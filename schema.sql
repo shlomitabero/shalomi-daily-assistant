@@ -48,6 +48,7 @@ CREATE TABLE businesses (
   owner_id        UUID NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
   name            TEXT NOT NULL,
   brand           TEXT NOT NULL, -- shared across franchised locations of the same concept
+  origin          TEXT NOT NULL DEFAULT 'founded', -- founded | acquired | franchised — drives specialization inference
   industry        TEXT NOT NULL, -- food | car_detailing | ecommerce | ...
   city            TEXT NOT NULL,
   stage           TEXT NOT NULL DEFAULT 'active', -- active | closed | bankrupt | sold

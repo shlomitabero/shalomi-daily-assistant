@@ -1,4 +1,8 @@
+import { useEffect, useState } from 'react';
+import { api } from '../api';
 import { formatMoney, formatCompact } from '../format';
+import { DISTRICTS } from '../world';
+import PlayerCard from '../components/PlayerCard';
 
 export default function Home({ state, onNavigate, onAdvanceDay, advancing }) {
   const { profile, rank, nextRank, businesses, alerts } = state;
@@ -7,6 +11,22 @@ export default function Home({ state, onNavigate, onAdvanceDay, advancing }) {
   const progress = nextRank
     ? Math.min(100, Math.max(0, ((profile.netWorth - rank.netWorthThreshold) / (nextRank.netWorthThreshold - rank.netWorthThreshold)) * 100))
     : 100;
+
+  const [dailyOpportunity, setDailyOpportunity] = useState(null);
+  const [rival, setRival] = useState(null);
+  const [hotProperty, setHotProperty] = useState(null);
+  const [viewingPlayer, setViewingPlayer] = useState(null);
+
+  useEffect(() => {
+    api.getDailyOpportunity(profile.id).then((d) => setDailyOpportunity(d.opportunity)).catch(() => {});
+    api.getRival(profile.id).then((d) => setRival(d.rival)).catch(() => {});
+    api.getProperties().then((d) => setHotProperty(d.properties.find((p) => !p.owner_id) ?? null)).catch(() => {});
+  }, [profile.id]);
+
+  const districtsWithMe = DISTRICTS.map((d) => ({
+    ...d,
+    presence: activeBusinesses.filter((b) => d.industries.includes(b.industry)).length,
+  }));
 
   return (
     <div className="scroll-area stack-lg fade-in">
@@ -41,6 +61,47 @@ export default function Home({ state, onNavigate, onAdvanceDay, advancing }) {
         <div className="progress-track"><span style={{ width: `${progress}%` }} /></div>
         {nextRank && <div className="faint">{formatCompact(Math.max(0, nextRank.netWorthThreshold - profile.netWorth))} to rank {nextRank.rank}</div>}
       </div>
+
+      <div className="stack" style={{ gap: 8 }}>
+        <div className="row-between">
+          <div className="eyebrow">YOUR CITY</div>
+          <button className="faint" style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 11 }} onClick={() => onNavigate('world')}>Open map →</button>
+        </div>
+        <div className="row" style={{ gap: 8, overflowX: 'auto', paddingBottom: 2 }}>
+          {districtsWithMe.map((d) => (
+            <div key={d.id} onClick={() => onNavigate('world')} style={{
+              flexShrink: 0, width: 78, padding: '10px 8px', borderRadius: 12, textAlign: 'center',
+              background: `linear-gradient(155deg, ${d.color}cc, ${d.color}44)`, cursor: 'pointer', color: 'white',
+            }}>
+              <div style={{ fontSize: 20 }}>{d.icon}</div>
+              <div style={{ fontSize: 10, fontWeight: 700, marginTop: 4, lineHeight: 1.2 }}>{d.name}</div>
+              {d.presence > 0 && <div style={{ fontSize: 9.5, opacity: 0.85, marginTop: 2 }}>{d.presence} owned</div>}
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {(dailyOpportunity || rival || hotProperty) && (
+        <div className="stack">
+          <div className="eyebrow">URGENT</div>
+          {dailyOpportunity && (
+            <UrgentCard icon="💼" label="DEAL" sub={dailyOpportunity.name} onClick={() => onNavigate('deals')} />
+          )}
+          {rival && (
+            <UrgentCard
+              icon="⚔️"
+              label={rival.youAreAhead ? 'RIVAL — YOU LEAD' : 'RIVAL — CLOSING GAP'}
+              sub={`${rival.displayName} · ${formatCompact(rival.netWorth)} net worth`}
+              onClick={() => setViewingPlayer(rival.profileId)}
+            />
+          )}
+          {hotProperty && (
+            <UrgentCard icon="🏙️" label="PROPERTY" sub={`${hotProperty.neighborhood} · ${formatMoney(hotProperty.value)}`} onClick={() => onNavigate('estate')} />
+          )}
+        </div>
+      )}
+
+      <PlayerCard profileId={viewingPlayer} onClose={() => setViewingPlayer(null)} />
 
       <div className="grid-2">
         <StatMini label="BUSINESSES" value={activeBusinesses.length} onClick={() => onNavigate('empire')} />
@@ -82,6 +143,18 @@ function ActionCard({ icon, label, sub, onClick }) {
       <span className="icon">{icon}</span>
       <span className="label">{label}</span>
       <span className="sub">{sub}</span>
+    </div>
+  );
+}
+
+function UrgentCard({ icon, label, sub, onClick }) {
+  return (
+    <div className="urgent-card" onClick={onClick}>
+      <span className="urgent-icon">{icon}</span>
+      <div>
+        <div className="urgent-label">{label}</div>
+        <div className="urgent-sub">{sub}</div>
+      </div>
     </div>
   );
 }

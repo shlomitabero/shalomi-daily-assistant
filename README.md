@@ -8,11 +8,53 @@ no connections — and build toward becoming **THE SHARK**, the most successful
 business player in the world, through decisions, negotiation, risk, and
 strategy rather than waiting on timers.
 
-This is a playable vertical slice (section 31/47 of the design brief), not a
-design document: create a player, choose a first business, run it, hire and
-fire, negotiate a real acquisition in free text, take on debt, buy real
-estate, climb a 100-rank ladder, and watch a simulated global economy move
-around you.
+This is a playable vertical slice, not a design document: create a player,
+choose a first business, run it, hire and fire, negotiate a real acquisition
+in free text, take on debt, buy real estate, climb a 100-rank ladder, and
+watch a simulated global economy move around you.
+
+## Game feel, not a dashboard
+
+A second design pass ("turn this into a real game") pushed the experience
+layer specifically — without touching the underlying financial simulation:
+
+- **A living city.** The World screen's City tab renders 8 stylized
+  districts (Downtown, Food, Tech, Industrial, Entertainment, Luxury,
+  Residential, Port), each with its own color language, showing your
+  presence there and a pulsing 🔥 badge when there's an opportunity. Home
+  leads with a compact city strip and up to 3 one-tap "URGENT" cards (a
+  deal, your nearest rival, a property) instead of a menu.
+- **Cinematic deals.** Negotiation is framed as a boardroom scene — a
+  portrait, a live mood indicator, and a tension meter that rises with each
+  round — not a plain chat log. Closing one plays a "DEAL CLOSED" sequence
+  before the numbers update.
+- **Characters.** 10 persistent NPC personalities get colored portrait
+  avatars; employees show a real loyalty bar, not just a stat.
+- **Rivalry.** Every player sees their closest net-worth competitor as a
+  tappable rival card, with a "View Player" profile modal reused from the
+  world feed.
+- **Status without pay-to-win.** A Profile "Status" section (home, vehicle,
+  HQ) upgrades purely with rank tier — nothing purchasable affects it.
+- **Visual business tiers.** A business's icon evolves — 🏪 → 🏬 → ⭐ → 🏢 →
+  🏙️ — as its valuation grows, in the Empire list, its own detail page, and
+  franchise flow.
+- **Play-style inference.** A specialization label (THE SHARK, THE REAL
+  ESTATE KING, THE INVESTOR, THE BUILDER) is inferred from what you actually
+  did — acquisitions vs. organic founding vs. investing vs. real estate —
+  never asked for directly.
+- **A real share card.** Profile → Share Card renders a downloadable PNG
+  client-side via canvas — genuinely screenshot-worthy, no server round-trip.
+- **Bigger milestones.** Rank-ups at every 10th rank get a "NEW POWERS
+  UNLOCKED" cinematic treatment; the first-million moment now shows days
+  to reach it, your first business, and portfolio size.
+
+**Deliberately out of scope for this pass**, because they need infrastructure
+or product decisions beyond a single build (an actual 3D/isometric renderer,
+a video clip export pipeline, public companies/IPOs, a multi-city global
+map, and a spectator system): the city map and business tiers are 2D/CSS,
+not 3D; the "share card" is a static PNG, not a video clip; rivalry is a
+live comparison, not a persisted history (there's no snapshot table yet to
+back a real trend).
 
 ## What's actually playable
 

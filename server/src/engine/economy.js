@@ -18,7 +18,7 @@ const MISC_EXPENSE_RATIO = 0.04;
 // trailing data can otherwise inflate a brand-new business to full value.
 const VALUATION_RAMP_DAYS = 30;
 
-export function newBusinessFromOpportunity({ id, owner_id, opportunity, name, costBasis100, brand }) {
+export function newBusinessFromOpportunity({ id, owner_id, opportunity, name, costBasis100, brand, origin = 'founded' }) {
   const industry = INDUSTRIES[opportunity.industry];
   const resolvedName = name || opportunity.name;
   return {
@@ -26,6 +26,7 @@ export function newBusinessFromOpportunity({ id, owner_id, opportunity, name, co
     owner_id,
     name: resolvedName,
     brand: brand || resolvedName, // franchised locations of the same brand share this
+    origin, // 'founded' | 'acquired' | 'franchised' — drives specialization inference
     industry: opportunity.industry,
     city: 'Zero City',
     stage: 'active',

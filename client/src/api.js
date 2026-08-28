@@ -18,6 +18,7 @@ async function request(path, options = {}) {
 export const api = {
   createPlayer: (payload) => request('/players', { method: 'POST', body: JSON.stringify(payload) }),
   getPlayer: (id) => request(`/players/${id}`),
+  getPublicProfile: (id) => request(`/players/${id}/public`),
   getLegacy: (id) => request(`/players/${id}/legacy`),
 
   getOpportunities: (id) => request(id ? `/players/${id}/opportunities` : '/opportunities'),
@@ -53,4 +54,5 @@ export const api = {
   getFeed: () => request('/feed'),
   getLeaderboard: (category) => request(`/leaderboard?category=${category}`),
   getDailyOpportunity: (id) => request(`/players/${id}/daily-opportunity`),
+  getRival: (id) => request(`/players/${id}/rival`),
 };

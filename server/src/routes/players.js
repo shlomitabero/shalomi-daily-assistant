@@ -43,6 +43,26 @@ playersRouter.get('/players/:id', (req, res) => {
   res.json(state);
 });
 
+// Trimmed, read-only view for looking at ANOTHER player (world feed, rival
+// card) — no cash/loans/reputation detail, just what a rival profile card
+// should show.
+playersRouter.get('/players/:id/public', (req, res) => {
+  const state = getFullPlayerState(req.params.id);
+  if (!state) return res.status(404).json({ error: 'player not found' });
+  const active = state.businesses.filter((b) => b.stage === 'active');
+  res.json({
+    displayName: state.profile.display_name,
+    avatar: state.profile.avatar,
+    city: state.profile.city,
+    netWorth: state.profile.netWorth,
+    specialization: state.profile.specialization,
+    rank: state.rank,
+    businessCount: active.length,
+    realEstateCount: state.properties.length,
+    biggestDeal: db.legacy.where((l) => l.profile_id === req.params.id && l.kind === 'biggest_deal')[0] ?? null,
+  });
+});
+
 playersRouter.get('/players/:id/legacy', (req, res) => {
   const profile = db.profiles.get(req.params.id);
   if (!profile) return res.status(404).json({ error: 'player not found' });

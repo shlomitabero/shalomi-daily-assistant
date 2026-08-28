@@ -45,8 +45,25 @@ export default function App() {
 
   const afterAction = async (result) => {
     if (result?.bankrupt) queueCelebration({ type: 'bankrupt' });
-    if (result?.million) queueCelebration({ type: 'million', label: result.million.label, amount: state.profile.netWorth });
-    if (result?.rankedUp && result?.rank) queueCelebration({ type: 'rankup', title: result.rank.title, unlock: result.rank.unlock });
+    if (result?.million) {
+      queueCelebration({
+        type: 'million',
+        label: result.million.label,
+        amount: result.netWorth ?? state.profile.netWorth,
+        daysToReach: result.million.daysToReach,
+        firstBusiness: result.million.firstBusiness,
+        businessCount: result.million.businessCount,
+      });
+    }
+    if (result?.rankedUp && result?.rank) {
+      queueCelebration({
+        type: 'rankup',
+        title: result.rank.title,
+        unlock: result.rank.unlock,
+        major: result.rank.rank % 10 === 0,
+        rank: result.rank.rank,
+      });
+    }
     await refresh();
   };
 
@@ -110,12 +127,25 @@ export default function App() {
         {view.name === 'negotiation' && (
           <Negotiation profileId={state.profile.id} offerId={view.params.offerId}
             onBack={() => nav('deals')}
-            onClosed={async (result) => { if (result) await afterAction(result); else await refresh(); nav('empire'); }} />
+            onClosed={async (result, context) => {
+              if (result) {
+                queueCelebration({
+                  type: 'dealclosed',
+                  companyName: context?.target?.name ?? result.business?.name,
+                  price: context?.price ?? 0,
+                  stakePct: context?.stakePct ?? result.business?.ownership_pct,
+                });
+                await afterAction(result);
+              } else {
+                await refresh();
+              }
+              nav('empire');
+            }} />
         )}
         {view.name === 'estate' && <RealEstate state={state} onChanged={refresh} />}
         {view.name === 'loans' && <Loans state={state} onChanged={refresh} />}
         {view.name === 'invest' && <Invest state={state} onChanged={refresh} />}
-        {view.name === 'world' && <World state={state} />}
+        {view.name === 'world' && <World state={state} onNavigate={nav} />}
         {view.name === 'profile' && <Profile state={state} onNavigate={nav} />}
         {view.name === 'ranks' && <Ranks state={state} onBack={() => nav('profile')} />}
         {view.name === 'legacy' && <Legacy state={state} onBack={() => nav('profile')} />}

@@ -6,6 +6,7 @@
 import { db, makeId } from '../db/store.js';
 import { valuation, computeNetWorth } from '../engine/economy.js';
 import { rankForNetWorth, nextRank, MILLION_MOMENTS } from '../data/ranks.js';
+import { inferSpecialization } from '../engine/specialization.js';
 
 export function getBusinessValuation(business) {
   if (business.stage !== 'active') return 0;
@@ -60,10 +61,18 @@ export function recomputeNetWorthAndRank(profileId) {
   }
   if (profile.rank !== rank.rank) db.profiles.update(profileId, { rank: rank.rank });
 
-  const million = MILLION_MOMENTS.find((m) => prevNetWorth < m.amount && netWorth >= m.amount);
-  if (million) {
-    addLegacy(profileId, `milestone_${million.amount}`, million.label, netWorth);
-    pushWorldFeed(`${profile.display_name} just crossed $${formatCompact(million.amount)} net worth.`, profileId, 'milestone', netWorth);
+  const millionMatch = MILLION_MOMENTS.find((m) => prevNetWorth < m.amount && netWorth >= m.amount);
+  let million = null;
+  if (millionMatch) {
+    addLegacy(profileId, `milestone_${millionMatch.amount}`, millionMatch.label, netWorth);
+    pushWorldFeed(`${profile.display_name} just crossed $${formatCompact(millionMatch.amount)} net worth.`, profileId, 'milestone', netWorth);
+    const firstCompany = db.legacy.where((l) => l.profile_id === profileId && l.kind === 'first_company')[0];
+    million = {
+      ...millionMatch,
+      daysToReach: profile.age_days,
+      firstBusiness: firstCompany?.headline ?? null,
+      businessCount: db.businesses.where((b) => b.owner_id === profileId && b.stage === 'active').length,
+    };
   }
 
   const othersMax = Math.max(0, ...db.player_rank.all().filter((r) => r.profile_id !== profileId).map((r) => r.net_worth_at));
@@ -140,8 +149,15 @@ export function getFullPlayerState(profileId) {
   const investments = db.investments.where((i) => i.investor_id === profileId);
   const unresolvedEvents = db.events.where((e) => e.profile_id === profileId && !e.resolved);
 
+  const specialization = inferSpecialization({
+    acquisitions: businesses.filter((b) => b.origin === 'acquired').length,
+    organicBusinesses: businesses.filter((b) => b.origin === 'founded').length,
+    investments: investments.length,
+    properties: properties.length,
+  });
+
   return {
-    profile: { ...profile, netWorth },
+    profile: { ...profile, netWorth, specialization },
     reputation,
     rank,
     nextRank: nr,

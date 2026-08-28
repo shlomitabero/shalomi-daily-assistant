@@ -2,6 +2,15 @@ import { useEffect, useRef, useState } from 'react';
 import { api } from '../api';
 import { formatMoney } from '../format';
 import { sfx } from '../audio';
+import Portrait, { archetypeColor } from '../components/Portrait';
+
+const MOOD_BY_OUTCOME = {
+  null: { label: 'Opening offer', color: '#f0b93d' },
+  accept: { label: 'Ready to deal', color: '#34d399' },
+  counter: { label: 'Considering', color: '#f0b93d' },
+  reject: { label: 'Frustrated', color: '#fb7185' },
+  walk_away: { label: 'Walking away', color: '#fb7185' },
+};
 
 export default function Negotiation({ profileId, offerId, onBack, onClosed }) {
   const [data, setData] = useState(null);
@@ -17,6 +26,12 @@ export default function Negotiation({ profileId, offerId, onBack, onClosed }) {
   const { offer, target, npc, transcript } = data;
   const closed = offer.status !== 'negotiating';
 
+  const lastSeller = [...transcript].reverse().find((t) => t.speaker === 'seller');
+  const mood = MOOD_BY_OUTCOME[lastSeller?.outcome ?? null] ?? MOOD_BY_OUTCOME.counter;
+  const turnsUsed = transcript.filter((t) => t.speaker === 'buyer').length;
+  const tension = Math.min(100, turnsUsed * 22);
+  const tensionColor = tension < 40 ? '#34d399' : tension < 75 ? '#f0b93d' : '#fb7185';
+
   const send = async () => {
     if (!text.trim() || sending) return;
     setSending(true);
@@ -30,7 +45,8 @@ export default function Negotiation({ profileId, offerId, onBack, onClosed }) {
           setError(result.acquisition.error);
         } else {
           sfx.dealClosed();
-          onClosed(result.acquisition);
+          const closingTurn = result.transcript[result.transcript.length - 1];
+          onClosed(result.acquisition, { npc, target, price: closingTurn?.proposed_price, stakePct: closingTurn?.proposed_stake });
         }
       }
       if (result.decision === 'walk_away') {
@@ -46,18 +62,26 @@ export default function Negotiation({ profileId, offerId, onBack, onClosed }) {
 
   return (
     <div className="stack" style={{ height: '100%', overflow: 'hidden' }}>
-      <div style={{ padding: '18px 18px 10px' }}>
+      <div className="boardroom">
         <button className="faint" style={{ background: 'none', border: 'none', textAlign: 'left', padding: 0, cursor: 'pointer' }} onClick={onBack}>← Back</button>
-        <div className="row-between" style={{ marginTop: 10 }}>
-          <div>
-            <div style={{ fontWeight: 800 }}>{npc?.name}</div>
-            <div className="faint">{npc?.archetype} · {target?.name}</div>
+        <div className="row" style={{ marginTop: 12, gap: 12, alignItems: 'flex-start' }}>
+          <Portrait name={npc?.name} archetype={npc?.archetype} />
+          <div style={{ flex: 1 }}>
+            <div style={{ fontWeight: 800, fontSize: 16 }}>{npc?.name}</div>
+            <div className="faint" style={{ textTransform: 'capitalize' }}>{npc?.archetype} · {target?.name}</div>
+            <div className="row" style={{ marginTop: 4, gap: 4 }}>
+              <span className="mood-dot" style={{ background: mood.color }} />
+              <span style={{ fontSize: 12, color: mood.color, fontWeight: 700 }}>{mood.label}</span>
+            </div>
           </div>
-          <span className="badge accent">Asking {formatMoney(offer.ask_price)} / {offer.ask_stake_pct}%</span>
+          <span className="badge accent">{formatMoney(offer.ask_price)} / {offer.ask_stake_pct}%</span>
+        </div>
+        <div className="tension-track">
+          <span style={{ width: `${tension}%`, background: tensionColor }} />
         </div>
       </div>
 
-      <div className="scroll-area no-nav chat-log" ref={logRef} style={{ paddingTop: 6 }}>
+      <div className="scroll-area no-nav chat-log" ref={logRef} style={{ paddingTop: 14 }}>
         {transcript.map((t) => (
           <div key={t.id} className={`bubble ${t.speaker}`}>{t.message}</div>
         ))}

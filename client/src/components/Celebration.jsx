@@ -9,9 +9,24 @@ export default function Celebration({ celebration, onDismiss }) {
     if (celebration.type === 'million') sfx.million();
     else if (celebration.type === 'rankup') sfx.rankUp();
     else if (celebration.type === 'bankrupt') sfx.loss();
+    else if (celebration.type === 'dealclosed') sfx.dealClosed();
   }, [celebration]);
 
   if (!celebration) return null;
+
+  if (celebration.type === 'dealclosed') {
+    return (
+      <div className="overlay" onClick={onDismiss}>
+        <div className="eyebrow">DEAL CLOSED</div>
+        <div style={{ fontSize: 48 }}>🤝</div>
+        <div className="headline" style={{ fontSize: 26 }}>{celebration.companyName}</div>
+        <div className="subline">
+          {celebration.stakePct}% for {formatCompact(celebration.price)} — now part of your empire.
+        </div>
+        <button className="btn btn-money" onClick={onDismiss}>ADD TO PORTFOLIO</button>
+      </div>
+    );
+  }
 
   if (celebration.type === 'million') {
     return (
@@ -19,18 +34,39 @@ export default function Celebration({ celebration, onDismiss }) {
         <div style={{ fontSize: 52 }}>💰</div>
         <div className="headline">{celebration.label}</div>
         <div className="subline">Net worth: {formatCompact(celebration.amount)}</div>
+        {(celebration.daysToReach != null || celebration.firstBusiness) && (
+          <div className="card stack" style={{ maxWidth: 300, width: '100%', textAlign: 'left' }}>
+            {celebration.daysToReach != null && (
+              <div className="row-between"><span className="faint">Days to get here</span><span style={{ fontWeight: 700 }}>{celebration.daysToReach}</span></div>
+            )}
+            {celebration.firstBusiness && (
+              <div className="row-between"><span className="faint">Started with</span><span style={{ fontWeight: 700, textAlign: 'right' }}>{celebration.firstBusiness}</span></div>
+            )}
+            {celebration.businessCount != null && (
+              <div className="row-between"><span className="faint">Businesses now</span><span style={{ fontWeight: 700 }}>{celebration.businessCount}</span></div>
+            )}
+          </div>
+        )}
         <button className="btn btn-money" onClick={onDismiss}>KEEP BUILDING</button>
       </div>
     );
   }
 
   if (celebration.type === 'rankup') {
+    const powers = (celebration.unlock ?? '').split(/\.\s+|,\s+/).map((s) => s.trim()).filter(Boolean);
     return (
       <div className="overlay" onClick={onDismiss}>
-        <div className="eyebrow">RANK UP</div>
-        <div style={{ fontSize: 44 }}>🦈</div>
-        <div className="headline">{celebration.title}</div>
-        <div className="subline">{celebration.unlock}</div>
+        <div className="eyebrow">{celebration.major ? `MAJOR MILESTONE — RANK ${celebration.rank}` : 'RANK UP'}</div>
+        <div style={{ fontSize: celebration.major ? 60 : 44 }}>{celebration.major ? '🦈✨' : '🦈'}</div>
+        <div className="headline" style={{ fontSize: celebration.major ? 32 : 26 }}>{celebration.title}</div>
+        {celebration.major ? (
+          <div className="card stack" style={{ maxWidth: 300, width: '100%', textAlign: 'left' }}>
+            <div className="eyebrow" style={{ color: 'var(--gold)' }}>NEW POWERS UNLOCKED</div>
+            {powers.map((p, i) => <div key={i} style={{ fontSize: 13.5 }}>✓ {p}</div>)}
+          </div>
+        ) : (
+          <div className="subline">{celebration.unlock}</div>
+        )}
         <button className="btn btn-primary" onClick={onDismiss}>CONTINUE</button>
       </div>
     );

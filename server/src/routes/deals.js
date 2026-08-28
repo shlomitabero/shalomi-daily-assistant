@@ -125,7 +125,7 @@ function finalizeAcquisition(profile, offer, target, evalResult, reputation) {
   }
   const impliedFullValue = Math.round((evalResult.proposedPrice / evalResult.proposedStakePct) * 100);
   const business = newBusinessFromOpportunity({
-    id: makeId('biz'), owner_id: profile.id,
+    id: makeId('biz'), owner_id: profile.id, origin: 'acquired',
     opportunity: {
       industry: target.industry, name: target.name,
       cost: impliedFullValue, baseRevenuePerDay: Math.round((impliedFullValue * 0.9) / 90),

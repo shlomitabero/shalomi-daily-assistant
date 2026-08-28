@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react';
 import { api } from '../api';
 import { formatMoney } from '../format';
+import { businessTier } from '../world';
+import Portrait from '../components/Portrait';
 
 const ROLES = ['Manager', 'Cook', 'Sales Rep', 'Technician', 'Marketer'];
 
@@ -19,6 +21,7 @@ export default function BusinessDetail({ profileId, bizId, rank, onBack, onChang
 
   if (!data) return <div className="scroll-area center"><div className="spinner" /></div>;
   const { business, financials, employees } = data;
+  const tier = businessTier(business.valuation ?? 0);
   const latest = financials[financials.length - 1];
   const activeEmployees = employees.filter((e) => !e.terminated_at);
 
@@ -42,10 +45,11 @@ export default function BusinessDetail({ profileId, bizId, rank, onBack, onChang
 
       <div className="stack">
         <div className="eyebrow">{business.industry.replace('_', ' ').toUpperCase()} · {business.city}</div>
-        <h2 style={{ fontSize: 22 }}>{business.name}</h2>
-        <div className="row" style={{ gap: 10 }}>
+        <h2 style={{ fontSize: 22 }}>{tier.icon} {business.name}</h2>
+        <div className="row" style={{ gap: 10, flexWrap: 'wrap' }}>
           <span className="badge accent">{business.ownership_pct}% owned</span>
           <span className="badge gold">Quality {business.quality}</span>
+          <span className="badge">{tier.label}</span>
         </div>
       </div>
 
@@ -122,12 +126,24 @@ export default function BusinessDetail({ profileId, bizId, rank, onBack, onChang
         )}
 
         {activeEmployees.map((e) => (
-          <div key={e.id} className="card row-between">
-            <div>
-              <div style={{ fontWeight: 700 }}>{e.name}</div>
-              <div className="faint">{e.role} · {formatMoney(e.salary_monthly)}/mo · skill {e.skill}</div>
+          <div key={e.id} className="card stack" style={{ gap: 8 }}>
+            <div className="row-between">
+              <div className="row" style={{ gap: 10 }}>
+                <Portrait name={e.name} archetype={e.role} size={38} />
+                <div>
+                  <div style={{ fontWeight: 700 }}>{e.name}</div>
+                  <div className="faint">{e.role} · {formatMoney(e.salary_monthly)}/mo · skill {e.skill}</div>
+                </div>
+              </div>
+              <button className="btn btn-sm btn-danger" disabled={busy} onClick={() => run(() => api.fire(profileId, bizId, e.id))}>Fire</button>
             </div>
-            <button className="btn btn-sm btn-danger" disabled={busy} onClick={() => run(() => api.fire(profileId, bizId, e.id))}>Fire</button>
+            <div>
+              <div className="row-between" style={{ marginBottom: 3 }}>
+                <span className="faint" style={{ fontSize: 10.5 }}>LOYALTY</span>
+                <span className="faint" style={{ fontSize: 10.5 }}>{e.loyalty}%</span>
+              </div>
+              <div className="loyalty-track"><span style={{ width: `${e.loyalty}%` }} /></div>
+            </div>
           </div>
         ))}
         {activeEmployees.length === 0 && !hiring && <div className="faint">No employees yet.</div>}

@@ -15,6 +15,7 @@ import {
 import {
   getFullPlayerState,
   recomputeNetWorthAndRank,
+  getBusinessValuation,
   addLegacy,
   recordIfBigger,
   pushWorldFeed,
@@ -84,7 +85,7 @@ businessRouter.get('/players/:id/businesses/:bizId', (req, res) => {
   if (!business || business.owner_id !== req.params.id) return res.status(404).json({ error: 'business not found' });
   const financials = db.business_financials.where((f) => f.business_id === business.id).sort((a, b) => a.period - b.period);
   const employees = db.employees.where((e) => e.business_id === business.id);
-  res.json({ business, financials: financials.slice(-30), employees });
+  res.json({ business: { ...business, valuation: getBusinessValuation(business) }, financials: financials.slice(-30), employees });
 });
 
 businessRouter.post('/players/:id/businesses/:bizId/hire', (req, res) => {
@@ -179,7 +180,7 @@ businessRouter.post('/players/:id/businesses/:bizId/franchise', (req, res) => {
   const brand = business.brand ?? business.name;
   const locationCount = db.businesses.where((b) => b.owner_id === profile.id && (b.brand ?? b.name) === brand).length;
   const newLocation = newBusinessFromOpportunity({
-    id: makeId('biz'), owner_id: profile.id, brand,
+    id: makeId('biz'), owner_id: profile.id, brand, origin: 'franchised',
     name: `${brand} #${locationCount + 1}`,
     opportunity: {
       industry: business.industry, cost: business.cost_basis_100, baseRevenuePerDay: business.baseRevenuePerDay,

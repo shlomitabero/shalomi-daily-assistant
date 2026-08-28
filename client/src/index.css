@@ -332,3 +332,83 @@ label { font-size: 13px; color: var(--text-dim); font-weight: 600; margin-bottom
   height: 100%;
   background: linear-gradient(90deg, #34d399, #f0b93d);
 }
+
+/* --------------------------------------------------------------- CITY MAP */
+.district-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+.district-tile {
+  position: relative;
+  border-radius: var(--radius);
+  padding: 16px 14px;
+  min-height: 108px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  cursor: pointer;
+  border: 1px solid var(--border);
+  overflow: hidden;
+  transition: transform 0.1s ease;
+  color: white;
+}
+.district-tile:active { transform: scale(0.97); }
+.district-tile .district-icon { font-size: 24px; }
+.district-tile .district-name { font-weight: 800; font-size: 13.5px; line-height: 1.25; margin-top: 6px; }
+.district-tile .district-meta { font-size: 11px; opacity: 0.85; margin-top: 4px; }
+.district-tile .hot-badge {
+  position: absolute; top: 10px; right: 10px;
+  background: rgba(0,0,0,0.35);
+  border-radius: 999px;
+  padding: 2px 8px;
+  font-size: 10px;
+  font-weight: 700;
+  animation: pulse 1.6s ease-in-out infinite;
+}
+@keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.55; } }
+
+/* -------------------------------------------------------------- BOARDROOM */
+.boardroom {
+  padding: 16px 18px 12px;
+  border-bottom: 1px solid var(--border);
+  background: linear-gradient(180deg, #170f28, transparent);
+}
+.portrait {
+  width: 52px; height: 52px; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  font-weight: 800; font-size: 18px; color: white;
+  flex-shrink: 0;
+  box-shadow: 0 4px 14px -4px rgba(0,0,0,0.5);
+}
+.mood-dot {
+  width: 9px; height: 9px; border-radius: 50%;
+  display: inline-block; margin-right: 5px;
+}
+.tension-track {
+  height: 5px; border-radius: 999px; background: var(--surface-3); overflow: hidden; margin-top: 10px;
+}
+.tension-track > span {
+  display: block; height: 100%; border-radius: 999px;
+  transition: width 0.4s ease, background 0.4s ease;
+}
+
+/* --------------------------------------------------------------- URGENT */
+.urgent-card {
+  display: flex; align-items: center; gap: 12px;
+  padding: 13px 14px; border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--surface);
+  cursor: pointer;
+  transition: transform 0.1s ease, border-color 0.15s ease;
+}
+.urgent-card:active { transform: scale(0.98); }
+.urgent-card .urgent-icon { font-size: 20px; }
+.urgent-card .urgent-label { font-weight: 700; font-size: 13px; }
+.urgent-card .urgent-sub { font-size: 11.5px; color: var(--text-faint); }
+
+/* --------------------------------------------------------------- LOYALTY */
+.loyalty-track {
+  height: 5px; border-radius: 999px; background: var(--surface-3); overflow: hidden;
+}
+.loyalty-track > span { display: block; height: 100%; background: linear-gradient(90deg, #f472b6, #8b7cff); }

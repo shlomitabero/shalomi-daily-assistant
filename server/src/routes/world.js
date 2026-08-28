@@ -3,6 +3,7 @@ import { db, getMarketState } from '../db/store.js';
 import { RANKS } from '../data/ranks.js';
 import { ACQUISITION_TARGETS } from '../data/industries.js';
 import { getBusinessValuation } from '../services/playerState.js';
+import { findNearestRival } from '../engine/rival.js';
 
 export const worldRouter = Router();
 
@@ -53,6 +54,31 @@ worldRouter.get('/players/:id/daily-opportunity', (req, res) => {
   if (!pool.length) return res.json({ opportunity: null });
   const idx = (profile.age_days + hashCode(profile.id)) % pool.length;
   res.json({ opportunity: pool[idx], dayIndex: profile.age_days });
+});
+
+worldRouter.get('/players/:id/rival', (req, res) => {
+  const profile = db.profiles.get(req.params.id);
+  if (!profile) return res.status(404).json({ error: 'player not found' });
+  const myRankRow = db.player_rank.get(profile.id);
+  const myNetWorth = myRankRow?.net_worth_at ?? 10000;
+  const closest = findNearestRival(profile.id, myNetWorth, db.player_rank.all());
+  if (!closest) return res.json({ rival: null });
+
+  const rivalProfile = db.profiles.get(closest.profile_id);
+  const businessCount = db.businesses.where((b) => b.owner_id === closest.profile_id && b.stage === 'active').length;
+  res.json({
+    rival: {
+      profileId: rivalProfile.id,
+      displayName: rivalProfile.display_name,
+      avatar: rivalProfile.avatar,
+      city: rivalProfile.city,
+      netWorth: closest.net_worth_at,
+      rank: closest.rank,
+      businessCount,
+      youAreAhead: myNetWorth >= closest.net_worth_at,
+      gap: Math.abs(myNetWorth - closest.net_worth_at),
+    },
+  });
 });
 
 function hashCode(str) {
