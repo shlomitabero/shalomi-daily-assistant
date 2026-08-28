@@ -1,0 +1,20 @@
+{
+  "name": "from-zero",
+  "private": true,
+  "version": "0.1.0",
+  "description": "FROM ZERO — a real-life business MMO. Start with $10,000. Own everything.",
+  "type": "module",
+  "workspaces": [
+    "server",
+    "client"
+  ],
+  "scripts": {
+    "dev:server": "npm run dev --workspace=server",
+    "dev:client": "npm run dev --workspace=client",
+    "dev": "npm run dev:server & npm run dev:client",
+    "build": "npm run build --workspace=client",
+    "start": "npm run build && npm run start --workspace=server",
+    "test": "npm run test --workspace=server",
+    "seed": "npm run seed --workspace=server"
+  }
+}

@@ -1,0 +1,140 @@
+import { useEffect, useState } from 'react';
+import { api } from './api';
+import BottomNav from './components/BottomNav';
+import Celebration from './components/Celebration';
+import Onboarding from './screens/Onboarding';
+import Home from './screens/Home';
+import Opportunities from './screens/Opportunities';
+import Empire from './screens/Empire';
+import BusinessDetail from './screens/BusinessDetail';
+import Deals from './screens/Deals';
+import Negotiation from './screens/Negotiation';
+import RealEstate from './screens/RealEstate';
+import Loans from './screens/Loans';
+import World from './screens/World';
+import Profile from './screens/Profile';
+import Ranks from './screens/Ranks';
+import Legacy from './screens/Legacy';
+
+const NAV_SCREENS = new Set(['home', 'empire', 'deals', 'estate', 'loans', 'world', 'profile']);
+
+export default function App() {
+  const [state, setState] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [view, setView] = useState({ name: 'home', params: {} });
+  const [advancing, setAdvancing] = useState(false);
+  const [celebrationQueue, setCelebrationQueue] = useState([]);
+
+  useEffect(() => {
+    const id = localStorage.getItem('fz_profile_id');
+    if (!id) { setLoading(false); return; }
+    api.getPlayer(id).then(setState).catch(() => localStorage.removeItem('fz_profile_id')).finally(() => setLoading(false));
+  }, []);
+
+  const nav = (name, params = {}) => setView({ name, params });
+
+  const refresh = async () => {
+    if (!state) return;
+    const fresh = await api.getPlayer(state.profile.id);
+    setState(fresh);
+    return fresh;
+  };
+
+  const queueCelebration = (c) => setCelebrationQueue((q) => [...q, c]);
+
+  const afterAction = async (result) => {
+    if (result?.bankrupt) queueCelebration({ type: 'bankrupt' });
+    if (result?.million) queueCelebration({ type: 'million', label: result.million.label, amount: state.profile.netWorth });
+    if (result?.rankedUp && result?.rank) queueCelebration({ type: 'rankup', title: result.rank.title, unlock: result.rank.unlock });
+    await refresh();
+  };
+
+  const handleCreated = (newState) => { setState(newState); nav('home'); };
+
+  const handleAdvanceDay = async () => {
+    setAdvancing(true);
+    try {
+      const result = await api.advanceDay(state.profile.id);
+      await afterAction(result);
+    } finally {
+      setAdvancing(false);
+    }
+  };
+
+  if (loading) {
+    return <div className="app-frame center"><div className="spinner" /></div>;
+  }
+
+  if (!state) {
+    return (
+      <div className="app-frame">
+        <Onboarding onCreated={handleCreated} />
+      </div>
+    );
+  }
+
+  const showNav = NAV_SCREENS.has(view.name);
+
+  return (
+    <div className="app-frame">
+      {view.name !== 'negotiation' && (
+        <div className="topbar row-between">
+          <div className="brand">FROM ZERO<span className="dot">.</span></div>
+          <div className="row" style={{ gap: 8 }}>
+            <span className="badge accent">Rank {state.rank.rank}</span>
+            <span className="badge money">{formatShort(state.profile.netWorth)}</span>
+          </div>
+        </div>
+      )}
+
+      <div style={{ flex: 1, overflow: 'hidden', position: 'relative', display: 'flex', flexDirection: 'column' }}>
+        {view.name === 'home' && (
+          <Home state={state} onNavigate={nav} onAdvanceDay={handleAdvanceDay} advancing={advancing} />
+        )}
+        {view.name === 'opportunities' && (
+          <Opportunities state={state} onBack={() => nav('home')}
+            onBought={async (result) => { await afterAction(result); nav('business', { bizId: result.business.id }); }} />
+        )}
+        {view.name === 'empire' && (
+          <Empire state={state} onNavigate={nav} onOpenBusiness={(bizId) => nav('business', { bizId })} />
+        )}
+        {view.name === 'business' && (
+          <BusinessDetail profileId={state.profile.id} bizId={view.params.bizId}
+            onBack={() => nav('empire')} onChanged={refresh} />
+        )}
+        {view.name === 'deals' && (
+          <Deals state={state} onBack={() => nav('home')}
+            onOpenNegotiation={(offerId) => nav('negotiation', { offerId })} />
+        )}
+        {view.name === 'negotiation' && (
+          <Negotiation profileId={state.profile.id} offerId={view.params.offerId}
+            onBack={() => nav('deals')}
+            onClosed={async (result) => { if (result) await afterAction(result); else await refresh(); nav('empire'); }} />
+        )}
+        {view.name === 'estate' && <RealEstate state={state} onChanged={refresh} />}
+        {view.name === 'loans' && <Loans state={state} onChanged={refresh} />}
+        {view.name === 'world' && <World state={state} />}
+        {view.name === 'profile' && <Profile state={state} onNavigate={nav} />}
+        {view.name === 'ranks' && <Ranks state={state} onBack={() => nav('profile')} />}
+        {view.name === 'legacy' && <Legacy state={state} onBack={() => nav('profile')} />}
+      </div>
+
+      {showNav && (
+        <BottomNav
+          active={view.name}
+          onNavigate={(key) => nav(key)}
+        />
+      )}
+
+      <Celebration celebration={celebrationQueue[0] ?? null} onDismiss={() => setCelebrationQueue((q) => q.slice(1))} />
+    </div>
+  );
+}
+
+function formatShort(n) {
+  const abs = Math.abs(n);
+  if (abs >= 1_000_000_000) return `$${(n / 1_000_000_000).toFixed(1)}B`;
+  if (abs >= 1_000_000) return `$${(n / 1_000_000).toFixed(1)}M`;
+  if (abs >= 1_000) return `$${(n / 1_000).toFixed(1)}K`;
+  return `$${n}`;
+}
