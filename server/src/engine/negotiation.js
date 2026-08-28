@@ -51,6 +51,11 @@ export function openingLine(npc, offer, business) {
     'desperate startup founder': `I'll be honest, we're burning cash. ${askDisplay} gets you ${offer.ask_stake_pct}%.`,
     'arrogant investor': `${askDisplay} for ${offer.ask_stake_pct}%. That's a gift, frankly.`,
     'conservative banker': `The number is ${askDisplay} for ${offer.ask_stake_pct}%. I don't negotiate on principle, only on terms.`,
+    'aggressive founder': `Don't waste my time. ${askDisplay} for ${offer.ask_stake_pct}%, and that's already a favor.`,
+    'loyal manager': `Before anything else — my team keeps their jobs. The price is ${askDisplay} for ${offer.ask_stake_pct}%.`,
+    'ambitious employee': `I've been waiting for this. ${askDisplay} for ${offer.ask_stake_pct}% and I want to be part of what comes next.`,
+    'dishonest partner': `The numbers speak for themselves — ${askDisplay} for ${offer.ask_stake_pct}%, and honestly, that's underselling it.`,
+    'genius operator': `${askDisplay} for ${offer.ask_stake_pct}%. I built the model myself, so I already know what it's worth.`,
   };
   return lines[npc.archetype] ?? `I'm asking ${askDisplay} for ${offer.ask_stake_pct}%.`;
 }
@@ -156,6 +161,11 @@ function buildAcceptMessage(npc, price, stakePct, conditions) {
     'desperate startup founder': `Yes — $${price.toLocaleString()} for ${stakePct}% saves us. Thank you.${conditionText}`,
     'arrogant investor': `Fine. $${price.toLocaleString()} for ${stakePct}%. Don't expect that again.${conditionText}`,
     'conservative banker': `Terms accepted: $${price.toLocaleString()} for ${stakePct}%.${conditionText}`,
+    'aggressive founder': `Fine — $${price.toLocaleString()} for ${stakePct}%. Don't make me regret it.${conditionText}`,
+    'loyal manager': `Deal, as long as my people are taken care of. $${price.toLocaleString()} for ${stakePct}%.${conditionText}`,
+    'ambitious employee': `Yes! $${price.toLocaleString()} for ${stakePct}% — let's build something.${conditionText}`,
+    'dishonest partner': `Deal. $${price.toLocaleString()} for ${stakePct}%. You're getting a bargain, trust me.${conditionText}`,
+    'genius operator': `Acceptable. $${price.toLocaleString()} for ${stakePct}%. Don't waste what you're buying.${conditionText}`,
   };
   return byArchetype[npc.archetype] ?? `Deal. $${price.toLocaleString()} for ${stakePct}%.${conditionText}`;
 }
@@ -168,6 +178,11 @@ function buildCounterMessage(npc, price, stakePct, offerCeoStay = false) {
     'desperate startup founder': `What about $${price.toLocaleString()} for ${stakePct}%? I need this to move fast.${stayText}`,
     'arrogant investor': `$${price.toLocaleString()} for ${stakePct}%. That's already generous of me.${stayText}`,
     'conservative banker': `Counter: $${price.toLocaleString()} for ${stakePct}%.${stayText}`,
+    'aggressive founder': `Not even close. $${price.toLocaleString()} for ${stakePct}%, final offer territory.${stayText}`,
+    'loyal manager': `I can move to $${price.toLocaleString()} for ${stakePct}%, but only with real guarantees for my team.${stayText}`,
+    'ambitious employee': `I'll meet you at $${price.toLocaleString()} for ${stakePct}% — I want this to happen.${stayText}`,
+    'dishonest partner': `$${price.toLocaleString()} for ${stakePct}%. That's still more than fair, believe me.${stayText}`,
+    'genius operator': `$${price.toLocaleString()} for ${stakePct}%. The math doesn't move much past that.${stayText}`,
   };
   return byArchetype[npc.archetype] ?? `Counter: $${price.toLocaleString()} for ${stakePct}%.${stayText}`;
 }

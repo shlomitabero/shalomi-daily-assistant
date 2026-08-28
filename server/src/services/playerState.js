@@ -23,6 +23,9 @@ export function recomputeNetWorthAndRank(profileId) {
   const businesses = db.businesses.where((b) => b.owner_id === profileId && b.stage === 'active');
   const businessValuations = businesses.map(getBusinessValuation);
 
+  const crown = businesses.find((b, i) => businessValuations[i] >= 100_000_000);
+  if (crown) addLegacy(profileId, 'first_100m_company', `${crown.name} became a $100M+ company.`, 100_000_000);
+
   const properties = db.properties.where((p) => p.owner_id === profileId);
   const propertyValues = properties.map((p) => p.value);
 
@@ -63,6 +66,13 @@ export function recomputeNetWorthAndRank(profileId) {
     pushWorldFeed(`${profile.display_name} just crossed $${formatCompact(million.amount)} net worth.`, profileId, 'milestone', netWorth);
   }
 
+  const othersMax = Math.max(0, ...db.player_rank.all().filter((r) => r.profile_id !== profileId).map((r) => r.net_worth_at));
+  if (netWorth > 0 && netWorth >= othersMax) {
+    const isFirstTime = !db.legacy.where((l) => l.profile_id === profileId && l.kind === 'reached_number_1').length;
+    addLegacy(profileId, 'reached_number_1', `${profile.display_name} reached #1 in the world by net worth.`, netWorth);
+    if (isFirstTime) pushWorldFeed(`${profile.display_name} is the new #1 in the world.`, profileId, 'milestone', netWorth);
+  }
+
   return { netWorth, rank, rankedUp, nextRank: nextRank(rank.rank), million };
 }
 
@@ -77,6 +87,19 @@ export function addLegacy(profileId, kind, headline, amount = null) {
     amount,
     created_at: new Date().toISOString(),
   });
+}
+
+// For "biggest deal", "biggest loss", "best investment" — records that only
+// get overwritten by a bigger one, never duplicated or shrunk.
+export function recordIfBigger(profileId, kind, headline, amount) {
+  const existing = db.legacy.where((l) => l.profile_id === profileId && l.kind === kind)[0];
+  if (!existing) {
+    return db.legacy.insert({ id: makeId('legacy'), profile_id: profileId, kind, headline, amount, created_at: new Date().toISOString() });
+  }
+  if (amount > existing.amount) {
+    return db.legacy.update(existing.id, { headline, amount, created_at: new Date().toISOString() });
+  }
+  return existing;
 }
 
 export function pushWorldFeed(headline, profileId, kind, amount = null) {

@@ -3,8 +3,10 @@ import { db, makeId } from '../db/store.js';
 import { ACQUISITION_TARGETS, INDUSTRIES } from '../data/industries.js';
 import { getNpc } from '../data/npcs.js';
 import { openingLine, evaluateNegotiationTurn } from '../engine/negotiation.js';
-import { newBusinessFromOpportunity, accrueLoanInterest, loanPayment } from '../engine/economy.js';
-import { recomputeNetWorthAndRank, addLegacy, pushWorldFeed, formatCompact } from '../services/playerState.js';
+import { newBusinessFromOpportunity, accrueLoanInterest, loanPayment, valuation } from '../engine/economy.js';
+import { recomputeNetWorthAndRank, addLegacy, recordIfBigger, pushWorldFeed, formatCompact } from '../services/playerState.js';
+
+const MAX_MINORITY_STAKE_PCT = 40; // investing never buys control — that's what acquisitions are for
 
 export const dealsRouter = Router();
 
@@ -140,6 +142,7 @@ function finalizeAcquisition(profile, offer, target, evalResult, reputation) {
     memo: `Acquired ${evalResult.proposedStakePct}% of ${target.name}`, ref_id: business.id, created_at: new Date().toISOString(),
   });
   addLegacy(profile.id, 'first_acquisition', `Acquired ${target.name} for $${formatCompact(evalResult.proposedPrice)}.`, evalResult.proposedPrice);
+  recordIfBigger(profile.id, 'biggest_deal', `Biggest deal: acquired ${target.name} for ${formatCompact(evalResult.proposedPrice)}.`, evalResult.proposedPrice);
   pushWorldFeed(`${profile.display_name} acquired ${evalResult.proposedStakePct}% of ${target.name} for $${formatCompact(evalResult.proposedPrice)}.`, profile.id, 'acquisition', evalResult.proposedPrice);
   if (reputation) db.reputation.update(profile.id, { trust: Math.min(100, reputation.trust + 2), dealmaking: Math.min(100, reputation.dealmaking + 3) });
 
@@ -234,4 +237,88 @@ dealsRouter.post('/players/:id/properties/:propId/sell', (req, res) => {
   db.transactions.insert({ id: makeId('txn'), profile_id: profile.id, kind: 'property', amount: property.value, memo: `Sold ${property.neighborhood} ${property.kind}`, ref_id: property.id, created_at: new Date().toISOString() });
   const result = recomputeNetWorthAndRank(profile.id);
   res.json({ ...result });
+});
+
+const RENOVATE_COST_PCT = 0.15;
+const RENOVATE_VALUE_GAIN_PCT = 0.20;
+const RENOVATE_INCOME_GAIN_PCT = 0.15;
+
+dealsRouter.post('/players/:id/properties/:propId/renovate', (req, res) => {
+  const profile = requireProfile(req, res);
+  if (!profile) return;
+  const property = db.properties.get(req.params.propId);
+  if (!property || property.owner_id !== profile.id) return res.status(404).json({ error: 'property not found' });
+
+  const cost = Math.round(property.value * RENOVATE_COST_PCT);
+  if (profile.cash < cost) return res.status(400).json({ error: 'not enough cash' });
+
+  const newValue = Math.round(property.value * (1 + RENOVATE_VALUE_GAIN_PCT));
+  const newIncome = Math.round(property.monthly_income * (1 + RENOVATE_INCOME_GAIN_PCT));
+  db.properties.update(property.id, { value: newValue, monthly_income: newIncome });
+  db.profiles.update(profile.id, { cash: profile.cash - cost });
+  db.transactions.insert({ id: makeId('txn'), profile_id: profile.id, kind: 'property', amount: -cost, memo: `Renovated ${property.neighborhood} ${property.kind}`, ref_id: property.id, created_at: new Date().toISOString() });
+  pushWorldFeed(`${profile.display_name} renovated ${property.neighborhood} ${property.kind}.`, profile.id, 'property', newValue);
+
+  const result = recomputeNetWorthAndRank(profile.id);
+  res.json({ property: db.properties.get(property.id), ...result });
+});
+
+// ------------------------------------------------------------------- INVEST
+// Minority stakes in other players' (including simulated competitors')
+// companies — a lighter-weight path into ownership than a full negotiated
+// acquisition, capped so it can never buy control.
+dealsRouter.get('/players/:id/invest/targets', (req, res) => {
+  const profile = requireProfile(req, res);
+  if (!profile) return;
+
+  const targets = db.businesses
+    .where((b) => b.owner_id !== profile.id && b.stage === 'active')
+    .map((b) => {
+      const owner = db.profiles.get(b.owner_id);
+      const financials = db.business_financials.where((f) => f.business_id === b.id).slice(-30);
+      const fullValuation = valuation(b, financials);
+      const alreadyInvested = db.investments.where((i) => i.business_id === b.id).reduce((s, i) => s + i.stake_pct, 0);
+      const availablePct = Math.max(0, Math.min(MAX_MINORITY_STAKE_PCT, b.ownership_pct - 1) - alreadyInvested);
+      return {
+        businessId: b.id, name: b.name, industry: b.industry, ownerName: owner?.display_name ?? 'Unknown',
+        ownerId: b.owner_id, fullValuation, pricePerPct: Math.round(fullValuation / 100), availablePct,
+      };
+    })
+    .filter((t) => t.availablePct >= 1 && t.fullValuation > 0);
+
+  res.json({ targets });
+});
+
+dealsRouter.post('/players/:id/invest/:businessId', (req, res) => {
+  const profile = requireProfile(req, res);
+  if (!profile) return;
+  const business = db.businesses.get(req.params.businessId);
+  if (!business || business.stage !== 'active') return res.status(404).json({ error: 'business not found' });
+  if (business.owner_id === profile.id) return res.status(400).json({ error: "you can't invest in your own business" });
+
+  const stakePct = Number(req.body?.stakePct);
+  if (!(stakePct > 0)) return res.status(400).json({ error: 'stakePct must be positive' });
+
+  const financials = db.business_financials.where((f) => f.business_id === business.id).slice(-30);
+  const fullValuation = valuation(business, financials);
+  const alreadyInvested = db.investments.where((i) => i.business_id === business.id).reduce((s, i) => s + i.stake_pct, 0);
+  const availablePct = Math.max(0, Math.min(MAX_MINORITY_STAKE_PCT, business.ownership_pct - 1) - alreadyInvested);
+  if (stakePct > availablePct) return res.status(400).json({ error: `only ${availablePct}% is available for investment` });
+
+  const cost = Math.round((fullValuation * stakePct) / 100);
+  if (profile.cash < cost) return res.status(400).json({ error: 'not enough cash' });
+
+  db.investments.insert({
+    id: makeId('inv'), investor_id: profile.id, business_id: business.id, stake_pct: stakePct, amount: cost,
+    created_at: new Date().toISOString(),
+  });
+  db.businesses.update(business.id, { ownership_pct: business.ownership_pct - stakePct });
+  db.profiles.update(profile.id, { cash: profile.cash - cost });
+  db.transactions.insert({ id: makeId('txn'), profile_id: profile.id, kind: 'investment', amount: -cost, memo: `Invested in ${business.name}`, ref_id: business.id, created_at: new Date().toISOString() });
+  addLegacy(profile.id, 'first_investment', `Took a ${stakePct}% stake in ${business.name}.`, cost);
+  recordIfBigger(profile.id, 'best_investment', `Biggest investment: ${stakePct}% of ${business.name} for ${formatCompact(cost)}.`, cost);
+  pushWorldFeed(`${profile.display_name} invested in ${business.name} (${stakePct}%).`, profile.id, 'investment', cost);
+
+  const result = recomputeNetWorthAndRank(profile.id);
+  res.status(201).json({ investment: { businessId: business.id, stakePct, cost }, ...result });
 });

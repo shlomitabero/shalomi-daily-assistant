@@ -1,7 +1,16 @@
+import { useEffect } from 'react';
 import { formatCompact } from '../format';
+import { sfx } from '../audio';
 
 // Full-screen celebration for million moments (section 37) and rank-ups.
 export default function Celebration({ celebration, onDismiss }) {
+  useEffect(() => {
+    if (!celebration) return;
+    if (celebration.type === 'million') sfx.million();
+    else if (celebration.type === 'rankup') sfx.rankUp();
+    else if (celebration.type === 'bankrupt') sfx.loss();
+  }, [celebration]);
+
   if (!celebration) return null;
 
   if (celebration.type === 'million') {

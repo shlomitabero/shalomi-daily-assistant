@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { api } from '../api';
 import { formatMoney } from '../format';
+import { sfx } from '../audio';
 
 export default function Negotiation({ profileId, offerId, onBack, onClosed }) {
   const [data, setData] = useState(null);
@@ -28,10 +29,12 @@ export default function Negotiation({ profileId, offerId, onBack, onClosed }) {
         if (result.acquisition?.error) {
           setError(result.acquisition.error);
         } else {
+          sfx.dealClosed();
           onClosed(result.acquisition);
         }
       }
       if (result.decision === 'walk_away') {
+        sfx.loss();
         setTimeout(() => onClosed(null), 1200);
       }
     } catch (e) {

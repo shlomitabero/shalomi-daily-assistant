@@ -38,6 +38,20 @@ export default function RealEstate({ state, onChanged }) {
     }
   };
 
+  const renovate = async (p) => {
+    setBusyId(p.id);
+    setError(null);
+    try {
+      await api.renovateProperty(state.profile.id, p.id);
+      await load();
+      onChanged();
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setBusyId(null);
+    }
+  };
+
   return (
     <div className="scroll-area stack-lg fade-in">
       <div className="stack">
@@ -64,7 +78,13 @@ export default function RealEstate({ state, onChanged }) {
                 <div><div className="faint" style={{ fontSize: 10.5 }}>INCOME/MO</div><div style={{ fontWeight: 700 }}>{formatMoney(p.monthly_income)}</div></div>
               </div>
               {mine ? (
-                <button className="btn btn-danger" disabled={busyId === p.id} onClick={() => sell(p)}>SELL</button>
+                <div className="grid-2">
+                  <button className="btn btn-ghost" disabled={busyId === p.id || state.profile.cash < p.value * 0.15}
+                    onClick={() => renovate(p)}>
+                    🔨 Renovate ({formatMoney(Math.round(p.value * 0.15))})
+                  </button>
+                  <button className="btn btn-danger" disabled={busyId === p.id} onClick={() => sell(p)}>SELL</button>
+                </div>
               ) : takenByOther ? (
                 <button className="btn btn-ghost" disabled>OWNED BY ANOTHER PLAYER</button>
               ) : (

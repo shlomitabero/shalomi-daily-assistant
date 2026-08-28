@@ -17,26 +17,41 @@ around you.
 ## What's actually playable
 
 - **Onboarding → first business in under a minute.** $10,000, 3 starter
-  opportunities (Food, Car Detailing, Ecommerce).
+  opportunities (Food, Car Detailing, Ecommerce), plus 8 growth-tier
+  opportunities across Retail, Services, Entertainment, Manufacturing and
+  Tech that unlock as your rank climbs.
 - **Real operations.** Every business has a real daily P&L (revenue, COGS,
   payroll, rent, marketing, EBITDA, customer score). "Advance Day" is a
   player-triggered action, not a timer — there's always something to decide.
+  Global market cycles (recession / boom / tech bubble) actually move
+  revenue, not just flavor text on the feed.
 - **AI negotiation.** Acquisitions are negotiated in free text, not YES/NO
-  buttons. NPC sellers have persistent personalities (greed, desperation,
-  stubbornness) and evaluate your offer's price, stake, and conditions
+  buttons. 10 persistent NPC personalities (greed, desperation,
+  stubbornness) evaluate your offer's price, stake, and conditions
   ("stay on as CEO for 2 years") against a deterministic floor. See
   `server/src/engine/negotiation.js`.
+- **Decision Engine.** Real events force a real choice — e.g. a manager
+  asking for a raise — via fixed options (PAY / NEGOTIATE / OFFER EQUITY /
+  REFUSE / FIRE) or your own free-text response, resolved by
+  `server/src/engine/decisions.js` into concrete salary/loyalty/ownership
+  effects, never just flavor text.
 - **Server-authoritative economy.** The client never computes money. Every
   dollar — revenue, valuation, net worth, loan interest — is computed once,
   server-side, by pure functions in `server/src/engine/economy.js`. The
   "AI" layer only ever proposes decisions; it can't create or destroy money.
 - **100 ranks**, Hustler → The Shark, each with a title and a real unlock,
   all visible from rank 1.
+- **Franchising.** Open a second (third, fourth...) location of a business
+  you already run once you hit rank 10.
+- **Investing.** Take a minority stake (capped at 40%, so it can never buy
+  control) in another player's — or a simulated competitor's — company.
 - **Loans & leverage**, real estate (including scarce, one-owner landmark
-  properties), random business events, a global feed, leaderboards, and a
-  permanent legacy/achievement log (first company, first million, first
-  bankruptcy, first acquisition, ...). Bankruptcy resets your businesses and
-  debt, not your account — the comeback is part of the game.
+  properties, and a renovate action that raises value and income), random
+  business events, a global feed, leaderboards, and a permanent
+  legacy/achievement log (first company, first million, first bankruptcy,
+  first acquisition, first $100M company, biggest deal, biggest loss,
+  reached #1, ...). Bankruptcy resets your businesses and debt, not your
+  account — the comeback is part of the game.
 
 ## Architecture
 

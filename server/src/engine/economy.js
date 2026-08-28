@@ -5,7 +5,10 @@
 // rng, which tests pin for determinism).
 import { INDUSTRIES } from '../data/industries.js';
 
-const VALUATION_MULTIPLE = { food: 2.5, car_detailing: 3, ecommerce: 4 };
+const VALUATION_MULTIPLE = {
+  food: 2.5, car_detailing: 3, ecommerce: 4,
+  retail: 2.8, services: 3.2, entertainment: 3.5, manufacturing: 4.5, tech: 6,
+};
 const MARKETING_COST_PER_LEVEL_PER_DAY = 15;
 const MISC_EXPENSE_RATIO = 0.04;
 // A business's valuation ramps from what the player paid for it (100% basis)
@@ -15,12 +18,14 @@ const MISC_EXPENSE_RATIO = 0.04;
 // trailing data can otherwise inflate a brand-new business to full value.
 const VALUATION_RAMP_DAYS = 30;
 
-export function newBusinessFromOpportunity({ id, owner_id, opportunity, name, costBasis100 }) {
+export function newBusinessFromOpportunity({ id, owner_id, opportunity, name, costBasis100, brand }) {
   const industry = INDUSTRIES[opportunity.industry];
+  const resolvedName = name || opportunity.name;
   return {
     id,
     owner_id,
-    name: name || opportunity.name,
+    name: resolvedName,
+    brand: brand || resolvedName, // franchised locations of the same brand share this
     industry: opportunity.industry,
     city: 'Zero City',
     stage: 'active',
@@ -77,17 +82,27 @@ function clamp(v, min, max) {
   return Math.max(min, Math.min(max, v));
 }
 
+// Global economic cycles (section 21) — these create real winners and
+// losers rather than just flavor text on the feed. tech_bubble specifically
+// juices the tech sector on top of the broad multiplier.
+const MARKET_CYCLE_MULTIPLIER = { stable: 1, recession: 0.85, boom: 1.15, tech_bubble: 1.02, shortage: 0.92 };
+
 // One simulated business day. `employees` is the list of active employees.
-export function runDayForBusiness(business, employees, rng = Math.random) {
+export function runDayForBusiness(business, employees, rng = Math.random, marketCycle = 'stable') {
   const industry = INDUSTRIES[business.industry];
   const qualityFactor = 0.5 + business.quality / 100; // 0.5 - 1.5
   const marketingFactor = 1 + (business.marketing_level - 1) * 0.15;
   const revenueMultiplier = activeMultiplier(business, 'revenue_multiplier');
+  const cycleMultiplier = MARKET_CYCLE_MULTIPLIER[marketCycle] ?? 1;
+  const techBubbleBoost = marketCycle === 'tech_bubble' && business.industry === 'tech' ? 1.35 : 1;
   const noise = 1 + industry.volatility * (rng() - 0.5) * 2;
 
   const revenue = Math.max(
     0,
-    Math.round(business.baseRevenuePerDay * qualityFactor * marketingFactor * revenueMultiplier * noise),
+    Math.round(
+      business.baseRevenuePerDay * qualityFactor * marketingFactor * revenueMultiplier
+      * cycleMultiplier * techBubbleBoost * noise,
+    ),
   );
 
   const cogsRatio = industry.cogsRatio + activeAdd(business, 'cogs_add');

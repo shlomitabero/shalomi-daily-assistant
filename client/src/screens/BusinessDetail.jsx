@@ -4,10 +4,13 @@ import { formatMoney } from '../format';
 
 const ROLES = ['Manager', 'Cook', 'Sales Rep', 'Technician', 'Marketer'];
 
-export default function BusinessDetail({ profileId, bizId, onBack, onChanged }) {
+const FRANCHISE_MIN_RANK = 10;
+
+export default function BusinessDetail({ profileId, bizId, rank, onBack, onChanged, onOpenBusiness }) {
   const [data, setData] = useState(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
+  const [notice, setNotice] = useState(null);
   const [hiring, setHiring] = useState(false);
   const [hireForm, setHireForm] = useState({ role: ROLES[0], name: '', salaryMonthly: 1800, skill: 50 });
 
@@ -47,6 +50,7 @@ export default function BusinessDetail({ profileId, bizId, onBack, onChanged }) 
       </div>
 
       {error && <div className="badge loss">{error}</div>}
+      {notice && <div className="badge money">{notice}</div>}
 
       {latest && (
         <div className="card stack">
@@ -72,6 +76,22 @@ export default function BusinessDetail({ profileId, bizId, onBack, onChanged }) 
             if (confirm(`Sell ${business.name}? This can't be undone.`)) run(() => api.sellBusiness(profileId, bizId));
           }}>💰 Sell Business</button>
         </div>
+      )}
+
+      {business.stage === 'active' && (
+        <button
+          className="btn btn-primary btn-block"
+          disabled={busy || (rank ?? 0) < FRANCHISE_MIN_RANK}
+          onClick={() => run(async () => {
+            const result = await api.franchiseBusiness(profileId, bizId);
+            setNotice(`Opened ${result.business.name}!`);
+            if (onOpenBusiness) onOpenBusiness(result.business.id);
+          })}
+        >
+          {(rank ?? 0) < FRANCHISE_MIN_RANK
+            ? `🔒 OPEN A SECOND LOCATION (RANK ${FRANCHISE_MIN_RANK}+)`
+            : '🏗️ OPEN A SECOND LOCATION (FRANCHISE)'}
+        </button>
       )}
 
       <div className="stack">

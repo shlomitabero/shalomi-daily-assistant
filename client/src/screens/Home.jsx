@@ -56,9 +56,10 @@ export default function Home({ state, onNavigate, onAdvanceDay, advancing }) {
         <div className="action-grid">
           <ActionCard icon="🚀" label="New Opportunity" sub="Open a business" onClick={() => onNavigate('opportunities')} />
           <ActionCard icon="🤝" label="Make a Deal" sub="Negotiate an acquisition" onClick={() => onNavigate('deals')} />
+          <ActionCard icon="📈" label="Invest" sub="Take a minority stake" onClick={() => onNavigate('invest')} />
           <ActionCard icon="🏙️" label="Real Estate" sub="Buy and develop property" onClick={() => onNavigate('estate')} />
           <ActionCard icon="🏦" label="Get a Loan" sub="Leverage your empire" onClick={() => onNavigate('loans')} />
-          <ActionCard icon="🌍" label="World Feed" sub="See who's winning" onClick={() => onNavigate('feed')} />
+          <ActionCard icon="🌍" label="World Feed" sub="See who's winning" onClick={() => onNavigate('world')} />
           <ActionCard icon="👤" label="My Empire" sub="Profile & legacy" onClick={() => onNavigate('profile')} />
         </div>
       </div>

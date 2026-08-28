@@ -11,12 +11,13 @@ import Deals from './screens/Deals';
 import Negotiation from './screens/Negotiation';
 import RealEstate from './screens/RealEstate';
 import Loans from './screens/Loans';
+import Invest from './screens/Invest';
 import World from './screens/World';
 import Profile from './screens/Profile';
 import Ranks from './screens/Ranks';
 import Legacy from './screens/Legacy';
 
-const NAV_SCREENS = new Set(['home', 'empire', 'deals', 'estate', 'loans', 'world', 'profile']);
+const NAV_SCREENS = new Set(['home', 'empire', 'deals', 'estate', 'loans', 'invest', 'world', 'profile']);
 
 export default function App() {
   const [state, setState] = useState(null);
@@ -96,11 +97,11 @@ export default function App() {
             onBought={async (result) => { await afterAction(result); nav('business', { bizId: result.business.id }); }} />
         )}
         {view.name === 'empire' && (
-          <Empire state={state} onNavigate={nav} onOpenBusiness={(bizId) => nav('business', { bizId })} />
+          <Empire state={state} onNavigate={nav} onOpenBusiness={(bizId) => nav('business', { bizId })} onChanged={refresh} />
         )}
         {view.name === 'business' && (
-          <BusinessDetail profileId={state.profile.id} bizId={view.params.bizId}
-            onBack={() => nav('empire')} onChanged={refresh} />
+          <BusinessDetail profileId={state.profile.id} bizId={view.params.bizId} rank={state.rank.rank}
+            onBack={() => nav('empire')} onChanged={refresh} onOpenBusiness={(bizId) => nav('business', { bizId })} />
         )}
         {view.name === 'deals' && (
           <Deals state={state} onBack={() => nav('home')}
@@ -113,6 +114,7 @@ export default function App() {
         )}
         {view.name === 'estate' && <RealEstate state={state} onChanged={refresh} />}
         {view.name === 'loans' && <Loans state={state} onChanged={refresh} />}
+        {view.name === 'invest' && <Invest state={state} onChanged={refresh} />}
         {view.name === 'world' && <World state={state} />}
         {view.name === 'profile' && <Profile state={state} onNavigate={nav} />}
         {view.name === 'ranks' && <Ranks state={state} onBack={() => nav('profile')} />}

@@ -1,6 +1,8 @@
-// MVP industries (section 32): FOOD, CAR DETAILING, ECOMMERCE.
-// Each opportunity template drives the deterministic economy engine —
-// baseline P&L ratios that quality/marketing/inventory/employees modify.
+// Industries (section 8). FOOD, CAR DETAILING and ECOMMERCE are the day-one
+// starter sectors (section 32); RETAIL, SERVICES, ENTERTAINMENT,
+// MANUFACTURING and TECH unlock as growth-tier opportunities once a player
+// has some rank behind them. Each entry drives the deterministic economy
+// engine — baseline P&L ratios that quality/marketing/employees modify.
 
 export const INDUSTRIES = {
   food: {
@@ -26,6 +28,46 @@ export const INDUSTRIES = {
     rentRatio: 0.02,
     baseCustomerScore: 58,
     volatility: 0.22,
+  },
+  retail: {
+    name: 'Retail',
+    unit: 'shop',
+    cogsRatio: 0.45,
+    rentRatio: 0.10,
+    baseCustomerScore: 55,
+    volatility: 0.16,
+  },
+  services: {
+    name: 'Services',
+    unit: 'location',
+    cogsRatio: 0.15,
+    rentRatio: 0.06,
+    baseCustomerScore: 65,
+    volatility: 0.12,
+  },
+  entertainment: {
+    name: 'Entertainment',
+    unit: 'venue',
+    cogsRatio: 0.25,
+    rentRatio: 0.12,
+    baseCustomerScore: 60,
+    volatility: 0.30,
+  },
+  manufacturing: {
+    name: 'Manufacturing',
+    unit: 'line',
+    cogsRatio: 0.55,
+    rentRatio: 0.05,
+    baseCustomerScore: 50,
+    volatility: 0.10,
+  },
+  tech: {
+    name: 'Tech',
+    unit: 'product',
+    cogsRatio: 0.12,
+    rentRatio: 0.01,
+    baseCustomerScore: 52,
+    volatility: 0.28,
   },
 };
 
@@ -69,6 +111,108 @@ export const STARTER_OPPORTUNITIES = [
   },
 ];
 
+// Growth-tier opportunities: bigger, pricier, and gated behind a minimum
+// rank so they read as real progression rather than more day-one noise.
+// Shown in Opportunities alongside the starter tier once unlocked.
+export const GROWTH_OPPORTUNITIES = [
+  {
+    id: 'opp_consulting',
+    industry: 'services',
+    name: 'Consulting Practice',
+    description: 'A solo consulting shop with two retained clients and a decent referral pipeline.',
+    cost: 12_000,
+    minRank: 4,
+    risk: 'Low',
+    potential: 'Medium',
+    baseRevenuePerDay: 780,
+    startingQuality: 58,
+  },
+  {
+    id: 'opp_saas_tool',
+    industry: 'tech',
+    name: 'SaaS Micro-Tool',
+    description: 'A single-feature subscription tool with a small but paying user base. Cheap to run, volatile to grow.',
+    cost: 18_000,
+    minRank: 6,
+    risk: 'High',
+    potential: 'High',
+    baseRevenuePerDay: 950,
+    startingQuality: 50,
+  },
+  {
+    id: 'opp_fashion_boutique',
+    industry: 'retail',
+    name: 'Boutique Fashion Store',
+    description: 'A curated streetwear storefront in a walkable retail strip. Inventory-heavy but loyal locals.',
+    cost: 22_000,
+    minRank: 5,
+    risk: 'Medium',
+    potential: 'Medium',
+    baseRevenuePerDay: 1300,
+    startingQuality: 54,
+  },
+  {
+    id: 'opp_electronics_resale',
+    industry: 'retail',
+    name: 'Electronics Resale Shop',
+    description: 'Refurbished phones and laptops. Thin margins, high volume, easy to scale with more buyers.',
+    cost: 28_000,
+    minRank: 7,
+    risk: 'Medium',
+    potential: 'Medium',
+    baseRevenuePerDay: 1600,
+    startingQuality: 52,
+  },
+  {
+    id: 'opp_gym',
+    industry: 'services',
+    name: 'Neighborhood Gym',
+    description: 'A membership gym with steady recurring revenue and an underused group class schedule.',
+    cost: 35_000,
+    minRank: 8,
+    risk: 'Low',
+    potential: 'High',
+    baseRevenuePerDay: 1900,
+    startingQuality: 62,
+  },
+  {
+    id: 'opp_event_venue',
+    industry: 'entertainment',
+    name: 'Event Venue',
+    description: 'A mid-size venue booked for weddings and corporate events. Big swings between good and slow months.',
+    cost: 45_000,
+    minRank: 12,
+    risk: 'High',
+    potential: 'High',
+    baseRevenuePerDay: 2200,
+    startingQuality: 58,
+  },
+  {
+    id: 'opp_nightclub',
+    industry: 'entertainment',
+    name: 'Pop-up Nightclub',
+    description: 'A weekend-only nightlife concept with a cult following and a landlord who wants more nights.',
+    cost: 50_000,
+    minRank: 14,
+    risk: 'High',
+    potential: 'High',
+    baseRevenuePerDay: 2800,
+    startingQuality: 56,
+  },
+  {
+    id: 'opp_snack_factory',
+    industry: 'manufacturing',
+    name: 'Private Label Snack Factory',
+    description: 'A small production line making white-label snacks for regional grocery chains.',
+    cost: 60_000,
+    minRank: 15,
+    risk: 'Medium',
+    potential: 'High',
+    baseRevenuePerDay: 3200,
+    startingQuality: 50,
+  },
+];
+
 // Later-game acquisition targets used to seed AI-negotiated deals.
 export const ACQUISITION_TARGETS = [
   {
@@ -78,7 +222,6 @@ export const ACQUISITION_TARGETS = [
     description: 'A single-location burger restaurant with strong repeat customers but a tired kitchen.',
     askPrice: 250_000,
     askStakePct: 60,
-    monthlyRevenue: 320_000 / 12 * 12, // seed value, refined by engine on creation
     npcId: 'npc_desperate_founder',
   },
   {
@@ -98,5 +241,50 @@ export const ACQUISITION_TARGETS = [
     askPrice: 95_000,
     askStakePct: 55,
     npcId: 'npc_desperate_startup_founder',
+  },
+  {
+    id: 'target_retail_chain',
+    industry: 'retail',
+    name: 'Coastal Sneaker Co. (5 stores)',
+    description: 'A regional sneaker retail chain. The founder is proud, difficult, and convinced it is worth every penny.',
+    askPrice: 410_000,
+    askStakePct: 51,
+    npcId: 'npc_arrogant_investor',
+  },
+  {
+    id: 'target_gym_chain',
+    industry: 'services',
+    name: 'IronWorks Fitness (2 locations)',
+    description: 'A profitable gym chain. The manager who actually runs it day-to-day wants assurance her job is safe.',
+    askPrice: 180_000,
+    askStakePct: 65,
+    npcId: 'npc_loyal_manager',
+  },
+  {
+    id: 'target_media_studio',
+    industry: 'entertainment',
+    name: 'Nightline Media Studio',
+    description: 'A scrappy content studio with a viral hit and an ambitious junior partner pushing for the sale.',
+    askPrice: 130_000,
+    askStakePct: 60,
+    npcId: 'npc_ambitious_employee',
+  },
+  {
+    id: 'target_manufacturing_line',
+    industry: 'manufacturing',
+    name: 'Delta Bay Bottling Co.',
+    description: 'A contract bottling line with a founder who has a reputation for shading the numbers in his favor.',
+    askPrice: 300_000,
+    askStakePct: 55,
+    npcId: 'npc_dishonest_partner',
+  },
+  {
+    id: 'target_saas_company',
+    industry: 'tech',
+    name: 'Ledgerly (B2B SaaS)',
+    description: 'A small but technically brilliant SaaS company. The founder is a genius operator who barely wants to sell.',
+    askPrice: 520_000,
+    askStakePct: 45,
+    npcId: 'npc_genius_operator',
   },
 ];

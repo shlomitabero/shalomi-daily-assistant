@@ -4,10 +4,13 @@ import { formatMoney } from '../format';
 
 export default function Opportunities({ state, onBought, onBack }) {
   const [opportunities, setOpportunities] = useState([]);
+  const [locked, setLocked] = useState([]);
   const [busyId, setBusyId] = useState(null);
   const [error, setError] = useState(null);
 
-  useEffect(() => { api.getOpportunities().then((d) => setOpportunities(d.opportunities)); }, []);
+  useEffect(() => {
+    api.getOpportunities(state.profile.id).then((d) => { setOpportunities(d.opportunities); setLocked(d.locked ?? []); });
+  }, []);
 
   const buy = async (opp) => {
     setBusyId(opp.id);
@@ -55,6 +58,21 @@ export default function Opportunities({ state, onBought, onBack }) {
           </div>
         ))}
       </div>
+
+      {locked.length > 0 && (
+        <div className="stack">
+          <div className="eyebrow">UNLOCKS AS YOU RANK UP</div>
+          {locked.map((opp) => (
+            <div key={opp.id} className="card stack" style={{ opacity: 0.55 }}>
+              <div className="row-between">
+                <div style={{ fontWeight: 800, fontSize: 15 }}>🔒 {opp.name}</div>
+                <span className="badge">Rank {opp.minRank}+</span>
+              </div>
+              <p className="muted" style={{ fontSize: 13 }}>{opp.description}</p>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

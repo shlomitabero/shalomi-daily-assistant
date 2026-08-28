@@ -1,9 +1,36 @@
+import { useState } from 'react';
+import { api } from '../api';
 import { formatMoney } from '../format';
+import DecisionModal from '../components/DecisionModal';
+import { sfx } from '../audio';
 
 const STAGE_LABEL = { active: null, sold: 'SOLD', bankrupt: 'BANKRUPT', closed: 'CLOSED' };
 
-export default function Empire({ state, onOpenBusiness, onNavigate }) {
+export default function Empire({ state, onOpenBusiness, onNavigate, onChanged }) {
   const { businesses, events } = state;
+  const [openDecision, setOpenDecision] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [resultText, setResultText] = useState(null);
+
+  const dismiss = async (event) => {
+    await api.dismissEvent(state.profile.id, event.id);
+    onChanged();
+  };
+
+  const decide = async (payload) => {
+    setBusy(true);
+    try {
+      const result = await api.decideEvent(state.profile.id, openDecision.id, payload);
+      setResultText(result.resultText);
+      sfx.dealClosed();
+      setOpenDecision(null);
+      onChanged();
+    } catch (e) {
+      setResultText(e.message);
+    } finally {
+      setBusy(false);
+    }
+  };
 
   return (
     <div className="scroll-area stack-lg fade-in">
@@ -12,16 +39,24 @@ export default function Empire({ state, onOpenBusiness, onNavigate }) {
         <h2 style={{ fontSize: 22 }}>Your businesses</h2>
       </div>
 
+      {resultText && <div className="badge money">{resultText}</div>}
+
       {events.length > 0 && (
         <div className="stack">
           <div className="eyebrow">ALERTS</div>
-          {events.map((e) => (
-            <div key={e.id} className="card" style={{ borderColor: 'rgba(240,185,61,0.35)' }}>
-              <div className="row-between">
-                <span style={{ fontSize: 13.5 }}>⚡ {e.description}</span>
+          {events.map((e) => {
+            const isDecision = Boolean(e.impact?.decisionId);
+            return (
+              <div key={e.id} className="card row-between" style={{ borderColor: 'rgba(240,185,61,0.35)' }}>
+                <span style={{ fontSize: 13.5, flex: 1, paddingRight: 10 }}>⚡ {e.description}</span>
+                {isDecision ? (
+                  <button className="btn btn-sm btn-primary" onClick={() => setOpenDecision(e)}>Decide</button>
+                ) : (
+                  <button className="btn btn-sm btn-ghost" onClick={() => dismiss(e)}>OK</button>
+                )}
               </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       )}
 
@@ -49,6 +84,8 @@ export default function Empire({ state, onOpenBusiness, onNavigate }) {
       </div>
 
       <button className="btn btn-ghost btn-block" onClick={() => onNavigate('opportunities')}>+ OPEN ANOTHER BUSINESS</button>
+
+      <DecisionModal event={openDecision} busy={busy} onDecide={decide} onClose={() => setOpenDecision(null)} />
     </div>
   );
 }

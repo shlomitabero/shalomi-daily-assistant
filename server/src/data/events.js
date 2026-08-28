@@ -64,6 +64,18 @@ export const EVENTS = [
     headline: () => `Economists are warning of a recession.`,
     effect: { type: 'market_shift', value: 'recession' },
   },
+  {
+    id: 'evt_economic_boom',
+    weight: 1,
+    headline: () => `Consumer spending is surging — the economy is booming.`,
+    effect: { type: 'market_shift', value: 'boom' },
+  },
+  {
+    id: 'evt_tech_bubble',
+    weight: 1,
+    headline: () => `Investors are piling into tech. Valuations are soaring.`,
+    effect: { type: 'market_shift', value: 'tech_bubble' },
+  },
 ];
 
 export function rollEvent(rng = Math.random) {
