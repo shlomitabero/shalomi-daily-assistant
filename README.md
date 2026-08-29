@@ -199,11 +199,30 @@ npm test --workspace=server   # node:test — economy, negotiation, ranks
    onboarding, stored in `localStorage` — fine for a demo, not for
    production multiplayer).
 
+## Getting a live link (no coding required)
+
+The app isn't hosted anywhere by default — the code just sits in this repo
+until something runs it. The simplest way to get a real web link you can
+open from any phone or browser, free, without installing anything:
+
+1. Go to **render.com** and sign up (you can use your GitHub account).
+2. Click **New +** → **Blueprint**, and connect this GitHub repository.
+   Render reads `render.yaml` in this repo and fills in everything by
+   itself — you don't need to configure anything.
+3. Click **Deploy**. After a couple of minutes you'll get a URL like
+   `https://from-zero.onrender.com` — that's your live link.
+
+Notes: the free tier sleeps after inactivity (the first open after a while
+takes ~30 seconds to wake up), and its storage isn't permanent — a redeploy
+or restart resets the game world back to a fresh start. That's fine for
+trying it out or sharing with friends; see "Moving to production
+infrastructure" below for what real persistence needs.
+
 ## What's intentionally not in this slice
 
 Full spec sections not implemented in this pass: hostile takeovers between
-real players, multiplayer investment/partnership between two live accounts,
-franchising, the AI Game Master content pipeline, and the viral-content
-export engine. The architecture (server-authoritative economy, isolated
-negotiation seam, full schema) is built to grow into those rather than be
-rewritten for them.
+real players, the AI Game Master content pipeline, the viral-content export
+engine, an actual 3D/isometric city renderer, public companies/IPOs, and a
+multi-city global map. The architecture (server-authoritative economy,
+isolated negotiation seam, full schema) is built to grow into those rather
+than be rewritten for them.

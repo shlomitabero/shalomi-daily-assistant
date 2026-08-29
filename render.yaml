@@ -1,0 +1,15 @@
+# Render Blueprint — lets Render auto-configure this whole app from one
+# file. In the Render dashboard: New + -> Blueprint -> pick this repo and
+# this file does the rest. See README "Deploying a live link" for the
+# non-technical, step-by-step version of this.
+services:
+  - type: web
+    name: from-zero
+    runtime: node
+    plan: free
+    branch: claude/from-zero-game-design-2b0jli
+    buildCommand: npm install && npm run build
+    startCommand: npm run start --workspace=server
+    envVars:
+      - key: NODE_VERSION
+        value: 20
