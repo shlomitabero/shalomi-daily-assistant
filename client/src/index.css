@@ -254,8 +254,25 @@ label { font-size: 13px; color: var(--text-dim); font-weight: 600; margin-bottom
 }
 @keyframes spin { to { transform: rotate(360deg); } }
 
-.fade-in { animation: fadeIn 0.25s ease both; }
-@keyframes fadeIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
+.fade-in { animation: fadeIn 0.2s ease both; }
+@keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+
+/* Every screen's top-level children cascade in — makes switching tabs feel
+   like navigating an app instead of a form re-rendering. */
+.fade-in > * { animation: fadeInUp 0.4s cubic-bezier(.22,1,.36,1) both; }
+.fade-in > *:nth-child(1) { animation-delay: 0.01s; }
+.fade-in > *:nth-child(2) { animation-delay: 0.05s; }
+.fade-in > *:nth-child(3) { animation-delay: 0.09s; }
+.fade-in > *:nth-child(4) { animation-delay: 0.13s; }
+.fade-in > *:nth-child(5) { animation-delay: 0.17s; }
+.fade-in > *:nth-child(n+6) { animation-delay: 0.2s; }
+@keyframes fadeInUp {
+  from { opacity: 0; transform: translateY(12px) scale(0.99); }
+  to { opacity: 1; transform: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .fade-in > * { animation: none; }
+}
 
 /* --------------------------------------------------------------- OVERLAY */
 .overlay {
@@ -368,6 +385,12 @@ label { font-size: 13px; color: var(--text-dim); font-weight: 600; margin-bottom
 }
 @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.55; } }
 
+.pulse-attention { animation: attention-glow 1.8s ease-in-out infinite; }
+@keyframes attention-glow {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(240,185,61,0); border-color: var(--border); }
+  50% { box-shadow: 0 0 0 4px rgba(240,185,61,0.12); border-color: rgba(240,185,61,0.5); }
+}
+
 /* -------------------------------------------------------------- BOARDROOM */
 .boardroom {
   padding: 16px 18px 12px;
@@ -412,3 +435,91 @@ label { font-size: 13px; color: var(--text-dim); font-weight: 600; margin-bottom
   height: 5px; border-radius: 999px; background: var(--surface-3); overflow: hidden;
 }
 .loyalty-track > span { display: block; height: 100%; background: linear-gradient(90deg, #f472b6, #8b7cff); }
+
+/* ------------------------------------------------------------- CITY LIFE */
+.city-life {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+.city-walker {
+  position: absolute;
+  filter: drop-shadow(0 1px 2px rgba(0,0,0,0.4));
+  animation-name: walk-across;
+  animation-timing-function: linear;
+  animation-iteration-count: infinite;
+  opacity: 0.9;
+  will-change: left;
+}
+.city-walker.reverse {
+  animation-name: walk-across-reverse;
+  transform: scaleX(-1);
+}
+/* left/right percentages resolve against the container's own width, so
+   this scales correctly whether it's a small Home chip or a full district
+   tile — no fixed pixel distance to tune per size. */
+@keyframes walk-across {
+  from { left: -12%; }
+  to { left: 108%; }
+}
+@keyframes walk-across-reverse {
+  from { left: 108%; }
+  to { left: -12%; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .city-walker { animation: none; opacity: 0.6; }
+}
+
+/* ----------------------------------------------------------- SCENE (deal
+   close / purchase walk-up sequence) */
+.scene {
+  position: relative;
+  width: 100%;
+  max-width: 320px;
+  height: 150px;
+  border-radius: var(--radius);
+  overflow: hidden;
+  background: linear-gradient(180deg, #170f28, #0c0e15 75%, #08090d);
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  flex-shrink: 0;
+}
+.scene .scene-building {
+  position: absolute;
+  bottom: 0; left: 50%;
+  transform: translateX(-50%);
+  font-size: 56px;
+  filter: drop-shadow(0 6px 16px rgba(0,0,0,0.5));
+}
+.scene .scene-avatar {
+  position: absolute;
+  bottom: 6px;
+  font-size: 30px;
+  animation: walk-up 1.4s ease-in-out forwards;
+}
+@keyframes walk-up {
+  0% { left: -10%; transform: translateY(0); }
+  40% { left: 38%; transform: translateY(-2px); }
+  55% { left: 38%; transform: translateY(0); }
+  100% { left: 38%; transform: translateY(0); }
+}
+.scene .scene-stamp {
+  position: absolute;
+  top: 18px; left: 50%;
+  transform: translateX(-50%) rotate(-8deg) scale(0);
+  border: 4px solid var(--money);
+  color: var(--money);
+  font-family: var(--font-display);
+  font-weight: 800;
+  font-size: 15px;
+  padding: 6px 14px;
+  border-radius: 10px;
+  letter-spacing: 0.04em;
+  animation: stamp-in 0.4s cubic-bezier(.34,1.56,.64,1) 1.3s forwards;
+}
+@keyframes stamp-in {
+  to { transform: translateX(-50%) rotate(-8deg) scale(1); }
+}

@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { api } from './api';
 import BottomNav from './components/BottomNav';
 import Celebration from './components/Celebration';
+import Tutorial from './components/Tutorial';
 import Onboarding from './screens/Onboarding';
 import Home from './screens/Home';
 import Opportunities from './screens/Opportunities';
@@ -25,12 +26,22 @@ export default function App() {
   const [view, setView] = useState({ name: 'home', params: {} });
   const [advancing, setAdvancing] = useState(false);
   const [celebrationQueue, setCelebrationQueue] = useState([]);
+  const [showTutorial, setShowTutorial] = useState(false);
 
   useEffect(() => {
     const id = localStorage.getItem('fz_profile_id');
     if (!id) { setLoading(false); return; }
     api.getPlayer(id).then(setState).catch(() => localStorage.removeItem('fz_profile_id')).finally(() => setLoading(false));
   }, []);
+
+  useEffect(() => {
+    if (state && !localStorage.getItem('fz_tutorial_seen')) setShowTutorial(true);
+  }, [state]);
+
+  const dismissTutorial = () => {
+    localStorage.setItem('fz_tutorial_seen', '1');
+    setShowTutorial(false);
+  };
 
   const nav = (name, params = {}) => setView({ name, params });
 
@@ -101,6 +112,7 @@ export default function App() {
           <div className="row" style={{ gap: 8 }}>
             <span className="badge accent">Rank {state.rank.rank}</span>
             <span className="badge money">{formatShort(state.profile.netWorth)}</span>
+            <button className="btn btn-sm btn-ghost" style={{ borderRadius: 999, width: 26, height: 26, padding: 0 }} onClick={() => setShowTutorial(true)}>?</button>
           </div>
         </div>
       )}
@@ -111,7 +123,11 @@ export default function App() {
         )}
         {view.name === 'opportunities' && (
           <Opportunities state={state} onBack={() => nav('home')}
-            onBought={async (result) => { await afterAction(result); nav('business', { bizId: result.business.id }); }} />
+            onBought={async (result, opportunity) => {
+              queueCelebration({ type: 'purchase', businessName: result.business.name, valuation: opportunity?.cost ?? 0 });
+              await afterAction(result);
+              nav('business', { bizId: result.business.id });
+            }} />
         )}
         {view.name === 'empire' && (
           <Empire state={state} onNavigate={nav} onOpenBusiness={(bizId) => nav('business', { bizId })} onChanged={refresh} />
@@ -158,7 +174,8 @@ export default function App() {
         />
       )}
 
-      <Celebration celebration={celebrationQueue[0] ?? null} onDismiss={() => setCelebrationQueue((q) => q.slice(1))} />
+      <Celebration celebration={celebrationQueue[0] ?? null} onDismiss={() => setCelebrationQueue((q) => q.slice(1))} avatar={state.profile.avatar} />
+      {showTutorial && <Tutorial onDone={dismissTutorial} />}
     </div>
   );
 }

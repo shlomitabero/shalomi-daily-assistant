@@ -3,6 +3,7 @@ import { api } from '../api';
 import { formatCompact } from '../format';
 import { DISTRICTS } from '../world';
 import PlayerCard from '../components/PlayerCard';
+import CityLife from '../components/CityLife';
 
 const KIND_ICON = {
   sale: '💰', loss: '📉', property: '🏙️', acquisition: '🤝', bankruptcy: '⚠️',
@@ -62,9 +63,10 @@ export default function World({ state, onNavigate }) {
                   style={{ background: `linear-gradient(155deg, ${d.color}dd, ${d.color}55)` }}
                   onClick={() => onNavigate?.(d.industries.length ? 'opportunities' : 'estate')}
                 >
+                  <CityLife seed={d.id.length * 17 + d.id.charCodeAt(0)} count={3} />
                   {hasHotOpportunity && <span className="hot-badge">🔥 HOT</span>}
-                  <span className="district-icon">{d.icon}</span>
-                  <div>
+                  <span className="district-icon" style={{ position: 'relative' }}>{d.icon}</span>
+                  <div style={{ position: 'relative' }}>
                     <div className="district-name">{d.name}</div>
                     <div className="district-meta">{presence > 0 ? `You own ${presence} here` : 'No presence yet'}</div>
                   </div>

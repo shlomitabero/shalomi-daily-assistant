@@ -3,6 +3,7 @@ import { api } from '../api';
 import { formatMoney, formatCompact } from '../format';
 import { DISTRICTS } from '../world';
 import PlayerCard from '../components/PlayerCard';
+import CityLife from '../components/CityLife';
 
 export default function Home({ state, onNavigate, onAdvanceDay, advancing }) {
   const { profile, rank, nextRank, businesses, alerts } = state;
@@ -70,11 +71,12 @@ export default function Home({ state, onNavigate, onAdvanceDay, advancing }) {
         <div className="row" style={{ gap: 8, overflowX: 'auto', paddingBottom: 2 }}>
           {districtsWithMe.map((d) => (
             <div key={d.id} onClick={() => onNavigate('world')} style={{
-              flexShrink: 0, width: 78, padding: '10px 8px', borderRadius: 12, textAlign: 'center',
-              background: `linear-gradient(155deg, ${d.color}cc, ${d.color}44)`, cursor: 'pointer', color: 'white',
+              position: 'relative', flexShrink: 0, width: 78, padding: '10px 8px', borderRadius: 12, textAlign: 'center',
+              background: `linear-gradient(155deg, ${d.color}cc, ${d.color}44)`, cursor: 'pointer', color: 'white', overflow: 'hidden',
             }}>
-              <div style={{ fontSize: 20 }}>{d.icon}</div>
-              <div style={{ fontSize: 10, fontWeight: 700, marginTop: 4, lineHeight: 1.2 }}>{d.name}</div>
+              <CityLife seed={d.id.length * 13 + d.id.charCodeAt(0)} count={1} compact />
+              <div style={{ fontSize: 20, position: 'relative' }}>{d.icon}</div>
+              <div style={{ fontSize: 10, fontWeight: 700, marginTop: 4, lineHeight: 1.2, position: 'relative' }}>{d.name}</div>
               {d.presence > 0 && <div style={{ fontSize: 9.5, opacity: 0.85, marginTop: 2 }}>{d.presence} owned</div>}
             </div>
           ))}
@@ -130,9 +132,9 @@ export default function Home({ state, onNavigate, onAdvanceDay, advancing }) {
 
 function StatMini({ label, value, accent, onClick }) {
   return (
-    <div className="card card-tap" onClick={onClick}>
+    <div className={`card card-tap ${accent === 'gold' && value > 0 ? 'pulse-attention' : ''}`} onClick={onClick}>
       <div className="eyebrow">{label}</div>
-      <div className={`money ${accent === 'gold' ? '' : ''}`} style={{ fontSize: 22, color: accent === 'gold' ? 'var(--gold)' : 'var(--text)' }}>{value}</div>
+      <div style={{ fontSize: 22, color: accent === 'gold' ? 'var(--gold)' : 'var(--text)' }}>{value}</div>
     </div>
   );
 }

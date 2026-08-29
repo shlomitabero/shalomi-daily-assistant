@@ -1,24 +1,35 @@
 import { useEffect } from 'react';
 import { formatCompact } from '../format';
 import { sfx } from '../audio';
+import Scene from './Scene';
 
 // Full-screen celebration for million moments (section 37) and rank-ups.
-export default function Celebration({ celebration, onDismiss }) {
+export default function Celebration({ celebration, onDismiss, avatar }) {
   useEffect(() => {
     if (!celebration) return;
     if (celebration.type === 'million') sfx.million();
     else if (celebration.type === 'rankup') sfx.rankUp();
     else if (celebration.type === 'bankrupt') sfx.loss();
-    else if (celebration.type === 'dealclosed') sfx.dealClosed();
+    else if (celebration.type === 'dealclosed' || celebration.type === 'purchase') sfx.dealClosed();
   }, [celebration]);
 
   if (!celebration) return null;
 
+  if (celebration.type === 'purchase') {
+    return (
+      <div className="overlay" onClick={onDismiss}>
+        <Scene valuation={celebration.valuation} avatar={avatar} label="IT'S YOURS" />
+        <div className="headline" style={{ fontSize: 26 }}>{celebration.businessName}</div>
+        <div className="subline">Your first day starts now.</div>
+        <button className="btn btn-money" onClick={onDismiss}>OPEN FOR BUSINESS</button>
+      </div>
+    );
+  }
+
   if (celebration.type === 'dealclosed') {
     return (
       <div className="overlay" onClick={onDismiss}>
-        <div className="eyebrow">DEAL CLOSED</div>
-        <div style={{ fontSize: 48 }}>🤝</div>
+        <Scene valuation={celebration.price} avatar={avatar} label="DEAL CLOSED" />
         <div className="headline" style={{ fontSize: 26 }}>{celebration.companyName}</div>
         <div className="subline">
           {celebration.stakePct}% for {formatCompact(celebration.price)} — now part of your empire.

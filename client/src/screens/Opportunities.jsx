@@ -17,7 +17,7 @@ export default function Opportunities({ state, onBought, onBack }) {
     setError(null);
     try {
       const result = await api.buyBusiness(state.profile.id, opp.id);
-      onBought(result);
+      onBought(result, opp);
     } catch (e) {
       setError(e.message);
     } finally {
