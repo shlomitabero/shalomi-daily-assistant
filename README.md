@@ -93,6 +93,27 @@ npm start          # builds, then serves the API on :4000 (see apps/api/src/serv
 Set `DB_PATH` to change where the SQLite file lives (default:
 `apps/api/data/forge.sqlite`).
 
+## Getting a live link (no coding required)
+
+The app isn't hosted anywhere by default — it only runs when someone starts
+it, like in this development session. The simplest way to get a real web
+link you can open from any phone or browser, free, without installing
+anything:
+
+1. Go to **render.com** and sign up (you can use your GitHub account).
+2. Click **New +** → **Blueprint**, and connect this GitHub repository.
+   Render reads `render.yaml` in this repo and fills in everything by
+   itself — you don't need to configure anything technical.
+3. Click **Deploy**. After a few minutes you'll get a URL like
+   `https://forge-ai.onrender.com` — that's your live link. Open it, sign
+   up, and start describing what you want to build.
+
+Notes: the free tier sleeps after inactivity (the first open after a while
+takes ~30 seconds to wake up), and its storage isn't permanent — a redeploy
+or restart resets everything back to a fresh start. That's fine for trying
+it out or sharing with someone; a real long-term product would need a
+persistent database and is listed on the roadmap.
+
 **Tests:**
 
 ```bash
