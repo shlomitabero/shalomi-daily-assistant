@@ -1,6 +1,50 @@
 import { useEffect, useRef, useState } from "react";
 import type { AgentStepEvent, Project } from "@forge/shared";
 
+const AGENT_INFO: Record<
+  AgentStepEvent["agent"],
+  { icon: string; title: string; running: string; success: string }
+> = {
+  Architect: {
+    icon: "🏗️",
+    title: "מתכנן/ת המוצר",
+    running: "מתכנן/ת איך המסכים והנתונים מתחברים…",
+    success: "התכנון מוכן.",
+  },
+  Database: {
+    icon: "🗄️",
+    title: "מהנדס/ת בסיס הנתונים",
+    running: "בונה את מקום האחסון של המידע שלכם…",
+    success: "בסיס הנתונים מוכן ועובד.",
+  },
+  "Seed Data": {
+    icon: "🌱",
+    title: "ממלא/ת דוגמאות",
+    running: "מוסיף/ה כמה רשומות לדוגמה, כדי שלא תתחילו מדף ריק…",
+    success: "נתוני דוגמה נוספו.",
+  },
+  QA: {
+    icon: "🔍",
+    title: "בודק/ת האיכות",
+    running: "בודק/ת שהכל באמת עובד כמו שצריך…",
+    success: "כל הבדיקות עברו בהצלחה.",
+  },
+  Security: {
+    icon: "🛡️",
+    title: "מומחה/ית האבטחה",
+    running: "סורק/ת אחר בעיות אבטחה נפוצות…",
+    success: "נסרק ואושר.",
+  },
+  Forge: {
+    icon: "🔥",
+    title: "סגירת הבנייה",
+    running: "שומר/ת הכל ומכין/ה נקודת שחזור…",
+    success: "הכל מוכן!",
+  },
+};
+
+const AGENT_ORDER: AgentStepEvent["agent"][] = ["Architect", "Database", "Seed Data", "QA", "Security", "Forge"];
+
 function StatusIcon({ status }: { status: AgentStepEvent["status"] }) {
   if (status === "success") return <span className="step-icon step-success">✓</span>;
   if (status === "failed") return <span className="step-icon step-failed">✕</span>;
@@ -46,40 +90,52 @@ export function BuildProgress({
   // One row per agent, showing its latest status (the "running" placeholder
   // is replaced in place once that agent's success/failed event arrives).
   const latestByAgent = new Map<string, AgentStepEvent>();
-  const agentOrder: string[] = [];
   for (const event of events) {
-    if (!latestByAgent.has(event.agent)) agentOrder.push(event.agent);
     latestByAgent.set(event.agent, event);
   }
-  const steps = agentOrder.map((agent) => latestByAgent.get(agent)!);
+  const doneCount = AGENT_ORDER.filter((a) => latestByAgent.get(a)?.status === "success").length;
 
   return (
     <main className="ai-team">
       <h1>{title}</h1>
-      <p className="muted">
-        Every step below does real, verifiable work — a real migration, real seed data, a real
-        smoke test, a real static scan — not a scripted delay.
-      </p>
+      <p className="muted">צוות ה-AI עובד עכשיו, בזמן אמת. שלב {Math.min(doneCount + 1, 6)} מתוך 6.</p>
       <ol className="agent-steps">
-        {steps.map((event) => (
-          <li key={event.agent} className={`agent-step agent-step-${event.status}`}>
-            <StatusIcon status={event.status} />
-            <div>
-              <strong>{event.agent} Agent</strong>
-              <p>{event.message}</p>
-            </div>
-          </li>
-        ))}
+        {AGENT_ORDER.map((agent) => {
+          const event = latestByAgent.get(agent);
+          const info = AGENT_INFO[agent];
+          const status = event?.status ?? "pending";
+          const caption =
+            status === "failed"
+              ? `נתקלנו בבעיה: ${event!.message}`
+              : status === "success"
+                ? info.success
+                : status === "running"
+                  ? info.running
+                  : "ממתין/ה בתור…";
+          return (
+            <li key={agent} className={`agent-step agent-step-${status}`}>
+              {status === "pending" ? (
+                <span className="step-icon step-pending">{info.icon}</span>
+              ) : (
+                <StatusIcon status={status as AgentStepEvent["status"]} />
+              )}
+              <div>
+                <strong>
+                  {info.icon} {info.title}
+                </strong>
+                <p>{caption}</p>
+              </div>
+            </li>
+          );
+        })}
       </ol>
+      <p className="muted small">כל שלב פה קורה באמת עכשיו על הנתונים שלכם — לא רק אנימציה.</p>
       {error && <p className="error banner">{error}</p>}
       {failedStep && (
         <div>
-          <p className="error">
-            The {failedStep.agent} agent reported a failure, so this build was not published. Fix
-            the underlying issue and try again.
-          </p>
+          <p className="error">הבנייה נעצרה כדי לא לפרסם משהו שלא עובד כמו שצריך.</p>
           <button type="button" onClick={onBack}>
-            Back
+            חזרה
           </button>
         </div>
       )}

@@ -38,34 +38,33 @@ export function HistoryPanel({
     <div className="history-overlay">
       <div className="history-panel">
         <div className="history-header">
-          <h2>Time Machine</h2>
+          <h2>ציר זמן</h2>
           <button type="button" className="secondary" onClick={onClose}>
-            Close
+            סגירה
           </button>
         </div>
         <p className="muted small">
-          Every build and refine saves a checkpoint here. Restoring never deletes data — migrations
-          in this engine only ever add tables/columns, so it's always safe to move the spec pointer
-          back and forth.
+          כל בנייה או שיפור נשמר כאן כנקודת שחזור. חוזרים אחורה בלי לאבד מידע — אף פעולה כאן לא
+          מוחקת נתונים קיימים.
         </p>
         {error && <p className="error">{error}</p>}
         {checkpoints.length === 0 ? (
-          <p className="muted">No checkpoints yet.</p>
+          <p className="muted">אין עדיין נקודות שמורות.</p>
         ) : (
           <ul className="checkpoint-list">
             {checkpoints.map((checkpoint) => (
               <li key={checkpoint.id}>
                 <div>
                   <strong>{checkpoint.label}</strong>
-                  <div className="muted small">{new Date(checkpoint.createdAt).toLocaleString()}</div>
-                  <div className="muted small">{checkpoint.spec.entities.length} entities</div>
+                  <div className="muted small">{new Date(checkpoint.createdAt).toLocaleString("he-IL")}</div>
+                  <div className="muted small">{checkpoint.spec.entities.length} מסכים</div>
                 </div>
                 <button
                   type="button"
                   onClick={() => handleRestore(checkpoint.id)}
                   disabled={busyId === checkpoint.id}
                 >
-                  {busyId === checkpoint.id ? "Restoring…" : "Restore"}
+                  {busyId === checkpoint.id ? "משחזר…" : "שחזור"}
                 </button>
               </li>
             ))}

@@ -1,6 +1,11 @@
 import type { Entity, Field } from "@forge/shared";
 
-function seedValueFor(field: Field, entityName: string, index: number): unknown {
+const HEBREW_PATTERN = /[֐-׿]/;
+
+function seedValueFor(field: Field, entity: Entity, index: number): unknown {
+  const entityName = entity.label ?? entity.name;
+  const fieldLabel = field.label ?? field.name;
+  const isHebrew = HEBREW_PATTERN.test(entityName) || HEBREW_PATTERN.test(fieldLabel);
   switch (field.type) {
     case "number":
       return (index + 1) * 10;
@@ -19,10 +24,12 @@ function seedValueFor(field: Field, entityName: string, index: number): unknown 
       // not hidden here.
       return field.required ? 1 : null;
     case "longtext":
-      return `Sample ${field.name} for ${entityName} #${index + 1}.`;
+      return isHebrew
+        ? `${fieldLabel} לדוגמה עבור ${entityName} מספר ${index + 1}.`
+        : `Sample ${field.name} for ${entityName} #${index + 1}.`;
     case "text":
     default:
-      return `${entityName} ${field.name} ${index + 1}`;
+      return isHebrew ? `${entityName} - ${fieldLabel} ${index + 1}` : `${entityName} ${field.name} ${index + 1}`;
   }
 }
 
@@ -36,7 +43,7 @@ export function generateSeedRecords(entity: Entity, count = 2): Record<string, u
   return Array.from({ length: count }, (_, index) => {
     const record: Record<string, unknown> = {};
     for (const field of entity.fields) {
-      record[field.name] = seedValueFor(field, entity.name, index);
+      record[field.name] = seedValueFor(field, entity, index);
     }
     return record;
   });

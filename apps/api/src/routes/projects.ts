@@ -17,7 +17,7 @@ import {
   type ForgeDatabase,
 } from "@forge/db";
 import type { SpecProvider } from "@forge/spec-engine";
-import { generateSpec } from "@forge/spec-engine";
+import { generateSpec, isHebrewText } from "@forge/spec-engine";
 import { HttpError } from "../httpError.js";
 import { requireAuth } from "../auth/middleware.js";
 import { runBuildPipeline } from "../pipeline.js";
@@ -120,7 +120,7 @@ export function createProjectsRouter(db: ForgeDatabase, provider?: SpecProvider)
       const project = requireOwnedProject(db, req.params.id, req.userId!);
       await streamPipeline(res, db, project, {
         nextSpec: project.spec,
-        changeLabel: "Initial build",
+        changeLabel: isHebrewText(project.description) ? "בנייה ראשונית" : "Initial build",
       });
     }),
   );
@@ -142,7 +142,7 @@ export function createProjectsRouter(db: ForgeDatabase, provider?: SpecProvider)
       await streamPipeline(res, db, project, {
         previousSpec: project.spec,
         nextSpec,
-        changeLabel: `Refine: ${instruction}`,
+        changeLabel: isHebrewText(instruction) ? `שיפור: ${instruction}` : `Refine: ${instruction}`,
       });
     }),
   );

@@ -13,9 +13,13 @@ export const FIELD_TYPES = [
 export const FieldSchema = z
   .object({
     name: z.string().min(1),
+    /** Human-facing name shown in the UI (e.g. Hebrew). Falls back to `name` when absent. */
+    label: z.string().optional(),
     type: z.enum(FIELD_TYPES),
     required: z.boolean().default(false),
     enumValues: z.array(z.string()).optional(),
+    /** Display text per raw enumValue (e.g. {"New": "חדש"}). The stored/API value is always the raw enumValue. */
+    enumLabels: z.record(z.string(), z.string()).optional(),
     relationTo: z.string().optional(),
   })
   .refine(
@@ -30,6 +34,8 @@ export type Field = z.infer<typeof FieldSchema>;
 
 export const EntitySchema = z.object({
   name: z.string().min(1),
+  /** Human-facing name shown in the UI (e.g. Hebrew). Falls back to `name` when absent. */
+  label: z.string().optional(),
   description: z.string().optional(),
   fields: z.array(FieldSchema).min(1),
 });

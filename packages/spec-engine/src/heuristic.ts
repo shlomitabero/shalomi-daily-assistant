@@ -1,39 +1,83 @@
 import type { Entity, OpenQuestion, ProductSpec, Screen } from "@forge/shared";
 import { ProductSpecSchema } from "@forge/shared";
 import type { SpecProvider } from "./provider.js";
-import { DEFAULT_ENTITY, DOMAIN_ENTITY_RULES, ROLE_KEYWORDS } from "./domainEntities.js";
+import {
+  DEFAULT_ENTITY,
+  DEFAULT_ENTITY_LABEL_HE,
+  DEFAULT_ENTITY_DESCRIPTION_HE,
+  DEFAULT_ENTITY_FIELD_LABELS_HE,
+  DEFAULT_ENTITY_ENUM_LABELS_HE,
+  DOMAIN_ENTITY_RULES,
+  ROLE_RULES,
+  isHebrewText,
+} from "./domainEntities.js";
 
-const PAYMENT_KEYWORDS = ["payment", "invoice", "billing", "subscription", "checkout", "stripe"];
+const PAYMENT_KEYWORDS = [
+  "payment", "invoice", "billing", "subscription", "checkout", "stripe",
+  "תשלום", "תשלומים", "חשבונית", "חיוב", "מנוי",
+];
 
-function matchEntities(text: string): Entity[] {
+interface HebrewLabels {
+  labelHe: string;
+  descriptionHe: string;
+  fieldLabelsHe: Record<string, string>;
+  enumLabelsHe?: Record<string, Record<string, string>>;
+}
+
+function withLabels(entity: Entity, labels: HebrewLabels): Entity {
+  return {
+    ...entity,
+    label: labels.labelHe,
+    description: labels.descriptionHe,
+    fields: entity.fields.map((f) => ({
+      ...f,
+      label: labels.fieldLabelsHe[f.name] ?? f.name,
+      ...(f.type === "enum" && labels.enumLabelsHe?.[f.name] ? { enumLabels: labels.enumLabelsHe[f.name] } : {}),
+    })),
+  };
+}
+
+function matchEntities(text: string, isHebrew: boolean): Entity[] {
   const lower = text.toLowerCase();
   const matched: Entity[] = [];
   for (const rule of DOMAIN_ENTITY_RULES) {
     if (rule.keywords.some((kw) => lower.includes(kw))) {
-      matched.push(rule.entity);
+      matched.push(isHebrew ? withLabels(rule.entity, rule) : rule.entity);
     }
   }
-  return matched.length > 0 ? matched : [DEFAULT_ENTITY];
+  if (matched.length > 0) return matched;
+  return [
+    isHebrew
+      ? withLabels(DEFAULT_ENTITY, {
+          labelHe: DEFAULT_ENTITY_LABEL_HE,
+          descriptionHe: DEFAULT_ENTITY_DESCRIPTION_HE,
+          fieldLabelsHe: DEFAULT_ENTITY_FIELD_LABELS_HE,
+          enumLabelsHe: DEFAULT_ENTITY_ENUM_LABELS_HE,
+        })
+      : DEFAULT_ENTITY,
+  ];
 }
 
-function matchRoles(text: string): string[] {
+function matchRoles(text: string, isHebrew: boolean): string[] {
   const lower = text.toLowerCase();
   const roles = new Set<string>();
-  for (const [role, keywords] of Object.entries(ROLE_KEYWORDS)) {
-    if (keywords.some((kw) => lower.includes(kw))) {
-      roles.add(role);
+  for (const [role, rule] of Object.entries(ROLE_RULES)) {
+    if (rule.keywords.some((kw) => lower.includes(kw))) {
+      roles.add(isHebrew ? rule.labelHe : role);
     }
   }
-  roles.add("Admin");
+  const adminLabel = isHebrew ? ROLE_RULES.Admin.labelHe : "Admin";
+  const memberLabel = isHebrew ? "חבר/ת צוות" : "Member";
+  roles.add(adminLabel);
   if (roles.size === 1) {
-    roles.add("Member");
+    roles.add(memberLabel);
   }
   return Array.from(roles);
 }
 
-function buildScreens(entities: Entity[], roles: string[]): Screen[] {
+function buildScreens(entities: Entity[], hasElevatedRole: boolean): Screen[] {
   const screens: Screen[] = [];
-  if (roles.includes("Admin") || roles.includes("Manager")) {
+  if (hasElevatedRole) {
     screens.push({ name: "Dashboard", type: "dashboard" });
   }
   for (const entity of entities) {
@@ -43,39 +87,62 @@ function buildScreens(entities: Entity[], roles: string[]): Screen[] {
   return screens;
 }
 
-function buildOpenQuestions(text: string, entities: Entity[]): OpenQuestion[] {
+function buildOpenQuestions(text: string, entities: Entity[], isHebrew: boolean): OpenQuestion[] {
   const lower = text.toLowerCase();
-  const questions: OpenQuestion[] = [];
   const mentionsPayments = PAYMENT_KEYWORDS.some((kw) => lower.includes(kw));
   const hasBillingEntity = entities.some((e) => e.name === "Invoice" || e.name === "Order");
-  if (mentionsPayments || hasBillingEntity) {
-    questions.push({
-      question: "Which payment provider should this use?",
-      options: ["Stripe", "PayPal", "No payments", "Decide for me"],
-      recommendation: "Stripe",
-    });
-  } else {
-    questions.push({
-      question: "Does this application need to accept payments?",
-      options: ["Stripe", "PayPal", "No payments", "Decide for me"],
-      recommendation: "No payments",
-    });
+  const needsPayments = mentionsPayments || hasBillingEntity;
+
+  if (isHebrew) {
+    return [
+      {
+        question: needsPayments ? "באיזה ספק תשלומים כדאי להשתמש?" : "האם האפליקציה צריכה לקבל תשלומים?",
+        options: ["Stripe", "PayPal", "בלי תשלומים", "תחליטו בשבילי"],
+        recommendation: needsPayments ? "Stripe" : "בלי תשלומים",
+      },
+    ];
   }
-  return questions;
+  return [
+    {
+      question: needsPayments ? "Which payment provider should this use?" : "Does this application need to accept payments?",
+      options: ["Stripe", "PayPal", "No payments", "Decide for me"],
+      recommendation: needsPayments ? "Stripe" : "No payments",
+    },
+  ];
 }
 
-function summarize(text: string, entities: Entity[], roles: string[]): string {
-  const entityNames = entities.map((e) => e.name).join(", ");
+function summarize(text: string, entities: Entity[], roles: string[], isHebrew: boolean): string {
+  const entityNames = entities.map((e) => e.label ?? e.name).join(", ");
+  if (isHebrew) {
+    return `אפליקציה עסקית שמנהלת ${entityNames}, עם הרשאות גישה לפי תפקיד עבור: ${roles.join(", ")}.`;
+  }
   return `A business application managing ${entityNames} with role-based access for ${roles.join(", ")}, generated from: "${text.trim()}"`;
+}
+
+function buildAssumptions(isHebrew: boolean): string[] {
+  if (isHebrew) {
+    return [
+      "האפליקציה בנויה כרגע על מנוע גנרי משותף עם בסיס נתונים אמיתי — לא קוד ייעודי מלא לכל פרויקט.",
+      "יש כרגע סביבת עבודה אחת פרטית לחשבון שלך; אין עדיין שיתוף בין כמה משתמשים על אותו פרויקט.",
+      "כל אינטגרציה שהוזכרה בתיאור (תשלומים, הודעות וכו') עדיין לא מחוברת בפועל — ראו את השאלות הפתוחות למטה.",
+    ];
+  }
+  return [
+    "Using a generic schema-driven CRUD engine backed by SQLite for this Phase 1 slice, not a dedicated generated codebase per project yet.",
+    "Single demo workspace; multi-user authentication is not implemented yet.",
+    "Any integrations mentioned in the description (payments, messaging, etc.) are not wired up yet — see open questions and the product roadmap.",
+  ];
 }
 
 /**
  * Deterministic, offline product-spec generator. Matches recognizable
  * business nouns (customers, appointments, invoices, ...) against a small
- * domain library instead of calling a model. This is Forge AI's fallback
- * provider — always available, zero configuration, fully testable — used
- * when no LLM credentials are configured. It is intentionally simpler than
- * the Anthropic provider and never claims to understand nuance it doesn't.
+ * domain library instead of calling a model — in English or Hebrew. This is
+ * Forge AI's fallback provider — always available, zero configuration,
+ * fully testable — used when no LLM credentials are configured. When the
+ * input is Hebrew, entities/fields/roles/summary/questions all come back in
+ * Hebrew too (via `label`), while the underlying `name`s stay fixed ASCII
+ * identifiers used for the real SQL schema (see packages/db/identifiers.ts).
  */
 export class HeuristicSpecProvider implements SpecProvider {
   readonly name = "heuristic";
@@ -84,22 +151,20 @@ export class HeuristicSpecProvider implements SpecProvider {
     if (!description || description.trim().length === 0) {
       throw new Error("description must not be empty");
     }
-    const entities = matchEntities(description);
-    const roles = matchRoles(description);
-    const screens = buildScreens(entities, roles);
-    const openQuestions = buildOpenQuestions(description, entities);
+    const isHebrew = isHebrewText(description);
+    const entities = matchEntities(description, isHebrew);
+    const roles = matchRoles(description, isHebrew);
+    const hasElevatedRole = roles.some((r) => r === "Admin" || r === "Manager" || r === ROLE_RULES.Admin.labelHe || r === ROLE_RULES.Manager.labelHe);
+    const screens = buildScreens(entities, hasElevatedRole);
+    const openQuestions = buildOpenQuestions(description, entities, isHebrew);
 
     const spec: ProductSpec = {
-      summary: summarize(description, entities, roles),
-      personas: roles.map((r) => `${r} user`),
+      summary: summarize(description, entities, roles, isHebrew),
+      personas: roles.map((r) => (isHebrew ? `משתמש/ת מסוג ${r}` : `${r} user`)),
       roles,
       entities,
       screens,
-      assumptions: [
-        "Using a generic schema-driven CRUD engine backed by SQLite for this Phase 1 slice, not a dedicated generated codebase per project yet.",
-        "Single demo workspace; multi-user authentication is not implemented yet.",
-        "Any integrations mentioned in the description (payments, messaging, etc.) are not wired up yet — see open questions and the product roadmap.",
-      ],
+      assumptions: buildAssumptions(isHebrew),
       openQuestions,
     };
 

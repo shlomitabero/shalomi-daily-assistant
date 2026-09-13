@@ -41,3 +41,32 @@ test("asks about payments when billing entities are implied", async () => {
   assert.ok(paymentQuestion);
   assert.ok(paymentQuestion!.options.includes("Stripe"));
 });
+
+test("detects Hebrew input and returns Hebrew labels while keeping ASCII names", async () => {
+  const provider = new HeuristicSpecProvider();
+  const spec = await provider.generate(
+    "אני צריך אפליקציה לניהול לקוחות למספרה, עם תורים, עובדים ושירותים",
+  );
+
+  const entityNames = spec.entities.map((e) => e.name).sort();
+  assert.deepEqual(entityNames, ["Appointment", "Customer", "Employee", "Service"]);
+
+  // Names stay ASCII (real SQL identifiers); labels are the Hebrew display text.
+  const customer = spec.entities.find((e) => e.name === "Customer")!;
+  assert.equal(customer.label, "לקוחות");
+  const nameField = customer.fields.find((f) => f.name === "name")!;
+  assert.equal(nameField.label, "שם");
+
+  assert.match(spec.summary, /[֐-׿]/);
+  assert.ok(spec.roles.some((r) => /[֐-׿]/.test(r)));
+  assert.ok(spec.assumptions.every((a) => /[֐-׿]/.test(a)));
+  assert.match(spec.openQuestions[0].question, /[֐-׿]/);
+});
+
+test("English input still produces English labels (no Hebrew leaks in)", async () => {
+  const provider = new HeuristicSpecProvider();
+  const spec = await provider.generate("A CRM with customers and deals.");
+  const customer = spec.entities.find((e) => e.name === "Customer")!;
+  assert.equal(customer.label, undefined);
+  assert.doesNotMatch(spec.summary, /[֐-׿]/);
+});

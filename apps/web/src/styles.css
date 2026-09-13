@@ -8,7 +8,7 @@
   --accent: #1f6feb;
   --accent-contrast: #ffffff;
   --danger: #c0392b;
-  font-family: -apple-system, "Segoe UI", Inter, Roboto, sans-serif;
+  font-family: "Heebo", -apple-system, "Segoe UI", Roboto, sans-serif;
 }
 
 * {
@@ -41,6 +41,12 @@ body {
   display: flex;
   align-items: center;
   gap: 10px;
+}
+
+.topbar-title {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
 }
 
 .brand {
@@ -238,7 +244,7 @@ table {
 
 th,
 td {
-  text-align: left;
+  text-align: start;
   padding: 8px 10px;
   border-bottom: 1px solid var(--border);
 }
@@ -347,6 +353,19 @@ td {
 
 .agent-step-failed {
   border-color: var(--danger);
+}
+
+.agent-step-pending {
+  opacity: 0.45;
+}
+
+.step-pending {
+  font-size: 18px;
+  line-height: 1.2;
+  width: 20px;
+  text-align: center;
+  flex-shrink: 0;
+  filter: grayscale(1);
 }
 
 .history-overlay {

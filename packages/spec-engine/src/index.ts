@@ -6,6 +6,7 @@ import type { SpecProvider } from "./provider.js";
 export type { SpecProvider } from "./provider.js";
 export { HeuristicSpecProvider } from "./heuristic.js";
 export { AnthropicSpecProvider } from "./anthropic.js";
+export { isHebrewText } from "./domainEntities.js";
 
 /**
  * Picks the best available provider: a real Claude model call when

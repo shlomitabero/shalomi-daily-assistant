@@ -5,15 +5,41 @@ import type { Entity } from "@forge/shared";
  * the heuristic (offline, no-LLM) provider matches against. Real accuracy
  * comes from the Anthropic provider; this exists so Forge AI works with zero
  * configuration and produces deterministic, testable output.
+ *
+ * Each rule carries both English and Hebrew trigger keywords, plus a Hebrew
+ * label for the entity and each of its fields. `entity.name`/`field.name`
+ * stay fixed, ASCII, English identifiers always — they become real SQL
+ * table/column names (see packages/db) and Hebrew text can't safely be one
+ * (see identifiers.ts). `labelHe`/`fieldLabelsHe` are purely UI-facing
+ * display text, attached onto the entity/field as `label` when the user's
+ * description is in Hebrew (see heuristic.ts).
  */
 export interface DomainEntityRule {
   keywords: string[];
   entity: Entity;
+  labelHe: string;
+  descriptionHe: string;
+  fieldLabelsHe: Record<string, string>;
+  /** field name -> { raw enumValue -> Hebrew display text }. The stored value stays the raw enumValue. */
+  enumLabelsHe?: Record<string, Record<string, string>>;
 }
 
 export const DOMAIN_ENTITY_RULES: DomainEntityRule[] = [
   {
-    keywords: ["customer", "client", "lead"],
+    keywords: ["customer", "client", "lead", "לקוח", "לקוחה", "לקוחות", "קליינט"],
+    labelHe: "לקוחות",
+    descriptionHe: "לקוח או חברה שהעסק משרת.",
+    fieldLabelsHe: {
+      name: "שם",
+      email: "אימייל",
+      phone: "טלפון",
+      status: "סטטוס",
+      source: "מקור",
+      notes: "הערות",
+    },
+    enumLabelsHe: {
+      status: { New: "חדש", Contacted: "יצרנו קשר", Qualified: "מתאים", Won: "הצליח", Lost: "לא הצליח" },
+    },
     entity: {
       name: "Customer",
       description: "A person or company the business serves.",
@@ -33,7 +59,19 @@ export const DOMAIN_ENTITY_RULES: DomainEntityRule[] = [
     },
   },
   {
-    keywords: ["appointment", "booking", "reservation", "schedule"],
+    keywords: ["appointment", "booking", "reservation", "schedule", "תור", "תורים", "פגישה", "פגישות"],
+    labelHe: "תורים",
+    descriptionHe: "פגישה מתוזמנת עם לקוח.",
+    fieldLabelsHe: {
+      customerName: "שם לקוח",
+      date: "תאריך",
+      service: "שירות",
+      status: "סטטוס",
+      notes: "הערות",
+    },
+    enumLabelsHe: {
+      status: { Scheduled: "מתוכנן", Completed: "הושלם", Cancelled: "בוטל", "No-show": "לא הגיע/ה" },
+    },
     entity: {
       name: "Appointment",
       description: "A scheduled time slot with a customer.",
@@ -52,7 +90,10 @@ export const DOMAIN_ENTITY_RULES: DomainEntityRule[] = [
     },
   },
   {
-    keywords: ["employee", "staff", "team member", "worker"],
+    keywords: ["employee", "staff", "team member", "worker", "עובד", "עובדת", "עובדים", "צוות"],
+    labelHe: "עובדים",
+    descriptionHe: "מישהו שעובד בעסק.",
+    fieldLabelsHe: { name: "שם", role: "תפקיד", email: "אימייל", active: "פעיל/ה" },
     entity: {
       name: "Employee",
       description: "A person who works for the business.",
@@ -65,7 +106,19 @@ export const DOMAIN_ENTITY_RULES: DomainEntityRule[] = [
     },
   },
   {
-    keywords: ["invoice", "billing", "payment"],
+    keywords: ["invoice", "billing", "payment", "חשבונית", "חשבוניות", "חיוב", "חיובים"],
+    labelHe: "חשבוניות",
+    descriptionHe: "חשבון שנשלח ללקוח.",
+    fieldLabelsHe: {
+      customerName: "שם לקוח",
+      amount: "סכום",
+      status: "סטטוס",
+      dueDate: "תאריך לתשלום",
+      notes: "הערות",
+    },
+    enumLabelsHe: {
+      status: { Draft: "טיוטה", Sent: "נשלחה", Paid: "שולמה", Overdue: "באיחור" },
+    },
     entity: {
       name: "Invoice",
       description: "A bill issued to a customer.",
@@ -84,7 +137,13 @@ export const DOMAIN_ENTITY_RULES: DomainEntityRule[] = [
     },
   },
   {
-    keywords: ["order", "purchase", "checkout"],
+    keywords: ["order", "purchase", "checkout", "הזמנה", "הזמנות", "רכישה", "רכישות"],
+    labelHe: "הזמנות",
+    descriptionHe: "רכישה שביצע לקוח.",
+    fieldLabelsHe: { customerName: "שם לקוח", total: "סכום כולל", status: "סטטוס", items: "פריטים" },
+    enumLabelsHe: {
+      status: { Pending: "ממתינה", Shipped: "נשלחה", Delivered: "נמסרה", Cancelled: "בוטלה" },
+    },
     entity: {
       name: "Order",
       description: "A purchase placed by a customer.",
@@ -102,7 +161,10 @@ export const DOMAIN_ENTITY_RULES: DomainEntityRule[] = [
     },
   },
   {
-    keywords: ["service", "treatment"],
+    keywords: ["service", "treatment", "שירות", "שירותים", "טיפול", "טיפולים"],
+    labelHe: "שירותים",
+    descriptionHe: "משהו שהעסק מציע למכירה.",
+    fieldLabelsHe: { name: "שם", price: "מחיר", durationMinutes: "משך בדקות", description: "תיאור" },
     entity: {
       name: "Service",
       description: "Something the business offers for sale.",
@@ -115,7 +177,10 @@ export const DOMAIN_ENTITY_RULES: DomainEntityRule[] = [
     },
   },
   {
-    keywords: ["product", "inventory", "stock"],
+    keywords: ["product", "inventory", "stock", "מוצר", "מוצרים", "מלאי"],
+    labelHe: "מוצרים",
+    descriptionHe: "פריט שהעסק מוכר או עוקב אחריו.",
+    fieldLabelsHe: { name: "שם", sku: 'מק"ט', price: "מחיר", quantity: "כמות" },
     entity: {
       name: "Product",
       description: "An item the business sells or tracks.",
@@ -128,7 +193,13 @@ export const DOMAIN_ENTITY_RULES: DomainEntityRule[] = [
     },
   },
   {
-    keywords: ["deal", "negotiation", "pipeline"],
+    keywords: ["deal", "negotiation", "pipeline", "עסקה", "עסקאות", "משא ומתן"],
+    labelHe: "עסקאות",
+    descriptionHe: "עסקת מכירה פוטנציאלית.",
+    fieldLabelsHe: { title: "כותרת", value: "שווי", stage: "שלב", owner: "אחראי/ת" },
+    enumLabelsHe: {
+      stage: { Lead: "ליד", Negotiation: "משא ומתן", Won: "נסגרה בהצלחה", Lost: "לא נסגרה" },
+    },
     entity: {
       name: "Deal",
       description: "A potential sale being pursued.",
@@ -147,11 +218,16 @@ export const DOMAIN_ENTITY_RULES: DomainEntityRule[] = [
   },
 ];
 
-export const ROLE_KEYWORDS: Record<string, string[]> = {
-  Admin: ["admin", "administrator", "owner"],
-  Manager: ["manager", "management"],
-  Employee: ["employee", "staff", "worker", "team member"],
-  Customer: ["customer portal", "client portal", "self-service"],
+export interface RoleRule {
+  keywords: string[];
+  labelHe: string;
+}
+
+export const ROLE_RULES: Record<string, RoleRule> = {
+  Admin: { keywords: ["admin", "administrator", "owner", "מנהל מערכת", "אדמין", "בעלים"], labelHe: "מנהל/ת ראשי/ת" },
+  Manager: { keywords: ["manager", "management", "מנהל", "מנהלת", "ניהול"], labelHe: "מנהל/ת" },
+  Employee: { keywords: ["employee", "staff", "worker", "team member", "עובד", "עובדת", "עובדים", "צוות"], labelHe: "עובד/ת" },
+  Customer: { keywords: ["customer portal", "client portal", "self-service", "פורטל לקוחות", "גישת לקוחות"], labelHe: "לקוח/ה" },
 };
 
 export const DEFAULT_ENTITY: Entity = {
@@ -168,3 +244,20 @@ export const DEFAULT_ENTITY: Entity = {
     },
   ],
 };
+
+export const DEFAULT_ENTITY_LABEL_HE = "פריטים";
+export const DEFAULT_ENTITY_DESCRIPTION_HE = 'רשומה כללית. אפשר לדייק את זה ע"י תיאור ישויות אמיתיות.';
+export const DEFAULT_ENTITY_FIELD_LABELS_HE: Record<string, string> = {
+  name: "שם",
+  description: "תיאור",
+  status: "סטטוס",
+};
+export const DEFAULT_ENTITY_ENUM_LABELS_HE: Record<string, Record<string, string>> = {
+  status: { Active: "פעיל", Inactive: "לא פעיל" },
+};
+
+export const HEBREW_PATTERN = /[֐-׿]/;
+
+export function isHebrewText(text: string): boolean {
+  return HEBREW_PATTERN.test(text);
+}

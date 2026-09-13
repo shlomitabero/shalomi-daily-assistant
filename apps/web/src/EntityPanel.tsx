@@ -10,6 +10,13 @@ function emptyForm(entity: Entity): Record<string, unknown> {
   return form;
 }
 
+function formatCell(field: Field, value: unknown): string {
+  if (value === null || value === undefined || value === "") return "—";
+  if (field.type === "boolean") return value ? "כן" : "לא";
+  if (field.type === "enum") return field.enumLabels?.[String(value)] ?? String(value);
+  return String(value);
+}
+
 function FieldInput({
   field,
   value,
@@ -32,11 +39,11 @@ function FieldInput({
     return (
       <select value={String(value ?? "")} onChange={(e) => onChange(e.target.value)}>
         <option value="" disabled>
-          Choose…
+          לבחור…
         </option>
         {field.enumValues?.map((v) => (
           <option key={v} value={v}>
-            {v}
+            {field.enumLabels?.[v] ?? v}
           </option>
         ))}
       </select>
@@ -51,7 +58,7 @@ function FieldInput({
         type="number"
         value={value === "" || value === null || value === undefined ? "" : Number(value)}
         onChange={(e) => onChange(e.target.value === "" ? "" : Number(e.target.value))}
-        placeholder={field.type === "relation" ? `${field.relationTo} id` : undefined}
+        placeholder={field.type === "relation" ? "מספר מזהה" : undefined}
       />
     );
   }
@@ -121,14 +128,14 @@ export function EntityPanel({ projectId, entity }: { projectId: string; entity: 
 
   return (
     <div className="entity-panel">
-      <h3>{entity.name}</h3>
+      <h3>{entity.label ?? entity.name}</h3>
       {entity.description && <p className="muted">{entity.description}</p>}
 
       <form className="record-form" onSubmit={handleSubmit}>
         {entity.fields.map((field) => (
           <label key={field.name} className="field-row">
             <span>
-              {field.name}
+              {field.label ?? field.name}
               {field.required ? " *" : ""}
             </span>
             <FieldInput
@@ -139,7 +146,7 @@ export function EntityPanel({ projectId, entity }: { projectId: string; entity: 
           </label>
         ))}
         <div className="form-actions">
-          <button type="submit">{editingId != null ? "Save" : "Add"}</button>
+          <button type="submit">{editingId != null ? "שמירה" : "הוספה"}</button>
           {editingId != null && (
             <button
               type="button"
@@ -149,7 +156,7 @@ export function EntityPanel({ projectId, entity }: { projectId: string; entity: 
                 setForm(emptyForm(entity));
               }}
             >
-              Cancel
+              ביטול
             </button>
           )}
         </div>
@@ -157,15 +164,15 @@ export function EntityPanel({ projectId, entity }: { projectId: string; entity: 
 
       {error && <p className="error">{error}</p>}
       {loading ? (
-        <p className="muted">Loading…</p>
+        <p className="muted">טוען…</p>
       ) : records.length === 0 ? (
-        <p className="muted">No records yet.</p>
+        <p className="muted">אין עדיין רשומות — אפשר להוסיף את הראשונה למעלה.</p>
       ) : (
         <table>
           <thead>
             <tr>
               {entity.fields.map((f) => (
-                <th key={f.name}>{f.name}</th>
+                <th key={f.name}>{f.label ?? f.name}</th>
               ))}
               <th />
             </tr>
@@ -174,14 +181,14 @@ export function EntityPanel({ projectId, entity }: { projectId: string; entity: 
             {records.map((record) => (
               <tr key={record.id as number}>
                 {entity.fields.map((f) => (
-                  <td key={f.name}>{String(record[f.name] ?? "")}</td>
+                  <td key={f.name}>{formatCell(f, record[f.name])}</td>
                 ))}
                 <td className="row-actions">
                   <button type="button" onClick={() => startEdit(record)}>
-                    Edit
+                    עריכה
                   </button>
                   <button type="button" className="danger" onClick={() => handleDelete(record.id as number)}>
-                    Delete
+                    מחיקה
                   </button>
                 </td>
               </tr>

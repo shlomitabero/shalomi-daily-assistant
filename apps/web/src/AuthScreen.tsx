@@ -26,14 +26,19 @@ export function AuthScreen({ onAuthenticated }: { onAuthenticated: (user: User) 
 
   return (
     <main className="home">
-      <h1>{mode === "signup" ? "Create your Forge AI workspace" : "Welcome back"}</h1>
+      <h1>{mode === "signup" ? "בואו נתחיל" : "ברוך שובך"}</h1>
+      <p className="muted">
+        {mode === "signup"
+          ? "פותחים חשבון חינמי — כל מה שתבנו יהיה פרטי ושמור רק אצלך."
+          : "מתחברים לחשבון שלך."}
+      </p>
       <form onSubmit={handleSubmit} className="auth-form">
         <label className="field-row">
-          <span>Email</span>
+          <span>אימייל</span>
           <input type="email" required value={email} onChange={(e) => setEmail(e.target.value)} />
         </label>
         <label className="field-row">
-          <span>Password</span>
+          <span>סיסמה (לפחות 8 תווים)</span>
           <input
             type="password"
             required
@@ -43,7 +48,7 @@ export function AuthScreen({ onAuthenticated }: { onAuthenticated: (user: User) 
           />
         </label>
         <button type="submit" disabled={busy}>
-          {busy ? "Please wait…" : mode === "signup" ? "Create account" : "Log in"}
+          {busy ? "רגע…" : mode === "signup" ? "פתיחת חשבון" : "התחברות"}
         </button>
       </form>
       {error && <p className="error">{error}</p>}
@@ -52,12 +57,8 @@ export function AuthScreen({ onAuthenticated }: { onAuthenticated: (user: User) 
         className="secondary link-button"
         onClick={() => setMode(mode === "signup" ? "login" : "signup")}
       >
-        {mode === "signup" ? "Already have an account? Log in" : "Need an account? Sign up"}
+        {mode === "signup" ? "כבר יש לי חשבון" : "אין לי עדיין חשבון"}
       </button>
-      <p className="muted small">
-        Every project is private to your account — see docs/security.md for exactly what this
-        single-workspace-per-user auth does and doesn't cover yet.
-      </p>
     </main>
   );
 }

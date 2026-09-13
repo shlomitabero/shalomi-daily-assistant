@@ -13,7 +13,7 @@ matching exactly this shape:
   "summary": string,
   "personas": string[],
   "roles": string[],
-  "entities": [{ "name": string, "description"?: string, "fields": [{ "name": string, "type": "text"|"longtext"|"number"|"boolean"|"date"|"enum"|"relation", "required"?: boolean, "enumValues"?: string[], "relationTo"?: string }] }],
+  "entities": [{ "name": string, "label"?: string, "description"?: string, "fields": [{ "name": string, "label"?: string, "type": "text"|"longtext"|"number"|"boolean"|"date"|"enum"|"relation", "required"?: boolean, "enumValues"?: string[], "relationTo"?: string }] }],
   "screens": [{ "name": string, "type": "list"|"form"|"dashboard", "entity"?: string }],
   "assumptions": string[],
   "openQuestions": [{ "question": string, "options": string[], "recommendation"?: string }]
@@ -25,6 +25,11 @@ Rules:
 - "enum" fields must include enumValues. "relation" fields must include relationTo naming another entity.
 - State genuine assumptions you made instead of asking unnecessary questions.
 - Only ask openQuestions for decisions with no reasonable default (e.g. which payment provider).
+- Every entity/field "name" MUST stay a plain ASCII identifier (e.g. "Customer", "dueDate") no matter what
+  language the user wrote in — these become real SQL table/column names. Write "summary", "roles",
+  "assumptions", "openQuestions", and every entity/field "label" in the SAME language and script the user's
+  description was written in (e.g. Hebrew in, Hebrew labels and summary out). "label" is the only place
+  non-ASCII text belongs.
 - Output raw JSON only.`;
 
 export interface AnthropicProviderOptions {

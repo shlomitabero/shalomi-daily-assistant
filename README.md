@@ -12,6 +12,12 @@ verifies it, and keeps improving it after launch. That's a multi-year
 vision; this repository contains a genuinely working slice of it, not a
 demo of the whole thing.
 
+The web UI itself is in Hebrew (RTL) end-to-end, since that's this project's
+actual audience today. When you describe a business in Hebrew, the offline
+heuristic spec generator also returns Hebrew entity/field names and status
+values (e.g. "לקוחות" instead of "Customer") while keeping ASCII identifiers
+internally for the real SQL schema — see `packages/spec-engine/src/domainEntities.ts`.
+
 ## What actually works right now
 
 1. **Sign up** (email/password) — every project belongs to your account;
