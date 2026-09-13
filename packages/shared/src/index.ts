@@ -66,6 +66,7 @@ export type ProductSpec = z.infer<typeof ProductSpecSchema>;
 
 export const ProjectSchema = z.object({
   id: z.string(),
+  ownerId: z.string(),
   name: z.string(),
   description: z.string(),
   spec: ProductSpecSchema,
@@ -75,5 +76,35 @@ export const ProjectSchema = z.object({
 
 export type Project = z.infer<typeof ProjectSchema>;
 
+export const UserSchema = z.object({
+  id: z.string(),
+  email: z.string().email(),
+  createdAt: z.string(),
+});
+
+export type User = z.infer<typeof UserSchema>;
+
+export const CheckpointSchema = z.object({
+  id: z.string(),
+  projectId: z.string(),
+  label: z.string(),
+  spec: ProductSpecSchema,
+  createdAt: z.string(),
+});
+
+export type Checkpoint = z.infer<typeof CheckpointSchema>;
+
 /** A single generated record's data, keyed by field name. Values are JSON-safe. */
 export type EntityRecord = Record<string, string | number | boolean | null>;
+
+/**
+ * One step emitted by the build/refine agent pipeline (see apps/api/src/pipeline.ts).
+ * Each step reports genuinely verifiable work — a real migration, a real
+ * smoke test, a real static check — not a scripted delay.
+ */
+export interface AgentStepEvent {
+  agent: "Architect" | "Database" | "Seed Data" | "QA" | "Security" | "Forge";
+  status: "running" | "success" | "failed";
+  message: string;
+  detail?: unknown;
+}

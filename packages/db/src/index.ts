@@ -1,5 +1,10 @@
 export { openDatabase, type ForgeDatabase } from "./connection.js";
-export { applyMigrations, generateCreateTableStatements } from "./migrate.js";
+export {
+  applyMigrations,
+  generateCreateTableStatements,
+  diffAndMigrate,
+  type MigrationChange,
+} from "./migrate.js";
 export {
   insertRecord,
   listRecords,
@@ -9,5 +14,29 @@ export {
   ValidationError,
   NotFoundError,
 } from "./repository.js";
-export { ensureProjectsTable, insertProject, getProject, listProjects, markProjectBuilt } from "./projects.js";
+export {
+  ensureProjectsTable,
+  insertProject,
+  getProject,
+  listProjectsForOwner,
+  markProjectBuilt,
+  updateProjectSpec,
+} from "./projects.js";
+export {
+  ensureUsersTable,
+  createUser,
+  findUserById,
+  findUserByEmail,
+  createSession,
+  getSessionUser,
+  deleteSession,
+  DuplicateEmailError,
+} from "./users.js";
+export {
+  ensureCheckpointsTable,
+  insertCheckpoint,
+  listCheckpoints,
+  getCheckpoint,
+} from "./checkpoints.js";
+export { generateSeedRecords } from "./seed.js";
 export { tableNameFor, assertSafeIdentifier } from "./identifiers.js";

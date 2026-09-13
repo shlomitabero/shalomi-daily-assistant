@@ -54,3 +54,60 @@ export function applyMigrations(db: ForgeDatabase, projectId: string, spec: Prod
     db.exec(statement);
   }
 }
+
+export interface MigrationChange {
+  type: "new_table" | "new_column";
+  table: string;
+  column?: string;
+}
+
+/**
+ * Additive-only migration: creates tables for entities that didn't exist in
+ * `previousSpec`, and ALTER TABLE ADD COLUMN for fields that didn't exist on
+ * an entity that did. Never drops or renames anything, even if a field or
+ * entity was removed from the new spec — consistent with the vision's
+ * "never destroy work" principle (section 70) and with Time Machine
+ * checkpoints always being safe to restore. `previousSpec` undefined means
+ * this is the first build (equivalent to applyMigrations).
+ */
+export function diffAndMigrate(
+  db: ForgeDatabase,
+  projectId: string,
+  previousSpec: ProductSpec | undefined,
+  nextSpec: ProductSpec,
+): MigrationChange[] {
+  if (!previousSpec) {
+    applyMigrations(db, projectId, nextSpec);
+    return nextSpec.entities.map((e) => ({ type: "new_table" as const, table: tableNameFor(projectId, e.name) }));
+  }
+
+  const statements = generateCreateTableStatements(projectId, nextSpec);
+  const previousEntities = new Map(previousSpec.entities.map((e) => [e.name, e]));
+  const changes: MigrationChange[] = [];
+
+  nextSpec.entities.forEach((entity, index) => {
+    const table = tableNameFor(projectId, entity.name);
+    const prevEntity = previousEntities.get(entity.name);
+
+    if (!prevEntity) {
+      db.exec(statements[index]);
+      changes.push({ type: "new_table", table });
+      return;
+    }
+
+    const prevFieldNames = new Set(prevEntity.fields.map((f) => f.name));
+    for (const field of entity.fields) {
+      if (prevFieldNames.has(field.name)) continue;
+      const columnName = assertSafeIdentifier(field.name, "column");
+      const sqlType = sqlTypeFor(field);
+      // NOT NULL / FK deliberately omitted: SQLite can't retroactively
+      // satisfy either constraint against a table's existing rows. The
+      // column is added nullable; required-ness is still enforced by the
+      // API for every write going forward.
+      db.exec(`ALTER TABLE ${table} ADD COLUMN ${columnName} ${sqlType}`);
+      changes.push({ type: "new_column", table, column: columnName });
+    }
+  });
+
+  return changes;
+}

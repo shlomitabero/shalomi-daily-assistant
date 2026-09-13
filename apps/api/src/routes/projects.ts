@@ -3,11 +3,13 @@ import { Router, type Request, type Response, type NextFunction } from "express"
 import { z } from "zod";
 import type { Entity, Project } from "@forge/shared";
 import {
-  applyMigrations,
+  getCheckpoint,
   getProject,
   insertProject,
-  listProjects,
-  markProjectBuilt,
+  listCheckpoints,
+  listProjectsForOwner,
+  diffAndMigrate,
+  updateProjectSpec,
   insertRecord,
   listRecords,
   updateRecord,
@@ -17,10 +19,16 @@ import {
 import type { SpecProvider } from "@forge/spec-engine";
 import { generateSpec } from "@forge/spec-engine";
 import { HttpError } from "../httpError.js";
+import { requireAuth } from "../auth/middleware.js";
+import { runBuildPipeline } from "../pipeline.js";
 
 const CreateProjectSchema = z.object({
   description: z.string().min(1, "description is required"),
   name: z.string().optional(),
+});
+
+const RefineSchema = z.object({
+  instruction: z.string().min(1, "instruction is required"),
 });
 
 function deriveName(description: string): string {
@@ -36,9 +44,10 @@ function findEntity(project: Project, entityName: string): Entity {
   return entity;
 }
 
-function requireProject(db: ForgeDatabase, id: string): Project {
+/** 404s (rather than 403s) on a project owned by someone else, to avoid leaking existence. */
+function requireOwnedProject(db: ForgeDatabase, id: string, userId: string): Project {
   const project = getProject(db, id);
-  if (!project) {
+  if (!project || project.ownerId !== userId) {
     throw new HttpError(404, `Project "${id}" not found`);
   }
   return project;
@@ -50,8 +59,26 @@ function asyncRoute(fn: (req: Request, res: Response) => Promise<void> | void) {
   };
 }
 
+async function streamPipeline(
+  res: Response,
+  db: ForgeDatabase,
+  project: Project,
+  opts: Parameters<typeof runBuildPipeline>[2],
+) {
+  res.writeHead(200, {
+    "content-type": "text/event-stream",
+    "cache-control": "no-cache",
+    connection: "keep-alive",
+  });
+  for await (const event of runBuildPipeline(db, project, opts)) {
+    res.write(`data: ${JSON.stringify(event)}\n\n`);
+  }
+  res.end();
+}
+
 export function createProjectsRouter(db: ForgeDatabase, provider?: SpecProvider): Router {
   const router = Router();
+  router.use(requireAuth(db));
 
   router.post(
     "/projects",
@@ -64,6 +91,7 @@ export function createProjectsRouter(db: ForgeDatabase, provider?: SpecProvider)
       const { spec, providerName } = await generateSpec(description, provider);
       const project = insertProject(db, {
         id: randomUUID(),
+        ownerId: req.userId!,
         name: name ?? deriveName(description),
         description,
         spec,
@@ -74,24 +102,73 @@ export function createProjectsRouter(db: ForgeDatabase, provider?: SpecProvider)
 
   router.get(
     "/projects",
-    asyncRoute(async (_req, res) => {
-      res.json({ projects: listProjects(db) });
+    asyncRoute(async (req, res) => {
+      res.json({ projects: listProjectsForOwner(db, req.userId!) });
     }),
   );
 
   router.get(
     "/projects/:id",
     asyncRoute(async (req, res) => {
-      res.json({ project: requireProject(db, req.params.id) });
+      res.json({ project: requireOwnedProject(db, req.params.id, req.userId!) });
     }),
   );
 
   router.post(
     "/projects/:id/build",
     asyncRoute(async (req, res) => {
-      const project = requireProject(db, req.params.id);
-      applyMigrations(db, project.id, project.spec);
-      const updated = markProjectBuilt(db, project.id);
+      const project = requireOwnedProject(db, req.params.id, req.userId!);
+      await streamPipeline(res, db, project, {
+        nextSpec: project.spec,
+        changeLabel: "Initial build",
+      });
+    }),
+  );
+
+  router.post(
+    "/projects/:id/refine",
+    asyncRoute(async (req, res) => {
+      const project = requireOwnedProject(db, req.params.id, req.userId!);
+      if (project.status !== "built") {
+        throw new HttpError(409, "Build the project before refining it");
+      }
+      const parsed = RefineSchema.safeParse(req.body);
+      if (!parsed.success) {
+        throw new HttpError(400, parsed.error.message);
+      }
+      const { instruction } = parsed.data;
+      const combinedDescription = `${project.description}\n\nAdditional requirement: ${instruction}`;
+      const { spec: nextSpec } = await generateSpec(combinedDescription, provider);
+      await streamPipeline(res, db, project, {
+        previousSpec: project.spec,
+        nextSpec,
+        changeLabel: `Refine: ${instruction}`,
+      });
+    }),
+  );
+
+  router.get(
+    "/projects/:id/checkpoints",
+    asyncRoute(async (req, res) => {
+      const project = requireOwnedProject(db, req.params.id, req.userId!);
+      res.json({ checkpoints: listCheckpoints(db, project.id) });
+    }),
+  );
+
+  router.post(
+    "/projects/:id/checkpoints/:checkpointId/restore",
+    asyncRoute(async (req, res) => {
+      const project = requireOwnedProject(db, req.params.id, req.userId!);
+      const checkpoint = getCheckpoint(db, req.params.checkpointId);
+      if (!checkpoint || checkpoint.projectId !== project.id) {
+        throw new HttpError(404, `Checkpoint "${req.params.checkpointId}" not found`);
+      }
+      // Restoring never drops columns/tables (migrations are additive-only),
+      // so it's always safe: this just ensures the restored spec's schema
+      // exists (a no-op unless restoring "forward" to a spec never built)
+      // and moves the spec pointer.
+      diffAndMigrate(db, project.id, project.spec, checkpoint.spec);
+      const updated = updateProjectSpec(db, project.id, checkpoint.spec);
       res.json({ project: updated });
     }),
   );
@@ -99,7 +176,7 @@ export function createProjectsRouter(db: ForgeDatabase, provider?: SpecProvider)
   router.get(
     "/projects/:id/entities/:entityName",
     asyncRoute(async (req, res) => {
-      const project = requireProject(db, req.params.id);
+      const project = requireOwnedProject(db, req.params.id, req.userId!);
       if (project.status !== "built") {
         throw new HttpError(409, "Project has not been built yet — call POST /build first");
       }
@@ -111,7 +188,7 @@ export function createProjectsRouter(db: ForgeDatabase, provider?: SpecProvider)
   router.post(
     "/projects/:id/entities/:entityName",
     asyncRoute(async (req, res) => {
-      const project = requireProject(db, req.params.id);
+      const project = requireOwnedProject(db, req.params.id, req.userId!);
       if (project.status !== "built") {
         throw new HttpError(409, "Project has not been built yet — call POST /build first");
       }
@@ -124,7 +201,7 @@ export function createProjectsRouter(db: ForgeDatabase, provider?: SpecProvider)
   router.patch(
     "/projects/:id/entities/:entityName/:recordId",
     asyncRoute(async (req, res) => {
-      const project = requireProject(db, req.params.id);
+      const project = requireOwnedProject(db, req.params.id, req.userId!);
       if (project.status !== "built") {
         throw new HttpError(409, "Project has not been built yet — call POST /build first");
       }
@@ -138,7 +215,7 @@ export function createProjectsRouter(db: ForgeDatabase, provider?: SpecProvider)
   router.delete(
     "/projects/:id/entities/:entityName/:recordId",
     asyncRoute(async (req, res) => {
-      const project = requireProject(db, req.params.id);
+      const project = requireOwnedProject(db, req.params.id, req.userId!);
       if (project.status !== "built") {
         throw new HttpError(409, "Project has not been built yet — call POST /build first");
       }

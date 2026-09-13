@@ -3,6 +3,7 @@ import express, { type Express, type NextFunction, type Request, type Response }
 import { ValidationError, NotFoundError, type ForgeDatabase } from "@forge/db";
 import type { SpecProvider } from "@forge/spec-engine";
 import { createProjectsRouter } from "./routes/projects.js";
+import { createAuthRouter } from "./routes/auth.js";
 import { HttpError } from "./httpError.js";
 
 export function createApp(db: ForgeDatabase, provider?: SpecProvider): Express {
@@ -11,6 +12,7 @@ export function createApp(db: ForgeDatabase, provider?: SpecProvider): Express {
   app.use(express.json());
 
   app.get("/api/health", (_req, res) => res.json({ status: "ok" }));
+  app.use("/api", createAuthRouter(db));
   app.use("/api", createProjectsRouter(db, provider));
 
   app.use((err: unknown, _req: Request, res: Response, _next: NextFunction) => {

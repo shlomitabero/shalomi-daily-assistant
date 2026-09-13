@@ -7,32 +7,45 @@
 Forge AI is an AI software creation platform. The goal — described in full
 in `docs/product-vision.md` — is to be materially more than "prompt → code →
 preview": a system that understands a business, generates a real
-specification, builds a real working application, verifies it, and keeps
-operating it after launch. That's a multi-year vision; this repository
-contains a genuinely working **Phase 1** vertical slice of it, not a demo of
-the whole thing.
+specification, builds a real working application with a visible AI team,
+verifies it, and keeps improving it after launch. That's a multi-year
+vision; this repository contains a genuinely working slice of it, not a
+demo of the whole thing.
 
 ## What actually works right now
 
-1. Type a business description in plain language (e.g. *"Build an
+1. **Sign up** (email/password) — every project belongs to your account;
+   another account can't see or touch it.
+2. **Describe a business** in plain language (e.g. *"Build an
    appointment-management application for a beauty clinic. I need
    customers, appointments, employees, services, an admin dashboard and
-   automatic appointment status tracking."*).
-2. Forge AI generates a real **Product Spec**: roles, entities, fields,
-   screens, stated assumptions, and open questions with one-click answers.
-   This uses a real Claude API call when `ANTHROPIC_API_KEY` is configured,
-   and a deterministic offline heuristic generator otherwise — so the whole
-   thing runs with zero configuration.
-3. Click **Build App** — Forge AI creates a real SQLite schema: one table
-   per entity, typed columns, foreign keys for relations.
-4. You get a live, working UI: a tab per entity with a generated
-   create/edit/delete form and table, backed by a real validated CRUD API —
-   not mock data.
+   automatic appointment status tracking."*). Forge AI generates a real
+   **Product Spec**: roles, entities, fields, screens, stated assumptions,
+   and open questions with one-click answers — using a real Claude API call
+   when `ANTHROPIC_API_KEY` is configured, and a deterministic offline
+   heuristic generator otherwise, so the whole thing runs with zero
+   configuration.
+3. **Click Build App** and watch the **AI Team** actually work, live: an
+   Architect agent plans the schema, a Database agent applies a real
+   migration, a Seed Data agent inserts real sample records, a QA agent
+   runs real smoke tests (and stops the build if one fails), and a Security
+   agent runs a real static scan with a real score. Every step is
+   genuine, checkable work — not a progress bar standing in for nothing.
+4. **Use the generated app**: a tab per entity with a create/edit/delete
+   form and table, backed by a real validated CRUD API — not mock data.
+5. **Improve it in plain language.** Type "Also track invoices for
+   customers" into the Refine box and the same AI Team runs again: it
+   re-derives the spec, works out exactly what's new, and applies only
+   that — your existing data is never touched.
+6. **Time Machine.** Every build and refine saves a checkpoint. Open
+   History to see them and restore any earlier version — always safe,
+   because this engine's migrations only ever add tables/columns, never
+   drop them.
 
-**What this is not (yet):** authentication/multi-tenancy, an exportable
-per-project codebase, Git integration, deployment, multi-agent
-orchestration, or self-healing. See `docs/roadmap.md` for the phased plan
-and exactly what's deferred and why.
+**What this is not (yet):** an exportable per-project codebase, Git
+integration, deployment, fully parallel multi-agent orchestration, or
+self-healing in production. See `docs/roadmap.md` for the phased plan and
+exactly what's deferred and why.
 
 ## Architecture
 
@@ -41,15 +54,16 @@ apps/
   api/    Express + TypeScript backend
   web/    Vite + React + TypeScript frontend
 packages/
-  shared/       Shared Zod schemas/types (ProductSpec, Entity, Field, Project)
+  shared/       Shared Zod schemas/types (ProductSpec, Entity, Field, Project, User, Checkpoint, AgentStepEvent)
   spec-engine/  Idea -> ProductSpec (Anthropic provider + offline heuristic fallback)
-  db/           SQLite: schema-from-spec migrations + generic CRUD repository
+  db/           SQLite: schema-from-spec migrations, generic CRUD repository, auth, Time Machine
 docs/           Product vision, architecture, data model, security, roadmap, ADRs
 ```
 
 See `docs/architecture.md` for the full request flow and the reasoning
-behind each major decision (why `node:sqlite`, why a generic CRUD engine
-instead of generated codebases yet, why the provider seam is two-way today).
+behind each major decision, and `docs/ADR/` for why auth works the way it
+does, why the pipeline is a sequence (not yet parallel), and why migrations
+are additive-only.
 
 ## Running it
 
@@ -58,9 +72,10 @@ npm install                       # installs every workspace
 npm run dev                       # api on :4000, web on :5173 (proxies /api)
 ```
 
-Open http://localhost:5173. No environment variables or external services
-are required — without `ANTHROPIC_API_KEY` set, spec generation falls back
-to the offline heuristic provider automatically.
+Open http://localhost:5173, sign up with any email/password (8+ chars), and
+describe something you want to build. No environment variables or external
+services are required — without `ANTHROPIC_API_KEY` set, spec generation
+falls back to the offline heuristic provider automatically.
 
 To use real Claude-generated specs instead of the heuristic:
 
@@ -91,5 +106,6 @@ them.
 ## Security
 
 Read `docs/security.md` before deploying this anywhere reachable by
-untrusted users — Phase 1 has no authentication and assumes a single
-trusted workspace.
+untrusted users. Auth and per-owner isolation are real (see
+`apps/api/src/app.test.ts`'s cross-user test), but there's no rate
+limiting, email verification, or password reset yet.

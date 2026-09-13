@@ -1,11 +1,16 @@
-import { useState } from "react";
-import type { Project } from "@forge/shared";
-import { buildProject, createProject } from "./api.js";
+import { useEffect, useState } from "react";
+import type { Project, User } from "@forge/shared";
+import { clearToken, createProject, getToken, logout, me, streamBuild, streamRefine } from "./api.js";
+import { AuthScreen } from "./AuthScreen.js";
+import { BuildProgress } from "./BuildProgress.js";
 import { EntityPanel } from "./EntityPanel.js";
+import { HistoryPanel } from "./HistoryPanel.js";
 
-type View = "home" | "spec" | "preview";
+type View = "home" | "spec" | "building" | "preview";
 
 export default function App() {
+  const [user, setUser] = useState<User | null>(null);
+  const [checkingSession, setCheckingSession] = useState(true);
   const [view, setView] = useState<View>("home");
   const [description, setDescription] = useState("");
   const [project, setProject] = useState<Project | null>(null);
@@ -14,6 +19,32 @@ export default function App() {
   const [error, setError] = useState<string | null>(null);
   const [activeEntity, setActiveEntity] = useState<string | null>(null);
   const [selectedAnswers, setSelectedAnswers] = useState<Record<string, string>>({});
+  const [refineText, setRefineText] = useState("");
+  const [showHistory, setShowHistory] = useState(false);
+  const [buildMode, setBuildMode] = useState<"build" | "refine">("build");
+
+  useEffect(() => {
+    if (!getToken()) {
+      setCheckingSession(false);
+      return;
+    }
+    me()
+      .then(({ user }) => setUser(user))
+      .catch(() => clearToken())
+      .finally(() => setCheckingSession(false));
+  }, []);
+
+  if (checkingSession) {
+    return (
+      <div className="app">
+        <p className="muted">Loading…</p>
+      </div>
+    );
+  }
+
+  if (!user) {
+    return <AuthScreen onAuthenticated={setUser} />;
+  }
 
   async function handleDescribe(e: React.FormEvent) {
     e.preventDefault();
@@ -32,27 +63,45 @@ export default function App() {
     }
   }
 
-  async function handleBuild() {
-    if (!project) return;
-    setBusy(true);
-    setError(null);
-    try {
-      const { project: built } = await buildProject(project.id);
-      setProject(built);
-      setActiveEntity(built.spec.entities[0]?.name ?? null);
-      setView("preview");
-    } catch (err) {
-      setError((err as Error).message);
-    } finally {
-      setBusy(false);
-    }
+  function handleBuild() {
+    setBuildMode("build");
+    setView("building");
+  }
+
+  function handleRefine(e: React.FormEvent) {
+    e.preventDefault();
+    if (!refineText.trim()) return;
+    setBuildMode("refine");
+    setView("building");
+  }
+
+  function handleBuildComplete(builtProject: Project) {
+    setProject(builtProject);
+    setActiveEntity((prev) => prev ?? builtProject.spec.entities[0]?.name ?? null);
+    setRefineText("");
+    setView("preview");
+  }
+
+  async function handleLogout() {
+    await logout();
+    setUser(null);
+    setProject(null);
+    setView("home");
   }
 
   return (
     <div className="app">
       <header className="topbar">
-        <span className="brand">Forge AI</span>
-        <span className="tagline">Describe your business. Get your software company.</span>
+        <div>
+          <span className="brand">Forge AI</span>
+          <span className="tagline">Describe your business. Get your software company.</span>
+        </div>
+        <div className="topbar-right">
+          <span className="muted small">{user.email}</span>
+          <button type="button" className="secondary" onClick={handleLogout}>
+            Log out
+          </button>
+        </div>
       </header>
 
       {error && <p className="error banner">{error}</p>}
@@ -72,9 +121,10 @@ export default function App() {
             </button>
           </form>
           <p className="muted small">
-            Phase 1 slice: this generates a real product spec and a real, working generic CRUD
-            application (schema + API + UI) — not a mockup. See the README for what's on the
-            roadmap next (custom generated codebases, auth, deployment, multi-agent builds).
+            Phase 1+ slice: this generates a real product spec and a real, working generic CRUD
+            application (schema + API + UI), built by a real multi-step agent pipeline you can
+            watch run. See the README for what's still on the roadmap (custom generated codebases,
+            deployment).
           </p>
         </main>
       )}
@@ -101,10 +151,7 @@ export default function App() {
             {project.spec.entities.map((entity) => (
               <div key={entity.name} className="entity-summary">
                 <strong>{entity.name}</strong>
-                <span className="muted">
-                  {" "}
-                  — {entity.fields.map((f) => f.name).join(", ")}
-                </span>
+                <span className="muted"> — {entity.fields.map((f) => f.name).join(", ")}</span>
               </div>
             ))}
           </section>
@@ -145,15 +192,44 @@ export default function App() {
             </section>
           )}
 
-          <button type="button" onClick={handleBuild} disabled={busy}>
-            {busy ? "Building…" : "Build App"}
+          <button type="button" onClick={handleBuild}>
+            Build App
           </button>
         </main>
       )}
 
+      {view === "building" && project && (
+        <BuildProgress
+          title={buildMode === "build" ? "AI Team — Building your app" : "AI Team — Applying your change"}
+          run={(onEvent) =>
+            buildMode === "build" ? streamBuild(project.id, onEvent) : streamRefine(project.id, refineText, onEvent)
+          }
+          onComplete={handleBuildComplete}
+          onBack={() => setView(buildMode === "build" ? "spec" : "preview")}
+        />
+      )}
+
       {view === "preview" && project && (
         <main className="preview">
-          <h1>{project.name}</h1>
+          <div className="preview-header">
+            <h1>{project.name}</h1>
+            <button type="button" className="secondary" onClick={() => setShowHistory(true)}>
+              Time Machine
+            </button>
+          </div>
+
+          <form className="refine-box" onSubmit={handleRefine}>
+            <input
+              type="text"
+              placeholder="Describe a change, e.g. “Also track invoices for customers”"
+              value={refineText}
+              onChange={(e) => setRefineText(e.target.value)}
+            />
+            <button type="submit" disabled={!refineText.trim()}>
+              Improve this app
+            </button>
+          </form>
+
           <nav className="entity-tabs">
             {project.spec.entities.map((entity) => (
               <button
@@ -168,6 +244,18 @@ export default function App() {
           {project.spec.entities
             .filter((e) => e.name === activeEntity)
             .map((entity) => <EntityPanel key={entity.name} projectId={project.id} entity={entity} />)}
+
+          {showHistory && (
+            <HistoryPanel
+              projectId={project.id}
+              onClose={() => setShowHistory(false)}
+              onRestored={(restored) => {
+                setProject(restored);
+                setActiveEntity(restored.spec.entities[0]?.name ?? null);
+                setShowHistory(false);
+              }}
+            />
+          )}
         </main>
       )}
     </div>

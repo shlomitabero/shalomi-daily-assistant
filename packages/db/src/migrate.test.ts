@@ -2,7 +2,8 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { ProductSpec } from "@forge/shared";
 import { openDatabase } from "./connection.js";
-import { applyMigrations, generateCreateTableStatements } from "./migrate.js";
+import { applyMigrations, diffAndMigrate, generateCreateTableStatements } from "./migrate.js";
+import { insertRecord, listRecords } from "./repository.js";
 
 const spec: ProductSpec = {
   summary: "test",
@@ -68,4 +69,67 @@ test("rejects unsafe column names rather than sanitizing them silently", () => {
     entities: [{ name: "Thing", fields: [{ name: "n; DROP TABLE x;--", type: "text", required: true }] }],
   };
   assert.throws(() => generateCreateTableStatements("proj1", malicious));
+});
+
+test("diffAndMigrate with no previous spec behaves like a fresh applyMigrations", () => {
+  const db = openDatabase(":memory:");
+  const changes = diffAndMigrate(db, "proj1", undefined, spec);
+  assert.deepEqual(
+    changes.map((c) => c.type),
+    ["new_table", "new_table"],
+  );
+  const tables = db
+    .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name != 'sqlite_sequence' ORDER BY name")
+    .all() as { name: string }[];
+  assert.equal(tables.length, 2);
+});
+
+test("diffAndMigrate adds only a new table for a brand-new entity, keeping existing data", () => {
+  const db = openDatabase(":memory:");
+  applyMigrations(db, "proj1", spec);
+  const customerEntity = spec.entities[0];
+  insertRecord(db, "proj1", customerEntity, { name: "Alice", status: "New" });
+
+  const nextSpec: ProductSpec = {
+    ...spec,
+    entities: [
+      ...spec.entities,
+      { name: "Invoice", fields: [{ name: "amount", type: "number", required: true }] },
+    ],
+  };
+  const changes = diffAndMigrate(db, "proj1", spec, nextSpec);
+  assert.deepEqual(changes, [{ type: "new_table", table: "entity_proj1_Invoice" }]);
+
+  // Existing Customer data must survive untouched.
+  const customers = listRecords(db, "proj1", customerEntity);
+  assert.equal(customers.length, 1);
+  assert.equal(customers[0].name, "Alice");
+});
+
+test("diffAndMigrate adds a nullable column for a new field on an existing entity, never dropping old ones", () => {
+  const db = openDatabase(":memory:");
+  applyMigrations(db, "proj1", spec);
+  const customerEntity = spec.entities[0];
+  insertRecord(db, "proj1", customerEntity, { name: "Alice", status: "New" });
+
+  const nextSpec: ProductSpec = {
+    ...spec,
+    entities: [
+      {
+        ...spec.entities[0],
+        fields: [...spec.entities[0].fields, { name: "loyaltyPoints", type: "number", required: false }],
+      },
+      spec.entities[1],
+    ],
+  };
+  const changes = diffAndMigrate(db, "proj1", spec, nextSpec);
+  assert.deepEqual(changes, [
+    { type: "new_column", table: "entity_proj1_Customer", column: "loyaltyPoints" },
+  ]);
+
+  const updatedEntity = nextSpec.entities[0];
+  const customers = listRecords(db, "proj1", updatedEntity);
+  assert.equal(customers.length, 1);
+  assert.equal(customers[0].name, "Alice");
+  assert.equal(customers[0].loyaltyPoints, null);
 });
