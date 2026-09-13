@@ -1,0 +1,27 @@
+{
+  "name": "@forge/api",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "main": "src/server.ts",
+  "scripts": {
+    "dev": "tsx watch --experimental-sqlite src/server.ts",
+    "start": "tsx --experimental-sqlite src/server.ts",
+    "test": "tsx --test --experimental-sqlite src/**/*.test.ts"
+  },
+  "dependencies": {
+    "@forge/db": "*",
+    "@forge/shared": "*",
+    "@forge/spec-engine": "*",
+    "cors": "^2.8.5",
+    "express": "^4.21.1",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "tsx": "^4.19.2",
+    "typescript": "^5.6.3",
+    "@types/node": "^22.7.5",
+    "@types/express": "^4.17.21",
+    "@types/cors": "^2.8.17"
+  }
+}

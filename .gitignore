@@ -2,11 +2,12 @@
 node_modules/
 
 # Build output
-client/dist/
-client/dist-ssr/
+apps/web/dist/
+*.tsbuildinfo
 
-# Runtime data (file-backed store — see server/src/db/store.js)
-server/data/
+# Runtime data (SQLite database — see apps/api/src/store.ts)
+apps/api/data/
+*.sqlite
 
 # Logs
 *.log
@@ -18,3 +19,7 @@ npm-debug.log*
 .idea
 .DS_Store
 *.local
+
+# Env
+.env
+.env.local
