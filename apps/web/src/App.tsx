@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import type { Project, User } from "@forge/shared";
-import { clearToken, createProject, getToken, logout, me, streamBuild, streamRefine } from "./api.js";
+import { clearToken, createProject, exportProject, getToken, logout, me, streamBuild, streamRefine } from "./api.js";
 import { AuthScreen } from "./AuthScreen.js";
 import { BuildProgress } from "./BuildProgress.js";
 import { EntityPanel } from "./EntityPanel.js";
@@ -21,6 +21,7 @@ export default function App() {
   const [refineText, setRefineText] = useState("");
   const [showHistory, setShowHistory] = useState(false);
   const [buildMode, setBuildMode] = useState<"build" | "refine">("build");
+  const [exportBusy, setExportBusy] = useState(false);
 
   useEffect(() => {
     if (!getToken()) {
@@ -62,6 +63,19 @@ export default function App() {
       setError((err as Error).message);
     } finally {
       setBusy(false);
+    }
+  }
+
+  async function handleExport() {
+    if (!project) return;
+    setExportBusy(true);
+    setError(null);
+    try {
+      await exportProject(project.id, project.name);
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setExportBusy(false);
     }
   }
 
@@ -213,9 +227,14 @@ export default function App() {
         <main className="preview">
           <div className="preview-header">
             <h1>{project.name}</h1>
-            <button type="button" className="secondary" onClick={() => setShowHistory(true)}>
-              🕘 ציר זמן
-            </button>
+            <div className="preview-header-actions">
+              <button type="button" className="secondary" onClick={handleExport} disabled={exportBusy}>
+                {exportBusy ? "מייצא…" : "⬇️ ייצוא קוד"}
+              </button>
+              <button type="button" className="secondary" onClick={() => setShowHistory(true)}>
+                🕘 ציר זמן
+              </button>
+            </div>
           </div>
 
           <form className="refine-box" onSubmit={handleRefine}>

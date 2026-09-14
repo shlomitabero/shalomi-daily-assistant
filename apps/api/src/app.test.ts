@@ -286,3 +286,32 @@ test("rejects an insert missing a required field with 400", async () => {
     assert.equal(badInsert.status, 400);
   });
 });
+
+test("export refuses before build, and returns a real zip file after", async () => {
+  await withServer(async (baseUrl) => {
+    const token = await signup(baseUrl);
+    const createRes = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ description: "A CRM with customers and deals." }),
+    });
+    const { project } = (await createRes.json()) as { project: { id: string } };
+
+    const tooEarly = await fetch(`${baseUrl}/api/projects/${project.id}/export`, { headers: authHeaders(token) });
+    assert.equal(tooEarly.status, 409);
+
+    const buildRes = await fetch(`${baseUrl}/api/projects/${project.id}/build`, {
+      method: "POST",
+      headers: authHeaders(token),
+    });
+    await collectSSE(buildRes);
+
+    const exportRes = await fetch(`${baseUrl}/api/projects/${project.id}/export`, { headers: authHeaders(token) });
+    assert.equal(exportRes.status, 200);
+    assert.equal(exportRes.headers.get("content-type"), "application/zip");
+    assert.match(exportRes.headers.get("content-disposition") ?? "", /attachment; filename=".*\.zip"/);
+    const buffer = Buffer.from(await exportRes.arrayBuffer());
+    assert.equal(buffer.readUInt32LE(0), 0x04034b50); // real ZIP local-file-header magic
+    assert.ok(buffer.length > 500);
+  });
+});

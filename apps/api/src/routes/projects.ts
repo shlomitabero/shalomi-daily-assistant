@@ -21,6 +21,8 @@ import { generateSpec, isHebrewText } from "@forge/spec-engine";
 import { HttpError } from "../httpError.js";
 import { requireAuth } from "../auth/middleware.js";
 import { runBuildPipeline } from "../pipeline.js";
+import { generateExportFiles } from "../codegen.js";
+import { buildZip } from "../zip.js";
 
 const CreateProjectSchema = z.object({
   description: z.string().min(1, "description is required"),
@@ -170,6 +172,22 @@ export function createProjectsRouter(db: ForgeDatabase, provider?: SpecProvider)
       diffAndMigrate(db, project.id, project.spec, checkpoint.spec);
       const updated = updateProjectSpec(db, project.id, checkpoint.spec);
       res.json({ project: updated });
+    }),
+  );
+
+  router.get(
+    "/projects/:id/export",
+    asyncRoute(async (req, res) => {
+      const project = requireOwnedProject(db, req.params.id, req.userId!);
+      if (project.status !== "built") {
+        throw new HttpError(409, "Build the project before exporting its code");
+      }
+      const files = generateExportFiles(project);
+      const zip = buildZip(files);
+      const safeName = project.name.replace(/[^A-Za-z0-9 _-]/g, "").trim() || "forge-app";
+      res.setHeader("content-type", "application/zip");
+      res.setHeader("content-disposition", `attachment; filename="${safeName}.zip"`);
+      res.send(zip);
     }),
   );
 

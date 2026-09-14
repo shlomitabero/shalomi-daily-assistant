@@ -57,11 +57,22 @@ delete records through the generated UI, backed by the real API.
       re-derives the spec, diffs it against the current one, and applies
       only the new tables/columns — existing data is untouched (verified in
       `apps/api/src/app.test.ts`).
+- [x] **Standalone code export**: `GET /api/projects/:id/export` generates a
+      real, literal, single-server-file + single-HTML-file app (package.json,
+      server.js, public/index.html, README) from the project's spec, zipped
+      with a dependency-free ZIP writer, with zero runtime dependency on
+      Forge AI. Verified by actually stopping the Forge AI server, extracting
+      the export elsewhere, running `npm install && npm start`, and driving
+      real CRUD against it standalone (curl + a real browser) — see ADR 0003.
+      This is a lightweight, honest first answer to "own your code"; a full
+      generated Next.js/React codebase per project (below) is the larger,
+      still-open version of the same promise.
 - [ ] Multi-agent **parallel** execution (today's pipeline is a sequence, not
       parallel branches with real dependency scheduling) — **not yet implemented**
-- [ ] Actual generated, exportable codebases (Next.js/React) per project instead
-      of the shared generic CRUD engine — this is what makes "your app, your
-      code" (section 11 of the vision) true — **not yet implemented**
+- [ ] Actual generated, exportable Next.js/React codebases per project
+      instead of the shared generic CRUD engine — the code-export item above
+      covers a minimal standalone app; this is the larger, framework-based
+      version — **not yet implemented**
 - [ ] Git integration (bidirectional sync) — **not yet implemented**
 - [ ] Visual editor over the generated UI — **not yet implemented**
 - [ ] Integration marketplace (Stripe, email, etc.) — **not yet implemented**

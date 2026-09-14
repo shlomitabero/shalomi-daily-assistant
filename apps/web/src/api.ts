@@ -120,6 +120,31 @@ export function streamRefine(
   return streamPipeline(`/projects/${projectId}/refine`, onEvent, { instruction });
 }
 
+/**
+ * Downloads the real, standalone exported app as a .zip and saves it via
+ * the browser's normal download flow. Uses a blob (not a plain <a href>)
+ * because the request needs the Authorization header.
+ */
+export async function exportProject(projectId: string, projectName: string): Promise<void> {
+  const token = getToken();
+  const res = await fetch(`/api/projects/${projectId}/export`, {
+    headers: token ? { authorization: `Bearer ${token}` } : {},
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ error: res.statusText }));
+    throw new Error((body as { error?: string }).error ?? `Request failed (${res.status})`);
+  }
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `${projectName.replace(/[^A-Za-z0-9 _-]/g, "").trim() || "forge-app"}.zip`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
 export function listCheckpoints(projectId: string): Promise<{ checkpoints: Checkpoint[] }> {
   return request(`/projects/${projectId}/checkpoints`);
 }

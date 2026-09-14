@@ -457,6 +457,12 @@ tbody tr:hover {
   flex-wrap: wrap;
 }
 
+.preview-header-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
 .refine-box {
   display: flex;
   gap: 8px;

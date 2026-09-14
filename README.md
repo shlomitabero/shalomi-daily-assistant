@@ -47,9 +47,15 @@ internally for the real SQL schema — see `packages/spec-engine/src/domainEntit
    History to see them and restore any earlier version — always safe,
    because this engine's migrations only ever add tables/columns, never
    drop them.
+7. **Own your code.** Click "Export Code" and download a real, standalone
+   app (one server file, one HTML file, one `npm install` away from
+   running) with zero dependency on Forge AI — verified by actually
+   stopping this platform's own server and running the export on its own.
+   See `docs/ADR/0003-code-export.md`.
 
-**What this is not (yet):** an exportable per-project codebase, Git
-integration, deployment, fully parallel multi-agent orchestration, or
+**What this is not (yet):** a full generated Next.js/React codebase per
+project (the export above is a lightweight, standalone app, not that),
+Git integration, deployment, fully parallel multi-agent orchestration, or
 self-healing in production. See `docs/roadmap.md` for the phased plan and
 exactly what's deferred and why.
 
