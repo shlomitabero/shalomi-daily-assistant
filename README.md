@@ -48,16 +48,16 @@ internally for the real SQL schema — see `packages/spec-engine/src/domainEntit
    because this engine's migrations only ever add tables/columns, never
    drop them.
 7. **Own your code.** Click "Export Code" and download a real, standalone
-   app (one server file, one HTML file, one `npm install` away from
-   running) with zero dependency on Forge AI — verified by actually
-   stopping this platform's own server and running the export on its own.
-   See `docs/ADR/0003-code-export.md`.
+   multi-file React (Vite) + Express project — one real, editable
+   component file per entity, not a single generic HTML blob — with zero
+   dependency on Forge AI and one `npm install && npm start` away from
+   running, verified by actually stopping this platform's own server and
+   running the export on its own with a fresh `npm install` from the
+   public registry. See `docs/ADR/0005-react-codebase-export.md`.
 
-**What this is not (yet):** a full generated Next.js/React codebase per
-project (the export above is a lightweight, standalone app, not that),
-Git integration, deployment, fully parallel multi-agent orchestration, or
-self-healing in production. See `docs/roadmap.md` for the phased plan and
-exactly what's deferred and why.
+**What this is not (yet):** Git integration, deployment, fully parallel
+multi-agent orchestration, or self-healing in production. See
+`docs/roadmap.md` for the phased plan and exactly what's deferred and why.
 
 ## Architecture
 

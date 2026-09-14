@@ -57,16 +57,21 @@ delete records through the generated UI, backed by the real API.
       re-derives the spec, diffs it against the current one, and applies
       only the new tables/columns — existing data is untouched (verified in
       `apps/api/src/app.test.ts`).
-- [x] **Standalone code export**: `GET /api/projects/:id/export` generates a
-      real, literal, single-server-file + single-HTML-file app (package.json,
-      server.js, public/index.html, README) from the project's spec, zipped
-      with a dependency-free ZIP writer, with zero runtime dependency on
-      Forge AI. Verified by actually stopping the Forge AI server, extracting
-      the export elsewhere, running `npm install && npm start`, and driving
-      real CRUD against it standalone (curl + a real browser) — see ADR 0003.
-      This is a lightweight, honest first answer to "own your code"; a full
-      generated Next.js/React codebase per project (below) is the larger,
-      still-open version of the same promise.
+- [x] **Standalone code export, upgraded to a real multi-file React
+      codebase**: `GET /api/projects/:id/export` generates a real Vite +
+      React + Express project — one real, editable component file per
+      entity (`web/src/entities/<Entity>.jsx`, with that entity's exact
+      field list as literal code), a shared list/form component, and the
+      same real Express + `node:sqlite` backend from the original export
+      — zipped with the existing dependency-free ZIP writer, with zero
+      runtime dependency on Forge AI. `npm install && npm start` still
+      works as one command (`start` runs `vite build` first). Verified by
+      a real `npm install` against the public registry in a directory
+      with no relationship to this repo, a real `vite build`, and a real
+      browser driving CRUD against the built app standalone — see
+      ADR 0005 (supersedes the file shape, not the intent, of ADR 0003).
+      This satisfies the "full generated React codebase per project" item
+      previously listed below as not yet implemented.
 - [x] **AI Team agent detail.** Each build/refine agent step in the UI can be
       expanded ("מה בדיוק נעשה?") to show the real data behind its summary
       message — the Architect's exact new/changed entities, the Database
@@ -116,10 +121,6 @@ delete records through the generated UI, backed by the real API.
       the built app.
 - [ ] Multi-agent **parallel** execution (today's pipeline is a sequence, not
       parallel branches with real dependency scheduling) — **not yet implemented**
-- [ ] Actual generated, exportable Next.js/React codebases per project
-      instead of the shared generic CRUD engine — the code-export item above
-      covers a minimal standalone app; this is the larger, framework-based
-      version — **not yet implemented**
 - [ ] Git integration (bidirectional sync) — **not yet implemented**
 - [ ] Visual editor over the generated UI — **not yet implemented**
 - [ ] Integration marketplace (Stripe, email, etc.) — **not yet implemented**

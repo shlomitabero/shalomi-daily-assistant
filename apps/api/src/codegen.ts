@@ -1,13 +1,15 @@
-import type { Project } from "@forge/shared";
+import type { Entity, Project } from "@forge/shared";
 
 /**
- * Generates a real, standalone Express + SQLite + vanilla-JS application
- * from a project's ProductSpec. This is the "own your code" export: the
- * output has zero dependency on Forge AI at runtime — no import of our
- * packages, no network call back to this platform. It's a small,
- * intentionally readable app (one server file, one HTML file) rather than
- * a framework-heavy scaffold, so someone can actually open and understand
- * it. See docs/ADR/0003-code-export.md for why it's shaped this way.
+ * Generates a real, standalone, multi-file React (Vite) + Express + SQLite
+ * application from a project's ProductSpec. This is the "own your code"
+ * export: the output has zero dependency on Forge AI at runtime — no
+ * import of our packages, no network call back to this platform. Unlike
+ * the original single-HTML-file export (see docs/ADR/0003), this produces
+ * an actual per-entity React codebase — one real, editable component file
+ * per entity, not one generic runtime-schema-driven blob — because that's
+ * what "own your code" means against Base44/Lovable-style exports. See
+ * docs/ADR/0005-react-codebase-export.md.
  */
 
 const SAFE_IDENTIFIER = /^[A-Za-z][A-Za-z0-9_]*$/;
@@ -27,6 +29,10 @@ function packageName(projectName: string): string {
   return slug || "forge-exported-app";
 }
 
+function isHebrew(text: string): boolean {
+  return /[֐-׿]/.test(text);
+}
+
 function renderPackageJson(project: Project): string {
   return JSON.stringify(
     {
@@ -36,10 +42,18 @@ function renderPackageJson(project: Project): string {
       description: `Exported from Forge AI: ${project.description}`.slice(0, 200),
       type: "module",
       scripts: {
-        start: "node server.js",
+        dev: "vite",
+        build: "vite build",
+        start: "vite build && node server.js",
       },
       dependencies: {
         express: "^4.21.1",
+        react: "^19.3.0",
+        "react-dom": "^19.3.0",
+      },
+      devDependencies: {
+        vite: "^8.3.0",
+        "@vitejs/plugin-react": "^6.1.1",
       },
       engines: {
         node: ">=22.5.0",
@@ -51,7 +65,9 @@ function renderPackageJson(project: Project): string {
 }
 
 function renderReadme(project: Project): string {
-  const entityList = project.spec.entities.map((e) => `- **${e.label ?? e.name}** (\`${e.name}\`)`).join("\n");
+  const entityList = project.spec.entities
+    .map((e) => `- **${e.label ?? e.name}** (\`${e.name}\`) — \`web/src/entities/${e.name}.jsx\``)
+    .join("\n");
   return `# ${project.name}
 
 Exported from Forge AI. This is a complete, standalone application —
@@ -62,7 +78,7 @@ install beyond what's in \`package.json\`.
 
 ${project.description}
 
-## Entities
+## Entities (one real React component file each)
 
 ${entityList}
 
@@ -73,30 +89,51 @@ npm install
 npm start
 \`\`\`
 
-Open http://localhost:3000. Data is stored in \`data.sqlite\` next to
-\`server.js\` (created automatically on first run).
+\`npm start\` builds the React frontend and then starts the server, all in
+one command. Open http://localhost:3000. Data is stored in
+\`data.sqlite\` next to \`server.js\` (created automatically on first run).
+
+For active development with hot reload while the API runs separately, use
+\`npm run dev\` (Vite dev server) alongside \`node server.js\`.
 
 ## What's here
 
 - \`server.js\` — the entire backend: creates the SQLite schema for every
   entity above and exposes a REST API at \`/api/<Entity>\` (GET list, POST
   create, PATCH update, DELETE) with the same validation rules (required
-  fields, enum membership) the Forge AI preview enforced.
-- \`public/index.html\` — the entire frontend: one file, no build step, no
-  framework. Reads \`/api/entities\` for field metadata and renders a tab +
-  table + form per entity.
+  fields, enum membership) the Forge AI preview enforced. Serves the built
+  frontend from \`dist/\` once you've run \`npm run build\` (or \`npm start\`,
+  which does this for you).
+- \`web/src/entities/*.jsx\` — one real component per entity, each with its
+  own field list as literal, editable code (not fetched from a schema at
+  runtime) — open \`web/src/entities/${project.spec.entities[0]?.name ?? "YourEntity"}.jsx\`
+  and you'll see exactly which fields it has.
+- \`web/src/components/EntityView.jsx\` — the shared list + form UI that
+  every entity file uses, the same way a hand-written multi-entity CRUD
+  app would share this logic.
+- \`web/src/App.jsx\` — the top-level app: entity tabs, wired to the entity
+  components above.
+- \`web/src/api.js\` — the small REST client every component calls.
 - \`data.sqlite\` — your data. Back it up like any file.
 
 ## Extending it
 
-There's no magic here — read \`server.js\` top to bottom, it's a few
-hundred lines. Common next steps: swap SQLite for Postgres (replace the
-\`node:sqlite\` calls), add authentication (there is none in this export —
-see Forge AI's own auth in \`apps/api/src/auth/\` for a reference), or add
-real fields by editing the \`ENTITIES\` array at the top of \`server.js\` and
-restarting (existing columns are kept; SQLite needs \`ALTER TABLE\` for new
-ones, same as Forge AI's own migration engine does).
+There's no magic here. Add a field to an entity by editing its
+\`web/src/entities/<Entity>.jsx\` field list *and* the matching entity in
+the \`ENTITIES\` array at the top of \`server.js\`, then restart — existing
+columns are kept, and SQLite migrates new ones automatically (\`ALTER
+TABLE\`, same as Forge AI's own migration engine). There is no
+authentication in this export — see Forge AI's own auth in
+\`apps/api/src/auth/\` (in the Forge AI repository) for a reference if you
+want to add it.
 `;
+}
+
+function sqlType(type: string): string {
+  if (type === "relation") return "INTEGER";
+  if (type === "number") return "REAL";
+  if (type === "boolean") return "INTEGER";
+  return "TEXT";
 }
 
 function renderServerJs(project: Project): string {
@@ -143,7 +180,8 @@ function assertSafe(name) {
 }
 
 function sqlType(type) {
-  if (type === "number" || type === "relation") return type === "relation" ? "INTEGER" : "REAL";
+  if (type === "relation") return "INTEGER";
+  if (type === "number") return "REAL";
   if (type === "boolean") return "INTEGER";
   return "TEXT";
 }
@@ -188,7 +226,7 @@ function rowToRecord(entity, row) {
 
 const app = express();
 app.use(express.json());
-app.use(express.static(path.join(__dirname, "public")));
+app.use(express.static(path.join(__dirname, "dist")));
 
 app.get("/api/entities", (_req, res) => res.json({ entities: ENTITIES }));
 
@@ -241,11 +279,22 @@ app.listen(port, () => console.log(\`\${${JSON.stringify(project.name)}} running
 `;
 }
 
-function isHebrew(text: string): boolean {
-  return /[֐-׿]/.test(text);
+function renderViteConfig(): string {
+  return `import { defineConfig } from "vite";
+import react from "@vitejs/plugin-react";
+
+export default defineConfig({
+  root: "web",
+  plugins: [react()],
+  build: {
+    outDir: "../dist",
+    emptyOutDir: true,
+  },
+});
+`;
 }
 
-function renderIndexHtml(project: Project): string {
+function renderWebIndexHtml(project: Project): string {
   const hebrew = project.spec.entities.some((e) => isHebrew(e.label ?? ""));
   const dir = hebrew ? "rtl" : "ltr";
   const lang = hebrew ? "he" : "en";
@@ -257,90 +306,71 @@ function renderIndexHtml(project: Project): string {
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>${title}</title>
-<style>
-  * { box-sizing: border-box; }
-  body { font-family: -apple-system, "Segoe UI", Roboto, sans-serif; margin: 0; background: #f6f2ea; color: #241f19; }
-  .app { max-width: 880px; margin: 0 auto; padding: 24px 16px 64px; }
-  h1 { font-size: 26px; margin: 0 0 20px; }
-  nav { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 20px; }
-  nav button { padding: 8px 16px; border-radius: 8px; border: 1px solid #e6ddcc; background: #fff; cursor: pointer; font: inherit; }
-  nav button.active { background: #d9622b; color: #fff; border-color: #d9622b; }
-  .panel { background: #fff; border: 1px solid #e6ddcc; border-radius: 14px; padding: 20px; box-shadow: 0 8px 24px rgba(36,31,25,0.08); }
-  form.record-form { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 12px; margin-bottom: 16px; padding-bottom: 16px; border-bottom: 1px solid #efe8da; }
-  .field { display: flex; flex-direction: column; gap: 4px; font-size: 12.5px; color: #83786a; min-width: 0; }
-  input, select, textarea { font: inherit; padding: 8px 10px; border: 1px solid #e6ddcc; border-radius: 6px; width: 100%; }
-  button[type="submit"], .btn { padding: 9px 18px; border-radius: 8px; border: none; background: #d9622b; color: #fff; font: inherit; font-weight: 600; cursor: pointer; }
-  .table-scroll { overflow-x: auto; }
-  table { width: 100%; border-collapse: collapse; font-size: 14px; }
-  th, td { text-align: start; padding: 8px 10px; border-bottom: 1px solid #efe8da; white-space: nowrap; }
-  .row-actions button { margin-inline-start: 4px; padding: 5px 10px; border-radius: 6px; border: 1px solid #e6ddcc; background: #fff; cursor: pointer; }
-  .muted { color: #83786a; font-size: 13px; }
-  .error { color: #c0392b; }
-</style>
 </head>
 <body>
-<div class="app">
-  <h1>${title}</h1>
-  <nav id="tabs"></nav>
-  <div class="panel" id="panel"></div>
-</div>
-<script>
-let ENTITIES = [];
-let ACTIVE = null;
-let EDITING_ID = null;
+<div id="root"></div>
+<script type="module" src="/src/main.jsx"></script>
+</body>
+</html>
+`;
+}
 
-async function api(path, opts) {
-  const res = await fetch("/api" + path, {
+function renderMainJsx(): string {
+  return `import { StrictMode } from "react";
+import { createRoot } from "react-dom/client";
+import App from "./App.jsx";
+import "./styles.css";
+
+createRoot(document.getElementById("root")).render(
+  <StrictMode>
+    <App />
+  </StrictMode>,
+);
+`;
+}
+
+function renderApiJs(): string {
+  return `const API_BASE = "/api";
+
+async function request(path, opts) {
+  const res = await fetch(API_BASE + path, {
     ...opts,
     headers: { "content-type": "application/json", ...(opts && opts.headers) },
   });
   if (!res.ok) {
     const body = await res.json().catch(() => ({ error: res.statusText }));
-    throw new Error(body.error || ("Request failed (" + res.status + ")"));
+    throw new Error(body.error || \`Request failed (\${res.status})\`);
   }
   if (res.status === 204) return undefined;
   return res.json();
 }
 
+export function listRecords(entityName) {
+  return request(\`/\${entityName}\`);
+}
+
+export function createRecord(entityName, data) {
+  return request(\`/\${entityName}\`, { method: "POST", body: JSON.stringify(data) });
+}
+
+export function updateRecord(entityName, id, data) {
+  return request(\`/\${entityName}/\${id}\`, { method: "PATCH", body: JSON.stringify(data) });
+}
+
+export function deleteRecord(entityName, id) {
+  return request(\`/\${entityName}/\${id}\`, { method: "DELETE" });
+}
+`;
+}
+
+function renderEntityViewJsx(): string {
+  return `import { useEffect, useState } from "react";
+import { createRecord, deleteRecord, listRecords, updateRecord } from "../api.js";
+
 function emptyForm(entity) {
   const form = {};
   for (const f of entity.fields) form[f.name] = f.type === "boolean" ? false : "";
   return form;
-}
-
-function fieldInputHtml(entity, field, value) {
-  const id = "f_" + entity.name + "_" + field.name;
-  if (field.type === "boolean") {
-    return '<input type="checkbox" id="' + id + '" ' + (value ? "checked" : "") + ' />';
-  }
-  if (field.type === "enum") {
-    const opts = (field.enumValues || []).map((v) => {
-      const label = (field.enumLabels && field.enumLabels[v]) || v;
-      const sel = String(value) === v ? "selected" : "";
-      return '<option value="' + v + '" ' + sel + '>' + label + '</option>';
-    }).join("");
-    return '<select id="' + id + '"><option value="" disabled ' + (value ? "" : "selected") + '>...</option>' + opts + '</select>';
-  }
-  if (field.type === "longtext") {
-    return '<textarea id="' + id + '" rows="2">' + (value ?? "") + '</textarea>';
-  }
-  if (field.type === "date") {
-    return '<input type="date" id="' + id + '" value="' + (value ?? "") + '" />';
-  }
-  if (field.type === "number" || field.type === "relation") {
-    return '<input type="number" id="' + id + '" value="' + (value ?? "") + '" />';
-  }
-  const escaped = String(value ?? "").replace(/"/g, "&quot;");
-  return '<input type="text" id="' + id + '" value="' + escaped + '" />';
-}
-
-function readForm(entity) {
-  const data = {};
-  for (const f of entity.fields) {
-    const el = document.getElementById("f_" + entity.name + "_" + f.name);
-    data[f.name] = f.type === "boolean" ? el.checked : el.value;
-  }
-  return data;
 }
 
 function formatCell(field, value) {
@@ -350,119 +380,280 @@ function formatCell(field, value) {
   return String(value);
 }
 
-async function renderPanel(entity) {
-  const panel = document.getElementById("panel");
-  const formValues = emptyForm(entity);
-  const fieldsHtml = entity.fields.map((f) =>
-    '<label class="field"><span>' + f.label + (f.required ? " *" : "") + '</span>' + fieldInputHtml(entity, f, formValues[f.name]) + '</label>'
-  ).join("");
-
-  panel.innerHTML =
-    '<h3>' + entity.label + '</h3>' +
-    '<form class="record-form" id="record-form">' + fieldsHtml +
-      '<div><button type="submit" class="btn" id="submit-btn">Add</button> <button type="button" id="cancel-btn" style="display:none">Cancel</button></div>' +
-    '</form>' +
-    '<p id="panel-error" class="error"></p>' +
-    '<div id="table-holder"></div>';
-
-  document.getElementById("record-form").addEventListener("submit", async (e) => {
-    e.preventDefault();
-    const errorEl = document.getElementById("panel-error");
-    errorEl.textContent = "";
-    try {
-      const data = readForm(entity);
-      if (EDITING_ID != null) {
-        await api("/" + entity.name + "/" + EDITING_ID, { method: "PATCH", body: JSON.stringify(data) });
-        EDITING_ID = null;
-      } else {
-        await api("/" + entity.name, { method: "POST", body: JSON.stringify(data) });
-      }
-      await renderPanel(entity);
-    } catch (err) {
-      errorEl.textContent = err.message;
-    }
-  });
-
-  await loadRecords(entity);
-}
-
-async function loadRecords(entity) {
-  const holder = document.getElementById("table-holder");
-  holder.innerHTML = '<p class="muted">Loading…</p>';
-  try {
-    const { records } = await api("/" + entity.name);
-    if (records.length === 0) {
-      holder.innerHTML = '<p class="muted">No records yet.</p>';
-      return;
-    }
-    const headerHtml = entity.fields.map((f) => '<th>' + f.label + '</th>').join("") + "<th></th>";
-    const rowsHtml = records.map((r) => {
-      const cells = entity.fields.map((f) => '<td>' + formatCell(f, r[f.name]) + '</td>').join("");
-      return '<tr>' + cells + '<td class="row-actions">' +
-        '<button data-edit="' + r.id + '">Edit</button>' +
-        '<button data-delete="' + r.id + '">Delete</button></td></tr>';
-    }).join("");
-    holder.innerHTML = '<div class="table-scroll"><table><thead><tr>' + headerHtml + '</tr></thead><tbody>' + rowsHtml + '</tbody></table></div>';
-
-    holder.querySelectorAll("[data-edit]").forEach((btn) => {
-      btn.addEventListener("click", async () => {
-        const id = Number(btn.getAttribute("data-edit"));
-        const record = records.find((r) => r.id === id);
-        EDITING_ID = id;
-        for (const f of entity.fields) {
-          const el = document.getElementById("f_" + entity.name + "_" + f.name);
-          if (f.type === "boolean") el.checked = Boolean(record[f.name]);
-          else el.value = record[f.name] ?? "";
-        }
-        document.getElementById("submit-btn").textContent = "Save";
-        document.getElementById("cancel-btn").style.display = "inline-block";
-        document.getElementById("cancel-btn").onclick = () => renderPanel(entity);
-      });
-    });
-    holder.querySelectorAll("[data-delete]").forEach((btn) => {
-      btn.addEventListener("click", async () => {
-        await api("/" + entity.name + "/" + btn.getAttribute("data-delete"), { method: "DELETE" });
-        await loadRecords(entity);
-      });
-    });
-  } catch (err) {
-    holder.innerHTML = '<p class="error">' + err.message + '</p>';
+function FieldInput({ entity, field, value, onChange }) {
+  const id = \`f_\${entity.name}_\${field.name}\`;
+  if (field.type === "boolean") {
+    return <input id={id} type="checkbox" checked={!!value} onChange={(e) => onChange(e.target.checked)} />;
   }
+  if (field.type === "enum") {
+    return (
+      <select id={id} value={value ?? ""} onChange={(e) => onChange(e.target.value)}>
+        <option value="" disabled>
+          …
+        </option>
+        {(field.enumValues ?? []).map((v) => (
+          <option key={v} value={v}>
+            {(field.enumLabels && field.enumLabels[v]) || v}
+          </option>
+        ))}
+      </select>
+    );
+  }
+  if (field.type === "longtext") {
+    return <textarea id={id} rows={2} value={value ?? ""} onChange={(e) => onChange(e.target.value)} />;
+  }
+  if (field.type === "date") {
+    return <input id={id} type="date" value={value ?? ""} onChange={(e) => onChange(e.target.value)} />;
+  }
+  if (field.type === "number" || field.type === "relation") {
+    return <input id={id} type="number" value={value ?? ""} onChange={(e) => onChange(e.target.value)} />;
+  }
+  return <input id={id} type="text" value={value ?? ""} onChange={(e) => onChange(e.target.value)} />;
 }
 
-async function boot() {
-  const { entities } = await api("/entities");
-  ENTITIES = entities;
-  const tabs = document.getElementById("tabs");
-  tabs.innerHTML = ENTITIES.map((e) => '<button data-tab="' + e.name + '">' + e.label + '</button>').join("");
-  tabs.querySelectorAll("button").forEach((btn) => {
-    btn.addEventListener("click", () => selectTab(btn.getAttribute("data-tab")));
-  });
-  if (ENTITIES.length > 0) selectTab(ENTITIES[0].name);
+/** Shared list + form UI used by every entity's own component file. */
+export function EntityView({ entity }) {
+  const [records, setRecords] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+  const [form, setForm] = useState(() => emptyForm(entity));
+  const [editingId, setEditingId] = useState(null);
+
+  async function refresh() {
+    setLoading(true);
+    try {
+      const { records } = await listRecords(entity.name);
+      setRecords(records);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    setForm(emptyForm(entity));
+    setEditingId(null);
+    refresh();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [entity.name]);
+
+  async function handleSubmit(e) {
+    e.preventDefault();
+    setError(null);
+    try {
+      if (editingId != null) {
+        await updateRecord(entity.name, editingId, form);
+      } else {
+        await createRecord(entity.name, form);
+      }
+      setForm(emptyForm(entity));
+      setEditingId(null);
+      await refresh();
+    } catch (err) {
+      setError(err.message);
+    }
+  }
+
+  function startEdit(record) {
+    const next = {};
+    for (const f of entity.fields) next[f.name] = record[f.name] ?? (f.type === "boolean" ? false : "");
+    setForm(next);
+    setEditingId(record.id);
+  }
+
+  async function handleDelete(id) {
+    await deleteRecord(entity.name, id);
+    await refresh();
+  }
+
+  return (
+    <div className="panel">
+      <h3>{entity.label}</h3>
+      <form className="record-form" onSubmit={handleSubmit}>
+        {entity.fields.map((f) => (
+          <label className="field" key={f.name}>
+            <span>
+              {f.label}
+              {f.required ? " *" : ""}
+            </span>
+            <FieldInput entity={entity} field={f} value={form[f.name]} onChange={(v) => setForm((prev) => ({ ...prev, [f.name]: v }))} />
+          </label>
+        ))}
+        <div>
+          <button type="submit" className="btn">
+            {editingId != null ? "Save" : "Add"}
+          </button>
+          {editingId != null && (
+            <button
+              type="button"
+              onClick={() => {
+                setForm(emptyForm(entity));
+                setEditingId(null);
+              }}
+            >
+              Cancel
+            </button>
+          )}
+        </div>
+      </form>
+      {error && <p className="error">{error}</p>}
+      {loading ? (
+        <p className="muted">Loading…</p>
+      ) : records.length === 0 ? (
+        <p className="muted">No records yet.</p>
+      ) : (
+        <div className="table-scroll">
+          <table>
+            <thead>
+              <tr>
+                {entity.fields.map((f) => (
+                  <th key={f.name}>{f.label}</th>
+                ))}
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              {records.map((r) => (
+                <tr key={r.id}>
+                  {entity.fields.map((f) => (
+                    <td key={f.name}>{formatCell(f, r[f.name])}</td>
+                  ))}
+                  <td className="row-actions">
+                    <button onClick={() => startEdit(r)}>Edit</button>
+                    <button onClick={() => handleDelete(r.id)}>Delete</button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+`;
 }
 
-function selectTab(name) {
-  ACTIVE = ENTITIES.find((e) => e.name === name);
-  EDITING_ID = null;
-  document.querySelectorAll("#tabs button").forEach((b) => {
-    b.classList.toggle("active", b.getAttribute("data-tab") === name);
-  });
-  renderPanel(ACTIVE);
+function renderEntityJsx(entity: Entity): string {
+  const fieldsJson = JSON.stringify(
+    entity.fields.map((f) => ({
+      name: f.name,
+      label: f.label ?? f.name,
+      type: f.type,
+      required: !!f.required,
+      enumValues: f.enumValues ?? null,
+      enumLabels: f.enumLabels ?? null,
+    })),
+    null,
+    2,
+  );
+
+  return `import { EntityView } from "../components/EntityView.jsx";
+
+// This entity's own field list, as real editable code — not fetched from
+// a schema at runtime. Add or change a field here (and in the matching
+// entry of server.js's ENTITIES array) to change this entity's form/table.
+export const entity = {
+  name: ${JSON.stringify(entity.name)},
+  label: ${JSON.stringify(entity.label ?? entity.name)},
+  fields: ${fieldsJson},
+};
+
+export default function View() {
+  return <EntityView entity={entity} />;
+}
+`;
 }
 
-boot();
-</script>
-</body>
-</html>
+function renderAppJsx(project: Project): string {
+  const entities = project.spec.entities;
+  const imports = entities
+    .map((e) => `import ${e.name}View from "./entities/${e.name}.jsx";`)
+    .join("\n");
+  const entries = entities
+    .map((e) => `  { name: ${JSON.stringify(e.name)}, label: ${JSON.stringify(e.label ?? e.name)}, View: ${e.name}View },`)
+    .join("\n");
+
+  return `import { useState } from "react";
+${imports}
+
+const ENTITIES = [
+${entries}
+];
+
+// The app title is a plain JS string rendered through a JSX expression
+// (not embedded as literal JSX text) so it's safe however it's spelled.
+const TITLE = ${JSON.stringify(project.name)};
+
+export default function App() {
+  const [active, setActive] = useState(ENTITIES[0]?.name ?? null);
+  const activeEntity = ENTITIES.find((e) => e.name === active);
+
+  return (
+    <div className="app">
+      <h1>{TITLE}</h1>
+      <nav>
+        {ENTITIES.map((e) => (
+          <button key={e.name} className={e.name === active ? "active" : ""} onClick={() => setActive(e.name)}>
+            {e.label}
+          </button>
+        ))}
+      </nav>
+      {activeEntity && <activeEntity.View />}
+    </div>
+  );
+}
+`;
+}
+
+function renderStylesCss(): string {
+  return `* { box-sizing: border-box; }
+body { font-family: -apple-system, "Segoe UI", Roboto, sans-serif; margin: 0; background: #f6f2ea; color: #241f19; }
+.app { max-width: 880px; margin: 0 auto; padding: 24px 16px 64px; }
+h1 { font-size: 26px; margin: 0 0 20px; }
+nav { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 20px; }
+nav button { padding: 8px 16px; border-radius: 8px; border: 1px solid #e6ddcc; background: #fff; cursor: pointer; font: inherit; }
+nav button.active { background: #d9622b; color: #fff; border-color: #d9622b; }
+.panel { background: #fff; border: 1px solid #e6ddcc; border-radius: 14px; padding: 20px; box-shadow: 0 8px 24px rgba(36,31,25,0.08); }
+form.record-form { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 12px; margin-bottom: 16px; padding-bottom: 16px; border-bottom: 1px solid #efe8da; }
+.field { display: flex; flex-direction: column; gap: 4px; font-size: 12.5px; color: #83786a; min-width: 0; }
+input, select, textarea { font: inherit; padding: 8px 10px; border: 1px solid #e6ddcc; border-radius: 6px; width: 100%; }
+button[type="submit"], .btn { padding: 9px 18px; border-radius: 8px; border: none; background: #d9622b; color: #fff; font: inherit; font-weight: 600; cursor: pointer; }
+.table-scroll { overflow-x: auto; }
+table { width: 100%; border-collapse: collapse; font-size: 14px; }
+th, td { text-align: start; padding: 8px 10px; border-bottom: 1px solid #efe8da; white-space: nowrap; }
+.row-actions button { margin-inline-start: 4px; padding: 5px 10px; border-radius: 6px; border: 1px solid #e6ddcc; background: #fff; cursor: pointer; }
+.muted { color: #83786a; font-size: 13px; }
+.error { color: #c0392b; }
 `;
 }
 
 export function generateExportFiles(project: Project): { path: string; content: string }[] {
+  for (const entity of project.spec.entities) {
+    assertSafe(entity.name, "entity");
+    for (const field of entity.fields) {
+      assertSafe(field.name, "field");
+    }
+  }
+
+  const entityFiles = project.spec.entities.map((entity) => ({
+    path: `web/src/entities/${entity.name}.jsx`,
+    content: renderEntityJsx(entity),
+  }));
+
   return [
     { path: "package.json", content: renderPackageJson(project) },
     { path: "README.md", content: renderReadme(project) },
+    { path: "vite.config.js", content: renderViteConfig() },
     { path: "server.js", content: renderServerJs(project) },
-    { path: "public/index.html", content: renderIndexHtml(project) },
-    { path: ".gitignore", content: "node_modules/\ndata.sqlite\n" },
+    { path: "web/index.html", content: renderWebIndexHtml(project) },
+    { path: "web/src/main.jsx", content: renderMainJsx() },
+    { path: "web/src/App.jsx", content: renderAppJsx(project) },
+    { path: "web/src/api.js", content: renderApiJs() },
+    { path: "web/src/styles.css", content: renderStylesCss() },
+    { path: "web/src/components/EntityView.jsx", content: renderEntityViewJsx() },
+    ...entityFiles,
+    { path: ".gitignore", content: "node_modules/\ndist/\ndata.sqlite\n" },
   ];
 }

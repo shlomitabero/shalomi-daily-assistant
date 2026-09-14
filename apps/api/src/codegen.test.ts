@@ -37,27 +37,53 @@ const project: Project = {
           },
         ],
       },
+      {
+        name: "Service",
+        label: "שירותים",
+        fields: [{ name: "title", label: "כותרת", type: "text", required: true }],
+      },
     ],
   },
 };
 
-test("generateExportFiles produces the expected file set", () => {
+test("generateExportFiles produces a real multi-file React (Vite) + Express project", () => {
   const files = generateExportFiles(project);
   const paths = files.map((f) => f.path).sort();
-  assert.deepEqual(paths, [".gitignore", "README.md", "package.json", "public/index.html", "server.js"]);
+  assert.deepEqual(paths, [
+    ".gitignore",
+    "README.md",
+    "package.json",
+    "server.js",
+    "vite.config.js",
+    "web/index.html",
+    "web/src/App.jsx",
+    "web/src/api.js",
+    "web/src/components/EntityView.jsx",
+    "web/src/entities/Customer.jsx",
+    "web/src/entities/Service.jsx",
+    "web/src/main.jsx",
+    "web/src/styles.css",
+  ]);
 });
 
-test("generated package.json is valid JSON with an express dependency", () => {
+test("generated package.json is valid JSON with express + react + vite, and start builds before serving", () => {
   const files = generateExportFiles(project);
   const pkg = JSON.parse(files.find((f) => f.path === "package.json")!.content);
   assert.equal(pkg.private, true);
   assert.ok(pkg.dependencies.express);
-  assert.equal(pkg.scripts.start, "node server.js");
+  assert.ok(pkg.dependencies.react);
+  assert.ok(pkg.dependencies["react-dom"]);
+  assert.ok(pkg.devDependencies.vite);
+  assert.ok(pkg.devDependencies["@vitejs/plugin-react"]);
+  // The one-command "npm install && npm start" promise from ADR 0003 still
+  // holds even though there's now a real build step: start builds first.
+  assert.equal(pkg.scripts.start, "vite build && node server.js");
 });
 
-test("generated server.js is syntactically valid JavaScript", () => {
+test("generated server.js is syntactically valid JavaScript and serves dist/, not public/", () => {
   const files = generateExportFiles(project);
   const serverJs = files.find((f) => f.path === "server.js")!.content;
+  assert.match(serverJs, /express\.static\(path\.join\(__dirname, "dist"\)\)/);
   const dir = mkdtempSync(path.join(tmpdir(), "codegen-test-"));
   const filePath = path.join(dir, "server.js");
   writeFileSync(filePath, serverJs);
@@ -78,14 +104,49 @@ test("generated server.js embeds the entity metadata with names and labels intac
   assert.match(serverJs, /"New": "חדש"/);
 });
 
-test("generated index.html sets RTL when entity labels are Hebrew", () => {
+test("every generated .jsx/.js file is syntactically valid, checked with a real parser (esbuild)", async () => {
+  const esbuild = await import("esbuild");
   const files = generateExportFiles(project);
-  const html = files.find((f) => f.path === "public/index.html")!.content;
+  for (const file of files.filter((f) => f.path.endsWith(".jsx") || f.path.endsWith(".js"))) {
+    if (file.path === "server.js") continue; // already checked above with node --check
+    assert.doesNotThrow(
+      () => esbuild.transformSync(file.content, { loader: file.path.endsWith(".jsx") ? "jsx" : "js" }),
+      `${file.path} should be valid JS/JSX`,
+    );
+  }
+});
+
+test("each entity gets its own real component file with its literal field list, not a shared runtime-schema blob", () => {
+  const files = generateExportFiles(project);
+  const customerJsx = files.find((f) => f.path === "web/src/entities/Customer.jsx")!.content;
+  assert.match(customerJsx, /"name": "name"/);
+  assert.match(customerJsx, /"label": "שם"/);
+  assert.match(customerJsx, /EntityView/);
+
+  const serviceJsx = files.find((f) => f.path === "web/src/entities/Service.jsx")!.content;
+  assert.match(serviceJsx, /"name": "title"/);
+  assert.doesNotMatch(serviceJsx, /"name": "name"/); // Customer's fields must not leak into Service's file
+
+  const appJsx = files.find((f) => f.path === "web/src/App.jsx")!.content;
+  assert.match(appJsx, /import CustomerView from ".\/entities\/Customer\.jsx"/);
+  assert.match(appJsx, /import ServiceView from ".\/entities\/Service\.jsx"/);
+});
+
+test("a project name with JSX-significant characters doesn't break the generated App.jsx", () => {
+  const tricky: Project = { ...project, name: `My "App" {with} <weird> chars & backtick \`` };
+  const files = generateExportFiles(tricky);
+  const appJsx = files.find((f) => f.path === "web/src/App.jsx")!.content;
+  assert.match(appJsx, /const TITLE = /);
+});
+
+test("generated web/index.html sets RTL when entity labels are Hebrew", () => {
+  const files = generateExportFiles(project);
+  const html = files.find((f) => f.path === "web/index.html")!.content;
   assert.match(html, /dir="rtl"/);
   assert.match(html, /lang="he"/);
 });
 
-test("refuses to export an unsafe entity/field name rather than emitting broken SQL", () => {
+test("refuses to export an unsafe entity/field name rather than emitting broken SQL or JS", () => {
   const malicious: Project = {
     ...project,
     spec: {
