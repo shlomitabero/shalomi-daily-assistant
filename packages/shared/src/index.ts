@@ -109,7 +109,7 @@ export type EntityRecord = Record<string, string | number | boolean | null>;
  * smoke test, a real static check — not a scripted delay.
  */
 export interface AgentStepEvent {
-  agent: "Architect" | "Database" | "Seed Data" | "QA" | "Security" | "Forge";
+  agent: "Architect" | "Database" | "Debug" | "Seed Data" | "QA" | "Security" | "Forge";
   status: "running" | "success" | "failed";
   message: string;
   detail?: unknown;

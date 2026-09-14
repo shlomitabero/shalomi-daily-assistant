@@ -14,6 +14,7 @@ import {
   type ForgeDatabase,
   type MigrationChange,
 } from "@forge/db";
+import { requestSpecFix } from "@forge/spec-engine";
 
 const RESERVED_SQL_WORDS = new Set([
   "SELECT", "INSERT", "UPDATE", "DELETE", "TABLE", "FROM", "WHERE", "ORDER",
@@ -134,7 +135,8 @@ export async function* runBuildPipeline(
   project: Project,
   options: PipelineOptions,
 ): AsyncGenerator<AgentStepEvent> {
-  const { previousSpec, nextSpec, changeLabel } = options;
+  const { previousSpec, changeLabel } = options;
+  let nextSpec = options.nextSpec;
 
   yield { agent: "Architect", status: "running", message: "Designing schema from the product spec…" };
   const impact = computeImpact(previousSpec, nextSpec);
@@ -149,8 +151,39 @@ export async function* runBuildPipeline(
   try {
     changes = diffAndMigrate(db, project.id, previousSpec, nextSpec);
   } catch (err) {
-    yield { agent: "Database", status: "failed", message: (err as Error).message };
-    return;
+    const dbError = (err as Error).message;
+    yield { agent: "Database", status: "failed", message: dbError };
+
+    const apiKey = process.env.ANTHROPIC_API_KEY;
+    if (!apiKey) {
+      yield {
+        agent: "Debug",
+        status: "failed",
+        message: "אין מפתח Claude API מוגדר, אז אין אפשרות לתיקון אוטומטי כרגע. זו השגיאה המדויקת שקרתה: " + dbError,
+      };
+      return;
+    }
+
+    yield { agent: "Debug", status: "running", message: "מנתח מה השתבש ומנסה למצוא תיקון…" };
+    let fixedSpec: ProductSpec;
+    try {
+      fixedSpec = await requestSpecFix(nextSpec, dbError, { apiKey, model: process.env.ANTHROPIC_MODEL });
+      changes = diffAndMigrate(db, project.id, previousSpec, fixedSpec);
+    } catch (fixErr) {
+      yield {
+        agent: "Debug",
+        status: "failed",
+        message: "הניסיון לתקן אוטומטית נכשל: " + (fixErr as Error).message,
+      };
+      return;
+    }
+    nextSpec = fixedSpec;
+    yield {
+      agent: "Debug",
+      status: "success",
+      message: "נמצא תיקון אוטומטי לבעיה, וממשיכים בבנייה איתו.",
+      detail: { correctedSpec: fixedSpec },
+    };
   }
   yield {
     agent: "Database",

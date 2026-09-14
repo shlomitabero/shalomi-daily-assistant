@@ -17,6 +17,12 @@ const AGENT_INFO: Record<
     running: "בונה את מקום האחסון של המידע שלכם…",
     success: "בסיס הנתונים מוכן ועובד.",
   },
+  Debug: {
+    icon: "🔧",
+    title: "סוכן/ת הדיבוג",
+    running: "מנתח/ת מה השתבש ומנסה למצוא תיקון…",
+    success: "הבעיה תוקנה אוטומטית והבנייה ממשיכה.",
+  },
   "Seed Data": {
     icon: "🌱",
     title: "ממלא/ת דוגמאות",
@@ -43,7 +49,7 @@ const AGENT_INFO: Record<
   },
 };
 
-const AGENT_ORDER: AgentStepEvent["agent"][] = ["Architect", "Database", "Seed Data", "QA", "Security", "Forge"];
+const AGENT_ORDER: AgentStepEvent["agent"][] = ["Architect", "Database", "Debug", "Seed Data", "QA", "Security", "Forge"];
 
 function StatusIcon({ status }: { status: AgentStepEvent["status"] }) {
   if (status === "success") return <span className="step-icon step-success">✓</span>;
@@ -193,14 +199,20 @@ export function BuildProgress({
   for (const event of events) {
     latestByAgent.set(event.agent, event);
   }
-  const doneCount = AGENT_ORDER.filter((a) => latestByAgent.get(a)?.status === "success").length;
+  // Debug only ever shows up if it actually ran (a real migration failure)
+  // — most builds never trigger it, so it shouldn't sit there as a
+  // permanent "pending" placeholder on every successful build.
+  const visibleAgents = AGENT_ORDER.filter((a) => a !== "Debug" || latestByAgent.has("Debug"));
+  const doneCount = visibleAgents.filter((a) => latestByAgent.get(a)?.status === "success").length;
 
   return (
     <main className="ai-team">
       <h1>{title}</h1>
-      <p className="muted">צוות ה-AI עובד עכשיו, בזמן אמת. שלב {Math.min(doneCount + 1, 6)} מתוך 6.</p>
+      <p className="muted">
+        צוות ה-AI עובד עכשיו, בזמן אמת. שלב {Math.min(doneCount + 1, visibleAgents.length)} מתוך {visibleAgents.length}.
+      </p>
       <ol className="agent-steps">
-        {AGENT_ORDER.map((agent) => {
+        {visibleAgents.map((agent) => {
           const event = latestByAgent.get(agent);
           const info = AGENT_INFO[agent];
           const status = event?.status ?? "pending";
@@ -212,7 +224,11 @@ export function BuildProgress({
                 : status === "running"
                   ? info.running
                   : "ממתין/ה בתור…";
-          const hasDetail = agent !== "Forge" && event?.detail !== undefined && (status === "success" || status === "failed");
+          const hasDetail =
+            agent !== "Forge" &&
+            agent !== "Debug" &&
+            event?.detail !== undefined &&
+            (status === "success" || status === "failed");
           const isOpen = expanded.has(agent);
           return (
             <li key={agent} className={`agent-step agent-step-${status}`}>

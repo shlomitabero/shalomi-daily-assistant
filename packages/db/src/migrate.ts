@@ -55,6 +55,12 @@ export function applyMigrations(db: ForgeDatabase, projectId: string, spec: Prod
   }
 }
 
+/** The set of column names SQLite already has for a table (empty if the table doesn't exist yet). */
+function existingColumns(db: ForgeDatabase, table: string): Set<string> {
+  const rows = db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[];
+  return new Set(rows.map((r) => r.name));
+}
+
 export interface MigrationChange {
   type: "new_table" | "new_column";
   table: string;
@@ -96,9 +102,17 @@ export function diffAndMigrate(
     }
 
     const prevFieldNames = new Set(prevEntity.fields.map((f) => f.name));
+    const currentColumns = existingColumns(db, table);
     for (const field of entity.fields) {
       if (prevFieldNames.has(field.name)) continue;
       const columnName = assertSafeIdentifier(field.name, "column");
+      // Defensive idempotency: the spec-level diff above should already
+      // guarantee this column is new, but SQLite's own error for adding a
+      // column that already exists ("duplicate column name") would
+      // otherwise throw and halt the whole build with no recovery path.
+      // Checking PRAGMA table_info first turns that entire failure class
+      // into a safe no-op instead — prevention over a retry loop.
+      if (currentColumns.has(columnName)) continue;
       const sqlType = sqlTypeFor(field);
       // NOT NULL / FK deliberately omitted: SQLite can't retroactively
       // satisfy either constraint against a table's existing rows. The

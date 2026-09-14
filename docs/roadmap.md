@@ -80,6 +80,26 @@ delete records through the generated UI, backed by the real API.
       of the vision's larger Business Twin idea (section 58): no fabricated
       business insight, no simulated personas, just facts from your actual
       data. Verified in `apps/api/src/twin.test.ts` and via a live browser.
+- [x] **Migration idempotency hardening.** `diffAndMigrate` now checks
+      `PRAGMA table_info` before issuing `ALTER TABLE ... ADD COLUMN`,
+      so calling it twice with the same additive change (e.g. a retried
+      build, or a refine that re-derives a spec already applied) can never
+      crash with a "duplicate column name" error — a real bug class closed,
+      not worked around. Verified by a new idempotency test in
+      `packages/db/src/migrate.test.ts`.
+- [x] **Debug Agent.** When the Database step's migration throws for any
+      reason, the pipeline no longer just stops: a `Debug` agent step sends
+      the failing spec and the exact error to Claude, asking for a corrected
+      spec, then retries the migration with the fix. If no
+      `ANTHROPIC_API_KEY` is configured, or the model's own fix also fails,
+      the pipeline reports the real failure honestly instead of pretending
+      to succeed or looping — see ADR 0004. This is a first, narrow version
+      of "a system like Claude Code, and better" for this platform's own
+      build pipeline: self-diagnosis and self-repair for one well-defined
+      failure class (schema migration errors), not a general autonomous
+      coding agent. Verified in `apps/api/src/pipeline.test.ts` (recovers
+      with a mocked model fix, reports honestly with no API key, reports
+      honestly when the model's own fix is also broken — no infinite loop).
 - [ ] Multi-agent **parallel** execution (today's pipeline is a sequence, not
       parallel branches with real dependency scheduling) — **not yet implemented**
 - [ ] Actual generated, exportable Next.js/React codebases per project

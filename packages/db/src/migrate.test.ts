@@ -133,3 +133,37 @@ test("diffAndMigrate adds a nullable column for a new field on an existing entit
   assert.equal(customers[0].name, "Alice");
   assert.equal(customers[0].loyaltyPoints, null);
 });
+
+test("diffAndMigrate is safe to call twice with the same additive change (idempotent, never throws)", () => {
+  // Reproduces the real failure class this hardening prevents: SQLite
+  // throws "duplicate column name" on a second ALTER TABLE ADD COLUMN for
+  // the same column. Previously this would halt the whole build with no
+  // recovery path; it must now be a silent no-op the second time.
+  const db = openDatabase(":memory:");
+  applyMigrations(db, "proj1", spec);
+  const customerEntity = spec.entities[0];
+  insertRecord(db, "proj1", customerEntity, { name: "Alice", status: "New" });
+
+  const nextSpec: ProductSpec = {
+    ...spec,
+    entities: [
+      {
+        ...spec.entities[0],
+        fields: [...spec.entities[0].fields, { name: "loyaltyPoints", type: "number", required: false }],
+      },
+      spec.entities[1],
+    ],
+  };
+
+  const firstRun = diffAndMigrate(db, "proj1", spec, nextSpec);
+  assert.equal(firstRun.length, 1);
+
+  // Simulate the diff not recognizing the field as already present (the
+  // exact scenario a spec regeneration quirk could hit) by diffing against
+  // the *original* (pre-loyaltyPoints) spec again.
+  assert.doesNotThrow(() => diffAndMigrate(db, "proj1", spec, nextSpec));
+
+  const customers = listRecords(db, "proj1", nextSpec.entities[0]);
+  assert.equal(customers.length, 1);
+  assert.equal(customers[0].name, "Alice");
+});
