@@ -145,6 +145,26 @@ export async function exportProject(projectId: string, projectName: string): Pro
   URL.revokeObjectURL(url);
 }
 
+export interface BusinessTwinEntityStat {
+  name: string;
+  label: string;
+  count: number;
+}
+
+export interface BusinessTwin {
+  summary: string;
+  roles: string[];
+  entities: BusinessTwinEntityStat[];
+  totalRecords: number;
+  mostActive: BusinessTwinEntityStat | null;
+  unused: BusinessTwinEntityStat[];
+  observations: string[];
+}
+
+export function getBusinessTwin(projectId: string): Promise<{ twin: BusinessTwin }> {
+  return request(`/projects/${projectId}/twin`);
+}
+
 export function listCheckpoints(projectId: string): Promise<{ checkpoints: Checkpoint[] }> {
   return request(`/projects/${projectId}/checkpoints`);
 }

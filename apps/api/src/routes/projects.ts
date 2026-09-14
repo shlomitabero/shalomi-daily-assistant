@@ -23,6 +23,7 @@ import { requireAuth } from "../auth/middleware.js";
 import { runBuildPipeline } from "../pipeline.js";
 import { generateExportFiles } from "../codegen.js";
 import { buildZip } from "../zip.js";
+import { computeBusinessTwin } from "../twin.js";
 
 const CreateProjectSchema = z.object({
   description: z.string().min(1, "description is required"),
@@ -188,6 +189,17 @@ export function createProjectsRouter(db: ForgeDatabase, provider?: SpecProvider)
       res.setHeader("content-type", "application/zip");
       res.setHeader("content-disposition", `attachment; filename="${safeName}.zip"`);
       res.send(zip);
+    }),
+  );
+
+  router.get(
+    "/projects/:id/twin",
+    asyncRoute(async (req, res) => {
+      const project = requireOwnedProject(db, req.params.id, req.userId!);
+      if (project.status !== "built") {
+        throw new HttpError(409, "Build the project before viewing its Business Twin");
+      }
+      res.json({ twin: computeBusinessTwin(db, project) });
     }),
   );
 

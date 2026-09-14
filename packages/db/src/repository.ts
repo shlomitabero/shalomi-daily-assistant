@@ -73,6 +73,12 @@ export function listRecords(db: ForgeDatabase, projectId: string, entity: Entity
   return rows.map((row) => rowToRecord(entity, row));
 }
 
+export function countRecords(db: ForgeDatabase, projectId: string, entity: Entity): number {
+  const table = tableNameFor(projectId, entity.name);
+  const row = db.prepare(`SELECT COUNT(*) as count FROM ${table}`).get() as { count: number };
+  return row.count;
+}
+
 export function getRecord(
   db: ForgeDatabase,
   projectId: string,

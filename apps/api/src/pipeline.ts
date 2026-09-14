@@ -26,27 +26,32 @@ const SENSITIVE_FIELD_HINTS = ["password", "secret", "apikey", "api_key", "token
 
 interface ImpactSummary {
   newEntityNames: string[];
-  changedEntities: { name: string; newFieldNames: string[] }[];
+  newEntities: { name: string; label: string }[];
+  changedEntities: { name: string; label: string; newFieldNames: string[] }[];
 }
 
 function computeImpact(previousSpec: ProductSpec | undefined, nextSpec: ProductSpec): ImpactSummary {
   const previousEntities = new Map((previousSpec?.entities ?? []).map((e) => [e.name, e]));
-  const newEntityNames: string[] = [];
-  const changedEntities: { name: string; newFieldNames: string[] }[] = [];
+  const newEntities: { name: string; label: string }[] = [];
+  const changedEntities: { name: string; label: string; newFieldNames: string[] }[] = [];
 
   for (const entity of nextSpec.entities) {
     const prev = previousEntities.get(entity.name);
     if (!prev) {
-      newEntityNames.push(entity.name);
+      newEntities.push({ name: entity.name, label: entity.label ?? entity.name });
       continue;
     }
     const prevFieldNames = new Set(prev.fields.map((f) => f.name));
-    const newFieldNames = entity.fields.filter((f) => !prevFieldNames.has(f.name)).map((f) => f.name);
-    if (newFieldNames.length > 0) {
-      changedEntities.push({ name: entity.name, newFieldNames });
+    const newFields = entity.fields.filter((f) => !prevFieldNames.has(f.name));
+    if (newFields.length > 0) {
+      changedEntities.push({
+        name: entity.name,
+        label: entity.label ?? entity.name,
+        newFieldNames: newFields.map((f) => f.label ?? f.name),
+      });
     }
   }
-  return { newEntityNames, changedEntities };
+  return { newEntityNames: newEntities.map((e) => e.name), newEntities, changedEntities };
 }
 
 function runQaChecks(
@@ -181,6 +186,7 @@ export async function* runBuildPipeline(
       agent: "Seed Data",
       status: "success",
       message: entitiesToSeed.length > 0 ? `Seeded ${seededCount} sample record(s) across ${entitiesToSeed.length} new table(s).` : "No new tables to seed.",
+      detail: { seededCount, entities: entitiesToSeed.map((e) => e.label ?? e.name) },
     };
   }
 

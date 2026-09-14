@@ -51,6 +51,96 @@ function StatusIcon({ status }: { status: AgentStepEvent["status"] }) {
   return <span className="step-icon step-running">●</span>;
 }
 
+interface ImpactDetail {
+  newEntities: { name: string; label: string }[];
+  changedEntities: { name: string; label: string; newFieldNames: string[] }[];
+}
+
+interface MigrationChangeDetail {
+  type: "new_table" | "new_column";
+  table: string;
+  column?: string;
+}
+
+interface QaResultDetail {
+  entity: string;
+  checks: string[];
+}
+
+/** Renders the real payload each agent reported — the same data used to build the summary message, not a re-statement of it. */
+function AgentDetail({ agent, detail }: { agent: AgentStepEvent["agent"]; detail: unknown }) {
+  if (agent === "Architect" && detail) {
+    const { newEntities, changedEntities } = detail as ImpactDetail;
+    if (newEntities.length === 0 && changedEntities.length === 0) {
+      return <p className="muted small">אין שינוי במבנה — הכל כבר קיים.</p>;
+    }
+    return (
+      <ul className="detail-list">
+        {newEntities.map((e) => (
+          <li key={e.name}>מסך חדש: <strong>{e.label}</strong></li>
+        ))}
+        {changedEntities.map((e) => (
+          <li key={e.name}>
+            <strong>{e.label}</strong> קיבל שדות חדשים: {e.newFieldNames.join(", ")}
+          </li>
+        ))}
+      </ul>
+    );
+  }
+
+  if (agent === "Database" && Array.isArray(detail)) {
+    const changes = detail as MigrationChangeDetail[];
+    if (changes.length === 0) return <p className="muted small">לא היה צורך בשינוי בבסיס הנתונים.</p>;
+    return (
+      <ul className="detail-list">
+        {changes.map((c, i) => (
+          <li key={i}>{c.type === "new_table" ? `טבלה חדשה נוצרה: ${c.table}` : `עמודה חדשה נוספה: ${c.table}.${c.column}`}</li>
+        ))}
+      </ul>
+    );
+  }
+
+  if (agent === "Seed Data" && detail) {
+    const { seededCount, entities } = detail as { seededCount: number; entities: string[] };
+    if (entities.length === 0) return <p className="muted small">לא נוספו נתוני דוגמה (אין מסכים חדשים).</p>;
+    return <p className="muted small">{seededCount} רשומות דוגמה נוספו ב: {entities.join(", ")}.</p>;
+  }
+
+  if (agent === "QA" && Array.isArray(detail)) {
+    const results = detail as QaResultDetail[];
+    return (
+      <ul className="detail-list">
+        {results.map((r) => (
+          <li key={r.entity}>
+            <strong>{r.entity}</strong>
+            <ul className="detail-sublist">
+              {r.checks.map((c, i) => (
+                <li key={i} className={c.startsWith("FAILED") ? "detail-fail" : undefined}>
+                  {c}
+                </li>
+              ))}
+            </ul>
+          </li>
+        ))}
+      </ul>
+    );
+  }
+
+  if (agent === "Security" && Array.isArray(detail)) {
+    const warnings = detail as string[];
+    if (warnings.length === 0) return <p className="muted small">לא נמצאו אזהרות.</p>;
+    return (
+      <ul className="detail-list">
+        {warnings.map((w, i) => (
+          <li key={i}>{w}</li>
+        ))}
+      </ul>
+    );
+  }
+
+  return null;
+}
+
 export function BuildProgress({
   title,
   run,
@@ -65,6 +155,7 @@ export function BuildProgress({
   const [events, setEvents] = useState<AgentStepEvent[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [finished, setFinished] = useState(false);
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const started = useRef(false);
 
   useEffect(() => {
@@ -84,6 +175,15 @@ export function BuildProgress({
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [finished]);
+
+  function toggleExpanded(agent: string) {
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      if (next.has(agent)) next.delete(agent);
+      else next.add(agent);
+      return next;
+    });
+  }
 
   const failedStep = events.find((e) => e.status === "failed");
 
@@ -112,6 +212,8 @@ export function BuildProgress({
                 : status === "running"
                   ? info.running
                   : "ממתין/ה בתור…";
+          const hasDetail = agent !== "Forge" && event?.detail !== undefined && (status === "success" || status === "failed");
+          const isOpen = expanded.has(agent);
           return (
             <li key={agent} className={`agent-step agent-step-${status}`}>
               {status === "pending" ? (
@@ -119,11 +221,23 @@ export function BuildProgress({
               ) : (
                 <StatusIcon status={status as AgentStepEvent["status"]} />
               )}
-              <div>
-                <strong>
-                  {info.icon} {info.title}
-                </strong>
+              <div className="agent-step-body">
+                <div className="agent-step-header">
+                  <strong>
+                    {info.icon} {info.title}
+                  </strong>
+                  {hasDetail && (
+                    <button type="button" className="link-button detail-toggle" onClick={() => toggleExpanded(agent)}>
+                      {isOpen ? "הסתרת פרטים" : "מה בדיוק נעשה?"}
+                    </button>
+                  )}
+                </div>
                 <p>{caption}</p>
+                {hasDetail && isOpen && (
+                  <div className="agent-detail">
+                    <AgentDetail agent={agent} detail={event!.detail} />
+                  </div>
+                )}
               </div>
             </li>
           );

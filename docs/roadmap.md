@@ -67,6 +67,19 @@ delete records through the generated UI, backed by the real API.
       This is a lightweight, honest first answer to "own your code"; a full
       generated Next.js/React codebase per project (below) is the larger,
       still-open version of the same promise.
+- [x] **AI Team agent detail.** Each build/refine agent step in the UI can be
+      expanded ("מה בדיוק נעשה?") to show the real data behind its summary
+      message — the Architect's exact new/changed entities, the Database
+      agent's literal schema changes, QA's per-entity check results, the
+      Security agent's warning list — using the same `detail` payload the
+      pipeline already emits, not a re-statement of the headline.
+- [x] **Business Twin (basic).** `GET /api/projects/:id/twin` and a "🧠 תמונת
+      העסק" panel report real, live record counts per entity and a small
+      number of observations that follow directly from those counts (most
+      active entity, entities with zero records) — a first, honest version
+      of the vision's larger Business Twin idea (section 58): no fabricated
+      business insight, no simulated personas, just facts from your actual
+      data. Verified in `apps/api/src/twin.test.ts` and via a live browser.
 - [ ] Multi-agent **parallel** execution (today's pipeline is a sequence, not
       parallel branches with real dependency scheduling) — **not yet implemented**
 - [ ] Actual generated, exportable Next.js/React codebases per project

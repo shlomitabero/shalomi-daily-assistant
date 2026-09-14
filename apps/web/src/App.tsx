@@ -3,6 +3,7 @@ import type { Project, User } from "@forge/shared";
 import { clearToken, createProject, exportProject, getToken, logout, me, streamBuild, streamRefine } from "./api.js";
 import { AuthScreen } from "./AuthScreen.js";
 import { BuildProgress } from "./BuildProgress.js";
+import { BusinessTwinPanel } from "./BusinessTwinPanel.js";
 import { EntityPanel } from "./EntityPanel.js";
 import { HistoryPanel } from "./HistoryPanel.js";
 
@@ -22,6 +23,7 @@ export default function App() {
   const [showHistory, setShowHistory] = useState(false);
   const [buildMode, setBuildMode] = useState<"build" | "refine">("build");
   const [exportBusy, setExportBusy] = useState(false);
+  const [showTwin, setShowTwin] = useState(false);
 
   useEffect(() => {
     if (!getToken()) {
@@ -228,6 +230,9 @@ export default function App() {
           <div className="preview-header">
             <h1>{project.name}</h1>
             <div className="preview-header-actions">
+              <button type="button" className="secondary" onClick={() => setShowTwin(true)}>
+                🧠 תמונת העסק
+              </button>
               <button type="button" className="secondary" onClick={handleExport} disabled={exportBusy}>
                 {exportBusy ? "מייצא…" : "⬇️ ייצוא קוד"}
               </button>
@@ -275,6 +280,8 @@ export default function App() {
               }}
             />
           )}
+
+          {showTwin && <BusinessTwinPanel projectId={project.id} onClose={() => setShowTwin(false)} />}
         </main>
       )}
     </div>

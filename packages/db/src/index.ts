@@ -11,6 +11,7 @@ export {
   getRecord,
   updateRecord,
   deleteRecord,
+  countRecords,
   ValidationError,
   NotFoundError,
 } from "./repository.js";

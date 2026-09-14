@@ -287,6 +287,46 @@ test("rejects an insert missing a required field with 400", async () => {
   });
 });
 
+test("business twin reports real counts and updates as records are added", async () => {
+  await withServer(async (baseUrl) => {
+    const token = await signup(baseUrl);
+    const createRes = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ description: "A CRM with customers and deals." }),
+    });
+    const { project } = (await createRes.json()) as { project: { id: string } };
+
+    const tooEarly = await fetch(`${baseUrl}/api/projects/${project.id}/twin`, { headers: authHeaders(token) });
+    assert.equal(tooEarly.status, 409);
+
+    const buildRes = await fetch(`${baseUrl}/api/projects/${project.id}/build`, {
+      method: "POST",
+      headers: authHeaders(token),
+    });
+    await collectSSE(buildRes);
+
+    const twinRes = await fetch(`${baseUrl}/api/projects/${project.id}/twin`, { headers: authHeaders(token) });
+    assert.equal(twinRes.status, 200);
+    const { twin } = (await twinRes.json()) as {
+      twin: { totalRecords: number; entities: { name: string; count: number }[]; mostActive: unknown };
+    };
+    // Seed Data agent already populated the new tables during build.
+    assert.ok(twin.totalRecords > 0);
+    assert.ok(twin.entities.some((e) => e.name === "Customer" && e.count > 0));
+
+    await fetch(`${baseUrl}/api/projects/${project.id}/entities/Customer`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ name: "Extra Customer", status: "New" }),
+    });
+
+    const twinRes2 = await fetch(`${baseUrl}/api/projects/${project.id}/twin`, { headers: authHeaders(token) });
+    const { twin: twin2 } = (await twinRes2.json()) as { twin: { totalRecords: number } };
+    assert.equal(twin2.totalRecords, twin.totalRecords + 1);
+  });
+});
+
 test("export refuses before build, and returns a real zip file after", async () => {
   await withServer(async (baseUrl) => {
     const token = await signup(baseUrl);

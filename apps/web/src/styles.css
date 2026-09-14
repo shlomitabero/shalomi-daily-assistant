@@ -519,6 +519,50 @@ tbody tr:hover {
   font-size: 14px;
 }
 
+.agent-step-body {
+  flex: 1;
+  min-width: 0;
+}
+
+.agent-step-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.detail-toggle {
+  font-size: 12.5px;
+  padding: 0;
+  align-self: auto;
+}
+
+.agent-detail {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px dashed var(--border);
+}
+
+.detail-list,
+.detail-sublist {
+  margin: 0;
+  padding-inline-start: 20px;
+  font-size: 13.5px;
+  color: var(--muted);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.detail-sublist {
+  margin-top: 4px;
+}
+
+.detail-fail {
+  color: var(--danger);
+}
+
 .step-icon {
   font-size: 16px;
   line-height: 1.4;
@@ -646,6 +690,62 @@ tbody tr:hover {
 
 .checkpoint-list li button {
   flex-shrink: 0;
+}
+
+.twin-panel {
+  max-width: 560px;
+}
+
+.twin-stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(110px, 1fr));
+  gap: 10px;
+  margin: 18px 0;
+}
+
+.twin-stat-tile {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 14px 10px;
+  text-align: center;
+}
+
+.twin-stat-value {
+  font-family: "Heebo", sans-serif;
+  font-variant-numeric: tabular-nums;
+  font-size: 28px;
+  font-weight: 700;
+  color: var(--accent-deep);
+  line-height: 1.1;
+}
+
+.twin-stat-label {
+  margin-top: 4px;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.twin-observations {
+  border-top: 1px solid var(--border-soft);
+  padding-top: 14px;
+}
+
+.twin-observations .label {
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+  text-transform: uppercase;
+}
+
+.twin-observations ul {
+  margin: 10px 0 0;
+  padding-inline-start: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  font-size: 14.5px;
 }
 
 @media (prefers-color-scheme: dark) {

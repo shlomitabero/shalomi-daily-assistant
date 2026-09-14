@@ -9,6 +9,7 @@ import {
   getRecord,
   updateRecord,
   deleteRecord,
+  countRecords,
   ValidationError,
   NotFoundError,
 } from "./repository.js";
@@ -88,4 +89,14 @@ test("deleteRecord removes the row; a second delete throws NotFoundError", () =>
   deleteRecord(db, "proj1", customer, created.id as number);
   assert.equal(getRecord(db, "proj1", customer, created.id as number), undefined);
   assert.throws(() => deleteRecord(db, "proj1", customer, created.id as number), NotFoundError);
+});
+
+test("countRecords reflects inserts and deletes", () => {
+  const db = setup();
+  assert.equal(countRecords(db, "proj1", customer), 0);
+  const a = insertRecord(db, "proj1", customer, { name: "Alice", status: "New" });
+  insertRecord(db, "proj1", customer, { name: "Bob", status: "New" });
+  assert.equal(countRecords(db, "proj1", customer), 2);
+  deleteRecord(db, "proj1", customer, a.id as number);
+  assert.equal(countRecords(db, "proj1", customer), 1);
 });
