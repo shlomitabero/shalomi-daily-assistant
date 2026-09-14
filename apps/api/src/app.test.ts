@@ -327,6 +327,60 @@ test("business twin reports real counts and updates as records are added", async
   });
 });
 
+test("answering an open question (free text, not just a suggested option) actually changes the spec used to build", async () => {
+  await withServer(async (baseUrl) => {
+    const token = await signup(baseUrl);
+    const createRes = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ description: "A CRM with customers and deals." }),
+    });
+    const { project } = (await createRes.json()) as {
+      project: { id: string; spec: { openQuestions: { question: string; recommendation?: string }[] } };
+    };
+    const question = project.spec.openQuestions[0];
+    assert.ok(question, "the heuristic provider should ask a payments open question here");
+    assert.equal(question.recommendation, "No payments");
+
+    // A free-text answer (not one of the quick-pick chip options) should
+    // still flow back into spec regeneration.
+    const answersRes = await fetch(`${baseUrl}/api/projects/${project.id}/answers`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ answers: { [question.question]: "Yes, use Stripe for all payments" } }),
+    });
+    assert.equal(answersRes.status, 200);
+    const { project: answeredProject } = (await answersRes.json()) as {
+      project: { spec: { openQuestions: { question: string; recommendation?: string }[] } };
+    };
+    // Mentioning "Stripe" is a real payment keyword, so the regenerated
+    // spec's own open question now reflects that payments are needed --
+    // proof the answer changed the spec, not just a UI checkbox.
+    assert.equal(answeredProject.spec.openQuestions[0].recommendation, "Stripe");
+
+    // Building now uses the answered (regenerated) spec, not the original.
+    const buildRes = await fetch(`${baseUrl}/api/projects/${project.id}/build`, {
+      method: "POST",
+      headers: authHeaders(token),
+    });
+    assert.equal(buildRes.status, 200);
+    const buildEvents = await collectSSE(buildRes);
+    assert.ok(buildEvents.every((e) => e.status !== "failed"));
+    const finalProject = (buildEvents[buildEvents.length - 1].detail as {
+      project: { spec: { openQuestions: { recommendation?: string }[] } };
+    }).project;
+    assert.equal(finalProject.spec.openQuestions[0].recommendation, "Stripe");
+
+    // Submitting no non-empty answers is a harmless no-op, not an error.
+    const noopRes = await fetch(`${baseUrl}/api/projects/${project.id}/answers`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ answers: { "some question": "   " } }),
+    });
+    assert.equal(noopRes.status, 200);
+  });
+});
+
 test("export refuses before build, and returns a real zip file after", async () => {
   await withServer(async (baseUrl) => {
     const token = await signup(baseUrl);

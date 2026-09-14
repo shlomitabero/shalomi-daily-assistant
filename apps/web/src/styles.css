@@ -310,6 +310,11 @@ button.danger:hover:not(:disabled) {
   box-shadow: var(--shadow-sm);
 }
 
+.answer-input {
+  margin-top: 10px;
+  background: var(--surface);
+}
+
 .entity-tabs {
   display: flex;
   gap: 6px;

@@ -1,6 +1,16 @@
 import { useEffect, useState } from "react";
 import type { Project, User } from "@forge/shared";
-import { clearToken, createProject, exportProject, getToken, logout, me, streamBuild, streamRefine } from "./api.js";
+import {
+  answerQuestions,
+  clearToken,
+  createProject,
+  exportProject,
+  getToken,
+  logout,
+  me,
+  streamBuild,
+  streamRefine,
+} from "./api.js";
 import { AuthScreen } from "./AuthScreen.js";
 import { BuildProgress } from "./BuildProgress.js";
 import { BusinessTwinPanel } from "./BusinessTwinPanel.js";
@@ -81,7 +91,22 @@ export default function App() {
     }
   }
 
-  function handleBuild() {
+  async function handleBuild() {
+    if (!project) return;
+    const answered = Object.fromEntries(Object.entries(selectedAnswers).filter(([, v]) => v.trim().length > 0));
+    if (Object.keys(answered).length > 0) {
+      setBusy(true);
+      setError(null);
+      try {
+        const { project: updated } = await answerQuestions(project.id, answered);
+        setProject(updated);
+      } catch (err) {
+        setError((err as Error).message);
+        setBusy(false);
+        return;
+      }
+      setBusy(false);
+    }
     setBuildMode("build");
     setView("building");
   }
@@ -202,14 +227,21 @@ export default function App() {
                       </button>
                     ))}
                   </div>
+                  <input
+                    type="text"
+                    className="answer-input"
+                    placeholder="או כתבו תשובה משלכם…"
+                    value={selectedAnswers[q.question] ?? ""}
+                    onChange={(e) => setSelectedAnswers((prev) => ({ ...prev, [q.question]: e.target.value }))}
+                  />
                   {q.recommendation && <p className="muted small">ההמלצה שלנו: {q.recommendation}</p>}
                 </div>
               ))}
             </section>
           )}
 
-          <button type="button" onClick={handleBuild}>
-            🔥 לבנות את האפליקציה
+          <button type="button" onClick={handleBuild} disabled={busy}>
+            {busy ? "מיישמים את התשובות שלכם…" : "🔥 לבנות את האפליקציה"}
           </button>
         </main>
       )}

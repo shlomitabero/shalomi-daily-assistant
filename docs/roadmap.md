@@ -100,6 +100,20 @@ delete records through the generated UI, backed by the real API.
       coding agent. Verified in `apps/api/src/pipeline.test.ts` (recovers
       with a mocked model fix, reports honestly with no API key, reports
       honestly when the model's own fix is also broken — no infinite loop).
+- [x] **Open-ended answers to clarifying questions.** The "כדאי שתחליטו"
+      review screen previously only offered fixed quick-pick chips, and —
+      a real pre-existing bug — picking one didn't actually do anything: it
+      only highlighted the chip, with no effect on the spec that got built.
+      Both are fixed: each open question now also has a free-text input for
+      an answer in your own words, and `POST /projects/:id/answers`
+      regenerates the spec from the original description plus your answers
+      before the build runs, so an answer genuinely changes what gets
+      built. Verified in `apps/api/src/app.test.ts` (a free-text answer
+      mentioning a payment keyword changes the regenerated spec's own
+      recommendation, and that change carries through to the built
+      project) and live in a real browser: answering "use Stripe for all
+      payments" in free text caused a real Invoice table to be added to
+      the built app.
 - [ ] Multi-agent **parallel** execution (today's pipeline is a sequence, not
       parallel branches with real dependency scheduling) — **not yet implemented**
 - [ ] Actual generated, exportable Next.js/React codebases per project

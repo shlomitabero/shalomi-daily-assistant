@@ -34,6 +34,10 @@ const RefineSchema = z.object({
   instruction: z.string().min(1, "instruction is required"),
 });
 
+const AnswerQuestionsSchema = z.object({
+  answers: z.record(z.string(), z.string()),
+});
+
 function deriveName(description: string): string {
   const words = description.trim().split(/\s+/).slice(0, 6).join(" ");
   return words.length > 0 ? words : "Untitled Project";
@@ -114,6 +118,33 @@ export function createProjectsRouter(db: ForgeDatabase, provider?: SpecProvider)
     "/projects/:id",
     asyncRoute(async (req, res) => {
       res.json({ project: requireOwnedProject(db, req.params.id, req.userId!) });
+    }),
+  );
+
+  router.post(
+    "/projects/:id/answers",
+    asyncRoute(async (req, res) => {
+      const project = requireOwnedProject(db, req.params.id, req.userId!);
+      const parsed = AnswerQuestionsSchema.safeParse(req.body);
+      if (!parsed.success) {
+        throw new HttpError(400, parsed.error.message);
+      }
+      const entries = Object.entries(parsed.data.answers)
+        .map(([question, answer]) => [question.trim(), answer.trim()] as const)
+        .filter(([question, answer]) => question.length > 0 && answer.length > 0);
+      if (entries.length === 0) {
+        res.json({ project });
+        return;
+      }
+      // Free-text answers (not just the suggested quick-pick options) feed
+      // straight back into spec generation, exactly like Refine does for an
+      // already-built project — so answering actually changes the spec that
+      // gets built, instead of only highlighting a chip in the UI.
+      const answersText = entries.map(([question, answer]) => `- ${question}: ${answer}`).join("\n");
+      const combinedDescription = `${project.description}\n\nAnswers to clarifying questions:\n${answersText}`;
+      const { spec } = await generateSpec(combinedDescription, provider);
+      const updated = updateProjectSpec(db, project.id, spec);
+      res.json({ project: updated });
     }),
   );
 
