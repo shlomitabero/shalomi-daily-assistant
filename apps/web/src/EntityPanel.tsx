@@ -168,33 +168,35 @@ export function EntityPanel({ projectId, entity }: { projectId: string; entity: 
       ) : records.length === 0 ? (
         <p className="muted">אין עדיין רשומות — אפשר להוסיף את הראשונה למעלה.</p>
       ) : (
-        <table>
-          <thead>
-            <tr>
-              {entity.fields.map((f) => (
-                <th key={f.name}>{f.label ?? f.name}</th>
-              ))}
-              <th />
-            </tr>
-          </thead>
-          <tbody>
-            {records.map((record) => (
-              <tr key={record.id as number}>
+        <div className="table-scroll">
+          <table>
+            <thead>
+              <tr>
                 {entity.fields.map((f) => (
-                  <td key={f.name}>{formatCell(f, record[f.name])}</td>
+                  <th key={f.name}>{f.label ?? f.name}</th>
                 ))}
-                <td className="row-actions">
-                  <button type="button" onClick={() => startEdit(record)}>
-                    עריכה
-                  </button>
-                  <button type="button" className="danger" onClick={() => handleDelete(record.id as number)}>
-                    מחיקה
-                  </button>
-                </td>
+                <th />
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {records.map((record) => (
+                <tr key={record.id as number}>
+                  {entity.fields.map((f) => (
+                    <td key={f.name}>{formatCell(f, record[f.name])}</td>
+                  ))}
+                  <td className="row-actions">
+                    <button type="button" onClick={() => startEdit(record)}>
+                      עריכה
+                    </button>
+                    <button type="button" className="danger" onClick={() => handleDelete(record.id as number)}>
+                      מחיקה
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       )}
     </div>
   );
