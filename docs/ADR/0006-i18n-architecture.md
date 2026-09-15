@@ -150,3 +150,19 @@ browser contexts with different locales (`en-US`, `he-IL`, `fr-FR`, and
 title, with zero stored preference in three of the four cases (a fresh
 browser context has no `localStorage`) to confirm this was genuinely the
 locale-detection path, not leftover state from a previous test.
+
+## Update: server-side error messages are now localized too
+
+This closes the last gap this ADR called out ("not yet handled: server-
+side error messages"). The API never had its own i18n — its errors are
+plain English strings written for developers, and the client used to show
+them verbatim. Localizing them server-side would mean the API needs to
+know the caller's language on every request; instead, every `HttpError`
+now also carries a small stable `code` (`apps/api/src/httpError.ts`), and
+translation happens client-side via a new `error.<CODE>` slice of the
+same dictionary this ADR already established, through a new pure
+`resolveErrorMessage(lang, body)` in `i18n/language.ts` — no second i18n
+system, just more keys in the existing one. A code the dictionary doesn't
+recognize yet falls back to the original raw English text rather than
+showing nothing. See `docs/roadmap.md` ("Localize server-side error
+messages") for the verification detail.

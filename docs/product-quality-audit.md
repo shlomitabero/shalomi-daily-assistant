@@ -71,9 +71,13 @@ external font request, not an application bug).
    regardless of the selected UI language. Browser-language
    auto-detection (Hebrew locale → Hebrew, else → English, stored
    preference always wins) is now enabled too, verified across 4 real
-   browser locale contexts — see `docs/roadmap.md`. **Remaining, tracked
-   as a follow-up, not a blocker:** server-side error messages aren't
-   localized in any screen.
+   browser locale contexts — see `docs/roadmap.md`. Server-side error
+   messages are now localized too (a real user-reported incident showed a
+   raw English "Internal server error" on an all-Hebrew page): every API
+   error now carries a stable code the client translates, verified live
+   in both a Hebrew and an English browser context — see
+   `docs/roadmap.md`'s "Production hardening" section. No known i18n gaps
+   remain.
 
 3. **Desktop screens with little content leave a large, unstyled empty
    void below the fold** (seen clearly on the auth screen and the "מה

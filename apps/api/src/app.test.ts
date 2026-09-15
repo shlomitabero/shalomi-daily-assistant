@@ -71,6 +71,7 @@ test("signup rejects a duplicate email and login rejects a wrong password", asyn
       body: JSON.stringify({ email, password: "correct-horse-battery" }),
     });
     assert.equal(dup.status, 409);
+    assert.equal(((await dup.json()) as { code?: string }).code, "EMAIL_TAKEN");
 
     const badLogin = await fetch(`${baseUrl}/api/auth/login`, {
       method: "POST",
@@ -78,6 +79,7 @@ test("signup rejects a duplicate email and login rejects a wrong password", asyn
       body: JSON.stringify({ email, password: "wrong-password" }),
     });
     assert.equal(badLogin.status, 401);
+    assert.equal(((await badLogin.json()) as { code?: string }).code, "INVALID_CREDENTIALS");
 
     const goodLogin = await fetch(`${baseUrl}/api/auth/login`, {
       method: "POST",
@@ -92,8 +94,10 @@ test("project routes reject requests without a valid session", async () => {
   await withServer(async (baseUrl) => {
     const res = await fetch(`${baseUrl}/api/projects`);
     assert.equal(res.status, 401);
+    assert.equal(((await res.json()) as { code?: string }).code, "AUTH_REQUIRED");
     const bad = await fetch(`${baseUrl}/api/projects`, { headers: { authorization: "Bearer nope" } });
     assert.equal(bad.status, 401);
+    assert.equal(((await bad.json()) as { code?: string }).code, "SESSION_EXPIRED");
   });
 });
 
@@ -260,6 +264,7 @@ test("returns 404 for an unknown project", async () => {
     const token = await signup(baseUrl);
     const res = await fetch(`${baseUrl}/api/projects/does-not-exist`, { headers: authHeaders(token) });
     assert.equal(res.status, 404);
+    assert.equal(((await res.json()) as { code?: string }).code, "PROJECT_NOT_FOUND");
   });
 });
 
@@ -299,6 +304,7 @@ test("business twin reports real counts and updates as records are added", async
 
     const tooEarly = await fetch(`${baseUrl}/api/projects/${project.id}/twin`, { headers: authHeaders(token) });
     assert.equal(tooEarly.status, 409);
+    assert.equal(((await tooEarly.json()) as { code?: string }).code, "BUILD_REQUIRED");
 
     const buildRes = await fetch(`${baseUrl}/api/projects/${project.id}/build`, {
       method: "POST",

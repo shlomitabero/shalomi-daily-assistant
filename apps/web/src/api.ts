@@ -1,6 +1,27 @@
 import type { AgentStepEvent, Checkpoint, EntityRecord, Project, User } from "@forge/shared";
+import {
+  detectInitialLang,
+  resolveErrorMessage as resolveErrorMessageForLang,
+  STORAGE_KEY as LANG_STORAGE_KEY,
+} from "./i18n/language.js";
 
 const TOKEN_KEY = "forge.token";
+
+/**
+ * Reads the same stored language preference / browser locale
+ * LanguageProvider uses (see i18n/LanguageContext.tsx) to translate a
+ * server error, since this runs in plain functions outside the React tree.
+ */
+function resolveErrorMessage(body: { error?: string; code?: string }): string {
+  let stored: string | null = null;
+  try {
+    stored = localStorage.getItem(LANG_STORAGE_KEY);
+  } catch {
+    // localStorage can be unavailable (private mode); fall through to the browser locale.
+  }
+  const lang = detectInitialLang(stored, typeof navigator !== "undefined" ? navigator.language : undefined);
+  return resolveErrorMessageForLang(lang, body);
+}
 
 export function getToken(): string | null {
   try {
@@ -38,8 +59,8 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     },
   });
   if (!res.ok) {
-    const body = await res.json().catch(() => ({ error: res.statusText }));
-    throw new Error((body as { error?: string }).error ?? `Request failed (${res.status})`);
+    const body = await res.json().catch(() => ({ error: `Request failed (${res.status})` }));
+    throw new Error(resolveErrorMessage(body as { error?: string; code?: string }));
   }
   if (res.status === 204) return undefined as T;
   return (await res.json()) as T;
@@ -115,8 +136,8 @@ async function streamPipeline(
     ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
   });
   if (!res.ok || !res.body) {
-    const errorBody = await res.json().catch(() => ({ error: res.statusText }));
-    throw new Error((errorBody as { error?: string }).error ?? `Request failed (${res.status})`);
+    const errorBody = await res.json().catch(() => ({ error: `Request failed (${res.status})` }));
+    throw new Error(resolveErrorMessage(errorBody as { error?: string; code?: string }));
   }
   const reader = res.body.getReader();
   const decoder = new TextDecoder();
@@ -158,8 +179,8 @@ export async function exportProject(projectId: string, projectName: string): Pro
     headers: token ? { authorization: `Bearer ${token}` } : {},
   });
   if (!res.ok) {
-    const body = await res.json().catch(() => ({ error: res.statusText }));
-    throw new Error((body as { error?: string }).error ?? `Request failed (${res.status})`);
+    const body = await res.json().catch(() => ({ error: `Request failed (${res.status})` }));
+    throw new Error(resolveErrorMessage(body as { error?: string; code?: string }));
   }
   const blob = await res.blob();
   const url = URL.createObjectURL(blob);

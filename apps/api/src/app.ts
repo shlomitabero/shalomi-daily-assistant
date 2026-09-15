@@ -33,20 +33,20 @@ export function createApp(db: ForgeDatabase, provider?: SpecProvider, staticDir?
 
   app.use((err: unknown, _req: Request, res: Response, _next: NextFunction) => {
     if (err instanceof HttpError) {
-      res.status(err.status).json({ error: err.message });
+      res.status(err.status).json({ error: err.message, code: err.code });
       return;
     }
     if (err instanceof ValidationError) {
-      res.status(400).json({ error: err.message });
+      res.status(400).json({ error: err.message, code: "VALIDATION_ERROR" });
       return;
     }
     if (err instanceof NotFoundError) {
-      res.status(404).json({ error: err.message });
+      res.status(404).json({ error: err.message, code: "NOT_FOUND" });
       return;
     }
     // eslint-disable-next-line no-console
     console.error(err);
-    res.status(500).json({ error: "Internal server error" });
+    res.status(500).json({ error: "Internal server error", code: "INTERNAL_ERROR" });
   });
 
   return app;

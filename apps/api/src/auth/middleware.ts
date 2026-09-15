@@ -16,12 +16,12 @@ export function requireAuth(db: ForgeDatabase) {
     const header = req.header("authorization") ?? "";
     const token = header.startsWith("Bearer ") ? header.slice("Bearer ".length) : undefined;
     if (!token) {
-      next(new HttpError(401, "Missing Authorization header"));
+      next(new HttpError(401, "Missing Authorization header", "AUTH_REQUIRED"));
       return;
     }
     const user = getSessionUser(db, token);
     if (!user) {
-      next(new HttpError(401, "Invalid or expired session"));
+      next(new HttpError(401, "Invalid or expired session", "SESSION_EXPIRED"));
       return;
     }
     req.userId = user.id;

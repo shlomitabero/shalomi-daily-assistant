@@ -51,7 +51,7 @@ function deriveName(description: string): string {
 function findEntity(project: Project, entityName: string): Entity {
   const entity = project.spec.entities.find((e) => e.name === entityName);
   if (!entity) {
-    throw new HttpError(404, `Entity "${entityName}" is not part of this project's spec`);
+    throw new HttpError(404, `Entity "${entityName}" is not part of this project's spec`, "ENTITY_NOT_FOUND");
   }
   return entity;
 }
@@ -60,7 +60,7 @@ function findEntity(project: Project, entityName: string): Entity {
 function requireOwnedProject(db: ForgeDatabase, id: string, userId: string): Project {
   const project = getProject(db, id);
   if (!project || project.ownerId !== userId) {
-    throw new HttpError(404, `Project "${id}" not found`);
+    throw new HttpError(404, `Project "${id}" not found`, "PROJECT_NOT_FOUND");
   }
   return project;
 }
@@ -103,7 +103,7 @@ export function createProjectsRouter(db: ForgeDatabase, provider?: SpecProvider)
     asyncRoute(async (req, res) => {
       const parsed = EnhanceIdeaSchema.safeParse(req.body);
       if (!parsed.success) {
-        throw new HttpError(400, parsed.error.message);
+        throw new HttpError(400, parsed.error.message, "VALIDATION_ERROR");
       }
       const { enhanced, providerName } = await enhancePrompt(parsed.data.idea);
       res.json({ enhanced, providerName });
@@ -115,7 +115,7 @@ export function createProjectsRouter(db: ForgeDatabase, provider?: SpecProvider)
     asyncRoute(async (req, res) => {
       const parsed = CreateProjectSchema.safeParse(req.body);
       if (!parsed.success) {
-        throw new HttpError(400, parsed.error.message);
+        throw new HttpError(400, parsed.error.message, "VALIDATION_ERROR");
       }
       const { description, name } = parsed.data;
       const { spec, providerName } = await generateSpec(description, provider);
@@ -150,7 +150,7 @@ export function createProjectsRouter(db: ForgeDatabase, provider?: SpecProvider)
       const project = requireOwnedProject(db, req.params.id, req.userId!);
       const parsed = AnswerQuestionsSchema.safeParse(req.body);
       if (!parsed.success) {
-        throw new HttpError(400, parsed.error.message);
+        throw new HttpError(400, parsed.error.message, "VALIDATION_ERROR");
       }
       const entries = Object.entries(parsed.data.answers)
         .map(([question, answer]) => [question.trim(), answer.trim()] as const)
@@ -197,11 +197,11 @@ export function createProjectsRouter(db: ForgeDatabase, provider?: SpecProvider)
     asyncRoute(async (req, res) => {
       const project = requireOwnedProject(db, req.params.id, req.userId!);
       if (project.status !== "built") {
-        throw new HttpError(409, "Build the project before refining it");
+        throw new HttpError(409, "Build the project before refining it", "BUILD_REQUIRED");
       }
       const parsed = RefineSchema.safeParse(req.body);
       if (!parsed.success) {
-        throw new HttpError(400, parsed.error.message);
+        throw new HttpError(400, parsed.error.message, "VALIDATION_ERROR");
       }
       const { instruction } = parsed.data;
       const combinedDescription = `${project.description}\n\nAdditional requirement: ${instruction}`;
@@ -228,7 +228,7 @@ export function createProjectsRouter(db: ForgeDatabase, provider?: SpecProvider)
       const project = requireOwnedProject(db, req.params.id, req.userId!);
       const checkpoint = getCheckpoint(db, req.params.checkpointId);
       if (!checkpoint || checkpoint.projectId !== project.id) {
-        throw new HttpError(404, `Checkpoint "${req.params.checkpointId}" not found`);
+        throw new HttpError(404, `Checkpoint "${req.params.checkpointId}" not found`, "CHECKPOINT_NOT_FOUND");
       }
       // Restoring never drops columns/tables (migrations are additive-only),
       // so it's always safe: this just ensures the restored spec's schema
@@ -245,7 +245,7 @@ export function createProjectsRouter(db: ForgeDatabase, provider?: SpecProvider)
     asyncRoute(async (req, res) => {
       const project = requireOwnedProject(db, req.params.id, req.userId!);
       if (project.status !== "built") {
-        throw new HttpError(409, "Build the project before exporting its code");
+        throw new HttpError(409, "Build the project before exporting its code", "BUILD_REQUIRED");
       }
       const files = generateExportFiles(project);
       const zip = buildZip(files);
@@ -261,7 +261,7 @@ export function createProjectsRouter(db: ForgeDatabase, provider?: SpecProvider)
     asyncRoute(async (req, res) => {
       const project = requireOwnedProject(db, req.params.id, req.userId!);
       if (project.status !== "built") {
-        throw new HttpError(409, "Build the project before viewing its Business Twin");
+        throw new HttpError(409, "Build the project before viewing its Business Twin", "BUILD_REQUIRED");
       }
       res.json({ twin: computeBusinessTwin(db, project) });
     }),
@@ -272,7 +272,7 @@ export function createProjectsRouter(db: ForgeDatabase, provider?: SpecProvider)
     asyncRoute(async (req, res) => {
       const project = requireOwnedProject(db, req.params.id, req.userId!);
       if (project.status !== "built") {
-        throw new HttpError(409, "Project has not been built yet — call POST /build first");
+        throw new HttpError(409, "Project has not been built yet — call POST /build first", "BUILD_REQUIRED");
       }
       const entity = findEntity(project, req.params.entityName);
       res.json({ records: listRecords(db, project.id, entity) });
@@ -284,7 +284,7 @@ export function createProjectsRouter(db: ForgeDatabase, provider?: SpecProvider)
     asyncRoute(async (req, res) => {
       const project = requireOwnedProject(db, req.params.id, req.userId!);
       if (project.status !== "built") {
-        throw new HttpError(409, "Project has not been built yet — call POST /build first");
+        throw new HttpError(409, "Project has not been built yet — call POST /build first", "BUILD_REQUIRED");
       }
       const entity = findEntity(project, req.params.entityName);
       const record = insertRecord(db, project.id, entity, req.body ?? {});
@@ -297,7 +297,7 @@ export function createProjectsRouter(db: ForgeDatabase, provider?: SpecProvider)
     asyncRoute(async (req, res) => {
       const project = requireOwnedProject(db, req.params.id, req.userId!);
       if (project.status !== "built") {
-        throw new HttpError(409, "Project has not been built yet — call POST /build first");
+        throw new HttpError(409, "Project has not been built yet — call POST /build first", "BUILD_REQUIRED");
       }
       const entity = findEntity(project, req.params.entityName);
       const recordId = Number(req.params.recordId);
@@ -311,7 +311,7 @@ export function createProjectsRouter(db: ForgeDatabase, provider?: SpecProvider)
     asyncRoute(async (req, res) => {
       const project = requireOwnedProject(db, req.params.id, req.userId!);
       if (project.status !== "built") {
-        throw new HttpError(409, "Project has not been built yet — call POST /build first");
+        throw new HttpError(409, "Project has not been built yet — call POST /build first", "BUILD_REQUIRED");
       }
       const entity = findEntity(project, req.params.entityName);
       const recordId = Number(req.params.recordId);

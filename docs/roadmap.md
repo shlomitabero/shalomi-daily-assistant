@@ -162,10 +162,10 @@ delete records through the generated UI, backed by the real API.
       already produces English entity/field names and observations too
       — English users get more coherent content than the UI-chrome
       translation alone would suggest.
-      **Known remaining gap:** server-side error messages (e.g. a failed
-      record validation) are not localized in any screen. (Browser-
-      language auto-detection — the other gap noted here previously — is
-      now enabled; see below.)
+      (Browser-language auto-detection — the other gap noted here
+      previously — is now enabled; see below. Server-side error message
+      localization — the last known gap — is also now closed; see
+      "Localize server-side error messages" further down.)
 - [x] **Browser-language auto-detection.** Now that every screen is
       translated, `detectInitialLang` picks the visitor's language from
       `navigator.language` when nothing is stored yet (Hebrew locale →
@@ -305,6 +305,40 @@ delete records through the generated UI, backed by the real API.
 
 ## Production hardening
 
+- [x] **Localize server-side error messages** — the last remaining known
+      i18n gap (see ADR 0006), freshly and concretely motivated: the live
+      "Internal server error" incident (see the fallback entry just below)
+      showed a raw, untranslated English string sitting on an otherwise
+      all-Hebrew page. Every `HttpError` the API can throw (auth, project
+      ownership, build-order, validation) now carries a stable `code`
+      (e.g. `"BUILD_REQUIRED"`, `"INVALID_CREDENTIALS"`) alongside its
+      existing English `message` (see `apps/api/src/httpError.ts`); the
+      global error handler in `app.ts` adds the same for `ValidationError`
+      (`"VALIDATION_ERROR"`), `NotFoundError` (`"NOT_FOUND"`), and the
+      generic 500 fallback (`"INTERNAL_ERROR"`). A new pure
+      `resolveErrorMessage(lang, body)` in `i18n/language.ts` translates a
+      known code into the current UI language, falling back to the raw
+      English text for any code not yet in the dictionary (so nothing
+      goes silently blank as new error paths are added later) — `api.ts`
+      wraps it with the same stored-preference/browser-locale detection
+      `LanguageProvider` uses, since it runs outside the React tree. Field-
+      level validation detail (raw zod messages) is intentionally
+      collapsed into one generic "the submitted data isn't valid" message
+      per language rather than translated field-by-field — a reasonable,
+      explicitly scoped tradeoff for this pass. Verified: 5 new pure-
+      function unit tests (including a regression test asserting every
+      code actually thrown anywhere in `apps/api/src` has both a Hebrew
+      and an English dictionary entry, so a future throw site without a
+      translation fails loudly instead of silently showing English again)
+      + `code` assertions added to 4 existing real API integration tests
+      (wrong password, duplicate signup, missing/invalid session, build-
+      before-ready) + full test suite green (98 tests) + `npm run build`
+      clean + two real Playwright runs against a real running server, one
+      with an `he-IL` browser context and one with `en-US`: triggered a
+      real login failure and confirmed the on-screen error text reads
+      "אימייל או סיסמה שגויים." in the Hebrew context and "Incorrect email
+      or password." in the English one — not the old raw "Invalid email
+      or password" either way.
 - [x] **Graceful fallback when the real Anthropic call fails.** The user
       reported "Internal server error" on the live site right after using
       the new "Enhance & build with AI" feature — the first real use of

@@ -34,7 +34,7 @@ export function createAuthRouter(db: ForgeDatabase): Router {
   router.post("/auth/signup", (req, res, next) => {
     const parsed = CredentialsSchema.safeParse(req.body);
     if (!parsed.success) {
-      next(new HttpError(400, parsed.error.message));
+      next(new HttpError(400, parsed.error.message, "VALIDATION_ERROR"));
       return;
     }
     try {
@@ -44,7 +44,7 @@ export function createAuthRouter(db: ForgeDatabase): Router {
       res.status(201).json({ user, token });
     } catch (err) {
       if (err instanceof DuplicateEmailError) {
-        next(new HttpError(409, err.message));
+        next(new HttpError(409, err.message, "EMAIL_TAKEN"));
         return;
       }
       next(err);
@@ -54,13 +54,13 @@ export function createAuthRouter(db: ForgeDatabase): Router {
   router.post("/auth/login", (req, res, next) => {
     const parsed = CredentialsSchema.safeParse(req.body);
     if (!parsed.success) {
-      next(new HttpError(400, parsed.error.message));
+      next(new HttpError(400, parsed.error.message, "VALIDATION_ERROR"));
       return;
     }
     const { email, password } = parsed.data;
     const record = findUserByEmail(db, email);
     if (!record || !verifyPassword(password, record.passwordHash)) {
-      next(new HttpError(401, "Invalid email or password"));
+      next(new HttpError(401, "Invalid email or password", "INVALID_CREDENTIALS"));
       return;
     }
     const token = issueSession(db, record.id);
@@ -70,7 +70,7 @@ export function createAuthRouter(db: ForgeDatabase): Router {
   router.get("/auth/me", requireAuth(db), (req, res, next) => {
     const user = findUserById(db, req.userId!);
     if (!user) {
-      next(new HttpError(404, "User not found"));
+      next(new HttpError(404, "User not found", "USER_NOT_FOUND"));
       return;
     }
     res.json({ user });

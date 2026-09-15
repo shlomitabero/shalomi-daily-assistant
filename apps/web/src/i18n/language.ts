@@ -20,11 +20,44 @@ export function dirFor(lang: Lang): "rtl" | "ltr" {
   return lang === "he" ? "rtl" : "ltr";
 }
 
+export interface ApiErrorBody {
+  error?: string;
+  code?: string;
+}
+
+/**
+ * Server errors were never localized (see docs/roadmap.md): the API sends a
+ * stable `code` (see apps/api/src/httpError.ts) alongside its English
+ * `error` message specifically so the client can show a translated string
+ * instead. Falls back to the raw `error` text for any code this
+ * dictionary doesn't recognize yet, so nothing goes silently blank.
+ */
+export function resolveErrorMessage(lang: Lang, body: ApiErrorBody): string {
+  if (body.code) {
+    const key = `error.${body.code}`;
+    const translated = translate(lang, key);
+    if (translated !== key) return translated;
+  }
+  return body.error ?? "Request failed";
+}
+
 export const translations: Record<Lang, Record<string, string>> = {
   he: {
     "brand.tagline": "מתארים עסק במילים שלכם — ומקבלים אפליקציה עובדת.",
     "topbar.logout": "יציאה",
     "app.loading": "טוען…",
+    "error.VALIDATION_ERROR": "הנתונים שנשלחו לא תקינים. בדקו את הטופס ונסו שוב.",
+    "error.EMAIL_TAKEN": "כבר קיים חשבון עם כתובת האימייל הזו.",
+    "error.INVALID_CREDENTIALS": "אימייל או סיסמה שגויים.",
+    "error.USER_NOT_FOUND": "המשתמש לא נמצא. נסו להתחבר שוב.",
+    "error.AUTH_REQUIRED": "צריך להתחבר כדי להמשיך.",
+    "error.SESSION_EXPIRED": "ההתחברות שלכם פגה. התחברו שוב.",
+    "error.ENTITY_NOT_FOUND": "הישות הזו לא קיימת באפליקציה.",
+    "error.PROJECT_NOT_FOUND": "הפרויקט לא נמצא.",
+    "error.BUILD_REQUIRED": "צריך לבנות את הפרויקט קודם.",
+    "error.CHECKPOINT_NOT_FOUND": "נקודת השחזור הזו לא נמצאה.",
+    "error.NOT_FOUND": "הפריט המבוקש לא נמצא.",
+    "error.INTERNAL_ERROR": "קרתה תקלה בשרת. נסו שוב בעוד רגע.",
     "lang.he": "עברית",
     "lang.en": "EN",
     "auth.title.signup": "בואו נתחיל",
@@ -134,6 +167,18 @@ export const translations: Record<Lang, Record<string, string>> = {
     "brand.tagline": "Describe your business in your own words — get a working app.",
     "topbar.logout": "Log out",
     "app.loading": "Loading…",
+    "error.VALIDATION_ERROR": "The submitted data isn't valid. Please check the form and try again.",
+    "error.EMAIL_TAKEN": "An account with this email already exists.",
+    "error.INVALID_CREDENTIALS": "Incorrect email or password.",
+    "error.USER_NOT_FOUND": "User not found. Please sign in again.",
+    "error.AUTH_REQUIRED": "You need to sign in to continue.",
+    "error.SESSION_EXPIRED": "Your session has expired. Please sign in again.",
+    "error.ENTITY_NOT_FOUND": "This entity doesn't exist in the app.",
+    "error.PROJECT_NOT_FOUND": "Project not found.",
+    "error.BUILD_REQUIRED": "You need to build the project first.",
+    "error.CHECKPOINT_NOT_FOUND": "This checkpoint wasn't found.",
+    "error.NOT_FOUND": "The requested item wasn't found.",
+    "error.INTERNAL_ERROR": "Something went wrong on the server. Please try again shortly.",
     "lang.he": "עברית",
     "lang.en": "EN",
     "auth.title.signup": "Let's get started",
