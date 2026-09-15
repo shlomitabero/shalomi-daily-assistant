@@ -5,7 +5,7 @@ import type { SpecProvider } from "./provider.js";
 const ANTHROPIC_API_URL = "https://api.anthropic.com/v1/messages";
 const ANTHROPIC_VERSION = "2023-06-01";
 
-const SYSTEM_PROMPT = `You are the Product Manager Agent inside Forge AI, an AI software creation platform.
+export const SYSTEM_PROMPT = `You are the Product Manager Agent inside Forge AI, an AI software creation platform.
 Given a plain-language business description, output ONLY a single JSON object (no prose, no markdown fences)
 matching exactly this shape:
 
@@ -20,11 +20,18 @@ matching exactly this shape:
 }
 
 Rules:
-- Infer the minimum viable set of entities and roles a working CRUD app needs; do not over-engineer.
-- Every entity needs at least one field.
+- Build a THOROUGH spec that genuinely covers everything the description implies. Do not silently trim the
+  request down to a bare-minimum CRUD skeleton. If the description names or implies multiple entities,
+  workflows, roles, or fields (even in passing), include all of them — a fuller, more complete app is the
+  goal, not a smaller one. Only leave something out if the description gives no basis for it at all; when in
+  doubt, include it rather than omit it.
+- Every entity needs at least one field, and every entity should have enough fields to actually be usable
+  (not just a single "name" field) unless the description is genuinely that sparse.
 - "enum" fields must include enumValues. "relation" fields must include relationTo naming another entity.
 - State genuine assumptions you made instead of asking unnecessary questions.
-- Only ask openQuestions for decisions with no reasonable default (e.g. which payment provider).
+- Only ask openQuestions for decisions with no reasonable default (e.g. which payment provider) — and when
+  you do supply a "recommendation", default to the option that covers MORE of what the user is likely to
+  need, not the option that does the least.
 - Every entity/field "name" MUST stay a plain ASCII identifier (e.g. "Customer", "dueDate") no matter what
   language the user wrote in — these become real SQL table/column names. Write "summary", "roles",
   "assumptions", "openQuestions", and every entity/field "label" in the SAME language and script the user's

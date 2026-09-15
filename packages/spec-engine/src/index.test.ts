@@ -1,7 +1,18 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { AnthropicSpecProvider } from "./anthropic.js";
+import { AnthropicSpecProvider, SYSTEM_PROMPT } from "./anthropic.js";
 import { selectProvider, generateSpec } from "./index.js";
+
+test("the Product Manager Agent's system prompt tells the model to be thorough, not to minimize", () => {
+  // Direct product feedback: the platform should not default to recommending
+  // a stripped-down spec -- it should try to cover everything the user's
+  // description implies. Lock this in as a real regression test so a future
+  // prompt edit can't silently reintroduce "infer the minimum viable set...
+  // do not over-engineer" style language.
+  assert.doesNotMatch(SYSTEM_PROMPT, /minimum viable/i);
+  assert.doesNotMatch(SYSTEM_PROMPT, /do not over-engineer/i);
+  assert.match(SYSTEM_PROMPT, /thorough/i);
+});
 
 test("selectProvider falls back to heuristic when no API key is configured", () => {
   const provider = selectProvider({});

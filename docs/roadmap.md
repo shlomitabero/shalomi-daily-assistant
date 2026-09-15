@@ -168,6 +168,22 @@ delete records through the generated UI, backed by the real API.
       auto-detect from the browser (a deliberate interim choice from
       when only some screens were converted — worth revisiting now that
       all of them are).
+- [x] **Product Manager Agent no longer defaults toward a minimal spec.**
+      Direct product feedback: the AI was consistently recommending a
+      stripped-down interpretation of what the user described. Traced to
+      `packages/spec-engine/src/anthropic.ts`'s system prompt, which
+      literally instructed the model to "infer the minimum viable set of
+      entities and roles... do not over-engineer." Rewrote the rule to
+      instruct thoroughness instead: cover everything the description
+      implies, don't trim entities/fields for the sake of a smaller spec,
+      and when giving an openQuestions "recommendation," default to the
+      option that covers more of what the user is likely to need. Locked
+      in with a new regression test asserting the system prompt text
+      itself no longer contains "minimum viable"/"do not over-engineer"
+      and does instruct thoroughness — this is a prompt-only change (no
+      code path to exercise live without a real Anthropic API key
+      outside this dev environment), so it's verified that way rather
+      than by a claimed browser run.
 - [ ] Multi-agent **parallel** execution (today's pipeline is a sequence, not
       parallel branches with real dependency scheduling) — **not yet implemented**
 - [ ] Git integration (bidirectional sync) — **not yet implemented**
