@@ -1,7 +1,9 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { Entity, EntityRecord, Field } from "@forge/shared";
 import { createRecord, deleteRecord, listRecords, updateRecord } from "./api.js";
+import { badgeTone, formatDateValue, formatNumberValue, matchesSearch, sortRecords, type SortDirection } from "./entityFormatting.js";
 import { useTranslation } from "./i18n/LanguageContext.js";
+import type { Lang } from "./i18n/language.js";
 
 function emptyForm(entity: Entity): Record<string, unknown> {
   const form: Record<string, unknown> = {};
@@ -11,11 +13,27 @@ function emptyForm(entity: Entity): Record<string, unknown> {
   return form;
 }
 
-function formatCell(field: Field, value: unknown, t: (key: string) => string): string {
-  if (value === null || value === undefined || value === "") return t("entity.empty");
-  if (field.type === "boolean") return value ? t("entity.boolean.yes") : t("entity.boolean.no");
-  if (field.type === "enum") return field.enumLabels?.[String(value)] ?? String(value);
-  return String(value);
+/** Renders a table cell for a field's value -- a status badge for enums, a
+ * checkmark/dash for booleans, a locale-formatted date or number, and plain
+ * text otherwise -- instead of one generic string for every field type. */
+function Cell({ field, value, lang, t }: { field: Field; value: unknown; lang: Lang; t: (key: string) => string }) {
+  if (value === null || value === undefined || value === "") {
+    return <span className="muted">{t("entity.empty")}</span>;
+  }
+  if (field.type === "boolean") {
+    return value ? <span className="bool-yes">✓</span> : <span className="muted">–</span>;
+  }
+  if (field.type === "enum") {
+    const label = field.enumLabels?.[String(value)] ?? String(value);
+    return <span className={`badge badge-${badgeTone(String(value))}`}>{label}</span>;
+  }
+  if (field.type === "date") {
+    return <>{formatDateValue(String(value), lang)}</>;
+  }
+  if (field.type === "number") {
+    return <>{formatNumberValue(Number(value), lang)}</>;
+  }
+  return <>{String(value)}</>;
 }
 
 function FieldInput({
@@ -71,12 +89,15 @@ function FieldInput({
 }
 
 export function EntityPanel({ projectId, entity }: { projectId: string; entity: Entity }) {
-  const { t } = useTranslation();
+  const { t, lang } = useTranslation();
   const [records, setRecords] = useState<EntityRecord[]>([]);
   const [form, setForm] = useState<Record<string, unknown>>(() => emptyForm(entity));
   const [editingId, setEditingId] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [search, setSearch] = useState("");
+  const [sortField, setSortField] = useState<string | null>(null);
+  const [sortDir, setSortDir] = useState<SortDirection>("asc");
 
   async function refresh() {
     setLoading(true);
@@ -93,9 +114,25 @@ export function EntityPanel({ projectId, entity }: { projectId: string; entity: 
   useEffect(() => {
     setForm(emptyForm(entity));
     setEditingId(null);
+    setSearch("");
+    setSortField(null);
     void refresh();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [entity.name]);
+
+  function toggleSort(fieldName: string) {
+    if (sortField !== fieldName) {
+      setSortField(fieldName);
+      setSortDir("asc");
+    } else {
+      setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+    }
+  }
+
+  const visibleRecords = useMemo(
+    () => sortRecords(records.filter((r) => matchesSearch(r, entity.fields, search)), sortField, sortDir),
+    [records, entity.fields, search, sortField, sortDir],
+  );
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -169,37 +206,61 @@ export function EntityPanel({ projectId, entity }: { projectId: string; entity: 
       {loading ? (
         <p className="muted">{t("entity.loading")}</p>
       ) : records.length === 0 ? (
-        <p className="muted">{t("entity.noRecords")}</p>
-      ) : (
-        <div className="table-scroll">
-          <table>
-            <thead>
-              <tr>
-                {entity.fields.map((f) => (
-                  <th key={f.name}>{f.label ?? f.name}</th>
-                ))}
-                <th />
-              </tr>
-            </thead>
-            <tbody>
-              {records.map((record) => (
-                <tr key={record.id as number}>
-                  {entity.fields.map((f) => (
-                    <td key={f.name}>{formatCell(f, record[f.name], t)}</td>
-                  ))}
-                  <td className="row-actions">
-                    <button type="button" onClick={() => startEdit(record)}>
-                      {t("entity.edit")}
-                    </button>
-                    <button type="button" className="danger" onClick={() => handleDelete(record.id as number)}>
-                      {t("entity.delete")}
-                    </button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+        <div className="empty-state">
+          <p>{t("entity.noRecords")}</p>
         </div>
+      ) : (
+        <>
+          <input
+            type="text"
+            className="entity-search"
+            placeholder={t("entity.search.placeholder")}
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+          />
+          {visibleRecords.length === 0 ? (
+            <div className="empty-state">
+              <p>{t("entity.noResults")}</p>
+            </div>
+          ) : (
+            <div className="table-scroll">
+              <table>
+                <thead>
+                  <tr>
+                    {entity.fields.map((f) => (
+                      <th key={f.name}>
+                        <button type="button" className="sort-header" onClick={() => toggleSort(f.name)}>
+                          {f.label ?? f.name}
+                          {sortField === f.name ? (sortDir === "asc" ? " ▲" : " ▼") : ""}
+                        </button>
+                      </th>
+                    ))}
+                    <th />
+                  </tr>
+                </thead>
+                <tbody>
+                  {visibleRecords.map((record) => (
+                    <tr key={record.id as number}>
+                      {entity.fields.map((f) => (
+                        <td key={f.name}>
+                          <Cell field={f} value={record[f.name]} lang={lang} t={t} />
+                        </td>
+                      ))}
+                      <td className="row-actions">
+                        <button type="button" onClick={() => startEdit(record)}>
+                          {t("entity.edit")}
+                        </button>
+                        <button type="button" className="danger" onClick={() => handleDelete(record.id as number)}>
+                          {t("entity.delete")}
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </>
       )}
     </div>
   );

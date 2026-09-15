@@ -9,7 +9,7 @@
     "build": "esbuild src/server.ts --bundle --platform=node --format=esm --target=node22 --outfile=dist/server.js --external:express --external:cors --external:zod",
     "start": "node --experimental-sqlite dist/server.js",
     "start:dev": "tsx --experimental-sqlite src/server.ts",
-    "test": "tsx --test --experimental-sqlite src/**/*.test.ts"
+    "test": "tsx --test --experimental-sqlite 'src/**/*.test.ts'"
   },
   "dependencies": {
     "@forge/db": "*",

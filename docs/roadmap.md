@@ -303,6 +303,63 @@ delete records through the generated UI, backed by the real API.
       390px mobile width — the new button and hint text lay out cleanly,
       no clipping.
 
+## Generated-app quality
+
+Direct, blunt user feedback: the apps this platform builds looked cheap
+and generic, with no real features. This is accurate and structural —
+every business type (a CRM, a barbershop, a delivery app) rendered
+through one shared, generic table+form component with no visual
+distinction between field types and no interactivity beyond CRUD. This
+section tracks closing that gap for real, one verified step at a time —
+not a single "make it perfect" claim.
+
+- [x] **Step 1: upgrade the entity list view (badges, formatting, search,
+      sort).** `EntityPanel.tsx`'s table used to render every field as
+      plain text and had no way to find or order records. New
+      `entityFormatting.ts` (pure, unit-tested functions, no React) adds:
+      color-coded status badges for enum fields (a lightweight classifier
+      recognizes common positive/negative words like "Won"/"Lost" from
+      the domain library and any AI-generated spec, falling back to
+      neutral for anything else — no per-app configuration needed), a ✓/–
+      icon for booleans instead of "Yes"/"No" text, locale-formatted
+      dates and thousands-separated numbers instead of raw values, a
+      real search box that filters across every field (case-insensitive,
+      matches translated enum labels too), and click-to-sort column
+      headers (asc/desc, correct for numbers/strings/booleans/nulls). A
+      real bug was found and fixed along the way, unrelated to this
+      feature: the test glob in every workspace's `package.json`
+      (`src/**/*.test.ts`, unquoted) was being pre-expanded by the shell
+      inconsistently across workspaces, silently dropping any test file
+      placed directly in `src/` (not a subdirectory) in some workspaces
+      but not others — exposed the moment this work added the first such
+      file in `apps/web`. Fixed by quoting the glob everywhere so the
+      test runner's own (correct) recursive matching is always used;
+      re-ran the full suite before and after to confirm no test was
+      silently lost elsewhere. Also found and fixed a CSS specificity bug
+      while verifying live: the new sort-header buttons briefly flashed
+      solid accent-orange on hover instead of a subtle text-color change,
+      because the generic `button:hover:not(:disabled)` rule was
+      (surprisingly) more specific than the new `.sort-header:hover`
+      override. Verified: 8 new unit tests for `entityFormatting.ts` +
+      full suite green (109 tests, up from 101) + `npm run build` clean +
+      a real Playwright run against a real running server: built a CRM,
+      added customer records with varied statuses, confirmed the color
+      badges render correctly (red for "Lost", neutral for "New"),
+      confirmed search correctly found records by name across both
+      manually-added and seed data, confirmed clicking the status header
+      sorts correctly, and confirmed the hover-color bug is gone —
+      checked in light mode, dark mode, and at mobile width (390px), zero
+      console errors throughout.
+- [ ] **Step 2 candidates (not started, for a future round):** apply the
+      same field-aware rendering (badges, formatted dates/numbers) to the
+      *exported* standalone codegen output (`apps/api/src/codegen.ts`),
+      which currently generates its own separate, plainer React
+      components — today's upgrade only reaches the live in-app preview,
+      not the code a user downloads. Also worth considering: a
+      business-type-aware layout (e.g. a Kanban board for a "Deal"
+      entity with a stage-like enum field, a calendar view for
+      "Appointment") instead of one shared table shape for every entity.
+
 ## Production hardening
 
 - [x] **Fix mobile Refine box placeholder clipping (P2 finding).** The
