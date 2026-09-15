@@ -294,13 +294,13 @@ function AppContent() {
             <h1>{project.name}</h1>
             <div className="preview-header-actions">
               <button type="button" className="secondary" onClick={() => setShowTwin(true)}>
-                🧠 תמונת העסק
+                {t("preview.twin")}
               </button>
               <button type="button" className="secondary" onClick={handleExport} disabled={exportBusy}>
-                {exportBusy ? "מייצא…" : "⬇️ ייצוא קוד"}
+                {exportBusy ? t("preview.export.busy") : t("preview.export")}
               </button>
               <button type="button" className="secondary" onClick={() => setShowHistory(true)}>
-                🕘 ציר זמן
+                {t("preview.history")}
               </button>
             </div>
           </div>
@@ -308,12 +308,12 @@ function AppContent() {
           <form className="refine-box" onSubmit={handleRefine}>
             <input
               type="text"
-              placeholder='לדוגמה: "רוצה לעקוב גם אחרי חשבוניות ללקוחות"'
+              placeholder={t("preview.refine.placeholder")}
               value={refineText}
               onChange={(e) => setRefineText(e.target.value)}
             />
             <button type="submit" disabled={!refineText.trim()}>
-              שיפור האפליקציה
+              {t("preview.refine.submit")}
             </button>
           </form>
 

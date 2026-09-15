@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import type { Entity, EntityRecord, Field } from "@forge/shared";
 import { createRecord, deleteRecord, listRecords, updateRecord } from "./api.js";
+import { useTranslation } from "./i18n/LanguageContext.js";
 
 function emptyForm(entity: Entity): Record<string, unknown> {
   const form: Record<string, unknown> = {};
@@ -10,9 +11,9 @@ function emptyForm(entity: Entity): Record<string, unknown> {
   return form;
 }
 
-function formatCell(field: Field, value: unknown): string {
-  if (value === null || value === undefined || value === "") return "—";
-  if (field.type === "boolean") return value ? "כן" : "לא";
+function formatCell(field: Field, value: unknown, t: (key: string) => string): string {
+  if (value === null || value === undefined || value === "") return t("entity.empty");
+  if (field.type === "boolean") return value ? t("entity.boolean.yes") : t("entity.boolean.no");
   if (field.type === "enum") return field.enumLabels?.[String(value)] ?? String(value);
   return String(value);
 }
@@ -26,6 +27,7 @@ function FieldInput({
   value: unknown;
   onChange: (value: unknown) => void;
 }) {
+  const { t } = useTranslation();
   if (field.type === "boolean") {
     return (
       <input
@@ -39,7 +41,7 @@ function FieldInput({
     return (
       <select value={String(value ?? "")} onChange={(e) => onChange(e.target.value)}>
         <option value="" disabled>
-          לבחור…
+          {t("entity.select")}
         </option>
         {field.enumValues?.map((v) => (
           <option key={v} value={v}>
@@ -58,7 +60,7 @@ function FieldInput({
         type="number"
         value={value === "" || value === null || value === undefined ? "" : Number(value)}
         onChange={(e) => onChange(e.target.value === "" ? "" : Number(e.target.value))}
-        placeholder={field.type === "relation" ? "מספר מזהה" : undefined}
+        placeholder={field.type === "relation" ? t("entity.relation.placeholder") : undefined}
       />
     );
   }
@@ -69,6 +71,7 @@ function FieldInput({
 }
 
 export function EntityPanel({ projectId, entity }: { projectId: string; entity: Entity }) {
+  const { t } = useTranslation();
   const [records, setRecords] = useState<EntityRecord[]>([]);
   const [form, setForm] = useState<Record<string, unknown>>(() => emptyForm(entity));
   const [editingId, setEditingId] = useState<number | null>(null);
@@ -146,7 +149,7 @@ export function EntityPanel({ projectId, entity }: { projectId: string; entity: 
           </label>
         ))}
         <div className="form-actions">
-          <button type="submit">{editingId != null ? "שמירה" : "הוספה"}</button>
+          <button type="submit">{editingId != null ? t("entity.save") : t("entity.add")}</button>
           {editingId != null && (
             <button
               type="button"
@@ -156,7 +159,7 @@ export function EntityPanel({ projectId, entity }: { projectId: string; entity: 
                 setForm(emptyForm(entity));
               }}
             >
-              ביטול
+              {t("entity.cancel")}
             </button>
           )}
         </div>
@@ -164,9 +167,9 @@ export function EntityPanel({ projectId, entity }: { projectId: string; entity: 
 
       {error && <p className="error">{error}</p>}
       {loading ? (
-        <p className="muted">טוען…</p>
+        <p className="muted">{t("entity.loading")}</p>
       ) : records.length === 0 ? (
-        <p className="muted">אין עדיין רשומות — אפשר להוסיף את הראשונה למעלה.</p>
+        <p className="muted">{t("entity.noRecords")}</p>
       ) : (
         <div className="table-scroll">
           <table>
@@ -182,14 +185,14 @@ export function EntityPanel({ projectId, entity }: { projectId: string; entity: 
               {records.map((record) => (
                 <tr key={record.id as number}>
                   {entity.fields.map((f) => (
-                    <td key={f.name}>{formatCell(f, record[f.name])}</td>
+                    <td key={f.name}>{formatCell(f, record[f.name], t)}</td>
                   ))}
                   <td className="row-actions">
                     <button type="button" onClick={() => startEdit(record)}>
-                      עריכה
+                      {t("entity.edit")}
                     </button>
                     <button type="button" className="danger" onClick={() => handleDelete(record.id as number)}>
-                      מחיקה
+                      {t("entity.delete")}
                     </button>
                   </td>
                 </tr>
