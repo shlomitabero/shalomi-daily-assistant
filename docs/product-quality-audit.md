@@ -99,10 +99,17 @@ external font request, not an application bug).
 
 ### P2 — minor polish
 
-- On mobile (390px), the Refine box's input placeholder text gets visibly
-  clipped because the input and its submit button share one row with a
-  160px input minimum — the box still functions correctly once you start
-  typing, this is cosmetic only. Not fixed in this pass.
+- **Mobile Refine box placeholder clipping — fixed.** The input and its
+  submit button shared one row with a 160px input minimum, visibly
+  clipping the placeholder text on narrow viewports. Below 480px they now
+  stack vertically (input gets the full row width), and the English/
+  Hebrew placeholder copy was also shortened to a realistic short example
+  ("add invoice tracking" / "להוסיף מעקב חשבוניות") so it fully fits
+  without relying on the wider box alone. Verified live at 390px in both
+  languages: the full placeholder text is now visible with room to
+  spare, and confirmed no regression on desktop, where the chat pane's
+  own narrow column width already wraps the same way. This closes the
+  last open finding from the original audit.
 - **Dark mode toggle — fixed.** `styles.css` already defined dark-mode-
   ready CSS custom properties (applied automatically via
   `prefers-color-scheme`), but there was no way for the user to switch

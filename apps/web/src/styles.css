@@ -647,6 +647,24 @@ tbody tr:hover {
   box-shadow: none;
 }
 
+@media (max-width: 480px) {
+  /* Below this width the input and submit button no longer fit on one row
+     without squeezing the input under its readable placeholder text (see
+     docs/product-quality-audit.md P2) -- stack them instead of shrinking. */
+  .refine-box {
+    flex-direction: column;
+  }
+
+  .refine-box input {
+    min-width: 0;
+    width: 100%;
+  }
+
+  .refine-box button {
+    width: 100%;
+  }
+}
+
 .refine-history {
   margin: 0 0 24px;
 }

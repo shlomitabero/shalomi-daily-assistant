@@ -305,6 +305,13 @@ delete records through the generated UI, backed by the real API.
 
 ## Production hardening
 
+- [x] **Fix mobile Refine box placeholder clipping (P2 finding).** The
+      input and its submit button shared one row with a 160px input
+      minimum; below 480px they now stack vertically, and the example
+      placeholder copy was shortened in both languages to fit
+      comfortably. Verified live at 390px in Hebrew and English. This
+      closes the last known finding from the original quality audit —
+      see `docs/product-quality-audit.md` for the full detail.
 - [x] **Add a dark mode toggle (P2 finding).** `styles.css` already had
       dark-mode-ready tokens (auto-applied via `prefers-color-scheme`)
       but no manual switch. Added `theme/theme.ts` + `theme/ThemeContext.tsx`
