@@ -184,7 +184,7 @@ delete records through the generated UI, backed by the real API.
       code path to exercise live without a real Anthropic API key
       outside this dev environment), so it's verified that way rather
       than by a claimed browser run.
-- [ ] **Persistent chat + live-preview split-pane builder (Base44/Lovable-
+- [x] **Persistent chat + live-preview split-pane builder (Base44/Lovable-
       style), not a linear screen flow.** Direct product feedback naming
       Base44 specifically. Researched (base44.com itself is blocked by
       this environment's network egress policy, so via search results and
@@ -226,10 +226,29 @@ delete records through the generated UI, backed by the real API.
       full-bleed wide layout) because it still lives inside the app's
       existing 880px content container — widening that container is a
       separate, larger decision not made here.
-      **Still to do:** making the AI Team build activity appear inline in
-      the chat pane instead of taking over the whole screen during a
-      refine (today, submitting a refine still navigates away to the
-      full-screen AI Team view and back) — queued as the next step.
+      **Step 3 done — core loop complete:** refining a built app no
+      longer navigates away to a full-screen AI Team view at all. The
+      chat pane now shows a compact inline version of the AI Team
+      activity (`BuildProgress`'s new `compact` prop: same real per-agent
+      status/detail, no full-page `<main>`/`<h1>` chrome) in place of the
+      Refine input while a refine runs, then returns to the input with
+      the completed entry added to the history — the live-preview column
+      never disappears. Verified live in a real browser by polling the
+      DOM every 20ms through an entire refine: confirmed `.preview-body`
+      (the split-pane container) was present the whole time — a real
+      measurement that no navigation occurred, not an assumption — and
+      confirmed the compact panel was actually observed rendering
+      mid-refine, then confirmed the live entity tabs updated with a real
+      new entity afterward. Zero console errors.
+      **What "core loop complete" means, honestly:** the primary
+      interaction — describe once, then keep refining through a
+      persistent chat next to a live, never-navigated-away-from preview
+      — now genuinely matches the Base44/Lovable pattern that prompted
+      this initiative. Not yet ported: the very first build (idea →
+      spec review → initial build) still uses the earlier full-page flow
+      before any project exists to preview, since there is nothing to
+      show in a live pane yet — folding that in too is a possible, but
+      not yet started, future step.
 - [ ] Multi-agent **parallel** execution (today's pipeline is a sequence, not
       parallel branches with real dependency scheduling) — **not yet implemented**
 - [ ] Git integration (bidirectional sync) — **not yet implemented**

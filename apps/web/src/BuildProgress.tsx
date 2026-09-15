@@ -141,11 +141,16 @@ export function BuildProgress({
   run,
   onComplete,
   onBack,
+  compact = false,
 }: {
-  title: string;
+  title?: string;
   run: (onEvent: (event: AgentStepEvent) => void) => Promise<void>;
   onComplete: (project: Project) => void;
   onBack: () => void;
+  /** Renders without the full-page <main>/<h1> chrome, for embedding inline
+   * (e.g. in the preview screen's chat pane during a refine) instead of
+   * taking over the whole screen. */
+  compact?: boolean;
 }) {
   const { t } = useTranslation();
   const [events, setEvents] = useState<AgentStepEvent[]>([]);
@@ -195,10 +200,12 @@ export function BuildProgress({
   const visibleAgents = AGENT_ORDER.filter((a) => a !== "Debug" || latestByAgent.has("Debug"));
   const doneCount = visibleAgents.filter((a) => latestByAgent.get(a)?.status === "success").length;
 
+  const Wrapper = compact ? "div" : "main";
+
   return (
-    <main className="ai-team">
-      <h1>{title}</h1>
-      <p className="muted">
+    <Wrapper className={compact ? "ai-team ai-team-compact" : "ai-team"}>
+      {!compact && <h1>{title}</h1>}
+      <p className={compact ? "muted small" : "muted"}>
         {t("build.subtitle", { current: Math.min(doneCount + 1, visibleAgents.length), total: visibleAgents.length })}
       </p>
       <ol className="agent-steps">
@@ -250,7 +257,7 @@ export function BuildProgress({
           );
         })}
       </ol>
-      <p className="muted small">{t("build.footer")}</p>
+      {!compact && <p className="muted small">{t("build.footer")}</p>}
       {error && <p className="error banner">{error}</p>}
       {failedStep && (
         <div>
@@ -260,6 +267,6 @@ export function BuildProgress({
           </button>
         </div>
       )}
-    </main>
+    </Wrapper>
   );
 }

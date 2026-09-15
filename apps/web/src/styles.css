@@ -598,6 +598,19 @@ tbody tr:hover {
   max-width: 640px;
 }
 
+.ai-team-compact {
+  max-width: none;
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 14px;
+  box-shadow: var(--shadow-sm);
+}
+
+.ai-team-compact .agent-steps {
+  margin: 12px 0 0;
+}
+
 .agent-steps {
   list-style: none;
   margin: 20px 0;

@@ -74,10 +74,10 @@ function AppContent() {
   const [additionalRequest, setAdditionalRequest] = useState("");
   const [refineText, setRefineText] = useState("");
   const [showHistory, setShowHistory] = useState(false);
-  const [buildMode, setBuildMode] = useState<"build" | "refine">("build");
   const [exportBusy, setExportBusy] = useState(false);
   const [showTwin, setShowTwin] = useState(false);
   const [refineHistory, setRefineHistory] = useState<RefineHistoryEntry[]>([]);
+  const [refineRunning, setRefineRunning] = useState(false);
   const pendingRefineInstruction = useRef<string | null>(null);
   const refineEvents = useRef<AgentStepEvent[]>([]);
 
@@ -154,7 +154,6 @@ function AppContent() {
       }
       setBusy(false);
     }
-    setBuildMode("build");
     setView("building");
   }
 
@@ -163,12 +162,11 @@ function AppContent() {
     if (!refineText.trim()) return;
     pendingRefineInstruction.current = refineText.trim();
     refineEvents.current = [];
-    setBuildMode("refine");
-    setView("building");
+    setRefineRunning(true);
   }
 
   function handleBuildComplete(builtProject: Project) {
-    if (buildMode === "refine" && pendingRefineInstruction.current) {
+    if (refineRunning && pendingRefineInstruction.current) {
       const entry: RefineHistoryEntry = {
         id: crypto.randomUUID(),
         instruction: pendingRefineInstruction.current,
@@ -181,6 +179,7 @@ function AppContent() {
     setActiveEntity((prev) => prev ?? builtProject.spec.entities[0]?.name ?? null);
     setRefineText("");
     setAdditionalRequest("");
+    setRefineRunning(false);
     setView("preview");
   }
 
@@ -324,18 +323,10 @@ function AppContent() {
 
       {view === "building" && project && (
         <BuildProgress
-          title={buildMode === "build" ? t("build.title.build") : t("build.title.refine")}
-          run={(onEvent) => {
-            const wrappedOnEvent = (event: AgentStepEvent) => {
-              if (buildMode === "refine") refineEvents.current.push(event);
-              onEvent(event);
-            };
-            return buildMode === "build"
-              ? streamBuild(project.id, wrappedOnEvent)
-              : streamRefine(project.id, refineText, wrappedOnEvent);
-          }}
+          title={t("build.title.build")}
+          run={(onEvent) => streamBuild(project.id, onEvent)}
           onComplete={handleBuildComplete}
-          onBack={() => setView(buildMode === "build" ? "spec" : "preview")}
+          onBack={() => setView("spec")}
         />
       )}
 
@@ -358,17 +349,32 @@ function AppContent() {
 
           <div className="preview-body">
             <div className="preview-chat-pane">
-              <form className="refine-box" onSubmit={handleRefine}>
-                <input
-                  type="text"
-                  placeholder={t("preview.refine.placeholder")}
-                  value={refineText}
-                  onChange={(e) => setRefineText(e.target.value)}
+              {refineRunning ? (
+                <BuildProgress
+                  compact
+                  run={(onEvent) => {
+                    const wrappedOnEvent = (event: AgentStepEvent) => {
+                      refineEvents.current.push(event);
+                      onEvent(event);
+                    };
+                    return streamRefine(project.id, refineText, wrappedOnEvent);
+                  }}
+                  onComplete={handleBuildComplete}
+                  onBack={() => setRefineRunning(false)}
                 />
-                <button type="submit" disabled={!refineText.trim()}>
-                  {t("preview.refine.submit")}
-                </button>
-              </form>
+              ) : (
+                <form className="refine-box" onSubmit={handleRefine}>
+                  <input
+                    type="text"
+                    placeholder={t("preview.refine.placeholder")}
+                    value={refineText}
+                    onChange={(e) => setRefineText(e.target.value)}
+                  />
+                  <button type="submit" disabled={!refineText.trim()}>
+                    {t("preview.refine.submit")}
+                  </button>
+                </form>
+              )}
 
               {refineHistory.length > 0 && (
                 <div className="refine-history">
