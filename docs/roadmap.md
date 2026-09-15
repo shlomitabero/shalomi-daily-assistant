@@ -124,6 +124,22 @@ delete records through the generated UI, backed by the real API.
       — verified the same way (a request with no matching open question
       still added a real Invoice entity to the built app, live in a
       browser).
+- [x] **Product quality audit + believable seed data.** In response to a
+      direct request to benchmark against Lovable/Base44-class products,
+      ran a real audit — a real browser at mobile/tablet/desktop widths
+      against every major screen, not a checklist filled in from memory —
+      and wrote the honest findings to `docs/product-quality-audit.md`
+      (P0/P1/P2). The clearest, most visible P1 found: every freshly built
+      app's first screen showed placeholder rows like "לקוחות - שם 1" /
+      "Customer phone 2" — fixed by giving `packages/db/src/seed.ts` real
+      believable value pools (names, emails, phones, sources, roles, item
+      names) keyed by field name and entity context. Verified with new
+      unit tests and live in a browser across three entity types.
+- [ ] **Real bilingual support (Hebrew + English, proper RTL/LTR i18n).**
+      Confirmed by the audit above: there is currently zero i18n
+      architecture — every string is hardcoded Hebrew JSX, no language
+      switcher, no LTR path. This is the top-priority item queued next —
+      **not yet implemented**.
 - [ ] Multi-agent **parallel** execution (today's pipeline is a sequence, not
       parallel branches with real dependency scheduling) — **not yet implemented**
 - [ ] Git integration (bidirectional sync) — **not yet implemented**
