@@ -37,7 +37,7 @@ function withLabels(entity: Entity, labels: HebrewLabels): Entity {
   };
 }
 
-function matchEntities(text: string, isHebrew: boolean): Entity[] {
+export function matchEntities(text: string, isHebrew: boolean): Entity[] {
   const lower = text.toLowerCase();
   const matched: Entity[] = [];
   for (const rule of DOMAIN_ENTITY_RULES) {
@@ -58,7 +58,7 @@ function matchEntities(text: string, isHebrew: boolean): Entity[] {
   ];
 }
 
-function matchRoles(text: string, isHebrew: boolean): string[] {
+export function matchRoles(text: string, isHebrew: boolean): string[] {
   const lower = text.toLowerCase();
   const roles = new Set<string>();
   for (const [role, rule] of Object.entries(ROLE_RULES)) {

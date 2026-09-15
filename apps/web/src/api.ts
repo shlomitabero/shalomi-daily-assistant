@@ -66,6 +66,15 @@ export function createProject(description: string): Promise<{ project: Project; 
   return request("/projects", { method: "POST", body: JSON.stringify({ description }) });
 }
 
+/**
+ * The Prompt Architect Agent: sends a short, rough idea and gets back a
+ * fuller, more detailed rewrite the user can review before it's used to
+ * create the project (same AI-or-heuristic provider seam as createProject).
+ */
+export function enhanceIdea(idea: string): Promise<{ enhanced: string; providerName: string }> {
+  return request("/ideas/enhance", { method: "POST", body: JSON.stringify({ idea }) });
+}
+
 export function listProjects(): Promise<{ projects: Project[] }> {
   return request("/projects");
 }

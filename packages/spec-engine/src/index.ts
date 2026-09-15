@@ -8,6 +8,13 @@ export { HeuristicSpecProvider } from "./heuristic.js";
 export { AnthropicSpecProvider } from "./anthropic.js";
 export { isHebrewText } from "./domainEntities.js";
 export { requestSpecFix, type RequestSpecFixOptions } from "./debug.js";
+export {
+  enhancePrompt,
+  selectEnhancer,
+  HeuristicPromptEnhancer,
+  AnthropicPromptEnhancer,
+  type PromptEnhancer,
+} from "./promptEnhancer.js";
 
 /**
  * Picks the best available provider: a real Claude model call when

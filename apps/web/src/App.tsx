@@ -4,6 +4,7 @@ import {
   answerQuestions,
   clearToken,
   createProject,
+  enhanceIdea,
   exportProject,
   getToken,
   logout,
@@ -68,6 +69,7 @@ function AppContent() {
   const [description, setDescription] = useState("");
   const [project, setProject] = useState<Project | null>(null);
   const [busy, setBusy] = useState(false);
+  const [enhanceBusy, setEnhanceBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [activeEntity, setActiveEntity] = useState<string | null>(null);
   const [selectedAnswers, setSelectedAnswers] = useState<Record<string, string>>({});
@@ -121,6 +123,30 @@ function AppContent() {
       setError((err as Error).message);
     } finally {
       setBusy(false);
+    }
+  }
+
+  /**
+   * The "improve my idea then build" loop: sends the raw idea to the Prompt
+   * Architect Agent, shows the rewritten prompt it wrote back in the
+   * textarea (nothing hidden), then immediately runs that AI-written prompt
+   * through the normal create-project pipeline -- the app builds its own
+   * prompt, then builds itself from it.
+   */
+  async function handleEnhanceAndBuild() {
+    if (!description.trim()) return;
+    setEnhanceBusy(true);
+    setError(null);
+    try {
+      const { enhanced } = await enhanceIdea(description);
+      setDescription(enhanced);
+      const { project } = await createProject(enhanced);
+      setProject(project);
+      setView("spec");
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setEnhanceBusy(false);
     }
   }
 
@@ -226,9 +252,18 @@ function AppContent() {
               value={description}
               onChange={(e) => setDescription(e.target.value)}
             />
-            <button type="submit" disabled={busy}>
+            <button type="submit" disabled={busy || enhanceBusy}>
               {busy ? t("home.submit.busy") : t("home.submit")}
             </button>
+            <button
+              type="button"
+              className="secondary"
+              disabled={busy || enhanceBusy || !description.trim()}
+              onClick={handleEnhanceAndBuild}
+            >
+              {enhanceBusy ? t("home.enhance.busy") : t("home.enhance")}
+            </button>
+            <p className="muted small">{t("home.enhance.hint")}</p>
           </form>
         </main>
       )}

@@ -17,7 +17,7 @@ import {
   type ForgeDatabase,
 } from "@forge/db";
 import type { SpecProvider } from "@forge/spec-engine";
-import { generateSpec, isHebrewText } from "@forge/spec-engine";
+import { enhancePrompt, generateSpec, isHebrewText } from "@forge/spec-engine";
 import { HttpError } from "../httpError.js";
 import { requireAuth } from "../auth/middleware.js";
 import { runBuildPipeline } from "../pipeline.js";
@@ -28,6 +28,10 @@ import { computeBusinessTwin } from "../twin.js";
 const CreateProjectSchema = z.object({
   description: z.string().min(1, "description is required"),
   name: z.string().optional(),
+});
+
+const EnhanceIdeaSchema = z.object({
+  idea: z.string().min(1, "idea is required"),
 });
 
 const RefineSchema = z.object({
@@ -87,6 +91,24 @@ async function streamPipeline(
 export function createProjectsRouter(db: ForgeDatabase, provider?: SpecProvider): Router {
   const router = Router();
   router.use(requireAuth(db));
+
+  /**
+   * The Prompt Architect Agent: takes a short, rough idea and rewrites it
+   * into a fuller, more detailed prompt (same AI-or-heuristic provider seam
+   * as generateSpec), without creating a project yet -- the client decides
+   * whether to use the enhanced text.
+   */
+  router.post(
+    "/ideas/enhance",
+    asyncRoute(async (req, res) => {
+      const parsed = EnhanceIdeaSchema.safeParse(req.body);
+      if (!parsed.success) {
+        throw new HttpError(400, parsed.error.message);
+      }
+      const { enhanced, providerName } = await enhancePrompt(parsed.data.idea);
+      res.json({ enhanced, providerName });
+    }),
+  );
 
   router.post(
     "/projects",

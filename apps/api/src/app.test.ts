@@ -452,3 +452,47 @@ test("export refuses before build, and returns a real zip file after", async () 
     assert.ok(buffer.length > 500);
   });
 });
+
+test("the idea-enhance endpoint requires auth, rejects an empty idea, and expands a real one", async () => {
+  await withServer(async (baseUrl) => {
+    const noAuth = await fetch(`${baseUrl}/api/ideas/enhance`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ idea: "a hair salon" }),
+    });
+    assert.equal(noAuth.status, 401);
+
+    const token = await signup(baseUrl);
+
+    const empty = await fetch(`${baseUrl}/api/ideas/enhance`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ idea: "" }),
+    });
+    assert.equal(empty.status, 400);
+
+    const idea = "a booking app for a hair salon with customers and appointments";
+    const res = await fetch(`${baseUrl}/api/ideas/enhance`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ idea }),
+    });
+    assert.equal(res.status, 200);
+    const { enhanced, providerName } = (await res.json()) as { enhanced: string; providerName: string };
+    assert.equal(providerName, "heuristic"); // no ANTHROPIC_API_KEY in the test environment
+    assert.match(enhanced, /Customer/);
+    assert.ok(enhanced.length > idea.length);
+
+    // The enhanced text is a real, usable description -- feed it straight into project creation,
+    // proving this genuinely "runs the AI's own improved prompt through the normal pipeline" rather
+    // than being a dead-end preview.
+    const createRes = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ description: enhanced }),
+    });
+    assert.equal(createRes.status, 201);
+    const { project } = (await createRes.json()) as { project: { spec: { entities: { name: string }[] } } };
+    assert.ok(project.spec.entities.some((e) => e.name === "Customer"));
+  });
+});

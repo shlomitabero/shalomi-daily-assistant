@@ -268,6 +268,40 @@ delete records through the generated UI, backed by the real API.
 - [x] Precompile `apps/api` to a bundled JS file for production instead of
       transpiling TypeScript at every boot — see "Production hardening"
       below.
+- [x] **Prompt Architect Agent: "enhance my idea, then build it" loop.**
+      Direct user request: write a rough idea, have the app's AI turn it
+      into a proper, detailed prompt, then run that AI-written prompt
+      through the app itself automatically (a Base44/Lovable-style
+      "improve my prompt" step, taken one step further into full
+      automation). New `packages/spec-engine/src/promptEnhancer.ts`
+      mirrors the existing `SpecProvider` seam exactly:
+      `AnthropicPromptEnhancer` (real Claude call, dedicated system prompt,
+      used when `ANTHROPIC_API_KEY` is set) and `HeuristicPromptEnhancer`
+      (deterministic, offline — reuses the same keyword-matched domain
+      library the heuristic spec generator already uses, so it works with
+      zero configuration), picked by `selectEnhancer` the same way
+      `selectProvider` already works. New `POST /api/ideas/enhance`
+      endpoint (auth-required, 400 on an empty idea). On the home screen, a
+      new "✨ Enhance & build with AI" button sends the typed idea to this
+      endpoint, **replaces the textarea with the AI's rewritten prompt so
+      the user sees exactly what it wrote** (nothing hidden or silently
+      substituted), and immediately continues through the normal
+      create-project pipeline with that rewritten text — the app builds
+      its own prompt, then builds itself from it, in one click. The
+      original "Let's get started" button is untouched and still builds
+      whatever is currently in the textarea (raw or AI-rewritten,
+      user-edited or not), so nothing about the existing flow changed.
+      Verified: 28 spec-engine unit tests (both providers, empty-input and
+      API-failure error paths, `selectEnhancer`'s key-based provider
+      choice) + a new API integration test (401 without auth, 400 on an
+      empty idea, and a full round trip proving the enhanced text is a
+      real, usable description by feeding it straight into project
+      creation) + `npm run build` clean + a real Playwright run against a
+      real running server: typed a two-word Hebrew idea for a hair salon,
+      clicked the new button, watched it land directly on the spec review
+      screen with detected entities, zero console errors. Also checked at
+      390px mobile width — the new button and hint text lay out cleanly,
+      no clipping.
 
 ## Production hardening
 
