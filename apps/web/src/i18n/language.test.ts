@@ -7,10 +7,27 @@ test("detectInitialLang trusts a valid stored value", () => {
   assert.equal(detectInitialLang("he"), "he");
 });
 
-test("detectInitialLang defaults to Hebrew for null or a corrupted value, never throws", () => {
+test("detectInitialLang defaults to Hebrew for a corrupted stored value even with no browser info, never throws", () => {
   assert.equal(detectInitialLang(null), "he");
   assert.equal(detectInitialLang("fr"), "he");
   assert.equal(detectInitialLang(""), "he");
+});
+
+test("detectInitialLang picks Hebrew for a Hebrew browser locale when nothing is stored", () => {
+  assert.equal(detectInitialLang(null, "he"), "he");
+  assert.equal(detectInitialLang(null, "he-IL"), "he");
+  assert.equal(detectInitialLang(null, "HE-il"), "he");
+});
+
+test("detectInitialLang picks English for any non-Hebrew browser locale when nothing is stored", () => {
+  assert.equal(detectInitialLang(null, "en-US"), "en");
+  assert.equal(detectInitialLang(null, "fr-FR"), "en");
+  assert.equal(detectInitialLang(null, "ar"), "en");
+});
+
+test("detectInitialLang lets a stored preference override the browser locale", () => {
+  assert.equal(detectInitialLang("en", "he-IL"), "en");
+  assert.equal(detectInitialLang("he", "en-US"), "he");
 });
 
 test("dirFor maps each language to the correct writing direction", () => {

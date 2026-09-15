@@ -19,7 +19,7 @@ function readStoredLang(): string | null {
 }
 
 export function LanguageProvider({ children }: { children: ReactNode }) {
-  const [lang, setLangState] = useState<Lang>(() => detectInitialLang(readStoredLang()));
+  const [lang, setLangState] = useState<Lang>(() => detectInitialLang(readStoredLang(), navigator.language));
 
   useEffect(() => {
     document.documentElement.lang = lang;

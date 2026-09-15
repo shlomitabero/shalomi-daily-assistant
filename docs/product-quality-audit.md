@@ -68,12 +68,12 @@ external font request, not an application bug).
    AI Team build, preview + entity panel, History panel, and Business
    Twin panel. A real bug was found and fixed along the way: checkpoint
    timestamps in the History panel were hardcoded to `he-IL` formatting
-   regardless of the selected UI language. **Remaining, tracked as
-   follow-ups, not blockers:** server-side error messages aren't
-   localized in any screen, and the default language still doesn't
-   auto-detect from the browser (a deliberate interim choice from when
-   only some screens were converted — see `docs/roadmap.md` for why it's
-   now worth revisiting).
+   regardless of the selected UI language. Browser-language
+   auto-detection (Hebrew locale → Hebrew, else → English, stored
+   preference always wins) is now enabled too, verified across 4 real
+   browser locale contexts — see `docs/roadmap.md`. **Remaining, tracked
+   as a follow-up, not a blocker:** server-side error messages aren't
+   localized in any screen.
 
 3. **Desktop screens with little content leave a large, unstyled empty
    void below the fold** (seen clearly on the auth screen and the "מה

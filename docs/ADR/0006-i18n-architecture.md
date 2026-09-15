@@ -123,3 +123,30 @@ use today and are not translated client-side.
 - Adding a new user-facing string anywhere in the app now has a clear,
   established pattern to follow (`t("area.key")` + both dictionary
   entries), rather than being a one-off decision each time.
+
+## Update: browser-language auto-detection enabled
+
+All screens (home, spec review, AI Team build, preview/entity, History,
+Business Twin) were converted in the follow-up work this ADR anticipated
+(`docs/roadmap.md`), removing the reason the "default Hebrew, not
+browser-detected" decision above gave for deferring auto-detection —
+there is no longer an unconverted screen that a browser-detected English
+visitor could land on and see a mixed-language page.
+
+`detectInitialLang` now takes an optional `browserLanguage` argument
+(`LanguageProvider` passes `navigator.language`): an explicit stored
+choice still always wins; otherwise a Hebrew browser locale (`he`,
+`he-IL`, ...) picks Hebrew, any other locale picks English, and no
+browser info at all (e.g. a non-browser test environment) still falls
+back to Hebrew, preserving the product's Hebrew-first default when there
+is genuinely nothing to detect.
+
+Verified with 4 new unit tests (Hebrew locale variants, non-Hebrew
+locales, a stored preference overriding the locale, and the no-browser-
+info fallback) and live in a real browser across four real Playwright
+browser contexts with different locales (`en-US`, `he-IL`, `fr-FR`, and
+`en-US` with a stored Hebrew preference) — each produced the correct
+`dir`/`lang` and, for the two full-page cases, the correctly translated
+title, with zero stored preference in three of the four cases (a fresh
+browser context has no `localStorage`) to confirm this was genuinely the
+locale-detection path, not leftover state from a previous test.

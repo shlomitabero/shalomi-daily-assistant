@@ -3,17 +3,17 @@ export type Lang = "he" | "en";
 export const STORAGE_KEY = "forge.lang";
 
 /**
- * Only Hebrew and the topbar chrome are converted so far (see
- * docs/product-quality-audit.md) -- switching to English on an
- * unconverted screen would show a mix of English chrome and Hebrew
- * content, which is worse than staying consistently Hebrew. So for now
- * the default is always Hebrew regardless of browser language, and
- * English is an explicit choice via the language switcher, never an
- * automatic one. Browser-language auto-detection is deferred until more
- * screens are converted (tracked in docs/roadmap.md).
+ * Every screen is now translated (see docs/roadmap.md), so browser-language
+ * detection is safe: an explicit stored choice always wins; otherwise a
+ * Hebrew browser locale ("he", "he-IL", ...) picks Hebrew and anything else
+ * picks English; with no browser info at all (e.g. a non-browser test
+ * environment) the default stays Hebrew, matching this product's Hebrew-
+ * first origin.
  */
-export function detectInitialLang(storedValue: string | null): Lang {
-  return storedValue === "he" || storedValue === "en" ? storedValue : "he";
+export function detectInitialLang(storedValue: string | null, browserLanguage?: string): Lang {
+  if (storedValue === "he" || storedValue === "en") return storedValue;
+  if (!browserLanguage) return "he";
+  return browserLanguage.toLowerCase().startsWith("he") ? "he" : "en";
 }
 
 export function dirFor(lang: Lang): "rtl" | "ltr" {

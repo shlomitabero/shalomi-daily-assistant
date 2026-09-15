@@ -162,12 +162,22 @@ delete records through the generated UI, backed by the real API.
       already produces English entity/field names and observations too
       — English users get more coherent content than the UI-chrome
       translation alone would suggest.
-      **Known remaining gaps, tracked as follow-ups, not blockers:**
-      server-side error messages (e.g. a failed record validation) are
-      not localized in any screen; the default language still doesn't
-      auto-detect from the browser (a deliberate interim choice from
-      when only some screens were converted — worth revisiting now that
-      all of them are).
+      **Known remaining gap:** server-side error messages (e.g. a failed
+      record validation) are not localized in any screen. (Browser-
+      language auto-detection — the other gap noted here previously — is
+      now enabled; see below.)
+- [x] **Browser-language auto-detection.** Now that every screen is
+      translated, `detectInitialLang` picks the visitor's language from
+      `navigator.language` when nothing is stored yet (Hebrew locale →
+      Hebrew, anything else → English), instead of always defaulting to
+      Hebrew regardless of browser — a stored preference still always
+      wins. See ADR 0006's update section. Verified with 4 new unit
+      tests and live across 4 real Playwright browser contexts with
+      different locales (`en-US`, `he-IL`, `fr-FR`, and `en-US` with a
+      stored Hebrew preference) — each produced the correct language,
+      including confirming the override case works and that an
+      unsupported locale (French) correctly falls back to English rather
+      than erroring or defaulting to Hebrew.
 - [x] **Product Manager Agent no longer defaults toward a minimal spec.**
       Direct product feedback: the AI was consistently recommending a
       stripped-down interpretation of what the user described. Traced to
