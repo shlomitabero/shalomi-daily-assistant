@@ -135,33 +135,39 @@ delete records through the generated UI, backed by the real API.
       believable value pools (names, emails, phones, sources, roles, item
       names) keyed by field name and entity context. Verified with new
       unit tests and live in a browser across three entity types.
-- [~] **Real bilingual support (Hebrew + English, proper RTL/LTR i18n) —
-      Steps 1–4 done.** Built the real i18n architecture (no library —
-      `apps/web/src/i18n/`: a pure translation dictionary + `translate()`
-      with lightweight `{placeholder}` interpolation, a
+- [x] **Real bilingual support (Hebrew + English, proper RTL/LTR i18n) —
+      every screen converted.** Built the real i18n architecture (no
+      library — `apps/web/src/i18n/`: a pure translation dictionary +
+      `translate()` with lightweight `{placeholder}` interpolation, a
       `LanguageProvider`/`useTranslation()` context, a language
       switcher), driving a real `dir`/`lang` flip on `<html>` (the
       existing CSS already used only logical properties, so no CSS
-      changes were needed for LTR to work). Converted and verified live:
-      the pre-auth screen, the authenticated topbar chrome, the home
-      screen, the full spec review screen, the AI Team build screen (all
-      7 agents' captions and detail panels), and the preview screen (the
-      Business Twin/Export/Time Machine buttons, the Refine box, entity
-      tabs, and the full entity record panel — form labels, the
-      boolean/enum/relation field renderers, save/add/cancel/edit/delete,
-      loading and empty states). See ADR 0006 for why the default stays
-      Hebrew until more is converted. One nice side effect confirmed
-      live: since the spec itself is already generated in whichever
-      language the user typed their description in (existing bilingual
-      spec-engine behavior), an English description already produces
-      English entity/field names too — so English users get more
-      coherent content than the chrome-only conversion alone would
-      suggest. **Still not yet implemented:** the History panel and
-      Business Twin panel (opened from the preview screen's buttons)
-      still show hardcoded Hebrew regardless of the selected language —
-      each is a queued next step. Server-side error messages (e.g. a
-      failed record validation) are also not localized yet, in any
-      screen.
+      changes were needed for LTR to work). Every screen is now
+      converted and was verified live in a real browser: the pre-auth
+      screen, the topbar chrome, the home screen, the full spec review
+      screen, the AI Team build screen (all 7 agents' captions and
+      detail panels), the preview screen (header buttons, Refine box,
+      entity tabs, and the full entity record panel), the History panel
+      (checkpoint restore, including fixing a real bug found along the
+      way — checkpoint timestamps were hardcoded to `he-IL` regardless
+      of the selected language, now correctly use `en-US`/`he-IL` based
+      on it), and the Business Twin panel. See ADR 0006 for the
+      architecture and the deliberate choice to default new visitors to
+      Hebrew rather than browser-detect (now that every screen is
+      converted, this default is worth revisiting in a future pass —
+      see below). One nice side effect confirmed live throughout: since
+      the spec and Business Twin observations are already generated in
+      whichever language the user typed their description in (existing
+      bilingual spec-engine/twin behavior), an English description
+      already produces English entity/field names and observations too
+      — English users get more coherent content than the UI-chrome
+      translation alone would suggest.
+      **Known remaining gaps, tracked as follow-ups, not blockers:**
+      server-side error messages (e.g. a failed record validation) are
+      not localized in any screen; the default language still doesn't
+      auto-detect from the browser (a deliberate interim choice from
+      when only some screens were converted — worth revisiting now that
+      all of them are).
 - [ ] Multi-agent **parallel** execution (today's pipeline is a sequence, not
       parallel branches with real dependency scheduling) — **not yet implemented**
 - [ ] Git integration (bidirectional sync) — **not yet implemented**

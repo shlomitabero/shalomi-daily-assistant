@@ -56,25 +56,24 @@ external font request, not an application bug).
    a real browser across three entity types (Customer, Appointment,
    Employee) — see the "Add believable seed data" commit.
 
-2. **No bilingual (Hebrew + English) support at all — Steps 1–4 fixed,
-   two panels still open.** There was no i18n architecture in this
-   codebase at all (`grep` for `i18n`/`locale`/`translation` across
-   `apps/web/src` returned nothing): every user-facing string was
-   hardcoded Hebrew JSX text, with no language switcher and no LTR path.
-   The founding prompt marks this "CRITICAL," correctly. Given the size of
-   this change, it's being done as a sequence of real steps rather than
-   rushed in one pass — see ADR 0006. Done so far: the i18n architecture
-   itself, the pre-auth screen, the topbar chrome, the home screen, the
-   full spec review screen, the AI Team build screen, and now the full
-   preview screen (header buttons, Refine box, entity tabs) and entity
-   record panel (form, field renderers, table, edit/delete, empty/loading
-   states) — all verified live in a real browser with zero page errors,
-   including confirming a real validation error still correctly blocks an
-   incomplete form submission in the translated UI. **Still open:** the
-   History panel and Business Twin panel still show hardcoded Hebrew
-   regardless of the selected language, and server-side error messages
-   are not localized in any screen — each is a queued next step in
-   `docs/roadmap.md`.
+2. **No bilingual (Hebrew + English) support at all — now fixed, every
+   screen converted.** There was no i18n architecture in this codebase at
+   all (`grep` for `i18n`/`locale`/`translation` across `apps/web/src`
+   returned nothing): every user-facing string was hardcoded Hebrew JSX
+   text, with no language switcher and no LTR path. The founding prompt
+   marked this "CRITICAL," correctly. Fixed as a sequence of real,
+   individually-verified steps rather than rushed in one pass — see
+   ADR 0006 for the architecture. Every screen is now converted and was
+   verified live in a real browser: pre-auth, topbar, home, spec review,
+   AI Team build, preview + entity panel, History panel, and Business
+   Twin panel. A real bug was found and fixed along the way: checkpoint
+   timestamps in the History panel were hardcoded to `he-IL` formatting
+   regardless of the selected UI language. **Remaining, tracked as
+   follow-ups, not blockers:** server-side error messages aren't
+   localized in any screen, and the default language still doesn't
+   auto-detect from the browser (a deliberate interim choice from when
+   only some screens were converted — see `docs/roadmap.md` for why it's
+   now worth revisiting).
 
 3. **Desktop screens with little content leave a large, unstyled empty
    void below the fold** (seen clearly on the auth screen and the "מה

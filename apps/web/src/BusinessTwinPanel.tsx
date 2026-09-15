@@ -1,7 +1,9 @@
 import { useEffect, useState } from "react";
 import { getBusinessTwin, type BusinessTwin } from "./api.js";
+import { useTranslation } from "./i18n/LanguageContext.js";
 
 export function BusinessTwinPanel({ projectId, onClose }: { projectId: string; onClose: () => void }) {
+  const { t } = useTranslation();
   const [twin, setTwin] = useState<BusinessTwin | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -15,17 +17,15 @@ export function BusinessTwinPanel({ projectId, onClose }: { projectId: string; o
     <div className="history-overlay">
       <div className="history-panel twin-panel">
         <div className="history-header">
-          <h2>🧠 תמונת העסק</h2>
+          <h2>{t("twin.title")}</h2>
           <button type="button" className="secondary" onClick={onClose}>
-            סגירה
+            {t("history.close")}
           </button>
         </div>
-        <p className="muted small">
-          זו תמונת מצב אמיתית, מבוססת על הנתונים שבפועל נמצאים באפליקציה שלך — לא ניתוח עסקי מלא.
-        </p>
+        <p className="muted small">{t("twin.description")}</p>
 
         {error && <p className="error">{error}</p>}
-        {!twin && !error && <p className="muted">טוען…</p>}
+        {!twin && !error && <p className="muted">{t("twin.loading")}</p>}
 
         {twin && (
           <>
@@ -48,7 +48,7 @@ export function BusinessTwinPanel({ projectId, onClose }: { projectId: string; o
 
             {twin.observations.length > 0 && (
               <div className="twin-observations">
-                <span className="label">מה שמתי לב אליו</span>
+                <span className="label">{t("twin.observations")}</span>
                 <ul>
                   {twin.observations.map((o, i) => (
                     <li key={i}>{o}</li>

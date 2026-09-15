@@ -1,6 +1,9 @@
 import { useEffect, useState } from "react";
 import type { Checkpoint, Project } from "@forge/shared";
 import { listCheckpoints, restoreCheckpoint } from "./api.js";
+import { useTranslation } from "./i18n/LanguageContext.js";
+
+const LOCALE: Record<string, string> = { he: "he-IL", en: "en-US" };
 
 export function HistoryPanel({
   projectId,
@@ -11,6 +14,7 @@ export function HistoryPanel({
   onRestored: (project: Project) => void;
   onClose: () => void;
 }) {
+  const { t, lang } = useTranslation();
   const [checkpoints, setCheckpoints] = useState<Checkpoint[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
@@ -38,33 +42,34 @@ export function HistoryPanel({
     <div className="history-overlay">
       <div className="history-panel">
         <div className="history-header">
-          <h2>ציר זמן</h2>
+          <h2>{t("history.title")}</h2>
           <button type="button" className="secondary" onClick={onClose}>
-            סגירה
+            {t("history.close")}
           </button>
         </div>
-        <p className="muted small">
-          כל בנייה או שיפור נשמר כאן כנקודת שחזור. חוזרים אחורה בלי לאבד מידע — אף פעולה כאן לא
-          מוחקת נתונים קיימים.
-        </p>
+        <p className="muted small">{t("history.description")}</p>
         {error && <p className="error">{error}</p>}
         {checkpoints.length === 0 ? (
-          <p className="muted">אין עדיין נקודות שמורות.</p>
+          <p className="muted">{t("history.empty")}</p>
         ) : (
           <ul className="checkpoint-list">
             {checkpoints.map((checkpoint) => (
               <li key={checkpoint.id}>
                 <div>
                   <strong>{checkpoint.label}</strong>
-                  <div className="muted small">{new Date(checkpoint.createdAt).toLocaleString("he-IL")}</div>
-                  <div className="muted small">{checkpoint.spec.entities.length} מסכים</div>
+                  <div className="muted small">
+                    {new Date(checkpoint.createdAt).toLocaleString(LOCALE[lang])}
+                  </div>
+                  <div className="muted small">
+                    {t("history.screenCount", { count: checkpoint.spec.entities.length })}
+                  </div>
                 </div>
                 <button
                   type="button"
                   onClick={() => handleRestore(checkpoint.id)}
                   disabled={busyId === checkpoint.id}
                 >
-                  {busyId === checkpoint.id ? "משחזר…" : "שחזור"}
+                  {busyId === checkpoint.id ? t("history.restore.busy") : t("history.restore")}
                 </button>
               </li>
             ))}
