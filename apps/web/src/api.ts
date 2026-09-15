@@ -72,12 +72,20 @@ export function listProjects(): Promise<{ projects: Project[] }> {
 
 /**
  * Sends the user's answers to the spec's open questions (quick-pick or
- * freely typed) back to the server, which regenerates the spec from them
- * before the build runs — so an answer actually changes what gets built,
- * not just which chip looks selected.
+ * freely typed), and/or a free-standing request not tied to any specific
+ * question, back to the server, which regenerates the spec from them
+ * before the build runs — so this actually changes what gets built, not
+ * just which chip looks selected.
  */
-export function answerQuestions(projectId: string, answers: Record<string, string>): Promise<{ project: Project }> {
-  return request(`/projects/${projectId}/answers`, { method: "POST", body: JSON.stringify({ answers }) });
+export function answerQuestions(
+  projectId: string,
+  answers: Record<string, string>,
+  additionalRequest?: string,
+): Promise<{ project: Project }> {
+  return request(`/projects/${projectId}/answers`, {
+    method: "POST",
+    body: JSON.stringify({ answers, additionalRequest }),
+  });
 }
 
 /**

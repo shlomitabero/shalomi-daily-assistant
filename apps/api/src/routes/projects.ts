@@ -35,7 +35,8 @@ const RefineSchema = z.object({
 });
 
 const AnswerQuestionsSchema = z.object({
-  answers: z.record(z.string(), z.string()),
+  answers: z.record(z.string(), z.string()).optional().default({}),
+  additionalRequest: z.string().optional(),
 });
 
 function deriveName(description: string): string {
@@ -132,16 +133,26 @@ export function createProjectsRouter(db: ForgeDatabase, provider?: SpecProvider)
       const entries = Object.entries(parsed.data.answers)
         .map(([question, answer]) => [question.trim(), answer.trim()] as const)
         .filter(([question, answer]) => question.length > 0 && answer.length > 0);
-      if (entries.length === 0) {
+      const additionalRequest = parsed.data.additionalRequest?.trim() ?? "";
+
+      // Free-text answers (not just the suggested quick-pick options) and a
+      // free-standing request (not tied to any specific question at all)
+      // both feed straight back into spec generation, exactly like Refine
+      // does for an already-built project — so this actually changes the
+      // spec that gets built, instead of only highlighting a chip in the UI.
+      const sections: string[] = [];
+      if (entries.length > 0) {
+        const answersText = entries.map(([question, answer]) => `- ${question}: ${answer}`).join("\n");
+        sections.push(`Answers to clarifying questions:\n${answersText}`);
+      }
+      if (additionalRequest.length > 0) {
+        sections.push(`Additional request: ${additionalRequest}`);
+      }
+      if (sections.length === 0) {
         res.json({ project });
         return;
       }
-      // Free-text answers (not just the suggested quick-pick options) feed
-      // straight back into spec generation, exactly like Refine does for an
-      // already-built project — so answering actually changes the spec that
-      // gets built, instead of only highlighting a chip in the UI.
-      const answersText = entries.map(([question, answer]) => `- ${question}: ${answer}`).join("\n");
-      const combinedDescription = `${project.description}\n\nAnswers to clarifying questions:\n${answersText}`;
+      const combinedDescription = `${project.description}\n\n${sections.join("\n\n")}`;
       const { spec } = await generateSpec(combinedDescription, provider);
       const updated = updateProjectSpec(db, project.id, spec);
       res.json({ project: updated });

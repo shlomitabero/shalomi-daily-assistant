@@ -29,6 +29,7 @@ export default function App() {
   const [error, setError] = useState<string | null>(null);
   const [activeEntity, setActiveEntity] = useState<string | null>(null);
   const [selectedAnswers, setSelectedAnswers] = useState<Record<string, string>>({});
+  const [additionalRequest, setAdditionalRequest] = useState("");
   const [refineText, setRefineText] = useState("");
   const [showHistory, setShowHistory] = useState(false);
   const [buildMode, setBuildMode] = useState<"build" | "refine">("build");
@@ -94,11 +95,12 @@ export default function App() {
   async function handleBuild() {
     if (!project) return;
     const answered = Object.fromEntries(Object.entries(selectedAnswers).filter(([, v]) => v.trim().length > 0));
-    if (Object.keys(answered).length > 0) {
+    const request = additionalRequest.trim();
+    if (Object.keys(answered).length > 0 || request.length > 0) {
       setBusy(true);
       setError(null);
       try {
-        const { project: updated } = await answerQuestions(project.id, answered);
+        const { project: updated } = await answerQuestions(project.id, answered, request || undefined);
         setProject(updated);
       } catch (err) {
         setError((err as Error).message);
@@ -122,6 +124,7 @@ export default function App() {
     setProject(builtProject);
     setActiveEntity((prev) => prev ?? builtProject.spec.entities[0]?.name ?? null);
     setRefineText("");
+    setAdditionalRequest("");
     setView("preview");
   }
 
@@ -240,8 +243,21 @@ export default function App() {
             </section>
           )}
 
+          <section>
+            <h2>יש עוד משהו שתרצו לבקש?</h2>
+            <p className="muted small">
+              לא חייבים לחכות לשאלה מוכנה — אפשר לכתוב כל בקשה במילים שלכם, והיא תיכנס לתכנון לפני שמתחילים לבנות.
+            </p>
+            <textarea
+              rows={3}
+              placeholder='לדוגמה: "רוצה לעקוב גם אחרי ספקים" או "תוסיפו שדה הערות לכל לקוח"'
+              value={additionalRequest}
+              onChange={(e) => setAdditionalRequest(e.target.value)}
+            />
+          </section>
+
           <button type="button" onClick={handleBuild} disabled={busy}>
-            {busy ? "מיישמים את התשובות שלכם…" : "🔥 לבנות את האפליקציה"}
+            {busy ? "מיישמים את הבקשות שלכם…" : "🔥 לבנות את האפליקציה"}
           </button>
         </main>
       )}

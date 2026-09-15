@@ -118,7 +118,12 @@ delete records through the generated UI, backed by the real API.
       recommendation, and that change carries through to the built
       project) and live in a real browser: answering "use Stripe for all
       payments" in free text caused a real Invoice table to be added to
-      the built app.
+      the built app. The same screen also has a free-standing "יש עוד
+      משהו שתרצו לבקש?" box, not tied to any specific question, so a
+      request doesn't have to wait for Forge AI to think to ask about it
+      — verified the same way (a request with no matching open question
+      still added a real Invoice entity to the built app, live in a
+      browser).
 - [ ] Multi-agent **parallel** execution (today's pipeline is a sequence, not
       parallel branches with real dependency scheduling) — **not yet implemented**
 - [ ] Git integration (bidirectional sync) — **not yet implemented**

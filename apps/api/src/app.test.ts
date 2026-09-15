@@ -381,6 +381,49 @@ test("answering an open question (free text, not just a suggested option) actual
   });
 });
 
+test("a free-standing request on the spec review screen (not tied to any open question) also changes the spec", async () => {
+  await withServer(async (baseUrl) => {
+    const token = await signup(baseUrl);
+    const createRes = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ description: "A CRM with customers and deals." }),
+    });
+    const { project } = (await createRes.json()) as {
+      project: { id: string; spec: { entities: { name: string }[] } };
+    };
+    assert.deepEqual(project.spec.entities.map((e) => e.name).sort(), ["Customer", "Deal"]);
+
+    // No answer to any specific question -- just a free-form request.
+    const answersRes = await fetch(`${baseUrl}/api/projects/${project.id}/answers`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ additionalRequest: "Also track invoices for customers." }),
+    });
+    assert.equal(answersRes.status, 200);
+    const { project: updated } = (await answersRes.json()) as {
+      project: { spec: { entities: { name: string }[] } };
+    };
+    assert.ok(
+      updated.spec.entities.some((e) => e.name === "Invoice"),
+      "the free-standing request should have added an Invoice entity",
+    );
+
+    // Sending neither answers nor a request is a harmless no-op.
+    const noopRes = await fetch(`${baseUrl}/api/projects/${project.id}/answers`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({}),
+    });
+    assert.equal(noopRes.status, 200);
+    const { project: unchanged } = (await noopRes.json()) as { project: { spec: { entities: { name: string }[] } } };
+    assert.deepEqual(
+      unchanged.spec.entities.map((e) => e.name).sort(),
+      updated.spec.entities.map((e) => e.name).sort(),
+    );
+  });
+});
+
 test("export refuses before build, and returns a real zip file after", async () => {
   await withServer(async (baseUrl) => {
     const token = await signup(baseUrl);
