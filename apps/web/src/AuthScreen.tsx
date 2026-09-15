@@ -41,35 +41,48 @@ export function AuthScreen({ onAuthenticated }: { onAuthenticated: (user: User) 
         </div>
         <LanguageSwitcher />
       </div>
-      <h1>{mode === "signup" ? t("auth.title.signup") : t("auth.title.login")}</h1>
-      <p className="muted">{mode === "signup" ? t("auth.subtitle.signup") : t("auth.subtitle.login")}</p>
-      <form onSubmit={handleSubmit} className="auth-form">
-        <label className="field-row">
-          <span>{t("auth.email.label")}</span>
-          <input type="email" required value={email} onChange={(e) => setEmail(e.target.value)} />
-        </label>
-        <label className="field-row">
-          <span>{t("auth.password.label")}</span>
-          <input
-            type="password"
-            required
-            minLength={8}
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-          />
-        </label>
-        <button type="submit" disabled={busy}>
-          {busy ? t("auth.submit.busy") : mode === "signup" ? t("auth.submit.signup") : t("auth.submit.login")}
-        </button>
-      </form>
-      {error && <p className="error">{error}</p>}
-      <button
-        type="button"
-        className="secondary link-button"
-        onClick={() => setMode(mode === "signup" ? "login" : "signup")}
-      >
-        {mode === "signup" ? t("auth.toggle.toLogin") : t("auth.toggle.toSignup")}
-      </button>
+      <div className="auth-layout">
+        <div className="auth-main">
+          <h1>{mode === "signup" ? t("auth.title.signup") : t("auth.title.login")}</h1>
+          <p className="muted">{mode === "signup" ? t("auth.subtitle.signup") : t("auth.subtitle.login")}</p>
+          <form onSubmit={handleSubmit} className="auth-form">
+            <label className="field-row">
+              <span>{t("auth.email.label")}</span>
+              <input type="email" required value={email} onChange={(e) => setEmail(e.target.value)} />
+            </label>
+            <label className="field-row">
+              <span>{t("auth.password.label")}</span>
+              <input
+                type="password"
+                required
+                minLength={8}
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+              />
+            </label>
+            <button type="submit" disabled={busy}>
+              {busy ? t("auth.submit.busy") : mode === "signup" ? t("auth.submit.signup") : t("auth.submit.login")}
+            </button>
+          </form>
+          {error && <p className="error">{error}</p>}
+          <button
+            type="button"
+            className="secondary link-button"
+            onClick={() => setMode(mode === "signup" ? "login" : "signup")}
+          >
+            {mode === "signup" ? t("auth.toggle.toLogin") : t("auth.toggle.toSignup")}
+          </button>
+        </div>
+        <aside className="auth-highlights">
+          <h2>{t("auth.highlights.heading")}</h2>
+          <ul>
+            <li>{t("auth.highlights.item1")}</li>
+            <li>{t("auth.highlights.item2")}</li>
+            <li>{t("auth.highlights.item3")}</li>
+            <li>{t("auth.highlights.item4")}</li>
+          </ul>
+        </aside>
+      </div>
     </main>
   );
 }

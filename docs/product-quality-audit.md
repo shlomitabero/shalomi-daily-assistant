@@ -79,16 +79,23 @@ external font request, not an application bug).
    `docs/roadmap.md`'s "Production hardening" section. No known i18n gaps
    remain.
 
-3. **Desktop screens with little content leave a large, unstyled empty
-   void below the fold** (seen clearly on the auth screen and the "מה
-   תרצו לבנות?" home screen at 1440px). The content container is
-   correctly centered, but nothing anchors the page visually once the
-   viewport is taller than the content — no hero treatment, no background
-   texture, nothing. This reads as "generic/unfinished" per the founding
-   prompt's own language, though it doesn't block any functionality. Not
-   fixed in this pass — real visual design work (not a quick CSS
-   tweak) belongs in its own pass so it gets done properly rather than
-   patched.
+3. **Desktop empty void below the fold — fixed.** The content container
+   was correctly centered, but nothing anchored the page visually once
+   the viewport was taller than the content, worst on the auth screen at
+   1440px. Fixed with real design work, not a CSS patch: a subtle, fixed
+   radial-gradient background (using the existing `--accent-soft`/
+   `--steel-soft` tokens, so it adapts automatically in dark mode too)
+   anchors every screen; the auth screen specifically gained a real
+   two-column layout at ≥900px with a "What you get" panel — four
+   genuine, honestly-scoped product claims (schema/API/screens
+   generation, Time Machine, bilingual UI including error messages, code
+   export), not filler copy. Verified live in a real browser at 1440px
+   (desktop, both languages), 768px (tablet, confirmed it stacks single-
+   column below the breakpoint) and 390px (mobile, confirmed no clipping)
+   — RTL correctly mirrors the two-column order via the same direction-
+   relative flexbox pattern this codebase already uses (see ADR 0006).
+   Also confirmed the new background doesn't clash with content-heavy
+   screens (spec review). Zero console errors in any of these checks.
 
 ### P2 — minor polish, not fixed in this pass
 

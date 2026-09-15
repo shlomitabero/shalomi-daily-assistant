@@ -36,9 +36,15 @@ html {
 
 body {
   margin: 0;
-  background: var(--bg);
   color: var(--text);
   overflow-x: hidden;
+  /* A soft, fixed gradient glow anchors screens with little content (e.g.
+     the auth screen) instead of leaving a flat, empty void below the fold
+     on tall desktop viewports -- see docs/product-quality-audit.md. Fixed
+     so it doesn't scroll or resize with page content. */
+  background: radial-gradient(ellipse 900px 600px at 15% -10%, var(--accent-soft) 0%, transparent 60%),
+    radial-gradient(ellipse 700px 500px at 100% 20%, var(--steel-soft) 0%, transparent 55%), var(--bg);
+  background-attachment: fixed;
 }
 
 .app {
@@ -471,6 +477,56 @@ tbody tr:hover {
   flex-direction: column;
   gap: 14px;
   max-width: 360px;
+}
+
+.auth-layout {
+  display: flex;
+  flex-direction: column;
+  gap: 32px;
+}
+
+.auth-main {
+  max-width: 400px;
+}
+
+.auth-highlights {
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  box-shadow: var(--shadow-sm);
+  padding: 22px 24px;
+}
+
+.auth-highlights h2 {
+  margin-top: 0;
+}
+
+.auth-highlights ul {
+  margin: 0;
+  padding-inline-start: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  color: var(--text);
+  font-size: 14.5px;
+  line-height: 1.5;
+}
+
+@media (min-width: 900px) {
+  .auth-layout {
+    flex-direction: row;
+    align-items: flex-start;
+  }
+
+  .auth-main {
+    flex: 0 0 400px;
+  }
+
+  .auth-highlights {
+    flex: 1;
+    max-width: 420px;
+    margin-top: 44px;
+  }
 }
 
 .link-button {

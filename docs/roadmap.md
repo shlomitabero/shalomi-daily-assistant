@@ -305,6 +305,13 @@ delete records through the generated UI, backed by the real API.
 
 ## Production hardening
 
+- [x] **Fix the desktop empty-void visual design (P1 finding).** See
+      `docs/product-quality-audit.md` finding #3 for the full detail: a
+      subtle fixed radial-gradient background anchors every screen, and
+      the auth screen gained a real two-column "What you get" panel at
+      ≥900px with four honestly-scoped feature highlights. This was the
+      last open P1 finding from the quality audit — no known P0/P1
+      findings remain.
 - [x] **Localize server-side error messages** — the last remaining known
       i18n gap (see ADR 0006), freshly and concretely motivated: the live
       "Internal server error" incident (see the fallback entry just below)
