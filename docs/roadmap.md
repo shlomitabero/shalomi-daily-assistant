@@ -199,8 +199,21 @@ delete records through the generated UI, backed by the real API.
       from its current linear `View` state machine into a persistent
       two-pane layout — not a small tweak, so it will be built the same
       way the bilingual rollout was: staged, verified steps, not one
-      pass. **Not yet implemented** — queued as the next major initiative
-      after this audit's other items.
+      pass.
+      **Step 1 done:** the preview screen now keeps a real, persistent
+      refine conversation history instead of a single-shot input that
+      forgets itself after each submit — every refine instruction is
+      listed with a one-line summary derived from the actual Architect
+      agent event of that refine (e.g. "New screen: Invoice"), not a
+      generic re-statement. This is the data-model prerequisite for the
+      eventual two-pane layout. Verified live in a real browser: two
+      sequential refines (one that added a real new entity, one that
+      genuinely changed nothing) both produced accurate, real summaries,
+      in order, with zero console errors.
+      **Still to do:** the actual two-column layout (chat pane + live
+      preview pane side by side) and making the AI Team activity appear
+      inline in the chat instead of taking over the whole screen during a
+      refine — both queued as the next steps.
 - [ ] Multi-agent **parallel** execution (today's pipeline is a sequence, not
       parallel branches with real dependency scheduling) — **not yet implemented**
 - [ ] Git integration (bidirectional sync) — **not yet implemented**

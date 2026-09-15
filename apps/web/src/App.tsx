@@ -1,5 +1,5 @@
-import { useEffect, useState } from "react";
-import type { Project, User } from "@forge/shared";
+import { useEffect, useRef, useState } from "react";
+import type { AgentStepEvent, Project, User } from "@forge/shared";
 import {
   answerQuestions,
   clearToken,
@@ -20,6 +20,37 @@ import { LanguageProvider, useTranslation } from "./i18n/LanguageContext.js";
 import { LanguageSwitcher } from "./i18n/LanguageSwitcher.js";
 
 type View = "home" | "spec" | "building" | "preview";
+
+interface RefineHistoryEntry {
+  id: string;
+  instruction: string;
+  summary: string;
+}
+
+interface ArchitectImpactDetail {
+  newEntities: { name: string; label: string }[];
+  changedEntities: { name: string; label: string; newFieldNames: string[] }[];
+}
+
+/**
+ * Turns the real Architect event's impact payload from a completed refine
+ * into a one-line summary for the conversation history -- the same data
+ * the AI Team screen's own detail panel shows, not a re-statement of the
+ * instruction the user already sees above it.
+ */
+function summarizeRefineImpact(events: AgentStepEvent[], t: (key: string) => string): string {
+  const architectEvent = events.find((e) => e.agent === "Architect" && e.status === "success");
+  const detail = architectEvent?.detail as ArchitectImpactDetail | undefined;
+  if (!detail) return t("preview.refineHistory.noSummary");
+  const parts: string[] = [];
+  for (const e of detail.newEntities) {
+    parts.push(`${t("build.detail.architect.newScreen")}${e.label}`);
+  }
+  for (const e of detail.changedEntities) {
+    parts.push(`${e.label}${t("build.detail.architect.gainedFields")}${e.newFieldNames.join(", ")}`);
+  }
+  return parts.length > 0 ? parts.join(" · ") : t("preview.refineHistory.noChange");
+}
 
 export default function App() {
   return (
@@ -46,6 +77,9 @@ function AppContent() {
   const [buildMode, setBuildMode] = useState<"build" | "refine">("build");
   const [exportBusy, setExportBusy] = useState(false);
   const [showTwin, setShowTwin] = useState(false);
+  const [refineHistory, setRefineHistory] = useState<RefineHistoryEntry[]>([]);
+  const pendingRefineInstruction = useRef<string | null>(null);
+  const refineEvents = useRef<AgentStepEvent[]>([]);
 
   useEffect(() => {
     if (!getToken()) {
@@ -127,11 +161,22 @@ function AppContent() {
   function handleRefine(e: React.FormEvent) {
     e.preventDefault();
     if (!refineText.trim()) return;
+    pendingRefineInstruction.current = refineText.trim();
+    refineEvents.current = [];
     setBuildMode("refine");
     setView("building");
   }
 
   function handleBuildComplete(builtProject: Project) {
+    if (buildMode === "refine" && pendingRefineInstruction.current) {
+      const entry: RefineHistoryEntry = {
+        id: crypto.randomUUID(),
+        instruction: pendingRefineInstruction.current,
+        summary: summarizeRefineImpact(refineEvents.current, t),
+      };
+      setRefineHistory((prev) => [...prev, entry]);
+    }
+    pendingRefineInstruction.current = null;
     setProject(builtProject);
     setActiveEntity((prev) => prev ?? builtProject.spec.entities[0]?.name ?? null);
     setRefineText("");
@@ -280,9 +325,15 @@ function AppContent() {
       {view === "building" && project && (
         <BuildProgress
           title={buildMode === "build" ? t("build.title.build") : t("build.title.refine")}
-          run={(onEvent) =>
-            buildMode === "build" ? streamBuild(project.id, onEvent) : streamRefine(project.id, refineText, onEvent)
-          }
+          run={(onEvent) => {
+            const wrappedOnEvent = (event: AgentStepEvent) => {
+              if (buildMode === "refine") refineEvents.current.push(event);
+              onEvent(event);
+            };
+            return buildMode === "build"
+              ? streamBuild(project.id, wrappedOnEvent)
+              : streamRefine(project.id, refineText, wrappedOnEvent);
+          }}
           onComplete={handleBuildComplete}
           onBack={() => setView(buildMode === "build" ? "spec" : "preview")}
         />
@@ -316,6 +367,20 @@ function AppContent() {
               {t("preview.refine.submit")}
             </button>
           </form>
+
+          {refineHistory.length > 0 && (
+            <div className="refine-history">
+              <h2>{t("preview.refineHistory.heading")}</h2>
+              <ul className="refine-history-list">
+                {refineHistory.map((entry) => (
+                  <li key={entry.id}>
+                    <p className="refine-history-instruction">{entry.instruction}</p>
+                    <p className="muted small">{entry.summary}</p>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
 
           <nav className="entity-tabs">
             {project.spec.entities.map((entity) => (

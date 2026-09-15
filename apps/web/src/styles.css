@@ -529,6 +529,37 @@ tbody tr:hover {
   box-shadow: none;
 }
 
+.refine-history {
+  margin: 0 0 24px;
+}
+
+.refine-history h2 {
+  margin: 0 0 10px;
+}
+
+.refine-history-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 220px;
+  overflow-y: auto;
+}
+
+.refine-history-list li {
+  background: var(--surface-raised);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-md);
+  padding: 10px 14px;
+}
+
+.refine-history-instruction {
+  margin: 0 0 4px;
+  font-weight: 600;
+}
+
 .ai-team {
   max-width: 640px;
 }
