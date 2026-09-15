@@ -174,16 +174,16 @@ function AppContent() {
 
       {view === "home" && (
         <main className="home">
-          <h1>מה תרצו לבנות?</h1>
+          <h1>{t("home.title")}</h1>
           <form onSubmit={handleDescribe}>
             <textarea
               rows={5}
-              placeholder="לדוגמה: אפליקציה לניהול תורים למספרה, עם לקוחות, עובדים ושירותים, ולוח בקרה למנהל/ת."
+              placeholder={t("home.placeholder")}
               value={description}
               onChange={(e) => setDescription(e.target.value)}
             />
             <button type="submit" disabled={busy}>
-              {busy ? "חושבים על זה…" : "בואו נתחיל"}
+              {busy ? t("home.submit.busy") : t("home.submit")}
             </button>
           </form>
         </main>
@@ -191,11 +191,11 @@ function AppContent() {
 
       {view === "spec" && project && (
         <main className="spec-review">
-          <h1>ככה הבנו את זה</h1>
+          <h1>{t("spec.title")}</h1>
           <p>{project.spec.summary}</p>
 
           <section>
-            <h2>מי ישתמש באפליקציה</h2>
+            <h2>{t("spec.roles.heading")}</h2>
             <div className="chips">
               {project.spec.roles.map((r) => (
                 <span className="chip" key={r}>
@@ -206,7 +206,7 @@ function AppContent() {
           </section>
 
           <section>
-            <h2>המסכים שנבנה</h2>
+            <h2>{t("spec.entities.heading")}</h2>
             {project.spec.entities.map((entity) => (
               <div key={entity.name} className="entity-summary">
                 <strong>{entity.label ?? entity.name}</strong>
@@ -216,7 +216,7 @@ function AppContent() {
           </section>
 
           <section>
-            <h2>הנחות שעשינו</h2>
+            <h2>{t("spec.assumptions.heading")}</h2>
             <ul>
               {project.spec.assumptions.map((a, i) => (
                 <li key={i}>{a}</li>
@@ -226,7 +226,7 @@ function AppContent() {
 
           {project.spec.openQuestions.length > 0 && (
             <section>
-              <h2>כדאי שתחליטו</h2>
+              <h2>{t("spec.openQuestions.heading")}</h2>
               {project.spec.openQuestions.map((q, i) => (
                 <div key={i} className="open-question">
                   <p>{q.question}</p>
@@ -245,31 +245,34 @@ function AppContent() {
                   <input
                     type="text"
                     className="answer-input"
-                    placeholder="או כתבו תשובה משלכם…"
+                    placeholder={t("spec.answerInput.placeholder")}
                     value={selectedAnswers[q.question] ?? ""}
                     onChange={(e) => setSelectedAnswers((prev) => ({ ...prev, [q.question]: e.target.value }))}
                   />
-                  {q.recommendation && <p className="muted small">ההמלצה שלנו: {q.recommendation}</p>}
+                  {q.recommendation && (
+                    <p className="muted small">
+                      {t("spec.recommendation")}
+                      {q.recommendation}
+                    </p>
+                  )}
                 </div>
               ))}
             </section>
           )}
 
           <section>
-            <h2>יש עוד משהו שתרצו לבקש?</h2>
-            <p className="muted small">
-              לא חייבים לחכות לשאלה מוכנה — אפשר לכתוב כל בקשה במילים שלכם, והיא תיכנס לתכנון לפני שמתחילים לבנות.
-            </p>
+            <h2>{t("spec.additionalRequest.heading")}</h2>
+            <p className="muted small">{t("spec.additionalRequest.description")}</p>
             <textarea
               rows={3}
-              placeholder='לדוגמה: "רוצה לעקוב גם אחרי ספקים" או "תוסיפו שדה הערות לכל לקוח"'
+              placeholder={t("spec.additionalRequest.placeholder")}
               value={additionalRequest}
               onChange={(e) => setAdditionalRequest(e.target.value)}
             />
           </section>
 
           <button type="button" onClick={handleBuild} disabled={busy}>
-            {busy ? "מיישמים את הבקשות שלכם…" : "🔥 לבנות את האפליקציה"}
+            {busy ? t("spec.build.busy") : t("spec.build.submit")}
           </button>
         </main>
       )}

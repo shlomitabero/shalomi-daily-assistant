@@ -136,20 +136,27 @@ delete records through the generated UI, backed by the real API.
       names) keyed by field name and entity context. Verified with new
       unit tests and live in a browser across three entity types.
 - [~] **Real bilingual support (Hebrew + English, proper RTL/LTR i18n) —
-      Step 1 done.** Built the real i18n architecture (no library —
+      Steps 1–2 done.** Built the real i18n architecture (no library —
       `apps/web/src/i18n/`: a pure translation dictionary + `translate()`,
       a `LanguageProvider`/`useTranslation()` context, a language
       switcher), driving a real `dir`/`lang` flip on `<html>` (the
       existing CSS already used only logical properties, so no CSS
       changes were needed for LTR to work). Converted and verified live:
-      the pre-auth screen and the authenticated topbar chrome. See
-      ADR 0006 for why the default stays Hebrew until more is converted,
-      and what's honestly not translated yet. **Still not yet
-      implemented:** the home/describe, spec review, AI Team build,
-      preview/entity, History and Business Twin screens all still show
-      hardcoded Hebrew regardless of the selected language — each is a
-      queued next step, one (or a small group) per cycle, using the same
-      architecture.
+      the pre-auth screen, the authenticated topbar chrome, the home
+      ("what do you want to build") screen, and the full spec review
+      screen (including the open-questions and free-text-request boxes).
+      See ADR 0006 for why the default stays Hebrew until more is
+      converted. One nice side effect confirmed live: since the spec
+      itself is already generated in whichever language the user typed
+      their description in (existing bilingual spec-engine behavior), an
+      English description already produces English entity/field names in
+      the spec review screen too — so English users get more coherent
+      English content than the "chrome-only" conversion alone would
+      suggest. **Still not yet implemented:** the AI Team build screen,
+      preview/entity panel, History, and Business Twin panel all still
+      show hardcoded Hebrew regardless of the selected language — each is
+      a queued next step, one (or a small group) per cycle, using the
+      same architecture.
 - [ ] Multi-agent **parallel** execution (today's pipeline is a sequence, not
       parallel branches with real dependency scheduling) — **not yet implemented**
 - [ ] Git integration (bidirectional sync) — **not yet implemented**
