@@ -16,10 +16,21 @@ import { BuildProgress } from "./BuildProgress.js";
 import { BusinessTwinPanel } from "./BusinessTwinPanel.js";
 import { EntityPanel } from "./EntityPanel.js";
 import { HistoryPanel } from "./HistoryPanel.js";
+import { LanguageProvider, useTranslation } from "./i18n/LanguageContext.js";
+import { LanguageSwitcher } from "./i18n/LanguageSwitcher.js";
 
 type View = "home" | "spec" | "building" | "preview";
 
 export default function App() {
+  return (
+    <LanguageProvider>
+      <AppContent />
+    </LanguageProvider>
+  );
+}
+
+function AppContent() {
+  const { t } = useTranslation();
   const [user, setUser] = useState<User | null>(null);
   const [checkingSession, setCheckingSession] = useState(true);
   const [view, setView] = useState<View>("home");
@@ -50,7 +61,7 @@ export default function App() {
   if (checkingSession) {
     return (
       <div className="app">
-        <p className="muted">טוען…</p>
+        <p className="muted">{t("app.loading")}</p>
       </div>
     );
   }
@@ -148,12 +159,13 @@ export default function App() {
             </svg>
             <span className="brand">Forge AI</span>
           </div>
-          <span className="tagline">מתארים עסק במילים שלכם — ומקבלים אפליקציה עובדת.</span>
+          <span className="tagline">{t("brand.tagline")}</span>
         </div>
         <div className="topbar-right">
+          <LanguageSwitcher />
           <span className="muted small">{user.email}</span>
           <button type="button" className="secondary" onClick={handleLogout}>
-            יציאה
+            {t("topbar.logout")}
           </button>
         </div>
       </header>

@@ -56,17 +56,20 @@ external font request, not an application bug).
    a real browser across three entity types (Customer, Appointment,
    Employee) — see the "Add believable seed data" commit.
 
-2. **No bilingual (Hebrew + English) support at all — confirmed, not yet
-   fixed.** There is no i18n architecture in this codebase (`grep` for
-   `i18n`/`locale`/`translation` across `apps/web/src` returns nothing):
-   every user-facing string is hardcoded Hebrew JSX text, with no language
-   switcher and no LTR path. The founding prompt marks this "CRITICAL."
-   This is real and correctly prioritized, but it is a large, cross-cutting
-   change (extracting every string to translation keys, a real RTL/LTR
-   layout switch, a language switcher, persisted preference) that
-   deserves its own dedicated, carefully-verified pass rather than being
-   rushed alongside this audit — it is the top item queued next in
-   `docs/roadmap.md`.
+2. **No bilingual (Hebrew + English) support at all — Step 1 fixed, most
+   screens still open.** There was no i18n architecture in this codebase
+   at all (`grep` for `i18n`/`locale`/`translation` across
+   `apps/web/src` returned nothing): every user-facing string was
+   hardcoded Hebrew JSX text, with no language switcher and no LTR path.
+   The founding prompt marks this "CRITICAL," correctly. Given the size of
+   this change, it's being done as a sequence of real steps rather than
+   rushed in one pass — see ADR 0006. Step 1 (done): the i18n
+   architecture itself (dictionary, context, hook, language switcher, a
+   real `dir`/`lang` flip verified live in a browser) plus the pre-auth
+   screen and the topbar chrome. **Still open:** the home/describe, spec
+   review, AI Team build, preview/entity, History and Business Twin
+   screens all still show hardcoded Hebrew regardless of the selected
+   language — each is a queued next step in `docs/roadmap.md`.
 
 3. **Desktop screens with little content leave a large, unstyled empty
    void below the fold** (seen clearly on the auth screen and the "מה

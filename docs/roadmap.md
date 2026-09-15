@@ -135,11 +135,21 @@ delete records through the generated UI, backed by the real API.
       believable value pools (names, emails, phones, sources, roles, item
       names) keyed by field name and entity context. Verified with new
       unit tests and live in a browser across three entity types.
-- [ ] **Real bilingual support (Hebrew + English, proper RTL/LTR i18n).**
-      Confirmed by the audit above: there is currently zero i18n
-      architecture — every string is hardcoded Hebrew JSX, no language
-      switcher, no LTR path. This is the top-priority item queued next —
-      **not yet implemented**.
+- [~] **Real bilingual support (Hebrew + English, proper RTL/LTR i18n) —
+      Step 1 done.** Built the real i18n architecture (no library —
+      `apps/web/src/i18n/`: a pure translation dictionary + `translate()`,
+      a `LanguageProvider`/`useTranslation()` context, a language
+      switcher), driving a real `dir`/`lang` flip on `<html>` (the
+      existing CSS already used only logical properties, so no CSS
+      changes were needed for LTR to work). Converted and verified live:
+      the pre-auth screen and the authenticated topbar chrome. See
+      ADR 0006 for why the default stays Hebrew until more is converted,
+      and what's honestly not translated yet. **Still not yet
+      implemented:** the home/describe, spec review, AI Team build,
+      preview/entity, History and Business Twin screens all still show
+      hardcoded Hebrew regardless of the selected language — each is a
+      queued next step, one (or a small group) per cycle, using the same
+      architecture.
 - [ ] Multi-agent **parallel** execution (today's pipeline is a sequence, not
       parallel branches with real dependency scheduling) — **not yet implemented**
 - [ ] Git integration (bidirectional sync) — **not yet implemented**

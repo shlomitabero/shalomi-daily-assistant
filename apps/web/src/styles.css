@@ -124,12 +124,49 @@ h2 {
   font-weight: 600;
 }
 
-.auth-brand {
+.auth-top-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
   margin-bottom: 28px;
 }
 
 .auth-brand .brand {
   font-size: 22px;
+}
+
+.lang-switch {
+  display: flex;
+  gap: 4px;
+  padding: 3px;
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+}
+
+.lang-btn {
+  padding: 5px 12px;
+  border-radius: 999px;
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  font-size: 12.5px;
+  font-weight: 600;
+  box-shadow: none;
+}
+
+.lang-btn:hover:not(.lang-btn-active) {
+  background: var(--surface);
+  transform: none;
+  box-shadow: none;
+}
+
+.lang-btn-active {
+  background: var(--accent);
+  color: var(--accent-contrast);
+  box-shadow: none;
 }
 
 .home form {
