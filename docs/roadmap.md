@@ -305,6 +305,16 @@ delete records through the generated UI, backed by the real API.
 
 ## Production hardening
 
+- [x] **Add a dark mode toggle (P2 finding).** `styles.css` already had
+      dark-mode-ready tokens (auto-applied via `prefers-color-scheme`)
+      but no manual switch. Added `theme/theme.ts` + `theme/ThemeContext.tsx`
+      + `theme/ThemeSwitcher.tsx`, mirroring the existing i18n
+      architecture exactly: a stored choice always wins, otherwise falls
+      back to the system preference. Shown in the topbar and on the auth
+      screen. Verified with 3 new unit tests and live in a real browser —
+      see `docs/product-quality-audit.md`'s P2 section for the full
+      verification detail. Only remaining known P2 item: the mobile
+      Refine-box input clipping (cosmetic only).
 - [x] **Fix the desktop empty-void visual design (P1 finding).** See
       `docs/product-quality-audit.md` finding #3 for the full detail: a
       subtle fixed radial-gradient background anchors every screen, and

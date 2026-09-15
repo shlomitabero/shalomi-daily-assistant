@@ -97,16 +97,26 @@ external font request, not an application bug).
    Also confirmed the new background doesn't clash with content-heavy
    screens (spec review). Zero console errors in any of these checks.
 
-### P2 — minor polish, not fixed in this pass
+### P2 — minor polish
 
 - On mobile (390px), the Refine box's input placeholder text gets visibly
   clipped because the input and its submit button share one row with a
   160px input minimum — the box still functions correctly once you start
-  typing, this is cosmetic only.
-- No dark mode toggle is exposed in the UI yet, even though
-  `styles.css` already defines dark-mode-ready CSS custom properties in
-  several places — the token system exists but isn't switchable by the
-  user today.
+  typing, this is cosmetic only. Not fixed in this pass.
+- **Dark mode toggle — fixed.** `styles.css` already defined dark-mode-
+  ready CSS custom properties (applied automatically via
+  `prefers-color-scheme`), but there was no way for the user to switch
+  manually. Added a real toggle (`ThemeSwitcher`, mirroring the existing
+  `LanguageSwitcher`/`LanguageProvider` architecture in `theme/theme.ts` +
+  `theme/ThemeContext.tsx`): an explicit choice always wins, otherwise it
+  falls back to the system preference, persisted to `localStorage`. Shown
+  in the topbar and on the auth screen. Verified: 3 new unit tests +
+  live in a real browser — toggled to dark, confirmed `data-theme="dark"`
+  on `<html>`, took real screenshots of both the auth and home screens
+  showing correct dark styling, confirmed the choice survives a page
+  reload, and checked mobile (390px) + Hebrew RTL together with the new
+  switch button present — no clipping, correct layout, zero console
+  errors.
 
 ## What this audit deliberately did not do
 

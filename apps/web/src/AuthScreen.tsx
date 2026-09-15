@@ -3,6 +3,7 @@ import type { User } from "@forge/shared";
 import { login, setToken, signup } from "./api.js";
 import { useTranslation } from "./i18n/LanguageContext.js";
 import { LanguageSwitcher } from "./i18n/LanguageSwitcher.js";
+import { ThemeSwitcher } from "./theme/ThemeSwitcher.js";
 
 export function AuthScreen({ onAuthenticated }: { onAuthenticated: (user: User) => void }) {
   const { t } = useTranslation();
@@ -39,7 +40,10 @@ export function AuthScreen({ onAuthenticated }: { onAuthenticated: (user: User) 
           </svg>
           <span className="brand">Forge AI</span>
         </div>
-        <LanguageSwitcher />
+        <div className="auth-top-actions">
+          <ThemeSwitcher />
+          <LanguageSwitcher />
+        </div>
       </div>
       <div className="auth-layout">
         <div className="auth-main">

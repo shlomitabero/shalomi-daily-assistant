@@ -19,6 +19,8 @@ import { EntityPanel } from "./EntityPanel.js";
 import { HistoryPanel } from "./HistoryPanel.js";
 import { LanguageProvider, useTranslation } from "./i18n/LanguageContext.js";
 import { LanguageSwitcher } from "./i18n/LanguageSwitcher.js";
+import { ThemeProvider } from "./theme/ThemeContext.js";
+import { ThemeSwitcher } from "./theme/ThemeSwitcher.js";
 
 type View = "home" | "spec" | "building" | "preview";
 
@@ -55,9 +57,11 @@ function summarizeRefineImpact(events: AgentStepEvent[], t: (key: string) => str
 
 export default function App() {
   return (
-    <LanguageProvider>
-      <AppContent />
-    </LanguageProvider>
+    <ThemeProvider>
+      <LanguageProvider>
+        <AppContent />
+      </LanguageProvider>
+    </ThemeProvider>
   );
 }
 
@@ -232,6 +236,7 @@ function AppContent() {
           <span className="tagline">{t("brand.tagline")}</span>
         </div>
         <div className="topbar-right">
+          <ThemeSwitcher />
           <LanguageSwitcher />
           <span className="muted small">{user.email}</span>
           <button type="button" className="secondary" onClick={handleLogout}>
