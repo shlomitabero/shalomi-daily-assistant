@@ -4,7 +4,7 @@ import { detectInitialLang, dirFor, translate, STORAGE_KEY, type Lang } from "./
 interface LanguageContextValue {
   lang: Lang;
   dir: "rtl" | "ltr";
-  t: (key: string) => string;
+  t: (key: string, params?: Record<string, string | number>) => string;
   setLang: (lang: Lang) => void;
 }
 
@@ -34,7 +34,7 @@ export function LanguageProvider({ children }: { children: ReactNode }) {
   const value: LanguageContextValue = {
     lang,
     dir: dirFor(lang),
-    t: (key: string) => translate(lang, key),
+    t: (key: string, params?: Record<string, string | number>) => translate(lang, key, params),
     setLang: setLangState,
   };
 

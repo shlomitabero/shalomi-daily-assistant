@@ -31,6 +31,16 @@ test("translate falls back to Hebrew, then to the raw key, instead of throwing o
   assert.equal(translate("en", "this.key.does.not.exist"), "this.key.does.not.exist");
 });
 
+test("translate fills in {placeholder} params without touching the rest of the string", () => {
+  const result = translate("en", "build.subtitle", { current: 2, total: 5 });
+  assert.equal(result, "The AI Team is working now, in real time. Step 2 of 5.");
+});
+
+test("translate leaves an unmatched {placeholder} alone rather than throwing", () => {
+  const result = translate("en", "build.subtitle", { current: 2 });
+  assert.match(result, /\{total\}/);
+});
+
 test("every Hebrew key has an English counterpart (no untranslated strings)", () => {
   for (const key of Object.keys(translations.he)) {
     assert.ok(key in translations.en, `"${key}" exists in Hebrew but not English`);

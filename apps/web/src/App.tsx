@@ -279,7 +279,7 @@ function AppContent() {
 
       {view === "building" && project && (
         <BuildProgress
-          title={buildMode === "build" ? "צוות ה-AI בונה את האפליקציה שלכם" : "צוות ה-AI מיישם את השינוי"}
+          title={buildMode === "build" ? t("build.title.build") : t("build.title.refine")}
           run={(onEvent) =>
             buildMode === "build" ? streamBuild(project.id, onEvent) : streamRefine(project.id, refineText, onEvent)
           }

@@ -1,52 +1,26 @@
 import { useEffect, useRef, useState } from "react";
 import type { AgentStepEvent, Project } from "@forge/shared";
+import { useTranslation } from "./i18n/LanguageContext.js";
 
-const AGENT_INFO: Record<
-  AgentStepEvent["agent"],
-  { icon: string; title: string; running: string; success: string }
-> = {
-  Architect: {
-    icon: "🏗️",
-    title: "מתכנן/ת המוצר",
-    running: "מתכנן/ת איך המסכים והנתונים מתחברים…",
-    success: "התכנון מוכן.",
-  },
-  Database: {
-    icon: "🗄️",
-    title: "מהנדס/ת בסיס הנתונים",
-    running: "בונה את מקום האחסון של המידע שלכם…",
-    success: "בסיס הנתונים מוכן ועובד.",
-  },
-  Debug: {
-    icon: "🔧",
-    title: "סוכן/ת הדיבוג",
-    running: "מנתח/ת מה השתבש ומנסה למצוא תיקון…",
-    success: "הבעיה תוקנה אוטומטית והבנייה ממשיכה.",
-  },
-  "Seed Data": {
-    icon: "🌱",
-    title: "ממלא/ת דוגמאות",
-    running: "מוסיף/ה כמה רשומות לדוגמה, כדי שלא תתחילו מדף ריק…",
-    success: "נתוני דוגמה נוספו.",
-  },
-  QA: {
-    icon: "🔍",
-    title: "בודק/ת האיכות",
-    running: "בודק/ת שהכל באמת עובד כמו שצריך…",
-    success: "כל הבדיקות עברו בהצלחה.",
-  },
-  Security: {
-    icon: "🛡️",
-    title: "מומחה/ית האבטחה",
-    running: "סורק/ת אחר בעיות אבטחה נפוצות…",
-    success: "נסרק ואושר.",
-  },
-  Forge: {
-    icon: "🔥",
-    title: "סגירת הבנייה",
-    running: "שומר/ת הכל ומכין/ה נקודת שחזור…",
-    success: "הכל מוכן!",
-  },
+const AGENT_ICONS: Record<AgentStepEvent["agent"], string> = {
+  Architect: "🏗️",
+  Database: "🗄️",
+  Debug: "🔧",
+  "Seed Data": "🌱",
+  QA: "🔍",
+  Security: "🛡️",
+  Forge: "🔥",
+};
+
+/** Translation-key-safe identifier for an agent name that contains a space ("Seed Data"). */
+const AGENT_KEY: Record<AgentStepEvent["agent"], string> = {
+  Architect: "Architect",
+  Database: "Database",
+  Debug: "Debug",
+  "Seed Data": "SeedData",
+  QA: "QA",
+  Security: "Security",
+  Forge: "Forge",
 };
 
 const AGENT_ORDER: AgentStepEvent["agent"][] = ["Architect", "Database", "Debug", "Seed Data", "QA", "Security", "Forge"];
@@ -75,19 +49,26 @@ interface QaResultDetail {
 
 /** Renders the real payload each agent reported — the same data used to build the summary message, not a re-statement of it. */
 function AgentDetail({ agent, detail }: { agent: AgentStepEvent["agent"]; detail: unknown }) {
+  const { t } = useTranslation();
+
   if (agent === "Architect" && detail) {
     const { newEntities, changedEntities } = detail as ImpactDetail;
     if (newEntities.length === 0 && changedEntities.length === 0) {
-      return <p className="muted small">אין שינוי במבנה — הכל כבר קיים.</p>;
+      return <p className="muted small">{t("build.detail.architect.noChange")}</p>;
     }
     return (
       <ul className="detail-list">
         {newEntities.map((e) => (
-          <li key={e.name}>מסך חדש: <strong>{e.label}</strong></li>
+          <li key={e.name}>
+            {t("build.detail.architect.newScreen")}
+            <strong>{e.label}</strong>
+          </li>
         ))}
         {changedEntities.map((e) => (
           <li key={e.name}>
-            <strong>{e.label}</strong> קיבל שדות חדשים: {e.newFieldNames.join(", ")}
+            <strong>{e.label}</strong>
+            {t("build.detail.architect.gainedFields")}
+            {e.newFieldNames.join(", ")}
           </li>
         ))}
       </ul>
@@ -96,11 +77,15 @@ function AgentDetail({ agent, detail }: { agent: AgentStepEvent["agent"]; detail
 
   if (agent === "Database" && Array.isArray(detail)) {
     const changes = detail as MigrationChangeDetail[];
-    if (changes.length === 0) return <p className="muted small">לא היה צורך בשינוי בבסיס הנתונים.</p>;
+    if (changes.length === 0) return <p className="muted small">{t("build.detail.database.noChange")}</p>;
     return (
       <ul className="detail-list">
         {changes.map((c, i) => (
-          <li key={i}>{c.type === "new_table" ? `טבלה חדשה נוצרה: ${c.table}` : `עמודה חדשה נוספה: ${c.table}.${c.column}`}</li>
+          <li key={i}>
+            {c.type === "new_table"
+              ? `${t("build.detail.database.newTable")}${c.table}`
+              : `${t("build.detail.database.newColumn")}${c.table}.${c.column}`}
+          </li>
         ))}
       </ul>
     );
@@ -108,8 +93,12 @@ function AgentDetail({ agent, detail }: { agent: AgentStepEvent["agent"]; detail
 
   if (agent === "Seed Data" && detail) {
     const { seededCount, entities } = detail as { seededCount: number; entities: string[] };
-    if (entities.length === 0) return <p className="muted small">לא נוספו נתוני דוגמה (אין מסכים חדשים).</p>;
-    return <p className="muted small">{seededCount} רשומות דוגמה נוספו ב: {entities.join(", ")}.</p>;
+    if (entities.length === 0) return <p className="muted small">{t("build.detail.seed.none")}</p>;
+    return (
+      <p className="muted small">
+        {t("build.detail.seed.summary", { count: seededCount, entities: entities.join(", ") })}
+      </p>
+    );
   }
 
   if (agent === "QA" && Array.isArray(detail)) {
@@ -134,7 +123,7 @@ function AgentDetail({ agent, detail }: { agent: AgentStepEvent["agent"]; detail
 
   if (agent === "Security" && Array.isArray(detail)) {
     const warnings = detail as string[];
-    if (warnings.length === 0) return <p className="muted small">לא נמצאו אזהרות.</p>;
+    if (warnings.length === 0) return <p className="muted small">{t("build.detail.security.none")}</p>;
     return (
       <ul className="detail-list">
         {warnings.map((w, i) => (
@@ -158,6 +147,7 @@ export function BuildProgress({
   onComplete: (project: Project) => void;
   onBack: () => void;
 }) {
+  const { t } = useTranslation();
   const [events, setEvents] = useState<AgentStepEvent[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [finished, setFinished] = useState(false);
@@ -209,21 +199,22 @@ export function BuildProgress({
     <main className="ai-team">
       <h1>{title}</h1>
       <p className="muted">
-        צוות ה-AI עובד עכשיו, בזמן אמת. שלב {Math.min(doneCount + 1, visibleAgents.length)} מתוך {visibleAgents.length}.
+        {t("build.subtitle", { current: Math.min(doneCount + 1, visibleAgents.length), total: visibleAgents.length })}
       </p>
       <ol className="agent-steps">
         {visibleAgents.map((agent) => {
           const event = latestByAgent.get(agent);
-          const info = AGENT_INFO[agent];
+          const key = AGENT_KEY[agent];
+          const icon = AGENT_ICONS[agent];
           const status = event?.status ?? "pending";
           const caption =
             status === "failed"
-              ? `נתקלנו בבעיה: ${event!.message}`
+              ? `${t("build.status.failedPrefix")}${event!.message}`
               : status === "success"
-                ? info.success
+                ? t(`build.agent.${key}.success`)
                 : status === "running"
-                  ? info.running
-                  : "ממתין/ה בתור…";
+                  ? t(`build.agent.${key}.running`)
+                  : t("build.status.pending");
           const hasDetail =
             agent !== "Forge" &&
             agent !== "Debug" &&
@@ -233,18 +224,18 @@ export function BuildProgress({
           return (
             <li key={agent} className={`agent-step agent-step-${status}`}>
               {status === "pending" ? (
-                <span className="step-icon step-pending">{info.icon}</span>
+                <span className="step-icon step-pending">{icon}</span>
               ) : (
                 <StatusIcon status={status as AgentStepEvent["status"]} />
               )}
               <div className="agent-step-body">
                 <div className="agent-step-header">
                   <strong>
-                    {info.icon} {info.title}
+                    {icon} {t(`build.agent.${key}.title`)}
                   </strong>
                   {hasDetail && (
                     <button type="button" className="link-button detail-toggle" onClick={() => toggleExpanded(agent)}>
-                      {isOpen ? "הסתרת פרטים" : "מה בדיוק נעשה?"}
+                      {isOpen ? t("build.detail.hide") : t("build.detail.show")}
                     </button>
                   )}
                 </div>
@@ -259,13 +250,13 @@ export function BuildProgress({
           );
         })}
       </ol>
-      <p className="muted small">כל שלב פה קורה באמת עכשיו על הנתונים שלכם — לא רק אנימציה.</p>
+      <p className="muted small">{t("build.footer")}</p>
       {error && <p className="error banner">{error}</p>}
       {failedStep && (
         <div>
-          <p className="error">הבנייה נעצרה כדי לא לפרסם משהו שלא עובד כמו שצריך.</p>
+          <p className="error">{t("build.failed.banner")}</p>
           <button type="button" onClick={onBack}>
-            חזרה
+            {t("build.back")}
           </button>
         </div>
       )}

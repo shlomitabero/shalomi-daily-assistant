@@ -56,7 +56,7 @@ external font request, not an application bug).
    a real browser across three entity types (Customer, Appointment,
    Employee) — see the "Add believable seed data" commit.
 
-2. **No bilingual (Hebrew + English) support at all — Steps 1–2 fixed,
+2. **No bilingual (Hebrew + English) support at all — Steps 1–3 fixed,
    more screens still open.** There was no i18n architecture in this
    codebase at all (`grep` for `i18n`/`locale`/`translation` across
    `apps/web/src` returned nothing): every user-facing string was
@@ -65,13 +65,16 @@ external font request, not an application bug).
    this change, it's being done as a sequence of real steps rather than
    rushed in one pass — see ADR 0006. Done so far: the i18n architecture
    itself (dictionary, context, hook, language switcher, a real
-   `dir`/`lang` flip), the pre-auth screen, the topbar chrome, the home
-   ("what do you want to build") screen, and the full spec review screen
-   — all verified live in a real browser at desktop width with zero page
-   errors. **Still open:** the AI Team build screen, preview/entity
-   panel, History, and Business Twin panel all still show hardcoded
-   Hebrew regardless of the selected language — each is a queued next
-   step in `docs/roadmap.md`.
+   `dir`/`lang` flip, `{placeholder}` interpolation for strings like "Step
+   2 of 6"), the pre-auth screen, the topbar chrome, the home screen, the
+   full spec review screen, and the AI Team build screen (all 7 agents'
+   captions and their expandable detail panels) — all verified live in a
+   real browser with zero page errors, including actually catching and
+   reading the live in-progress build screen mid-build, not just its
+   start and end states. **Still open:** the preview/entity panel,
+   History, and Business Twin panel all still show hardcoded Hebrew
+   regardless of the selected language — each is a queued next step in
+   `docs/roadmap.md`.
 
 3. **Desktop screens with little content leave a large, unstyled empty
    void below the fold** (seen clearly on the auth screen and the "מה
