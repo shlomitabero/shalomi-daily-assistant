@@ -132,10 +132,25 @@ export function selectEnhancer(env: NodeJS.ProcessEnv = process.env): PromptEnha
   return new HeuristicPromptEnhancer();
 }
 
+/**
+ * Same graceful-degradation pattern as generateSpec (see index.ts): if the
+ * real model call fails at runtime, fall back to the deterministic
+ * heuristic enhancer instead of surfacing a raw 500. The real failure is
+ * still logged server-side, and providerName comes back tagged
+ * "<name>-fallback" so this is never mistaken for a normal response.
+ */
 export async function enhancePrompt(
   rawIdea: string,
   enhancer: PromptEnhancer = selectEnhancer(),
 ): Promise<{ enhanced: string; providerName: string }> {
-  const enhanced = await enhancer.enhance(rawIdea);
-  return { enhanced, providerName: enhancer.name };
+  try {
+    const enhanced = await enhancer.enhance(rawIdea);
+    return { enhanced, providerName: enhancer.name };
+  } catch (err) {
+    if (enhancer.name === "heuristic") throw err;
+    // eslint-disable-next-line no-console
+    console.error(`prompt enhancer "${enhancer.name}" failed, falling back to heuristic:`, err);
+    const enhanced = await new HeuristicPromptEnhancer().enhance(rawIdea);
+    return { enhanced, providerName: `${enhancer.name}-fallback` };
+  }
 }

@@ -81,3 +81,25 @@ test("generateSpec returns providerName alongside the spec", async () => {
   assert.equal(providerName, "heuristic");
   assert.ok(spec.entities.length > 0);
 });
+
+test("generateSpec falls back to the heuristic provider when a non-heuristic provider throws, instead of surfacing a raw error", async () => {
+  const failingProvider = {
+    name: "anthropic",
+    generate: async () => {
+      throw new Error("simulated model failure (e.g. schema mismatch or rate limit)");
+    },
+  };
+  const { spec, providerName } = await generateSpec("a shop with customers and orders", failingProvider);
+  assert.equal(providerName, "anthropic-fallback");
+  assert.ok(spec.entities.length > 0);
+});
+
+test("generateSpec still throws when the heuristic provider itself fails (no further fallback to hide behind)", async () => {
+  const failingHeuristic = {
+    name: "heuristic",
+    generate: async () => {
+      throw new Error("should propagate, not loop");
+    },
+  };
+  await assert.rejects(() => generateSpec("x", failingHeuristic), /should propagate/);
+});

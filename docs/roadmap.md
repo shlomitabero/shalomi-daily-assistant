@@ -305,6 +305,33 @@ delete records through the generated UI, backed by the real API.
 
 ## Production hardening
 
+- [x] **Graceful fallback when the real Anthropic call fails.** The user
+      reported "Internal server error" on the live site right after using
+      the new "Enhance & build with AI" feature — the first real use of
+      the Anthropic-backed path in production (this sandbox has no
+      `ANTHROPIC_API_KEY`, so it had only ever been tested against the
+      heuristic fallback and a mocked Anthropic response, never a live
+      API call). `generateSpec` and `enhancePrompt` now catch a failure
+      from a non-heuristic provider/enhancer (network error, rate limit,
+      or the model's output not matching `ProductSpecSchema`), log the
+      real error server-side for diagnosis, and transparently retry with
+      the deterministic heuristic instead of surfacing a raw 500 —
+      `providerName` comes back tagged `"<name>-fallback"` so this is
+      never confused with a normal response. Verified: 4 new unit tests
+      (fallback triggers and returns a valid result; a heuristic failure
+      still propagates, i.e. this doesn't loop or hide every error) +
+      full test suite green + a real Playwright run against a real
+      running server with a **deliberately invalid** `ANTHROPIC_API_KEY`
+      (to force a genuine live API failure, not a mock): the server logs
+      show a real `401 invalid x-api-key` from `api.anthropic.com`, and
+      the user still lands cleanly on the spec review screen with a
+      working, if less tailored, generated app — zero error banner, zero
+      console errors. This strongly suggests the live incident's likely
+      cause: if the real key configured in Render's environment is
+      invalid/expired, this exact 401 would occur — worth the user
+      double-checking `ANTHROPIC_API_KEY` in the Render dashboard's
+      Environment tab, though the app itself no longer breaks either way.
+
 - [x] **Faster production boot for `apps/api`.** Investigated a live
       "Load failed" report on the deployed site. Render's own dashboard
       showed the `forge-ai` service itself was deployed successfully

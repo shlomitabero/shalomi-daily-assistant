@@ -87,3 +87,25 @@ test("enhancePrompt returns providerName alongside the enhanced text", async () 
   assert.equal(providerName, "heuristic");
   assert.ok(enhanced.length > 0);
 });
+
+test("enhancePrompt falls back to the heuristic enhancer when a non-heuristic enhancer throws", async () => {
+  const failingEnhancer = {
+    name: "anthropic",
+    enhance: async () => {
+      throw new Error("simulated model failure");
+    },
+  };
+  const { enhanced, providerName } = await enhancePrompt("a shop with customers and orders", failingEnhancer);
+  assert.equal(providerName, "anthropic-fallback");
+  assert.ok(enhanced.length > 0);
+});
+
+test("enhancePrompt still throws when the heuristic enhancer itself fails (no further fallback to hide behind)", async () => {
+  const failingHeuristic = {
+    name: "heuristic",
+    enhance: async () => {
+      throw new Error("should propagate, not loop");
+    },
+  };
+  await assert.rejects(() => enhancePrompt("x", failingHeuristic), /should propagate/);
+});

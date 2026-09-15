@@ -30,10 +30,27 @@ export function selectProvider(env: NodeJS.ProcessEnv = process.env): SpecProvid
   return new HeuristicSpecProvider();
 }
 
+/**
+ * If a real model call fails at runtime -- network error, rate limit, or the
+ * model's output not matching ProductSpecSchema -- this falls back to the
+ * deterministic heuristic provider instead of surfacing a raw 500 to the
+ * user, who has no way to act on "Internal server error". The real failure
+ * is still logged server-side for diagnosis. `providerName` comes back
+ * tagged "<name>-fallback" so this is never silently mistaken for a normal
+ * heuristic (no-API-key) response.
+ */
 export async function generateSpec(
   description: string,
   provider: SpecProvider = selectProvider(),
 ): Promise<{ spec: ProductSpec; providerName: string }> {
-  const spec = await provider.generate(description);
-  return { spec, providerName: provider.name };
+  try {
+    const spec = await provider.generate(description);
+    return { spec, providerName: provider.name };
+  } catch (err) {
+    if (provider.name === "heuristic") throw err;
+    // eslint-disable-next-line no-console
+    console.error(`spec provider "${provider.name}" failed, falling back to heuristic:`, err);
+    const spec = await new HeuristicSpecProvider().generate(description);
+    return { spec, providerName: `${provider.name}-fallback` };
+  }
 }
