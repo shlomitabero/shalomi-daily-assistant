@@ -184,6 +184,23 @@ delete records through the generated UI, backed by the real API.
       code path to exercise live without a real Anthropic API key
       outside this dev environment), so it's verified that way rather
       than by a claimed browser run.
+- [ ] **Persistent chat + live-preview split-pane builder (Base44/Lovable-
+      style), not a linear screen flow.** Direct product feedback naming
+      Base44 specifically. Researched (base44.com itself is blocked by
+      this environment's network egress policy, so via search results and
+      third-party write-ups, not a direct fetch — that limitation is
+      stated honestly, not hidden): Base44's editor keeps an AI chat panel
+      on one side and a live app preview on the other, at all times, side
+      by side — you keep typing follow-up requests into the same
+      persistent chat and watch the preview update, rather than moving
+      through separate full-page screens (describe → review → build →
+      preview) the way Forge AI does today. Adopting this is a real UI/UX
+      architecture change — restructuring `apps/web/src/App.tsx` away
+      from its current linear `View` state machine into a persistent
+      two-pane layout — not a small tweak, so it will be built the same
+      way the bilingual rollout was: staged, verified steps, not one
+      pass. **Not yet implemented** — queued as the next major initiative
+      after this audit's other items.
 - [ ] Multi-agent **parallel** execution (today's pipeline is a sequence, not
       parallel branches with real dependency scheduling) — **not yet implemented**
 - [ ] Git integration (bidirectional sync) — **not yet implemented**
