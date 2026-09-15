@@ -265,6 +265,40 @@ delete records through the generated UI, backed by the real API.
 - [ ] Visual editor over the generated UI — **not yet implemented**
 - [ ] Integration marketplace (Stripe, email, etc.) — **not yet implemented**
 - [ ] Deployment (Vercel/Docker) — **not yet implemented**
+- [x] Precompile `apps/api` to a bundled JS file for production instead of
+      transpiling TypeScript at every boot — see "Production hardening"
+      below.
+
+## Production hardening
+
+- [x] **Faster production boot for `apps/api`.** Investigated a live
+      "Load failed" report on the deployed site. Render's own dashboard
+      showed the `forge-ai` service itself was deployed successfully
+      (green, no failed build) and no error logs — the actual cause was
+      Render's free-tier instance spinning down after inactivity, which
+      can add 50+ seconds to the very next request while it wakes back up;
+      a client that gives up before that finishes sees exactly this error.
+      That spin-up delay is a Render free-tier platform behavior, not
+      something this codebase can eliminate — but the app's own boot time
+      was a real, fixable contributor: production was running
+      `tsx --experimental-sqlite src/server.ts`, which transpiles every
+      TypeScript file (including the three workspace packages it imports)
+      from source on every single process start. Added a real build step
+      (`apps/api`'s `build` script bundles `src/server.ts` and its
+      workspace-package imports into a single plain-JS file with esbuild,
+      already an unused devDependency; `express`/`cors`/`zod` stay external
+      since they're real npm dependencies present after `npm install`) and
+      changed `start` to run the bundle directly with plain `node`. Local
+      measurement across 3 runs each: old (`tsx`, live transpile) booted in
+      837–964ms; new (precompiled bundle, plain `node`) booted in
+      171–196ms — roughly 5x faster. Verified: full test suite (77 tests
+      across all 4 workspaces) still passes; a clean-room clone + fresh
+      `npm install` + `npm run build` + `npm start` (mirroring Render's
+      exact `buildCommand`/`startCommand` from `render.yaml`) produced a
+      working server (`/api/health` returns ok, static assets serve) that
+      a real Playwright browser loaded with zero console errors. `dev`
+      still runs via `tsx watch` unchanged, so local development is
+      unaffected.
 
 ## Phase 3
 

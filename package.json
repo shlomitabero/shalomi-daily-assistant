@@ -12,7 +12,7 @@
     "dev:api": "npm run dev --workspace=@forge/api",
     "dev:web": "npm run dev --workspace=@forge/web",
     "dev": "npm run dev:api & npm run dev:web",
-    "build": "npm run build --workspace=@forge/web",
+    "build": "npm run build --workspace=@forge/web && npm run build --workspace=@forge/api",
     "start": "npm run start --workspace=@forge/api",
     "test": "npm run test --workspace=@forge/spec-engine && npm run test --workspace=@forge/db && npm run test --workspace=@forge/api && npm run test --workspace=@forge/web"
   }
