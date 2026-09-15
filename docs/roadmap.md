@@ -210,10 +210,26 @@ delete records through the generated UI, backed by the real API.
       sequential refines (one that added a real new entity, one that
       genuinely changed nothing) both produced accurate, real summaries,
       in order, with zero console errors.
-      **Still to do:** the actual two-column layout (chat pane + live
-      preview pane side by side) and making the AI Team activity appear
-      inline in the chat instead of taking over the whole screen during a
-      refine — both queued as the next steps.
+      **Step 2 done:** the preview screen is now a genuine two-column
+      split pane on wide viewports — a sticky chat/history column (the
+      Refine box + its conversation history from Step 1) next to a live
+      entity-preview column (tabs + the record table/form), instead of
+      one long stacked column. Falls back to a single stacked column
+      below a 760px breakpoint. Verified live in a real browser at both
+      1280px and 390px: measured the two panes' actual bounding boxes to
+      confirm they sit genuinely side by side on desktop (not just
+      visually adjacent by coincidence) and genuinely stacked on mobile
+      with no horizontal overflow, and confirmed the chat pane's `sticky`
+      positioning actually holds it near the top while scrolling past a
+      long entity table (moved only ~50px on screen after a 400px page
+      scroll). The two-column breakpoint is intentionally modest (not a
+      full-bleed wide layout) because it still lives inside the app's
+      existing 880px content container — widening that container is a
+      separate, larger decision not made here.
+      **Still to do:** making the AI Team build activity appear inline in
+      the chat pane instead of taking over the whole screen during a
+      refine (today, submitting a refine still navigates away to the
+      full-screen AI Team view and back) — queued as the next step.
 - [ ] Multi-agent **parallel** execution (today's pipeline is a sequence, not
       parallel branches with real dependency scheduling) — **not yet implemented**
 - [ ] Git integration (bidirectional sync) — **not yet implemented**

@@ -505,6 +505,40 @@ tbody tr:hover {
   flex-wrap: wrap;
 }
 
+/* Base44/Lovable-style split pane: a persistent chat/history column next
+   to the live app preview, instead of stacking everything in one column.
+   Single column below the breakpoint; the .app container's own max-width
+   caps how wide this can get, so the breakpoint is chosen to still leave
+   both columns usable widths within that cap, not a full-bleed layout. */
+.preview-body {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 24px;
+  align-items: start;
+}
+
+@media (min-width: 760px) {
+  .preview-body {
+    grid-template-columns: minmax(240px, 300px) 1fr;
+  }
+
+  .preview-chat-pane {
+    position: sticky;
+    top: 16px;
+  }
+}
+
+.preview-chat-pane {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-width: 0;
+}
+
+.preview-live-pane {
+  min-width: 0;
+}
+
 .refine-box {
   display: flex;
   gap: 8px;

@@ -356,46 +356,52 @@ function AppContent() {
             </div>
           </div>
 
-          <form className="refine-box" onSubmit={handleRefine}>
-            <input
-              type="text"
-              placeholder={t("preview.refine.placeholder")}
-              value={refineText}
-              onChange={(e) => setRefineText(e.target.value)}
-            />
-            <button type="submit" disabled={!refineText.trim()}>
-              {t("preview.refine.submit")}
-            </button>
-          </form>
+          <div className="preview-body">
+            <div className="preview-chat-pane">
+              <form className="refine-box" onSubmit={handleRefine}>
+                <input
+                  type="text"
+                  placeholder={t("preview.refine.placeholder")}
+                  value={refineText}
+                  onChange={(e) => setRefineText(e.target.value)}
+                />
+                <button type="submit" disabled={!refineText.trim()}>
+                  {t("preview.refine.submit")}
+                </button>
+              </form>
 
-          {refineHistory.length > 0 && (
-            <div className="refine-history">
-              <h2>{t("preview.refineHistory.heading")}</h2>
-              <ul className="refine-history-list">
-                {refineHistory.map((entry) => (
-                  <li key={entry.id}>
-                    <p className="refine-history-instruction">{entry.instruction}</p>
-                    <p className="muted small">{entry.summary}</p>
-                  </li>
-                ))}
-              </ul>
+              {refineHistory.length > 0 && (
+                <div className="refine-history">
+                  <h2>{t("preview.refineHistory.heading")}</h2>
+                  <ul className="refine-history-list">
+                    {refineHistory.map((entry) => (
+                      <li key={entry.id}>
+                        <p className="refine-history-instruction">{entry.instruction}</p>
+                        <p className="muted small">{entry.summary}</p>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
             </div>
-          )}
 
-          <nav className="entity-tabs">
-            {project.spec.entities.map((entity) => (
-              <button
-                key={entity.name}
-                className={activeEntity === entity.name ? "tab tab-active" : "tab"}
-                onClick={() => setActiveEntity(entity.name)}
-              >
-                {entity.label ?? entity.name}
-              </button>
-            ))}
-          </nav>
-          {project.spec.entities
-            .filter((e) => e.name === activeEntity)
-            .map((entity) => <EntityPanel key={entity.name} projectId={project.id} entity={entity} />)}
+            <div className="preview-live-pane">
+              <nav className="entity-tabs">
+                {project.spec.entities.map((entity) => (
+                  <button
+                    key={entity.name}
+                    className={activeEntity === entity.name ? "tab tab-active" : "tab"}
+                    onClick={() => setActiveEntity(entity.name)}
+                  >
+                    {entity.label ?? entity.name}
+                  </button>
+                ))}
+              </nav>
+              {project.spec.entities
+                .filter((e) => e.name === activeEntity)
+                .map((entity) => <EntityPanel key={entity.name} projectId={project.id} entity={entity} />)}
+            </div>
+          </div>
 
           {showHistory && (
             <HistoryPanel
