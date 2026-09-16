@@ -364,7 +364,7 @@ export function deleteRecord(entityName, id) {
 }
 
 function renderEntityViewJsx(): string {
-  return `import { useEffect, useState } from "react";
+  return `import { useEffect, useMemo, useState } from "react";
 import { createRecord, deleteRecord, listRecords, updateRecord } from "../api.js";
 
 function emptyForm(entity) {
@@ -373,11 +373,51 @@ function emptyForm(entity) {
   return form;
 }
 
-function formatCell(field, value) {
-  if (value === null || value === undefined || value === "") return "—";
-  if (field.type === "boolean") return value ? "Yes" : "No";
-  if (field.type === "enum" && field.enumLabels && field.enumLabels[value]) return field.enumLabels[value];
-  return String(value);
+// Classifies a status-like enum value into a badge color without needing
+// per-app configuration -- covers the common English status words Forge AI's
+// own spec generator uses ("Won", "Lost", "Active", ...) and falls back to
+// neutral for anything else (e.g. a freeform value).
+const POSITIVE_WORDS = ["won", "completed", "active", "paid", "delivered", "success", "qualified", "shipped", "confirmed", "approved"];
+const NEGATIVE_WORDS = ["lost", "cancelled", "canceled", "inactive", "overdue", "no-show", "failed", "rejected", "declined"];
+function badgeTone(rawValue) {
+  const lower = String(rawValue).toLowerCase();
+  if (POSITIVE_WORDS.some((w) => lower.includes(w))) return "positive";
+  if (NEGATIVE_WORDS.some((w) => lower.includes(w))) return "negative";
+  return "neutral";
+}
+
+function Cell({ field, value }) {
+  if (value === null || value === undefined || value === "") return <span className="muted">—</span>;
+  if (field.type === "boolean") return value ? <span className="bool-yes">✓</span> : <span className="muted">–</span>;
+  if (field.type === "enum") {
+    const label = (field.enumLabels && field.enumLabels[value]) || value;
+    return <span className={\`badge badge-\${badgeTone(value)}\`}>{label}</span>;
+  }
+  if (field.type === "date") {
+    const date = new Date(value);
+    return <>{Number.isNaN(date.getTime()) ? value : date.toLocaleDateString()}</>;
+  }
+  if (field.type === "number") return <>{Number(value).toLocaleString()}</>;
+  return <>{String(value)}</>;
+}
+
+function matchesSearch(record, fields, query) {
+  const trimmed = query.trim().toLowerCase();
+  if (!trimmed) return true;
+  return fields.some((f) => {
+    const value = record[f.name];
+    if (value === null || value === undefined) return false;
+    const display = f.type === "enum" && f.enumLabels && f.enumLabels[value] ? f.enumLabels[value] : String(value);
+    return String(display).toLowerCase().includes(trimmed);
+  });
+}
+
+function compareValues(a, b) {
+  if (a === null || a === undefined) return b === null || b === undefined ? 0 : -1;
+  if (b === null || b === undefined) return 1;
+  if (typeof a === "number" && typeof b === "number") return a - b;
+  if (typeof a === "boolean" && typeof b === "boolean") return Number(a) - Number(b);
+  return String(a).localeCompare(String(b));
 }
 
 function FieldInput({ entity, field, value, onChange }) {
@@ -418,6 +458,9 @@ export function EntityView({ entity }) {
   const [error, setError] = useState(null);
   const [form, setForm] = useState(() => emptyForm(entity));
   const [editingId, setEditingId] = useState(null);
+  const [search, setSearch] = useState("");
+  const [sortField, setSortField] = useState(null);
+  const [sortDir, setSortDir] = useState("asc");
 
   async function refresh() {
     setLoading(true);
@@ -434,9 +477,27 @@ export function EntityView({ entity }) {
   useEffect(() => {
     setForm(emptyForm(entity));
     setEditingId(null);
+    setSearch("");
+    setSortField(null);
     refresh();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [entity.name]);
+
+  function toggleSort(fieldName) {
+    if (sortField !== fieldName) {
+      setSortField(fieldName);
+      setSortDir("asc");
+    } else {
+      setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+    }
+  }
+
+  const visibleRecords = useMemo(() => {
+    const filtered = records.filter((r) => matchesSearch(r, entity.fields, search));
+    if (!sortField) return filtered;
+    const sorted = [...filtered].sort((a, b) => compareValues(a[sortField], b[sortField]));
+    return sortDir === "desc" ? sorted.reverse() : sorted;
+  }, [records, entity.fields, search, sortField, sortDir]);
 
   async function handleSubmit(e) {
     e.preventDefault();
@@ -501,33 +562,57 @@ export function EntityView({ entity }) {
       {loading ? (
         <p className="muted">Loading…</p>
       ) : records.length === 0 ? (
-        <p className="muted">No records yet.</p>
-      ) : (
-        <div className="table-scroll">
-          <table>
-            <thead>
-              <tr>
-                {entity.fields.map((f) => (
-                  <th key={f.name}>{f.label}</th>
-                ))}
-                <th></th>
-              </tr>
-            </thead>
-            <tbody>
-              {records.map((r) => (
-                <tr key={r.id}>
-                  {entity.fields.map((f) => (
-                    <td key={f.name}>{formatCell(f, r[f.name])}</td>
-                  ))}
-                  <td className="row-actions">
-                    <button onClick={() => startEdit(r)}>Edit</button>
-                    <button onClick={() => handleDelete(r.id)}>Delete</button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+        <div className="empty-state">
+          <p>No records yet — add the first one above.</p>
         </div>
+      ) : (
+        <>
+          <input
+            type="text"
+            className="entity-search"
+            placeholder="🔍 Search…"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+          />
+          {visibleRecords.length === 0 ? (
+            <div className="empty-state">
+              <p>No results match your search.</p>
+            </div>
+          ) : (
+            <div className="table-scroll">
+              <table>
+                <thead>
+                  <tr>
+                    {entity.fields.map((f) => (
+                      <th key={f.name}>
+                        <button type="button" className="sort-header" onClick={() => toggleSort(f.name)}>
+                          {f.label}
+                          {sortField === f.name ? (sortDir === "asc" ? " ▲" : " ▼") : ""}
+                        </button>
+                      </th>
+                    ))}
+                    <th></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {visibleRecords.map((r) => (
+                    <tr key={r.id}>
+                      {entity.fields.map((f) => (
+                        <td key={f.name}>
+                          <Cell field={f} value={r[f.name]} />
+                        </td>
+                      ))}
+                      <td className="row-actions">
+                        <button onClick={() => startEdit(r)}>Edit</button>
+                        <button onClick={() => handleDelete(r.id)}>Delete</button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </>
       )}
     </div>
   );
@@ -626,6 +711,15 @@ th, td { text-align: start; padding: 8px 10px; border-bottom: 1px solid #efe8da;
 .row-actions button { margin-inline-start: 4px; padding: 5px 10px; border-radius: 6px; border: 1px solid #e6ddcc; background: #fff; cursor: pointer; }
 .muted { color: #83786a; font-size: 13px; }
 .error { color: #c0392b; }
+.entity-search { max-width: 280px; margin-bottom: 14px; }
+.sort-header { background: none; border: none; padding: 0; margin: 0; color: inherit; font: inherit; cursor: pointer; }
+.sort-header:hover { color: #d9622b; }
+.badge { display: inline-block; padding: 3px 11px; border-radius: 999px; font-size: 12.5px; font-weight: 600; white-space: nowrap; }
+.badge-positive { background: #e2f2e8; color: #2e8b57; }
+.badge-negative { background: #fbe6e2; color: #c0392b; }
+.badge-neutral { background: #e9edf0; color: #4c5b6a; }
+.bool-yes { color: #2e8b57; font-weight: 700; }
+.empty-state { padding: 32px 16px; text-align: center; color: #83786a; background: #fdfbf7; border: 1px dashed #e6ddcc; border-radius: 10px; }
 `;
 }
 

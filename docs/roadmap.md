@@ -350,15 +350,36 @@ not a single "make it perfect" claim.
       sorts correctly, and confirmed the hover-color bug is gone —
       checked in light mode, dark mode, and at mobile width (390px), zero
       console errors throughout.
-- [ ] **Step 2 candidates (not started, for a future round):** apply the
-      same field-aware rendering (badges, formatted dates/numbers) to the
-      *exported* standalone codegen output (`apps/api/src/codegen.ts`),
-      which currently generates its own separate, plainer React
-      components — today's upgrade only reaches the live in-app preview,
-      not the code a user downloads. Also worth considering: a
-      business-type-aware layout (e.g. a Kanban board for a "Deal"
-      entity with a stage-like enum field, a calendar view for
-      "Appointment") instead of one shared table shape for every entity.
+- [x] **Step 2: bring the same upgrade to the exported standalone app.**
+      Step 1 only reached the live in-app preview; the code a user
+      actually downloads via "Export Code" (`apps/api/src/codegen.ts`,
+      a separate, dependency-free React codebase with zero runtime
+      connection to Forge AI) still generated the old plain table. Since
+      the export can't import Forge AI's own packages, the same
+      badge-classification/search/sort logic from `entityFormatting.ts`
+      was ported as literal, readable JS directly into the generated
+      `EntityView.jsx` template (and matching CSS into the generated
+      `styles.css`) — duplicated intentionally, not shared, because the
+      whole point of this export is that it owes nothing to Forge AI at
+      runtime. Verified: a new codegen test asserts the generated file
+      contains the badge/search/sort code and no longer contains the old
+      `formatCell` helper, full test suite green (110 tests) + `npm run
+      build` clean, and — the most rigorous check available — an actual
+      end-to-end run: signed up, built a real CRM project through the
+      live API, downloaded the real export .zip, unzipped it, ran `npm
+      install` and `npm start` on it as a **completely standalone
+      project** (no Forge AI code involved at all), and drove it with a
+      real Playwright browser: added customer records, saw the green
+      "Won" status badges render correctly, confirmed search correctly
+      filtered to 1 matching row, and confirmed clicking a column header
+      sorts without error. Zero console errors. This closes both
+      identified steps of the generated-app-quality effort for now — see
+      "Step 3 candidates" below for what's still not done.
+- [ ] **Step 3 candidates (not started, for a future round):** a
+      business-type-aware layout (e.g. a Kanban board for a "Deal" entity
+      with a stage-like enum field, a calendar view for "Appointment")
+      instead of one shared table shape for every entity, in both the
+      preview and the export.
 
 ## Production hardening
 

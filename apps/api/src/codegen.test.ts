@@ -156,3 +156,21 @@ test("refuses to export an unsafe entity/field name rather than emitting broken 
   };
   assert.throws(() => generateExportFiles(malicious));
 });
+
+test("the exported EntityView renders status badges, formatted dates/numbers, search, and sortable columns -- not the old plain table", () => {
+  const files = generateExportFiles(project);
+  const entityViewJsx = files.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+  // Status badge classification (mirrors apps/web/src/entityFormatting.ts)
+  assert.match(entityViewJsx, /badgeTone/);
+  assert.match(entityViewJsx, /badge-\$\{badgeTone\(value\)\}/);
+  // Locale-formatted dates/numbers instead of raw values
+  assert.match(entityViewJsx, /toLocaleDateString/);
+  assert.match(entityViewJsx, /toLocaleString/);
+  // A real search box and click-to-sort headers, not just a static table
+  assert.match(entityViewJsx, /entity-search/);
+  assert.match(entityViewJsx, /matchesSearch/);
+  assert.match(entityViewJsx, /sort-header/);
+  assert.match(entityViewJsx, /toggleSort/);
+  // The old plain-text formatCell helper is gone, replaced by the Cell component
+  assert.doesNotMatch(entityViewJsx, /function formatCell/);
+});
