@@ -782,6 +782,52 @@ not a single "make it perfect" claim.
       errors. This is one concrete, scoped step toward a more polished
       first impression — not a full redesign, which "Base44-level"
       would honestly require more than one round to reach.
+- [x] **Expand the heuristic domain-entity library — fix the real root
+      cause behind generic, shallow generated apps.** A direct follow-up
+      complaint ("not just the home screen — the CODE isn't at the
+      level") led to investigating what actually gets *built*, not just
+      how the builder screens look. Found the real cause: the offline
+      heuristic spec generator (used whenever no `ANTHROPIC_API_KEY` is
+      configured, which is how this always ran in this sandbox and
+      appears to be how production has been running too) only recognized
+      8 business-entity types (Customer, Appointment, Employee, Invoice,
+      Order, Service, Product, Deal). Any description it didn't
+      recognize — including the user's own literal report, "אפליקציה
+      משלוחים כמו wolt" (a delivery app like Wolt) — silently fell back
+      to one single generic "Item" entity (name/description/status),
+      which is exactly the "cheap, generic" impression the user
+      described, not a cosmetic issue. Added 7 new domain entities
+      (MenuItem, Courier, Property, Student, Course, Patient, Project,
+      Task — covering restaurants/delivery, real estate, education,
+      healthcare, and agencies/project-management) each with real,
+      sensible fields and full Hebrew labels, and extended the existing
+      Order rule's keywords to recognize "delivery"/"משלוחים"/"wolt" too
+      (a delivery is fundamentally a kind of order). Verified: 4 new
+      unit tests including a direct regression test using the user's
+      exact reported phrase, a combined "restaurant with delivery"
+      description that now correctly produces 3 tailored entities
+      together (MenuItem + Order + Courier) instead of one generic
+      fallback, coverage for the other 4 new domains, and a specific
+      test proving the new "Course" keyword doesn't spuriously trigger
+      on the common English phrase "of course" (a real substring-match
+      pitfall caught before it shipped). Full suite green (140 tests) +
+      `npm run build` clean + `npm run test` in `packages/spec-engine`
+      alone (36/36) + a real Playwright run against a real server:
+      re-ran the user's exact original phrase and confirmed the spec
+      review screen now shows a real "הזמנות" (Orders) entity with
+      real fields instead of the generic "פריטים" (Items) fallback, and
+      built a fuller "מסעדה עם משלוחים, כולל תפריט מנות ושליחים"
+      (restaurant with delivery, including a menu and couriers)
+      description all the way through a real build, confirming the
+      live app ends up with 3 real, distinct, correctly-fielded entity
+      tabs (Orders, Menu Items, Couriers) — not a single flat list.
+      **Scope note, stated honestly:** this materially improves what the
+      free, no-API-key heuristic path produces for many more common
+      business types, but it is still a keyword-matching heuristic, not
+      true language understanding — a genuinely novel business
+      description can still fall back to the generic entity, and the
+      Anthropic-backed provider (when a real API key is configured)
+      remains the path to real accuracy for arbitrary descriptions.
 
 ## Phase 3
 

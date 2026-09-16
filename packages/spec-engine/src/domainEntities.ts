@@ -137,7 +137,10 @@ export const DOMAIN_ENTITY_RULES: DomainEntityRule[] = [
     },
   },
   {
-    keywords: ["order", "purchase", "checkout", "הזמנה", "הזמנות", "רכישה", "רכישות"],
+    keywords: [
+      "order", "purchase", "checkout", "delivery", "deliveries", "wolt",
+      "הזמנה", "הזמנות", "רכישה", "רכישות", "משלוח", "משלוחים", "וולט",
+    ],
     labelHe: "הזמנות",
     descriptionHe: "רכישה שביצע לקוח.",
     fieldLabelsHe: { customerName: "שם לקוח", total: "סכום כולל", status: "סטטוס", items: "פריטים" },
@@ -213,6 +216,203 @@ export const DOMAIN_ENTITY_RULES: DomainEntityRule[] = [
           enumValues: ["Lead", "Negotiation", "Won", "Lost"],
         },
         { name: "owner", type: "text", required: false },
+      ],
+    },
+  },
+  {
+    keywords: [
+      "menu", "dish", "food item", "restaurant", "cafe", "מסעדה", "מסעדות",
+      "תפריט", "מנה", "מנות", "בית קפה",
+    ],
+    labelHe: "פריטי תפריט",
+    descriptionHe: "מנה או מוצר בתפריט של מסעדה או בית קפה.",
+    fieldLabelsHe: { name: "שם המנה", description: "תיאור", price: "מחיר", category: "קטגוריה", available: "זמין" },
+    enumLabelsHe: {
+      category: { Starter: "מנה ראשונה", Main: "מנה עיקרית", Dessert: "קינוח", Drink: "שתייה" },
+    },
+    entity: {
+      name: "MenuItem",
+      description: "A dish or product on a restaurant or cafe's menu.",
+      fields: [
+        { name: "name", type: "text", required: true },
+        { name: "description", type: "longtext", required: false },
+        { name: "price", type: "number", required: true },
+        {
+          name: "category",
+          type: "enum",
+          required: false,
+          enumValues: ["Starter", "Main", "Dessert", "Drink"],
+        },
+        { name: "available", type: "boolean", required: false },
+      ],
+    },
+  },
+  {
+    keywords: ["courier", "driver", "delivery person", "שליח", "שליחים", "נהג", "נהגים"],
+    labelHe: "שליחים",
+    descriptionHe: "מי שמבצע את המשלוח ללקוח.",
+    fieldLabelsHe: { name: "שם", phone: "טלפון", vehicleType: "סוג רכב", status: "סטטוס" },
+    enumLabelsHe: {
+      vehicleType: { Bike: "אופניים", Scooter: "קטנוע", Car: "רכב" },
+      status: { Available: "זמין", OnDelivery: "במשלוח", Offline: "לא זמין" },
+    },
+    entity: {
+      name: "Courier",
+      description: "The person who delivers an order to a customer.",
+      fields: [
+        { name: "name", type: "text", required: true },
+        { name: "phone", type: "text", required: false },
+        {
+          name: "vehicleType",
+          type: "enum",
+          required: false,
+          enumValues: ["Bike", "Scooter", "Car"],
+        },
+        {
+          name: "status",
+          type: "enum",
+          required: true,
+          enumValues: ["Available", "OnDelivery", "Offline"],
+        },
+      ],
+    },
+  },
+  {
+    keywords: [
+      "property", "real estate", "listing", "apartment for rent", "נכס", "נכסים",
+      "נדל\"ן", "דירה למכירה", "דירה להשכרה",
+    ],
+    labelHe: "נכסים",
+    descriptionHe: "נכס נדל\"ן למכירה או להשכרה.",
+    fieldLabelsHe: { address: "כתובת", type: "סוג", price: "מחיר", rooms: "חדרים", status: "סטטוס" },
+    enumLabelsHe: {
+      type: { Apartment: "דירה", House: "בית", Office: "משרד", Land: "מגרש" },
+      status: { Available: "זמין", UnderContract: "בתהליך", Sold: "נמכר", Rented: "מושכר" },
+    },
+    entity: {
+      name: "Property",
+      description: "A real estate property for sale or rent.",
+      fields: [
+        { name: "address", type: "text", required: true },
+        {
+          name: "type",
+          type: "enum",
+          required: false,
+          enumValues: ["Apartment", "House", "Office", "Land"],
+        },
+        { name: "price", type: "number", required: false },
+        { name: "rooms", type: "number", required: false },
+        {
+          name: "status",
+          type: "enum",
+          required: true,
+          enumValues: ["Available", "UnderContract", "Sold", "Rented"],
+        },
+      ],
+    },
+  },
+  {
+    keywords: ["student", "pupil", "learner", "תלמיד", "תלמידה", "תלמידים", "סטודנט", "סטודנטית"],
+    labelHe: "תלמידים",
+    descriptionHe: "מי שלומד במסגרת החינוכית.",
+    fieldLabelsHe: { name: "שם", email: "אימייל", phone: "טלפון", status: "סטטוס לימודים" },
+    enumLabelsHe: {
+      status: { Active: "פעיל", Graduated: "סיים", OnHold: "בהמתנה" },
+    },
+    entity: {
+      name: "Student",
+      description: "A person enrolled in the educational program.",
+      fields: [
+        { name: "name", type: "text", required: true },
+        { name: "email", type: "text", required: false },
+        { name: "phone", type: "text", required: false },
+        {
+          name: "status",
+          type: "enum",
+          required: true,
+          enumValues: ["Active", "Graduated", "OnHold"],
+        },
+      ],
+    },
+  },
+  {
+    keywords: ["courses", "curriculum", "lesson", "lessons", "קורס", "קורסים", "שיעור", "שיעורים", "כיתה"],
+    labelHe: "קורסים",
+    descriptionHe: "קורס או שיעור שהעסק מלמד.",
+    fieldLabelsHe: { name: "שם הקורס", instructor: "מדריך/ה", startDate: "תאריך התחלה", capacity: "מקום למספר תלמידים" },
+    entity: {
+      name: "Course",
+      description: "A course or class the business teaches.",
+      fields: [
+        { name: "name", type: "text", required: true },
+        { name: "instructor", type: "text", required: false },
+        { name: "startDate", type: "date", required: false },
+        { name: "capacity", type: "number", required: false },
+      ],
+    },
+  },
+  {
+    keywords: ["patient", "clinic patient", "מטופל", "מטופלת", "מטופלים"],
+    labelHe: "מטופלים",
+    descriptionHe: "מי שמקבל טיפול רפואי מהעסק.",
+    fieldLabelsHe: { name: "שם", phone: "טלפון", dateOfBirth: "תאריך לידה", notes: "הערות רפואיות" },
+    entity: {
+      name: "Patient",
+      description: "A person receiving medical care from the business.",
+      fields: [
+        { name: "name", type: "text", required: true },
+        { name: "phone", type: "text", required: false },
+        { name: "dateOfBirth", type: "date", required: false },
+        { name: "notes", type: "longtext", required: false },
+      ],
+    },
+  },
+  {
+    keywords: ["project", "פרויקט", "פרויקטים"],
+    labelHe: "פרויקטים",
+    descriptionHe: "עבודה מוגדרת שהעסק מבצע עבור לקוח.",
+    fieldLabelsHe: { name: "שם", client: "לקוח", status: "סטטוס", deadline: "תאריך יעד", budget: "תקציב" },
+    enumLabelsHe: {
+      status: { Planning: "תכנון", InProgress: "בעבודה", Completed: "הושלם", OnHold: "מוקפא" },
+    },
+    entity: {
+      name: "Project",
+      description: "Defined work the business performs for a client.",
+      fields: [
+        { name: "name", type: "text", required: true },
+        { name: "client", type: "text", required: false },
+        {
+          name: "status",
+          type: "enum",
+          required: true,
+          enumValues: ["Planning", "InProgress", "Completed", "OnHold"],
+        },
+        { name: "deadline", type: "date", required: false },
+        { name: "budget", type: "number", required: false },
+      ],
+    },
+  },
+  {
+    keywords: ["task", "todo", "to-do", "action item", "משימה", "משימות"],
+    labelHe: "משימות",
+    descriptionHe: "פעולה קונקרטית שצריך לבצע.",
+    fieldLabelsHe: { title: "כותרת", assignee: "אחראי/ת", status: "סטטוס", dueDate: "תאריך יעד" },
+    enumLabelsHe: {
+      status: { Todo: "לביצוע", InProgress: "בעבודה", Done: "הושלם" },
+    },
+    entity: {
+      name: "Task",
+      description: "A concrete piece of work that needs to get done.",
+      fields: [
+        { name: "title", type: "text", required: true },
+        { name: "assignee", type: "text", required: false },
+        {
+          name: "status",
+          type: "enum",
+          required: true,
+          enumValues: ["Todo", "InProgress", "Done"],
+        },
+        { name: "dueDate", type: "date", required: false },
       ],
     },
   },

@@ -70,3 +70,45 @@ test("English input still produces English labels (no Hebrew leaks in)", async (
   assert.equal(customer.label, undefined);
   assert.doesNotMatch(spec.summary, /[֐-׿]/);
 });
+
+// Regression test for a real user complaint: describing a delivery app like
+// Wolt used to fall through to the generic single "Item" entity because no
+// domain rule recognized "delivery"/"משלוחים" at all -- see docs/roadmap.md.
+test("a delivery app description (like the real 'wolt' user report) produces a real tailored Order entity, not the generic Item fallback", async () => {
+  const provider = new HeuristicSpecProvider();
+  const spec = await provider.generate("אפליקציה משלוחים כמו wolt");
+  const entityNames = spec.entities.map((e) => e.name);
+  assert.ok(!entityNames.includes("Item"), `Expected tailored entities, got generic fallback: ${entityNames}`);
+  assert.ok(entityNames.includes("Order"), `Expected an Order entity for a delivery app, got: ${entityNames}`);
+});
+
+test("a restaurant-with-delivery description produces menu, order, and courier entities together", async () => {
+  const provider = new HeuristicSpecProvider();
+  const spec = await provider.generate("An order-management app for a restaurant with delivery, including a menu and couriers.");
+  const entityNames = spec.entities.map((e) => e.name).sort();
+  assert.deepEqual(entityNames, ["Courier", "MenuItem", "Order"]);
+});
+
+test("recognizes real-estate, education, healthcare, and project-management descriptions with tailored entities", async () => {
+  const provider = new HeuristicSpecProvider();
+
+  const realEstate = await provider.generate("An app to manage real estate properties and listings for sale or rent.");
+  assert.ok(realEstate.entities.some((e) => e.name === "Property"));
+
+  const education = await provider.generate("An app for a school to manage students and their courses.");
+  const eduNames = education.entities.map((e) => e.name).sort();
+  assert.deepEqual(eduNames, ["Course", "Student"]);
+
+  const clinic = await provider.generate("An app for a clinic to manage patients.");
+  assert.ok(clinic.entities.some((e) => e.name === "Patient"));
+
+  const agency = await provider.generate("An app for an agency to manage projects and tasks.");
+  const agencyNames = agency.entities.map((e) => e.name).sort();
+  assert.deepEqual(agencyNames, ["Project", "Task"]);
+});
+
+test("the Course entity rule doesn't spuriously trigger on the common English phrase 'of course'", async () => {
+  const provider = new HeuristicSpecProvider();
+  const spec = await provider.generate("I want to track my customers, of course, and their orders.");
+  assert.ok(!spec.entities.some((e) => e.name === "Course"), "the substring 'course' inside 'of course' must not match the Course entity rule");
+});
