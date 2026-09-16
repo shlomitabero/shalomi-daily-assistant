@@ -828,6 +828,31 @@ not a single "make it perfect" claim.
       description can still fall back to the generic entity, and the
       Anthropic-backed provider (when a real API key is configured)
       remains the path to real accuracy for arbitrary descriptions.
+- [x] **Second domain-entity expansion round: 4 more common business
+      types.** Continuing the same initiative (the recurring automated
+      round picked up the previous round's own top-priority suggestion):
+      added Vehicle (garages, mechanics, fleets), Event (event planners,
+      weddings, conferences), Pet (veterinary clinics), and Rental
+      (equipment rental businesses) — bringing the domain library from
+      15 to 19 recognized entity types. **Found and fixed a real
+      false-positive bug while writing the safety tests for this round
+      (the same discipline that caught the "of course"/Course collision
+      last round):** the bare English keyword "events" is a literal
+      substring of the common word "prevents" — a description like "this
+      prevents double bookings" would have spuriously matched the new
+      Event entity. Caught by a dedicated test before it shipped and
+      fixed by dropping the bare "events" keyword in favor of the more
+      specific phrases already in the rule ("event planning",
+      "conference", "wedding", "weddings", "trade show" — plus the
+      Hebrew "אירוע"/"אירועים", which have no such collision risk).
+      Verified: 2 new tests (one covering all 4 new entity types end to
+      end, one specifically proving the new keywords don't spuriously
+      trigger on "prevents"/"current") + full suite green (142 tests) +
+      `npm run build` clean + a real Playwright run against a real
+      server: built a Hebrew "מרפאה וטרינרית" (veterinary clinic)
+      description all the way through a real build and confirmed the
+      live app has real "תורים" (Appointments) and "חיות מחמד" (Pets)
+      entity tabs with correctly-labeled fields, not a generic fallback.
 
 ## Phase 3
 

@@ -112,3 +112,30 @@ test("the Course entity rule doesn't spuriously trigger on the common English ph
   const spec = await provider.generate("I want to track my customers, of course, and their orders.");
   assert.ok(!spec.entities.some((e) => e.name === "Course"), "the substring 'course' inside 'of course' must not match the Course entity rule");
 });
+
+test("recognizes vehicle/garage, event-planning, veterinary, and equipment-rental descriptions with tailored entities", async () => {
+  const provider = new HeuristicSpecProvider();
+
+  const garage = await provider.generate("An app for a garage to manage vehicles and mechanics.");
+  assert.ok(garage.entities.some((e) => e.name === "Vehicle"));
+
+  const eventPlanner = await provider.generate("An app for an event planning business to manage events and weddings.");
+  assert.ok(eventPlanner.entities.some((e) => e.name === "Event"));
+
+  const vet = await provider.generate("An app for a veterinary clinic to track pet owners' animals.");
+  assert.ok(vet.entities.some((e) => e.name === "Pet"));
+
+  const rentalShop = await provider.generate("An app for an equipment rental business.");
+  assert.ok(rentalShop.entities.some((e) => e.name === "Rental"));
+});
+
+test("the new Event/Vehicle/Rental keywords don't spuriously trigger on common unrelated phrases", async () => {
+  const provider = new HeuristicSpecProvider();
+
+  const spec1 = await provider.generate("This prevents double bookings and keeps our current customers happy.");
+  assert.ok(!spec1.entities.some((e) => e.name === "Event"), "'prevents'/'current' must not match the Event entity rule");
+
+  const spec2 = await provider.generate("A CRM that helps our sales team close more deals with current clients.");
+  assert.ok(!spec2.entities.some((e) => e.name === "Vehicle"), "must not spuriously match Vehicle");
+  assert.ok(!spec2.entities.some((e) => e.name === "Rental"), "must not spuriously match Rental");
+});

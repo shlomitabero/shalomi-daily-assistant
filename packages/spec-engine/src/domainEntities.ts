@@ -416,6 +416,108 @@ export const DOMAIN_ENTITY_RULES: DomainEntityRule[] = [
       ],
     },
   },
+  {
+    keywords: [
+      "vehicle", "vehicles", "fleet management", "garage", "mechanic", "car dealership",
+      "רכב", "רכבים", "מוסך", "מכונאי", "כלי רכב",
+    ],
+    labelHe: "כלי רכב",
+    descriptionHe: "רכב שהעסק מטפל בו, משכיר, או עוקב אחריו.",
+    fieldLabelsHe: { licensePlate: "מספר רישוי", make: "יצרן", model: "דגם", status: "סטטוס" },
+    enumLabelsHe: {
+      status: { Available: "זמין", InService: "בטיפול", Rented: "מושכר" },
+    },
+    entity: {
+      name: "Vehicle",
+      description: "A vehicle the business services, rents out, or tracks.",
+      fields: [
+        { name: "licensePlate", type: "text", required: true },
+        { name: "make", type: "text", required: false },
+        { name: "model", type: "text", required: false },
+        {
+          name: "status",
+          type: "enum",
+          required: true,
+          enumValues: ["Available", "InService", "Rented"],
+        },
+      ],
+    },
+  },
+  {
+    keywords: [
+      "event planning", "conference", "wedding", "weddings", "trade show",
+      "אירוע", "אירועים", "כנס", "חתונה", "חתונות",
+    ],
+    labelHe: "אירועים",
+    descriptionHe: "אירוע שהעסק מארגן או מנהל.",
+    fieldLabelsHe: { name: "שם האירוע", date: "תאריך", venue: "מקום", capacity: "קיבולת", status: "סטטוס" },
+    enumLabelsHe: {
+      status: { Planned: "בתכנון", Confirmed: "מאושר", Completed: "התקיים", Cancelled: "בוטל" },
+    },
+    entity: {
+      name: "Event",
+      description: "An event the business organizes or manages.",
+      fields: [
+        { name: "name", type: "text", required: true },
+        { name: "date", type: "date", required: true },
+        { name: "venue", type: "text", required: false },
+        { name: "capacity", type: "number", required: false },
+        {
+          name: "status",
+          type: "enum",
+          required: true,
+          enumValues: ["Planned", "Confirmed", "Completed", "Cancelled"],
+        },
+      ],
+    },
+  },
+  {
+    keywords: [
+      "veterinary", "vet clinic", "pet owner", "pet grooming", "animal clinic",
+      "חיית מחמד", "חיות מחמד", "וטרינר", "וטרינרית", "טיפוח כלבים",
+    ],
+    labelHe: "חיות מחמד",
+    descriptionHe: "חיית מחמד שמקבלת טיפול מהעסק.",
+    fieldLabelsHe: { name: "שם", species: "סוג", ownerName: "שם הבעלים", notes: "הערות" },
+    entity: {
+      name: "Pet",
+      description: "An animal receiving care from the business.",
+      fields: [
+        { name: "name", type: "text", required: true },
+        { name: "species", type: "text", required: false },
+        { name: "ownerName", type: "text", required: false },
+        { name: "notes", type: "longtext", required: false },
+      ],
+    },
+  },
+  {
+    keywords: [
+      "equipment rental", "rent out", "rental business", "tool rental", "gear rental",
+      "ציוד להשכרה", "השכרת ציוד", "השכרת רכב",
+    ],
+    labelHe: "השכרות",
+    descriptionHe: "פריט שהושכר ללקוח לתקופה מוגדרת.",
+    fieldLabelsHe: { itemName: "שם הפריט", renterName: "שם השוכר", startDate: "תאריך התחלה", endDate: "תאריך סיום", status: "סטטוס" },
+    enumLabelsHe: {
+      status: { Reserved: "שמור", Active: "בהשכרה", Returned: "הוחזר" },
+    },
+    entity: {
+      name: "Rental",
+      description: "An item rented out to a customer for a defined period.",
+      fields: [
+        { name: "itemName", type: "text", required: true },
+        { name: "renterName", type: "text", required: false },
+        { name: "startDate", type: "date", required: false },
+        { name: "endDate", type: "date", required: false },
+        {
+          name: "status",
+          type: "enum",
+          required: true,
+          enumValues: ["Reserved", "Active", "Returned"],
+        },
+      ],
+    },
+  },
 ];
 
 export interface RoleRule {
