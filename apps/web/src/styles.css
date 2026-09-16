@@ -335,6 +335,15 @@ button.danger:hover:not(:disabled) {
   margin-bottom: 16px;
 }
 
+.waking.banner {
+  background: var(--accent-soft);
+  border: 1px solid var(--accent);
+  color: var(--text);
+  padding: 10px 14px;
+  border-radius: var(--radius-sm);
+  margin-bottom: 16px;
+}
+
 .chips {
   display: flex;
   flex-wrap: wrap;

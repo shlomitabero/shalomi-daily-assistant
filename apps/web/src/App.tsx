@@ -11,6 +11,7 @@ import {
   me,
   streamBuild,
   streamRefine,
+  subscribeWakeStatus,
 } from "./api.js";
 import { AuthScreen } from "./AuthScreen.js";
 import { BuildProgress } from "./BuildProgress.js";
@@ -69,6 +70,7 @@ function AppContent() {
   const { t } = useTranslation();
   const [user, setUser] = useState<User | null>(null);
   const [checkingSession, setCheckingSession] = useState(true);
+  const [waking, setWaking] = useState(false);
   const [view, setView] = useState<View>("home");
   const [description, setDescription] = useState("");
   const [project, setProject] = useState<Project | null>(null);
@@ -87,6 +89,8 @@ function AppContent() {
   const pendingRefineInstruction = useRef<string | null>(null);
   const refineEvents = useRef<AgentStepEvent[]>([]);
 
+  useEffect(() => subscribeWakeStatus(setWaking), []);
+
   useEffect(() => {
     if (!getToken()) {
       setCheckingSession(false);
@@ -98,9 +102,12 @@ function AppContent() {
       .finally(() => setCheckingSession(false));
   }, []);
 
+  const wakingBanner = waking && <p className="waking banner">{t("app.waking")}</p>;
+
   if (checkingSession) {
     return (
       <div className="app">
+        {wakingBanner}
         <p className="muted">{t("app.loading")}</p>
       </div>
     );
@@ -109,6 +116,7 @@ function AppContent() {
   if (!user) {
     return (
       <div className="app">
+        {wakingBanner}
         <AuthScreen onAuthenticated={setUser} />
       </div>
     );
@@ -245,6 +253,7 @@ function AppContent() {
         </div>
       </header>
 
+      {wakingBanner}
       {error && <p className="error banner">{error}</p>}
 
       {view === "home" && (

@@ -86,6 +86,11 @@ test("resolveErrorMessage falls back to a generic message when there's no code a
   assert.equal(resolveErrorMessage("he", {}), "Request failed");
 });
 
+test("NETWORK_ERROR (synthesized client-side when a network request is genuinely unreachable, see wakeRetry.ts) has both translations", () => {
+  assert.ok("error.NETWORK_ERROR" in translations.he);
+  assert.ok("error.NETWORK_ERROR" in translations.en);
+});
+
 test("every HttpError code the API can send has a Hebrew and an English translation", () => {
   // Mirrors the actual set of codes thrown across apps/api/src (see httpError.ts call sites) --
   // this is a real regression test: a new throw site without a matching dictionary entry would

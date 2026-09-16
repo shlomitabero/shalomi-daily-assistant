@@ -383,6 +383,39 @@ not a single "make it perfect" claim.
 
 ## Production hardening
 
+- [x] **Cold-start retry with a "waking up" message.** The user reported
+      "Load failed" again — this time correctly root-caused (not just
+      theorized) as a raw browser network error, thrown by `fetch()`
+      itself before any server response — no HTTP status code, no JSON
+      body, nothing our existing server-error-code translation could see.
+      This matches Render's free-tier behavior exactly: after inactivity
+      the very first request can take 50+ seconds while the instance
+      wakes up, and a browser's default patience for a connection to even
+      open is far shorter than that. The earlier boot-time fix
+      (esbuild bundle instead of `tsx` at runtime) made the *server's own*
+      startup faster but did nothing for the *platform's* wake-up delay,
+      which is what this is. New `wakeRetry.ts` (pure, unit-tested, no
+      DOM) retries a request that fails at the network level — never one
+      that gets a real HTTP response, even an error one — with backoff
+      (~49s total, matching Render's own quoted window), and reports a
+      `waking` status via a small callback so `api.ts` can surface it.
+      `App.tsx` shows a visible, translated "🔥 Waking up the server…"
+      banner during a retry, on every screen (auth, loading, and the main
+      app) — and if the backend is genuinely down (not just cold-starting)
+      it still gives up after the backoff and shows a normal, translated
+      error instead of hanging forever. Verified: 4 new unit tests for
+      the retry logic itself (succeeds immediately without waking anyone,
+      retries and recovers, gives up and rethrows, never retries a real
+      HTTP error response) + full suite green (115 tests) + `npm run
+      build` clean + three real Playwright runs against a real server,
+      using request interception to simulate an actual cold start (the
+      first N requests genuinely refused at the connection level, not
+      mocked): confirmed the waking banner appears, confirmed it clears
+      and the user lands on the real signed-in screen once the retry
+      succeeds, confirmed a fully-exhausted retry still resolves to a
+      normal translated error rather than hanging, and confirmed the
+      banner text is correctly translated in a Hebrew browser context too.
+
 - [x] **Fix mobile Refine box placeholder clipping (P2 finding).** The
       input and its submit button shared one row with a 160px input
       minimum; below 480px they now stack vertically, and the example

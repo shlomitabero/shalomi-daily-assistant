@@ -4,8 +4,36 @@ import {
   resolveErrorMessage as resolveErrorMessageForLang,
   STORAGE_KEY as LANG_STORAGE_KEY,
 } from "./i18n/language.js";
+import { fetchWithWakeRetry } from "./wakeRetry.js";
 
 const TOKEN_KEY = "forge.token";
+
+type WakeListener = (waking: boolean) => void;
+const wakeListeners = new Set<WakeListener>();
+
+/** Lets App.tsx show a "waking up the server" message during a cold-start retry, without api.ts depending on React. */
+export function subscribeWakeStatus(listener: WakeListener): () => void {
+  wakeListeners.add(listener);
+  return () => wakeListeners.delete(listener);
+}
+
+function notifyWaking(waking: boolean): void {
+  for (const listener of wakeListeners) listener(waking);
+}
+
+/**
+ * Wraps fetchWithWakeRetry so that if every retry is exhausted (the
+ * backend is genuinely unreachable, not just cold-starting), the caller
+ * sees a translated message instead of the browser's raw, untranslated
+ * network-error text (e.g. "Failed to fetch").
+ */
+async function fetchApi(input: string, init?: RequestInit): Promise<Response> {
+  try {
+    return await fetchWithWakeRetry(input, init, { onWaking: notifyWaking });
+  } catch {
+    throw new Error(resolveErrorMessage({ code: "NETWORK_ERROR" }));
+  }
+}
 
 /**
  * Reads the same stored language preference / browser locale
@@ -50,7 +78,7 @@ export function clearToken(): void {
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const token = getToken();
-  const res = await fetch(`/api${path}`, {
+  const res = await fetchApi(`/api${path}`, {
     ...init,
     headers: {
       "content-type": "application/json",
@@ -130,7 +158,7 @@ async function streamPipeline(
   body?: unknown,
 ): Promise<void> {
   const token = getToken();
-  const res = await fetch(`/api${path}`, {
+  const res = await fetchApi(`/api${path}`, {
     method: "POST",
     headers: { "content-type": "application/json", ...(token ? { authorization: `Bearer ${token}` } : {}) },
     ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
@@ -175,7 +203,7 @@ export function streamRefine(
  */
 export async function exportProject(projectId: string, projectName: string): Promise<void> {
   const token = getToken();
-  const res = await fetch(`/api/projects/${projectId}/export`, {
+  const res = await fetchApi(`/api/projects/${projectId}/export`, {
     headers: token ? { authorization: `Bearer ${token}` } : {},
   });
   if (!res.ok) {
