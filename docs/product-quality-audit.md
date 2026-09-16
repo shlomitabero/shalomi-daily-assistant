@@ -125,6 +125,45 @@ external font request, not an application bug).
   switch button present — no clipping, correct layout, zero console
   errors.
 
+## Re-verification pass (2026-09-16, after ~9 further improvement rounds)
+
+The original audit above is now well out of date — since it was written,
+this repository shipped real relation fields with a picker UI (live
+preview and export), a SQL-reserved-keyword bug fix in the exported app's
+server.js, 18 more domain entity types (Ticket, Subscription, JobApplicant,
+Donation, Shipment, InsuranceClaim, plus earlier rounds), a `render.yaml`
+Blueprint + Deploy section in every export, and two new Business Twin
+insights (relation coverage, most-linked record). None of that surface
+area had been checked together in one pass before. This entry does that,
+honestly: it does **not** claim a fresh finding just to look productive — where nothing broke, it says so.
+
+**Methodology:** built a real app from a description combining five of the
+newer domain entities at once (Customer, Order+courier relation,
+MenuItem, Ticket+customer relation, Subscription+customer relation) with a
+real Playwright browser at 390px, 768px, and 1440px, watching the browser
+console at every step.
+
+**Result: no new P0 or P1 found.** All five entity tabs generated
+correctly; table search, the CSV export button, and the board-view toggle
+all rendered without error; the Business Twin panel showed both the
+relation-coverage observations and record counts correctly (the
+most-linked-record insight didn't fire in this particular data set, since
+no seeded record happened to cross the ">1 reference" threshold — that's
+correct behavior, not a bug, per the "only report when actually
+interesting" design from that round); the Time Machine panel opened and
+showed a real checkpoint; the dark-mode toggle correctly flipped
+`data-theme` on every viewport. Zero console errors traceable to the
+app itself — the only two console entries seen
+(`ERR_CERT_AUTHORITY_INVALID` on a Google Fonts request, one `404`) are
+this sandboxed environment's proxy intercepting external font/favicon
+requests, the exact same non-issue the original audit already
+identified and dismissed.
+
+No code changes accompany this entry — it's a negative result, and
+negative results are worth recording so a future round doesn't
+re-investigate the same surface from scratch believing it's never been
+checked.
+
 ## What this audit deliberately did not do
 
 It did not implement items 1–123 of the founding prompt as a checklist.
