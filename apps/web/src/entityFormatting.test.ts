@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import type { Field } from "@forge/shared";
+import type { Entity, Field } from "@forge/shared";
 import {
   badgeTone,
   buildCalendarMonth,
@@ -10,6 +10,8 @@ import {
   formatNumberValue,
   groupByField,
   matchesSearch,
+  pickDisplayField,
+  recordDisplayLabel,
   recordsToCsv,
   sortRecords,
 } from "./entityFormatting.js";
@@ -213,6 +215,46 @@ test("recordsToCsv formats false as FALSE, not an empty field (falsy values must
   const fields: Field[] = [{ name: "active", label: "Active", type: "boolean", required: false }];
   const csv = recordsToCsv(fields, [{ active: false }], "en");
   assert.equal(csv, "Active\r\nFALSE");
+});
+
+test("pickDisplayField prefers a field literally named name/title over other fields", () => {
+  const withName: Field[] = [
+    { name: "id", type: "number", required: false },
+    { name: "name", type: "text", required: true },
+  ];
+  assert.equal(pickDisplayField({ name: "Courier", fields: withName })?.name, "name");
+
+  const withTitle: Field[] = [
+    { name: "status", type: "enum", required: true, enumValues: ["A", "B"] },
+    { name: "title", type: "text", required: true },
+  ];
+  assert.equal(pickDisplayField({ name: "Deal", fields: withTitle })?.name, "title");
+});
+
+test("pickDisplayField falls back to the first text field, then the first field of any type", () => {
+  const noNameOrTitle: Field[] = [
+    { name: "status", type: "enum", required: true, enumValues: ["A", "B"] },
+    { name: "licensePlate", type: "text", required: true },
+  ];
+  assert.equal(pickDisplayField({ name: "Vehicle", fields: noNameOrTitle })?.name, "licensePlate");
+
+  const onlyNonText: Field[] = [{ name: "amount", type: "number", required: true }];
+  assert.equal(pickDisplayField({ name: "Payment", fields: onlyNonText })?.name, "amount");
+
+  assert.equal(pickDisplayField({ name: "Empty", fields: [] }), null);
+});
+
+test("recordDisplayLabel shows the display field's value, falling back to #id when it's empty or missing", () => {
+  const courier: Entity = {
+    name: "Courier",
+    fields: [
+      { name: "name", type: "text", required: true },
+      { name: "phone", type: "text", required: false },
+    ],
+  };
+  assert.equal(recordDisplayLabel(courier, { id: 5, name: "Yossi Cohen", phone: "" }), "Yossi Cohen");
+  assert.equal(recordDisplayLabel(courier, { id: 7, name: "", phone: "050-1" }), "#7");
+  assert.equal(recordDisplayLabel({ name: "Empty", fields: [] }, { id: 9 }), "#9");
 });
 
 test("groupByField groups records into one column per declared enum value, in declared order, including empty columns", () => {

@@ -11,10 +11,35 @@ import {
   groupByField,
   LOCALE,
   matchesSearch,
+  recordDisplayLabel,
   recordsToCsv,
   sortRecords,
   type SortDirection,
 } from "./entityFormatting.js";
+
+/** Related records for every relation field on the current entity, keyed by the target entity's name. */
+type RelatedRecordsByEntity = Record<string, EntityRecord[]>;
+
+/**
+ * Resolves a relation field's stored id into the human label it should
+ * display, using whichever related entity/records are available -- the
+ * related entity may legitimately be absent from this project's spec (see
+ * domainEntities.ts's Order.courierId), in which case this degrades to the
+ * raw id rather than throwing.
+ */
+function relationDisplayLabel(
+  field: Field,
+  value: unknown,
+  allEntities: Entity[],
+  relatedRecords: RelatedRecordsByEntity,
+): string {
+  if (value === null || value === undefined || value === "") return "";
+  const targetEntity = field.relationTo ? allEntities.find((e) => e.name === field.relationTo) : undefined;
+  const records = field.relationTo ? relatedRecords[field.relationTo] : undefined;
+  if (!targetEntity || !records) return `#${value}`;
+  const match = records.find((r) => Number(r.id) === Number(value));
+  return match ? recordDisplayLabel(targetEntity, match) : `#${value}`;
+}
 import { useTranslation } from "./i18n/LanguageContext.js";
 import type { Lang } from "./i18n/language.js";
 
@@ -31,9 +56,24 @@ function emptyForm(entity: Entity): Record<string, unknown> {
 /** Renders a table cell for a field's value -- a status badge for enums, a
  * checkmark/dash for booleans, a locale-formatted date or number, and plain
  * text otherwise -- instead of one generic string for every field type. */
-function Cell({ field, value, lang, t }: { field: Field; value: unknown; lang: Lang; t: (key: string) => string }) {
+function Cell({
+  field,
+  value,
+  lang,
+  t,
+  relationLabel,
+}: {
+  field: Field;
+  value: unknown;
+  lang: Lang;
+  t: (key: string) => string;
+  relationLabel?: string;
+}) {
   if (value === null || value === undefined || value === "") {
     return <span className="muted">{t("entity.empty")}</span>;
+  }
+  if (field.type === "relation") {
+    return <>{relationLabel || `#${value}`}</>;
   }
   if (field.type === "boolean") {
     return value ? <span className="bool-yes">✓</span> : <span className="muted">–</span>;
@@ -63,6 +103,8 @@ function BoardCard({
   record,
   lang,
   t,
+  allEntities,
+  relatedRecords,
   onMove,
   onEdit,
   onDelete,
@@ -72,6 +114,8 @@ function BoardCard({
   record: EntityRecord;
   lang: Lang;
   t: (key: string) => string;
+  allEntities: Entity[];
+  relatedRecords: RelatedRecordsByEntity;
   onMove: (value: string) => void;
   onEdit: () => void;
   onDelete: () => void;
@@ -82,7 +126,15 @@ function BoardCard({
       {otherFields.map((f) => (
         <div key={f.name} className="board-card-field">
           <span className="muted small">{f.label ?? f.name}</span>
-          <Cell field={f} value={record[f.name]} lang={lang} t={t} />
+          <Cell
+            field={f}
+            value={record[f.name]}
+            lang={lang}
+            t={t}
+            relationLabel={
+              f.type === "relation" ? relationDisplayLabel(f, record[f.name], allEntities, relatedRecords) : undefined
+            }
+          />
         </div>
       ))}
       <select
@@ -199,12 +251,31 @@ function FieldInput({
   field,
   value,
   onChange,
+  relatedEntity,
+  relatedEntityRecords,
 }: {
   field: Field;
   value: unknown;
   onChange: (value: unknown) => void;
+  relatedEntity?: Entity;
+  relatedEntityRecords?: EntityRecord[];
 }) {
   const { t } = useTranslation();
+  if (field.type === "relation" && relatedEntity && relatedEntityRecords) {
+    return (
+      <select
+        value={value === "" || value === null || value === undefined ? "" : String(value)}
+        onChange={(e) => onChange(e.target.value === "" ? "" : Number(e.target.value))}
+      >
+        <option value="">{t("entity.select")}</option>
+        {relatedEntityRecords.map((r) => (
+          <option key={r.id as number} value={r.id as number}>
+            {recordDisplayLabel(relatedEntity, r)}
+          </option>
+        ))}
+      </select>
+    );
+  }
   if (field.type === "boolean") {
     return (
       <input
@@ -247,7 +318,15 @@ function FieldInput({
   return <input type="text" value={String(value ?? "")} onChange={(e) => onChange(e.target.value)} />;
 }
 
-export function EntityPanel({ projectId, entity }: { projectId: string; entity: Entity }) {
+export function EntityPanel({
+  projectId,
+  entity,
+  allEntities,
+}: {
+  projectId: string;
+  entity: Entity;
+  allEntities: Entity[];
+}) {
   const { t, lang } = useTranslation();
   const [records, setRecords] = useState<EntityRecord[]>([]);
   const [form, setForm] = useState<Record<string, unknown>>(() => emptyForm(entity));
@@ -260,8 +339,40 @@ export function EntityPanel({ projectId, entity }: { projectId: string; entity: 
   const [viewMode, setViewMode] = useState<ViewMode>("table");
   const [calendarMonth, setCalendarMonth] = useState(() => new Date());
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
+  const [relatedRecords, setRelatedRecords] = useState<RelatedRecordsByEntity>({});
   const boardField = useMemo(() => findBoardField(entity.fields), [entity.fields]);
   const dateField = useMemo(() => findDateField(entity.fields), [entity.fields]);
+  const relationTargets = useMemo(() => {
+    const names = entity.fields
+      .filter((f) => f.type === "relation" && f.relationTo)
+      .map((f) => f.relationTo!);
+    return [...new Set(names)].filter((name) => allEntities.some((e) => e.name === name));
+  }, [entity.fields, allEntities]);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function loadRelated() {
+      if (relationTargets.length === 0) {
+        setRelatedRecords({});
+        return;
+      }
+      const entries = await Promise.all(
+        relationTargets.map(async (name) => {
+          try {
+            const { records: related } = await listRecords(projectId, name);
+            return [name, related] as const;
+          } catch {
+            return [name, []] as const;
+          }
+        }),
+      );
+      if (!cancelled) setRelatedRecords(Object.fromEntries(entries));
+    }
+    void loadRelated();
+    return () => {
+      cancelled = true;
+    };
+  }, [projectId, relationTargets]);
 
   async function refresh() {
     setLoading(true);
@@ -415,6 +526,8 @@ export function EntityPanel({ projectId, entity }: { projectId: string; entity: 
               field={field}
               value={form[field.name]}
               onChange={(v) => setForm((prev) => ({ ...prev, [field.name]: v }))}
+              relatedEntity={field.relationTo ? allEntities.find((e) => e.name === field.relationTo) : undefined}
+              relatedEntityRecords={field.relationTo ? relatedRecords[field.relationTo] : undefined}
             />
           </label>
         ))}
@@ -510,6 +623,8 @@ export function EntityPanel({ projectId, entity }: { projectId: string; entity: 
                       record={record}
                       lang={lang}
                       t={t}
+                      allEntities={allEntities}
+                      relatedRecords={relatedRecords}
                       onMove={(value) => handleMove(record.id as number, boardField.name, value)}
                       onEdit={() => startEdit(record)}
                       onDelete={() => handleDelete(record.id as number)}
@@ -583,7 +698,17 @@ export function EntityPanel({ projectId, entity }: { projectId: string; entity: 
                       </td>
                       {entity.fields.map((f) => (
                         <td key={f.name}>
-                          <Cell field={f} value={record[f.name]} lang={lang} t={t} />
+                          <Cell
+                            field={f}
+                            value={record[f.name]}
+                            lang={lang}
+                            t={t}
+                            relationLabel={
+                              f.type === "relation"
+                                ? relationDisplayLabel(f, record[f.name], allEntities, relatedRecords)
+                                : undefined
+                            }
+                          />
                         </td>
                       ))}
                       <td className="row-actions">

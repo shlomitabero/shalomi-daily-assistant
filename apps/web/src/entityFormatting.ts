@@ -1,4 +1,4 @@
-import type { EntityRecord, Field } from "@forge/shared";
+import type { Entity, EntityRecord, Field } from "@forge/shared";
 import type { Lang } from "./i18n/language.js";
 
 export const LOCALE: Record<Lang, string> = { he: "he-IL", en: "en-US" };
@@ -180,6 +180,35 @@ export function buildCalendarMonth(records: EntityRecord[], field: Field, year: 
     days.push({ date, inCurrentMonth: date.getMonth() === month, records: dayRecords });
   }
   return days;
+}
+
+const DISPLAY_FIELD_NAME_HINTS = ["name", "title"];
+
+/**
+ * Picks the field that best represents one of an entity's records as a
+ * short human label -- this is what lets a relation field show "Dana Levi"
+ * in a picker/cell instead of a raw foreign-key id. Prefers a field
+ * literally named "name"/"title" (the domain library's own convention),
+ * then falls back to the first text field, then to the entity's first
+ * field of any type; returns null only for an entity with no fields at all.
+ */
+export function pickDisplayField(entity: Entity): Field | null {
+  const named = entity.fields.find((f) => DISPLAY_FIELD_NAME_HINTS.includes(f.name.toLowerCase()));
+  if (named) return named;
+  const firstText = entity.fields.find((f) => f.type === "text");
+  return firstText ?? entity.fields[0] ?? null;
+}
+
+/**
+ * Renders one record of `entity` as a short human label using its display
+ * field, falling back to "#<id>" when the entity has no usable field or the
+ * display field is empty on this particular record.
+ */
+export function recordDisplayLabel(entity: Entity, record: EntityRecord): string {
+  const field = pickDisplayField(entity);
+  const value = field ? record[field.name] : undefined;
+  if (value === null || value === undefined || value === "") return `#${record.id}`;
+  return String(value);
 }
 
 /** Wraps a CSV field in quotes (doubling any interior quotes) only when it contains a comma, quote, or newline. */

@@ -883,6 +883,46 @@ not a single "make it perfect" claim.
       dish names with correct categories, real project names with real
       client names, real vehicle plates/makes/models — zero raw
       placeholder text anywhere.
+- [x] **Relation fields now render as a real picker, not a raw numeric ID
+      input.** A direct response to a user complaint that the generated
+      code "isn't at the level" of a real app builder. The database/
+      migration layer (`packages/db`) has always fully supported relation
+      fields — real foreign keys, `PRAGMA foreign_keys = ON` enforcement —
+      but the live-preview UI (`EntityPanel.tsx`) rendered every relation
+      field as a bare `<input type="number">` asking the user to type a
+      raw row id, and the table/board views just printed that raw number
+      back. No domain entity actually used a relation field yet either, so
+      this whole code path was both unfinished and unreachable. Fixed
+      both: added `pickDisplayField`/`recordDisplayLabel` to
+      `entityFormatting.ts` (prefers a field named "name"/"title", falls
+      back sensibly, never throws for an entity with no fields), wired
+      `EntityPanel` to fetch the related entity's records and render a
+      real `<select>` of human-readable options in the create/edit form,
+      and resolve the same human label in table cells and board cards
+      instead of the raw id. Also gave the `Order` entity a real,
+      *optional* `courierId` relation field to `Courier` (kept optional
+      deliberately: a plain "orders" description has no `Courier` table
+      at all, and the seeding pipeline doesn't guarantee entities seed in
+      dependency order, so a required relation could fail seeding — see
+      the code comment in `domainEntities.ts`). Verified: 5 new unit tests
+      (`pickDisplayField`/`recordDisplayLabel` happy paths and fallbacks,
+      an Order-gets-courierId regression test including the case where no
+      courier is mentioned at all) + full suite green (147 tests) +
+      `npm run build` clean + a real Playwright run against a real
+      server: built a restaurant-with-delivery app, confirmed the Order
+      form's courier field is a real `<select>` populated with the
+      actual seeded courier names (not "type an ID"), picked one and
+      submitted a new order, confirmed the table cell showed the
+      courier's real name — then edited one of the seeded orders (whose
+      `courierId` started `null`), assigned a courier there too, and
+      confirmed that cell updated from the empty-state dash to the real
+      name. **Scope note, stated honestly:** this round only covers the
+      live preview; the exported/codegen standalone app still needs the
+      same relation-picker treatment (same two-step pattern used for
+      Kanban/calendar/CSV/bulk-select earlier in this log) — tracked as
+      the next candidate. CSV export also still prints the raw id for a
+      relation field rather than the resolved name; a known, minor,
+      pre-existing gap this round didn't touch.
 
 ## Phase 3
 

@@ -487,7 +487,14 @@ function AppContent() {
               </nav>
               {project.spec.entities
                 .filter((e) => e.name === activeEntity)
-                .map((entity) => <EntityPanel key={entity.name} projectId={project.id} entity={entity} />)}
+                .map((entity) => (
+                  <EntityPanel
+                    key={entity.name}
+                    projectId={project.id}
+                    entity={entity}
+                    allEntities={project.spec.entities}
+                  />
+                ))}
             </div>
           </div>
 

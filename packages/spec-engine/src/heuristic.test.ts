@@ -89,6 +89,24 @@ test("a restaurant-with-delivery description produces menu, order, and courier e
   assert.deepEqual(entityNames, ["Courier", "MenuItem", "Order"]);
 });
 
+test("Order gets an optional courierId relation field pointing to Courier, not a raw duplicated text field", async () => {
+  const provider = new HeuristicSpecProvider();
+  const spec = await provider.generate("An order-management app for a restaurant with delivery, including a menu and couriers.");
+  const order = spec.entities.find((e) => e.name === "Order")!;
+  const courierField = order.fields.find((f) => f.name === "courierId");
+  assert.ok(courierField, "Order must have a courierId field");
+  assert.equal(courierField!.type, "relation");
+  assert.equal(courierField!.relationTo, "Courier");
+  assert.equal(courierField!.required, false); // optional: an order-only description won't have a Courier table at all
+
+  // A plain order description (no courier/driver mentioned) still gets the
+  // field -- it's just not assignable to anything real yet, same as a real
+  // app's "assignee" field before anyone is hired.
+  const plainOrders = await provider.generate("A shop that tracks customer orders.");
+  const plainOrder = plainOrders.entities.find((e) => e.name === "Order")!;
+  assert.ok(plainOrder.fields.some((f) => f.name === "courierId"));
+});
+
 test("recognizes real-estate, education, healthcare, and project-management descriptions with tailored entities", async () => {
   const provider = new HeuristicSpecProvider();
 

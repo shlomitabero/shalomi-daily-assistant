@@ -143,7 +143,13 @@ export const DOMAIN_ENTITY_RULES: DomainEntityRule[] = [
     ],
     labelHe: "הזמנות",
     descriptionHe: "רכישה שביצע לקוח.",
-    fieldLabelsHe: { customerName: "שם לקוח", total: "סכום כולל", status: "סטטוס", items: "פריטים" },
+    fieldLabelsHe: {
+      customerName: "שם לקוח",
+      total: "סכום כולל",
+      status: "סטטוס",
+      items: "פריטים",
+      courierId: "שליח מוקצה",
+    },
     enumLabelsHe: {
       status: { Pending: "ממתינה", Shipped: "נשלחה", Delivered: "נמסרה", Cancelled: "בוטלה" },
     },
@@ -160,6 +166,12 @@ export const DOMAIN_ENTITY_RULES: DomainEntityRule[] = [
           enumValues: ["Pending", "Shipped", "Delivered", "Cancelled"],
         },
         { name: "items", type: "longtext", required: false },
+        // Optional, not required: when a description only mentions "order"
+        // without a courier/driver, the Courier entity (and its table) won't
+        // exist in the spec at all. Required here would either force an
+        // invalid reference or block the build; null is a legitimate,
+        // honest value for "not assigned yet" regardless.
+        { name: "courierId", type: "relation", required: false, relationTo: "Courier" },
       ],
     },
   },
