@@ -259,6 +259,7 @@ export function EntityPanel({ projectId, entity }: { projectId: string; entity: 
   const [sortDir, setSortDir] = useState<SortDirection>("asc");
   const [viewMode, setViewMode] = useState<ViewMode>("table");
   const [calendarMonth, setCalendarMonth] = useState(() => new Date());
+  const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
   const boardField = useMemo(() => findBoardField(entity.fields), [entity.fields]);
   const dateField = useMemo(() => findDateField(entity.fields), [entity.fields]);
 
@@ -281,6 +282,7 @@ export function EntityPanel({ projectId, entity }: { projectId: string; entity: 
     setSortField(null);
     setViewMode("table");
     setCalendarMonth(new Date());
+    setSelectedIds(new Set());
     void refresh();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [entity.name]);
@@ -325,6 +327,49 @@ export function EntityPanel({ projectId, entity }: { projectId: string; entity: 
     setError(null);
     try {
       await deleteRecord(projectId, entity.name, id);
+      setSelectedIds((prev) => {
+        if (!prev.has(id)) return prev;
+        const next = new Set(prev);
+        next.delete(id);
+        return next;
+      });
+      await refresh();
+    } catch (err) {
+      setError((err as Error).message);
+    }
+  }
+
+  function toggleSelected(id: number) {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  function toggleSelectAllVisible() {
+    const visibleIds = visibleRecords.map((r) => r.id as number);
+    const allSelected = visibleIds.length > 0 && visibleIds.every((id) => selectedIds.has(id));
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (allSelected) {
+        for (const id of visibleIds) next.delete(id);
+      } else {
+        for (const id of visibleIds) next.add(id);
+      }
+      return next;
+    });
+  }
+
+  async function handleBulkDelete() {
+    const ids = [...selectedIds];
+    if (ids.length === 0) return;
+    if (!window.confirm(t("entity.bulk.confirmDelete", { count: ids.length }))) return;
+    setError(null);
+    try {
+      await Promise.all(ids.map((id) => deleteRecord(projectId, entity.name, id)));
+      setSelectedIds(new Set());
       await refresh();
     } catch (err) {
       setError((err as Error).message);
@@ -487,9 +532,33 @@ export function EntityPanel({ projectId, entity }: { projectId: string; entity: 
             />
           ) : (
             <div className="table-scroll">
+              {selectedIds.size > 0 && (
+                <div className="bulk-actions-bar">
+                  <span>{t("entity.bulk.selectedCount", { count: selectedIds.size })}</span>
+                  <button type="button" className="danger" onClick={handleBulkDelete}>
+                    {t("entity.bulk.deleteSelected")}
+                  </button>
+                </div>
+              )}
               <table>
                 <thead>
                   <tr>
+                    <th className="select-col">
+                      <input
+                        type="checkbox"
+                        aria-label={t("entity.bulk.selectAll")}
+                        checked={
+                          visibleRecords.length > 0 && visibleRecords.every((r) => selectedIds.has(r.id as number))
+                        }
+                        ref={(el) => {
+                          if (!el) return;
+                          const someSelected = visibleRecords.some((r) => selectedIds.has(r.id as number));
+                          const allSelected = visibleRecords.length > 0 && visibleRecords.every((r) => selectedIds.has(r.id as number));
+                          el.indeterminate = someSelected && !allSelected;
+                        }}
+                        onChange={toggleSelectAllVisible}
+                      />
+                    </th>
                     {entity.fields.map((f) => (
                       <th key={f.name}>
                         <button type="button" className="sort-header" onClick={() => toggleSort(f.name)}>
@@ -504,6 +573,14 @@ export function EntityPanel({ projectId, entity }: { projectId: string; entity: 
                 <tbody>
                   {visibleRecords.map((record) => (
                     <tr key={record.id as number}>
+                      <td className="select-col">
+                        <input
+                          type="checkbox"
+                          aria-label={t("entity.bulk.selectRow")}
+                          checked={selectedIds.has(record.id as number)}
+                          onChange={() => toggleSelected(record.id as number)}
+                        />
+                      </td>
                       {entity.fields.map((f) => (
                         <td key={f.name}>
                           <Cell field={f} value={record[f.name]} lang={lang} t={t} />

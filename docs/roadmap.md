@@ -547,6 +547,36 @@ not a single "make it perfect" claim.
       closes the parity gap for CSV export — badges/search/sort, Kanban
       board, calendar view, and CSV export are now all present in both
       the live preview and the exported standalone app.
+- [x] **Step 9: bulk-select + bulk-delete for entity records (live
+      preview only).** Deleting several records meant clicking Delete one
+      row at a time. `EntityPanel.tsx`'s table view gained a checkbox per
+      row plus a header checkbox that selects every currently *visible*
+      row (search-filtered) — with a real `indeterminate` state (set via
+      a ref, since React has no `indeterminate` prop) when some but not
+      all visible rows are selected, not just a plain checked/unchecked
+      toggle. Selecting one or more rows shows a bulk-actions bar with
+      the live count ("2 selected") and a delete button; deleting asks
+      for confirmation first (a real `window.confirm`, since this is a
+      genuinely destructive, unrecoverable action) naming exactly how
+      many records will be removed, then deletes them all and clears the
+      selection. Selection is scoped correctly: deleting a single record
+      via its own row button also prunes it out of any active selection,
+      so a stale selected-but-deleted ID can never linger. Verified: full
+      suite green (135 tests, no new pure logic needed here beyond what
+      existing tests already cover) + `npm run build` clean + a real
+      Playwright run against a real running server: built a CRM, added 3
+      distinctly-named test records, selected 2 of them, confirmed the
+      bulk bar showed the correct count and the header checkbox was
+      genuinely `indeterminate` (checked via the real DOM property, not
+      inferred from a screenshot), accepted the real confirm dialog,
+      verified exactly those 2 records were removed and the untouched
+      third one remained, confirmed the bulk bar disappeared afterward,
+      and confirmed the header "select all" checkbox correctly selects
+      every remaining visible row. Checked at 390px mobile width and in
+      dark mode too, zero console errors. **Still not done, tracked as a
+      follow-up:** porting bulk-select/delete into the exported
+      standalone codegen output (`apps/api/src/codegen.ts`), matching
+      the pattern used for the four earlier features.
 
 ## Production hardening
 

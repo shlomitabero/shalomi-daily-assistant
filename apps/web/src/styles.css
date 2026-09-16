@@ -473,6 +473,23 @@ button.danger:hover:not(:disabled) {
   padding: 0 4px;
 }
 
+.bulk-actions-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 12px;
+  margin-bottom: 8px;
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font-size: 13.5px;
+}
+
+.select-col {
+  width: 1%;
+  white-space: nowrap;
+}
+
 table {
   width: 100%;
   border-collapse: collapse;
