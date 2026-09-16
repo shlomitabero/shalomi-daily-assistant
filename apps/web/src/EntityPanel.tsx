@@ -11,6 +11,7 @@ import {
   groupByField,
   LOCALE,
   matchesSearch,
+  recordsToCsv,
   sortRecords,
   type SortDirection,
 } from "./entityFormatting.js";
@@ -330,6 +331,19 @@ export function EntityPanel({ projectId, entity }: { projectId: string; entity: 
     }
   }
 
+  function handleExportCsv() {
+    const csv = recordsToCsv(entity.fields, visibleRecords, lang);
+    const blob = new Blob(["﻿" + csv], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `${entity.name}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  }
+
   async function handleMove(id: number, fieldName: string, value: string) {
     setError(null);
     try {
@@ -422,6 +436,14 @@ export function EntityPanel({ projectId, entity }: { projectId: string; entity: 
                 )}
               </div>
             )}
+            <button
+              type="button"
+              className="secondary csv-export-btn"
+              onClick={handleExportCsv}
+              disabled={visibleRecords.length === 0}
+            >
+              {t("entity.exportCsv")}
+            </button>
           </div>
           {visibleRecords.length === 0 ? (
             <div className="empty-state">

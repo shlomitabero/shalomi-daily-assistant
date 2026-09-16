@@ -181,3 +181,40 @@ export function buildCalendarMonth(records: EntityRecord[], field: Field, year: 
   }
   return days;
 }
+
+/** Wraps a CSV field in quotes (doubling any interior quotes) only when it contains a comma, quote, or newline. */
+function csvEscape(value: string): string {
+  if (/[",\r\n]/.test(value)) {
+    return `"${value.replace(/"/g, '""')}"`;
+  }
+  return value;
+}
+
+/**
+ * Renders a field's value the way a human reading a spreadsheet would
+ * expect -- the enum's translated label instead of its raw stored value,
+ * a locale-formatted date/number, TRUE/FALSE for booleans (Excel's own
+ * convention, language-neutral) -- rather than a 1:1 dump of the raw
+ * database values.
+ */
+function fieldDisplayValue(field: Field, value: unknown, lang: Lang): string {
+  if (value === null || value === undefined || value === "") return "";
+  if (field.type === "boolean") return value ? "TRUE" : "FALSE";
+  if (field.type === "enum") return field.enumLabels?.[String(value)] ?? String(value);
+  if (field.type === "date") return formatDateValue(String(value), lang);
+  if (field.type === "number") return formatNumberValue(Number(value), lang);
+  return String(value);
+}
+
+/**
+ * Builds a real, Excel-friendly CSV (CRLF line endings, quoted fields where
+ * needed) from an entity's records -- so "download my data" means an
+ * actual spreadsheet a business owner can open, not a JSON dump.
+ */
+export function recordsToCsv(fields: Field[], records: EntityRecord[], lang: Lang): string {
+  const header = fields.map((f) => csvEscape(f.label ?? f.name)).join(",");
+  const rows = records.map((record) =>
+    fields.map((f) => csvEscape(fieldDisplayValue(f, record[f.name], lang))).join(","),
+  );
+  return [header, ...rows].join("\r\n");
+}

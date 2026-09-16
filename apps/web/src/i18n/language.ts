@@ -166,6 +166,7 @@ export const translations: Record<Lang, Record<string, string>> = {
     "entity.calendar.prev": "החודש הקודם",
     "entity.calendar.next": "החודש הבא",
     "entity.calendar.more": "עוד {count}",
+    "entity.exportCsv": "⬇️ ייצוא ל-CSV",
     "history.title": "🕘 ציר זמן",
     "history.close": "סגירה",
     "history.description": "כל בנייה או שיפור נשמר כאן כנקודת שחזור. חוזרים אחורה בלי לאבד מידע — אף פעולה כאן לא מוחקת נתונים קיימים.",
@@ -305,6 +306,7 @@ export const translations: Record<Lang, Record<string, string>> = {
     "entity.calendar.prev": "Previous month",
     "entity.calendar.next": "Next month",
     "entity.calendar.more": "+{count} more",
+    "entity.exportCsv": "⬇️ Export CSV",
     "history.title": "🕘 Time Machine",
     "history.close": "Close",
     "history.description":

@@ -534,6 +534,12 @@ tbody tr:hover {
   flex-shrink: 0;
 }
 
+.csv-export-btn {
+  flex-shrink: 0;
+  padding: 8px 14px;
+  font-size: 13px;
+}
+
 .view-toggle-btn {
   padding: 6px 12px;
   border-radius: calc(var(--radius-sm) - 2px);

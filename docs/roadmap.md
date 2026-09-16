@@ -481,6 +481,41 @@ not a single "make it perfect" claim.
       the calendar feature — badges/search/sort, Kanban board, and
       calendar view are now all present in both the live preview and the
       exported standalone app.
+- [x] **Step 7: real CSV export for entities (live preview only).** There
+      was no way to get an entity's data out of Forge AI except reading it
+      off the screen. New `recordsToCsv(fields, records, lang)` in
+      `entityFormatting.ts` (pure, unit-tested) builds an actual
+      Excel-friendly CSV — CRLF line endings, comma/quote values correctly
+      quoted (with interior quotes doubled), and human-friendly cell
+      values matching what the table already shows (an enum's translated
+      label, a locale-formatted date/number, `TRUE`/`FALSE` for booleans)
+      rather than a 1:1 dump of raw stored values. `EntityPanel.tsx`
+      gained a "⬇️ Export CSV" button in the toolbar (disabled when the
+      current search has zero matching rows) that exports exactly the
+      currently visible (search-filtered, sorted) records — "what you see
+      is what you export" — as a real client-side file download, with a
+      UTF-8 byte-order mark prepended so Hebrew text renders correctly in
+      Excel instead of as mojibake (a real, easy-to-miss correctness
+      requirement for a Hebrew-first product). Verified: 5 new unit tests
+      for the CSV-building logic (header from labels, enum/date/number/
+      boolean formatting, comma/quote escaping and doubling, null/
+      undefined/empty all render as an empty field, `false` still renders
+      as `FALSE` rather than being mistaken for "missing") + full suite
+      green (134 tests) + `npm run build` clean + a real Playwright run
+      against a real running server: built a CRM, added a record with a
+      comma and embedded quotes in its name specifically to exercise
+      escaping, clicked the real export button, captured the actual
+      browser download event (not a mocked one), read the downloaded
+      file's real bytes, and confirmed the BOM is present, the row count
+      matches the table exactly, the Hebrew enum label renders correctly,
+      and the escaped value round-trips as `"Cohen, Yossi ""The
+      Great"""` — exactly correct CSV per RFC 4180. Also confirmed the
+      button correctly disables when a search matches nothing, and
+      checked it at 390px mobile width and in dark mode. Zero console
+      errors. **Still not done, tracked as a follow-up:** porting CSV
+      export into the exported standalone codegen output
+      (`apps/api/src/codegen.ts`), matching the pattern used for the
+      three earlier features.
 
 ## Production hardening
 

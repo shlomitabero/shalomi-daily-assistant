@@ -10,6 +10,7 @@ import {
   formatNumberValue,
   groupByField,
   matchesSearch,
+  recordsToCsv,
   sortRecords,
 } from "./entityFormatting.js";
 
@@ -173,6 +174,45 @@ test("buildCalendarMonth silently skips records with a missing or unparseable da
     days.reduce((sum, d) => sum + d.records.length, 0),
     0,
   );
+});
+
+test("recordsToCsv builds a header row from field labels and one row per record, with human-friendly values", () => {
+  const fields: Field[] = [
+    { name: "name", label: "Name", type: "text", required: true },
+    { name: "status", label: "Status", type: "enum", required: true, enumValues: ["New", "Won"], enumLabels: { New: "New lead" } },
+    { name: "active", label: "Active", type: "boolean", required: false },
+    { name: "amount", label: "Amount", type: "number", required: false },
+  ];
+  const records = [{ name: "Dana", status: "New", active: true, amount: 1234 }];
+  const csv = recordsToCsv(fields, records, "en");
+  const lines = csv.split("\r\n");
+  assert.equal(lines[0], "Name,Status,Active,Amount");
+  // The formatted amount ("1,234") contains a comma, so it's correctly quoted as its own CSV field.
+  assert.equal(lines[1], 'Dana,New lead,TRUE,"1,234"');
+});
+
+test("recordsToCsv falls back to the raw field name when there's no label, and to the raw enum value when there's no translated label", () => {
+  const fields: Field[] = [{ name: "raw_field", type: "enum", required: true, enumValues: ["Untranslated"] }];
+  const csv = recordsToCsv(fields, [{ raw_field: "Untranslated" }], "en");
+  assert.equal(csv, "raw_field\r\nUntranslated");
+});
+
+test("recordsToCsv quotes a value containing a comma, quote, or newline, and doubles interior quotes", () => {
+  const fields: Field[] = [{ name: "notes", label: "Notes", type: "text", required: false }];
+  const csv = recordsToCsv(fields, [{ notes: 'Says "hi", then leaves' }], "en");
+  assert.equal(csv, 'Notes\r\n"Says ""hi"", then leaves"');
+});
+
+test("recordsToCsv renders an empty/missing value as an empty CSV field, never the string \"null\" or \"undefined\"", () => {
+  const fields: Field[] = [{ name: "notes", label: "Notes", type: "text", required: false }];
+  const csv = recordsToCsv(fields, [{ notes: null }, { notes: undefined }, { notes: "" }] as never, "en");
+  assert.equal(csv, "Notes\r\n\r\n\r\n");
+});
+
+test("recordsToCsv formats false as FALSE, not an empty field (falsy values must not be treated as missing)", () => {
+  const fields: Field[] = [{ name: "active", label: "Active", type: "boolean", required: false }];
+  const csv = recordsToCsv(fields, [{ active: false }], "en");
+  assert.equal(csv, "Active\r\nFALSE");
 });
 
 test("groupByField groups records into one column per declared enum value, in declared order, including empty columns", () => {
