@@ -96,6 +96,21 @@ one command. Open http://localhost:3000. Data is stored in
 For active development with hot reload while the API runs separately, use
 \`npm run dev\` (Vite dev server) alongside \`node server.js\`.
 
+## Deploy it
+
+A \`render.yaml\` is included, so [Render](https://render.com) can deploy
+this without any manual configuration: push this folder to a GitHub repo,
+create a new Blueprint on Render pointing at it, and it picks up the build
+(\`npm install\`) and start (\`npm start\`) commands automatically. The free
+plan works for this — same one-command build/start as running it
+locally, just hosted.
+
+Prefer a different host? Any platform that runs a long-lived Node process
+(not a serverless/edge-function-only host, since this keeps a SQLite file
+on local disk) works the same way: install with \`npm install\`, run with
+\`npm start\`, and make sure the platform routes its assigned port through
+\`process.env.PORT\` (\`server.js\` already reads it).
+
 ## What's here
 
 - \`server.js\` — the entire backend: creates the SQLite schema for every
@@ -285,6 +300,26 @@ for (const entity of ENTITIES) {
 
 const port = process.env.PORT || 3000;
 app.listen(port, () => console.log(\`\${${JSON.stringify(project.name)}} running at http://localhost:\${port}\`));
+`;
+}
+
+/**
+ * A real Render.com Blueprint (render.yaml), in the same proven structure
+ * this platform's own render.yaml uses (see the repository root) — not a
+ * speculative format. Render auto-detects this file and offers to deploy
+ * from it with zero manual dashboard configuration. `buildCommand`/
+ * `startCommand` just run the same `npm install`/`npm start` the README
+ * already documents, so this isn't a second, divergent way to run the app.
+ */
+function renderRenderYaml(project: Project): string {
+  const name = packageName(project.name);
+  return `services:
+  - type: web
+    name: ${name}
+    runtime: node
+    plan: free
+    buildCommand: npm install
+    startCommand: npm start
 `;
 }
 
@@ -1219,6 +1254,7 @@ export function generateExportFiles(project: Project): { path: string; content: 
   return [
     { path: "package.json", content: renderPackageJson(project) },
     { path: "README.md", content: renderReadme(project) },
+    { path: "render.yaml", content: renderRenderYaml(project) },
     { path: "vite.config.js", content: renderViteConfig() },
     { path: "server.js", content: renderServerJs(project) },
     { path: "web/index.html", content: renderWebIndexHtml(project) },

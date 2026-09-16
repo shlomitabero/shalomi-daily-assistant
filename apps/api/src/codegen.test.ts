@@ -53,6 +53,7 @@ test("generateExportFiles produces a real multi-file React (Vite) + Express proj
     ".gitignore",
     "README.md",
     "package.json",
+    "render.yaml",
     "server.js",
     "vite.config.js",
     "web/index.html",
@@ -370,4 +371,28 @@ test("the exported EntityView renders a real picker for relation fields, not a r
   assert.match(entityViewJsx, /relatedEntityRecords\.map/);
   // CSV export also resolves the related record's label, not the raw id.
   assert.match(entityViewJsx, /function recordsToCsv\(fields, records, relatedRecords\)/);
+});
+
+test("generateExportFiles includes a real render.yaml matching this repo's own proven Render Blueprint structure", () => {
+  const files = generateExportFiles(project);
+  const renderYaml = files.find((f) => f.path === "render.yaml")!.content;
+  assert.match(renderYaml, /^services:\n {2}- type: web\n {4}name: /);
+  assert.match(renderYaml, /runtime: node/);
+  assert.match(renderYaml, /plan: free/);
+  assert.match(renderYaml, /buildCommand: npm install/);
+  assert.match(renderYaml, /startCommand: npm start/);
+
+  const readme = files.find((f) => f.path === "README.md")!.content;
+  assert.match(readme, /## Deploy it/);
+  assert.match(readme, /render\.yaml/);
+  assert.match(readme, /render\.com/i);
+});
+
+test("render.yaml's service name is a safe slug even for a project name with spaces, punctuation, and Hebrew", () => {
+  const messyName: Project = { ...project, name: 'לקוחות שלי! (v2) — "Best" App?' };
+  const files = generateExportFiles(messyName);
+  const renderYaml = files.find((f) => f.path === "render.yaml")!.content;
+  const nameLine = renderYaml.split("\n").find((l) => l.trim().startsWith("name:"))!;
+  const name = nameLine.split("name:")[1].trim();
+  assert.match(name, /^[a-z0-9-]+$/, `render.yaml service name must be a safe slug, got: "${name}"`);
 });

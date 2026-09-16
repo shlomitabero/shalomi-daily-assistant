@@ -1021,6 +1021,40 @@ not a single "make it perfect" claim.
       names, saved, and confirmed the table cell resolved to the
       customer's real name instead of staying blank or showing a raw id.
 
+- [x] **Real one-click deployment: a `render.yaml` Blueprint + a "Deploy
+      it" README section in every exported app.** A different kind of gap
+      than the last several rounds — not a data-quality or UI-quality
+      issue, but a genuine "own your code" completeness gap: the exported
+      app told you how to run it locally but nothing about actually
+      putting it online. `apps/api/src/codegen.ts` now emits a
+      `render.yaml` in the same proven structure this platform's own
+      `render.yaml` (repo root) already uses in production — not a
+      speculative format — with a safe slugified service name (reusing
+      the same slug function `package.json`'s `name` field already used,
+      so this is one proven code path, not a second one to get right).
+      The README gained a real "## Deploy it" section explaining the
+      Render Blueprint auto-detection, plus honest guidance for any other
+      long-lived-Node host (explicitly *not* a serverless/edge host,
+      since this app keeps its data in a local SQLite file) via the same
+      `npm install`/`npm start`/`process.env.PORT` contract already
+      documented for running it locally — deployment isn't a third way
+      to run the app, it's the same one, hosted. **Verification note,
+      stated honestly:** this sandbox has the `docker` CLI but no
+      reachable daemon and no network path to Render itself, so an actual
+      Render deployment could not be run end-to-end here. What *was*
+      verified for real, not just string-matched: downloaded a real
+      export ZIP, confirmed `render.yaml` and the README section are
+      actually present and correctly filled in, then ran the *exact*
+      `buildCommand`/`startCommand` `render.yaml` declares (`npm install`,
+      then `npm start`) as literal shell commands against the unzipped
+      app — the same two commands Render would run — and confirmed the
+      resulting server listens on `process.env.PORT` (Render's own
+      contract) and serves both the frontend and a working `/api/Customer`
+      response. Verified: 2 new unit tests (render.yaml structure/content,
+      and a slug-safety test using a Hebrew/punctuation-heavy project name)
+      + full suite green (155 tests) + `npm run build` clean + the
+      real build/start verification above.
+
 
 ## Phase 3
 
