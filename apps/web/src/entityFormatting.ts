@@ -84,3 +84,45 @@ export function sortRecords(records: EntityRecord[], sortField: string | null, d
   const sorted = [...records].sort((a, b) => compareValues(a[sortField], b[sortField]));
   return direction === "desc" ? sorted.reverse() : sorted;
 }
+
+const BOARD_FIELD_NAME_HINTS = ["status", "stage"];
+
+/**
+ * Picks the enum field an entity's records should be grouped into columns
+ * by, if any -- this is what turns a "Deal" or "Order" entity into a real
+ * Kanban board instead of the same table shape every entity gets. Prefers
+ * a field literally named "status"/"stage" (the domain library's own
+ * convention, see spec-engine/domainEntities.ts), then falls back to the
+ * first enum field with a workable number of columns (2-8); returns null
+ * when nothing fits, so a plain entity (like "Customer" with only a text
+ * "name" field) never gets forced into a board it doesn't suit.
+ */
+export function findBoardField(fields: Field[]): Field | null {
+  const enumFields = fields.filter(
+    (f) => f.type === "enum" && f.enumValues && f.enumValues.length >= 2 && f.enumValues.length <= 8,
+  );
+  if (enumFields.length === 0) return null;
+  const named = enumFields.find((f) => BOARD_FIELD_NAME_HINTS.includes(f.name.toLowerCase()));
+  return named ?? enumFields[0];
+}
+
+export interface BoardColumn {
+  value: string;
+  label: string;
+  records: EntityRecord[];
+}
+
+/**
+ * Groups records into one column per declared enum value, in the enum's
+ * own declared order (not first-seen order) -- including a value with zero
+ * matching records, so an empty stage still shows as a column rather than
+ * silently disappearing.
+ */
+export function groupByField(records: EntityRecord[], field: Field): BoardColumn[] {
+  const values = field.enumValues ?? [];
+  return values.map((value) => ({
+    value,
+    label: field.enumLabels?.[value] ?? value,
+    records: records.filter((r) => String(r[field.name]) === value),
+  }));
+}

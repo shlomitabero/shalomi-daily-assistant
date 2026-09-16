@@ -1,9 +1,20 @@
 import { useEffect, useMemo, useState } from "react";
 import type { Entity, EntityRecord, Field } from "@forge/shared";
 import { createRecord, deleteRecord, listRecords, updateRecord } from "./api.js";
-import { badgeTone, formatDateValue, formatNumberValue, matchesSearch, sortRecords, type SortDirection } from "./entityFormatting.js";
+import {
+  badgeTone,
+  findBoardField,
+  formatDateValue,
+  formatNumberValue,
+  groupByField,
+  matchesSearch,
+  sortRecords,
+  type SortDirection,
+} from "./entityFormatting.js";
 import { useTranslation } from "./i18n/LanguageContext.js";
 import type { Lang } from "./i18n/language.js";
+
+type ViewMode = "table" | "board";
 
 function emptyForm(entity: Entity): Record<string, unknown> {
   const form: Record<string, unknown> = {};
@@ -34,6 +45,63 @@ function Cell({ field, value, lang, t }: { field: Field; value: unknown; lang: L
     return <>{formatNumberValue(Number(value), lang)}</>;
   }
   return <>{String(value)}</>;
+}
+
+/**
+ * One card in the board view: the record's other fields (never the board
+ * field itself, since that's implied by which column the card is in), a
+ * select to move it directly to another column, and the same Edit/Delete
+ * actions the table row has.
+ */
+function BoardCard({
+  entity,
+  boardField,
+  record,
+  lang,
+  t,
+  onMove,
+  onEdit,
+  onDelete,
+}: {
+  entity: Entity;
+  boardField: Field;
+  record: EntityRecord;
+  lang: Lang;
+  t: (key: string) => string;
+  onMove: (value: string) => void;
+  onEdit: () => void;
+  onDelete: () => void;
+}) {
+  const otherFields = entity.fields.filter((f) => f.name !== boardField.name);
+  return (
+    <div className="board-card">
+      {otherFields.map((f) => (
+        <div key={f.name} className="board-card-field">
+          <span className="muted small">{f.label ?? f.name}</span>
+          <Cell field={f} value={record[f.name]} lang={lang} t={t} />
+        </div>
+      ))}
+      <select
+        className="board-card-move"
+        value={String(record[boardField.name] ?? "")}
+        onChange={(e) => onMove(e.target.value)}
+      >
+        {(boardField.enumValues ?? []).map((v) => (
+          <option key={v} value={v}>
+            {boardField.enumLabels?.[v] ?? v}
+          </option>
+        ))}
+      </select>
+      <div className="row-actions">
+        <button type="button" onClick={onEdit}>
+          {t("entity.edit")}
+        </button>
+        <button type="button" className="danger" onClick={onDelete}>
+          {t("entity.delete")}
+        </button>
+      </div>
+    </div>
+  );
 }
 
 function FieldInput({
@@ -98,6 +166,8 @@ export function EntityPanel({ projectId, entity }: { projectId: string; entity: 
   const [search, setSearch] = useState("");
   const [sortField, setSortField] = useState<string | null>(null);
   const [sortDir, setSortDir] = useState<SortDirection>("asc");
+  const [viewMode, setViewMode] = useState<ViewMode>("table");
+  const boardField = useMemo(() => findBoardField(entity.fields), [entity.fields]);
 
   async function refresh() {
     setLoading(true);
@@ -116,6 +186,7 @@ export function EntityPanel({ projectId, entity }: { projectId: string; entity: 
     setEditingId(null);
     setSearch("");
     setSortField(null);
+    setViewMode("table");
     void refresh();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [entity.name]);
@@ -160,6 +231,16 @@ export function EntityPanel({ projectId, entity }: { projectId: string; entity: 
     setError(null);
     try {
       await deleteRecord(projectId, entity.name, id);
+      await refresh();
+    } catch (err) {
+      setError((err as Error).message);
+    }
+  }
+
+  async function handleMove(id: number, fieldName: string, value: string) {
+    setError(null);
+    try {
+      await updateRecord(projectId, entity.name, id, { [fieldName]: value });
       await refresh();
     } catch (err) {
       setError((err as Error).message);
@@ -211,16 +292,60 @@ export function EntityPanel({ projectId, entity }: { projectId: string; entity: 
         </div>
       ) : (
         <>
-          <input
-            type="text"
-            className="entity-search"
-            placeholder={t("entity.search.placeholder")}
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-          />
+          <div className="entity-toolbar">
+            <input
+              type="text"
+              className="entity-search"
+              placeholder={t("entity.search.placeholder")}
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+            />
+            {boardField && (
+              <div className="view-toggle" role="group">
+                <button
+                  type="button"
+                  className={viewMode === "table" ? "view-toggle-btn view-toggle-btn-active" : "view-toggle-btn"}
+                  onClick={() => setViewMode("table")}
+                >
+                  {t("entity.view.table")}
+                </button>
+                <button
+                  type="button"
+                  className={viewMode === "board" ? "view-toggle-btn view-toggle-btn-active" : "view-toggle-btn"}
+                  onClick={() => setViewMode("board")}
+                >
+                  {t("entity.view.board")}
+                </button>
+              </div>
+            )}
+          </div>
           {visibleRecords.length === 0 ? (
             <div className="empty-state">
               <p>{t("entity.noResults")}</p>
+            </div>
+          ) : viewMode === "board" && boardField ? (
+            <div className="board-scroll">
+              {groupByField(visibleRecords, boardField).map((column) => (
+                <div className="board-column" key={column.value}>
+                  <div className="board-column-header">
+                    <span className={`badge badge-${badgeTone(column.value)}`}>{column.label}</span>
+                    <span className="muted small">{column.records.length}</span>
+                  </div>
+                  {column.records.map((record) => (
+                    <BoardCard
+                      key={record.id as number}
+                      entity={entity}
+                      boardField={boardField}
+                      record={record}
+                      lang={lang}
+                      t={t}
+                      onMove={(value) => handleMove(record.id as number, boardField.name, value)}
+                      onEdit={() => startEdit(record)}
+                      onDelete={() => handleDelete(record.id as number)}
+                    />
+                  ))}
+                </div>
+              ))}
             </div>
           ) : (
             <div className="table-scroll">

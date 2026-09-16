@@ -160,6 +160,8 @@ export const translations: Record<Lang, Record<string, string>> = {
     "entity.noRecords": "אין עדיין רשומות — אפשר להוסיף את הראשונה למעלה.",
     "entity.search.placeholder": "🔍 חיפוש…",
     "entity.noResults": "אין תוצאות תואמות לחיפוש.",
+    "entity.view.table": "📋 טבלה",
+    "entity.view.board": "🗂️ לוח",
     "history.title": "🕘 ציר זמן",
     "history.close": "סגירה",
     "history.description": "כל בנייה או שיפור נשמר כאן כנקודת שחזור. חוזרים אחורה בלי לאבד מידע — אף פעולה כאן לא מוחקת נתונים קיימים.",
@@ -293,6 +295,8 @@ export const translations: Record<Lang, Record<string, string>> = {
     "entity.noRecords": "No records yet — add the first one above.",
     "entity.search.placeholder": "🔍 Search…",
     "entity.noResults": "No results match your search.",
+    "entity.view.table": "📋 Table",
+    "entity.view.board": "🗂️ Board",
     "history.title": "🕘 Time Machine",
     "history.close": "Close",
     "history.description":

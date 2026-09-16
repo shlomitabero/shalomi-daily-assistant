@@ -375,11 +375,36 @@ not a single "make it perfect" claim.
       sorts without error. Zero console errors. This closes both
       identified steps of the generated-app-quality effort for now — see
       "Step 3 candidates" below for what's still not done.
-- [ ] **Step 3 candidates (not started, for a future round):** a
-      business-type-aware layout (e.g. a Kanban board for a "Deal" entity
-      with a stage-like enum field, a calendar view for "Appointment")
-      instead of one shared table shape for every entity, in both the
-      preview and the export.
+- [x] **Step 3: a real Kanban board for stage-like entities (live preview
+      only).** Every entity still rendered as the same table shape,
+      whether or not it actually represented a pipeline (a "Deal" moving
+      through stages, an "Order" moving through statuses). New
+      `findBoardField`/`groupByField` in `entityFormatting.ts` (pure,
+      unit-tested) pick the best enum field to group by — preferring one
+      literally named `status`/`stage` (the domain library's own
+      convention), falling back to the first workable enum field (2-8
+      values), and returning `null` for a genuinely flat entity like
+      "Customer" with no enum field, so nothing is forced into a board it
+      doesn't suit. `EntityPanel.tsx` gained a Table/Board toggle (shown
+      only when a board field exists) and a real board: one column per
+      declared enum value (including empty ones, not hidden), a card per
+      record showing its other fields, and a `<select>` on each card that
+      moves it to a different stage with one real `PATCH` call — search
+      still filters the board same as the table. Verified: 5 new unit
+      tests for the grouping/field-selection logic + full suite green
+      (120 tests) + `npm run build` clean + a real Playwright run against
+      a real running server: built a CRM, switched the "Deal" entity
+      (with its real `stage` enum: Lead/Negotiation/Won/Lost) to board
+      view, confirmed all 4 columns render with correct counts, added a
+      real deal, moved it from the "Lead" column to "Won" via the select,
+      and confirmed via direct DOM inspection (not just a screenshot)
+      that it actually left the Lead column's card list and appeared in
+      Won's — a real, persisted state change, not a visual-only move.
+      Checked at 390px mobile width and in dark mode too, zero console
+      errors. **Not done in this pass, tracked as a follow-up:** the same
+      board view in the exported standalone codegen output (still table-
+      only there), and a calendar-style view for date-heavy entities like
+      "Appointment".
 
 ## Production hardening
 
