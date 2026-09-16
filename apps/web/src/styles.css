@@ -220,6 +220,46 @@ h2 {
   box-shadow: var(--shadow-md);
 }
 
+.idea-examples {
+  margin-top: 36px;
+}
+
+.idea-examples-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 12px;
+}
+
+.idea-example-card {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 16px;
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-sm);
+  text-align: start;
+  font-weight: 600;
+  font-size: 14px;
+  color: var(--text);
+  cursor: pointer;
+  transition: transform 0.15s ease, box-shadow 0.15s ease, border-color 0.15s ease;
+}
+
+.idea-example-card:hover:not(:disabled) {
+  background: var(--surface-raised);
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-md);
+  border-color: var(--accent);
+}
+
+.idea-example-icon {
+  font-size: 22px;
+  line-height: 1;
+}
+
 textarea,
 input,
 select {

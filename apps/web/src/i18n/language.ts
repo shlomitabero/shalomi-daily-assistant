@@ -87,6 +87,17 @@ export const translations: Record<Lang, Record<string, string>> = {
     "home.enhance": "✨ שפר ובנה עם AI",
     "home.enhance.busy": "כותבים פרומפט מושלם…",
     "home.enhance.hint": "ה-AI יכתוב לרעיון שלך פרומפט מפורט יותר, ואז יבנה אותו ישירות — תוכלו לראות ולערוך את מה שנכתב.",
+    "home.examples.heading": "או תתחילו מדוגמה",
+    "home.examples.salon.label": "מספרה / מכון יופי",
+    "home.examples.salon.text": "אפליקציה לניהול תורים למספרה, עם לקוחות, עובדים ושירותים, ולוח בקרה למנהל/ת.",
+    "home.examples.restaurant.label": "מסעדה עם משלוחים",
+    "home.examples.restaurant.text": "אפליקציה לניהול הזמנות במסעדה עם משלוחים, כולל תפריט, סטטוס הזמנה ולקוחות.",
+    "home.examples.gym.label": "סטודיו כושר",
+    "home.examples.gym.text": "אפליקציה לניהול מנויים ושיעורים בסטודיו כושר, עם לקוחות, מאמנים ולוח שיעורים שבועי.",
+    "home.examples.shop.label": "חנות אונליין",
+    "home.examples.shop.text": "אפליקציה לניהול מלאי והזמנות לחנות אונליין קטנה, עם מוצרים, לקוחות והזמנות.",
+    "home.examples.crm.label": "CRM למכירות",
+    "home.examples.crm.text": "מערכת CRM לניהול לידים ולקוחות, עם שלבי מכירה, פגישות ומעקב הזדמנויות.",
     "spec.title": "ככה הבנו את זה",
     "spec.roles.heading": "מי ישתמש באפליקציה",
     "spec.entities.heading": "המסכים שנבנה",
@@ -231,6 +242,22 @@ export const translations: Record<Lang, Record<string, string>> = {
     "home.enhance.busy": "Writing the perfect prompt…",
     "home.enhance.hint":
       "AI will rewrite your idea into a more detailed prompt, then build it right away — you'll see exactly what it wrote and can edit it.",
+    "home.examples.heading": "Or start from an example",
+    "home.examples.salon.label": "Salon / beauty studio",
+    "home.examples.salon.text":
+      "An appointment-management app for a hair salon, with customers, staff and services, and an admin dashboard.",
+    "home.examples.restaurant.label": "Restaurant with delivery",
+    "home.examples.restaurant.text":
+      "An order-management app for a restaurant with delivery, including a menu, order status, and customers.",
+    "home.examples.gym.label": "Fitness studio",
+    "home.examples.gym.text":
+      "An app for managing memberships and classes at a fitness studio, with customers, trainers, and a weekly class schedule.",
+    "home.examples.shop.label": "Online shop",
+    "home.examples.shop.text":
+      "An inventory and order-management app for a small online shop, with products, customers, and orders.",
+    "home.examples.crm.label": "Sales CRM",
+    "home.examples.crm.text":
+      "A CRM for managing leads and customers, with sales stages, meetings, and opportunity tracking.",
     "spec.title": "Here's what we understood",
     "spec.roles.heading": "Who will use the app",
     "spec.entities.heading": "The screens we'll build",

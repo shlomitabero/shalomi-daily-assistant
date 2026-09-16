@@ -726,6 +726,34 @@ not a single "make it perfect" claim.
       a real Playwright browser loaded with zero console errors. `dev`
       still runs via `tsx watch` unchanged, so local development is
       unaffected.
+- [x] **Fill the home screen's empty desktop void with clickable example
+      ideas.** A direct user complaint ("works, but not at the level of
+      Base44") led to a real visual audit (screenshots of every main
+      screen, light + dark, desktop + mobile) rather than guessing —
+      which found the home/idea screen was still the single most glaring
+      "cheap" impression: on a normal desktop viewport, the entire
+      bottom two-thirds of the screen was empty background below the
+      textarea and two buttons, with nothing to guide a first-time user
+      on what a good description even looks like. Added `IDEA_EXAMPLES`
+      (5 real business types — salon, restaurant-with-delivery, fitness
+      studio, online shop, sales CRM) rendered as a responsive grid of
+      clickable cards below the form; clicking one fills the textarea
+      with a full example description in the current language (the user
+      can still edit before submitting) instead of auto-submitting.
+      This both fills the dead space with genuinely useful content (a
+      pattern Base44/Lovable/v0 all use) and lowers the barrier for a
+      non-technical user who doesn't know what to type. Verified: full
+      suite green (135 tests) + `npm run build` clean + a real Playwright
+      run: confirmed all 5 chips render, confirmed clicking one actually
+      fills the textarea with the matching example text, confirmed
+      building all the way through from a clicked example reaches the
+      spec-review screen, checked English labels/text render correctly,
+      and checked screenshots at 390px mobile width (single-column
+      stack, no overflow) and in dark mode (correct hover/selected
+      border color, no white-on-white or contrast issues). Zero console
+      errors. This is one concrete, scoped step toward a more polished
+      first impression — not a full redesign, which "Base44-level"
+      would honestly require more than one round to reach.
 
 ## Phase 3
 

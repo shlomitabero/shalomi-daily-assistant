@@ -25,6 +25,21 @@ import { ThemeSwitcher } from "./theme/ThemeSwitcher.js";
 
 type View = "home" | "spec" | "building" | "preview";
 
+/**
+ * Clickable starting points on the home screen -- fills the textarea with a
+ * fuller example description instead of leaving new users staring at an
+ * empty box with no sense of what a good description looks like. Also
+ * fills the large empty area below the form on a tall desktop viewport
+ * (see docs/product-quality-audit.md).
+ */
+const IDEA_EXAMPLES = [
+  { icon: "💇", labelKey: "home.examples.salon.label", textKey: "home.examples.salon.text" },
+  { icon: "🍽️", labelKey: "home.examples.restaurant.label", textKey: "home.examples.restaurant.text" },
+  { icon: "🏋️", labelKey: "home.examples.gym.label", textKey: "home.examples.gym.text" },
+  { icon: "🛍️", labelKey: "home.examples.shop.label", textKey: "home.examples.shop.text" },
+  { icon: "📈", labelKey: "home.examples.crm.label", textKey: "home.examples.crm.text" },
+] as const;
+
 interface RefineHistoryEntry {
   id: string;
   instruction: string;
@@ -279,6 +294,24 @@ function AppContent() {
             </button>
             <p className="muted small">{t("home.enhance.hint")}</p>
           </form>
+
+          <div className="idea-examples">
+            <h2>{t("home.examples.heading")}</h2>
+            <div className="idea-examples-grid">
+              {IDEA_EXAMPLES.map((example) => (
+                <button
+                  type="button"
+                  key={example.labelKey}
+                  className="idea-example-card"
+                  disabled={busy || enhanceBusy}
+                  onClick={() => setDescription(t(example.textKey))}
+                >
+                  <span className="idea-example-icon">{example.icon}</span>
+                  <span className="idea-example-label">{t(example.labelKey)}</span>
+                </button>
+              ))}
+            </div>
+          </div>
         </main>
       )}
 
