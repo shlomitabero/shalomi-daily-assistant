@@ -106,3 +106,50 @@ test("computeBusinessTwin reports how many records are missing a relation field,
   const twinFullyLinked = computeBusinessTwin(db2, relationProject);
   assert.ok(!twinFullyLinked.observations.some((o) => o.includes("have no")));
 });
+
+test("computeBusinessTwin identifies the record most referenced across multiple relation fields, with a per-entity breakdown", () => {
+  const hubProject: Project = {
+    ...project,
+    description: "I need to track orders and support tickets for my customers",
+    spec: {
+      ...project.spec,
+      entities: [
+        { name: "Customer", label: "Customers", fields: [{ name: "name", type: "text", required: true }] },
+        {
+          name: "Order",
+          label: "Orders",
+          fields: [
+            { name: "total", type: "number", required: true },
+            { name: "customerId", label: "Customer", type: "relation", required: false, relationTo: "Customer" },
+          ],
+        },
+        {
+          name: "Ticket",
+          label: "Tickets",
+          fields: [
+            { name: "subject", type: "text", required: true },
+            { name: "customerId", label: "Customer", type: "relation", required: false, relationTo: "Customer" },
+          ],
+        },
+      ],
+    },
+  };
+  const db = openDatabase(":memory:");
+  applyMigrations(db, hubProject.id, hubProject.spec);
+  const [customer, order, ticket] = hubProject.spec.entities;
+  const { id: dana } = insertRecord(db, hubProject.id, customer, { name: "Dana Levi" });
+  const { id: yossi } = insertRecord(db, hubProject.id, customer, { name: "Yossi Cohen" });
+  insertRecord(db, hubProject.id, order, { total: 50, customerId: dana });
+  insertRecord(db, hubProject.id, order, { total: 30, customerId: dana });
+  insertRecord(db, hubProject.id, ticket, { subject: "Refund", customerId: dana });
+  insertRecord(db, hubProject.id, order, { total: 10, customerId: yossi });
+
+  const twin = computeBusinessTwin(db, hubProject);
+  const hubObservation = twin.observations.find((o) => o.includes("most-linked record"));
+  assert.ok(hubObservation, `expected a most-linked-record observation, got: ${JSON.stringify(twin.observations)}`);
+  assert.ok(hubObservation!.includes("Dana Levi"), `expected Dana Levi (3 total links) to be the hub, got: "${hubObservation}"`);
+  assert.ok(hubObservation!.includes("3 links total"));
+  assert.ok(hubObservation!.includes('2 in "Orders"'));
+  assert.ok(hubObservation!.includes('1 in "Tickets"'));
+  assert.ok(!hubObservation!.includes("Yossi Cohen"), "Yossi Cohen has only 1 link and must not be reported as the hub");
+});

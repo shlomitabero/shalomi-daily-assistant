@@ -1122,6 +1122,30 @@ not a single "make it perfect" claim.
       names, real tracking numbers/carriers/destinations, real
       claimant names and policy numbers, zero raw placeholder text.
 
+- [x] **Business Twin's second relation-aware insight: the most-linked
+      record across the whole project** (e.g. "'Dana Levi' (Customers) is
+      the most-linked record: 3 links total — 2 in Subscriptions, 1 in
+      Tickets"). Builds directly on the relation-coverage observation
+      from two rounds ago, aggregating across *every* relation field in
+      the project that points to the same target entity — not just one
+      field on one entity — so a customer referenced from both
+      Subscriptions and Tickets gets counted once, correctly. Same
+      honesty discipline as the rest of `computeBusinessTwin`: a plain
+      count with a real per-source breakdown, never a guess at
+      significance. Only reported when a record is actually referenced
+      more than once, so a project with no real cross-entity activity
+      yet stays quiet instead of reporting a meaningless single link.
+      Verified: 1 new unit test (three relation fields across two source
+      entities pointing at the same Customer, asserting the correct
+      total and the correct per-entity breakdown counts, and that a
+      customer with only 1 link is correctly *not* reported as the hub)
+      + full suite green (161 tests) + `npm run build` clean + a real
+      Playwright run: built a support-desk-plus-subscriptions app,
+      manually linked the same seeded customer to 2 subscriptions and 1
+      ticket through the relation pickers, opened the Business Twin
+      panel, and confirmed the observation read exactly "3 links total —
+      1 in \"Tickets\", 2 in \"Subscriptions\"" with the correct customer
+      name, not a fabricated or rounded figure.
 
 ## Phase 3
 

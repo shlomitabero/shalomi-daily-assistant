@@ -1,4 +1,4 @@
-import type { Project } from "@forge/shared";
+import type { Entity, EntityRecord, Project } from "@forge/shared";
 import { countRecords, listRecords, type ForgeDatabase } from "@forge/db";
 import { isHebrewText } from "@forge/spec-engine";
 
@@ -58,6 +58,91 @@ function computeRelationCoverageObservations(db: ForgeDatabase, project: Project
   return observations;
 }
 
+const DISPLAY_FIELD_NAME_HINTS = ["name", "title"];
+
+/** Picks the field that best represents a record as a short human label -- prefers "name"/"title", then the first text field. */
+function pickDisplayField(entity: Entity) {
+  const named = entity.fields.find((f) => DISPLAY_FIELD_NAME_HINTS.includes(f.name.toLowerCase()));
+  if (named) return named;
+  const firstText = entity.fields.find((f) => f.type === "text");
+  return firstText ?? entity.fields[0] ?? null;
+}
+
+function recordLabel(entity: Entity, record: EntityRecord): string {
+  const field = pickDisplayField(entity);
+  const value = field ? record[field.name] : undefined;
+  if (value === null || value === undefined || value === "") return `#${record.id}`;
+  return String(value);
+}
+
+/**
+ * Finds the single record that's referenced the most across every relation
+ * field in the project that points to it -- e.g. "Dana Levi" being both a
+ * customer on 2 orders and 1 support ticket -- and reports it as one
+ * observation, honestly: a real cross-entity count, never a guess at why
+ * that record is popular. Only reported when a record is referenced more
+ * than once; a single reference isn't a pattern worth surfacing.
+ */
+function computeRelationHubObservation(db: ForgeDatabase, project: Project, hebrew: boolean): string[] {
+  const entities = project.spec.entities;
+  // targetEntityName -> targetRecordId -> [{ sourceLabel, fieldLabel, count }]
+  const breakdownByTarget = new Map<string, Map<number, { sourceLabel: string; fieldLabel: string; count: number }[]>>();
+
+  for (const sourceEntity of entities) {
+    const relationFields = sourceEntity.fields.filter(
+      (f) => f.type === "relation" && f.relationTo && entities.some((e) => e.name === f.relationTo),
+    );
+    if (relationFields.length === 0) continue;
+    const sourceRecords = listRecords(db, project.id, sourceEntity);
+    if (sourceRecords.length === 0) continue;
+
+    for (const field of relationFields) {
+      const countsById = new Map<number, number>();
+      for (const record of sourceRecords) {
+        const raw = record[field.name];
+        if (raw === null || raw === undefined) continue;
+        const id = Number(raw);
+        countsById.set(id, (countsById.get(id) ?? 0) + 1);
+      }
+      if (countsById.size === 0) continue;
+
+      const targetName = field.relationTo!;
+      if (!breakdownByTarget.has(targetName)) breakdownByTarget.set(targetName, new Map());
+      const perId = breakdownByTarget.get(targetName)!;
+      for (const [id, count] of countsById) {
+        const entry = { sourceLabel: sourceEntity.label ?? sourceEntity.name, fieldLabel: field.label ?? field.name, count };
+        perId.set(id, [...(perId.get(id) ?? []), entry]);
+      }
+    }
+  }
+
+  let best: { targetName: string; id: number; total: number } | null = null;
+  for (const [targetName, perId] of breakdownByTarget) {
+    for (const [id, breakdown] of perId) {
+      const total = breakdown.reduce((sum, b) => sum + b.count, 0);
+      if (total > 1 && (!best || total > best.total)) best = { targetName, id, total };
+    }
+  }
+  if (!best) return [];
+
+  const targetEntity = entities.find((e) => e.name === best!.targetName)!;
+  const targetRecord = listRecords(db, project.id, targetEntity).find((r) => Number(r.id) === best!.id);
+  if (!targetRecord) return [];
+
+  const breakdown = breakdownByTarget.get(best.targetName)!.get(best.id)!;
+  const breakdownText = breakdown
+    .map((b) => (hebrew ? `${b.count} ב"${b.sourceLabel}"` : `${b.count} in "${b.sourceLabel}"`))
+    .join(hebrew ? ", " : ", ");
+  const label = recordLabel(targetEntity, targetRecord);
+  const entityLabel = targetEntity.label ?? targetEntity.name;
+
+  return [
+    hebrew
+      ? `"${label}" (${entityLabel}) הרשומה המקושרת ביותר: ${best.total} קישורים בסה"כ — ${breakdownText}.`
+      : `"${label}" (${entityLabel}) is the most-linked record: ${best.total} links total — ${breakdownText}.`,
+  ];
+}
+
 export function computeBusinessTwin(db: ForgeDatabase, project: Project): BusinessTwin {
   const hebrew = isHebrewText(project.description);
   const entities: BusinessTwinEntityStat[] = project.spec.entities.map((entity) => ({
@@ -97,6 +182,7 @@ export function computeBusinessTwin(db: ForgeDatabase, project: Project): Busine
           : `No records yet in: ${names} — worth checking whether that's expected.`,
       );
     }
+    observations.push(...computeRelationHubObservation(db, project, hebrew));
     observations.push(...computeRelationCoverageObservations(db, project, hebrew));
   }
 
