@@ -141,6 +141,41 @@ test("the newer domain entities (MenuItem, Vehicle, Project, Event, Course, Pet,
   assert.doesNotMatch(rentalRecord.renterName as string, /Rental renterName/);
 });
 
+test("the Ticket, Subscription, and JobApplicant entities each get believable seed values, not the generic placeholder formula", () => {
+  const ticket: Entity = {
+    name: "Ticket",
+    fields: [
+      { name: "subject", type: "text", required: true },
+      { name: "customerId", type: "relation", required: false, relationTo: "Customer" },
+      { name: "assignee", type: "text", required: false },
+    ],
+  };
+  const subscription: Entity = {
+    name: "Subscription",
+    fields: [{ name: "planName", type: "text", required: true }],
+  };
+  const jobApplicant: Entity = {
+    name: "JobApplicant",
+    fields: [
+      { name: "name", type: "text", required: true },
+      { name: "appliedFor", type: "text", required: false },
+    ],
+  };
+
+  const [ticketRecord] = generateSeedRecords(ticket, 1);
+  assert.doesNotMatch(ticketRecord.subject as string, /Ticket subject/);
+  assert.equal(ticketRecord.customerId, null); // optional relation: no guaranteed related row to point at
+  assert.doesNotMatch(ticketRecord.assignee as string, /Ticket assignee/);
+
+  const [subscriptionRecord] = generateSeedRecords(subscription, 1);
+  assert.doesNotMatch(subscriptionRecord.planName as string, /Subscription planName/);
+
+  const [applicantRecord] = generateSeedRecords(jobApplicant, 1);
+  // "name" means a person here (not a catalog item), same as Customer.
+  assert.equal(applicantRecord.name, "Dana Levi");
+  assert.doesNotMatch(applicantRecord.appliedFor as string, /JobApplicant appliedFor/);
+});
+
 test("an unrecognized field name still gets a labeled fallback value instead of throwing", () => {
   const custom: Entity = { name: "Widget", fields: [{ name: "colorPreference", type: "text", required: false }] };
   const [record] = generateSeedRecords(custom, 1);

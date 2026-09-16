@@ -157,3 +157,54 @@ test("the new Event/Vehicle/Rental keywords don't spuriously trigger on common u
   assert.ok(!spec2.entities.some((e) => e.name === "Vehicle"), "must not spuriously match Vehicle");
   assert.ok(!spec2.entities.some((e) => e.name === "Rental"), "must not spuriously match Rental");
 });
+
+test("recognizes support-desk, subscription-billing, and recruitment descriptions with tailored entities", async () => {
+  const provider = new HeuristicSpecProvider();
+
+  const helpdesk = await provider.generate("A support ticket system for our customer support team.");
+  assert.ok(helpdesk.entities.some((e) => e.name === "Ticket"));
+
+  // Regression test: Hebrew construct-state phrasing ("תמיכת לקוחות" =
+  // "customer support") inflects the base word's ending, so the bare
+  // "תמיכה" keyword alone doesn't match it as a substring -- caught by
+  // actually running this exact phrase through a real build, not just
+  // string-matching the keyword list. Fixed by also matching "תמיכת".
+  const helpdeskHe = await provider.generate("אפליקציית תמיכת לקוחות לניהול פניות");
+  assert.ok(helpdeskHe.entities.some((e) => e.name === "Ticket"), "the construct-state phrase 'תמיכת לקוחות' must still match Ticket");
+
+  const saas = await provider.generate("A subscription management app to track customer membership plans.");
+  assert.ok(saas.entities.some((e) => e.name === "Subscription"));
+
+  const ats = await provider.generate("An app to track job applicants through our hiring process.");
+  assert.ok(ats.entities.some((e) => e.name === "JobApplicant"));
+
+  // Ticket and Subscription both get an optional relation to Customer.
+  const ticket = helpdesk.entities.find((e) => e.name === "Ticket")!;
+  const ticketCustomerField = ticket.fields.find((f) => f.name === "customerId")!;
+  assert.equal(ticketCustomerField.type, "relation");
+  assert.equal(ticketCustomerField.relationTo, "Customer");
+  assert.equal(ticketCustomerField.required, false);
+
+  const subscription = saas.entities.find((e) => e.name === "Subscription")!;
+  const subCustomerField = subscription.fields.find((f) => f.name === "customerId")!;
+  assert.equal(subCustomerField.type, "relation");
+  assert.equal(subCustomerField.relationTo, "Customer");
+});
+
+test("Ticket/Subscription/JobApplicant keywords avoid the substring collisions their obvious phrasing would have caused", async () => {
+  const provider = new HeuristicSpecProvider();
+
+  // JobApplicant deliberately uses "hiring" alone, not "hiring pipeline" --
+  // the obvious phrase -- because "pipeline" is Deal's own keyword. A
+  // recruitment description would otherwise spuriously also match Deal.
+  const recruiting = await provider.generate("Track candidates through our hiring process for open roles.");
+  assert.ok(recruiting.entities.some((e) => e.name === "JobApplicant"));
+  assert.ok(!recruiting.entities.some((e) => e.name === "Deal"), "'hiring' must not spuriously match Deal via a 'pipeline' substring that was deliberately left out");
+
+  // Same reasoning in Hebrew: "גיוס" alone, not "גיוס עובדים" -- the obvious
+  // phrase -- because "עובדים" is Employee's own keyword. A recruitment
+  // description in Hebrew would otherwise spuriously also match Employee.
+  const recruitingHe = await provider.generate("אפליקציה לניהול מועמדים בתהליך הגיוס שלנו");
+  assert.ok(recruitingHe.entities.some((e) => e.name === "JobApplicant"));
+  assert.ok(!recruitingHe.entities.some((e) => e.name === "Employee"), "'גיוס' must not spuriously match Employee via an 'עובדים' substring that was deliberately left out");
+});

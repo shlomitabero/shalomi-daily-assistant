@@ -13,6 +13,19 @@ import type { Entity } from "@forge/shared";
  * (see identifiers.ts). `labelHe`/`fieldLabelsHe` are purely UI-facing
  * display text, attached onto the entity/field as `label` when the user's
  * description is in Hebrew (see heuristic.ts).
+ *
+ * Two keyword pitfalls to check for before adding a new one (both caught by
+ * writing a real regression test, not by inspection):
+ * 1. English substring collisions with a short/common word inside an
+ *    unrelated word (e.g. "events" ⊂ "prevents", "pipeline" ⊂ "hiring
+ *    pipeline" colliding with Deal's own "pipeline" keyword).
+ * 2. Hebrew construct-state (סמיכות) and other suffix inflection: a keyword
+ *    like "תמיכה" does NOT match "תמיכת לקוחות" ("customer support") as a
+ *    substring, since the word's ending changes. Prefixes (ה/ו/ב/כ/ל/מ)
+ *    don't break matching (the root stays contiguous at the end), but a
+ *    changed suffix does — list the inflected form as its own keyword too
+ *    (e.g. both "תמיכה" and "תמיכת") rather than assuming one form covers
+ *    all of them.
  */
 export interface DomainEntityRule {
   keywords: string[];
@@ -527,6 +540,99 @@ export const DOMAIN_ENTITY_RULES: DomainEntityRule[] = [
           required: true,
           enumValues: ["Reserved", "Active", "Returned"],
         },
+      ],
+    },
+  },
+  {
+    keywords: [
+      "support ticket", "help desk", "helpdesk", "ticketing system", "customer support",
+      "תמיכה", "תמיכת", "כרטיסי תמיכה", "פניות תמיכה", "מוקד תמיכה",
+    ],
+    labelHe: "פניות תמיכה",
+    descriptionHe: "פנייה של לקוח שדורשת מענה או טיפול.",
+    fieldLabelsHe: { subject: "נושא", customerId: "לקוח", priority: "עדיפות", status: "סטטוס", assignee: "אחראי/ת" },
+    enumLabelsHe: {
+      priority: { Low: "נמוכה", Medium: "בינונית", High: "גבוהה", Urgent: "דחופה" },
+      status: { Open: "פתוחה", InProgress: "בטיפול", Resolved: "נפתרה", Closed: "סגורה" },
+    },
+    entity: {
+      name: "Ticket",
+      description: "A customer request or issue that needs a response.",
+      fields: [
+        { name: "subject", type: "text", required: true },
+        // Optional, not required: a support-only description won't
+        // necessarily also mention/match a Customer entity (see the same
+        // reasoning on Order.courierId above).
+        { name: "customerId", type: "relation", required: false, relationTo: "Customer" },
+        {
+          name: "priority",
+          type: "enum",
+          required: true,
+          enumValues: ["Low", "Medium", "High", "Urgent"],
+        },
+        {
+          name: "status",
+          type: "enum",
+          required: true,
+          enumValues: ["Open", "InProgress", "Resolved", "Closed"],
+        },
+        { name: "assignee", type: "text", required: false },
+      ],
+    },
+  },
+  {
+    keywords: [
+      "subscription", "membership plan", "recurring billing", "subscription plan", "member management",
+      "מנוי", "מנויים", "חברות מועדון", "דמי חבר",
+    ],
+    labelHe: "מנויים",
+    descriptionHe: "מנוי בתשלום חוזר של לקוח.",
+    fieldLabelsHe: { planName: "שם התוכנית", customerId: "לקוח", status: "סטטוס", monthlyPrice: "מחיר חודשי", startDate: "תאריך התחלה" },
+    enumLabelsHe: {
+      status: { Active: "פעיל", Paused: "מושהה", Cancelled: "בוטל" },
+    },
+    entity: {
+      name: "Subscription",
+      description: "A customer's recurring-payment membership or plan.",
+      fields: [
+        { name: "planName", type: "text", required: true },
+        { name: "customerId", type: "relation", required: false, relationTo: "Customer" },
+        {
+          name: "status",
+          type: "enum",
+          required: true,
+          enumValues: ["Active", "Paused", "Cancelled"],
+        },
+        { name: "monthlyPrice", type: "number", required: false },
+        { name: "startDate", type: "date", required: false },
+      ],
+    },
+  },
+  {
+    keywords: [
+      "job applicant", "job application", "recruitment", "hiring", "candidate tracking",
+      "מועמד", "מועמדים", "גיוס", "קורות חיים",
+    ],
+    labelHe: "מועמדים",
+    descriptionHe: "מי שהגיש מועמדות למשרה בעסק.",
+    fieldLabelsHe: { name: "שם", email: "אימייל", appliedFor: "משרה מבוקשת", stage: "שלב", appliedDate: "תאריך הגשה" },
+    enumLabelsHe: {
+      stage: { Applied: "הוגשה", Interviewing: "בראיונות", Offer: "הצעה נשלחה", Rejected: "נדחה", Hired: "התקבל/ה" },
+    },
+    entity: {
+      name: "JobApplicant",
+      description: "A person who applied for a role at the business.",
+      fields: [
+        { name: "name", type: "text", required: true },
+        { name: "email", type: "text", required: false },
+        { name: "appliedFor", type: "text", required: false },
+        {
+          name: "stage",
+          type: "enum",
+          required: true,
+          enumValues: ["Applied", "Interviewing", "Offer", "Rejected", "Hired"],
+        },
+        { name: "appliedDate", type: "date", required: false },
       ],
     },
   },

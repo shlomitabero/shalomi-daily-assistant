@@ -47,6 +47,13 @@ const VENUES_HE = ["אולמי הגן", "מלון דן", "בית התרבות", 
 const VENUES_EN = ["Garden Hall", "Dan Hotel", "Community Center", "Event Gardens"];
 const INSTRUCTORS_HE = ["ד\"ר רותם כץ", "המורה עדי בר", "פרופ' יעל אבני", "המדריך גיל שגיא"];
 const INSTRUCTORS_EN = ["Dr. Rotem Katz", "Adi Bar", "Prof. Yael Avni", "Gil Sagi"];
+// Pools for Ticket, Subscription, JobApplicant.
+const TICKET_SUBJECTS_HE = ["לא מצליח/ה להתחבר לחשבון", "חיוב כפול בכרטיס האשראי", "בקשה לשדרוג תוכנית", "שאלה לגבי החשבונית"];
+const TICKET_SUBJECTS_EN = ["Can't log into my account", "Charged twice on my card", "Request to upgrade my plan", "Question about my invoice"];
+const PLAN_NAMES_HE = ["תוכנית בסיסית", "תוכנית פרו", "תוכנית עסקית", "תוכנית שנתית"];
+const PLAN_NAMES_EN = ["Basic Plan", "Pro Plan", "Business Plan", "Annual Plan"];
+const JOB_TITLES_HE = ["מפתח/ת תוכנה", "מנהל/ת מכירות", "רכז/ת שיווק", "מעצב/ת UX"];
+const JOB_TITLES_EN = ["Software Engineer", "Sales Manager", "Marketing Coordinator", "UX Designer"];
 
 function pick(pool: string[], index: number): string {
   return pool[index % pool.length];
@@ -130,6 +137,12 @@ function textSeedValueFor(fieldName: string, entityName: string, isHebrew: boole
       return pick(VEHICLE_MODELS, index);
     case "licensePlate":
       return pick(LICENSE_PLATES, index);
+    case "subject":
+      return pick(isHebrew ? TICKET_SUBJECTS_HE : TICKET_SUBJECTS_EN, index);
+    case "planName":
+      return pick(isHebrew ? PLAN_NAMES_HE : PLAN_NAMES_EN, index);
+    case "appliedFor":
+      return pick(isHebrew ? JOB_TITLES_HE : JOB_TITLES_EN, index);
     case "name":
       // "name" means different things for different entity shapes -- a
       // person for people-shaped entities, a thing for catalog-shaped

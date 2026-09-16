@@ -975,6 +975,52 @@ not a single "make it perfect" claim.
       confirmed the table cell resolved to the real name, downloaded the
       CSV export via a real browser download event, and confirmed the CSV
       file itself contains the courier's real name.
+- [x] **Third domain-entity expansion round: Ticket (support desk),
+      Subscription (recurring billing), and JobApplicant (recruitment) --
+      three more common business verticals, chosen to be genuinely
+      different from the 20 entities already covered (delivery,
+      real estate, education, healthcare, automotive, events, etc.), not
+      more of the same.** Both `Ticket.customerId` and
+      `Subscription.customerId` are real, optional relation fields to
+      `Customer` — the first production use of the relation-picker work
+      from the last two rounds beyond the original `Order.courierId`
+      example, and it worked without any extra wiring, which is the actual
+      proof that feature is genuinely general-purpose rather than
+      special-cased for Order/Courier.
+      **Found and fixed a real Hebrew-morphology bug while doing the
+      actual browser verification, not just running the unit tests:** the
+      natural, idiomatic way to say "customer support" in Hebrew is
+      "תמיכת לקוחות" (construct state / סמיכות), not "תמיכה ללקוחות". The
+      `Ticket` rule's keyword was only "תמיכה", and Hebrew's construct
+      state changes the word's ending, so "תמיכה" is not a substring of
+      "תמיכת" — the exact same class of bug as the earlier "of course"/
+      "prevents" substring pitfalls, but the Hebrew-specific variant of it,
+      not previously documented. Confirmed live: typing the natural phrase
+      "אפליקציית תמיכת לקוחות" into a real build produced no Ticket entity
+      at all before the fix. Fixed by also listing "תמיכת" as its own
+      keyword, and added a permanent comment on `DOMAIN_ENTITY_RULES`
+      itself documenting the general rule (prefixes like ה/ו/ב/כ/ל/מ don't
+      break substring matching since the root stays contiguous at the end;
+      suffix inflections like construct state do, so list each inflected
+      form explicitly) so the next Hebrew keyword addition doesn't repeat
+      it. Verified: 5 new unit tests (entity/field shape for all three,
+      the Hebrew construct-state regression using the exact phrase that
+      failed, and two substring-collision-avoidance tests proving
+      JobApplicant's keywords were deliberately written as "hiring" not
+      "hiring pipeline" (Deal's own keyword) and "גיוס" not "גיוס עובדים"
+      (Employee's own keyword)) + a seed-data test for all three entities'
+      new field names + full suite green (153 tests) + `npm run build`
+      clean + two real Playwright runs against a real server: the first
+      one is what caught the Hebrew bug (no Ticket tab appeared for the
+      natural phrasing), the second one (after the fix) confirmed all four
+      resulting entity tabs (Customer, Ticket, Subscription, JobApplicant)
+      render with real seed values — real ticket subjects, real plan
+      names, real job titles — and confirmed the Ticket→Customer relation
+      picker itself: edited a seeded ticket (customerId started null),
+      assigned a real customer from a real `<select>` of actual customer
+      names, saved, and confirmed the table cell resolved to the
+      customer's real name instead of staying blank or showing a raw id.
+
 
 ## Phase 3
 
