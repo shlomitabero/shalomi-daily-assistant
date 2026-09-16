@@ -924,6 +924,26 @@ button.sort-header:hover:not(:disabled) {
   flex-wrap: wrap;
 }
 
+.shortcut-hint {
+  margin-inline-start: 6px;
+  padding: 1px 6px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font-size: 0.7rem;
+  font-family: monospace;
+  color: var(--muted);
+  direction: ltr;
+  unicode-bidi: isolate;
+}
+
+@media (max-width: 640px) {
+  /* Ctrl/Cmd+K isn't a meaningful affordance on a touch device, and the
+     header actions row is already tight at this width. */
+  .shortcut-hint {
+    display: none;
+  }
+}
+
 /* Base44/Lovable-style split pane: a persistent chat/history column next
    to the live app preview, instead of stacking everything in one column.
    Single column below the breakpoint; the .app container's own max-width

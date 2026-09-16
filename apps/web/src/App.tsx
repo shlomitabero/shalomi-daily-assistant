@@ -108,6 +108,31 @@ function AppContent() {
 
   useEffect(() => subscribeWakeStatus(setWaking), []);
 
+  /**
+   * Ctrl/Cmd+K opens global search from anywhere in the preview screen (a
+   * command-palette convention users already know from other tools), and
+   * Escape closes whichever overlay panel is currently open. Only active
+   * in the preview view so it can't fire while filling in the home-screen
+   * idea textarea or the spec-review form.
+   */
+  useEffect(() => {
+    if (view !== "preview") return;
+    function handleKeyDown(e: KeyboardEvent) {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        setShowSearch(true);
+        return;
+      }
+      if (e.key === "Escape") {
+        setShowHistory(false);
+        setShowTwin(false);
+        setShowSearch(false);
+      }
+    }
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [view]);
+
   useEffect(() => {
     if (!getToken()) {
       setCheckingSession(false);
@@ -421,6 +446,7 @@ function AppContent() {
             <div className="preview-header-actions">
               <button type="button" className="secondary" onClick={() => setShowSearch(true)}>
                 {t("preview.search")}
+                <span className="shortcut-hint">Ctrl+K</span>
               </button>
               <button type="button" className="secondary" onClick={() => setShowTwin(true)}>
                 {t("preview.twin")}

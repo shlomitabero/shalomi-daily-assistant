@@ -1182,6 +1182,31 @@ not a single "make it perfect" claim.
       clean + a from-scratch clean-room clone/install/test/build/start
       cycle, including a live `/api/health` check against the freshly
       built server.
+- [x] **Ctrl/Cmd+K shortcut for global search, Escape to close panels.**
+      Immediate follow-up to the global search feature above: added a
+      `keydown` listener (scoped to the preview view only, so it can't
+      fire while typing in the home-screen idea box or the spec-review
+      form) that opens the search panel on Ctrl+K or Cmd+K — a
+      command-palette convention from other tools — with `preventDefault`
+      so it doesn't fall through to the browser's own address-bar
+      shortcut. Escape closes whichever overlay is currently open
+      (Search, Business Twin, or History), all three of which reuse the
+      same overlay markup. A small "Ctrl+K" hint badge next to the search
+      button makes the shortcut discoverable rather than hidden;
+      `.shortcut-hint` is hidden below 640px since the affordance means
+      nothing on a touch device and the header row is already tight
+      there. Verified with a real Playwright run: built a real app,
+      pressed Ctrl+K with focus nowhere in particular and confirmed the
+      panel opened with its input auto-focused, typed the literal
+      character "k" into that focused input and confirmed it lands as
+      text rather than re-triggering anything, pressed Escape and
+      confirmed the panel closed, repeated the open+close check against
+      the Business Twin panel to prove Escape isn't wired to one specific
+      panel, and pressed Meta+K to confirm the Mac modifier path works
+      too. Full suite green (163 tests, unchanged — this feature is pure
+      event-handling glue with no new pure-function logic to unit-test)
+      + both builds clean + a from-scratch clean-room clone/install/test/
+      build/start cycle with a live `/api/health` check.
 
 ## Phase 3
 
