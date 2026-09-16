@@ -1232,6 +1232,41 @@ not a single "make it perfect" claim.
       above). Full suite green (163 tests, unchanged) + both builds clean
       + a from-scratch clean-room clone/install/test/build/start cycle
       with a live `/api/health` check.
+- [x] **Ported global search + Ctrl/Cmd+K + keyboard navigation to the
+      exported codegen app.** The last three rounds built global search
+      into the Forge AI *live preview* only — the downloadable "own your
+      code" export was missing it, the same gap every other live-preview
+      feature (relation picker, Kanban, calendar, CSV export, bulk-select)
+      had before its own porting round. Added `web/src/components/
+      GlobalSearch.jsx` to the generated app, reusing `matchesSearch` and
+      `recordDisplayLabel` that `EntityView.jsx` already had (now
+      exported instead of module-private) so the exported app's per-tab
+      search and its new global search can never disagree about what
+      counts as a match — same principle as the live preview's own
+      `searchEntityRecords`. `App.jsx` gained the same Ctrl/Cmd+K
+      listener, Escape-to-close, and a visible shortcut hint. Verified
+      with the full real pipeline this kind of change requires: built a
+      real app in the live Forge AI preview, clicked the actual "⬇️ ייצוא
+      קוד" button to trigger a real browser download of the exported zip,
+      unzipped it, ran a real `npm install` and `vite build`, started the
+      generated `server.js` as a real child process, then opened a
+      *second* real browser against that standalone server (not the
+      generated code in isolation) and exercised the ported feature
+      there: created a real record through the exported app's own add-record
+      form (the export never carries over Forge AI's own live-preview demo
+      data, so there was nothing to search until a record existed),
+      confirmed the "Ctrl+K" hint renders, pressed Ctrl+K to open search,
+      searched for that record and got a real hit, pressed ArrowDown and
+      confirmed a result group highlighted, pressed Enter and confirmed it
+      jumped to the entity's tab and closed the panel, then re-opened with
+      Ctrl+K and confirmed Escape closes it too. Also added unit-level
+      content tests to `codegen.test.ts` (19 tests now, up from 18) that
+      would catch a broken import/export wiring between `GlobalSearch.jsx`
+      and `EntityView.jsx` without needing the full browser cycle every
+      time. Full suite green (164 tests: 44 spec-engine + 24 db + 42 api +
+      54 web) + both builds clean + a from-scratch clean-room
+      clone/install/test/build/start cycle with a live `/api/health`
+      check.
 
 ## Phase 3
 

@@ -60,6 +60,7 @@ test("generateExportFiles produces a real multi-file React (Vite) + Express proj
     "web/src/App.jsx",
     "web/src/api.js",
     "web/src/components/EntityView.jsx",
+    "web/src/components/GlobalSearch.jsx",
     "web/src/entities/Customer.jsx",
     "web/src/entities/Service.jsx",
     "web/src/main.jsx",
@@ -213,8 +214,8 @@ test("each entity gets its own real component file with its literal field list, 
   assert.doesNotMatch(serviceJsx, /"name": "name"/); // Customer's fields must not leak into Service's file
 
   const appJsx = files.find((f) => f.path === "web/src/App.jsx")!.content;
-  assert.match(appJsx, /import CustomerView from ".\/entities\/Customer\.jsx"/);
-  assert.match(appJsx, /import ServiceView from ".\/entities\/Service\.jsx"/);
+  assert.match(appJsx, /import CustomerView, \{ entity as CustomerEntity \} from ".\/entities\/Customer\.jsx"/);
+  assert.match(appJsx, /import ServiceView, \{ entity as ServiceEntity \} from ".\/entities\/Service\.jsx"/);
 });
 
 test("a project name with JSX-significant characters doesn't break the generated App.jsx", () => {
@@ -386,6 +387,37 @@ test("generateExportFiles includes a real render.yaml matching this repo's own p
   assert.match(readme, /## Deploy it/);
   assert.match(readme, /render\.yaml/);
   assert.match(readme, /render\.com/i);
+});
+
+test("the exported app includes a real cross-entity global search, ported from the Forge AI live preview", () => {
+  const files = generateExportFiles(project);
+  const globalSearchJsx = files.find((f) => f.path === "web/src/components/GlobalSearch.jsx")!.content;
+  // Reuses EntityView's own matchesSearch/recordDisplayLabel rather than
+  // re-implementing the matching rule a second time.
+  assert.match(globalSearchJsx, /import \{ matchesSearch, recordDisplayLabel \} from ".\/EntityView\.jsx"/);
+  assert.match(globalSearchJsx, /export function GlobalSearch/);
+  assert.match(globalSearchJsx, /global-search-group-selected/);
+  assert.match(globalSearchJsx, /ArrowDown/);
+  assert.match(globalSearchJsx, /ArrowUp/);
+
+  // EntityView.jsx must actually export what GlobalSearch.jsx imports.
+  const entityViewJsx = files.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+  assert.match(entityViewJsx, /export function matchesSearch/);
+  assert.match(entityViewJsx, /export function recordDisplayLabel/);
+
+  // App.jsx wires it up: Ctrl/Cmd+K opens it, each entity import also pulls
+  // in that entity's own field list (needed to search its records), and a
+  // visible shortcut hint makes the affordance discoverable.
+  const appJsx = files.find((f) => f.path === "web/src/App.jsx")!.content;
+  assert.match(appJsx, /import \{ GlobalSearch \} from ".\/components\/GlobalSearch\.jsx"/);
+  assert.match(appJsx, /entity as CustomerEntity/);
+  assert.match(appJsx, /fields: CustomerEntity\.fields/);
+  assert.match(appJsx, /ctrlKey \|\| e\.metaKey/);
+  assert.match(appJsx, /shortcut-hint/);
+
+  const stylesCss = files.find((f) => f.path === "web/src/styles.css")!.content;
+  assert.match(stylesCss, /\.search-overlay/);
+  assert.match(stylesCss, /\.global-search-group-selected/);
 });
 
 test("render.yaml's service name is a safe slug even for a project name with spaces, punctuation, and Hebrew", () => {

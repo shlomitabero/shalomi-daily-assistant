@@ -440,7 +440,7 @@ function emptyForm(entity) {
 // short human label -- prefers a field literally named "name"/"title",
 // falls back to the first text field, then the first field of any type.
 const DISPLAY_FIELD_NAME_HINTS = ["name", "title"];
-function pickDisplayField(entity) {
+export function pickDisplayField(entity) {
   if (!entity || !entity.fields || entity.fields.length === 0) return null;
   const named = entity.fields.find((f) => DISPLAY_FIELD_NAME_HINTS.includes(f.name.toLowerCase()));
   if (named) return named;
@@ -448,7 +448,7 @@ function pickDisplayField(entity) {
   return firstText || entity.fields[0];
 }
 
-function recordDisplayLabel(entity, record) {
+export function recordDisplayLabel(entity, record) {
   const field = pickDisplayField(entity);
   const value = field ? record[field.name] : undefined;
   if (value === null || value === undefined || value === "") return \`#\${record.id}\`;
@@ -498,7 +498,7 @@ function Cell({ field, value, relationLabel }) {
   return <>{String(value)}</>;
 }
 
-function matchesSearch(record, fields, query) {
+export function matchesSearch(record, fields, query) {
   const trimmed = query.trim().toLowerCase();
   if (!trimmed) return true;
   return fields.some((f) => {
@@ -1104,6 +1104,138 @@ export function EntityView({ entity }) {
 `;
 }
 
+/**
+ * A single query box that searches every entity's records at once, then
+ * lets a shortcut/click jump to that entity's tab -- the same feature
+ * added to the Forge AI live preview, ported here so an exported app
+ * isn't missing it just because it was born as a download. Reuses the
+ * exact same `matchesSearch`/`recordDisplayLabel` EntityView.jsx already
+ * exports, so a record that matches in a tab's own search matches here
+ * too, by construction.
+ */
+function renderGlobalSearchJsx(): string {
+  return `import { useState } from "react";
+import { listRecords } from "../api.js";
+import { matchesSearch, recordDisplayLabel } from "./EntityView.jsx";
+
+async function searchEntity(entity, query) {
+  const { records } = await listRecords(entity.name);
+  const matches = records.filter((r) => matchesSearch(r, entity.fields, query));
+  if (matches.length === 0) return null;
+  return { entityName: entity.name, entityLabel: entity.label, totalMatches: matches.length, sample: matches.slice(0, 5) };
+}
+
+/**
+ * Down/Up move a highlight across the result groups (not individual
+ * records -- jumping always lands on an entity tab), clamped at the
+ * first/last group rather than wrapping, and Enter jumps to whichever
+ * group is highlighted. Enter with nothing highlighted still submits the
+ * form as a normal search.
+ */
+export function GlobalSearch({ entities, onClose, onJumpToEntity }) {
+  const [query, setQuery] = useState("");
+  const [results, setResults] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
+  const [searched, setSearched] = useState(false);
+  const [selectedIndex, setSelectedIndex] = useState(null);
+
+  async function runSearch(q) {
+    if (!q.trim()) {
+      setResults([]);
+      setSearched(false);
+      setSelectedIndex(null);
+      return;
+    }
+    setLoading(true);
+    setError(null);
+    try {
+      const perEntity = await Promise.all(entities.map((entity) => searchEntity(entity, q)));
+      setResults(perEntity.filter((r) => r !== null));
+      setSearched(true);
+      setSelectedIndex(null);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handleSubmit(e) {
+    e.preventDefault();
+    await runSearch(query);
+  }
+
+  function handleInputKeyDown(e) {
+    if (results.length === 0) return;
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      setSelectedIndex((prev) => (prev === null ? 0 : Math.min(prev + 1, results.length - 1)));
+    } else if (e.key === "ArrowUp") {
+      e.preventDefault();
+      setSelectedIndex((prev) => (prev === null ? results.length - 1 : Math.max(prev - 1, 0)));
+    } else if (e.key === "Enter" && selectedIndex !== null) {
+      e.preventDefault();
+      onJumpToEntity(results[selectedIndex].entityName);
+    }
+  }
+
+  return (
+    <div className="search-overlay">
+      <div className="search-panel">
+        <div className="search-header">
+          <h2>🔍 Search everything</h2>
+          <button type="button" onClick={onClose}>Close</button>
+        </div>
+        <p className="muted small">Searches across every entity at once, not just the open tab.</p>
+
+        <form className="global-search-form" onSubmit={handleSubmit}>
+          <input
+            type="text"
+            autoFocus
+            className="global-search-input"
+            placeholder="Type to search…"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            onKeyDown={handleInputKeyDown}
+          />
+          <button type="submit" disabled={!query.trim()}>Search</button>
+        </form>
+
+        {error && <p className="error">{error}</p>}
+        {loading && <p className="muted">Loading…</p>}
+        {!loading && !searched && !error && <p className="muted">Start typing to search.</p>}
+        {!loading && searched && results.length === 0 && !error && <p className="muted">No matching results in any entity.</p>}
+        {!loading && results.length > 0 && <p className="muted small">↑↓ to navigate results, Enter to jump to a tab</p>}
+
+        {!loading && results.length > 0 && (
+          <div className="global-search-results">
+            {results.map((result, i) => (
+              <div key={result.entityName} className={i === selectedIndex ? "global-search-group global-search-group-selected" : "global-search-group"}>
+                <div className="global-search-group-header">
+                  <span className="global-search-entity-label">{result.entityLabel}</span>
+                  <span className="muted small">{result.totalMatches} results</span>
+                  <button type="button" className="small" onClick={() => onJumpToEntity(result.entityName)}>Go to tab</button>
+                </div>
+                <ul className="global-search-hits">
+                  {result.sample.map((record) => (
+                    <li key={record.id}>{recordDisplayLabel(entities.find((e) => e.name === result.entityName), record)}</li>
+                  ))}
+                </ul>
+                {result.totalMatches > result.sample.length && (
+                  <p className="muted small">+{result.totalMatches - result.sample.length} more</p>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+`;
+}
+
 function renderEntityJsx(entity: Entity): string {
   const fieldsJson = JSON.stringify(
     entity.fields.map((f) => ({
@@ -1139,13 +1271,17 @@ export default function View() {
 function renderAppJsx(project: Project): string {
   const entities = project.spec.entities;
   const imports = entities
-    .map((e) => `import ${e.name}View from "./entities/${e.name}.jsx";`)
+    .map((e) => `import ${e.name}View, { entity as ${e.name}Entity } from "./entities/${e.name}.jsx";`)
     .join("\n");
   const entries = entities
-    .map((e) => `  { name: ${JSON.stringify(e.name)}, label: ${JSON.stringify(e.label ?? e.name)}, View: ${e.name}View },`)
+    .map(
+      (e) =>
+        `  { name: ${JSON.stringify(e.name)}, label: ${JSON.stringify(e.label ?? e.name)}, View: ${e.name}View, fields: ${e.name}Entity.fields },`,
+    )
     .join("\n");
 
-  return `import { useState } from "react";
+  return `import { useEffect, useState } from "react";
+import { GlobalSearch } from "./components/GlobalSearch.jsx";
 ${imports}
 
 const ENTITIES = [
@@ -1158,11 +1294,35 @@ const TITLE = ${JSON.stringify(project.name)};
 
 export default function App() {
   const [active, setActive] = useState(ENTITIES[0]?.name ?? null);
+  const [showSearch, setShowSearch] = useState(false);
   const activeEntity = ENTITIES.find((e) => e.name === active);
+
+  // Ctrl/Cmd+K opens global search from anywhere in the app (the same
+  // command-palette convention Forge AI's own live preview uses), and
+  // Escape closes it.
+  useEffect(() => {
+    function handleKeyDown(e) {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        setShowSearch(true);
+        return;
+      }
+      if (e.key === "Escape") {
+        setShowSearch(false);
+      }
+    }
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, []);
 
   return (
     <div className="app">
-      <h1>{TITLE}</h1>
+      <div className="app-header">
+        <h1>{TITLE}</h1>
+        <button type="button" className="search-trigger" onClick={() => setShowSearch(true)}>
+          🔍 Search <span className="shortcut-hint">Ctrl+K</span>
+        </button>
+      </div>
       <nav>
         {ENTITIES.map((e) => (
           <button key={e.name} className={e.name === active ? "active" : ""} onClick={() => setActive(e.name)}>
@@ -1171,6 +1331,16 @@ export default function App() {
         ))}
       </nav>
       {activeEntity && <activeEntity.View />}
+      {showSearch && (
+        <GlobalSearch
+          entities={ENTITIES}
+          onClose={() => setShowSearch(false)}
+          onJumpToEntity={(name) => {
+            setActive(name);
+            setShowSearch(false);
+          }}
+        />
+      )}
     </div>
   );
 }
@@ -1235,6 +1405,24 @@ th, td { text-align: start; padding: 8px 10px; border-bottom: 1px solid #efe8da;
 .csv-export-btn:disabled { opacity: 0.55; cursor: default; }
 .bulk-actions-bar { display: flex; align-items: center; gap: 12px; padding: 8px 12px; margin-bottom: 8px; background: #faf7f1; border: 1px solid #efe8da; border-radius: 8px; font-size: 13.5px; }
 .select-col { width: 1%; white-space: nowrap; }
+.app-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 20px; }
+.app-header h1 { margin: 0; }
+.search-trigger { padding: 8px 16px; border-radius: 8px; border: 1px solid #e6ddcc; background: #fff; cursor: pointer; font: inherit; }
+.search-trigger:hover { background: #f6f2ea; }
+.shortcut-hint { margin-inline-start: 6px; padding: 1px 6px; border: 1px solid #e6ddcc; border-radius: 4px; font-size: 0.7rem; font-family: monospace; color: #83786a; }
+.search-overlay { position: fixed; inset: 0; background: rgba(36,31,25,0.45); display: flex; align-items: flex-start; justify-content: center; padding: 60px 16px; z-index: 20; }
+.search-panel { background: #fff; border-radius: 14px; padding: 20px; width: 100%; max-width: 560px; max-height: 80vh; overflow-y: auto; box-shadow: 0 12px 32px rgba(36,31,25,0.2); }
+.search-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 8px; }
+.search-header h2 { margin: 0; font-size: 20px; }
+.global-search-form { display: flex; gap: 8px; margin: 12px 0; }
+.global-search-input { flex: 1; }
+.global-search-results { display: flex; flex-direction: column; gap: 16px; }
+.global-search-group { border-top: 1px solid #efe8da; padding-top: 12px; border-inline-start: 3px solid transparent; padding-inline-start: 9px; margin-inline-start: -12px; }
+.global-search-group-selected { border-inline-start-color: #d9622b; background: #fbe4d4; border-radius: 0 8px 8px 0; }
+.global-search-group-header { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.global-search-entity-label { font-weight: 700; }
+.global-search-group-header button.small { margin-inline-start: auto; padding: 4px 10px; font-size: 13px; }
+.global-search-hits { margin: 10px 0 0; padding-inline-start: 20px; display: flex; flex-direction: column; gap: 6px; font-size: 14.5px; }
 `;
 }
 
@@ -1263,6 +1451,7 @@ export function generateExportFiles(project: Project): { path: string; content: 
     { path: "web/src/api.js", content: renderApiJs() },
     { path: "web/src/styles.css", content: renderStylesCss() },
     { path: "web/src/components/EntityView.jsx", content: renderEntityViewJsx(project) },
+    { path: "web/src/components/GlobalSearch.jsx", content: renderGlobalSearchJsx() },
     ...entityFiles,
     { path: ".gitignore", content: "node_modules/\ndist/\ndata.sqlite\n" },
   ];
