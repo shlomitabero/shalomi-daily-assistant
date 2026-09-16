@@ -401,10 +401,27 @@ not a single "make it perfect" claim.
       that it actually left the Lead column's card list and appeared in
       Won's — a real, persisted state change, not a visual-only move.
       Checked at 390px mobile width and in dark mode too, zero console
-      errors. **Not done in this pass, tracked as a follow-up:** the same
-      board view in the exported standalone codegen output (still table-
-      only there), and a calendar-style view for date-heavy entities like
-      "Appointment".
+      errors.
+- [x] **Step 4: the same Kanban board in the exported standalone app.**
+      Ported `findBoardField`/`groupByField`/`BoardCard` into
+      `codegen.ts`'s generated `EntityView.jsx` template as literal JS
+      (same duplication-by-design reasoning as the earlier badges/search/
+      sort port — the export owes nothing to Forge AI at runtime), plus
+      the matching CSS into the generated `styles.css`. Verified: 2 new
+      codegen tests (the generated file contains the board code/CSS) +
+      full suite green (121 tests) + `npm run build` clean + the same
+      rigorous end-to-end check as before: built a real CRM project
+      through the live API, downloaded the actual export `.zip`, unzipped
+      it, ran `npm install` + `npm start` as a **fully standalone app**,
+      and drove it with a real browser — added a "Customer" record,
+      switched to board view, moved it from the "New" column to "Won" via
+      its card's select, and confirmed via direct column-count inspection
+      that it genuinely left one column and landed in the other (1→0 in
+      "New", 0→1 in "Won"), not just visually. Zero console errors. This
+      closes the parity gap between the live preview and the exported
+      code for the Kanban feature. **Still not done, tracked as a
+      follow-up:** a calendar-style view for date-heavy entities like
+      "Appointment", in either the preview or the export.
 
 ## Production hardening
 

@@ -420,6 +420,59 @@ function compareValues(a, b) {
   return String(a).localeCompare(String(b));
 }
 
+// Picks the enum field an entity's records should be grouped into board
+// columns by, if any -- prefers a field literally named status/stage, falls
+// back to the first workable enum field (2-8 values), and returns null for
+// a flat entity like "Customer" with no enum field.
+const BOARD_FIELD_NAME_HINTS = ["status", "stage"];
+function findBoardField(fields) {
+  const enumFields = fields.filter((f) => f.type === "enum" && f.enumValues && f.enumValues.length >= 2 && f.enumValues.length <= 8);
+  if (enumFields.length === 0) return null;
+  const named = enumFields.find((f) => BOARD_FIELD_NAME_HINTS.includes(f.name.toLowerCase()));
+  return named || enumFields[0];
+}
+
+// Groups records into one column per declared enum value, in declared
+// order, including a value with zero matching records so an empty stage
+// still shows as a column instead of disappearing.
+function groupByField(records, field) {
+  const values = field.enumValues || [];
+  return values.map((value) => ({
+    value,
+    label: (field.enumLabels && field.enumLabels[value]) || value,
+    records: records.filter((r) => String(r[field.name]) === value),
+  }));
+}
+
+// One card in the board view: the record's other fields (never the board
+// field itself, since that's implied by which column the card is in), a
+// select to move it directly to another column, and the same Edit/Delete
+// actions the table row has.
+function BoardCard({ entity, boardField, record, onMove, onEdit, onDelete }) {
+  const otherFields = entity.fields.filter((f) => f.name !== boardField.name);
+  return (
+    <div className="board-card">
+      {otherFields.map((f) => (
+        <div key={f.name} className="board-card-field">
+          <span className="muted small">{f.label}</span>
+          <Cell field={f} value={record[f.name]} />
+        </div>
+      ))}
+      <select className="board-card-move" value={record[boardField.name] ?? ""} onChange={(e) => onMove(e.target.value)}>
+        {(boardField.enumValues || []).map((v) => (
+          <option key={v} value={v}>
+            {(boardField.enumLabels && boardField.enumLabels[v]) || v}
+          </option>
+        ))}
+      </select>
+      <div className="row-actions">
+        <button onClick={onEdit}>Edit</button>
+        <button onClick={onDelete}>Delete</button>
+      </div>
+    </div>
+  );
+}
+
 function FieldInput({ entity, field, value, onChange }) {
   const id = \`f_\${entity.name}_\${field.name}\`;
   if (field.type === "boolean") {
@@ -461,6 +514,8 @@ export function EntityView({ entity }) {
   const [search, setSearch] = useState("");
   const [sortField, setSortField] = useState(null);
   const [sortDir, setSortDir] = useState("asc");
+  const [viewMode, setViewMode] = useState("table");
+  const boardField = useMemo(() => findBoardField(entity.fields), [entity.fields]);
 
   async function refresh() {
     setLoading(true);
@@ -479,6 +534,7 @@ export function EntityView({ entity }) {
     setEditingId(null);
     setSearch("");
     setSortField(null);
+    setViewMode("table");
     refresh();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [entity.name]);
@@ -528,6 +584,11 @@ export function EntityView({ entity }) {
     await refresh();
   }
 
+  async function handleMove(id, fieldName, value) {
+    await updateRecord(entity.name, id, { [fieldName]: value });
+    await refresh();
+  }
+
   return (
     <div className="panel">
       <h3>{entity.label}</h3>
@@ -567,16 +628,58 @@ export function EntityView({ entity }) {
         </div>
       ) : (
         <>
-          <input
-            type="text"
-            className="entity-search"
-            placeholder="🔍 Search…"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-          />
+          <div className="entity-toolbar">
+            <input
+              type="text"
+              className="entity-search"
+              placeholder="🔍 Search…"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+            />
+            {boardField && (
+              <div className="view-toggle" role="group">
+                <button
+                  type="button"
+                  className={viewMode === "table" ? "view-toggle-btn view-toggle-btn-active" : "view-toggle-btn"}
+                  onClick={() => setViewMode("table")}
+                >
+                  📋 Table
+                </button>
+                <button
+                  type="button"
+                  className={viewMode === "board" ? "view-toggle-btn view-toggle-btn-active" : "view-toggle-btn"}
+                  onClick={() => setViewMode("board")}
+                >
+                  🗂️ Board
+                </button>
+              </div>
+            )}
+          </div>
           {visibleRecords.length === 0 ? (
             <div className="empty-state">
               <p>No results match your search.</p>
+            </div>
+          ) : viewMode === "board" && boardField ? (
+            <div className="board-scroll">
+              {groupByField(visibleRecords, boardField).map((column) => (
+                <div className="board-column" key={column.value}>
+                  <div className="board-column-header">
+                    <span className={\`badge badge-\${badgeTone(column.value)}\`}>{column.label}</span>
+                    <span className="muted small">{column.records.length}</span>
+                  </div>
+                  {column.records.map((r) => (
+                    <BoardCard
+                      key={r.id}
+                      entity={entity}
+                      boardField={boardField}
+                      record={r}
+                      onMove={(value) => handleMove(r.id, boardField.name, value)}
+                      onEdit={() => startEdit(r)}
+                      onDelete={() => handleDelete(r.id)}
+                    />
+                  ))}
+                </div>
+              ))}
             </div>
           ) : (
             <div className="table-scroll">
@@ -720,6 +823,17 @@ th, td { text-align: start; padding: 8px 10px; border-bottom: 1px solid #efe8da;
 .badge-neutral { background: #e9edf0; color: #4c5b6a; }
 .bool-yes { color: #2e8b57; font-weight: 700; }
 .empty-state { padding: 32px 16px; text-align: center; color: #83786a; background: #fdfbf7; border: 1px dashed #e6ddcc; border-radius: 10px; }
+.entity-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 14px; }
+.entity-toolbar .entity-search { margin-bottom: 0; flex: 1; }
+.view-toggle { display: flex; gap: 4px; padding: 3px; background: #fff; border: 1px solid #e6ddcc; border-radius: 8px; flex-shrink: 0; }
+.view-toggle-btn { padding: 6px 12px; border-radius: 6px; border: none; background: transparent; color: #83786a; font-size: 13px; font-weight: 600; cursor: pointer; }
+.view-toggle-btn-active { background: #d9622b; color: #fff; }
+.board-scroll { display: flex; gap: 14px; overflow-x: auto; padding-bottom: 8px; }
+.board-column { flex: 0 0 240px; background: #faf7f1; border: 1px solid #efe8da; border-radius: 10px; padding: 12px; display: flex; flex-direction: column; gap: 10px; }
+.board-column-header { display: flex; align-items: center; justify-content: space-between; padding-bottom: 8px; border-bottom: 1px solid #efe8da; }
+.board-card { background: #fff; border: 1px solid #efe8da; border-radius: 8px; padding: 10px 12px; box-shadow: 0 1px 2px rgba(36,31,25,0.06); display: flex; flex-direction: column; gap: 6px; }
+.board-card-field { display: flex; flex-direction: column; gap: 1px; font-size: 13.5px; }
+.board-card-move { margin-top: 4px; }
 `;
 }
 

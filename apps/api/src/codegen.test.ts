@@ -174,3 +174,17 @@ test("the exported EntityView renders status badges, formatted dates/numbers, se
   // The old plain-text formatCell helper is gone, replaced by the Cell component
   assert.doesNotMatch(entityViewJsx, /function formatCell/);
 });
+
+test("the exported EntityView renders a real Kanban board for entities with a status/stage-like enum field", () => {
+  const files = generateExportFiles(project);
+  const entityViewJsx = files.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+  assert.match(entityViewJsx, /findBoardField/);
+  assert.match(entityViewJsx, /groupByField/);
+  assert.match(entityViewJsx, /function BoardCard/);
+  assert.match(entityViewJsx, /board-column/);
+  assert.match(entityViewJsx, /handleMove/);
+  // The exported CSS carries the matching board styling, not just the component code
+  const stylesCss = files.find((f) => f.path === "web/src/styles.css")!.content;
+  assert.match(stylesCss, /\.board-card/);
+  assert.match(stylesCss, /\.view-toggle/);
+});
