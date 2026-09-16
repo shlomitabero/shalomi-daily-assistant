@@ -217,6 +217,20 @@ test("recordsToCsv formats false as FALSE, not an empty field (falsy values must
   assert.equal(csv, "Active\r\nFALSE");
 });
 
+test("recordsToCsv resolves a relation field to the related record's display name, not the raw id, and degrades to #id when the target entity is unknown", () => {
+  const courier: Entity = {
+    name: "Courier",
+    fields: [{ name: "name", type: "text", required: true }],
+  };
+  const fields: Field[] = [{ name: "courierId", label: "Courier", type: "relation", required: false, relationTo: "Courier" }];
+  const csvResolved = recordsToCsv(fields, [{ courierId: 1 }], "en", [courier], { Courier: [{ id: 1, name: "Yossi Cohen" }] });
+  assert.equal(csvResolved, "Courier\r\nYossi Cohen");
+
+  // No allEntities/relatedRecords passed at all (backward-compatible default) -- degrades to the raw id.
+  const csvUnresolved = recordsToCsv(fields, [{ courierId: 1 }], "en");
+  assert.equal(csvUnresolved, "Courier\r\n#1");
+});
+
 test("pickDisplayField prefers a field literally named name/title over other fields", () => {
   const withName: Field[] = [
     { name: "id", type: "number", required: false },

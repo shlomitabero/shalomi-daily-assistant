@@ -923,6 +923,58 @@ not a single "make it perfect" claim.
       the next candidate. CSV export also still prints the raw id for a
       relation field rather than the resolved name; a known, minor,
       pre-existing gap this round didn't touch.
+- [x] **Ported the relation-field picker to the exported/codegen app, and
+      fixed CSV export to resolve a relation field's name (both live
+      preview and export).** Follow-through on the previous round's
+      explicitly stated scope gap. `apps/api/src/codegen.ts` gained the
+      same `pickDisplayField`/`recordDisplayLabel`/`relationDisplayLabel`
+      logic as the live preview (a small `ALL_ENTITIES` manifest baked
+      into `EntityView.jsx`, since each exported entity file only knows
+      its own fields), so a relation field in a *downloaded, standalone*
+      app also renders a real `<select>` instead of a raw id input.
+      `entityFormatting.ts`'s `recordsToCsv`/`fieldDisplayValue` (live
+      preview) and `codegen.ts`'s equivalents (export) now both resolve a
+      relation field to the related record's display name in the CSV too,
+      not the raw stored id — closing the exact gap the previous round's
+      entry flagged.
+      **Found and fixed a real, independent, higher-severity bug while
+      doing the actual "download the zip and run it standalone"
+      verification this discipline requires:** `Order` — a real Forge AI
+      domain entity, not a contrived case — is a reserved SQL keyword.
+      Every table/column name in the exported `server.js` was interpolated
+      into raw SQL unquoted, so `CREATE TABLE Order (...)` crashed the
+      *entire* exported app at startup with a SQL syntax error, before it
+      ever reached `app.listen`. This is not new breakage from this
+      round's relation work — it's a latent bug that's existed since
+      "Order" was added as a domain entity, invisible until an exported
+      Order app was actually built, unzipped, `npm install`ed, and run
+      (the live preview never hits it, since its own table names are
+      internally prefixed as `entity_<projectId>_<name>`, never a bare
+      keyword). Fixed by double-quoting every table/column identifier in
+      the generated `server.js` (`` `"${id}"` ``, safe because `assertSafe`
+      already guarantees no quote characters can appear in the name).
+      Verified: 6 new unit/integration tests — codegen tests asserting
+      the exported entity file carries `relationTo` and the manifest/
+      picker/CSV-resolver functions exist, an `entityFormatting.ts` test
+      for the CSV relation-resolution (and its backward-compatible
+      default when no related-records are passed), and, critically, **a
+      real execution test** (not just a syntax check) that generates a
+      server.js for an `Order` entity with a `group` field (also a SQL
+      keyword), spawns it as a real child process against a real SQLite
+      database via a `node_modules` symlink (avoiding a slow `npm
+      install` in the test itself), and makes real HTTP requests against
+      it — this is the test that would have caught the table-name bug
+      before it ever shipped. Full suite green (150 tests) + `npm run
+      build` clean + the actual manual verification that found the bug in
+      the first place, re-run after the fix: built a real "restaurant
+      with delivery" project through the real API, downloaded the export
+      ZIP, unzipped it, ran `npm install && npm start` as a genuinely
+      standalone app, and drove it with a real Playwright browser --
+      added a courier, confirmed the Order form's courier field is a real
+      `<select>` with the real courier's name, submitted a new order,
+      confirmed the table cell resolved to the real name, downloaded the
+      CSV export via a real browser download event, and confirmed the CSV
+      file itself contains the courier's real name.
 
 ## Phase 3
 

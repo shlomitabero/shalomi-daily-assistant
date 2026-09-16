@@ -179,6 +179,15 @@ function assertSafe(name) {
   return name;
 }
 
+// Double-quotes a table/column identifier for SQL -- assertSafe already
+// guarantees it's plain [A-Za-z][A-Za-z0-9_]* (no quote characters to
+// escape), so this only needs to wrap it. Without this, an entity or field
+// name that happens to be a SQL keyword (e.g. an "Order" entity) breaks
+// every query with a syntax error.
+function q(id) {
+  return \`"\${id}"\`;
+}
+
 function sqlType(type) {
   if (type === "relation") return "INTEGER";
   if (type === "number") return "REAL";
@@ -191,9 +200,9 @@ for (const entity of ENTITIES) {
   const columns = ["id INTEGER PRIMARY KEY AUTOINCREMENT", "createdAt TEXT NOT NULL"];
   for (const field of entity.fields) {
     assertSafe(field.name);
-    columns.push(\`\${field.name} \${sqlType(field.type)}\${field.required ? " NOT NULL" : ""}\`);
+    columns.push(\`\${q(field.name)} \${sqlType(field.type)}\${field.required ? " NOT NULL" : ""}\`);
   }
-  db.exec(\`CREATE TABLE IF NOT EXISTS \${entity.name} (\${columns.join(", ")})\`);
+  db.exec(\`CREATE TABLE IF NOT EXISTS \${q(entity.name)} (\${columns.join(", ")})\`);
 }
 
 function coerce(field, value) {
@@ -235,7 +244,7 @@ for (const entity of ENTITIES) {
   const columns = entity.fields.map((f) => f.name);
 
   app.get(base, (_req, res) => {
-    const rows = db.prepare(\`SELECT * FROM \${entity.name} ORDER BY id DESC\`).all();
+    const rows = db.prepare(\`SELECT * FROM \${q(entity.name)} ORDER BY id DESC\`).all();
     res.json({ records: rows.map((r) => rowToRecord(entity, r)) });
   });
 
@@ -244,9 +253,9 @@ for (const entity of ENTITIES) {
       const values = entity.fields.map((f) => coerce(f, req.body?.[f.name]));
       const createdAt = new Date().toISOString();
       const placeholders = ["?", ...columns.map(() => "?")].join(", ");
-      const stmt = db.prepare(\`INSERT INTO \${entity.name} (createdAt, \${columns.join(", ")}) VALUES (\${placeholders})\`);
+      const stmt = db.prepare(\`INSERT INTO \${q(entity.name)} (createdAt, \${columns.map(q).join(", ")}) VALUES (\${placeholders})\`);
       const result = stmt.run(createdAt, ...values);
-      const row = db.prepare(\`SELECT * FROM \${entity.name} WHERE id = ?\`).get(result.lastInsertRowid);
+      const row = db.prepare(\`SELECT * FROM \${q(entity.name)} WHERE id = ?\`).get(result.lastInsertRowid);
       res.status(201).json({ record: rowToRecord(entity, row) });
     } catch (err) {
       res.status(400).json({ error: err.message });
@@ -255,12 +264,12 @@ for (const entity of ENTITIES) {
 
   app.patch(\`\${base}/:id\`, (req, res) => {
     try {
-      const existing = db.prepare(\`SELECT * FROM \${entity.name} WHERE id = ?\`).get(req.params.id);
+      const existing = db.prepare(\`SELECT * FROM \${q(entity.name)} WHERE id = ?\`).get(req.params.id);
       if (!existing) return res.status(404).json({ error: "Not found" });
       const merged = { ...existing, ...req.body };
       const values = entity.fields.map((f) => coerce(f, merged[f.name]));
-      db.prepare(\`UPDATE \${entity.name} SET \${columns.map((c) => \`\${c} = ?\`).join(", ")} WHERE id = ?\`).run(...values, req.params.id);
-      const row = db.prepare(\`SELECT * FROM \${entity.name} WHERE id = ?\`).get(req.params.id);
+      db.prepare(\`UPDATE \${q(entity.name)} SET \${columns.map((c) => \`\${q(c)} = ?\`).join(", ")} WHERE id = ?\`).run(...values, req.params.id);
+      const row = db.prepare(\`SELECT * FROM \${q(entity.name)} WHERE id = ?\`).get(req.params.id);
       res.json({ record: rowToRecord(entity, row) });
     } catch (err) {
       res.status(400).json({ error: err.message });
@@ -268,7 +277,7 @@ for (const entity of ENTITIES) {
   });
 
   app.delete(\`\${base}/:id\`, (req, res) => {
-    const result = db.prepare(\`DELETE FROM \${entity.name} WHERE id = ?\`).run(req.params.id);
+    const result = db.prepare(\`DELETE FROM \${q(entity.name)} WHERE id = ?\`).run(req.params.id);
     if (result.changes === 0) return res.status(404).json({ error: "Not found" });
     res.status(204).end();
   });
@@ -363,14 +372,66 @@ export function deleteRecord(entityName, id) {
 `;
 }
 
-function renderEntityViewJsx(): string {
+function renderEntityViewJsx(project: Project): string {
+  // A light manifest of every entity's own field list (just enough to
+  // resolve a relation field's target: which entity it points to, and
+  // which of that entity's fields is the best human-readable label) --
+  // baked in as real data, same principle as each entity's own field list
+  // in entities/<Name>.jsx, not fetched from a schema at runtime.
+  const allEntitiesJson = JSON.stringify(
+    project.spec.entities.map((e) => ({
+      name: e.name,
+      fields: e.fields.map((f) => ({ name: f.name, type: f.type })),
+    })),
+    null,
+    2,
+  );
+
   return `import { useEffect, useMemo, useState } from "react";
 import { createRecord, deleteRecord, listRecords, updateRecord } from "../api.js";
+
+// See the comment on generateExportFiles' allEntitiesJson for why this
+// exists: it lets a relation field on one entity resolve a human label from
+// another entity's own records, without needing a runtime schema fetch.
+const ALL_ENTITIES = ${allEntitiesJson};
 
 function emptyForm(entity) {
   const form = {};
   for (const f of entity.fields) form[f.name] = f.type === "boolean" ? false : "";
   return form;
+}
+
+// Picks the field that best represents one of an entity's records as a
+// short human label -- prefers a field literally named "name"/"title",
+// falls back to the first text field, then the first field of any type.
+const DISPLAY_FIELD_NAME_HINTS = ["name", "title"];
+function pickDisplayField(entity) {
+  if (!entity || !entity.fields || entity.fields.length === 0) return null;
+  const named = entity.fields.find((f) => DISPLAY_FIELD_NAME_HINTS.includes(f.name.toLowerCase()));
+  if (named) return named;
+  const firstText = entity.fields.find((f) => f.type === "text");
+  return firstText || entity.fields[0];
+}
+
+function recordDisplayLabel(entity, record) {
+  const field = pickDisplayField(entity);
+  const value = field ? record[field.name] : undefined;
+  if (value === null || value === undefined || value === "") return \`#\${record.id}\`;
+  return String(value);
+}
+
+// Resolves a relation field's stored id into the human label it should
+// display. The related entity may legitimately be absent from this
+// project's spec (an optional relation whose target wasn't part of the
+// description), in which case this degrades to the raw id instead of
+// throwing.
+function relationDisplayLabel(field, value, relatedRecords) {
+  if (value === null || value === undefined || value === "") return "";
+  const targetEntity = field.relationTo ? ALL_ENTITIES.find((e) => e.name === field.relationTo) : null;
+  const records = field.relationTo ? relatedRecords[field.relationTo] : null;
+  if (!targetEntity || !records) return \`#\${value}\`;
+  const match = records.find((r) => Number(r.id) === Number(value));
+  return match ? recordDisplayLabel(targetEntity, match) : \`#\${value}\`;
 }
 
 // Classifies a status-like enum value into a badge color without needing
@@ -386,8 +447,9 @@ function badgeTone(rawValue) {
   return "neutral";
 }
 
-function Cell({ field, value }) {
+function Cell({ field, value, relationLabel }) {
   if (value === null || value === undefined || value === "") return <span className="muted">—</span>;
+  if (field.type === "relation") return <>{relationLabel || \`#\${value}\`}</>;
   if (field.type === "boolean") return value ? <span className="bool-yes">✓</span> : <span className="muted">–</span>;
   if (field.type === "enum") {
     const label = (field.enumLabels && field.enumLabels[value]) || value;
@@ -433,8 +495,9 @@ function csvEscape(value) {
 // expect -- the enum's translated label instead of its raw stored value, a
 // formatted date/number, TRUE/FALSE for booleans (Excel's own convention)
 // -- rather than a 1:1 dump of the raw stored values.
-function fieldDisplayValue(field, value) {
+function fieldDisplayValue(field, value, relatedRecords) {
   if (value === null || value === undefined || value === "") return "";
+  if (field.type === "relation") return relationDisplayLabel(field, value, relatedRecords) || \`#\${value}\`;
   if (field.type === "boolean") return value ? "TRUE" : "FALSE";
   if (field.type === "enum") return (field.enumLabels && field.enumLabels[value]) || value;
   if (field.type === "date") {
@@ -448,9 +511,9 @@ function fieldDisplayValue(field, value) {
 // Builds a real, Excel-friendly CSV (CRLF line endings, quoted fields
 // where needed) from an entity's records -- so "download my data" means
 // an actual spreadsheet, not a JSON dump.
-function recordsToCsv(fields, records) {
+function recordsToCsv(fields, records, relatedRecords) {
   const header = fields.map((f) => csvEscape(f.label || f.name)).join(",");
-  const rows = records.map((record) => fields.map((f) => csvEscape(fieldDisplayValue(f, record[f.name]))).join(","));
+  const rows = records.map((record) => fields.map((f) => csvEscape(fieldDisplayValue(f, record[f.name], relatedRecords))).join(","));
   return [header, ...rows].join("\\r\\n");
 }
 
@@ -569,14 +632,18 @@ function CalendarView({ entity, dateField, records, month, onPrevMonth, onNextMo
 // field itself, since that's implied by which column the card is in), a
 // select to move it directly to another column, and the same Edit/Delete
 // actions the table row has.
-function BoardCard({ entity, boardField, record, onMove, onEdit, onDelete }) {
+function BoardCard({ entity, boardField, record, relatedRecords, onMove, onEdit, onDelete }) {
   const otherFields = entity.fields.filter((f) => f.name !== boardField.name);
   return (
     <div className="board-card">
       {otherFields.map((f) => (
         <div key={f.name} className="board-card-field">
           <span className="muted small">{f.label}</span>
-          <Cell field={f} value={record[f.name]} />
+          <Cell
+            field={f}
+            value={record[f.name]}
+            relationLabel={f.type === "relation" ? relationDisplayLabel(f, record[f.name], relatedRecords) : undefined}
+          />
         </div>
       ))}
       <select className="board-card-move" value={record[boardField.name] ?? ""} onChange={(e) => onMove(e.target.value)}>
@@ -594,8 +661,20 @@ function BoardCard({ entity, boardField, record, onMove, onEdit, onDelete }) {
   );
 }
 
-function FieldInput({ entity, field, value, onChange }) {
+function FieldInput({ entity, field, value, onChange, relatedEntity, relatedEntityRecords }) {
   const id = \`f_\${entity.name}_\${field.name}\`;
+  if (field.type === "relation" && relatedEntity && relatedEntityRecords) {
+    return (
+      <select id={id} value={value === "" || value === null || value === undefined ? "" : String(value)} onChange={(e) => onChange(e.target.value === "" ? "" : Number(e.target.value))}>
+        <option value="">…</option>
+        {relatedEntityRecords.map((r) => (
+          <option key={r.id} value={r.id}>
+            {recordDisplayLabel(relatedEntity, r)}
+          </option>
+        ))}
+      </select>
+    );
+  }
   if (field.type === "boolean") {
     return <input id={id} type="checkbox" checked={!!value} onChange={(e) => onChange(e.target.checked)} />;
   }
@@ -638,8 +717,38 @@ export function EntityView({ entity }) {
   const [viewMode, setViewMode] = useState("table");
   const [calendarMonth, setCalendarMonth] = useState(() => new Date());
   const [selectedIds, setSelectedIds] = useState(() => new Set());
+  const [relatedRecords, setRelatedRecords] = useState({});
   const boardField = useMemo(() => findBoardField(entity.fields), [entity.fields]);
   const dateField = useMemo(() => findDateField(entity.fields), [entity.fields]);
+  const relationTargets = useMemo(() => {
+    const names = entity.fields.filter((f) => f.type === "relation" && f.relationTo).map((f) => f.relationTo);
+    return [...new Set(names)].filter((name) => ALL_ENTITIES.some((e) => e.name === name));
+  }, [entity.fields]);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function loadRelated() {
+      if (relationTargets.length === 0) {
+        setRelatedRecords({});
+        return;
+      }
+      const entries = await Promise.all(
+        relationTargets.map(async (name) => {
+          try {
+            const { records: related } = await listRecords(name);
+            return [name, related];
+          } catch {
+            return [name, []];
+          }
+        }),
+      );
+      if (!cancelled) setRelatedRecords(Object.fromEntries(entries));
+    }
+    loadRelated();
+    return () => {
+      cancelled = true;
+    };
+  }, [relationTargets]);
 
   async function refresh() {
     setLoading(true);
@@ -754,7 +863,7 @@ export function EntityView({ entity }) {
   }
 
   function handleExportCsv() {
-    const csv = recordsToCsv(entity.fields, visibleRecords);
+    const csv = recordsToCsv(entity.fields, visibleRecords, relatedRecords);
     const blob = new Blob(["\\uFEFF" + csv], { type: "text/csv;charset=utf-8;" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
@@ -776,7 +885,14 @@ export function EntityView({ entity }) {
               {f.label}
               {f.required ? " *" : ""}
             </span>
-            <FieldInput entity={entity} field={f} value={form[f.name]} onChange={(v) => setForm((prev) => ({ ...prev, [f.name]: v }))} />
+            <FieldInput
+              entity={entity}
+              field={f}
+              value={form[f.name]}
+              onChange={(v) => setForm((prev) => ({ ...prev, [f.name]: v }))}
+              relatedEntity={f.relationTo ? ALL_ENTITIES.find((e) => e.name === f.relationTo) : undefined}
+              relatedEntityRecords={f.relationTo ? relatedRecords[f.relationTo] : undefined}
+            />
           </label>
         ))}
         <div>
@@ -864,6 +980,7 @@ export function EntityView({ entity }) {
                       entity={entity}
                       boardField={boardField}
                       record={r}
+                      relatedRecords={relatedRecords}
                       onMove={(value) => handleMove(r.id, boardField.name, value)}
                       onEdit={() => startEdit(r)}
                       onDelete={() => handleDelete(r.id)}
@@ -927,7 +1044,11 @@ export function EntityView({ entity }) {
                       </td>
                       {entity.fields.map((f) => (
                         <td key={f.name}>
-                          <Cell field={f} value={r[f.name]} />
+                          <Cell
+                            field={f}
+                            value={r[f.name]}
+                            relationLabel={f.type === "relation" ? relationDisplayLabel(f, r[f.name], relatedRecords) : undefined}
+                          />
                         </td>
                       ))}
                       <td className="row-actions">
@@ -957,6 +1078,7 @@ function renderEntityJsx(entity: Entity): string {
       required: !!f.required,
       enumValues: f.enumValues ?? null,
       enumLabels: f.enumLabels ?? null,
+      relationTo: f.relationTo ?? null,
     })),
     null,
     2,
@@ -1104,7 +1226,7 @@ export function generateExportFiles(project: Project): { path: string; content: 
     { path: "web/src/App.jsx", content: renderAppJsx(project) },
     { path: "web/src/api.js", content: renderApiJs() },
     { path: "web/src/styles.css", content: renderStylesCss() },
-    { path: "web/src/components/EntityView.jsx", content: renderEntityViewJsx() },
+    { path: "web/src/components/EntityView.jsx", content: renderEntityViewJsx(project) },
     ...entityFiles,
     { path: ".gitignore", content: "node_modules/\ndist/\ndata.sqlite\n" },
   ];

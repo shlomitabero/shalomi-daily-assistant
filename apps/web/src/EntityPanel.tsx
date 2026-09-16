@@ -12,34 +12,12 @@ import {
   LOCALE,
   matchesSearch,
   recordDisplayLabel,
+  relationDisplayLabel,
   recordsToCsv,
   sortRecords,
+  type RelatedRecordsByEntity,
   type SortDirection,
 } from "./entityFormatting.js";
-
-/** Related records for every relation field on the current entity, keyed by the target entity's name. */
-type RelatedRecordsByEntity = Record<string, EntityRecord[]>;
-
-/**
- * Resolves a relation field's stored id into the human label it should
- * display, using whichever related entity/records are available -- the
- * related entity may legitimately be absent from this project's spec (see
- * domainEntities.ts's Order.courierId), in which case this degrades to the
- * raw id rather than throwing.
- */
-function relationDisplayLabel(
-  field: Field,
-  value: unknown,
-  allEntities: Entity[],
-  relatedRecords: RelatedRecordsByEntity,
-): string {
-  if (value === null || value === undefined || value === "") return "";
-  const targetEntity = field.relationTo ? allEntities.find((e) => e.name === field.relationTo) : undefined;
-  const records = field.relationTo ? relatedRecords[field.relationTo] : undefined;
-  if (!targetEntity || !records) return `#${value}`;
-  const match = records.find((r) => Number(r.id) === Number(value));
-  return match ? recordDisplayLabel(targetEntity, match) : `#${value}`;
-}
 import { useTranslation } from "./i18n/LanguageContext.js";
 import type { Lang } from "./i18n/language.js";
 
@@ -488,7 +466,7 @@ export function EntityPanel({
   }
 
   function handleExportCsv() {
-    const csv = recordsToCsv(entity.fields, visibleRecords, lang);
+    const csv = recordsToCsv(entity.fields, visibleRecords, lang, allEntities, relatedRecords);
     const blob = new Blob(["﻿" + csv], { type: "text/csv;charset=utf-8;" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");

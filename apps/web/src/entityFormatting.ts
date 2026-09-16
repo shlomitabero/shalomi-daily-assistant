@@ -211,6 +211,30 @@ export function recordDisplayLabel(entity: Entity, record: EntityRecord): string
   return String(value);
 }
 
+/** Related records for a relation field's target entity, keyed by that entity's name. */
+export type RelatedRecordsByEntity = Record<string, EntityRecord[]>;
+
+/**
+ * Resolves a relation field's stored id into the human label it should
+ * display, using whichever related entity/records are available -- the
+ * related entity may legitimately be absent from this project's spec (an
+ * optional relation whose target wasn't part of the description), in which
+ * case this degrades to the raw id rather than throwing.
+ */
+export function relationDisplayLabel(
+  field: Field,
+  value: unknown,
+  allEntities: Entity[],
+  relatedRecords: RelatedRecordsByEntity,
+): string {
+  if (value === null || value === undefined || value === "") return "";
+  const targetEntity = field.relationTo ? allEntities.find((e) => e.name === field.relationTo) : undefined;
+  const records = field.relationTo ? relatedRecords[field.relationTo] : undefined;
+  if (!targetEntity || !records) return `#${value}`;
+  const match = records.find((r) => Number(r.id) === Number(value));
+  return match ? recordDisplayLabel(targetEntity, match) : `#${value}`;
+}
+
 /** Wraps a CSV field in quotes (doubling any interior quotes) only when it contains a comma, quote, or newline. */
 function csvEscape(value: string): string {
   if (/[",\r\n]/.test(value)) {
@@ -226,8 +250,15 @@ function csvEscape(value: string): string {
  * convention, language-neutral) -- rather than a 1:1 dump of the raw
  * database values.
  */
-function fieldDisplayValue(field: Field, value: unknown, lang: Lang): string {
+function fieldDisplayValue(
+  field: Field,
+  value: unknown,
+  lang: Lang,
+  allEntities: Entity[],
+  relatedRecords: RelatedRecordsByEntity,
+): string {
   if (value === null || value === undefined || value === "") return "";
+  if (field.type === "relation") return relationDisplayLabel(field, value, allEntities, relatedRecords) || `#${value}`;
   if (field.type === "boolean") return value ? "TRUE" : "FALSE";
   if (field.type === "enum") return field.enumLabels?.[String(value)] ?? String(value);
   if (field.type === "date") return formatDateValue(String(value), lang);
@@ -238,12 +269,20 @@ function fieldDisplayValue(field: Field, value: unknown, lang: Lang): string {
 /**
  * Builds a real, Excel-friendly CSV (CRLF line endings, quoted fields where
  * needed) from an entity's records -- so "download my data" means an
- * actual spreadsheet a business owner can open, not a JSON dump.
+ * actual spreadsheet a business owner can open, not a JSON dump. A relation
+ * field resolves to the related record's own display label (e.g. a
+ * courier's name), same as the table/board views -- not the raw stored id.
  */
-export function recordsToCsv(fields: Field[], records: EntityRecord[], lang: Lang): string {
+export function recordsToCsv(
+  fields: Field[],
+  records: EntityRecord[],
+  lang: Lang,
+  allEntities: Entity[] = [],
+  relatedRecords: RelatedRecordsByEntity = {},
+): string {
   const header = fields.map((f) => csvEscape(f.label ?? f.name)).join(",");
   const rows = records.map((record) =>
-    fields.map((f) => csvEscape(fieldDisplayValue(f, record[f.name], lang))).join(","),
+    fields.map((f) => csvEscape(fieldDisplayValue(f, record[f.name], lang, allEntities, relatedRecords))).join(","),
   );
   return [header, ...rows].join("\r\n");
 }

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { execFileSync, spawn } from "node:child_process";
+import { mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { test } from "node:test";
@@ -102,6 +102,90 @@ test("generated server.js embeds the entity metadata with names and labels intac
   assert.match(serverJs, /"name": "Customer"/);
   assert.match(serverJs, /"label": "לקוחות"/);
   assert.match(serverJs, /"New": "חדש"/);
+});
+
+// Regression test: "Order" (a real Forge AI domain entity, see
+// domainEntities.ts) is a reserved SQL keyword. Before every table/column
+// name in the generated server.js was double-quoted, `CREATE TABLE Order
+// (...)` crashed the whole exported app at startup with a SQL syntax
+// error -- caught not by the syntax-only checks above (esbuild/node --check
+// both parse fine; this is a *runtime* SQL error) but by actually
+// downloading, unzipping, npm-installing, and running a real export with an
+// Order entity. This test reproduces that with a real child process and a
+// real SQLite database, standing in for that manual check going forward.
+test("generated server.js works end-to-end for an entity named after a reserved SQL keyword (e.g. Order)", async () => {
+  const keywordProject: Project = {
+    ...project,
+    spec: {
+      ...project.spec,
+      entities: [
+        {
+          name: "Order",
+          label: "Orders",
+          fields: [
+            { name: "customerName", label: "Customer", type: "text", required: true },
+            { name: "group", label: "Group", type: "text", required: false }, // a column name that's also a keyword
+          ],
+        },
+      ],
+    },
+  };
+  const files = generateExportFiles(keywordProject);
+  const serverJs = files.find((f) => f.path === "server.js")!.content;
+
+  const dir = mkdtempSync(path.join(tmpdir(), "codegen-keyword-test-"));
+  // The generated server.js imports "express" as a bare ESM specifier, which
+  // (unlike CommonJS require) ignores NODE_PATH -- symlink this repo's
+  // hoisted node_modules in instead of a slow real `npm install`.
+  const repoRoot = path.resolve(import.meta.dirname, "../../..");
+  symlinkSync(path.join(repoRoot, "node_modules"), path.join(dir, "node_modules"));
+  writeFileSync(path.join(dir, "server.js"), serverJs);
+
+  const port = 34000 + Math.floor(Math.random() * 5000);
+  const child = spawn(process.execPath, ["--experimental-sqlite", "server.js"], {
+    cwd: dir,
+    env: { ...process.env, PORT: String(port) },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  let stderr = "";
+  child.stderr.on("data", (chunk) => {
+    stderr += chunk.toString();
+  });
+
+  try {
+    // Poll for the server to come up (or crash) instead of a fixed sleep.
+    const deadline = Date.now() + 5000;
+    let lastErr: unknown;
+    while (Date.now() < deadline) {
+      if (child.exitCode !== null) {
+        throw new Error(`server.js exited early (code ${child.exitCode}):\n${stderr}`);
+      }
+      try {
+        const res = await fetch(`http://localhost:${port}/api/Order`);
+        assert.equal(res.status, 200);
+        const body = await res.json();
+        assert.deepEqual(body, { records: [] });
+
+        // Also exercise the keyword column name end-to-end (create + read).
+        const createRes = await fetch(`http://localhost:${port}/api/Order`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ customerName: "Dana", group: "VIP" }),
+        });
+        assert.equal(createRes.status, 201);
+        const created = await createRes.json();
+        assert.equal(created.record.group, "VIP");
+        return;
+      } catch (err) {
+        lastErr = err;
+        await new Promise((r) => setTimeout(r, 100));
+      }
+    }
+    throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
+  } finally {
+    child.kill();
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test("every generated .jsx/.js file is syntactically valid, checked with a real parser (esbuild)", async () => {
@@ -243,4 +327,47 @@ test("the exported EntityView renders real bulk-select + bulk-delete for table r
   const stylesCss = files.find((f) => f.path === "web/src/styles.css")!.content;
   assert.match(stylesCss, /\.bulk-actions-bar/);
   assert.match(stylesCss, /input\[type="checkbox"\]/);
+});
+
+test("the exported EntityView renders a real picker for relation fields, not a raw numeric ID input", () => {
+  const withRelation: Project = {
+    ...project,
+    spec: {
+      ...project.spec,
+      entities: [
+        ...project.spec.entities,
+        {
+          name: "Courier",
+          label: "Courier",
+          fields: [{ name: "name", label: "Name", type: "text", required: true }],
+        },
+        {
+          name: "Order",
+          label: "Order",
+          fields: [
+            { name: "customerName", label: "Customer", type: "text", required: true },
+            { name: "courierId", label: "Assigned Courier", type: "relation", required: false, relationTo: "Courier" },
+          ],
+        },
+      ],
+    },
+  };
+  const files = generateExportFiles(withRelation);
+
+  // Each entity's own field list carries relationTo, same "real editable
+  // code, not a runtime schema" principle as the rest of that file.
+  const orderJsx = files.find((f) => f.path === "web/src/entities/Order.jsx")!.content;
+  assert.match(orderJsx, /"relationTo": "Courier"/);
+
+  const entityViewJsx = files.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+  assert.match(entityViewJsx, /const ALL_ENTITIES = /);
+  assert.match(entityViewJsx, /function pickDisplayField/);
+  assert.match(entityViewJsx, /function recordDisplayLabel/);
+  assert.match(entityViewJsx, /function relationDisplayLabel/);
+  // The relation branch of FieldInput renders a real <select> of related
+  // records, not the old raw number input.
+  assert.match(entityViewJsx, /relatedEntity && relatedEntityRecords/);
+  assert.match(entityViewJsx, /relatedEntityRecords\.map/);
+  // CSV export also resolves the related record's label, not the raw id.
+  assert.match(entityViewJsx, /function recordsToCsv\(fields, records, relatedRecords\)/);
 });
