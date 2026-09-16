@@ -853,6 +853,36 @@ not a single "make it perfect" claim.
       description all the way through a real build and confirmed the
       live app has real "תורים" (Appointments) and "חיות מחמד" (Pets)
       entity tabs with correctly-labeled fields, not a generic fallback.
+- [x] **Fix broken seed data for the newer domain entities.** A real
+      follow-on bug from the two domain-entity expansion rounds above,
+      found by tracing through the seed-data generator's code rather
+      than assuming it "just worked" for the new entity types. The
+      Seed Data Agent's value picker (`packages/db/src/seed.ts`) has a
+      hardcoded switch on field *names*, and it only recognized the
+      original 8 entities' field vocabulary (`customerName`, `service`,
+      `sku`, ...). None of the 11 newer entities' field names
+      (`licensePlate`, `make`, `model`, `address`, `venue`, `species`,
+      `instructor`, `client`, `itemName`, `renterName`, `ownerName`,
+      `assignee`) were recognized, so a freshly built Vehicle/Property/
+      Course/Event/Rental/Pet app would have opened to rows of raw
+      placeholder text like "Vehicle - licensePlate 1" instead of a
+      believable "12-345-67". Worse, the `name` field specifically would
+      have shown a random *person's* name for a MenuItem, Project, Event,
+      Course, or Pet ("Dana Levi" as a dish, a project, or a dog's name),
+      because the existing catalog-vs-person branch only knew about
+      Service/Product. Added dedicated value pools for each new field
+      (vehicle makes/models/plates, addresses, venues, species, dish
+      names, project names, event names, course names/instructors) and
+      routed every new field name to its matching pool. Verified: 1 new
+      test asserting real values (not the `"<Entity> - <field> N"`
+      placeholder pattern) for all 7 newer entity types with previously-
+      unhandled fields + full suite green (143 tests) + `npm run build`
+      clean + a real Playwright run: built a garage+restaurant+agency
+      description through a real build and read every generated row for
+      all 3 resulting entity tabs directly from the live table — real
+      dish names with correct categories, real project names with real
+      client names, real vehicle plates/makes/models — zero raw
+      placeholder text anywhere.
 
 ## Phase 3
 

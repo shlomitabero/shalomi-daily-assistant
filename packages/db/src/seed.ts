@@ -22,6 +22,31 @@ const ROLES_HE = ["מוכר/ת", "טכנאי/ת", "מנהל/ת משמרת", "ר�
 const ROLES_EN = ["Sales Associate", "Technician", "Shift Manager", "Service Coordinator"];
 const DEAL_TITLES_HE = ["שדרוג חבילת שירות", "התקנה ראשונית", "חוזה שנתי", "הרחבת מנוי"];
 const DEAL_TITLES_EN = ["Service upgrade", "Initial setup", "Annual contract", "Plan expansion"];
+// Pools for the domain entities added later (MenuItem, Property, Course,
+// Project, Event, Pet, Vehicle, Rental) -- see packages/spec-engine/src/
+// domainEntities.ts. Same principle: believable, field-appropriate values
+// instead of a generic "<Entity> - <field> 1" placeholder.
+const DISH_NAMES_HE = ["פיצה מרגריטה", "סלט קיסר", "פסטה ברוטב שמנת", "עוגת שוקולד"];
+const DISH_NAMES_EN = ["Margherita Pizza", "Caesar Salad", "Creamy Pasta", "Chocolate Cake"];
+const PROJECT_NAMES_HE = ["עיצוב אתר מחדש", "קמפיין שיווקי", "מעבר מערכת", "פיתוח אפליקציה"];
+const PROJECT_NAMES_EN = ["Website Redesign", "Marketing Campaign", "System Migration", "App Development"];
+const EVENT_NAMES_HE = ["כנס שנתי", "חתונה", "השקת מוצר", "יום גיבוש"];
+const EVENT_NAMES_EN = ["Annual Conference", "Wedding", "Product Launch", "Team Retreat"];
+const COURSE_NAMES_HE = ["מבוא לתכנות", "אנגלית עסקית", "יסודות עיצוב", "ניהול פרויקטים"];
+const COURSE_NAMES_EN = ["Intro to Programming", "Business English", "Design Fundamentals", "Project Management"];
+const PET_NAMES_HE = ["רקס", "לונה", "מקס", "בֶּלָה"];
+const PET_NAMES_EN = ["Rex", "Luna", "Max", "Bella"];
+const SPECIES_HE = ["כלב", "חתול", "ארנב", "תוכי"];
+const SPECIES_EN = ["Dog", "Cat", "Rabbit", "Parrot"];
+const VEHICLE_MAKES = ["Toyota", "Hyundai", "Kia", "Mazda"];
+const VEHICLE_MODELS = ["Corolla", "Tucson", "Sportage", "3"];
+const LICENSE_PLATES = ["12-345-67", "23-456-78", "34-567-89", "45-678-90"];
+const ADDRESSES_HE = ["הרצל 12, תל אביב", "ויצמן 5, רעננה", "בן גוריון 30, חיפה", "רוטשילד 8, תל אביב"];
+const ADDRESSES_EN = ["12 Herzl St, Tel Aviv", "5 Weizmann St, Raanana", "30 Ben Gurion Blvd, Haifa", "8 Rothschild Blvd, Tel Aviv"];
+const VENUES_HE = ["אולמי הגן", "מלון דן", "בית התרבות", "גני האירועים"];
+const VENUES_EN = ["Garden Hall", "Dan Hotel", "Community Center", "Event Gardens"];
+const INSTRUCTORS_HE = ["ד\"ר רותם כץ", "המורה עדי בר", "פרופ' יעל אבני", "המדריך גיל שגיא"];
+const INSTRUCTORS_EN = ["Dr. Rotem Katz", "Adi Bar", "Prof. Yael Avni", "Gil Sagi"];
 
 function pick(pool: string[], index: number): string {
   return pool[index % pool.length];
@@ -59,6 +84,12 @@ function seedValueFor(field: Field, entity: Entity, index: number): unknown {
   }
 }
 
+// Entities whose "name" field names a generic catalog item/thing, not a
+// person. MenuItem/Project/Event/Course/Pet get their own dedicated pools
+// below instead, since "a generic package" reads oddly as a dish or a
+// project name.
+const CATALOG_NAME_ENTITIES = new Set(["Service", "Product"]);
+
 function textSeedValueFor(fieldName: string, entityName: string, isHebrew: boolean, index: number): string {
   switch (fieldName) {
     case "email":
@@ -75,15 +106,42 @@ function textSeedValueFor(fieldName: string, entityName: string, isHebrew: boole
       return pick(isHebrew ? DEAL_TITLES_HE : DEAL_TITLES_EN, index);
     case "customerName":
     case "owner":
+    case "assignee":
+    case "instructor":
+      return fieldName === "instructor"
+        ? pick(isHebrew ? INSTRUCTORS_HE : INSTRUCTORS_EN, index)
+        : pick(isHebrew ? PERSON_NAMES_HE : PERSON_NAMES_EN, index);
+    case "client":
+    case "ownerName":
+    case "renterName":
       return pick(isHebrew ? PERSON_NAMES_HE : PERSON_NAMES_EN, index);
     case "service":
+    case "itemName":
       return pick(isHebrew ? ITEM_NAMES_HE : ITEM_NAMES_EN, index);
+    case "address":
+      return pick(isHebrew ? ADDRESSES_HE : ADDRESSES_EN, index);
+    case "venue":
+      return pick(isHebrew ? VENUES_HE : VENUES_EN, index);
+    case "species":
+      return pick(isHebrew ? SPECIES_HE : SPECIES_EN, index);
+    case "make":
+      return pick(VEHICLE_MAKES, index);
+    case "model":
+      return pick(VEHICLE_MODELS, index);
+    case "licensePlate":
+      return pick(LICENSE_PLATES, index);
     case "name":
-      // "name" means a person for people-shaped entities and a thing for
-      // catalog-shaped ones — the same field name, two different meanings.
-      return entityName === "Service" || entityName === "Product"
-        ? pick(isHebrew ? ITEM_NAMES_HE : ITEM_NAMES_EN, index)
-        : pick(isHebrew ? PERSON_NAMES_HE : PERSON_NAMES_EN, index);
+      // "name" means different things for different entity shapes -- a
+      // person for people-shaped entities, a thing for catalog-shaped
+      // ones, and its own dedicated pool for a few entities where neither
+      // fits well (a project isn't a "product", a pet isn't a "customer").
+      if (CATALOG_NAME_ENTITIES.has(entityName)) return pick(isHebrew ? ITEM_NAMES_HE : ITEM_NAMES_EN, index);
+      if (entityName === "MenuItem") return pick(isHebrew ? DISH_NAMES_HE : DISH_NAMES_EN, index);
+      if (entityName === "Project") return pick(isHebrew ? PROJECT_NAMES_HE : PROJECT_NAMES_EN, index);
+      if (entityName === "Event") return pick(isHebrew ? EVENT_NAMES_HE : EVENT_NAMES_EN, index);
+      if (entityName === "Course") return pick(isHebrew ? COURSE_NAMES_HE : COURSE_NAMES_EN, index);
+      if (entityName === "Pet") return pick(isHebrew ? PET_NAMES_HE : PET_NAMES_EN, index);
+      return pick(isHebrew ? PERSON_NAMES_HE : PERSON_NAMES_EN, index);
     default:
       // No specific pool for this field name (a custom entity from an
       // AI-generated or refined spec, not the built-in domain library) —
