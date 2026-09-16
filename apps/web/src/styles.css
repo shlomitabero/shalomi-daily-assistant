@@ -607,6 +607,111 @@ tbody tr:hover {
   margin-top: 4px;
 }
 
+.calendar-view {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.calendar-nav {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+}
+
+.calendar-nav button {
+  padding: 4px 12px;
+  font-size: 16px;
+  line-height: 1;
+}
+
+.calendar-month-label {
+  font-weight: 600;
+  min-width: 140px;
+  text-align: center;
+}
+
+.calendar-grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 4px;
+}
+
+.calendar-weekday {
+  text-align: center;
+  color: var(--muted);
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-weight: 600;
+  padding-bottom: 4px;
+}
+
+.calendar-day {
+  min-height: 76px;
+  background: var(--surface);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-sm);
+  padding: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  overflow: hidden;
+}
+
+.calendar-day-outside {
+  opacity: 0.4;
+}
+
+.calendar-day-number {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.calendar-day-records {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.calendar-record-chip {
+  background: var(--accent-soft, var(--surface-raised));
+  border: 1px solid var(--border-soft);
+  border-radius: 4px;
+  padding: 2px 5px;
+  font-size: 11.5px;
+  text-align: start;
+  box-shadow: none;
+  align-self: stretch;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.calendar-record-chip:hover {
+  background: var(--surface-raised);
+  transform: none;
+  box-shadow: none;
+}
+
+.calendar-record-more {
+  font-size: 11px;
+  color: var(--muted);
+  padding: 0 5px;
+}
+
+@media (max-width: 640px) {
+  .calendar-day {
+    min-height: 56px;
+  }
+
+  .calendar-record-chip {
+    font-size: 10.5px;
+  }
+}
+
 .sort-header {
   background: none;
   border: none;

@@ -126,3 +126,58 @@ export function groupByField(records: EntityRecord[], field: Field): BoardColumn
     records: records.filter((r) => String(r[field.name]) === value),
   }));
 }
+
+const DATE_FIELD_NAME_HINTS = ["date", "appointmentdate", "scheduledat", "eventdate", "duedate"];
+
+/**
+ * Picks the date field an entity's records should be plotted on a calendar
+ * by, if any -- this is what turns an "Appointment" entity into a real
+ * month view instead of the same table shape every entity gets. Prefers a
+ * field literally named "date" (the domain library's own convention) or a
+ * few other common date-ish names, then falls back to the first date
+ * field; returns null for an entity with no date field at all.
+ */
+export function findDateField(fields: Field[]): Field | null {
+  const dateFields = fields.filter((f) => f.type === "date");
+  if (dateFields.length === 0) return null;
+  const named = dateFields.find((f) => DATE_FIELD_NAME_HINTS.includes(f.name.toLowerCase()));
+  return named ?? dateFields[0];
+}
+
+export interface CalendarDay {
+  /** Midnight, local time, for this cell's date. */
+  date: Date;
+  inCurrentMonth: boolean;
+  records: EntityRecord[];
+}
+
+function isSameDay(a: Date, b: Date): boolean {
+  return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
+}
+
+/**
+ * Builds a fixed 6-week (42-day) month grid for `month` (0-indexed, JS Date
+ * convention) of `year`, starting on the Sunday on/before the 1st and
+ * ending on the Saturday on/after the last day -- the standard calendar-UI
+ * shape, including the leading/trailing days from adjacent months so every
+ * week is a full row. Each day carries the records whose `field` value
+ * falls on that calendar date; a record with an unparseable date value is
+ * simply never matched, not an error.
+ */
+export function buildCalendarMonth(records: EntityRecord[], field: Field, year: number, month: number): CalendarDay[] {
+  const firstOfMonth = new Date(year, month, 1);
+  const gridStart = new Date(year, month, 1 - firstOfMonth.getDay());
+  const days: CalendarDay[] = [];
+  for (let i = 0; i < 42; i++) {
+    const date = new Date(gridStart);
+    date.setDate(gridStart.getDate() + i);
+    const dayRecords = records.filter((r) => {
+      const raw = r[field.name];
+      if (raw === null || raw === undefined || raw === "") return false;
+      const recordDate = new Date(String(raw));
+      return !Number.isNaN(recordDate.getTime()) && isSameDay(recordDate, date);
+    });
+    days.push({ date, inCurrentMonth: date.getMonth() === month, records: dayRecords });
+  }
+  return days;
+}

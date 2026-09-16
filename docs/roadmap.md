@@ -419,9 +419,42 @@ not a single "make it perfect" claim.
       that it genuinely left one column and landed in the other (1→0 in
       "New", 0→1 in "Won"), not just visually. Zero console errors. This
       closes the parity gap between the live preview and the exported
-      code for the Kanban feature. **Still not done, tracked as a
-      follow-up:** a calendar-style view for date-heavy entities like
-      "Appointment", in either the preview or the export.
+      code for the Kanban feature.
+- [x] **Step 5: a real month-calendar view for date-heavy entities (live
+      preview only).** An entity like "Appointment" still only offered
+      table/board views, with no way to see records laid out by date. New
+      `findDateField`/`buildCalendarMonth` in `entityFormatting.ts` (pure,
+      unit-tested) pick the best date field (preferring one literally
+      named `date`, falling back to the first date field, `null` for an
+      entity with none) and build a fixed 42-day (6-week) month grid with
+      each record placed on its matching calendar day — a record with a
+      missing/unparseable date is silently skipped, never a crash.
+      `EntityPanel.tsx` gained a `CalendarView` component and a third
+      "📅 Calendar" toggle (shown independently of the board toggle, since
+      an entity can have both a status field and a date field), with
+      prev/next month navigation, locale-correct month labels and weekday
+      headers (via `toLocaleDateString`/`Intl.DateTimeFormat`, so this
+      works in both Hebrew and English without hardcoding either), and a
+      chip per record per day (click to jump straight into editing that
+      record) with a "+N more" overflow instead of an ever-growing cell.
+      Verified: 7 new unit tests for the grid/date-matching logic + full
+      suite green (128 tests) + `npm run build` clean + a real Playwright
+      run against a real running server in both Hebrew and English
+      locales: built a salon-appointments project, added two real
+      appointment records on a specific day, switched to calendar view,
+      confirmed the grid is exactly 42 days, confirmed both new records'
+      chips render on the correct day (and only that day) alongside
+      pre-existing seed data, confirmed clicking a chip opens the edit
+      form pre-filled with that exact record (not a neighboring one),
+      confirmed navigating to the next month shows zero chips for the
+      records that belong to the current month (no leakage across
+      months) and navigating back returns to the original month label,
+      and confirmed the month label/weekday headers/chip text all
+      correctly localize in an English browser context too. Zero console
+      errors, zero failed network requests. **Still not done, tracked as
+      a follow-up:** porting this calendar view into the exported
+      standalone codegen output (`apps/api/src/codegen.ts`), matching the
+      Step 2→Step 4 pattern already used for the earlier two features.
 
 ## Production hardening
 

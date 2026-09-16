@@ -3,10 +3,13 @@ import type { Entity, EntityRecord, Field } from "@forge/shared";
 import { createRecord, deleteRecord, listRecords, updateRecord } from "./api.js";
 import {
   badgeTone,
+  buildCalendarMonth,
   findBoardField,
+  findDateField,
   formatDateValue,
   formatNumberValue,
   groupByField,
+  LOCALE,
   matchesSearch,
   sortRecords,
   type SortDirection,
@@ -14,7 +17,7 @@ import {
 import { useTranslation } from "./i18n/LanguageContext.js";
 import type { Lang } from "./i18n/language.js";
 
-type ViewMode = "table" | "board";
+type ViewMode = "table" | "board" | "calendar";
 
 function emptyForm(entity: Entity): Record<string, unknown> {
   const form: Record<string, unknown> = {};
@@ -104,6 +107,93 @@ function BoardCard({
   );
 }
 
+/**
+ * Renders a month grid for entities with a date field (e.g. "Appointment"),
+ * so a date-heavy entity gets a real calendar instead of the same table
+ * shape every entity gets. Each day cell shows a chip per record landing on
+ * that date (click to edit), with a "+N more" overflow instead of an
+ * ever-growing cell.
+ */
+function CalendarView({
+  entity,
+  dateField,
+  records,
+  month,
+  lang,
+  t,
+  onPrevMonth,
+  onNextMonth,
+  onEdit,
+}: {
+  entity: Entity;
+  dateField: Field;
+  records: EntityRecord[];
+  month: Date;
+  lang: Lang;
+  t: (key: string, params?: Record<string, string | number>) => string;
+  onPrevMonth: () => void;
+  onNextMonth: () => void;
+  onEdit: (record: EntityRecord) => void;
+}) {
+  const year = month.getFullYear();
+  const monthIndex = month.getMonth();
+  const days = useMemo(
+    () => buildCalendarMonth(records, dateField, year, monthIndex),
+    [records, dateField, year, monthIndex],
+  );
+  const monthLabel = month.toLocaleDateString(LOCALE[lang], { month: "long", year: "numeric" });
+  const weekdayLabels = useMemo(() => {
+    const formatter = new Intl.DateTimeFormat(LOCALE[lang], { weekday: "short" });
+    return days.slice(0, 7).map((d) => formatter.format(d.date));
+  }, [days, lang]);
+  const labelField = entity.fields.find((f) => f.name !== dateField.name) ?? dateField;
+
+  return (
+    <div className="calendar-view">
+      <div className="calendar-nav">
+        <button type="button" onClick={onPrevMonth} aria-label={t("entity.calendar.prev")}>
+          ‹
+        </button>
+        <span className="calendar-month-label">{monthLabel}</span>
+        <button type="button" onClick={onNextMonth} aria-label={t("entity.calendar.next")}>
+          ›
+        </button>
+      </div>
+      <div className="calendar-grid calendar-weekdays">
+        {weekdayLabels.map((label, i) => (
+          <div key={i} className="calendar-weekday">
+            {label}
+          </div>
+        ))}
+      </div>
+      <div className="calendar-grid calendar-days">
+        {days.map((day, i) => (
+          <div key={i} className={day.inCurrentMonth ? "calendar-day" : "calendar-day calendar-day-outside"}>
+            <span className="calendar-day-number">{day.date.getDate()}</span>
+            <div className="calendar-day-records">
+              {day.records.slice(0, 3).map((record) => (
+                <button
+                  type="button"
+                  key={record.id as number}
+                  className="calendar-record-chip"
+                  onClick={() => onEdit(record)}
+                >
+                  {String(record[labelField.name] ?? "")}
+                </button>
+              ))}
+              {day.records.length > 3 && (
+                <span className="calendar-record-more">
+                  {t("entity.calendar.more", { count: day.records.length - 3 })}
+                </span>
+              )}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function FieldInput({
   field,
   value,
@@ -167,7 +257,9 @@ export function EntityPanel({ projectId, entity }: { projectId: string; entity: 
   const [sortField, setSortField] = useState<string | null>(null);
   const [sortDir, setSortDir] = useState<SortDirection>("asc");
   const [viewMode, setViewMode] = useState<ViewMode>("table");
+  const [calendarMonth, setCalendarMonth] = useState(() => new Date());
   const boardField = useMemo(() => findBoardField(entity.fields), [entity.fields]);
+  const dateField = useMemo(() => findDateField(entity.fields), [entity.fields]);
 
   async function refresh() {
     setLoading(true);
@@ -187,6 +279,7 @@ export function EntityPanel({ projectId, entity }: { projectId: string; entity: 
     setSearch("");
     setSortField(null);
     setViewMode("table");
+    setCalendarMonth(new Date());
     void refresh();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [entity.name]);
@@ -300,7 +393,7 @@ export function EntityPanel({ projectId, entity }: { projectId: string; entity: 
               value={search}
               onChange={(e) => setSearch(e.target.value)}
             />
-            {boardField && (
+            {(boardField || dateField) && (
               <div className="view-toggle" role="group">
                 <button
                   type="button"
@@ -309,13 +402,24 @@ export function EntityPanel({ projectId, entity }: { projectId: string; entity: 
                 >
                   {t("entity.view.table")}
                 </button>
-                <button
-                  type="button"
-                  className={viewMode === "board" ? "view-toggle-btn view-toggle-btn-active" : "view-toggle-btn"}
-                  onClick={() => setViewMode("board")}
-                >
-                  {t("entity.view.board")}
-                </button>
+                {boardField && (
+                  <button
+                    type="button"
+                    className={viewMode === "board" ? "view-toggle-btn view-toggle-btn-active" : "view-toggle-btn"}
+                    onClick={() => setViewMode("board")}
+                  >
+                    {t("entity.view.board")}
+                  </button>
+                )}
+                {dateField && (
+                  <button
+                    type="button"
+                    className={viewMode === "calendar" ? "view-toggle-btn view-toggle-btn-active" : "view-toggle-btn"}
+                    onClick={() => setViewMode("calendar")}
+                  >
+                    {t("entity.view.calendar")}
+                  </button>
+                )}
               </div>
             )}
           </div>
@@ -347,6 +451,18 @@ export function EntityPanel({ projectId, entity }: { projectId: string; entity: 
                 </div>
               ))}
             </div>
+          ) : viewMode === "calendar" && dateField ? (
+            <CalendarView
+              entity={entity}
+              dateField={dateField}
+              records={visibleRecords}
+              month={calendarMonth}
+              lang={lang}
+              t={t}
+              onPrevMonth={() => setCalendarMonth((m) => new Date(m.getFullYear(), m.getMonth() - 1, 1))}
+              onNextMonth={() => setCalendarMonth((m) => new Date(m.getFullYear(), m.getMonth() + 1, 1))}
+              onEdit={startEdit}
+            />
           ) : (
             <div className="table-scroll">
               <table>
