@@ -62,3 +62,47 @@ test("computeBusinessTwin phrases observations in English for an English descrip
   const twin = computeBusinessTwin(db, enProject);
   assert.ok(twin.observations.some((o) => o.includes("No real data")));
 });
+
+test("computeBusinessTwin reports how many records are missing a relation field, and stays silent once it's fully set", () => {
+  const relationProject: Project = {
+    ...project,
+    description: "I need a support ticket system linked to customers",
+    spec: {
+      ...project.spec,
+      entities: [
+        { name: "Customer", label: "Customers", fields: [{ name: "name", type: "text", required: true }] },
+        {
+          name: "Ticket",
+          label: "Tickets",
+          fields: [
+            { name: "subject", type: "text", required: true },
+            { name: "customerId", label: "Customer", type: "relation", required: false, relationTo: "Customer" },
+          ],
+        },
+      ],
+    },
+  };
+  const db = openDatabase(":memory:");
+  applyMigrations(db, relationProject.id, relationProject.spec);
+  const customer = relationProject.spec.entities[0];
+  const ticket = relationProject.spec.entities[1];
+  const { id: customerId } = insertRecord(db, relationProject.id, customer, { name: "Dana Levi" });
+  insertRecord(db, relationProject.id, ticket, { subject: "Can't log in", customerId: null });
+  insertRecord(db, relationProject.id, ticket, { subject: "Billing question", customerId: null });
+  insertRecord(db, relationProject.id, ticket, { subject: "Refund request", customerId });
+
+  const twin = computeBusinessTwin(db, relationProject);
+  assert.ok(
+    twin.observations.some((o) => o.includes("2 of 3 records have no") && o.includes("Customer")),
+    `expected a relation-coverage observation, got: ${JSON.stringify(twin.observations)}`,
+  );
+
+  // Once every ticket has a customer, the observation must disappear -- it
+  // reports a real gap, not a permanent nag.
+  const db2 = openDatabase(":memory:");
+  applyMigrations(db2, relationProject.id, relationProject.spec);
+  const { id: customerId2 } = insertRecord(db2, relationProject.id, customer, { name: "Dana Levi" });
+  insertRecord(db2, relationProject.id, ticket, { subject: "Can't log in", customerId: customerId2 });
+  const twinFullyLinked = computeBusinessTwin(db2, relationProject);
+  assert.ok(!twinFullyLinked.observations.some((o) => o.includes("have no")));
+});

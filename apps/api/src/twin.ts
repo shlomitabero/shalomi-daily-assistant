@@ -1,5 +1,5 @@
 import type { Project } from "@forge/shared";
-import { countRecords, type ForgeDatabase } from "@forge/db";
+import { countRecords, listRecords, type ForgeDatabase } from "@forge/db";
 import { isHebrewText } from "@forge/spec-engine";
 
 /**
@@ -25,6 +25,37 @@ export interface BusinessTwin {
   mostActive: BusinessTwinEntityStat | null;
   unused: BusinessTwinEntityStat[];
   observations: string[];
+}
+
+/**
+ * Reports how well a relation field is actually being used -- e.g. "3 of 5
+ * tickets have no customer linked" -- for any entity that has one, not
+ * special-cased to a particular entity/field name. This is exactly the
+ * same "genuine fact derived from live data" principle as the rest of the
+ * Business Twin: it never guesses *why* a relation is unset, just surfaces
+ * the honest count so a real person can decide whether that's expected.
+ */
+function computeRelationCoverageObservations(db: ForgeDatabase, project: Project, hebrew: boolean): string[] {
+  const observations: string[] = [];
+  for (const entity of project.spec.entities) {
+    const relationFields = entity.fields.filter((f) => f.type === "relation");
+    if (relationFields.length === 0) continue;
+    const records = listRecords(db, project.id, entity);
+    if (records.length === 0) continue;
+
+    for (const field of relationFields) {
+      const unassigned = records.filter((r) => r[field.name] === null || r[field.name] === undefined).length;
+      if (unassigned === 0) continue;
+      const entityLabel = entity.label ?? entity.name;
+      const fieldLabel = field.label ?? field.name;
+      observations.push(
+        hebrew
+          ? `ב"${entityLabel}", ל-${unassigned} מתוך ${records.length} רשומות אין "${fieldLabel}" מוגדר.`
+          : `In "${entityLabel}", ${unassigned} of ${records.length} records have no "${fieldLabel}" set.`,
+      );
+    }
+  }
+  return observations;
 }
 
 export function computeBusinessTwin(db: ForgeDatabase, project: Project): BusinessTwin {
@@ -66,6 +97,7 @@ export function computeBusinessTwin(db: ForgeDatabase, project: Project): Busine
           : `No records yet in: ${names} — worth checking whether that's expected.`,
       );
     }
+    observations.push(...computeRelationCoverageObservations(db, project, hebrew));
   }
 
   return {

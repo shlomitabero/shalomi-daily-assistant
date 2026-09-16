@@ -1055,6 +1055,29 @@ not a single "make it perfect" claim.
       + full suite green (155 tests) + `npm run build` clean + the
       real build/start verification above.
 
+- [x] **Business Twin now reports relation-field coverage** ("In "Support
+      Tickets", 2 of 2 records have no "Customer" set") — a real,
+      genuinely new analytics observation, not more data-quality or
+      export-infra work like the last several rounds. Follows the exact
+      same honesty discipline the rest of `computeBusinessTwin`
+      (`apps/api/src/twin.ts`) already uses: it reports a plain count
+      derived from live data, never a guess at *why* a relation is unset.
+      Generic across every entity/relation field in a project, not
+      special-cased to Ticket/Customer — it only happened to be Ticket
+      that made a good example this round. The observation disappears
+      once a relation field is fully populated, so it's a real signal,
+      not a permanent nag. Verified: 1 new unit test (asserts the
+      observation appears with the right counts, then confirms it
+      disappears once every record has the relation set — catching a
+      real `FOREIGN KEY constraint failed` while writing the test itself,
+      since the relation target row has to actually exist first) + full
+      suite green (156 tests) + `npm run build` clean + a real Playwright
+      run: built a support-ticket app, opened the Business Twin panel
+      before assigning any customer and confirmed the "2 of 2" observation
+      appeared, then assigned a customer to one ticket through the
+      relation picker, reopened the Twin panel, and confirmed the
+      observation live-updated to "1 of 2".
+
 
 ## Phase 3
 
