@@ -512,10 +512,41 @@ not a single "make it perfect" claim.
       Great"""` — exactly correct CSV per RFC 4180. Also confirmed the
       button correctly disables when a search matches nothing, and
       checked it at 390px mobile width and in dark mode. Zero console
-      errors. **Still not done, tracked as a follow-up:** porting CSV
-      export into the exported standalone codegen output
-      (`apps/api/src/codegen.ts`), matching the pattern used for the
-      three earlier features.
+      errors.
+- [x] **Step 8: the same CSV export in the exported standalone app.**
+      Ported `csvEscape`/`fieldDisplayValue`/`recordsToCsv` and a
+      `handleExportCsv` handler into `codegen.ts`'s generated
+      `EntityView.jsx` template as literal JS (same duplication-by-design
+      reasoning as the three earlier ports), plus a matching
+      `.csv-export-btn` style into the generated `styles.css`. **Found
+      and fixed a real bug while porting, not just copying:** the
+      generator's own outer TypeScript template literal silently
+      interprets `\r`, `\n`, and `\u` escape sequences meant for the
+      *generated* file's own source — writing `"\r\n"` in `codegen.ts`
+      produces a raw, literal carriage-return/newline character baked
+      directly into the generated file's text at codegen time (not the
+      two-character escape sequence), which breaks a regex literal or
+      unterminated string wherever it lands in the *output* source. This
+      exact bug appeared during this port (an "Unterminated regular
+      expression" and then an "Unterminated string literal" from
+      esbuild's real-parser test) and was fixed by escaping the
+      backslash — `"\\r\\n"` in `codegen.ts` — so the generated file's
+      source contains the literal two-character escape sequence for its
+      *own* runtime to interpret. Verified: 1 new codegen test (the
+      generated file contains the CSV-building code/button/CSS) + full
+      suite green (135 tests) + `npm run build` clean + the same
+      end-to-end rigor as the earlier three ports: built a CRM through
+      the live API, downloaded the real export `.zip` via an actual
+      browser download event, unzipped it, ran `npm install` + `npm
+      start` as a **fully standalone app**, added a record with a comma
+      and embedded quotes specifically to re-exercise the escaping logic
+      in the *exported* code path, clicked the real export button,
+      captured the real download event, read the file's actual bytes,
+      and confirmed the BOM, row count, Hebrew header/enum-label
+      rendering, and exact RFC-4180 quote-doubling are all correct. This
+      closes the parity gap for CSV export — badges/search/sort, Kanban
+      board, calendar view, and CSV export are now all present in both
+      the live preview and the exported standalone app.
 
 ## Production hardening
 

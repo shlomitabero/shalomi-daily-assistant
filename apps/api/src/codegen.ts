@@ -420,6 +420,40 @@ function compareValues(a, b) {
   return String(a).localeCompare(String(b));
 }
 
+// Wraps a CSV field in quotes (doubling any interior quotes) only when it
+// contains a comma, quote, or newline.
+function csvEscape(value) {
+  if (/[",\\r\\n]/.test(value)) {
+    return \`"\${value.replace(/"/g, '""')}"\`;
+  }
+  return value;
+}
+
+// Renders a field's value the way a human reading a spreadsheet would
+// expect -- the enum's translated label instead of its raw stored value, a
+// formatted date/number, TRUE/FALSE for booleans (Excel's own convention)
+// -- rather than a 1:1 dump of the raw stored values.
+function fieldDisplayValue(field, value) {
+  if (value === null || value === undefined || value === "") return "";
+  if (field.type === "boolean") return value ? "TRUE" : "FALSE";
+  if (field.type === "enum") return (field.enumLabels && field.enumLabels[value]) || value;
+  if (field.type === "date") {
+    const date = new Date(value);
+    return Number.isNaN(date.getTime()) ? String(value) : date.toLocaleDateString();
+  }
+  if (field.type === "number") return Number(value).toLocaleString();
+  return String(value);
+}
+
+// Builds a real, Excel-friendly CSV (CRLF line endings, quoted fields
+// where needed) from an entity's records -- so "download my data" means
+// an actual spreadsheet, not a JSON dump.
+function recordsToCsv(fields, records) {
+  const header = fields.map((f) => csvEscape(f.label || f.name)).join(",");
+  const rows = records.map((record) => fields.map((f) => csvEscape(fieldDisplayValue(f, record[f.name]))).join(","));
+  return [header, ...rows].join("\\r\\n");
+}
+
 // Picks the enum field an entity's records should be grouped into board
 // columns by, if any -- prefers a field literally named status/stage, falls
 // back to the first workable enum field (2-8 values), and returns null for
@@ -679,6 +713,19 @@ export function EntityView({ entity }) {
     await refresh();
   }
 
+  function handleExportCsv() {
+    const csv = recordsToCsv(entity.fields, visibleRecords);
+    const blob = new Blob(["\\uFEFF" + csv], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = \`\${entity.name}.csv\`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  }
+
   return (
     <div className="panel">
       <h3>{entity.label}</h3>
@@ -755,6 +802,9 @@ export function EntityView({ entity }) {
                 )}
               </div>
             )}
+            <button type="button" className="csv-export-btn" onClick={handleExportCsv} disabled={visibleRecords.length === 0}>
+              ⬇️ Export CSV
+            </button>
           </div>
           {visibleRecords.length === 0 ? (
             <div className="empty-state">
@@ -958,6 +1008,9 @@ th, td { text-align: start; padding: 8px 10px; border-bottom: 1px solid #efe8da;
 .calendar-record-chip { background: #fff; border: 1px solid #efe8da; border-radius: 4px; padding: 2px 5px; font-size: 11.5px; text-align: start; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: pointer; }
 .calendar-record-chip:hover { background: #f6f2ea; }
 .calendar-record-more { font-size: 11px; color: #83786a; padding: 0 5px; }
+.csv-export-btn { flex-shrink: 0; padding: 8px 14px; font-size: 13px; border-radius: 8px; border: 1px solid #e6ddcc; background: #fff; color: #241f19; cursor: pointer; font: inherit; }
+.csv-export-btn:hover:not(:disabled) { background: #f6f2ea; }
+.csv-export-btn:disabled { opacity: 0.55; cursor: default; }
 `;
 }
 

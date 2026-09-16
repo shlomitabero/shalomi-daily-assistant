@@ -218,3 +218,15 @@ test("the exported EntityView renders a real month-calendar view for entities wi
   assert.match(stylesCss, /\.calendar-grid/);
   assert.match(stylesCss, /\.calendar-record-chip/);
 });
+
+test("the exported EntityView renders a real CSV export button backed by RFC-4180-correct CSV building", () => {
+  const files = generateExportFiles(project);
+  const entityViewJsx = files.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+  assert.match(entityViewJsx, /function recordsToCsv/);
+  assert.match(entityViewJsx, /function csvEscape/);
+  assert.match(entityViewJsx, /handleExportCsv/);
+  assert.match(entityViewJsx, /csv-export-btn/);
+  assert.match(entityViewJsx, /new Blob\(\["\\uFEFF" \+ csv\]/);
+  const stylesCss = files.find((f) => f.path === "web/src/styles.css")!.content;
+  assert.match(stylesCss, /\.csv-export-btn/);
+});
