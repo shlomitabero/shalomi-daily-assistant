@@ -444,6 +444,93 @@ function groupByField(records, field) {
   }));
 }
 
+// Picks the date field an entity's records should be plotted on a calendar
+// by, if any -- prefers a field literally named "date" or a few other
+// common date-ish names, then falls back to the first date field; returns
+// null for an entity with no date field at all.
+const DATE_FIELD_NAME_HINTS = ["date", "appointmentdate", "scheduledat", "eventdate", "duedate"];
+function findDateField(fields) {
+  const dateFields = fields.filter((f) => f.type === "date");
+  if (dateFields.length === 0) return null;
+  const named = dateFields.find((f) => DATE_FIELD_NAME_HINTS.includes(f.name.toLowerCase()));
+  return named || dateFields[0];
+}
+
+function isSameCalendarDay(a, b) {
+  return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
+}
+
+// Builds a fixed 6-week (42-day) month grid starting on the Sunday on/before
+// the 1st and ending on the Saturday on/after the last day -- the standard
+// calendar-UI shape, including leading/trailing days from adjacent months
+// so every week is a full row. Each day carries the records whose date
+// field falls on that calendar date; a record with an unparseable date is
+// simply never matched, not an error.
+function buildCalendarMonth(records, field, year, month) {
+  const firstOfMonth = new Date(year, month, 1);
+  const gridStart = new Date(year, month, 1 - firstOfMonth.getDay());
+  const days = [];
+  for (let i = 0; i < 42; i++) {
+    const date = new Date(gridStart);
+    date.setDate(gridStart.getDate() + i);
+    const dayRecords = records.filter((r) => {
+      const raw = r[field.name];
+      if (raw === null || raw === undefined || raw === "") return false;
+      const recordDate = new Date(String(raw));
+      return !Number.isNaN(recordDate.getTime()) && isSameCalendarDay(recordDate, date);
+    });
+    days.push({ date, inCurrentMonth: date.getMonth() === month, records: dayRecords });
+  }
+  return days;
+}
+
+// Renders a month grid for entities with a date field (e.g. "Appointment"),
+// so a date-heavy entity gets a real calendar instead of the same table
+// shape every entity gets. Each day cell shows a chip per record landing on
+// that date (click to edit), with a "+N more" overflow instead of an
+// ever-growing cell.
+function CalendarView({ entity, dateField, records, month, onPrevMonth, onNextMonth, onEdit }) {
+  const year = month.getFullYear();
+  const monthIndex = month.getMonth();
+  const days = useMemo(() => buildCalendarMonth(records, dateField, year, monthIndex), [records, dateField, year, monthIndex]);
+  const monthLabel = month.toLocaleDateString(undefined, { month: "long", year: "numeric" });
+  const weekdayLabels = useMemo(() => {
+    const formatter = new Intl.DateTimeFormat(undefined, { weekday: "short" });
+    return days.slice(0, 7).map((d) => formatter.format(d.date));
+  }, [days]);
+  const labelField = entity.fields.find((f) => f.name !== dateField.name) || dateField;
+
+  return (
+    <div className="calendar-view">
+      <div className="calendar-nav">
+        <button type="button" onClick={onPrevMonth}>‹</button>
+        <span className="calendar-month-label">{monthLabel}</span>
+        <button type="button" onClick={onNextMonth}>›</button>
+      </div>
+      <div className="calendar-grid calendar-weekdays">
+        {weekdayLabels.map((label, i) => (
+          <div key={i} className="calendar-weekday">{label}</div>
+        ))}
+      </div>
+      <div className="calendar-grid calendar-days">
+        {days.map((day, i) => (
+          <div key={i} className={day.inCurrentMonth ? "calendar-day" : "calendar-day calendar-day-outside"}>
+            <span className="calendar-day-number">{day.date.getDate()}</span>
+            <div className="calendar-day-records">
+              {day.records.slice(0, 3).map((record) => (
+                <button type="button" key={record.id} className="calendar-record-chip" onClick={() => onEdit(record)}>
+                  {String(record[labelField.name] ?? "")}
+                </button>
+              ))}
+              {day.records.length > 3 && <span className="calendar-record-more">+{day.records.length - 3} more</span>}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 // One card in the board view: the record's other fields (never the board
 // field itself, since that's implied by which column the card is in), a
 // select to move it directly to another column, and the same Edit/Delete
@@ -515,7 +602,9 @@ export function EntityView({ entity }) {
   const [sortField, setSortField] = useState(null);
   const [sortDir, setSortDir] = useState("asc");
   const [viewMode, setViewMode] = useState("table");
+  const [calendarMonth, setCalendarMonth] = useState(() => new Date());
   const boardField = useMemo(() => findBoardField(entity.fields), [entity.fields]);
+  const dateField = useMemo(() => findDateField(entity.fields), [entity.fields]);
 
   async function refresh() {
     setLoading(true);
@@ -535,6 +624,7 @@ export function EntityView({ entity }) {
     setSearch("");
     setSortField(null);
     setViewMode("table");
+    setCalendarMonth(new Date());
     refresh();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [entity.name]);
@@ -636,7 +726,7 @@ export function EntityView({ entity }) {
               value={search}
               onChange={(e) => setSearch(e.target.value)}
             />
-            {boardField && (
+            {(boardField || dateField) && (
               <div className="view-toggle" role="group">
                 <button
                   type="button"
@@ -645,13 +735,24 @@ export function EntityView({ entity }) {
                 >
                   📋 Table
                 </button>
-                <button
-                  type="button"
-                  className={viewMode === "board" ? "view-toggle-btn view-toggle-btn-active" : "view-toggle-btn"}
-                  onClick={() => setViewMode("board")}
-                >
-                  🗂️ Board
-                </button>
+                {boardField && (
+                  <button
+                    type="button"
+                    className={viewMode === "board" ? "view-toggle-btn view-toggle-btn-active" : "view-toggle-btn"}
+                    onClick={() => setViewMode("board")}
+                  >
+                    🗂️ Board
+                  </button>
+                )}
+                {dateField && (
+                  <button
+                    type="button"
+                    className={viewMode === "calendar" ? "view-toggle-btn view-toggle-btn-active" : "view-toggle-btn"}
+                    onClick={() => setViewMode("calendar")}
+                  >
+                    📅 Calendar
+                  </button>
+                )}
               </div>
             )}
           </div>
@@ -681,6 +782,16 @@ export function EntityView({ entity }) {
                 </div>
               ))}
             </div>
+          ) : viewMode === "calendar" && dateField ? (
+            <CalendarView
+              entity={entity}
+              dateField={dateField}
+              records={visibleRecords}
+              month={calendarMonth}
+              onPrevMonth={() => setCalendarMonth((m) => new Date(m.getFullYear(), m.getMonth() - 1, 1))}
+              onNextMonth={() => setCalendarMonth((m) => new Date(m.getFullYear(), m.getMonth() + 1, 1))}
+              onEdit={startEdit}
+            />
           ) : (
             <div className="table-scroll">
               <table>
@@ -834,6 +945,19 @@ th, td { text-align: start; padding: 8px 10px; border-bottom: 1px solid #efe8da;
 .board-card { background: #fff; border: 1px solid #efe8da; border-radius: 8px; padding: 10px 12px; box-shadow: 0 1px 2px rgba(36,31,25,0.06); display: flex; flex-direction: column; gap: 6px; }
 .board-card-field { display: flex; flex-direction: column; gap: 1px; font-size: 13.5px; }
 .board-card-move { margin-top: 4px; }
+.calendar-view { display: flex; flex-direction: column; gap: 10px; }
+.calendar-nav { display: flex; align-items: center; justify-content: center; gap: 16px; }
+.calendar-nav button { padding: 4px 12px; font-size: 16px; line-height: 1; border-radius: 6px; border: 1px solid #e6ddcc; background: #fff; cursor: pointer; }
+.calendar-month-label { font-weight: 600; min-width: 140px; text-align: center; }
+.calendar-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px; }
+.calendar-weekday { text-align: center; color: #83786a; font-size: 12px; text-transform: uppercase; letter-spacing: 0.04em; font-weight: 600; padding-bottom: 4px; }
+.calendar-day { min-height: 76px; background: #faf7f1; border: 1px solid #efe8da; border-radius: 8px; padding: 6px; display: flex; flex-direction: column; gap: 4px; overflow: hidden; }
+.calendar-day-outside { opacity: 0.4; }
+.calendar-day-number { font-size: 12px; font-weight: 600; color: #83786a; }
+.calendar-day-records { display: flex; flex-direction: column; gap: 3px; }
+.calendar-record-chip { background: #fff; border: 1px solid #efe8da; border-radius: 4px; padding: 2px 5px; font-size: 11.5px; text-align: start; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: pointer; }
+.calendar-record-chip:hover { background: #f6f2ea; }
+.calendar-record-more { font-size: 11px; color: #83786a; padding: 0 5px; }
 `;
 }
 

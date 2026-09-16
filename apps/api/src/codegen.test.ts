@@ -188,3 +188,33 @@ test("the exported EntityView renders a real Kanban board for entities with a st
   assert.match(stylesCss, /\.board-card/);
   assert.match(stylesCss, /\.view-toggle/);
 });
+
+test("the exported EntityView renders a real month-calendar view for entities with a date field", () => {
+  const withDate: Project = {
+    ...project,
+    spec: {
+      ...project.spec,
+      entities: [
+        ...project.spec.entities,
+        {
+          name: "Appointment",
+          label: "תורים",
+          fields: [
+            { name: "customerName", label: "שם לקוח", type: "text", required: true },
+            { name: "date", label: "תאריך", type: "date", required: true },
+          ],
+        },
+      ],
+    },
+  };
+  const files = generateExportFiles(withDate);
+  const entityViewJsx = files.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+  assert.match(entityViewJsx, /findDateField/);
+  assert.match(entityViewJsx, /buildCalendarMonth/);
+  assert.match(entityViewJsx, /function CalendarView/);
+  assert.match(entityViewJsx, /calendar-day/);
+  // The exported CSS carries the matching calendar styling, not just the component code
+  const stylesCss = files.find((f) => f.path === "web/src/styles.css")!.content;
+  assert.match(stylesCss, /\.calendar-grid/);
+  assert.match(stylesCss, /\.calendar-record-chip/);
+});

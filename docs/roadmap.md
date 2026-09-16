@@ -451,10 +451,36 @@ not a single "make it perfect" claim.
       months) and navigating back returns to the original month label,
       and confirmed the month label/weekday headers/chip text all
       correctly localize in an English browser context too. Zero console
-      errors, zero failed network requests. **Still not done, tracked as
-      a follow-up:** porting this calendar view into the exported
-      standalone codegen output (`apps/api/src/codegen.ts`), matching the
-      Step 2→Step 4 pattern already used for the earlier two features.
+      errors, zero failed network requests.
+- [x] **Step 6: the same month-calendar view in the exported standalone
+      app.** Ported `findDateField`/`buildCalendarMonth`/`CalendarView`
+      into `codegen.ts`'s generated `EntityView.jsx` template as literal
+      JS (same duplication-by-design reasoning as the badges/search/sort
+      and Kanban ports — the export owes nothing to Forge AI at runtime),
+      plus the matching CSS into the generated `styles.css`. The exported
+      app has no i18n of its own, so month/weekday labels use the
+      browser's default locale via `toLocaleDateString`/
+      `Intl.DateTimeFormat` rather than a Forge AI language context.
+      Verified: 1 new codegen test (the generated file contains the
+      calendar component/CSS, using a project with a real date field) +
+      full suite green (129 tests) + `npm run build` clean + the same
+      rigorous end-to-end check as the earlier ports: built a real
+      salon-appointments project through the live API, downloaded the
+      actual export `.zip` via a real browser download event, unzipped
+      it, ran `npm install` + `npm start` as a **fully standalone app**
+      (zero connection to Forge AI, verified by the app running from a
+      bare temp directory with its own SQLite file), and drove it with a
+      real Playwright browser: switched to calendar view, added two real
+      appointment records on a specific day, confirmed the grid is
+      exactly 42 days, confirmed both records' chips render on the
+      correct day and nowhere else, confirmed clicking a chip opens the
+      edit form pre-filled with that exact record, and confirmed month
+      navigation moves off that day's chips with no leakage. Zero console
+      errors beyond an unrelated pre-existing favicon 404. This closes
+      the parity gap between the live preview and the exported code for
+      the calendar feature — badges/search/sort, Kanban board, and
+      calendar view are now all present in both the live preview and the
+      exported standalone app.
 
 ## Production hardening
 
