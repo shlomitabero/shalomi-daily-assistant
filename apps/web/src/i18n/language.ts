@@ -204,6 +204,7 @@ export const translations: Record<Lang, Record<string, string>> = {
     "search.resultCount": "{count} תוצאות",
     "search.andMore": "ועוד {count}",
     "search.jumpTo": "מעבר לטאב",
+    "search.keyboardHint": "↑↓ לניווט בין התוצאות, Enter למעבר ללשונית",
   },
   en: {
     "brand.tagline": "Describe your business in your own words — get a working app.",
@@ -376,6 +377,7 @@ export const translations: Record<Lang, Record<string, string>> = {
     "search.resultCount": "{count} results",
     "search.andMore": "+{count} more",
     "search.jumpTo": "Go to tab",
+    "search.keyboardHint": "↑↓ to navigate results, Enter to jump to a tab",
   },
 };
 

@@ -1350,6 +1350,15 @@ button.sort-header:hover:not(:disabled) {
 .global-search-group {
   border-top: 1px solid var(--border-soft);
   padding-top: 12px;
+  border-inline-start: 3px solid transparent;
+  padding-inline-start: 9px;
+  margin-inline-start: -12px;
+}
+
+.global-search-group-selected {
+  border-inline-start-color: var(--accent);
+  background: var(--accent-soft);
+  border-radius: 0 8px 8px 0;
 }
 
 .global-search-group-header {

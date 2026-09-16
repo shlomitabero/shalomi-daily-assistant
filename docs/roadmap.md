@@ -1207,6 +1207,31 @@ not a single "make it perfect" claim.
       event-handling glue with no new pure-function logic to unit-test)
       + both builds clean + a from-scratch clean-room clone/install/test/
       build/start cycle with a live `/api/health` check.
+- [x] **Keyboard navigation (arrow keys + Enter) in global search
+      results.** Third round building out the search feature: Down/Up now
+      move a highlight across the result *groups* (not individual
+      records — jumping always lands on an entity tab, so the group is
+      the right unit to navigate), clamped at the first/last group rather
+      than wrapping, and Enter jumps to whichever group is highlighted
+      and closes the panel. Deliberately left plain Enter with nothing
+      highlighted alone — it still just runs the search, exactly as
+      before — so nobody who types a query and hits Enter once gets
+      unexpectedly bounced to a tab. A small hint line appears once
+      results exist so the behavior is discoverable. Verified with a real
+      Playwright run: built an app with three entities that all match a
+      single-letter query (so there are multiple groups to navigate
+      between), pressed ArrowDown and confirmed the first group gets a
+      highlight class, pressed it again and confirmed the highlight
+      moved to the second group, pressed it several more times past the
+      end and confirmed it clamps on the last group instead of erroring
+      or wrapping, pressed ArrowUp and confirmed it moves back, pressed
+      Enter and confirmed it both closed the panel and switched to the
+      correct entity tab, then re-opened search and confirmed a plain
+      Enter with no prior arrow-key press still just runs the search and
+      leaves the panel open (a regression check against the Ctrl+K round
+      above). Full suite green (163 tests, unchanged) + both builds clean
+      + a from-scratch clean-room clone/install/test/build/start cycle
+      with a live `/api/health` check.
 
 ## Phase 3
 
