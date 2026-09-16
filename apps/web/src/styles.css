@@ -597,6 +597,47 @@ tbody tr:hover {
   font-size: 13px;
 }
 
+.csv-import-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin: 0 0 14px;
+}
+
+.csv-import-label {
+  display: inline-flex;
+  align-items: center;
+  padding: 8px 14px;
+  font-size: 13px;
+  font-weight: 600;
+  border-radius: var(--radius-sm);
+  background: var(--surface-raised);
+  color: var(--text);
+  border: 1px solid var(--border);
+  cursor: pointer;
+}
+
+.csv-import-label:has(input:disabled) {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.csv-import-label:hover {
+  background: var(--surface);
+  border-color: var(--steel);
+}
+
+.csv-import-errors {
+  margin: -6px 0 14px;
+  padding-inline-start: 20px;
+  color: var(--danger);
+  font-size: 13px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
 .view-toggle-btn {
   padding: 6px 12px;
   border-radius: calc(var(--radius-sm) - 2px);

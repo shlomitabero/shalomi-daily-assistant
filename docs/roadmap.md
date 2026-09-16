@@ -1267,6 +1267,41 @@ not a single "make it perfect" claim.
       54 web) + both builds clean + a from-scratch clean-room
       clone/install/test/build/start cycle with a live `/api/health`
       check.
+- [x] **CSV import for entities (live preview).** The natural complement
+      to the CSV export added a few rounds ago — "download my data" only
+      goes one direction without a way to bring a spreadsheet *in*, and
+      that's exactly the "I have my customer list in Excel" case a real
+      small business runs into. Two new pure functions in
+      `entityFormatting.ts`: `parseCsv` (a real RFC-4180 parser — quoted
+      fields with embedded commas/newlines, doubled-quote escapes, both
+      CRLF and bare LF line endings) and `buildImportRecords` (matches
+      CSV columns to fields by header text — label or field name,
+      case-insensitively — then coerces each cell to the field's real
+      type: booleans, numbers, and enum values resolved from either their
+      raw value or translated label). Deliberately scoped: a relation
+      column is ignored if optional, and the whole import is refused with
+      one clear message (not attempted row-by-row) when the entity has a
+      *required* relation field, since resolving a label like "Dana Levi"
+      back to the right foreign-key id needs the related entity's records
+      loaded — an honest "not supported yet" rather than silently
+      producing broken records. The import button (⬆️ ייבוא מ-CSV) is
+      always visible in `EntityPanel.tsx`, including on an entity with
+      zero records, unlike CSV export which needs something to export
+      first. Invalid rows (missing required field, bad number, unknown
+      enum option) are skipped individually with a per-row reason, shown
+      on demand behind a "Show errors" toggle rather than blocking the
+      valid rows from importing. Verified with a real Playwright run:
+      built a Customer app, uploaded a real 4-row CSV file (two valid
+      rows, one missing the required name, one with an invalid status
+      value) through the actual file input, confirmed exactly 2 records
+      were created and appear in the table, confirmed the 2 invalid rows
+      were correctly rejected and did NOT appear, and confirmed both
+      rejection reasons show up correctly worded under "Show errors".
+      12 new unit tests for `parseCsv`/`buildImportRecords` (including a
+      round-trip test against `recordsToCsv`'s own output). Full suite
+      green (176 tests: 44 spec-engine + 24 db + 42 api + 66 web) + both
+      builds clean + a from-scratch clean-room clone/install/test/
+      build/start cycle with a live `/api/health` check.
 
 ## Phase 3
 

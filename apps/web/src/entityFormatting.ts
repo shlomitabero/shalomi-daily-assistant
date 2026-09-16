@@ -320,3 +320,181 @@ export function recordsToCsv(
   );
   return [header, ...rows].join("\r\n");
 }
+
+/**
+ * Parses CSV text into rows of raw string cells (RFC 4180: quoted fields
+ * may contain commas, newlines, and doubled-quote escapes), the reverse of
+ * `recordsToCsv` -- this is what lets "import my customer list" mean
+ * pasting/uploading an actual spreadsheet export, not a specially
+ * formatted file only this app could produce. Handles both CRLF and bare
+ * LF line endings, and drops a single trailing blank line (the common
+ * "file ends with a newline" case) rather than emitting a phantom empty row.
+ */
+export function parseCsv(text: string): string[][] {
+  const rows: string[][] = [];
+  let row: string[] = [];
+  let field = "";
+  let inQuotes = false;
+  let i = 0;
+  const len = text.length;
+
+  function endField() {
+    row.push(field);
+    field = "";
+  }
+  function endRow() {
+    endField();
+    rows.push(row);
+    row = [];
+  }
+
+  while (i < len) {
+    const ch = text[i];
+    if (inQuotes) {
+      if (ch === '"') {
+        if (text[i + 1] === '"') {
+          field += '"';
+          i += 2;
+          continue;
+        }
+        inQuotes = false;
+        i++;
+        continue;
+      }
+      field += ch;
+      i++;
+      continue;
+    }
+    if (ch === '"') {
+      inQuotes = true;
+      i++;
+      continue;
+    }
+    if (ch === ",") {
+      endField();
+      i++;
+      continue;
+    }
+    if (ch === "\r") {
+      if (text[i + 1] === "\n") i++;
+      endRow();
+      i++;
+      continue;
+    }
+    if (ch === "\n") {
+      endRow();
+      i++;
+      continue;
+    }
+    field += ch;
+    i++;
+  }
+  // A final row with no trailing newline still needs to be flushed; an
+  // actual trailing newline already flushed via endRow() above and left
+  // field/row empty, so only flush here when there's something pending.
+  if (field.length > 0 || row.length > 0) endRow();
+
+  return rows;
+}
+
+export interface ImportResult {
+  /** Record payloads ready to POST, one per valid data row. */
+  records: Record<string, unknown>[];
+  /** Human-readable problems, each naming the 1-based data row it came from (or none, for a whole-file problem). */
+  errors: string[];
+}
+
+function matchesHeader(header: string, field: Field): boolean {
+  const normalized = header.trim().toLowerCase();
+  return normalized === field.name.toLowerCase() || normalized === (field.label ?? "").toLowerCase();
+}
+
+/**
+ * Turns parsed CSV rows into record payloads matching `fields`' types --
+ * the reverse of `fieldDisplayValue`, so a file this app exported (or a
+ * hand-edited copy of one) round-trips back in. Columns are matched to
+ * fields by header text (label or field name, case-insensitive); an
+ * unmatched column is simply ignored rather than treated as an error,
+ * since a spreadsheet often carries extra notes columns.
+ *
+ * Relation fields are not supported yet -- resolving a CSV cell like
+ * "Dana Levi" back to the right foreign-key id needs the related entity's
+ * own records loaded, which the caller may not have fetched. A *required*
+ * relation field makes every row impossible to satisfy, so this refuses
+ * the whole import with one clear error instead of silently producing
+ * records that will fail the server's own required-field check one at a
+ * time. An *optional* relation column, if present, is ignored per row.
+ */
+export function buildImportRecords(fields: Field[], rows: string[][]): ImportResult {
+  if (rows.length === 0) return { records: [], errors: [] };
+
+  const requiredRelation = fields.find((f) => f.type === "relation" && f.required);
+  if (requiredRelation) {
+    return {
+      records: [],
+      errors: [
+        `CSV import isn't supported yet for entities with a required relation field ("${requiredRelation.label ?? requiredRelation.name}").`,
+      ],
+    };
+  }
+
+  const [header, ...dataRows] = rows;
+  const columnFields: (Field | null)[] = header.map((cell) => fields.find((f) => matchesHeader(cell, f)) ?? null);
+
+  const records: Record<string, unknown>[] = [];
+  const errors: string[] = [];
+
+  dataRows.forEach((row, rowIndex) => {
+    const isBlank = row.every((cell) => cell.trim() === "");
+    if (isBlank) return;
+
+    const record: Record<string, unknown> = {};
+    let rowError: string | null = null;
+
+    for (const field of fields) {
+      const columnIndex = columnFields.findIndex((f) => f?.name === field.name);
+      const raw = columnIndex === -1 ? "" : (row[columnIndex] ?? "").trim();
+
+      if (field.type === "relation") continue; // see doc comment: not supported per-row yet
+
+      if (raw === "") {
+        if (field.required) {
+          rowError = `Row ${rowIndex + 1}: missing required field "${field.label ?? field.name}".`;
+          break;
+        }
+        record[field.name] = field.type === "boolean" ? false : null;
+        continue;
+      }
+
+      if (field.type === "boolean") {
+        record[field.name] = ["true", "1", "yes"].includes(raw.toLowerCase());
+      } else if (field.type === "number") {
+        const n = Number(raw);
+        if (Number.isNaN(n)) {
+          rowError = `Row ${rowIndex + 1}: "${raw}" isn't a number for field "${field.label ?? field.name}".`;
+          break;
+        }
+        record[field.name] = n;
+      } else if (field.type === "enum") {
+        const byValue = field.enumValues?.find((v) => v.toLowerCase() === raw.toLowerCase());
+        const byLabel = field.enumValues?.find((v) => (field.enumLabels?.[v] ?? v).toLowerCase() === raw.toLowerCase());
+        const resolved = byValue ?? byLabel;
+        if (!resolved) {
+          rowError = `Row ${rowIndex + 1}: "${raw}" isn't a valid option for field "${field.label ?? field.name}".`;
+          break;
+        }
+        record[field.name] = resolved;
+      } else {
+        record[field.name] = raw;
+      }
+    }
+
+    if (rowError) {
+      errors.push(rowError);
+    } else {
+      records.push(record);
+    }
+  });
+
+  return { records, errors };
+}

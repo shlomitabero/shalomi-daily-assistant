@@ -4,6 +4,7 @@ import { createRecord, deleteRecord, listRecords, updateRecord } from "./api.js"
 import {
   badgeTone,
   buildCalendarMonth,
+  buildImportRecords,
   findBoardField,
   findDateField,
   formatDateValue,
@@ -11,6 +12,7 @@ import {
   groupByField,
   LOCALE,
   matchesSearch,
+  parseCsv,
   recordDisplayLabel,
   relationDisplayLabel,
   recordsToCsv,
@@ -318,6 +320,10 @@ export function EntityPanel({
   const [calendarMonth, setCalendarMonth] = useState(() => new Date());
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
   const [relatedRecords, setRelatedRecords] = useState<RelatedRecordsByEntity>({});
+  const [importBusy, setImportBusy] = useState(false);
+  const [importMessage, setImportMessage] = useState<string | null>(null);
+  const [importErrors, setImportErrors] = useState<string[]>([]);
+  const [showImportErrors, setShowImportErrors] = useState(false);
   const boardField = useMemo(() => findBoardField(entity.fields), [entity.fields]);
   const dateField = useMemo(() => findDateField(entity.fields), [entity.fields]);
   const relationTargets = useMemo(() => {
@@ -372,6 +378,9 @@ export function EntityPanel({
     setViewMode("table");
     setCalendarMonth(new Date());
     setSelectedIds(new Set());
+    setImportMessage(null);
+    setImportErrors([]);
+    setShowImportErrors(false);
     void refresh();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [entity.name]);
@@ -478,6 +487,61 @@ export function EntityPanel({
     URL.revokeObjectURL(url);
   }
 
+  /**
+   * The complement to CSV export: parses an uploaded file with parseCsv,
+   * converts it to record payloads with buildImportRecords (which already
+   * validates types/required fields client-side), then POSTs each valid
+   * row. Uses allSettled rather than assuming success once client-side
+   * validation passes, since the server has the final say (e.g. a
+   * cross-field rule this component doesn't know about) -- the summary
+   * message reports real created/skipped counts either way, not an
+   * optimistic guess.
+   */
+  async function handleImportFile(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    e.target.value = ""; // allow re-selecting the same file to retry
+    if (!file) return;
+    setImportBusy(true);
+    setImportMessage(null);
+    setImportErrors([]);
+    setShowImportErrors(false);
+    try {
+      const text = await file.text();
+      const rows = parseCsv(text);
+      const { records: parsedRecords, errors: parseErrors } = buildImportRecords(entity.fields, rows);
+
+      if (parsedRecords.length === 0) {
+        setImportErrors(parseErrors);
+        setImportMessage(
+          parseErrors.length > 0
+            ? t("entity.import.allFailed", { errorCount: parseErrors.length })
+            : t("entity.import.empty"),
+        );
+        return;
+      }
+
+      const results = await Promise.allSettled(
+        parsedRecords.map((record) => createRecord(projectId, entity.name, record)),
+      );
+      const serverErrors = results
+        .filter((r): r is PromiseRejectedResult => r.status === "rejected")
+        .map((r) => (r.reason as Error).message);
+      const createdCount = results.length - serverErrors.length;
+      const allErrors = [...parseErrors, ...serverErrors];
+      setImportErrors(allErrors);
+      setImportMessage(
+        allErrors.length === 0
+          ? t("entity.import.success", { count: createdCount })
+          : t("entity.import.successWithErrors", { count: createdCount, errorCount: allErrors.length }),
+      );
+      await refresh();
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setImportBusy(false);
+    }
+  }
+
   async function handleMove(id: number, fieldName: string, value: string) {
     setError(null);
     try {
@@ -527,6 +591,27 @@ export function EntityPanel({
       </form>
 
       {error && <p className="error">{error}</p>}
+
+      <div className="csv-import-row">
+        <label className="csv-import-label">
+          {importBusy ? t("entity.import.parsing") : t("entity.importCsv")}
+          <input type="file" accept=".csv,text/csv" onChange={handleImportFile} disabled={importBusy} hidden />
+        </label>
+        {importMessage && <span className="muted small">{importMessage}</span>}
+        {importErrors.length > 0 && (
+          <button type="button" className="secondary small" onClick={() => setShowImportErrors((v) => !v)}>
+            {showImportErrors ? t("entity.import.hideErrors") : t("entity.import.showErrors")}
+          </button>
+        )}
+      </div>
+      {showImportErrors && importErrors.length > 0 && (
+        <ul className="csv-import-errors">
+          {importErrors.map((msg, i) => (
+            <li key={i}>{msg}</li>
+          ))}
+        </ul>
+      )}
+
       {loading ? (
         <p className="muted">{t("entity.loading")}</p>
       ) : records.length === 0 ? (

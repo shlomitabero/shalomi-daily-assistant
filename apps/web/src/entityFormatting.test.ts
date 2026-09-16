@@ -4,12 +4,14 @@ import type { Entity, Field } from "@forge/shared";
 import {
   badgeTone,
   buildCalendarMonth,
+  buildImportRecords,
   findBoardField,
   findDateField,
   formatDateValue,
   formatNumberValue,
   groupByField,
   matchesSearch,
+  parseCsv,
   pickDisplayField,
   recordDisplayLabel,
   recordsToCsv,
@@ -299,6 +301,161 @@ test("recordDisplayLabel shows the display field's value, falling back to #id wh
   assert.equal(recordDisplayLabel(courier, { id: 5, name: "Yossi Cohen", phone: "" }), "Yossi Cohen");
   assert.equal(recordDisplayLabel(courier, { id: 7, name: "", phone: "050-1" }), "#7");
   assert.equal(recordDisplayLabel({ name: "Empty", fields: [] }, { id: 9 }), "#9");
+});
+
+test("parseCsv splits plain comma-separated rows, dropping a single trailing blank line", () => {
+  const rows = parseCsv("Name,Amount\r\nDana,10\r\nYossi,20\r\n");
+  assert.deepEqual(rows, [
+    ["Name", "Amount"],
+    ["Dana", "10"],
+    ["Yossi", "20"],
+  ]);
+});
+
+test("parseCsv handles quoted fields with embedded commas, newlines, and doubled-quote escapes", () => {
+  const csv = 'Name,Notes\r\n"Dana, VIP","Says ""hi""\nsee you soon"\r\n';
+  const rows = parseCsv(csv);
+  assert.deepEqual(rows, [
+    ["Name", "Notes"],
+    ["Dana, VIP", 'Says "hi"\nsee you soon'],
+  ]);
+});
+
+test("parseCsv round-trips output produced by recordsToCsv", () => {
+  const fields: Field[] = [
+    { name: "name", label: "Name", type: "text", required: true },
+    { name: "notes", label: "Notes", type: "text", required: false },
+  ];
+  const csv = recordsToCsv(fields, [{ name: "Dana", notes: 'Says "hi", bye' }], "en");
+  const rows = parseCsv(csv);
+  assert.deepEqual(rows, [
+    ["Name", "Notes"],
+    ["Dana", 'Says "hi", bye'],
+  ]);
+});
+
+test("parseCsv accepts bare LF line endings too, not just CRLF", () => {
+  const rows = parseCsv("Name,Amount\nDana,10\nYossi,20");
+  assert.deepEqual(rows, [
+    ["Name", "Amount"],
+    ["Dana", "10"],
+    ["Yossi", "20"],
+  ]);
+});
+
+test("buildImportRecords matches columns by header label or field name, case-insensitively", () => {
+  const fields: Field[] = [
+    { name: "name", label: "שם", type: "text", required: true },
+    { name: "amount", label: "Amount", type: "number", required: false },
+  ];
+  const rows = [
+    ["שם", "amount"],
+    ["Dana", "150"],
+  ];
+  const result = buildImportRecords(fields, rows);
+  assert.deepEqual(result.errors, []);
+  assert.deepEqual(result.records, [{ name: "Dana", amount: 150 }]);
+});
+
+test("buildImportRecords coerces booleans, numbers, and enum labels back to their stored values", () => {
+  const fields: Field[] = [
+    { name: "name", type: "text", required: true },
+    { name: "active", type: "boolean", required: false },
+    { name: "status", type: "enum", required: true, enumValues: ["New", "Won"], enumLabels: { New: "חדש" } },
+  ];
+  const rows = [
+    ["name", "active", "status"],
+    ["Dana", "true", "חדש"], // enum matched by translated label
+    ["Yossi", "yes", "Won"], // enum matched by raw value; "yes" also counts as true
+    ["Noa", "", "New"], // empty optional boolean defaults to false, not skipped
+  ];
+  const result = buildImportRecords(fields, rows);
+  assert.deepEqual(result.errors, []);
+  assert.deepEqual(result.records, [
+    { name: "Dana", active: true, status: "New" },
+    { name: "Yossi", active: true, status: "Won" },
+    { name: "Noa", active: false, status: "New" },
+  ]);
+});
+
+test("buildImportRecords skips a row missing a required field and reports which row and field", () => {
+  const fields: Field[] = [
+    { name: "name", label: "Name", type: "text", required: true },
+    { name: "email", label: "Email", type: "text", required: false },
+  ];
+  const rows = [
+    ["Name", "Email"],
+    ["Dana", "dana@example.com"],
+    ["", "noname@example.com"], // has an email, so it isn't a blank line -- just missing the required name
+    ["Yossi", ""],
+  ];
+  const result = buildImportRecords(fields, rows);
+  assert.deepEqual(result.records, [
+    { name: "Dana", email: "dana@example.com" },
+    { name: "Yossi", email: null },
+  ]);
+  assert.equal(result.errors.length, 1);
+  assert.match(result.errors[0], /Row 2/);
+  assert.match(result.errors[0], /Name/);
+});
+
+test("buildImportRecords reports an unparseable number and an invalid enum option by row", () => {
+  const fields: Field[] = [
+    { name: "name", type: "text", required: true },
+    { name: "amount", label: "Amount", type: "number", required: true },
+    { name: "status", label: "Status", type: "enum", required: true, enumValues: ["New", "Won"] },
+  ];
+  const rows = [
+    ["name", "amount", "status"],
+    ["Dana", "not-a-number", "New"],
+    ["Yossi", "10", "NotAnOption"],
+    ["Noa", "20", "Won"],
+  ];
+  const result = buildImportRecords(fields, rows);
+  assert.deepEqual(result.records, [{ name: "Noa", amount: 20, status: "Won" }]);
+  assert.equal(result.errors.length, 2);
+  assert.match(result.errors[0], /Row 1.*Amount/);
+  assert.match(result.errors[1], /Row 2.*Status/);
+});
+
+test("buildImportRecords skips fully blank rows silently instead of treating them as errors", () => {
+  const fields: Field[] = [{ name: "name", type: "text", required: true }];
+  const rows = [["name"], ["Dana"], [""], ["Yossi"]];
+  const result = buildImportRecords(fields, rows);
+  assert.deepEqual(result.records, [{ name: "Dana" }, { name: "Yossi" }]);
+  assert.deepEqual(result.errors, []);
+});
+
+test("buildImportRecords refuses the whole import for an entity with a required relation field, rather than producing records that would fail one at a time", () => {
+  const fields: Field[] = [
+    { name: "name", type: "text", required: true },
+    { name: "customerId", label: "Customer", type: "relation", required: true, relationTo: "Customer" },
+  ];
+  const rows = [["name", "Customer"], ["Dana", "Yossi Cohen"]];
+  const result = buildImportRecords(fields, rows);
+  assert.deepEqual(result.records, []);
+  assert.equal(result.errors.length, 1);
+  assert.match(result.errors[0], /required relation field/);
+  assert.match(result.errors[0], /Customer/);
+});
+
+test("buildImportRecords ignores an optional relation column instead of failing on it", () => {
+  const fields: Field[] = [
+    { name: "name", type: "text", required: true },
+    { name: "courierId", label: "Courier", type: "relation", required: false, relationTo: "Courier" },
+  ];
+  const rows = [["name", "Courier"], ["Dana", "Yossi Cohen"]];
+  const result = buildImportRecords(fields, rows);
+  assert.deepEqual(result.errors, []);
+  assert.deepEqual(result.records, [{ name: "Dana" }]);
+});
+
+test("buildImportRecords ignores an unmatched CSV column instead of erroring on it", () => {
+  const fields: Field[] = [{ name: "name", type: "text", required: true }];
+  const rows = [["name", "internal notes"], ["Dana", "vip, handle with care"]];
+  const result = buildImportRecords(fields, rows);
+  assert.deepEqual(result.errors, []);
+  assert.deepEqual(result.records, [{ name: "Dana" }]);
 });
 
 test("groupByField groups records into one column per declared enum value, in declared order, including empty columns", () => {
