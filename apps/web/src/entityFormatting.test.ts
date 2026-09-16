@@ -13,6 +13,7 @@ import {
   pickDisplayField,
   recordDisplayLabel,
   recordsToCsv,
+  searchEntityRecords,
   sortRecords,
 } from "./entityFormatting.js";
 
@@ -51,6 +52,35 @@ test("matchesSearch matches on any field, is case-insensitive, and an empty quer
   assert.ok(matchesSearch(record, fields, "dana"));
   assert.ok(matchesSearch(record, fields, "חדש")); // matches the translated enum label, not the raw stored value
   assert.ok(!matchesSearch(record, fields, "yossi"));
+});
+
+test("searchEntityRecords finds matches, caps the sample, and reports the real total match count", () => {
+  const customer: Entity = {
+    name: "Customer",
+    label: "Customers",
+    fields: [{ name: "name", type: "text", required: true }],
+  };
+  const records = [
+    { id: 1, name: "Dana Levi" },
+    { id: 2, name: "Dana Cohen" },
+    { id: 3, name: "Yossi Cohen" },
+    { id: 4, name: "Dana Peretz" },
+  ];
+  const result = searchEntityRecords(customer, records, "dana", 2);
+  assert.ok(result);
+  assert.equal(result!.entityName, "Customer");
+  assert.equal(result!.entityLabel, "Customers");
+  assert.equal(result!.totalMatches, 3); // 3 real matches...
+  assert.equal(result!.sample.length, 2); // ...but the sample is capped at the given limit
+  assert.deepEqual(result!.sample.map((r) => r.name), ["Dana Levi", "Dana Cohen"]);
+});
+
+test("searchEntityRecords returns null for an empty query or when nothing in this entity matched", () => {
+  const customer: Entity = { name: "Customer", fields: [{ name: "name", type: "text", required: true }] };
+  const records = [{ id: 1, name: "Dana Levi" }];
+  assert.equal(searchEntityRecords(customer, records, ""), null);
+  assert.equal(searchEntityRecords(customer, records, "   "), null);
+  assert.equal(searchEntityRecords(customer, records, "no-such-match"), null);
 });
 
 test("sortRecords sorts numbers, strings, and booleans correctly in both directions", () => {

@@ -1305,6 +1305,60 @@ button.sort-header:hover:not(:disabled) {
   font-size: 14.5px;
 }
 
+.search-panel {
+  max-width: 560px;
+}
+
+.global-search-form {
+  display: flex;
+  gap: 8px;
+  margin: 14px 0 4px;
+}
+
+.global-search-input {
+  flex: 1;
+  min-width: 0;
+}
+
+.global-search-results {
+  margin-top: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.global-search-group {
+  border-top: 1px solid var(--border-soft);
+  padding-top: 12px;
+}
+
+.global-search-group-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.global-search-entity-label {
+  font-weight: 700;
+  color: var(--text);
+}
+
+.global-search-group-header button.small {
+  margin-inline-start: auto;
+  padding: 4px 10px;
+  font-size: 13px;
+}
+
+.global-search-hits {
+  margin: 10px 0 0;
+  padding-inline-start: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 14.5px;
+}
+
 /* Dark mode applies automatically from the OS preference (no explicit
    choice yet), and can be forced either way once ThemeSwitcher sets
    data-theme on <html> -- see theme/ThemeContext.tsx. */

@@ -17,6 +17,7 @@ import { AuthScreen } from "./AuthScreen.js";
 import { BuildProgress } from "./BuildProgress.js";
 import { BusinessTwinPanel } from "./BusinessTwinPanel.js";
 import { EntityPanel } from "./EntityPanel.js";
+import { GlobalSearchPanel } from "./GlobalSearchPanel.js";
 import { HistoryPanel } from "./HistoryPanel.js";
 import { LanguageProvider, useTranslation } from "./i18n/LanguageContext.js";
 import { LanguageSwitcher } from "./i18n/LanguageSwitcher.js";
@@ -97,6 +98,7 @@ function AppContent() {
   const [additionalRequest, setAdditionalRequest] = useState("");
   const [refineText, setRefineText] = useState("");
   const [showHistory, setShowHistory] = useState(false);
+  const [showSearch, setShowSearch] = useState(false);
   const [exportBusy, setExportBusy] = useState(false);
   const [showTwin, setShowTwin] = useState(false);
   const [refineHistory, setRefineHistory] = useState<RefineHistoryEntry[]>([]);
@@ -417,6 +419,9 @@ function AppContent() {
           <div className="preview-header">
             <h1>{project.name}</h1>
             <div className="preview-header-actions">
+              <button type="button" className="secondary" onClick={() => setShowSearch(true)}>
+                {t("preview.search")}
+              </button>
               <button type="button" className="secondary" onClick={() => setShowTwin(true)}>
                 {t("preview.twin")}
               </button>
@@ -511,6 +516,18 @@ function AppContent() {
           )}
 
           {showTwin && <BusinessTwinPanel projectId={project.id} onClose={() => setShowTwin(false)} />}
+
+          {showSearch && (
+            <GlobalSearchPanel
+              projectId={project.id}
+              entities={project.spec.entities}
+              onClose={() => setShowSearch(false)}
+              onJumpToEntity={(entityName) => {
+                setActiveEntity(entityName);
+                setShowSearch(false);
+              }}
+            />
+          )}
         </main>
       )}
     </div>

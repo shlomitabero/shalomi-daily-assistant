@@ -1155,6 +1155,33 @@ not a single "make it perfect" claim.
       mode). Found no new P0/P1 — a genuine negative result, recorded
       honestly rather than manufacturing a finding. Full details in
       `docs/product-quality-audit.md`'s "Re-verification pass" section.
+- [x] **Global search across all entities (live preview).** Previously,
+      finding a record meant guessing which entity tab it lived in and
+      using that tab's own search box — with 26 possible entity types on
+      a single build, that's real friction. Added one search panel
+      (`apps/web/src/GlobalSearchPanel.tsx`, opened via a new "🔍 חיפוש"
+      button next to the Business Twin button) that queries every entity
+      in the project at once and groups matches by entity, each with a
+      "מעבר לטאב" (jump to tab) action. The matching logic itself
+      (`searchEntityRecords` in `entityFormatting.ts`) is a small pure
+      function, independently unit-tested, that reuses the exact same
+      `matchesSearch` rule the per-tab search already used — so a record
+      that matches in one place matches in the other, by construction,
+      not by convention. Verified with a real Playwright run: built a
+      customers/appointments/employees app, read a real seeded customer's
+      name off the table, searched for it globally, confirmed the
+      "לקוחות" result group and a matching hit rendered, clicked "jump to
+      tab" and confirmed the panel closed and the correct tab activated,
+      then searched a deliberately non-matching string and confirmed the
+      "no results" message appeared. (The first run of this script itself
+      had a bug — a stray leading space from a naive
+      `split(/\s+/).slice(0, 2)` on table text — which is a test-script
+      defect, not a product one; fixed by filtering empty tokens before
+      re-running, and the second run passed clean.) Full suite green
+      (163 tests: 44 spec-engine + 24 db + 41 api + 54 web) + both builds
+      clean + a from-scratch clean-room clone/install/test/build/start
+      cycle, including a live `/api/health` check against the freshly
+      built server.
 
 ## Phase 3
 

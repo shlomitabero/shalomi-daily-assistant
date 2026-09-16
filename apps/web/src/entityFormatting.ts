@@ -68,6 +68,40 @@ export function matchesSearch(record: EntityRecord, fields: Field[], query: stri
   });
 }
 
+export interface EntitySearchResult {
+  entityName: string;
+  entityLabel: string;
+  totalMatches: number;
+  /** Up to `limit` matching records, in the order they were given. */
+  sample: EntityRecord[];
+}
+
+/**
+ * Filters one entity's already-fetched records against a global search
+ * query -- the building block for project-wide search across every entity
+ * tab at once, reusing the exact same match rule `matchesSearch` uses
+ * per-tab so "found here" and "found everywhere" never disagree. Returns
+ * null for an empty query or when nothing in this entity matched, so a
+ * caller can simply filter out the nulls rather than special-casing "no
+ * results" per entity.
+ */
+export function searchEntityRecords(
+  entity: Entity,
+  records: EntityRecord[],
+  query: string,
+  limit = 5,
+): EntitySearchResult | null {
+  if (!query.trim()) return null;
+  const matches = records.filter((r) => matchesSearch(r, entity.fields, query));
+  if (matches.length === 0) return null;
+  return {
+    entityName: entity.name,
+    entityLabel: entity.label ?? entity.name,
+    totalMatches: matches.length,
+    sample: matches.slice(0, limit),
+  };
+}
+
 export type SortDirection = "asc" | "desc";
 
 function compareValues(a: unknown, b: unknown): number {
