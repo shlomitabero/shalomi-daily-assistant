@@ -72,7 +72,13 @@ export const DOMAIN_ENTITY_RULES: DomainEntityRule[] = [
     },
   },
   {
-    keywords: ["appointment", "booking", "reservation", "schedule", "תור", "תורים", "פגישה", "פגישות"],
+    // Bare "תור" (singular "turn/appointment") is deliberately left out --
+    // it's a substring of "תורם"/"תורמים" ("donor"/"donors", an unrelated
+    // word that happens to share its first three letters), which would
+    // make any donation-app description spuriously also produce an
+    // Appointment entity. "תורים" (plural) doesn't have this problem and
+    // is what every real appointment-related description already uses.
+    keywords: ["appointment", "booking", "reservation", "schedule", "תורים", "פגישה", "פגישות"],
     labelHe: "תורים",
     descriptionHe: "פגישה מתוזמנת עם לקוח.",
     fieldLabelsHe: {
@@ -633,6 +639,109 @@ export const DOMAIN_ENTITY_RULES: DomainEntityRule[] = [
           enumValues: ["Applied", "Interviewing", "Offer", "Rejected", "Hired"],
         },
         { name: "appliedDate", type: "date", required: false },
+      ],
+    },
+  },
+  {
+    // Two deliberate Hebrew keyword omissions here, both caught by an
+    // actual build, not by inspection:
+    // 1. "גיוס כספים" (fundraising) is left out even though it's the
+    //    obvious phrase -- "גיוס" is JobApplicant's own keyword
+    //    (recruitment), and Hebrew overloads that root for both
+    //    "recruiting people" and "recruiting money".
+    // 2. "תורם"/"תורמים" (donor/donors) are left out even though they're
+    //    the literal Hebrew word for "donor" -- both words *start with*
+    //    "תור" (turn/appointment), Appointment's own keyword, so a
+    //    donation description mentioning "מתורמים" (from donors) would
+    //    otherwise spuriously also match Appointment. This isn't a
+    //    prefix/suffix issue like the earlier סמיכות pitfall; it's a
+    //    coincidental shared root between two unrelated words.
+    // "תרומה"/"תרומות" (donation/donations) and "עמותה" (nonprofit) don't
+    // have this problem and cover the same descriptions.
+    keywords: [
+      "donation", "donations", "donor", "nonprofit", "fundraising campaign",
+      "תרומה", "תרומות", "עמותה",
+    ],
+    labelHe: "תרומות",
+    descriptionHe: "תרומה שנתרמה על ידי תורם.",
+    fieldLabelsHe: { donorName: "שם התורם", amount: "סכום", campaign: "קמפיין", status: "סטטוס", date: "תאריך" },
+    enumLabelsHe: {
+      status: { Pledged: "הובטחה", Received: "התקבלה", Refunded: "הוחזרה" },
+    },
+    entity: {
+      name: "Donation",
+      description: "A contribution made by a donor to the organization.",
+      fields: [
+        { name: "donorName", type: "text", required: true },
+        { name: "amount", type: "number", required: true },
+        { name: "campaign", type: "text", required: false },
+        {
+          name: "status",
+          type: "enum",
+          required: true,
+          enumValues: ["Pledged", "Received", "Refunded"],
+        },
+        { name: "date", type: "date", required: false },
+      ],
+    },
+  },
+  {
+    // "שילוח" (dispatch/freight) is deliberately used instead of "משלוח"
+    // (parcel/delivery, already Order's own keyword) -- different word,
+    // no substring overlap, so a logistics/warehouse description doesn't
+    // spuriously also match Order.
+    keywords: [
+      "shipping", "logistics", "warehouse management", "package tracking", "freight",
+      "שילוח", "לוגיסטיקה", "ניהול מחסן", "מעקב חבילות",
+    ],
+    labelHe: "משלוחים ומעקב",
+    descriptionHe: "חבילה שנשלחת ועוקבים אחריה.",
+    fieldLabelsHe: { trackingNumber: "מספר מעקב", carrier: "חברת שילוח", destination: "יעד", status: "סטטוס", shipDate: "תאריך שילוח" },
+    enumLabelsHe: {
+      status: { Preparing: "בהכנה", InTransit: "בדרך", Delivered: "נמסרה", Delayed: "בעיכוב" },
+    },
+    entity: {
+      name: "Shipment",
+      description: "A package being shipped and tracked.",
+      fields: [
+        { name: "trackingNumber", type: "text", required: true },
+        { name: "carrier", type: "text", required: false },
+        { name: "destination", type: "text", required: false },
+        {
+          name: "status",
+          type: "enum",
+          required: true,
+          enumValues: ["Preparing", "InTransit", "Delivered", "Delayed"],
+        },
+        { name: "shipDate", type: "date", required: false },
+      ],
+    },
+  },
+  {
+    keywords: [
+      "insurance claim", "insurance claims", "claims processing", "policy holder", "policyholder",
+      "תביעת ביטוח", "תביעות ביטוח", "פוליסת ביטוח", "תביעה",
+    ],
+    labelHe: "תביעות ביטוח",
+    descriptionHe: "תביעה שהוגשה על ידי בעל פוליסה.",
+    fieldLabelsHe: { claimant: "שם התובע", policyNumber: "מספר פוליסה", claimAmount: "סכום התביעה", status: "סטטוס", incidentDate: "תאריך האירוע" },
+    enumLabelsHe: {
+      status: { Submitted: "הוגשה", UnderReview: "בבדיקה", Approved: "אושרה", Denied: "נדחתה", Paid: "שולמה" },
+    },
+    entity: {
+      name: "InsuranceClaim",
+      description: "A claim filed by a policyholder.",
+      fields: [
+        { name: "claimant", type: "text", required: true },
+        { name: "policyNumber", type: "text", required: false },
+        { name: "claimAmount", type: "number", required: false },
+        {
+          name: "status",
+          type: "enum",
+          required: true,
+          enumValues: ["Submitted", "UnderReview", "Approved", "Denied", "Paid"],
+        },
+        { name: "incidentDate", type: "date", required: false },
       ],
     },
   },

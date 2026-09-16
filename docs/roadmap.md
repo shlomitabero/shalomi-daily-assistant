@@ -1078,6 +1078,50 @@ not a single "make it perfect" claim.
       relation picker, reopened the Twin panel, and confirmed the
       observation live-updated to "1 of 2".
 
+- [x] **Fourth domain-entity expansion round: Donation (nonprofit),
+      Shipment (logistics/warehouse), and InsuranceClaim — three more
+      distinct verticals, bringing the library to 26 recognized entity
+      types.** Seed-data pools were wired in from the start this time
+      (the lesson from the very first "domain entities shipped without
+      seed data" bug two rounds ago), and verified with a real build
+      before this entry was written, not after.
+      **Found and fixed two real Hebrew substring-collision bugs while
+      doing that verification, both from words that were never tested
+      together before because the relevant domains didn't coexist until
+      now:**
+      1. "תורם"/"תורמים" (donor/donors) both *start with* "תור"
+         ("turn/appointment") — a coincidental shared root, not the
+         construct-state/suffix-inflection pattern from an earlier
+         round's Hebrew bug. A donation-app description mentioning donors
+         spuriously also produced an Appointment entity. Fixed by
+         dropping the bare singular "תור" keyword from Appointment (kept
+         "תורים", the plural every real test and description already
+         uses, which has no such collision) rather than avoiding "תורם"
+         in Donation's own keywords, since "תורם" is the actual Hebrew
+         word for "donor" and dropping it there would have just made
+         Donation harder to trigger for no real gain.
+      2. "גיוס כספים" (fundraising) was deliberately never added as a
+         Donation keyword in the first place — "גיוס" is JobApplicant's
+         own keyword (recruitment), and Hebrew overloads that root for
+         both "recruiting people" and "recruiting money" — caught before
+         shipping by the same discipline, not after.
+      Also reused "שילוח" (dispatch/freight) instead of the more obvious
+      "משלוח" (parcel/delivery, already Order's keyword) for Shipment, so
+      a warehouse/logistics description doesn't spuriously also match
+      Order. Verified: 5 new unit tests (entity recognition for all three
+      in English and Hebrew, a false-positive test for the Donation/
+      JobApplicant collision that was avoided, a false-positive test for
+      the Shipment/Order collision that was avoided, and a dedicated
+      regression test reproducing the exact "תורמים"/Appointment bug using
+      the phrase that caused it) + a seed-data test for all three entities'
+      new field names + full suite green (160 tests) + `npm run build`
+      clean + a real Playwright run: built an app from a description
+      combining all three verticals, confirmed exactly three entity tabs
+      appeared (no spurious Appointment tab), and read every generated
+      row directly from the live table — real donor names and campaign
+      names, real tracking numbers/carriers/destinations, real
+      claimant names and policy numbers, zero raw placeholder text.
+
 
 ## Phase 3
 

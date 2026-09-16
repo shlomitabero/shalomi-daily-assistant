@@ -208,3 +208,61 @@ test("Ticket/Subscription/JobApplicant keywords avoid the substring collisions t
   assert.ok(recruitingHe.entities.some((e) => e.name === "JobApplicant"));
   assert.ok(!recruitingHe.entities.some((e) => e.name === "Employee"), "'גיוס' must not spuriously match Employee via an 'עובדים' substring that was deliberately left out");
 });
+
+test("recognizes nonprofit-donation, logistics/warehouse, and insurance-claims descriptions with tailored entities", async () => {
+  const provider = new HeuristicSpecProvider();
+
+  const nonprofit = await provider.generate("A nonprofit app to track donations from our donors.");
+  assert.ok(nonprofit.entities.some((e) => e.name === "Donation"));
+
+  const warehouse = await provider.generate("A warehouse management app for package tracking and freight.");
+  assert.ok(warehouse.entities.some((e) => e.name === "Shipment"));
+
+  const insurer = await provider.generate("An app for processing insurance claims from policyholders.");
+  assert.ok(insurer.entities.some((e) => e.name === "InsuranceClaim"));
+
+  // The same phrasing in Hebrew.
+  const nonprofitHe = await provider.generate("אפליקציה לעמותה למעקב אחר תרומות מתורמים");
+  assert.ok(nonprofitHe.entities.some((e) => e.name === "Donation"));
+
+  const warehouseHe = await provider.generate("אפליקציה לניהול מחסן ומעקב אחר שילוח חבילות");
+  assert.ok(warehouseHe.entities.some((e) => e.name === "Shipment"));
+
+  const insurerHe = await provider.generate("אפליקציה לטיפול בתביעות ביטוח מבעלי פוליסה");
+  assert.ok(insurerHe.entities.some((e) => e.name === "InsuranceClaim"));
+});
+
+test("Donation/Shipment keywords avoid the substring collisions their obvious phrasing would have caused", async () => {
+  const provider = new HeuristicSpecProvider();
+
+  // Donation deliberately doesn't use "גיוס כספים" (fundraising) -- the
+  // obvious Hebrew phrase -- because "גיוס" is JobApplicant's own keyword
+  // and Hebrew overloads that root for both "recruiting people" and
+  // "recruiting money".
+  const nonprofitHe = await provider.generate("אפליקציה לעמותה עם תרומות מתורמים");
+  assert.ok(nonprofitHe.entities.some((e) => e.name === "Donation"));
+  assert.ok(!nonprofitHe.entities.some((e) => e.name === "JobApplicant"), "a donation description must not spuriously match JobApplicant");
+
+  // Shipment uses "שילוח" (dispatch/freight), not "משלוח" (parcel/delivery)
+  // -- Order's own keyword -- so a warehouse/logistics description doesn't
+  // spuriously also match Order.
+  const warehouseHe = await provider.generate("אפליקציה לניהול מחסן ולוגיסטיקה, כולל מעקב חבילות ושילוח");
+  assert.ok(warehouseHe.entities.some((e) => e.name === "Shipment"));
+  assert.ok(!warehouseHe.entities.some((e) => e.name === "Order"), "a warehouse/logistics description must not spuriously match Order via a 'משלוח' substring");
+});
+
+// Regression test for a real bug caught by actually running a build, not by
+// inspecting the keyword lists: "תורם"/"תורמים" ("donor"/"donors") both
+// *start with* "תור" ("turn/appointment", Appointment's own former bare
+// keyword), a coincidental shared root -- not a prefix/suffix inflection
+// issue like the earlier "תמיכת" construct-state bug. A donation
+// description mentioning donors used to spuriously produce an Appointment
+// entity too. Fixed by dropping the bare singular "תור" keyword from
+// Appointment (the plural "תורים", used by every real test/description
+// already, has no such collision).
+test("a donation description mentioning 'תורמים' (donors) does not spuriously match Appointment via a 'תור' substring", async () => {
+  const provider = new HeuristicSpecProvider();
+  const spec = await provider.generate("אפליקציה לעמותה למעקב אחר תרומות מתורמים ומקבלי תרומה");
+  assert.ok(spec.entities.some((e) => e.name === "Donation"));
+  assert.ok(!spec.entities.some((e) => e.name === "Appointment"), "'תורמים' must not spuriously match Appointment via a 'תור' substring");
+});

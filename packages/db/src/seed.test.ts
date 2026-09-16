@@ -176,6 +176,45 @@ test("the Ticket, Subscription, and JobApplicant entities each get believable se
   assert.doesNotMatch(applicantRecord.appliedFor as string, /JobApplicant appliedFor/);
 });
 
+test("the Donation, Shipment, and InsuranceClaim entities each get believable seed values, not the generic placeholder formula", () => {
+  const donation: Entity = {
+    name: "Donation",
+    fields: [
+      { name: "donorName", type: "text", required: true },
+      { name: "campaign", type: "text", required: false },
+    ],
+  };
+  const shipment: Entity = {
+    name: "Shipment",
+    fields: [
+      { name: "trackingNumber", type: "text", required: true },
+      { name: "carrier", type: "text", required: false },
+      { name: "destination", type: "text", required: false },
+    ],
+  };
+  const claim: Entity = {
+    name: "InsuranceClaim",
+    fields: [
+      { name: "claimant", type: "text", required: true },
+      { name: "policyNumber", type: "text", required: false },
+    ],
+  };
+
+  const [donationRecord] = generateSeedRecords(donation, 1);
+  assert.equal(donationRecord.donorName, "Dana Levi");
+  assert.doesNotMatch(donationRecord.campaign as string, /Donation campaign/);
+
+  const [shipmentRecord] = generateSeedRecords(shipment, 1);
+  assert.doesNotMatch(shipmentRecord.trackingNumber as string, /Shipment trackingNumber/);
+  assert.match(shipmentRecord.trackingNumber as string, /^TRK-\d+$/);
+  assert.doesNotMatch(shipmentRecord.carrier as string, /Shipment carrier/);
+  assert.doesNotMatch(shipmentRecord.destination as string, /Shipment destination/);
+
+  const [claimRecord] = generateSeedRecords(claim, 1);
+  assert.equal(claimRecord.claimant, "Dana Levi");
+  assert.match(claimRecord.policyNumber as string, /^POL-\d+$/);
+});
+
 test("an unrecognized field name still gets a labeled fallback value instead of throwing", () => {
   const custom: Entity = { name: "Widget", fields: [{ name: "colorPreference", type: "text", required: false }] };
   const [record] = generateSeedRecords(custom, 1);

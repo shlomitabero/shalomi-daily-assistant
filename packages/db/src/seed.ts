@@ -54,6 +54,11 @@ const PLAN_NAMES_HE = ["תוכנית בסיסית", "תוכנית פרו", "תו
 const PLAN_NAMES_EN = ["Basic Plan", "Pro Plan", "Business Plan", "Annual Plan"];
 const JOB_TITLES_HE = ["מפתח/ת תוכנה", "מנהל/ת מכירות", "רכז/ת שיווק", "מעצב/ת UX"];
 const JOB_TITLES_EN = ["Software Engineer", "Sales Manager", "Marketing Coordinator", "UX Designer"];
+// Pools for Donation, Shipment, InsuranceClaim.
+const CAMPAIGN_NAMES_HE = ["מגבית שנתית", "קמפיין חירום", "בניית מרכז קהילתי", "מלגות לתלמידים"];
+const CAMPAIGN_NAMES_EN = ["Annual Appeal", "Emergency Relief Fund", "Community Center Build", "Student Scholarships"];
+const CARRIERS_HE = ["דואר ישראל", "צים", "UPS", "דלוור"];
+const CARRIERS_EN = ["FedEx", "UPS", "DHL", "USPS"];
 
 function pick(pool: string[], index: number): string {
   return pool[index % pool.length];
@@ -121,11 +126,14 @@ function textSeedValueFor(fieldName: string, entityName: string, isHebrew: boole
     case "client":
     case "ownerName":
     case "renterName":
+    case "donorName":
+    case "claimant":
       return pick(isHebrew ? PERSON_NAMES_HE : PERSON_NAMES_EN, index);
     case "service":
     case "itemName":
       return pick(isHebrew ? ITEM_NAMES_HE : ITEM_NAMES_EN, index);
     case "address":
+    case "destination":
       return pick(isHebrew ? ADDRESSES_HE : ADDRESSES_EN, index);
     case "venue":
       return pick(isHebrew ? VENUES_HE : VENUES_EN, index);
@@ -143,6 +151,14 @@ function textSeedValueFor(fieldName: string, entityName: string, isHebrew: boole
       return pick(isHebrew ? PLAN_NAMES_HE : PLAN_NAMES_EN, index);
     case "appliedFor":
       return pick(isHebrew ? JOB_TITLES_HE : JOB_TITLES_EN, index);
+    case "campaign":
+      return pick(isHebrew ? CAMPAIGN_NAMES_HE : CAMPAIGN_NAMES_EN, index);
+    case "carrier":
+      return pick(isHebrew ? CARRIERS_HE : CARRIERS_EN, index);
+    case "trackingNumber":
+      return `TRK-${100000 + index * 37}`;
+    case "policyNumber":
+      return `POL-${500000 + index * 111}`;
     case "name":
       // "name" means different things for different entity shapes -- a
       // person for people-shaped entities, a thing for catalog-shaped
