@@ -573,10 +573,38 @@ not a single "make it perfect" claim.
       third one remained, confirmed the bulk bar disappeared afterward,
       and confirmed the header "select all" checkbox correctly selects
       every remaining visible row. Checked at 390px mobile width and in
-      dark mode too, zero console errors. **Still not done, tracked as a
-      follow-up:** porting bulk-select/delete into the exported
-      standalone codegen output (`apps/api/src/codegen.ts`), matching
-      the pattern used for the four earlier features.
+      dark mode too, zero console errors.
+- [x] **Step 10: bulk-select + bulk-delete in the exported standalone
+      app.** Ported the checkbox-selection state, `toggleSelected`/
+      `toggleSelectAllVisible`/`handleBulkDelete`, and the bulk-actions
+      bar into `codegen.ts`'s generated `EntityView.jsx` template as
+      literal JS (same duplication-by-design pattern as the four earlier
+      ports), plus matching `.bulk-actions-bar`/`.select-col` CSS.
+      **Found and fixed a second real, pre-existing gap while porting,
+      not just copying:** the exported app's generic
+      `input, select, textarea { width: 100%; }` CSS rule had no
+      `input[type="checkbox"] { width: auto; }` override — unlike the
+      live-preview app, which already has one — so every checkbox in the
+      exported app (including the pre-existing boolean-field checkboxes
+      in the record form, not just the new bulk-select ones) would have
+      rendered stretched to its container's full width. Fixed by adding
+      the same override used in the live app. Verified: 1 new codegen
+      test (the generated file contains the bulk-select code/CSS/
+      checkbox-width override) + full suite green (136 tests) + `npm run
+      build` clean + the same end-to-end rigor as the earlier four
+      ports: built a CRM through the live API, downloaded the real
+      export `.zip`, unzipped it, ran `npm install` + `npm start` as a
+      **fully standalone app**, added 3 real records, selected 2,
+      confirmed the header checkbox was genuinely `indeterminate`,
+      accepted the real confirm dialog, confirmed exactly those 2
+      records were removed and the third remained, confirmed
+      select-all worked afterward, and directly measured the rendered
+      checkbox width (13px, not stretched) to confirm the CSS fix
+      actually took effect in the generated output, not just in source.
+      This closes the parity gap for bulk-select/delete — all five
+      generated-app-quality features (badges/search/sort, Kanban board,
+      calendar view, CSV export, bulk-select/delete) are now present in
+      both the live preview and the exported standalone app.
 
 ## Production hardening
 

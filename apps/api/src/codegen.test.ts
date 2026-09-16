@@ -230,3 +230,17 @@ test("the exported EntityView renders a real CSV export button backed by RFC-418
   const stylesCss = files.find((f) => f.path === "web/src/styles.css")!.content;
   assert.match(stylesCss, /\.csv-export-btn/);
 });
+
+test("the exported EntityView renders real bulk-select + bulk-delete for table rows", () => {
+  const files = generateExportFiles(project);
+  const entityViewJsx = files.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+  assert.match(entityViewJsx, /toggleSelected/);
+  assert.match(entityViewJsx, /toggleSelectAllVisible/);
+  assert.match(entityViewJsx, /handleBulkDelete/);
+  assert.match(entityViewJsx, /window\.confirm/);
+  assert.match(entityViewJsx, /bulk-actions-bar/);
+  assert.match(entityViewJsx, /el\.indeterminate/);
+  const stylesCss = files.find((f) => f.path === "web/src/styles.css")!.content;
+  assert.match(stylesCss, /\.bulk-actions-bar/);
+  assert.match(stylesCss, /input\[type="checkbox"\]/);
+});

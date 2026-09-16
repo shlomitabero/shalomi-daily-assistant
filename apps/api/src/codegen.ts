@@ -637,6 +637,7 @@ export function EntityView({ entity }) {
   const [sortDir, setSortDir] = useState("asc");
   const [viewMode, setViewMode] = useState("table");
   const [calendarMonth, setCalendarMonth] = useState(() => new Date());
+  const [selectedIds, setSelectedIds] = useState(() => new Set());
   const boardField = useMemo(() => findBoardField(entity.fields), [entity.fields]);
   const dateField = useMemo(() => findDateField(entity.fields), [entity.fields]);
 
@@ -659,6 +660,7 @@ export function EntityView({ entity }) {
     setSortField(null);
     setViewMode("table");
     setCalendarMonth(new Date());
+    setSelectedIds(new Set());
     refresh();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [entity.name]);
@@ -705,6 +707,44 @@ export function EntityView({ entity }) {
 
   async function handleDelete(id) {
     await deleteRecord(entity.name, id);
+    setSelectedIds((prev) => {
+      if (!prev.has(id)) return prev;
+      const next = new Set(prev);
+      next.delete(id);
+      return next;
+    });
+    await refresh();
+  }
+
+  function toggleSelected(id) {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  function toggleSelectAllVisible() {
+    const visibleIds = visibleRecords.map((r) => r.id);
+    const allSelected = visibleIds.length > 0 && visibleIds.every((id) => selectedIds.has(id));
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (allSelected) {
+        for (const id of visibleIds) next.delete(id);
+      } else {
+        for (const id of visibleIds) next.add(id);
+      }
+      return next;
+    });
+  }
+
+  async function handleBulkDelete() {
+    const ids = [...selectedIds];
+    if (ids.length === 0) return;
+    if (!window.confirm(\`Delete \${ids.length} records? This can't be undone.\`)) return;
+    await Promise.all(ids.map((id) => deleteRecord(entity.name, id)));
+    setSelectedIds(new Set());
     await refresh();
   }
 
@@ -844,9 +884,30 @@ export function EntityView({ entity }) {
             />
           ) : (
             <div className="table-scroll">
+              {selectedIds.size > 0 && (
+                <div className="bulk-actions-bar">
+                  <span>{selectedIds.size} selected</span>
+                  <button type="button" onClick={handleBulkDelete}>
+                    🗑️ Delete selected
+                  </button>
+                </div>
+              )}
               <table>
                 <thead>
                   <tr>
+                    <th className="select-col">
+                      <input
+                        type="checkbox"
+                        checked={visibleRecords.length > 0 && visibleRecords.every((r) => selectedIds.has(r.id))}
+                        ref={(el) => {
+                          if (!el) return;
+                          const someSelected = visibleRecords.some((r) => selectedIds.has(r.id));
+                          const allSelected = visibleRecords.length > 0 && visibleRecords.every((r) => selectedIds.has(r.id));
+                          el.indeterminate = someSelected && !allSelected;
+                        }}
+                        onChange={toggleSelectAllVisible}
+                      />
+                    </th>
                     {entity.fields.map((f) => (
                       <th key={f.name}>
                         <button type="button" className="sort-header" onClick={() => toggleSort(f.name)}>
@@ -861,6 +922,9 @@ export function EntityView({ entity }) {
                 <tbody>
                   {visibleRecords.map((r) => (
                     <tr key={r.id}>
+                      <td className="select-col">
+                        <input type="checkbox" checked={selectedIds.has(r.id)} onChange={() => toggleSelected(r.id)} />
+                      </td>
                       {entity.fields.map((f) => (
                         <td key={f.name}>
                           <Cell field={f} value={r[f.name]} />
@@ -968,6 +1032,7 @@ nav button.active { background: #d9622b; color: #fff; border-color: #d9622b; }
 form.record-form { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 12px; margin-bottom: 16px; padding-bottom: 16px; border-bottom: 1px solid #efe8da; }
 .field { display: flex; flex-direction: column; gap: 4px; font-size: 12.5px; color: #83786a; min-width: 0; }
 input, select, textarea { font: inherit; padding: 8px 10px; border: 1px solid #e6ddcc; border-radius: 6px; width: 100%; }
+input[type="checkbox"] { width: auto; }
 button[type="submit"], .btn { padding: 9px 18px; border-radius: 8px; border: none; background: #d9622b; color: #fff; font: inherit; font-weight: 600; cursor: pointer; }
 .table-scroll { overflow-x: auto; }
 table { width: 100%; border-collapse: collapse; font-size: 14px; }
@@ -1011,6 +1076,8 @@ th, td { text-align: start; padding: 8px 10px; border-bottom: 1px solid #efe8da;
 .csv-export-btn { flex-shrink: 0; padding: 8px 14px; font-size: 13px; border-radius: 8px; border: 1px solid #e6ddcc; background: #fff; color: #241f19; cursor: pointer; font: inherit; }
 .csv-export-btn:hover:not(:disabled) { background: #f6f2ea; }
 .csv-export-btn:disabled { opacity: 0.55; cursor: default; }
+.bulk-actions-bar { display: flex; align-items: center; gap: 12px; padding: 8px 12px; margin-bottom: 8px; background: #faf7f1; border: 1px solid #efe8da; border-radius: 8px; font-size: 13.5px; }
+.select-col { width: 1%; white-space: nowrap; }
 `;
 }
 
