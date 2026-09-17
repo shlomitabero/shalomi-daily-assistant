@@ -15,7 +15,12 @@ import { requireAuth } from "../auth/middleware.js";
 import { HttpError } from "../httpError.js";
 
 const CredentialsSchema = z.object({
-  email: z.string().email(),
+  // Emails are case-insensitive in practice (RFC 5321 makes the local part
+  // technically case-sensitive, but no mainstream provider treats it that
+  // way) -- normalizing here, at the one point every signup/login goes
+  // through, keeps uniqueness checks and later logins consistent no matter
+  // which casing someone happens to type.
+  email: z.string().email().transform((email) => email.toLowerCase()),
   password: z.string().min(8, "password must be at least 8 characters"),
 });
 
@@ -28,13 +33,18 @@ function issueSession(db: ForgeDatabase, userId: string): string {
   return token;
 }
 
+/** ZodError.message is a JSON dump of every issue, not readable text -- join the actual issue messages instead, matching HttpError's own "message" contract of a plain, readable fallback string. */
+function formatValidationError(error: z.ZodError): string {
+  return error.issues.map((issue) => issue.message).join("; ");
+}
+
 export function createAuthRouter(db: ForgeDatabase): Router {
   const router = Router();
 
   router.post("/auth/signup", (req, res, next) => {
     const parsed = CredentialsSchema.safeParse(req.body);
     if (!parsed.success) {
-      next(new HttpError(400, parsed.error.message, "VALIDATION_ERROR"));
+      next(new HttpError(400, formatValidationError(parsed.error), "VALIDATION_ERROR"));
       return;
     }
     try {
@@ -54,7 +64,7 @@ export function createAuthRouter(db: ForgeDatabase): Router {
   router.post("/auth/login", (req, res, next) => {
     const parsed = CredentialsSchema.safeParse(req.body);
     if (!parsed.success) {
-      next(new HttpError(400, parsed.error.message, "VALIDATION_ERROR"));
+      next(new HttpError(400, formatValidationError(parsed.error), "VALIDATION_ERROR"));
       return;
     }
     const { email, password } = parsed.data;

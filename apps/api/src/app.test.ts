@@ -141,6 +141,49 @@ test("signup rejects a duplicate email and login rejects a wrong password", asyn
   });
 });
 
+test("email casing is normalized: signing up as 'Dana@Example.com' can log in as 'dana@example.com', and a second signup with different casing is rejected as a duplicate", async () => {
+  await withServer(async (baseUrl) => {
+    const signupRes = await fetch(`${baseUrl}/api/auth/signup`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ email: "Dana@Example.com", password: "correct-horse-battery" }),
+    });
+    assert.equal(signupRes.status, 201);
+    const { user } = (await signupRes.json()) as { user: { email: string } };
+    assert.equal(user.email, "dana@example.com");
+
+    const loginRes = await fetch(`${baseUrl}/api/auth/login`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ email: "dana@example.com", password: "correct-horse-battery" }),
+    });
+    assert.equal(loginRes.status, 200);
+
+    const dupSignupRes = await fetch(`${baseUrl}/api/auth/signup`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ email: "DANA@EXAMPLE.COM", password: "another-password" }),
+    });
+    assert.equal(dupSignupRes.status, 409);
+    assert.equal(((await dupSignupRes.json()) as { code?: string }).code, "EMAIL_TAKEN");
+  });
+});
+
+test("an invalid signup/login payload gets a readable validation message, not a raw JSON dump of Zod's internal issues", async () => {
+  await withServer(async (baseUrl) => {
+    const res = await fetch(`${baseUrl}/api/auth/signup`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ email: "not-an-email", password: "short" }),
+    });
+    assert.equal(res.status, 400);
+    const { error } = (await res.json()) as { error: string };
+    // Not JSON.stringify(issues, null, 2) -- a real, readable sentence.
+    assert.doesNotMatch(error, /^\[?\s*\{/);
+    assert.match(error, /password must be at least 8 characters/);
+  });
+});
+
 test("project routes reject requests without a valid session", async () => {
   await withServer(async (baseUrl) => {
     const res = await fetch(`${baseUrl}/api/projects`);
