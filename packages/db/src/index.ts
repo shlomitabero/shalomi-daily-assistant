@@ -31,6 +31,7 @@ export {
   createSession,
   getSessionUser,
   deleteSession,
+  deleteExpiredSessions,
   DuplicateEmailError,
 } from "./users.js";
 export {

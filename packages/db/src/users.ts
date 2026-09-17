@@ -60,10 +60,25 @@ export function findUserByEmail(
   return row ? { ...rowToUser(row), passwordHash: row.passwordHash as string } : undefined;
 }
 
+/**
+ * Deletes every session whose expiresAt has already passed. Nothing else
+ * in this file ever pruned expired rows -- getSessionUser just filters
+ * them out of its own query -- so on a long-running deployment the table
+ * only ever grows, one row per login, forever. Called opportunistically
+ * from createSession (every login/signup issues one) rather than needing
+ * a separate scheduled job: a real, if imprecise, session's worth of
+ * lazy cleanup on the one write path that already touches this table.
+ */
+export function deleteExpiredSessions(db: ForgeDatabase): number {
+  const result = db.prepare("DELETE FROM sessions WHERE expiresAt <= ?").run(new Date().toISOString());
+  return result.changes;
+}
+
 export function createSession(
   db: ForgeDatabase,
   session: { token: string; userId: string; expiresAt: string },
 ): void {
+  deleteExpiredSessions(db);
   db.prepare("INSERT INTO sessions (token, userId, expiresAt) VALUES (?, ?, ?)").run(
     session.token,
     session.userId,
