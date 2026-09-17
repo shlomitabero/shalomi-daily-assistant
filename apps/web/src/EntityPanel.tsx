@@ -87,6 +87,7 @@ function BoardCard({
   relatedRecords,
   onMove,
   onEdit,
+  onDuplicate,
   onDelete,
 }: {
   entity: Entity;
@@ -98,6 +99,7 @@ function BoardCard({
   relatedRecords: RelatedRecordsByEntity;
   onMove: (value: string) => void;
   onEdit: () => void;
+  onDuplicate: () => void;
   onDelete: () => void;
 }) {
   const otherFields = entity.fields.filter((f) => f.name !== boardField.name);
@@ -131,6 +133,9 @@ function BoardCard({
       <div className="row-actions">
         <button type="button" onClick={onEdit}>
           {t("entity.edit")}
+        </button>
+        <button type="button" onClick={onDuplicate}>
+          {t("entity.duplicate")}
         </button>
         <button type="button" className="danger" onClick={onDelete}>
           {t("entity.delete")}
@@ -440,6 +445,26 @@ export function EntityPanel({
     }
   }
 
+  // Copies a record's own field values into a real new record -- a quick
+  // way to create several similar entries (e.g. a recurring appointment,
+  // near-identical orders) without retyping the whole form. Only the
+  // entity's own fields are sent (id/createdAt are server-assigned), and
+  // nothing is asked for confirmation since duplicating, unlike deleting,
+  // creates rather than destroys data.
+  async function handleDuplicate(id: number) {
+    const record = records.find((r) => (r.id as number) === id);
+    if (!record) return;
+    setError(null);
+    try {
+      const copy: Record<string, unknown> = {};
+      for (const field of entity.fields) copy[field.name] = record[field.name];
+      await createRecord(projectId, entity.name, copy);
+      await refresh();
+    } catch (err) {
+      setError((err as Error).message);
+    }
+  }
+
   function toggleSelected(id: number) {
     setSelectedIds((prev) => {
       const next = new Set(prev);
@@ -693,6 +718,7 @@ export function EntityPanel({
                       relatedRecords={relatedRecords}
                       onMove={(value) => handleMove(record.id as number, boardField.name, value)}
                       onEdit={() => startEdit(record)}
+                      onDuplicate={() => handleDuplicate(record.id as number)}
                       onDelete={() => handleDelete(record.id as number)}
                     />
                   ))}
@@ -780,6 +806,9 @@ export function EntityPanel({
                       <td className="row-actions">
                         <button type="button" onClick={() => startEdit(record)}>
                           {t("entity.edit")}
+                        </button>
+                        <button type="button" onClick={() => handleDuplicate(record.id as number)}>
+                          {t("entity.duplicate")}
                         </button>
                         <button type="button" className="danger" onClick={() => handleDelete(record.id as number)}>
                           {t("entity.delete")}

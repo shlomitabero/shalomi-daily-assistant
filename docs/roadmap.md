@@ -1556,6 +1556,23 @@ not a single "make it perfect" claim.
       Full suite green (216 tests) + both builds clean + a from-scratch
       clean-room clone/install/test/build/start cycle with a live
       `/api/health` check.
+- [x] **"Duplicate record" quick action (live preview).** A new "שכפול"
+      (Duplicate) button next to Edit/Delete on both the table and Kanban
+      board views copies a record's own field values into a real new
+      record via the existing `createRecord` call — useful for a
+      recurring appointment or a near-identical order without retyping
+      the whole form. No confirmation dialog, unlike delete, since
+      duplicating creates rather than destroys data. Verified with a real
+      Playwright run: duplicated one of the build pipeline's own seeded
+      records, confirmed exactly one new row appeared with the same
+      value, then edited the duplicate's name and confirmed the
+      original stayed unchanged — proving the two are genuinely
+      independent records, not the same row rendered twice. Not yet
+      ported to the exported codegen app — a candidate for a future
+      round, following this codebase's established port-after-live-
+      preview pattern. Full suite green (218 tests) + both builds clean
+      + a from-scratch clean-room clone/install/test/build/start cycle
+      with a live `/api/health` check.
 
 ## Phase 3
 
