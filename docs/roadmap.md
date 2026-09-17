@@ -1803,6 +1803,50 @@ not a single "make it perfect" claim.
       clone/install/test/build/start cycle with a live `/api/health`
       check.
 
+- [x] **Self-review of the auth module — first self-review of anything
+      outside WhatsApp this session — found and fixed 2 real bugs.**
+      Every prior self-review round had focused on the WhatsApp code
+      specifically; the auth module (`apps/api/src/routes/auth.ts`,
+      `apps/api/src/auth/middleware.ts`, `apps/api/src/auth/password.ts`)
+      had never been reviewed on its own. Ran `code-review` at high
+      effort and found: (1) **email casing was never normalized** —
+      `createUser`'s uniqueness check and `findUserByEmail`'s lookup
+      (`packages/db/src/users.ts`) both do an exact-match SQL comparison
+      against whatever casing was stored, so signing up as
+      `"User@Example.com"` and later logging in as `"user@example.com"`
+      (something anyone could naturally type) failed with 401, and it let
+      two accounts exist for what a human would consider the same
+      address; (2) **a validation failure sent `ZodError.message`
+      directly as the error text**, which is `JSON.stringify()` of the
+      internal issues array, not a sentence — `httpError.ts` documents
+      `message` as the readable fallback for any error code a client
+      doesn't recognize, so any consumer other than this app's own web
+      client (which happens to always prefer its own translated
+      `VALIDATION_ERROR` message) would see a raw JSON blob instead of
+      "password must be at least 8 characters". Fixed both: emails are
+      now lowercased in `CredentialsSchema` itself — the one point every
+      signup/login request already passes through — and a small
+      `formatValidationError()` joins the real per-issue messages instead
+      of dumping the whole `ZodError`. Two more findings from the same
+      review were deliberately left for later: a login timing
+      side-channel (verifying the password only when the email exists)
+      adds no real new risk here, since signup's own `EMAIL_TAKEN`
+      response already lets anyone enumerate registered emails; and
+      `/auth/logout` re-parsing the `Authorization` header instead of
+      sharing extraction logic with `requireAuth` isn't currently causing
+      a bug, just a maintainability coupling. New `app.test.ts` tests:
+      signing up as `"Dana@Example.com"`, logging in as
+      `"dana@example.com"`, and a second signup as `"DANA@EXAMPLE.COM"`
+      correctly bouncing as `EMAIL_TAKEN`; and an invalid signup payload
+      getting back a real sentence, asserted to not even look like JSON.
+      Verified live too: booted the real built server, signed up through
+      the actual UI form with a mixed-case email, then in a fresh browser
+      context logged in with the fully-lowercased version of the same
+      email and reached the real home screen. Full suite green (231
+      tests total) + both builds clean + a from-scratch clean-room
+      clone/install/test/build/start cycle with a live `/api/health`
+      check.
+
 ## Phase 3
 
 - Self-healing: production observability, automatic diagnosis and patch
