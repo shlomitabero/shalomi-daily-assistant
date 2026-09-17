@@ -1969,6 +1969,31 @@ not a single "make it perfect" claim.
       from-scratch clean-room clone/install/test/build/start cycle with a
       live `/api/health` check.
 
+- [x] **Prune expired sessions instead of letting the table grow
+      forever.** The last remaining open finding from the earlier auth
+      self-review: `getSessionUser` filters expired sessions out of its
+      own query, but nothing ever deleted them — every login/signup
+      inserts a new 30-day session row and none are ever pruned, so a
+      long-running deployment's `sessions` table only ever grows. Added
+      `deleteExpiredSessions(db)` in `packages/db/src/users.ts`, called
+      opportunistically from `createSession` — the one write path every
+      login and signup already goes through — instead of adding a
+      separate scheduled job for what's a small, low-stakes cleanup.
+      Also wrote the first-ever direct unit tests for this module
+      (`packages/db/src/users.test.ts` didn't exist before; it had only
+      been exercised indirectly through `app.test.ts`'s HTTP-level auth
+      tests) covering the cleanup in isolation and through the real
+      `createSession` write path, plus a sanity check that
+      `getSessionUser` still resolves a real, unexpired session
+      correctly. Verified live too: pre-seeded a real file-based sqlite
+      database with an already-expired session row, booted the actual
+      built server against that same file, made one real signup HTTP
+      request, and confirmed the pre-existing expired row was gone
+      afterward — a real login pruning a real stale row it had no other
+      reason to touch. Full suite green (240 tests total) + both builds
+      clean + a from-scratch clean-room clone/install/test/build/start
+      cycle with a live `/api/health` check.
+
 ## Phase 3
 
 - Self-healing: production observability, automatic diagnosis and patch
