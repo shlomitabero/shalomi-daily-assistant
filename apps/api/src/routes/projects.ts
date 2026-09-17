@@ -16,6 +16,7 @@ import {
   deleteRecord,
   insertWhatsAppMessage,
   listWhatsAppMessages,
+  clearWhatsAppMessages,
   type ForgeDatabase,
 } from "@forge/db";
 import type { SpecProvider } from "@forge/spec-engine";
@@ -337,6 +338,15 @@ export function createProjectsRouter(db: ForgeDatabase, provider: SpecProvider |
     asyncRoute(async (req, res) => {
       const project = requireOwnedProject(db, req.params.id, req.userId!);
       res.json({ messages: listWhatsAppMessages(db, project.id) });
+    }),
+  );
+
+  router.delete(
+    "/projects/:id/integrations/whatsapp/messages",
+    asyncRoute(async (req, res) => {
+      const project = requireOwnedProject(db, req.params.id, req.userId!);
+      clearWhatsAppMessages(db, project.id);
+      res.status(204).end();
     }),
   );
 

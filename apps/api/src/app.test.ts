@@ -751,6 +751,70 @@ test("WhatsApp: a failed send stays logged as failed, and retrying with the same
   );
 });
 
+test("WhatsApp: clearing the message history wipes this project's log but never touches another project's", async () => {
+  let createdSockets: ReturnType<typeof createFakeWhatsAppSocket>[] = [];
+  await withServer(
+    async (baseUrl) => {
+      const token = await signup(baseUrl);
+
+      const createRes = await fetch(`${baseUrl}/api/projects`, {
+        method: "POST",
+        headers: authHeaders(token),
+        body: JSON.stringify({ description: "A CRM with customers and deals." }),
+      });
+      const { project } = (await createRes.json()) as { project: { id: string } };
+      const otherRes = await fetch(`${baseUrl}/api/projects`, {
+        method: "POST",
+        headers: authHeaders(token),
+        body: JSON.stringify({ description: "A separate vet clinic app." }),
+      });
+      const { project: otherProject } = (await otherRes.json()) as { project: { id: string } };
+
+      await fetch(`${baseUrl}/api/projects/${project.id}/integrations/whatsapp/connect`, { method: "POST", headers: authHeaders(token) });
+      createdSockets[0].sock.user = { id: "15550001111:1@s.whatsapp.net" };
+      createdSockets[0].emitConnectionUpdate({ connection: "open" });
+      await fetch(`${baseUrl}/api/projects/${project.id}/integrations/whatsapp/send`, {
+        method: "POST",
+        headers: authHeaders(token),
+        body: JSON.stringify({ to: "972501234567", message: "היי" }),
+      });
+
+      await fetch(`${baseUrl}/api/projects/${otherProject.id}/integrations/whatsapp/connect`, { method: "POST", headers: authHeaders(token) });
+      createdSockets[1].sock.user = { id: "15550002222:1@s.whatsapp.net" };
+      createdSockets[1].emitConnectionUpdate({ connection: "open" });
+      await fetch(`${baseUrl}/api/projects/${otherProject.id}/integrations/whatsapp/send`, {
+        method: "POST",
+        headers: authHeaders(token),
+        body: JSON.stringify({ to: "972509999999", message: "שלום מהמרפאה" }),
+      });
+
+      const clearRes = await fetch(`${baseUrl}/api/projects/${project.id}/integrations/whatsapp/messages`, {
+        method: "DELETE",
+        headers: authHeaders(token),
+      });
+      assert.equal(clearRes.status, 204);
+
+      const clearedRes = await fetch(`${baseUrl}/api/projects/${project.id}/integrations/whatsapp/messages`, { headers: authHeaders(token) });
+      const { messages: clearedMessages } = (await clearedRes.json()) as { messages: unknown[] };
+      assert.equal(clearedMessages.length, 0);
+
+      const otherStillThereRes = await fetch(`${baseUrl}/api/projects/${otherProject.id}/integrations/whatsapp/messages`, {
+        headers: authHeaders(token),
+      });
+      const { messages: otherMessages } = (await otherStillThereRes.json()) as { messages: { body: string }[] };
+      assert.equal(otherMessages.length, 1);
+      assert.equal(otherMessages[0].body, "שלום מהמרפאה");
+    },
+    {
+      whatsapp: (db) => {
+        const created = createTestWhatsAppManager(db);
+        createdSockets = created.createdSockets;
+        return created.manager;
+      },
+    },
+  );
+});
+
 test("WhatsApp: a real incoming message from the linked socket is logged and matched to the right customer record", async () => {
   let createdSockets: ReturnType<typeof createFakeWhatsAppSocket>[] = [];
   await withServer(

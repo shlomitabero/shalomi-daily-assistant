@@ -175,3 +175,8 @@ export function listWhatsAppMessages(db: ForgeDatabase, projectId: string, limit
     .all(projectId, limit) as Record<string, unknown>[];
   return rows.map(rowToMessage);
 }
+
+/** Wipes a project's whole WhatsApp message log (both directions) -- the user's own explicit "clear history" action, not something triggered automatically. */
+export function clearWhatsAppMessages(db: ForgeDatabase, projectId: string): void {
+  db.prepare("DELETE FROM whatsapp_messages WHERE projectId = ?").run(projectId);
+}

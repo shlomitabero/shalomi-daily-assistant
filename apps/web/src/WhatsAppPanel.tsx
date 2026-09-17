@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "./i18n/LanguageContext.js";
 import { useDialogFocusTrap } from "./useDialogFocusTrap.js";
 import {
+  clearWhatsAppMessages,
   connectWhatsApp,
   disconnectWhatsApp,
   getWhatsAppStatus,
@@ -29,6 +30,7 @@ export function WhatsAppPanel({ projectId, onClose }: { projectId: string; onClo
   const [sendResult, setSendResult] = useState<{ ok: boolean; text: string } | null>(null);
   const [messages, setMessages] = useState<WhatsAppMessageLogEntry[]>([]);
   const [retryingId, setRetryingId] = useState<string | null>(null);
+  const [clearing, setClearing] = useState(false);
   const dialogRef = useDialogFocusTrap<HTMLDivElement>();
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const pollFailuresRef = useRef(0);
@@ -144,6 +146,19 @@ export function WhatsAppPanel({ projectId, onClose }: { projectId: string; onClo
     }
   }
 
+  async function handleClearHistory() {
+    if (!window.confirm(t("whatsapp.log.confirmClear"))) return;
+    setClearing(true);
+    try {
+      await clearWhatsAppMessages(projectId);
+      setMessages([]);
+    } catch (err) {
+      setLoadError((err as Error).message);
+    } finally {
+      setClearing(false);
+    }
+  }
+
   const s = status?.status ?? "disconnected";
 
   return (
@@ -224,7 +239,14 @@ export function WhatsAppPanel({ projectId, onClose }: { projectId: string; onClo
         )}
 
         <div className="whatsapp-message-log">
-          <h3>{t("whatsapp.log.heading")}</h3>
+          <div className="whatsapp-log-header">
+            <h3>{t("whatsapp.log.heading")}</h3>
+            {messages.length > 0 && (
+              <button type="button" className="secondary small" onClick={handleClearHistory} disabled={clearing}>
+                {clearing ? t("whatsapp.log.clearing") : t("whatsapp.log.clear")}
+              </button>
+            )}
+          </div>
           {messages.length === 0 ? (
             <p className="muted small">{t("whatsapp.log.empty")}</p>
           ) : (

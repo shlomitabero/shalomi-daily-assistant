@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { openDatabase } from "./connection.js";
 import {
+  clearWhatsAppMessages,
   ensureWhatsAppConnectionsTable,
   ensureWhatsAppMessagesTable,
   getWhatsAppConnection,
@@ -147,4 +148,37 @@ test("listWhatsAppMessages scopes to the given project and respects the limit", 
   assert.equal(listWhatsAppMessages(db, "proj1").length, 5);
   assert.equal(listWhatsAppMessages(db, "proj1", 2).length, 2);
   assert.equal(listWhatsAppMessages(db, "proj2").length, 1);
+});
+
+test("clearWhatsAppMessages wipes only the given project's message log, leaving other projects untouched", () => {
+  const db = openDatabase(":memory:");
+  ensureWhatsAppMessagesTable(db);
+  insertWhatsAppMessage(db, {
+    projectId: "proj1",
+    direction: "in",
+    fromNumber: "972500000000",
+    toNumber: "15550001111",
+    body: "message to clear",
+    status: "received",
+  });
+  insertWhatsAppMessage(db, {
+    projectId: "proj2",
+    direction: "in",
+    fromNumber: "972500000001",
+    toNumber: "15550001111",
+    body: "someone else's message",
+    status: "received",
+  });
+
+  clearWhatsAppMessages(db, "proj1");
+
+  assert.equal(listWhatsAppMessages(db, "proj1").length, 0);
+  assert.equal(listWhatsAppMessages(db, "proj2").length, 1);
+});
+
+test("clearWhatsAppMessages is a harmless no-op for a project with no messages", () => {
+  const db = openDatabase(":memory:");
+  ensureWhatsAppMessagesTable(db);
+  clearWhatsAppMessages(db, "proj-empty");
+  assert.equal(listWhatsAppMessages(db, "proj-empty").length, 0);
 });

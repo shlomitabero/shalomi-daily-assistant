@@ -49,6 +49,7 @@ export {
   ensureWhatsAppMessagesTable,
   insertWhatsAppMessage,
   listWhatsAppMessages,
+  clearWhatsAppMessages,
   type WhatsAppConnection,
   type WhatsAppMessage,
   type WhatsAppMessageDirection,

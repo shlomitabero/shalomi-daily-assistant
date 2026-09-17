@@ -374,3 +374,7 @@ export interface WhatsAppMessageLogEntry {
 export function listWhatsAppMessages(projectId: string): Promise<{ messages: WhatsAppMessageLogEntry[] }> {
   return request(`/projects/${projectId}/integrations/whatsapp/messages`);
 }
+
+export function clearWhatsAppMessages(projectId: string): Promise<void> {
+  return request(`/projects/${projectId}/integrations/whatsapp/messages`, { method: "DELETE" });
+}

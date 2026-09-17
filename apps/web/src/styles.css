@@ -1499,6 +1499,17 @@ button.sort-header:hover:not(:disabled) {
   margin-top: 16px;
 }
 
+.whatsapp-log-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.whatsapp-log-header h3 {
+  margin: 0;
+}
+
 .whatsapp-log-list {
   list-style: none;
   margin: 8px 0 0;
