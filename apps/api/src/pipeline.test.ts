@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { AgentStepEvent, Project, ProductSpec } from "@forge/shared";
-import { ensureCheckpointsTable, ensureProjectsTable, insertProject, openDatabase } from "@forge/db";
+import { countRecords, ensureCheckpointsTable, ensureProjectsTable, insertProject, listRecords, openDatabase } from "@forge/db";
 import { runBuildPipeline } from "./pipeline.js";
 
 const brokenSpec: ProductSpec = {
@@ -103,6 +103,55 @@ test("Debug Agent honestly reports it can't help when no ANTHROPIC_API_KEY is co
   } finally {
     process.env.ANTHROPIC_API_KEY = originalKey;
   }
+});
+
+test("re-running the pipeline for the same project doesn't re-seed a table that already has data", async () => {
+  // POST /projects/:id/build (apps/api/src/routes/projects.ts) always calls
+  // runBuildPipeline with previousSpec undefined -- there's no previous spec
+  // for an initial build. That also means a retry after a failure (the UI's
+  // "back" button returns to the spec screen, from where the real Build
+  // button re-POSTs the same spec) calls this pipeline exactly the same way
+  // as the first attempt: previousSpec is still undefined both times.
+  const spec: ProductSpec = {
+    summary: "test",
+    personas: [],
+    roles: ["Admin"],
+    screens: [],
+    assumptions: [],
+    openQuestions: [],
+    entities: [{ name: "Customer", label: "Customers", fields: [{ name: "name", type: "text", required: true }] }],
+  };
+  const db = openDatabase(":memory:");
+  ensureProjectsTable(db);
+  ensureCheckpointsTable(db);
+  const project = insertProject(db, {
+    id: "proj1",
+    ownerId: "user1",
+    name: "test",
+    description: "test",
+    spec,
+  });
+  const customer = spec.entities[0];
+
+  const firstRun = await collect(runBuildPipeline(db, project, { nextSpec: spec, changeLabel: "Initial build" }));
+  const firstForge = firstRun.find((e) => e.agent === "Forge");
+  assert.ok(firstForge && firstForge.status === "success", "first build should succeed");
+  const countAfterFirstBuild = countRecords(db, project.id, customer);
+  assert.ok(countAfterFirstBuild > 0, "the first build should have seeded some sample records");
+
+  // Same project, same spec, previousSpec still undefined -- a real retry.
+  const secondRun = await collect(runBuildPipeline(db, project, { nextSpec: spec, changeLabel: "Initial build" }));
+  const secondSeedEvent = secondRun.find((e) => e.agent === "Seed Data" && e.status === "success");
+  assert.ok(secondSeedEvent);
+  assert.deepEqual(
+    (secondSeedEvent!.detail as { entities: string[] }).entities,
+    [],
+    "the retry must not report re-seeding a table that already has data",
+  );
+
+  const countAfterRetry = countRecords(db, project.id, customer);
+  assert.equal(countAfterRetry, countAfterFirstBuild, "retrying the same build must not duplicate the sample records");
+  assert.equal(listRecords(db, project.id, customer).length, countAfterFirstBuild);
 });
 
 test("Debug Agent reports failure clearly when its own fix attempt is also invalid", async () => {

@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { AgentStepEvent, Entity, ProductSpec, Project } from "@forge/shared";
 import {
+  countRecords,
   diffAndMigrate,
   generateSeedRecords,
   getProject,
@@ -194,7 +195,17 @@ export async function* runBuildPipeline(
 
   yield { agent: "Seed Data", status: "running", message: "Generating sample records for new tables…" };
   const newEntityNames = new Set(changes.filter((c) => c.type === "new_table").map((c) => c.table));
-  const entitiesToSeed = nextSpec.entities.filter((e) => newEntityNames.has(tableNameFor(project.id, e.name)));
+  // Also requires the table to actually be empty right now, not just
+  // "new" per this diff: /projects/:id/build always calls this pipeline
+  // with previousSpec undefined (there's no previous spec for an initial
+  // build), so diffAndMigrate reports every entity as new_table on every
+  // call -- including a retry of a build that already got partway through
+  // seeding before a later step (QA) failed. Without this check, a retry
+  // re-inserts a full duplicate round of sample rows into tables that
+  // already have them.
+  const entitiesToSeed = nextSpec.entities.filter(
+    (e) => newEntityNames.has(tableNameFor(project.id, e.name)) && countRecords(db, project.id, e) === 0,
+  );
   let seededCount = 0;
   const seedErrors: string[] = [];
   for (const entity of entitiesToSeed) {

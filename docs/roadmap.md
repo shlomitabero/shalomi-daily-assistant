@@ -2029,6 +2029,44 @@ not a single "make it perfect" claim.
       clone/install/test/build/start cycle with a live `/api/health`
       check.
 
+- [x] **Fix a real bug: retrying a failed initial build duplicates every
+      table's sample data.** Self-reviewed `apps/api/pipeline.ts` (never
+      reviewed before) and this time the finding held up under an actual
+      regression test, unlike the previous round's twin.ts finding.
+      `POST /projects/:id/build` always calls `runBuildPipeline` with
+      `previousSpec` undefined — there's no previous spec for an initial
+      build — and `diffAndMigrate` reports *every* entity as `new_table`
+      whenever `previousSpec` is undefined (by design, so a first build's
+      migration report is complete). The Seed Data step used that
+      `new_table` list alone to decide what to seed. If a build gets
+      partway through (schema created, sample rows inserted) and then a
+      later step fails — QA is the one step that can genuinely fail and
+      halt the pipeline — the UI's "back" button returns to the spec
+      screen, and clicking "Build" again re-POSTs the identical request:
+      same undefined `previousSpec`, so every entity is reported as
+      `new_table` again, and the old code re-seeded a full duplicate
+      round of sample rows into tables that already had them, with no
+      de-dup. Verified this was real, not theoretical, before touching
+      anything: wrote a regression test that runs the real pipeline
+      twin the exact way the route calls it (twice, `previousSpec`
+      always undefined) and confirmed it failed against the old code —
+      it asserted the second run's Seed Data step should report seeding
+      nothing, and instead saw the same table re-seeded. Fixed by also
+      requiring the table to be genuinely empty right now
+      (`countRecords(db, project.id, entity) === 0`) before seeding it,
+      not just "new" per the diff — cheap, uses the existing indexed
+      count query, and doesn't need previousSpec threaded through at
+      all. Verified live end-to-end too: signed up, created a real
+      project via the heuristic provider, called the real build endpoint
+      twice over actual HTTP against a clean-room-built server — the
+      first call's real SSE stream reported "Seeded 2 sample record(s)"
+      for the new table, the second (retry) call reported "No new tables
+      to seed" with `seededCount: 0`, exactly the fix working end to
+      end. Full suite green (242 tests total across all 4 workspaces) +
+      both builds clean + a from-scratch clean-room
+      clone/install/test/build/start cycle with a live `/api/health`
+      check.
+
 ## Phase 3
 
 - Self-healing: production observability, automatic diagnosis and patch
