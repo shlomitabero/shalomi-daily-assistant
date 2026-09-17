@@ -256,6 +256,33 @@ test("the Vendor, Expense, and Review entities each get believable seed values, 
   assert.ok((reviewRecord.rating as number) >= 1 && (reviewRecord.rating as number) <= 5);
 });
 
+test("the WorkOrder, Volunteer, and Case entities each get believable seed values, not the generic placeholder formula", () => {
+  const workOrder: Entity = {
+    name: "WorkOrder",
+    fields: [
+      { name: "title", type: "text", required: true },
+      { name: "technician", type: "text", required: false },
+    ],
+  };
+  const volunteer: Entity = {
+    name: "Volunteer",
+    fields: [{ name: "name", type: "text", required: true }],
+  };
+  const legalCase: Entity = {
+    name: "Case",
+    fields: [{ name: "title", type: "text", required: true }],
+  };
+
+  const [workOrderRecord] = generateSeedRecords(workOrder, 1);
+  assert.doesNotMatch(workOrderRecord.technician as string, /WorkOrder technician/);
+
+  const [volunteerRecord] = generateSeedRecords(volunteer, 1);
+  assert.doesNotMatch(volunteerRecord.name as string, /Volunteer name/);
+
+  const [caseRecord] = generateSeedRecords(legalCase, 1);
+  assert.doesNotMatch(caseRecord.title as string, /Case title/);
+});
+
 test("an unrecognized field name still gets a labeled fallback value instead of throwing", () => {
   const custom: Entity = { name: "Widget", fields: [{ name: "colorPreference", type: "text", required: false }] };
   const [record] = generateSeedRecords(custom, 1);

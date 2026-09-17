@@ -304,3 +304,38 @@ test("Review's keywords avoid the substring collisions bare 'rating'/'review' wo
   const preview = await provider.generate("An app with a live preview of the product catalog for our sales team.");
   assert.ok(!preview.entities.some((e) => e.name === "Review"), "'preview' must not spuriously match Review via a 'review' substring");
 });
+
+test("recognizes field-service/repair, nonprofit-volunteer, and legal-case descriptions with tailored entities", async () => {
+  const provider = new HeuristicSpecProvider();
+
+  const repair = await provider.generate("An app for scheduling repair jobs and service calls for our plumbing business.");
+  assert.ok(repair.entities.some((e) => e.name === "WorkOrder"));
+
+  const nonprofit = await provider.generate("An app to manage our volunteers and their shifts.");
+  assert.ok(nonprofit.entities.some((e) => e.name === "Volunteer"));
+
+  const legal = await provider.generate("An app for our law firm to track legal cases for clients.");
+  assert.ok(legal.entities.some((e) => e.name === "Case"));
+
+  // The same phrasing in Hebrew, using the natural plural form a real idea
+  // description would use ("קריאות שירות"/"תיקים משפטיים"), not just the
+  // singular/construct form the keyword list happens to lead with.
+  const repairHe = await provider.generate("אפליקציה לניהול קריאות שירות לטכנאי מזגנים");
+  assert.ok(repairHe.entities.some((e) => e.name === "WorkOrder"));
+
+  const nonprofitHe = await provider.generate("אפליקציה לניהול מתנדבים בעמותה");
+  assert.ok(nonprofitHe.entities.some((e) => e.name === "Volunteer"));
+
+  const legalHe = await provider.generate("אפליקציה לניהול תיקים משפטיים למשרד עורכי דין");
+  assert.ok(legalHe.entities.some((e) => e.name === "Case"));
+});
+
+test("WorkOrder deliberately avoids Vehicle's own 'מוסך'/'מכונאי'/'garage'/'mechanic' keywords, so a garage idea doesn't ambiguously pick up an unrelated WorkOrder match from those words alone", async () => {
+  const provider = new HeuristicSpecProvider();
+  const garage = await provider.generate("An app for our garage to track vehicles our mechanics service.");
+  assert.ok(garage.entities.some((e) => e.name === "Vehicle"));
+  assert.ok(
+    !garage.entities.some((e) => e.name === "WorkOrder"),
+    "'garage'/'mechanic' alone must not spuriously match WorkOrder -- only its own distinct keywords should",
+  );
+});

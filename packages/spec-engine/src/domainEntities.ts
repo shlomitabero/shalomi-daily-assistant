@@ -852,6 +852,130 @@ export const DOMAIN_ENTITY_RULES: DomainEntityRule[] = [
       ],
     },
   },
+  {
+    // Field-service/repair jobs (plumbers, electricians, appliance/AC
+    // technicians, handymen) -- a distinct concept from the Ticket entity's
+    // "customer complaint that needs a response": a WorkOrder is scheduled
+    // physical work with an assigned technician, not a support conversation.
+    // "מוסך"/"מכונאי" are deliberately NOT reused here -- they're already
+    // Vehicle's own keywords (see above), and reusing them would blur which
+    // entity a garage idea actually means. "work order"/"service call" do
+    // overlap the bare "service"/"order" keywords already bound to the
+    // Service/Order entities; that's an intentional, harmless double-match
+    // (a repair business plausibly wants a services catalog and/or a
+    // generic order list too), not the false-positive substring pitfall
+    // this file's header warns about.
+    keywords: [
+      "work order", "field service", "service call", "repair job", "maintenance request",
+      "קריאת שירות", "קריאות שירות", "עבודת תחזוקה", "טכנאי", "אינסטלטור", "חשמלאי",
+    ],
+    labelHe: "קריאות שירות",
+    descriptionHe: "עבודת תיקון או תחזוקה מתוזמנת שהעסק מבצע עבור לקוח.",
+    fieldLabelsHe: {
+      title: "תיאור העבודה",
+      customerId: "לקוח",
+      technician: "טכנאי",
+      status: "סטטוס",
+      scheduledDate: "תאריך מתוזמן",
+      notes: "הערות",
+    },
+    enumLabelsHe: {
+      status: { Scheduled: "מתוזמנת", InProgress: "בביצוע", Completed: "הושלמה", Cancelled: "בוטלה" },
+    },
+    entity: {
+      name: "WorkOrder",
+      description: "A scheduled repair or maintenance job performed for a customer.",
+      fields: [
+        { name: "title", type: "text", required: true },
+        { name: "customerId", type: "relation", required: false, relationTo: "Customer" },
+        { name: "technician", type: "text", required: false },
+        {
+          name: "status",
+          type: "enum",
+          required: true,
+          enumValues: ["Scheduled", "InProgress", "Completed", "Cancelled"],
+        },
+        { name: "scheduledDate", type: "date", required: false },
+        { name: "notes", type: "longtext", required: false },
+      ],
+    },
+  },
+  {
+    // Volunteers for a nonprofit -- a distinct person/role from a Donor
+    // (see Donation's entity above): someone who gives time, not money.
+    // Pairs naturally with Donation for an NGO/community-org idea, and the
+    // two entities are expected to both fire together on "nonprofit"/
+    // "עמותה" without conflict.
+    keywords: [
+      "volunteer", "volunteer management", "volunteer shift",
+      "מתנדב", "מתנדבת", "מתנדבים", "התנדבות",
+    ],
+    labelHe: "מתנדבים",
+    descriptionHe: "מי שתורם/ת זמן להתנדבות בעסק או בעמותה.",
+    fieldLabelsHe: { name: "שם", phone: "טלפון", email: "אימייל", role: "תפקיד", status: "סטטוס", joinedDate: "תאריך הצטרפות" },
+    enumLabelsHe: {
+      status: { Active: "פעיל/ה", Inactive: "לא פעיל/ה" },
+    },
+    entity: {
+      name: "Volunteer",
+      description: "A person who donates time to the organization.",
+      fields: [
+        { name: "name", type: "text", required: true },
+        { name: "phone", type: "text", required: false },
+        { name: "email", type: "text", required: false },
+        { name: "role", type: "text", required: false },
+        {
+          name: "status",
+          type: "enum",
+          required: true,
+          enumValues: ["Active", "Inactive"],
+        },
+        { name: "joinedDate", type: "date", required: false },
+      ],
+    },
+  },
+  {
+    // Legal case files for a law firm or legal consultant -- the one
+    // professional-services domain not yet covered (Patient covers
+    // healthcare, Student covers education). "לקוח"/"client" already exist
+    // as Customer's own keywords, so a legal idea naturally also gets a
+    // Customer entity alongside Case, matching this file's established
+    // tolerance for related entities co-firing (e.g. Ticket + Customer).
+    keywords: [
+      "legal case", "law firm", "case management", "legal matter",
+      "תיק משפטי", "תיקים משפטיים", "עורך דין", "עורכת דין",
+    ],
+    labelHe: "תיקים",
+    descriptionHe: "תיק משפטי שמנוהל עבור לקוח.",
+    fieldLabelsHe: {
+      title: "נושא התיק",
+      clientId: "לקוח",
+      caseType: "סוג תיק",
+      status: "סטטוס",
+      openedDate: "תאריך פתיחה",
+      notes: "הערות",
+    },
+    enumLabelsHe: {
+      status: { Open: "פתוח", InProgress: "בטיפול", Closed: "סגור" },
+    },
+    entity: {
+      name: "Case",
+      description: "A legal matter managed on behalf of a client.",
+      fields: [
+        { name: "title", type: "text", required: true },
+        { name: "clientId", type: "relation", required: false, relationTo: "Customer" },
+        { name: "caseType", type: "text", required: false },
+        {
+          name: "status",
+          type: "enum",
+          required: true,
+          enumValues: ["Open", "InProgress", "Closed"],
+        },
+        { name: "openedDate", type: "date", required: false },
+        { name: "notes", type: "longtext", required: false },
+      ],
+    },
+  },
 ];
 
 export interface RoleRule {

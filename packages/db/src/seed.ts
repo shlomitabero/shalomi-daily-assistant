@@ -130,6 +130,7 @@ function textSeedValueFor(fieldName: string, entityName: string, isHebrew: boole
     case "owner":
     case "assignee":
     case "instructor":
+    case "technician":
       return fieldName === "instructor"
         ? pick(isHebrew ? INSTRUCTORS_HE : INSTRUCTORS_EN, index)
         : pick(isHebrew ? PERSON_NAMES_HE : PERSON_NAMES_EN, index);

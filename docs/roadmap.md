@@ -1635,6 +1635,42 @@ not a single "make it perfect" claim.
         Full suite green (219 tests, unaffected) + both builds clean + a
         from-scratch clean-room clone/install/test/build/start cycle
         with a live `/api/health` check.
+- [x] **Three more domain entities: WorkOrder, Volunteer, Case.** Extends
+      the heuristic (offline, no-LLM) domain library with three
+      previously-uncovered small-business categories: **WorkOrder**
+      (field-service/repair jobs — plumbers, electricians, AC
+      technicians; deliberately does *not* reuse Vehicle's own
+      "מוסך"/"מכונאי"/"garage"/"mechanic" keywords, so a garage idea
+      doesn't ambiguously blur into an unrelated WorkOrder match),
+      **Volunteer** (a nonprofit's own people who donate time, distinct
+      from a Donor and pairing naturally with the existing Donation
+      entity), and **Case** (a law firm/legal consultant's case files —
+      the one professional-services domain not yet covered; Patient
+      covers healthcare, Student covers education). Every new keyword
+      was checked by hand against this file's own documented pitfalls
+      (English short-substring collisions, Hebrew construct-state suffix
+      inflection) before being added — caught one for real while writing
+      the tests: the natural plural phrasing a real idea would use
+      ("קריאות שירות", "תיקים משפטיים") is *not* a substring of the
+      singular/construct keyword form ("קריאת שירות", "תיק משפטי"), so
+      both forms are now listed explicitly, the same fix already applied
+      to `תמיכה`/`תמיכת` for Ticket in an earlier round.
+      `packages/db/src/seed.ts`'s existing `technician`-shaped-field
+      branch was extended to route through the real person-name pool
+      instead of the generic placeholder formula (one line — `technician`
+      genuinely is a person's name, same reasoning as `assignee`/`owner`).
+      Verified with new `heuristic.test.ts` tests (positive match in
+      English and Hebrew for all three, plus a regression test proving
+      WorkOrder does *not* spuriously fire on bare "garage"/"mechanic"),
+      a new `seed.test.ts` test confirming real seed values (not the
+      generic placeholder) for all three, and a real Playwright run: built
+      three separate real apps (one per new domain, in Hebrew), opened
+      each entity's live tab, and confirmed real non-empty seeded rows
+      rendered with no console errors — including confirming the
+      technician name fix landed (a real Hebrew name, not
+      "WorkOrder - technician 2"). Full suite green (222 tests) + both
+      builds clean + a from-scratch clean-room clone/install/test/build/
+      start cycle with a live `/api/health` check.
 
 ## Phase 3
 
