@@ -1931,6 +1931,44 @@ not a single "make it perfect" claim.
       doesn't round-trip either — are left for a dedicated CSV round-trip
       fix later.)
 
+- [x] **Fixed the CSV export/import round-trip bug the previous round
+      found, in all three places it was duplicated.** `recordsToCsv`
+      formatted numbers with `toLocaleString()` (adding a thousands
+      separator) and dates with `toLocaleDateString()` (locale date
+      order) for CSV export — in the live preview
+      (`apps/web/src/entityFormatting.ts`), the exported standalone app's
+      own copy (`apps/api/src/codegen.ts`), and the "Backup All Data" ZIP
+      (`apps/api/src/backup.ts`, whose own doc comment already says it
+      "intentionally mirrors" the other two). None of the three
+      round-trip: `buildImportRecords` re-parses a number with plain
+      `Number()`, which chokes on the comma in `"1,234"`, and a
+      locale-formatted date like `"1/2/2024"` is ambiguous and doesn't
+      match the ISO format the app's own `<input type="date">` expects —
+      so exporting one of your own records and re-importing it silently
+      corrupted or dropped the row. Fixed all three by writing numbers
+      and dates to CSV as their plain stored value instead — no locale
+      formatting — which `buildImportRecords` already parses correctly.
+      The on-screen table view is untouched: it calls the same
+      `formatNumberValue`/`formatDateValue` helpers, but through a
+      separate function that was never part of the CSV round trip, so
+      locale-friendly reading in the UI itself is unaffected. New tests:
+      a real `recordsToCsv` → `parseCsv` → `buildImportRecords` round
+      trip for a number ≥ 1000 plus a date field
+      (`entityFormatting.test.ts`), a matching test in `backup.test.ts`,
+      and the one existing test that had been asserting the old, buggy
+      `"1,234"` output was fixed to match the corrected behavior.
+      Verified live too: built a real Invoice project through the actual
+      UI (an idea worded to reliably hit the heuristic's `Invoice` entity,
+      which has both an `amount` and a `dueDate` field), created a record
+      with `amount=12345` and a due date, downloaded the real exported
+      CSV and confirmed it contains the raw `12345` and `2024-01-15` (not
+      `12,345` or a locale-reordered date), then re-uploaded that exact
+      downloaded file through the real "Import CSV" button and confirmed
+      no `"isn't a number"` error and a second row with the same amount.
+      Full suite green (236 tests total) + both builds clean + a
+      from-scratch clean-room clone/install/test/build/start cycle with a
+      live `/api/health` check.
+
 ## Phase 3
 
 - Self-healing: production observability, automatic diagnosis and patch
