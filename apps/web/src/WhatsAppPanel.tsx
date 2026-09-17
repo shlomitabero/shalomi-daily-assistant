@@ -30,6 +30,7 @@ export function WhatsAppPanel({ projectId, onClose }: { projectId: string; onClo
   const [sendResult, setSendResult] = useState<{ ok: boolean; text: string } | null>(null);
   const [messages, setMessages] = useState<WhatsAppMessageLogEntry[]>([]);
   const [retryingId, setRetryingId] = useState<string | null>(null);
+  const [retryError, setRetryError] = useState<string | null>(null);
   const [clearing, setClearing] = useState(false);
   const dialogRef = useDialogFocusTrap<HTMLDivElement>();
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -132,15 +133,18 @@ export function WhatsAppPanel({ projectId, onClose }: { projectId: string; onClo
 
   async function handleRetry(m: WhatsAppMessageLogEntry) {
     setRetryingId(m.id);
+    setRetryError(null);
     try {
-      await sendWhatsAppMessage(projectId, m.toNumber, m.body);
+      const result = await sendWhatsAppMessage(projectId, m.toNumber, m.body);
+      // A retry can fail for a reason that never reaches insertWhatsAppMessage
+      // on the server (e.g. WhatsApp disconnected since the original failed
+      // send) -- in that case the message log is unchanged, so show the
+      // reason directly instead of leaving the button silently reset.
+      if (!result.ok) setRetryError(result.error ?? t("whatsapp.log.retryError"));
       const { messages } = await listWhatsAppMessages(projectId);
       setMessages(messages);
-    } catch {
-      // sendWhatsAppMessage already surfaces a failed send as a normal
-      // {ok:false} response logged to the message list, so a thrown error
-      // here means the request itself never reached the server -- the
-      // failed entry just stays in the log, retryable again.
+    } catch (err) {
+      setRetryError((err as Error).message);
     } finally {
       setRetryingId(null);
     }
@@ -152,6 +156,7 @@ export function WhatsAppPanel({ projectId, onClose }: { projectId: string; onClo
     try {
       await clearWhatsAppMessages(projectId);
       setMessages([]);
+      setRetryError(null);
     } catch (err) {
       setLoadError((err as Error).message);
     } finally {
@@ -247,6 +252,7 @@ export function WhatsAppPanel({ projectId, onClose }: { projectId: string; onClo
               </button>
             )}
           </div>
+          {retryError && <p className="error">{retryError}</p>}
           {messages.length === 0 ? (
             <p className="muted small">{t("whatsapp.log.empty")}</p>
           ) : (

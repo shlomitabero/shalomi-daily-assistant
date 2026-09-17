@@ -354,8 +354,14 @@ export async function sendWhatsAppMessage(projectId: string, to: string, message
   // A failed send (e.g. the socket drops mid-send, or the number is
   // invalid) is still a normal, expected response here -- surface it as
   // data, not a thrown error, so the panel can show the real reason
-  // instead of a generic failure.
-  return (await res.json()) as WhatsAppSendResult;
+  // instead of a generic failure. But some failures (e.g. sending before
+  // WhatsApp is connected) come back as the shared {error, code} shape the
+  // generic error middleware uses, not this route's own {ok, error} shape
+  // -- normalize those too, so every caller can just check `.ok` without
+  // needing to know which failure path produced the response.
+  const body = (await res.json().catch(() => ({}))) as { ok?: boolean; error?: string; code?: string };
+  if (typeof body.ok === "boolean") return body as WhatsAppSendResult;
+  return { ok: false, error: resolveErrorMessage(body) };
 }
 
 export interface WhatsAppMessageLogEntry {
