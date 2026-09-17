@@ -17,6 +17,12 @@ const POLL_INTERVAL_MS = 1500;
 // backend) shouldn't permanently strand the panel in "connecting" with no
 // further updates -- only give up after several polls in a row fail.
 const MAX_CONSECUTIVE_POLL_FAILURES = 5;
+// Once connected, WhatsApp itself can still drop the link later (phone
+// loses signal, is turned off, unlinks the device, ...) with no action
+// from this panel at all -- a slower background poll is enough to notice
+// that and refresh the UI, without hammering the server the way the fast
+// QR-waiting poll above needs to.
+const CONNECTED_POLL_INTERVAL_MS = 10000;
 
 export function WhatsAppPanel({ projectId, onClose }: { projectId: string; onClose: () => void }) {
   const { t } = useTranslation();
@@ -35,12 +41,44 @@ export function WhatsAppPanel({ projectId, onClose }: { projectId: string; onClo
   const dialogRef = useDialogFocusTrap<HTMLDivElement>();
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const pollFailuresRef = useRef(0);
+  const connectedPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   function stopPolling() {
     if (pollRef.current) {
       clearInterval(pollRef.current);
       pollRef.current = null;
     }
+  }
+
+  function stopConnectedPolling() {
+    if (connectedPollRef.current) {
+      clearInterval(connectedPollRef.current);
+      connectedPollRef.current = null;
+    }
+  }
+
+  /**
+   * Runs while status is "connected", so the panel notices if WhatsApp
+   * itself drops the link later (phone loses signal, gets unlinked, ...)
+   * instead of trusting a status that could be stale indefinitely -- this
+   * is what was missing when a stale "connected" status let the Retry
+   * button silently do nothing (see docs/roadmap.md).
+   */
+  function startConnectedPolling() {
+    stopConnectedPolling();
+    connectedPollRef.current = setInterval(async () => {
+      try {
+        const next = await getWhatsAppStatus(projectId);
+        setStatus(next);
+        if (next.status !== "connected") {
+          stopConnectedPolling();
+          if (next.status === "connecting" || next.status === "qr") startPolling();
+        }
+      } catch {
+        // A single failed background check while connected isn't worth
+        // interrupting the user over -- just try again next tick.
+      }
+    }, CONNECTED_POLL_INTERVAL_MS);
   }
 
   function startPolling() {
@@ -56,6 +94,7 @@ export function WhatsAppPanel({ projectId, onClose }: { projectId: string; onClo
           if (next.status === "connected") {
             const { messages } = await listWhatsAppMessages(projectId);
             setMessages(messages);
+            startConnectedPolling();
           }
         }
       } catch (err) {
@@ -78,10 +117,14 @@ export function WhatsAppPanel({ projectId, onClose }: { projectId: string; onClo
         if (s.status === "connecting" || s.status === "qr") startPolling();
         if (s.status === "connected") {
           listWhatsAppMessages(projectId).then(({ messages }) => setMessages(messages)).catch(() => {});
+          startConnectedPolling();
         }
       })
       .catch((err) => setLoadError((err as Error).message));
-    return () => stopPolling();
+    return () => {
+      stopPolling();
+      stopConnectedPolling();
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectId]);
 
@@ -102,6 +145,7 @@ export function WhatsAppPanel({ projectId, onClose }: { projectId: string; onClo
   async function handleDisconnect() {
     setDisconnecting(true);
     stopPolling();
+    stopConnectedPolling();
     try {
       const next = await disconnectWhatsApp(projectId);
       setStatus(next);
