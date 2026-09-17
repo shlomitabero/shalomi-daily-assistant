@@ -1732,6 +1732,45 @@ not a single "make it perfect" claim.
       from-scratch clean-room clone/install/test/build/start cycle with a
       live `/api/health` check.
 
+- [x] **Self-review pass on the last two WhatsApp rounds (retry + clear
+      history) — found and fixed a real bug.** Ran the `code-review` skill
+      at high effort over the diff since the domain-entity round, following
+      the standing practice recorded after the earlier WhatsApp self-review
+      (see the "Fix crash risk and race condition" entry above). It found
+      one real issue: `sendWhatsAppMessage()` always did `res.json()` and
+      returned the body as `WhatsAppSendResult`, but a `409` "not
+      connected" response — thrown by the route *before* it ever calls
+      `insertWhatsAppMessage()` — comes back as the shared `{error, code}`
+      shape every other route's error middleware uses, not this route's own
+      `{ok, error}` shape. `handleRetry()` in `WhatsAppPanel.tsx` never
+      checked `.ok`, so if WhatsApp disconnected between a message failing
+      and the user clicking Retry, the button just silently flipped back to
+      "Retry" with zero feedback and no change to the log — a real,
+      plausible sequence, since the panel's status polling stops the
+      moment it first reaches "connected" and has no way to notice a later
+      drop. Fixed by having `sendWhatsAppMessage()` normalize any response
+      missing an `ok` field into `{ok: false, error: <translated message>}`
+      via the same `error.<CODE>` translation path every other route's
+      errors already use (also added the missing
+      `error.WHATSAPP_NOT_CONNECTED` translation, which had been silently
+      falling back to raw English text), and having `handleRetry()` show
+      that error next to the log instead of swallowing it. New
+      `apps/web/src/api.test.ts` (first real unit test file for `api.ts`)
+      covers all three response shapes `sendWhatsAppMessage()` can see: a
+      normal success, this route's own `{ok:false, error}` 502 shape
+      (passed through unchanged), and the shared `{error, code}` 409 shape
+      (normalized). Verified live too: booted a real local server with the
+      fake-socket `WhatsAppWebManager` injected, drove Playwright through
+      the exact bug scenario — failed a send to get a Retry button,
+      dropped the fake connection to simulate WhatsApp disconnecting in
+      the background, clicked Retry, and confirmed a real, visible error
+      message now appears (and the log's entry count correctly stays
+      unchanged, matching the server never inserting a row on that path) —
+      instead of the old silent no-op. Full suite green (229 tests total)
+      + both builds clean + a from-scratch clean-room
+      clone/install/test/build/start cycle with a live `/api/health`
+      check.
+
 ## Phase 3
 
 - Self-healing: production observability, automatic diagnosis and patch
