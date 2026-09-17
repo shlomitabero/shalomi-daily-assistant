@@ -11,7 +11,7 @@ import {
   type ForgeDatabase,
 } from "@forge/db";
 import { hashPassword, verifyPassword } from "../auth/password.js";
-import { requireAuth } from "../auth/middleware.js";
+import { extractBearerToken, requireAuth } from "../auth/middleware.js";
 import { HttpError } from "../httpError.js";
 
 const CredentialsSchema = z.object({
@@ -87,9 +87,9 @@ export function createAuthRouter(db: ForgeDatabase): Router {
   });
 
   router.post("/auth/logout", requireAuth(db), (req, res) => {
-    const header = req.header("authorization") ?? "";
-    const token = header.slice("Bearer ".length);
-    deleteSession(db, token);
+    // requireAuth already validated this exact header on this request, so
+    // the token is guaranteed present here.
+    deleteSession(db, extractBearerToken(req)!);
     res.status(204).end();
   });
 

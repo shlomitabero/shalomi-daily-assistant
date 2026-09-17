@@ -184,6 +184,22 @@ test("an invalid signup/login payload gets a readable validation message, not a 
   });
 });
 
+test("the Authorization scheme name is accepted case-insensitively ('bearer' works, not just 'Bearer'), and logout actually deletes the session so the same token is rejected afterward", async () => {
+  await withServer(async (baseUrl) => {
+    const token = await signup(baseUrl);
+
+    const lowerSchemeRes = await fetch(`${baseUrl}/api/projects`, { headers: { authorization: `bearer ${token}` } });
+    assert.equal(lowerSchemeRes.status, 200);
+
+    const logoutRes = await fetch(`${baseUrl}/api/auth/logout`, { method: "POST", headers: authHeaders(token) });
+    assert.equal(logoutRes.status, 204);
+
+    const afterLogoutRes = await fetch(`${baseUrl}/api/projects`, { headers: authHeaders(token) });
+    assert.equal(afterLogoutRes.status, 401);
+    assert.equal(((await afterLogoutRes.json()) as { code?: string }).code, "SESSION_EXPIRED");
+  });
+});
+
 test("project routes reject requests without a valid session", async () => {
   await withServer(async (baseUrl) => {
     const res = await fetch(`${baseUrl}/api/projects`);
