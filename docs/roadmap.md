@@ -1672,6 +1672,37 @@ not a single "make it perfect" claim.
       builds clean + a from-scratch clean-room clone/install/test/build/
       start cycle with a live `/api/health` check.
 
+- [x] **Retry button for a failed WhatsApp send.** A message that failed to
+      send (e.g. a momentary socket write error on the unofficial QR-based
+      Baileys connection) sat in the message log forever with only a
+      "Failed" badge — the only way to try again was retyping it into the
+      test-send form. `WhatsAppPanel.tsx` now shows a "Retry" button next
+      to each failed *outgoing* log entry while connected; clicking it
+      re-sends the exact same recipient and body already stored on that
+      log entry (`sendWhatsAppMessage(projectId, m.toNumber, m.body)`) and
+      refreshes the log. The original failed entry is intentionally left
+      as-is — the log is an append-only history, so a successful retry
+      shows up as a second, separate "sent" entry rather than mutating the
+      first one, matching how every other message in the log already
+      behaves. Also fixed a stale comment in `api.ts` left over from the
+      earlier Meta Business API version (referred to Meta rejecting the
+      token/number; the unofficial QR/Baileys connection has no such
+      thing). New backend test in `app.test.ts` drives the real HTTP
+      send route with a fake socket that fails once then succeeds,
+      asserting the failed entry survives untouched and the retry lands as
+      a new "sent" entry. Verified live in the browser too: booted a real
+      local server with the fake-socket `WhatsAppWebManager` injected
+      (same DI seam the backend tests use, since a real Baileys/WhatsApp
+      connection is unreachable from this sandbox), drove the actual UI
+      with Playwright end to end — signed up, built a real project,
+      connected WhatsApp, armed the fake socket to fail one send, watched
+      the "Failed" badge and Retry button appear, clicked Retry, and
+      confirmed a second, successfully-sent entry appeared without
+      disturbing the original failed one. Full suite green (223 tests
+      total, 74 of them in `apps/api`) + both builds clean + a
+      from-scratch clean-room clone/install/test/build/start cycle with a
+      live `/api/health` check.
+
 ## Phase 3
 
 - Self-healing: production observability, automatic diagnosis and patch
