@@ -1567,12 +1567,31 @@ not a single "make it perfect" claim.
       records, confirmed exactly one new row appeared with the same
       value, then edited the duplicate's name and confirmed the
       original stayed unchanged — proving the two are genuinely
-      independent records, not the same row rendered twice. Not yet
-      ported to the exported codegen app — a candidate for a future
-      round, following this codebase's established port-after-live-
-      preview pattern. Full suite green (218 tests) + both builds clean
-      + a from-scratch clean-room clone/install/test/build/start cycle
-      with a live `/api/health` check.
+      independent records, not the same row rendered twice. Full suite
+      green (218 tests) + both builds clean + a from-scratch clean-room
+      clone/install/test/build/start cycle with a live `/api/health`
+      check.
+- [x] **"Duplicate record" ported to the exported standalone app.** Same
+      Duplicate button and `handleDuplicate` logic as the live preview
+      (copy a record's own field values into a real new record via
+      `createRecord`, no confirmation dialog), now generated into every
+      exported app's `EntityView.jsx`, wired into both the table row
+      actions and the Kanban `BoardCard`. Verified with a real codegen
+      test (checks the generated source for the handler, its real
+      `createRecord` call, the absence of `window.confirm` in it, and
+      both wiring sites) plus a full Playwright run per this codebase's
+      standing rule for any `codegen.ts` change: exported a real app,
+      downloaded the real zip, ran a real `npm install` and `npx vite
+      build` in a directory unrelated to this repo, started the real
+      generated server, and — in a genuine second browser page — created
+      a real record through the exported app's own form (the export has
+      no build-pipeline seed data, unlike the live preview, so this
+      round's test creates one directly, skipping any disabled
+      placeholder `<option>` when picking an enum value), clicked
+      Duplicate, and confirmed exactly one new row appeared with the
+      same value. Full suite green (219 tests) + both builds clean + a
+      from-scratch clean-room clone/install/test/build/start cycle with
+      a live `/api/health` check.
 
 ## Phase 3
 

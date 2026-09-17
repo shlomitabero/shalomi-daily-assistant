@@ -978,7 +978,7 @@ function CalendarView({ entity, dateField, records, month, onPrevMonth, onNextMo
 // field itself, since that's implied by which column the card is in), a
 // select to move it directly to another column, and the same Edit/Delete
 // actions the table row has.
-function BoardCard({ entity, boardField, record, relatedRecords, onMove, onEdit, onDelete }) {
+function BoardCard({ entity, boardField, record, relatedRecords, onMove, onEdit, onDuplicate, onDelete }) {
   const otherFields = entity.fields.filter((f) => f.name !== boardField.name);
   return (
     <div className="board-card">
@@ -1001,6 +1001,7 @@ function BoardCard({ entity, boardField, record, relatedRecords, onMove, onEdit,
       </select>
       <div className="row-actions">
         <button onClick={onEdit}>Edit</button>
+        <button onClick={onDuplicate}>Duplicate</button>
         <button onClick={onDelete}>Delete</button>
       </div>
     </div>
@@ -1178,6 +1179,18 @@ export function EntityView({ entity }) {
       next.delete(id);
       return next;
     });
+    await refresh();
+  }
+
+  // Copies a record's own field values into a real new record -- no
+  // confirmation, unlike delete, since duplicating creates rather than
+  // destroys data.
+  async function handleDuplicate(id) {
+    const record = records.find((r) => r.id === id);
+    if (!record) return;
+    const copy = {};
+    for (const f of entity.fields) copy[f.name] = record[f.name];
+    await createRecord(entity.name, copy);
     await refresh();
   }
 
@@ -1403,6 +1416,7 @@ export function EntityView({ entity }) {
                       relatedRecords={relatedRecords}
                       onMove={(value) => handleMove(r.id, boardField.name, value)}
                       onEdit={() => startEdit(r)}
+                      onDuplicate={() => handleDuplicate(r.id)}
                       onDelete={() => handleDelete(r.id)}
                     />
                   ))}
@@ -1473,6 +1487,7 @@ export function EntityView({ entity }) {
                       ))}
                       <td className="row-actions">
                         <button onClick={() => startEdit(r)}>Edit</button>
+                        <button onClick={() => handleDuplicate(r.id)}>Duplicate</button>
                         <button onClick={() => handleDelete(r.id)}>Delete</button>
                       </td>
                     </tr>

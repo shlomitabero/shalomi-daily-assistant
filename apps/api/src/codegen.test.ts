@@ -331,6 +331,24 @@ test("the exported EntityView renders real bulk-select + bulk-delete for table r
   assert.match(stylesCss, /input\[type="checkbox"\]/);
 });
 
+test("the exported EntityView renders a real Duplicate action (table and board views) that copies a record via a real createRecord call", () => {
+  const files = generateExportFiles(project);
+  const entityViewJsx = files.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+  assert.match(entityViewJsx, /async function handleDuplicate\(id\)/);
+  assert.match(entityViewJsx, /await createRecord\(entity\.name, copy\)/);
+  // No confirmation dialog for duplicating, unlike delete -- it creates
+  // data rather than destroying it.
+  const duplicateFnBody = entityViewJsx.slice(
+    entityViewJsx.indexOf("async function handleDuplicate"),
+    entityViewJsx.indexOf("async function handleDuplicate") + 300,
+  );
+  assert.doesNotMatch(duplicateFnBody, /window\.confirm/);
+  // Wired into both the table row actions and the Kanban board card.
+  assert.match(entityViewJsx, /onClick=\{\(\) => handleDuplicate\(r\.id\)\}>Duplicate<\/button>/);
+  assert.match(entityViewJsx, /onDuplicate=\{\(\) => handleDuplicate\(r\.id\)\}/);
+  assert.match(entityViewJsx, /<button onClick=\{onDuplicate\}>Duplicate<\/button>/);
+});
+
 test("the exported EntityView renders a real picker for relation fields, not a raw numeric ID input", () => {
   const withRelation: Project = {
     ...project,
