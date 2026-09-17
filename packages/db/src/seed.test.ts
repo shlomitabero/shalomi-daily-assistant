@@ -215,6 +215,47 @@ test("the Donation, Shipment, and InsuranceClaim entities each get believable se
   assert.match(claimRecord.policyNumber as string, /^POL-\d+$/);
 });
 
+test("the Vendor, Expense, and Review entities each get believable seed values, not the generic person-name or placeholder fallback", () => {
+  const vendor: Entity = {
+    name: "Vendor",
+    fields: [
+      { name: "name", type: "text", required: true },
+      { name: "contactPerson", type: "text", required: false },
+    ],
+  };
+  const expense: Entity = {
+    name: "Expense",
+    fields: [
+      { name: "description", type: "text", required: true },
+      { name: "vendor", type: "text", required: false },
+    ],
+  };
+  const review: Entity = {
+    name: "Review",
+    fields: [
+      { name: "reviewerName", type: "text", required: true },
+      { name: "rating", type: "number", required: true },
+    ],
+  };
+
+  const [vendorRecord] = generateSeedRecords(vendor, 1);
+  // Vendor's own "name" is a business name, not a person -- must not fall
+  // back to the generic person-name pool every other unrecognized "name"
+  // field gets.
+  assert.notEqual(vendorRecord.name, "Dana Levi");
+  assert.equal(vendorRecord.contactPerson, "Dana Levi");
+
+  const [expenseRecord] = generateSeedRecords(expense, 1);
+  assert.doesNotMatch(expenseRecord.description as string, /Expense description/);
+  assert.notEqual(expenseRecord.vendor, "Dana Levi");
+
+  const [reviewRecord] = generateSeedRecords(review, 1);
+  assert.equal(reviewRecord.reviewerName, "Dana Levi");
+  // A star rating must stay in its real 1-5 domain, not the generic
+  // (index+1)*10 formula every other numeric field uses.
+  assert.ok((reviewRecord.rating as number) >= 1 && (reviewRecord.rating as number) <= 5);
+});
+
 test("an unrecognized field name still gets a labeled fallback value instead of throwing", () => {
   const custom: Entity = { name: "Widget", fields: [{ name: "colorPreference", type: "text", required: false }] };
   const [record] = generateSeedRecords(custom, 1);

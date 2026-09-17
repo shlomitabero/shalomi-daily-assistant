@@ -1349,6 +1349,41 @@ not a single "make it perfect" claim.
       db + 44 api + 66 web) + both builds clean + a from-scratch
       clean-room clone/install/test/build/start cycle with a live
       `/api/health` check.
+- [x] **Vendor, Expense, and Review domain entities.** Three more entities
+      for `domainEntities.ts`, filling gaps the existing 26 didn't cover:
+      Vendor/Supplier (who the business buys *from*, the mirror of
+      Customer, who it sells *to*), Expense (business expense tracking:
+      description/amount/category/vendor/date/status), and Review
+      (customer feedback with a rating). Caught a real collision risk
+      before it ever shipped, not after: bare "rating" is a substring of
+      "operating"/"collaborating"/"generating" and bare "review" is a
+      substring of "preview" — the exact "events" ⊂ "prevents" pitfall
+      this file's own header has warned about since the Donation/Shipment
+      round, and the same reason Event's own keywords use "event
+      planning"/"conference" instead of bare "event". Used the safe
+      multi-word phrases ("customer review", "customer feedback",
+      "product review", "testimonial", Hebrew "ביקורת"/"משוב"/"דירוג")
+      instead, and added two regression tests that build real descriptions
+      containing "operating" and "preview" and assert Review does NOT
+      spuriously appear. Also improved `packages/db/src/seed.ts`: a
+      "rating" field now seeds a real 1-5 value instead of every other
+      numeric field's generic `(index+1)*10` formula (which would have
+      produced an obviously-broken rating of 10 or 20), Vendor's own
+      "name" field gets a real business-name pool instead of falling into
+      the generic person-name default every unrecognized "name" field
+      gets, and new pools cover contactPerson/reviewerName (person names)
+      and Expense's own description/vendor fields. Verified with a real
+      Playwright run: built an app from a Hebrew description combining
+      all three ("ניהול ספקים ורכש, מעקב הוצאות של העסק, ואיסוף ביקורות
+      ומשוב מלקוחות"), confirmed all three tabs appeared with genuinely
+      realistic seed data (a real vendor company name, a real expense
+      description referencing a real vendor, and a rating value
+      confirmed in the real 1-5 range) rather than a raw placeholder
+      string. 8 new tests across spec-engine (entity detection + the two
+      collision regressions) and db (seed-value pools). Full suite green
+      (181 tests: 46 spec-engine + 25 db + 44 api + 66 web) + both builds
+      clean + a from-scratch clean-room clone/install/test/build/start
+      cycle with a live `/api/health` check.
 
 ## Phase 3
 

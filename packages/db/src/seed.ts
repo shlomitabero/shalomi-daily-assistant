@@ -59,6 +59,11 @@ const CAMPAIGN_NAMES_HE = ["מגבית שנתית", "קמפיין חירום", "
 const CAMPAIGN_NAMES_EN = ["Annual Appeal", "Emergency Relief Fund", "Community Center Build", "Student Scholarships"];
 const CARRIERS_HE = ["דואר ישראל", "צים", "UPS", "דלוור"];
 const CARRIERS_EN = ["FedEx", "UPS", "DHL", "USPS"];
+// Pools for Vendor, Expense, Review.
+const VENDOR_NAMES_HE = ["חברת ציוד המשרד", "ספקי חומרי גלם בע\"מ", "פתרונות ענן ישראל", "שירותי ניקיון מקצועיים"];
+const VENDOR_NAMES_EN = ["Office Supplies Co.", "Raw Materials Ltd.", "CloudTech Solutions", "Professional Cleaning Services"];
+const EXPENSE_DESCRIPTIONS_HE = ["שכירות חודש", "רכישת ציוד משרדי", "כרטיסי טיסה לכנס", "חשבון חשמל"];
+const EXPENSE_DESCRIPTIONS_EN = ["Monthly office rent", "Office supplies purchase", "Conference flight tickets", "Electricity bill"];
 
 function pick(pool: string[], index: number): string {
   return pool[index % pool.length];
@@ -71,6 +76,11 @@ function seedValueFor(field: Field, entity: Entity, index: number): unknown {
 
   switch (field.type) {
     case "number":
+      // A 1-5 star rating shouldn't seed as 10/20/30 like every other
+      // numeric field (amount, capacity, price, ...) -- it has a real,
+      // narrow domain range, and a value outside it would look broken the
+      // moment a real UI renders it as stars.
+      if (field.name === "rating") return (index % 5) + 1;
       return (index + 1) * 10;
     case "boolean":
       return index % 2 === 0;
@@ -128,6 +138,8 @@ function textSeedValueFor(fieldName: string, entityName: string, isHebrew: boole
     case "renterName":
     case "donorName":
     case "claimant":
+    case "contactPerson":
+    case "reviewerName":
       return pick(isHebrew ? PERSON_NAMES_HE : PERSON_NAMES_EN, index);
     case "service":
     case "itemName":
@@ -159,6 +171,11 @@ function textSeedValueFor(fieldName: string, entityName: string, isHebrew: boole
       return `TRK-${100000 + index * 37}`;
     case "policyNumber":
       return `POL-${500000 + index * 111}`;
+    case "vendor":
+      return pick(isHebrew ? VENDOR_NAMES_HE : VENDOR_NAMES_EN, index);
+    case "description":
+      if (entityName === "Expense") return pick(isHebrew ? EXPENSE_DESCRIPTIONS_HE : EXPENSE_DESCRIPTIONS_EN, index);
+      return isHebrew ? `${entityName} - ${fieldName} ${index + 1}` : `${entityName} ${fieldName} ${index + 1}`;
     case "name":
       // "name" means different things for different entity shapes -- a
       // person for people-shaped entities, a thing for catalog-shaped
@@ -170,6 +187,7 @@ function textSeedValueFor(fieldName: string, entityName: string, isHebrew: boole
       if (entityName === "Event") return pick(isHebrew ? EVENT_NAMES_HE : EVENT_NAMES_EN, index);
       if (entityName === "Course") return pick(isHebrew ? COURSE_NAMES_HE : COURSE_NAMES_EN, index);
       if (entityName === "Pet") return pick(isHebrew ? PET_NAMES_HE : PET_NAMES_EN, index);
+      if (entityName === "Vendor") return pick(isHebrew ? VENDOR_NAMES_HE : VENDOR_NAMES_EN, index);
       return pick(isHebrew ? PERSON_NAMES_HE : PERSON_NAMES_EN, index);
     default:
       // No specific pool for this field name (a custom entity from an

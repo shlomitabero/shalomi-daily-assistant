@@ -745,6 +745,113 @@ export const DOMAIN_ENTITY_RULES: DomainEntityRule[] = [
       ],
     },
   },
+  {
+    // "ספק"/"ספקים" (vendor/supplier) -- who the business buys FROM, the
+    // mirror image of Customer (who it sells TO). No existing keyword
+    // shares this root, and "supplier"/"vendor" don't collide with any
+    // short English keyword either.
+    keywords: [
+      "vendor", "vendors", "supplier", "suppliers", "procurement",
+      "ספק", "ספקים", "רכש",
+    ],
+    labelHe: "ספקים",
+    descriptionHe: "גורם עסקי שהעסק קונה ממנו סחורה או שירותים.",
+    fieldLabelsHe: { name: "שם", contactPerson: "איש קשר", phone: "טלפון", email: "אימייל", category: "קטגוריה" },
+    enumLabelsHe: {
+      category: { Goods: "סחורה", Services: "שירותים", Both: "שניהם" },
+    },
+    entity: {
+      name: "Vendor",
+      description: "A business the company buys goods or services from.",
+      fields: [
+        { name: "name", type: "text", required: true },
+        { name: "contactPerson", type: "text", required: false },
+        { name: "phone", type: "text", required: false },
+        { name: "email", type: "text", required: false },
+        {
+          name: "category",
+          type: "enum",
+          required: true,
+          enumValues: ["Goods", "Services", "Both"],
+        },
+      ],
+    },
+  },
+  {
+    // "הוצאה"/"הוצאות" (expense/expenses). Checked against every existing
+    // keyword's root -- no collision.
+    keywords: [
+      "expense", "expenses", "expense tracking", "business expenses",
+      "הוצאה", "הוצאות", "מעקב הוצאות",
+    ],
+    labelHe: "הוצאות",
+    descriptionHe: "הוצאה עסקית שהעסק שילם.",
+    fieldLabelsHe: { description: "תיאור", amount: "סכום", category: "קטגוריה", vendor: "ספק", date: "תאריך", status: "סטטוס" },
+    enumLabelsHe: {
+      category: { Rent: "שכירות", Supplies: "ציוד", Travel: "נסיעות", Utilities: "שירותים ציבוריים", Payroll: "שכר", Other: "אחר" },
+      status: { Pending: "ממתין", Approved: "אושר", Paid: "שולם", Rejected: "נדחה" },
+    },
+    entity: {
+      name: "Expense",
+      description: "A business expense the company paid.",
+      fields: [
+        { name: "description", type: "text", required: true },
+        { name: "amount", type: "number", required: true },
+        {
+          name: "category",
+          type: "enum",
+          required: true,
+          enumValues: ["Rent", "Supplies", "Travel", "Utilities", "Payroll", "Other"],
+        },
+        { name: "vendor", type: "text", required: false },
+        { name: "date", type: "date", required: false },
+        {
+          name: "status",
+          type: "enum",
+          required: true,
+          enumValues: ["Pending", "Approved", "Paid", "Rejected"],
+        },
+      ],
+    },
+  },
+  {
+    // "ביקורת"/"חוות דעת"/"משוב" (review/opinion/feedback). None of these
+    // roots overlap with any existing keyword ("ביקור" (visit) is a
+    // different word from "ביקורת" (review) -- not a substring of it, so
+    // no risk of the construct-state/suffix pitfall either). Deliberately
+    // NOT using bare "review"/"reviews" or "rating" as English keywords:
+    // "review" ⊂ "preview" and "rating" ⊂ "operating"/"collaborating"/
+    // "generating" -- the exact "events" ⊂ "prevents" pitfall this file's
+    // own header warns about (same reason Event's own keywords below use
+    // "event planning"/"conference" instead of bare "event"). The
+    // multi-word phrases here don't have that problem.
+    keywords: [
+      "customer review", "customer feedback", "product review", "testimonial",
+      "ביקורת", "ביקורות", "חוות דעת", "משוב", "דירוג",
+    ],
+    labelHe: "ביקורות",
+    descriptionHe: "ביקורת או משוב שהשאיר לקוח.",
+    fieldLabelsHe: { reviewerName: "שם המבקר/ת", rating: "דירוג", comment: "תגובה", date: "תאריך", status: "סטטוס" },
+    enumLabelsHe: {
+      status: { Published: "פורסמה", Pending: "ממתינה לאישור", Hidden: "מוסתרת" },
+    },
+    entity: {
+      name: "Review",
+      description: "Feedback or a rating left by a customer.",
+      fields: [
+        { name: "reviewerName", type: "text", required: true },
+        { name: "rating", type: "number", required: true },
+        { name: "comment", type: "longtext", required: false },
+        { name: "date", type: "date", required: false },
+        {
+          name: "status",
+          type: "enum",
+          required: true,
+          enumValues: ["Published", "Pending", "Hidden"],
+        },
+      ],
+    },
+  },
 ];
 
 export interface RoleRule {

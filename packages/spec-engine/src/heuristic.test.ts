@@ -266,3 +266,41 @@ test("a donation description mentioning 'תורמים' (donors) does not spuriou
   assert.ok(spec.entities.some((e) => e.name === "Donation"));
   assert.ok(!spec.entities.some((e) => e.name === "Appointment"), "'תורמים' must not spuriously match Appointment via a 'תור' substring");
 });
+
+test("recognizes vendor/supplier, business-expense, and customer-review descriptions with tailored entities", async () => {
+  const provider = new HeuristicSpecProvider();
+
+  const procurement = await provider.generate("An app to manage our vendors and suppliers for procurement.");
+  assert.ok(procurement.entities.some((e) => e.name === "Vendor"));
+
+  const bookkeeping = await provider.generate("An app for tracking business expenses.");
+  assert.ok(bookkeeping.entities.some((e) => e.name === "Expense"));
+
+  const reviews = await provider.generate("An app to collect customer reviews and testimonials for our shop.");
+  assert.ok(reviews.entities.some((e) => e.name === "Review"));
+
+  // The same phrasing in Hebrew.
+  const procurementHe = await provider.generate("אפליקציה לניהול ספקים ורכש");
+  assert.ok(procurementHe.entities.some((e) => e.name === "Vendor"));
+
+  const bookkeepingHe = await provider.generate("אפליקציה למעקב הוצאות של העסק");
+  assert.ok(bookkeepingHe.entities.some((e) => e.name === "Expense"));
+
+  const reviewsHe = await provider.generate("אפליקציה לאיסוף ביקורות ומשוב מלקוחות");
+  assert.ok(reviewsHe.entities.some((e) => e.name === "Review"));
+});
+
+// Regression guard for the exact "events" ⊂ "prevents" pitfall this file's
+// header warns about: bare "rating"/"review" were deliberately left out of
+// Review's keyword list because they're substrings of common unrelated
+// words ("operating", "preview"). A description that happens to contain
+// those words must not spuriously produce a Review entity.
+test("Review's keywords avoid the substring collisions bare 'rating'/'review' would have caused", async () => {
+  const provider = new HeuristicSpecProvider();
+
+  const operations = await provider.generate("An app for operating and coordinating our field service team.");
+  assert.ok(!operations.entities.some((e) => e.name === "Review"), "'operating' must not spuriously match Review via a 'rating' substring");
+
+  const preview = await provider.generate("An app with a live preview of the product catalog for our sales team.");
+  assert.ok(!preview.entities.some((e) => e.name === "Review"), "'preview' must not spuriously match Review via a 'review' substring");
+});
