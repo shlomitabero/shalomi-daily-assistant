@@ -1771,6 +1771,38 @@ not a single "make it perfect" claim.
       clone/install/test/build/start cycle with a live `/api/health`
       check.
 
+- [x] **Fix the WhatsApp panel's root cause for going stale: it never
+      noticed a disconnect after the fact.** Direct follow-up to the
+      previous round's fix, which patched the *symptom* (Retry silently
+      doing nothing on a stale "connected" status) — this round fixes the
+      actual cause. `WhatsAppPanel.tsx`'s status polling (`startPolling`)
+      stopped for good the instant it first reached `"connected"`, so if
+      WhatsApp dropped the link *later* — the phone loses signal, the user
+      unlinks the device from their phone's own WhatsApp settings, the
+      account gets flagged — with zero action inside this app, the panel
+      had no way to ever find out; it would just keep showing "Connected"
+      indefinitely. Added a second, slower background poll
+      (`CONNECTED_POLL_INTERVAL_MS = 10000`, vs. the fast 1.5s poll used
+      only while waiting for a QR scan) that runs for the whole time
+      status is `"connected"`, refreshing the real status and switching
+      the panel back to the disconnected/connect view the moment it
+      notices the drop — wired in everywhere the panel can first reach
+      "connected" (initial mount, the tail end of the fast poll, matching
+      `stopPolling()`/cleanup calls added everywhere the fast poll already
+      stopped, including a new `stopConnectedPolling()` call in
+      `handleDisconnect` for a manual disconnect). Verified live: booted a
+      real local server with the fake-socket `WhatsAppWebManager`
+      injected, drove Playwright through the actual scenario this fixes —
+      connected the panel, then dropped the fake connection from the
+      *server* side with **zero** action in the browser — and confirmed
+      that within 15 seconds, with nothing clicked, the panel's background
+      poll noticed on its own and switched back to the disconnected view.
+      Both builds clean + full suite still green (no test file changed
+      this round; the added logic is pure client-side polling scheduling,
+      verified live instead) + a from-scratch clean-room
+      clone/install/test/build/start cycle with a live `/api/health`
+      check.
+
 ## Phase 3
 
 - Self-healing: production observability, automatic diagnosis and patch
