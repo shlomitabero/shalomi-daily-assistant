@@ -10,6 +10,20 @@ export const FIELD_TYPES = [
   "relation",
 ] as const;
 
+/**
+ * Every generated table hardcodes these two columns as built-ins
+ * (packages/db/src/migrate.ts for the live preview, apps/api/src/codegen.ts
+ * for the exported standalone app) -- a field sharing either name, in any
+ * casing, produces a duplicate-column `CREATE TABLE`, which throws
+ * uncaught and crashes the whole exported app before it can even start
+ * listening. Rejected here, at the one point every spec (heuristic, the
+ * real Anthropic provider, and its own repair path in debug.ts) is
+ * validated, so a bad name just falls back to the heuristic provider
+ * (see generateSpec in spec-engine/src/index.ts) instead of reaching
+ * either database layer at all.
+ */
+const RESERVED_FIELD_NAMES = new Set(["id", "createdat"]);
+
 export const FieldSchema = z
   .object({
     name: z.string().min(1),
@@ -28,7 +42,10 @@ export const FieldSchema = z
   )
   .refine((f) => (f.type !== "relation" || !!f.relationTo), {
     message: "relation fields must declare relationTo",
-  });
+  })
+  .refine((f) => !RESERVED_FIELD_NAMES.has(f.name.toLowerCase()), (f) => ({
+    message: `Field name "${f.name}" collides with a built-in column every table already has (id/createdAt) -- choose a different name`,
+  }));
 
 export type Field = z.infer<typeof FieldSchema>;
 

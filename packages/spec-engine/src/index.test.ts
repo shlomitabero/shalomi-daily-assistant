@@ -70,6 +70,60 @@ test("AnthropicSpecProvider strips markdown fences before parsing", async () => 
   assert.equal(spec.summary, "Fenced");
 });
 
+test("AnthropicSpecProvider rejects a field named 'id' or 'createdAt' (both are built-in columns every generated table already has)", async () => {
+  const fakeSpec = {
+    summary: "A tiny CRM",
+    personas: [],
+    roles: ["Admin"],
+    entities: [
+      {
+        name: "Lead",
+        fields: [
+          { name: "name", type: "text", required: true },
+          { name: "createdAt", type: "date", required: false },
+        ],
+      },
+    ],
+    screens: [],
+    assumptions: [],
+    openQuestions: [],
+  };
+  const fakeFetch = (async () =>
+    new Response(
+      JSON.stringify({ content: [{ type: "text", text: JSON.stringify(fakeSpec) }] }),
+      { status: 200 },
+    )) as unknown as typeof fetch;
+
+  const provider = new AnthropicSpecProvider({ apiKey: "test-key", fetchImpl: fakeFetch });
+  await assert.rejects(() => provider.generate("a tiny CRM"), /collides with a built-in column/);
+});
+
+test("a model response with a field named 'id' falls back to the heuristic provider end to end, instead of ever reaching the database layer with a colliding column name", async () => {
+  const badFieldSpec = {
+    summary: "A tiny CRM",
+    personas: [],
+    roles: ["Admin"],
+    entities: [{ name: "Lead", fields: [{ name: "id", type: "text", required: true }] }],
+    screens: [],
+    assumptions: [],
+    openQuestions: [],
+  };
+  const fakeFetch = (async () =>
+    new Response(
+      JSON.stringify({ content: [{ type: "text", text: JSON.stringify(badFieldSpec) }] }),
+      { status: 200 },
+    )) as unknown as typeof fetch;
+  const provider = new AnthropicSpecProvider({ apiKey: "test-key", fetchImpl: fakeFetch });
+
+  const { spec, providerName } = await generateSpec("a tiny CRM", provider);
+  assert.equal(providerName, "anthropic-fallback");
+  // The real heuristic output, not the rejected spec -- no entity in it ever
+  // has a field literally named "id" (that's the whole point).
+  for (const entity of spec.entities) {
+    assert.ok(!entity.fields.some((f) => f.name.toLowerCase() === "id"));
+  }
+});
+
 test("AnthropicSpecProvider throws a descriptive error on API failure", async () => {
   const fakeFetch = (async () => new Response("rate limited", { status: 429 })) as unknown as typeof fetch;
   const provider = new AnthropicSpecProvider({ apiKey: "test-key", fetchImpl: fakeFetch });
