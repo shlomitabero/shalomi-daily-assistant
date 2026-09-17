@@ -41,6 +41,14 @@ function recordDisplayLabel(entity: Entity, record: EntityRecord): string {
   return String(value);
 }
 
+/**
+ * Numbers and dates are deliberately left unformatted (no thousands
+ * separator, no locale date reordering) -- unlike this same value's
+ * on-screen table rendering elsewhere, this CSV is meant to be re-openable
+ * as plain data (and could plausibly be re-imported via the per-entity
+ * "Import CSV" feature, which shares this exact column format). A
+ * locale-formatted "1,500" or "1/2/2024" wouldn't round-trip cleanly.
+ */
 function fieldDisplayValue(
   field: Field,
   value: unknown,
@@ -57,11 +65,6 @@ function fieldDisplayValue(
   }
   if (field.type === "boolean") return value ? "TRUE" : "FALSE";
   if (field.type === "enum") return field.enumLabels?.[String(value)] ?? String(value);
-  if (field.type === "date") {
-    const date = new Date(String(value));
-    return Number.isNaN(date.getTime()) ? String(value) : date.toLocaleDateString();
-  }
-  if (field.type === "number") return Number(value).toLocaleString();
   return String(value);
 }
 

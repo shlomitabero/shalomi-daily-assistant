@@ -221,8 +221,10 @@ test("recordsToCsv builds a header row from field labels and one row per record,
   const csv = recordsToCsv(fields, records, "en");
   const lines = csv.split("\r\n");
   assert.equal(lines[0], "Name,Status,Active,Amount");
-  // The formatted amount ("1,234") contains a comma, so it's correctly quoted as its own CSV field.
-  assert.equal(lines[1], 'Dana,New lead,TRUE,"1,234"');
+  // The amount is deliberately NOT locale-formatted with a thousands
+  // separator (no quoting needed either) -- see buildImportRecords'
+  // round-trip test below for why: a "1,234" text value fails Number().
+  assert.equal(lines[1], "Dana,New lead,TRUE,1234");
 });
 
 test("recordsToCsv falls back to the raw field name when there's no label, and to the raw enum value when there's no translated label", () => {
@@ -332,6 +334,20 @@ test("parseCsv round-trips output produced by recordsToCsv", () => {
     ["Name", "Notes"],
     ["Dana", 'Says "hi", bye'],
   ]);
+});
+
+test("a number >= 1000 and a date field round-trip exactly through recordsToCsv -> parseCsv -> buildImportRecords (a real bug: exporting with a locale thousands separator/date order that the importer's plain Number()/raw-string parsing couldn't read back)", () => {
+  const fields: Field[] = [
+    { name: "name", label: "Name", type: "text", required: true },
+    { name: "amount", label: "Amount", type: "number", required: false },
+    { name: "dueDate", label: "Due Date", type: "date", required: false },
+  ];
+  const original = { name: "Dana", amount: 12345, dueDate: "2024-01-02" };
+  const csv = recordsToCsv(fields, [original], "en");
+  const rows = parseCsv(csv);
+  const { records, errors } = buildImportRecords(fields, rows);
+  assert.deepEqual(errors, []);
+  assert.deepEqual(records, [original]);
 });
 
 test("parseCsv accepts bare LF line endings too, not just CRLF", () => {

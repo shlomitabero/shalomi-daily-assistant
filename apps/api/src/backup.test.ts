@@ -94,6 +94,18 @@ test("a relation field resolves to the related record's display label, not the r
   assert.equal(lines[1], "150,Dana Levi");
 });
 
+test("a number >= 1000 is written unformatted, without a thousands separator (this CSV shares its column format with the per-entity Import CSV feature, so a locale-formatted \"1,234\" would fail that feature's plain Number() re-parse)", () => {
+  const db = openDatabase(":memory:");
+  applyMigrations(db, project.id, project.spec);
+  const order = project.spec.entities[1];
+  insertRecord(db, project.id, order, { amount: 12345 });
+
+  const entries = generateBackupZipEntries(db, project);
+  const orderCsv = entries.find((e) => e.path === "Order.csv")!.content.replace(/^﻿/, "");
+  const lines = orderCsv.split("\r\n");
+  assert.equal(lines[1], "12345,");
+});
+
 test("a value containing a comma or quote is correctly CSV-escaped", () => {
   const db = openDatabase(":memory:");
   applyMigrations(db, project.id, project.spec);

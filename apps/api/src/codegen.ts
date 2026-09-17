@@ -683,19 +683,18 @@ function csvEscape(value) {
 }
 
 // Renders a field's value the way a human reading a spreadsheet would
-// expect -- the enum's translated label instead of its raw stored value, a
-// formatted date/number, TRUE/FALSE for booleans (Excel's own convention)
-// -- rather than a 1:1 dump of the raw stored values.
+// expect -- the enum's translated label instead of its raw stored value,
+// TRUE/FALSE for booleans (Excel's own convention) -- rather than a 1:1
+// dump of the raw stored values. Numbers and dates are deliberately left
+// unformatted (no thousands separator, no locale date reordering): this
+// export is the designed inverse of buildImportRecords below, which
+// re-parses a number with plain Number() and stores a date as-is -- a
+// locale-formatted "1,500" or "1/2/2024" wouldn't round-trip back in.
 function fieldDisplayValue(field, value, relatedRecords) {
   if (value === null || value === undefined || value === "") return "";
   if (field.type === "relation") return relationDisplayLabel(field, value, relatedRecords) || \`#\${value}\`;
   if (field.type === "boolean") return value ? "TRUE" : "FALSE";
   if (field.type === "enum") return (field.enumLabels && field.enumLabels[value]) || value;
-  if (field.type === "date") {
-    const date = new Date(value);
-    return Number.isNaN(date.getTime()) ? String(value) : date.toLocaleDateString();
-  }
-  if (field.type === "number") return Number(value).toLocaleString();
   return String(value);
 }
 

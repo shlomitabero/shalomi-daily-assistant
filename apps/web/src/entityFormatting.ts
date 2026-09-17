@@ -280,14 +280,26 @@ function csvEscape(value: string): string {
 /**
  * Renders a field's value the way a human reading a spreadsheet would
  * expect -- the enum's translated label instead of its raw stored value,
- * a locale-formatted date/number, TRUE/FALSE for booleans (Excel's own
- * convention, language-neutral) -- rather than a 1:1 dump of the raw
- * database values.
+ * TRUE/FALSE for booleans (Excel's own convention, language-neutral) --
+ * rather than a 1:1 dump of the raw database values.
+ *
+ * Numbers and dates are deliberately NOT run through formatNumberValue /
+ * formatDateValue here, even though those exist and are used for the
+ * on-screen table (see EntityPanel.tsx). Those add locale formatting
+ * (thousands separators, a locale-ordered date) meant for reading, not
+ * for round-tripping: buildImportRecords is this function's designed
+ * inverse, and re-parses a number with plain `Number()` and stores a date
+ * field's text as-is. A locale-formatted "1,500" fails `Number()`, and a
+ * locale-formatted date like "1/2/2024" is ambiguous and doesn't match
+ * the ISO format the <input type="date"> field elsewhere in this app
+ * expects -- so exporting one of your own records and re-importing it
+ * would corrupt or drop it. Plain, unformatted values here keep the
+ * export/import round trip exact.
  */
 function fieldDisplayValue(
   field: Field,
   value: unknown,
-  lang: Lang,
+  _lang: Lang,
   allEntities: Entity[],
   relatedRecords: RelatedRecordsByEntity,
 ): string {
@@ -295,8 +307,8 @@ function fieldDisplayValue(
   if (field.type === "relation") return relationDisplayLabel(field, value, allEntities, relatedRecords) || `#${value}`;
   if (field.type === "boolean") return value ? "TRUE" : "FALSE";
   if (field.type === "enum") return field.enumLabels?.[String(value)] ?? String(value);
-  if (field.type === "date") return formatDateValue(String(value), lang);
-  if (field.type === "number") return formatNumberValue(Number(value), lang);
+  if (field.type === "date") return String(value);
+  if (field.type === "number") return String(value);
   return String(value);
 }
 
