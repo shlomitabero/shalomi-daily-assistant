@@ -41,3 +41,15 @@ export {
 } from "./checkpoints.js";
 export { generateSeedRecords } from "./seed.js";
 export { tableNameFor, assertSafeIdentifier } from "./identifiers.js";
+export {
+  ensureWhatsAppSettingsTable,
+  getWhatsAppSettings,
+  upsertWhatsAppSettings,
+  ensureWhatsAppMessagesTable,
+  insertWhatsAppMessage,
+  listWhatsAppMessages,
+  type WhatsAppSettings,
+  type WhatsAppMessage,
+  type WhatsAppMessageDirection,
+  type WhatsAppMessageStatus,
+} from "./whatsapp.js";

@@ -5,6 +5,8 @@ import {
   ensureProjectsTable,
   ensureUsersTable,
   ensureCheckpointsTable,
+  ensureWhatsAppSettingsTable,
+  ensureWhatsAppMessagesTable,
   type ForgeDatabase,
 } from "@forge/db";
 
@@ -16,5 +18,7 @@ export function createStore(path: string): ForgeDatabase {
   ensureProjectsTable(db);
   ensureUsersTable(db);
   ensureCheckpointsTable(db);
+  ensureWhatsAppSettingsTable(db);
+  ensureWhatsAppMessagesTable(db);
   return db;
 }

@@ -305,3 +305,73 @@ export function updateRecord(
 export function deleteRecord(projectId: string, entityName: string, recordId: number): Promise<void> {
   return request(`/projects/${projectId}/entities/${entityName}/${recordId}`, { method: "DELETE" });
 }
+
+/**
+ * Real, two-way WhatsApp sync is only possible through Meta's own
+ * WhatsApp Business Platform (Cloud API) -- there is no other supported
+ * way for a third-party app to send or receive WhatsApp messages. These
+ * calls hit Forge AI's own server, which in turn talks to Meta's real
+ * Graph API once the project owner has entered their own Meta-issued
+ * phoneNumberId/accessToken here; Forge AI can't create that account for
+ * them.
+ */
+export interface WhatsAppSettingsView {
+  configured: boolean;
+  phoneNumberId: string | null;
+  accessTokenMasked: string | null;
+  verifyToken: string | null;
+  webhookUrl: string;
+}
+
+export function getWhatsAppSettings(projectId: string): Promise<WhatsAppSettingsView> {
+  return request(`/projects/${projectId}/integrations/whatsapp`);
+}
+
+export function saveWhatsAppSettings(
+  projectId: string,
+  settings: { phoneNumberId: string; accessToken?: string; verifyToken?: string },
+): Promise<WhatsAppSettingsView> {
+  return request(`/projects/${projectId}/integrations/whatsapp`, {
+    method: "PUT",
+    body: JSON.stringify(settings),
+  });
+}
+
+export interface WhatsAppSendResult {
+  ok: boolean;
+  messageId?: string;
+  error?: string;
+}
+
+export async function sendWhatsAppMessage(projectId: string, to: string, message: string): Promise<WhatsAppSendResult> {
+  const token = getToken();
+  const res = await fetchApi(`/api/projects/${projectId}/integrations/whatsapp/send`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      ...(token ? { authorization: `Bearer ${token}` } : {}),
+    },
+    body: JSON.stringify({ to, message }),
+  });
+  // A failed send (e.g. Meta rejects the token/number) is still a normal,
+  // expected response here -- surface it as data, not a thrown error, so
+  // the panel can show the real reason instead of a generic failure.
+  return (await res.json()) as WhatsAppSendResult;
+}
+
+export interface WhatsAppMessageLogEntry {
+  id: string;
+  direction: "in" | "out";
+  fromNumber: string;
+  toNumber: string;
+  body: string;
+  matchedLabel: string | null;
+  matchedEntityName: string | null;
+  matchedRecordId: number | null;
+  status: "received" | "sent" | "failed";
+  createdAt: string;
+}
+
+export function listWhatsAppMessages(projectId: string): Promise<{ messages: WhatsAppMessageLogEntry[] }> {
+  return request(`/projects/${projectId}/integrations/whatsapp/messages`);
+}

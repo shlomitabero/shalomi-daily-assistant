@@ -498,6 +498,183 @@ test("backup refuses before build, and returns a real zip with one CSV per entit
   });
 });
 
+test("WhatsApp settings: unconfigured by default, saved settings round-trip with the access token masked, and a real webhook URL is computed from the request", async () => {
+  await withServer(async (baseUrl) => {
+    const token = await signup(baseUrl);
+    const createRes = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ description: "A CRM with customers and deals." }),
+    });
+    const { project } = (await createRes.json()) as { project: { id: string } };
+
+    const before = await fetch(`${baseUrl}/api/projects/${project.id}/integrations/whatsapp`, { headers: authHeaders(token) });
+    assert.equal(before.status, 200);
+    const beforeBody = (await before.json()) as { configured: boolean; webhookUrl: string };
+    assert.equal(beforeBody.configured, false);
+    assert.match(beforeBody.webhookUrl, new RegExp(`/api/webhooks/whatsapp/${project.id}$`));
+
+    const saveRes = await fetch(`${baseUrl}/api/projects/${project.id}/integrations/whatsapp`, {
+      method: "PUT",
+      headers: authHeaders(token),
+      body: JSON.stringify({ phoneNumberId: "123456123", accessToken: "EAAsecrettoken1234" }),
+    });
+    assert.equal(saveRes.status, 200);
+    const saved = (await saveRes.json()) as { configured: boolean; phoneNumberId: string; accessTokenMasked: string; verifyToken: string };
+    assert.equal(saved.configured, true);
+    assert.equal(saved.phoneNumberId, "123456123");
+    // The real secret must never round-trip back to the browser.
+    assert.ok(!saved.accessTokenMasked.includes("EAAsecrettoken1234"));
+    assert.match(saved.accessTokenMasked, /1234$/);
+    assert.ok(saved.verifyToken.length > 0); // auto-generated since none was supplied
+
+    const after = await fetch(`${baseUrl}/api/projects/${project.id}/integrations/whatsapp`, { headers: authHeaders(token) });
+    const afterBody = (await after.json()) as { configured: boolean; phoneNumberId: string };
+    assert.equal(afterBody.configured, true);
+    assert.equal(afterBody.phoneNumberId, "123456123");
+
+    // Updating just the phone number id (no re-typed access token) must
+    // succeed and keep the previously-saved token, not wipe it -- the UI
+    // never shows the real token back, so it can never re-submit it.
+    const updatePhoneOnly = await fetch(`${baseUrl}/api/projects/${project.id}/integrations/whatsapp`, {
+      method: "PUT",
+      headers: authHeaders(token),
+      body: JSON.stringify({ phoneNumberId: "999999999" }),
+    });
+    assert.equal(updatePhoneOnly.status, 200);
+    const updatedBody = (await updatePhoneOnly.json()) as { phoneNumberId: string; accessTokenMasked: string };
+    assert.equal(updatedBody.phoneNumberId, "999999999");
+    assert.match(updatedBody.accessTokenMasked, /1234$/); // same original token, still masked to its last 4 chars
+  });
+});
+
+test("WhatsApp settings: the very first save requires an access token, since there's nothing yet to keep", async () => {
+  await withServer(async (baseUrl) => {
+    const token = await signup(baseUrl);
+    const createRes = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ description: "A CRM with customers and deals." }),
+    });
+    const { project } = (await createRes.json()) as { project: { id: string } };
+
+    const res = await fetch(`${baseUrl}/api/projects/${project.id}/integrations/whatsapp`, {
+      method: "PUT",
+      headers: authHeaders(token),
+      body: JSON.stringify({ phoneNumberId: "123456123" }),
+    });
+    assert.equal(res.status, 400);
+  });
+});
+
+test("WhatsApp send refuses with 409 before settings are configured", async () => {
+  await withServer(async (baseUrl) => {
+    const token = await signup(baseUrl);
+    const createRes = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ description: "A CRM with customers and deals." }),
+    });
+    const { project } = (await createRes.json()) as { project: { id: string } };
+
+    const sendRes = await fetch(`${baseUrl}/api/projects/${project.id}/integrations/whatsapp/send`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ to: "972501234567", message: "hi" }),
+    });
+    assert.equal(sendRes.status, 409);
+  });
+});
+
+test("WhatsApp webhook: Meta's real GET verification handshake succeeds only with the right verify token, and a real POST delivery is logged and matched to the right customer record", async () => {
+  await withServer(async (baseUrl) => {
+    const token = await signup(baseUrl);
+    const createRes = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ description: "A CRM with customers and deals." }),
+    });
+    const { project } = (await createRes.json()) as { project: { id: string } };
+
+    const buildRes = await fetch(`${baseUrl}/api/projects/${project.id}/build`, {
+      method: "POST",
+      headers: authHeaders(token),
+    });
+    await collectSSE(buildRes);
+
+    const saveRes = await fetch(`${baseUrl}/api/projects/${project.id}/integrations/whatsapp`, {
+      method: "PUT",
+      headers: authHeaders(token),
+      body: JSON.stringify({ phoneNumberId: "123456123", accessToken: "EAAtest", verifyToken: "my-secret-token" }),
+    });
+    assert.equal(saveRes.status, 200);
+
+    // A real customer to match the incoming message's sender against.
+    const createCustomerRes = await fetch(`${baseUrl}/api/projects/${project.id}/entities/Customer`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ name: "Dana Levi", phone: "050-123-4567", status: "New" }),
+    });
+    assert.equal(createCustomerRes.status, 201);
+
+    // Wrong verify token: Meta's handshake must fail.
+    const wrongVerify = await fetch(
+      `${baseUrl}/api/webhooks/whatsapp/${project.id}?hub.mode=subscribe&hub.verify_token=wrong&hub.challenge=abc`,
+    );
+    assert.equal(wrongVerify.status, 403);
+
+    // Right verify token: Meta's handshake must succeed and echo the challenge as plain text.
+    const rightVerify = await fetch(
+      `${baseUrl}/api/webhooks/whatsapp/${project.id}?hub.mode=subscribe&hub.verify_token=my-secret-token&hub.challenge=abc123`,
+    );
+    assert.equal(rightVerify.status, 200);
+    assert.equal(await rightVerify.text(), "abc123");
+
+    // A real incoming-message delivery, in Meta's own documented shape,
+    // from a phone number that matches the customer above once
+    // international-vs-local formatting is normalized.
+    const webhookPayload = {
+      object: "whatsapp_business_account",
+      entry: [
+        {
+          id: "WABA_ID",
+          changes: [
+            {
+              value: {
+                messaging_product: "whatsapp",
+                metadata: { display_phone_number: "15550001111", phone_number_id: "123456123" },
+                contacts: [{ profile: { name: "Dana L" }, wa_id: "972501234567" }],
+                messages: [
+                  { from: "972501234567", id: "wamid.XYZ", timestamp: "1700000000", type: "text", text: { body: "מתי התור שלי?" } },
+                ],
+              },
+              field: "messages",
+            },
+          ],
+        },
+      ],
+    };
+    const deliverRes = await fetch(`${baseUrl}/api/webhooks/whatsapp/${project.id}`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(webhookPayload),
+    });
+    assert.equal(deliverRes.status, 200);
+
+    const messagesRes = await fetch(`${baseUrl}/api/projects/${project.id}/integrations/whatsapp/messages`, {
+      headers: authHeaders(token),
+    });
+    const { messages } = (await messagesRes.json()) as {
+      messages: { direction: string; body: string; matchedLabel: string | null; matchedEntityName: string | null }[];
+    };
+    assert.equal(messages.length, 1);
+    assert.equal(messages[0].direction, "in");
+    assert.equal(messages[0].body, "מתי התור שלי?");
+    assert.equal(messages[0].matchedEntityName, "Customer");
+    assert.equal(messages[0].matchedLabel, "Dana Levi");
+  });
+});
+
 test("the idea-enhance endpoint requires auth, rejects an empty idea, and expands a real one", async () => {
   await withServer(async (baseUrl) => {
     const noAuth = await fetch(`${baseUrl}/api/ideas/enhance`, {

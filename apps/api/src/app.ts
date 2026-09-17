@@ -6,6 +6,7 @@ import { ValidationError, NotFoundError, type ForgeDatabase } from "@forge/db";
 import type { SpecProvider } from "@forge/spec-engine";
 import { createProjectsRouter } from "./routes/projects.js";
 import { createAuthRouter } from "./routes/auth.js";
+import { createWhatsAppWebhookRouter } from "./routes/whatsappWebhook.js";
 import { HttpError } from "./httpError.js";
 
 /**
@@ -17,11 +18,18 @@ import { HttpError } from "./httpError.js";
  */
 export function createApp(db: ForgeDatabase, provider?: SpecProvider, staticDir?: string): Express {
   const app = express();
+  // Render (and most single-service PaaS hosts) terminates TLS at a proxy
+  // and forwards plain HTTP internally, so req.protocol would report
+  // "http" here without this -- which would make any URL this app builds
+  // from the request (e.g. the WhatsApp webhook URL shown to a project
+  // owner) silently wrong on the live site.
+  app.set("trust proxy", true);
   app.use(cors());
   app.use(express.json());
 
   app.get("/api/health", (_req, res) => res.json({ status: "ok" }));
   app.use("/api", createAuthRouter(db));
+  app.use("/api", createWhatsAppWebhookRouter(db));
   app.use("/api", createProjectsRouter(db, provider));
 
   if (staticDir && existsSync(staticDir)) {

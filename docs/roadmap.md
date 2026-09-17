@@ -1414,6 +1414,73 @@ not a single "make it perfect" claim.
       25 db + 50 api + 66 web) + both builds clean + a from-scratch
       clean-room clone/install/test/build/start cycle with a live
       `/api/health` check.
+- [x] **WhatsApp two-way sync — direct user request** ("שהאפליקציה תדע
+      להסתנכרן עם ואטסאפ"). Built against Meta's real, publicly documented
+      WhatsApp Business Platform (Cloud API), end to end:
+      - New `whatsapp_settings` and `whatsapp_messages` tables
+        (`packages/db/src/whatsapp.ts`) store each project's phone number
+        ID, access token, webhook verify token, and a full in/out message
+        log with which entity/record a message matched.
+      - `apps/api/src/whatsapp.ts` implements the real Cloud API send call
+        (`POST /{version}/{phone-number-id}/messages`), the GET webhook
+        verification handshake (echoes `hub.challenge` back as plain text
+        only when `hub.verify_token` matches), parsing of Meta's real
+        incoming-webhook payload shape, and phone-number-to-record
+        matching so an inbound message is linked to the customer (or any
+        entity with a `phone` field) that sent it.
+      - New routes: `GET`/`PUT /projects/:id/integrations/whatsapp` (the
+        access token is never echoed back to the browser, only a masked
+        `••••1234` form — re-saving other fields like the phone number ID
+        does not force retyping the secret), `POST .../send`, `GET
+        .../messages`, and the public `GET`/`POST
+        /api/webhooks/whatsapp/:projectId` webhook Meta calls directly.
+        `app.set("trust proxy", true)` was added so the webhook URL shown
+        to the user is correctly `https://` behind Render's proxy instead
+        of silently downgrading to `http://`.
+      - New "💬 WhatsApp" panel on the preview screen: settings form,
+        the real webhook URL + verify token to paste into Meta's app
+        dashboard, a test-send form, and a live in/out message log.
+      - Honest about the one real limitation: sending a message only
+        works once the project owner has their **own** Meta/WhatsApp
+        Business API account (a verified business phone number + access
+        token) — Forge AI cannot create that on anyone's behalf, since
+        it's Meta's own account/verification requirement, not a gap in
+        this feature. The panel says so up front in Hebrew. Everything
+        that does *not* require live Meta credentials — settings
+        persistence, the webhook verification handshake, incoming-webhook
+        parsing/logging, phone-to-record matching, the UI — is fully real
+        and fully tested against the app's own real running server;
+        only the outbound call to Meta's servers is tested via an
+        injectable `fetchImpl` mock, since it cannot be verified without
+        real credentials.
+      - Known v1 limitation, stated rather than hidden: the incoming
+        webhook does not yet verify Meta's `X-Hub-Signature-256` HMAC
+        signature — it relies on the project's unguessable UUID plus the
+        verify-token handshake as its access control instead.
+      - Two real bugs caught and fixed by tests before shipping: (1) a
+        message-ordering tie when two messages land in the same
+        millisecond, fixed by adding `rowid DESC` as a tiebreak; (2) phone
+        matching failing across formats because international format
+        *replaces* a local number's leading trunk "0" with the country
+        code rather than prepending to it (e.g. local "050-123-4567" vs.
+        international "972501234567") — fixed by stripping exactly one
+        leading zero after stripping non-digits.
+      - Verified with a real Playwright run against the real running app:
+        built a customer-management app, opened the WhatsApp panel,
+        confirmed the prerequisite explanation and that webhook info stays
+        hidden until settings are saved, saved real (fake-value) settings
+        through the actual form, confirmed a real webhook URL and a real
+        auto-generated verify token appear, confirmed the access-token
+        field clears instead of echoing the secret back, and attempted a
+        real test-send with fake credentials — confirmed it reports an
+        honest failure, never a fabricated success. 17 new unit tests (7
+        db, 10 business-logic) plus 5 new route tests in `app.test.ts`,
+        including a full webhook round-trip: GET verification with right
+        and wrong verify tokens, and a real POST delivery correctly
+        matched to a real customer record by phone number. Full suite
+        green (208 tests: 46 spec-engine + 32 db + 64 api + 66 web) + both
+        builds clean + a from-scratch clean-room clone/install/test/build/
+        start cycle with a live `/api/health` check.
 
 ## Phase 3
 

@@ -20,6 +20,7 @@ import { BusinessTwinPanel } from "./BusinessTwinPanel.js";
 import { EntityPanel } from "./EntityPanel.js";
 import { GlobalSearchPanel } from "./GlobalSearchPanel.js";
 import { HistoryPanel } from "./HistoryPanel.js";
+import { WhatsAppPanel } from "./WhatsAppPanel.js";
 import { LanguageProvider, useTranslation } from "./i18n/LanguageContext.js";
 import { LanguageSwitcher } from "./i18n/LanguageSwitcher.js";
 import { ThemeProvider } from "./theme/ThemeContext.js";
@@ -103,6 +104,7 @@ function AppContent() {
   const [exportBusy, setExportBusy] = useState(false);
   const [backupBusy, setBackupBusy] = useState(false);
   const [showTwin, setShowTwin] = useState(false);
+  const [showWhatsApp, setShowWhatsApp] = useState(false);
   const [refineHistory, setRefineHistory] = useState<RefineHistoryEntry[]>([]);
   const [refineRunning, setRefineRunning] = useState(false);
   const pendingRefineInstruction = useRef<string | null>(null);
@@ -129,6 +131,7 @@ function AppContent() {
         setShowHistory(false);
         setShowTwin(false);
         setShowSearch(false);
+        setShowWhatsApp(false);
       }
     }
     window.addEventListener("keydown", handleKeyDown);
@@ -472,6 +475,9 @@ function AppContent() {
               <button type="button" className="secondary" onClick={handleBackup} disabled={backupBusy}>
                 {backupBusy ? t("preview.backup.busy") : t("preview.backup")}
               </button>
+              <button type="button" className="secondary" onClick={() => setShowWhatsApp(true)}>
+                {t("preview.whatsapp")}
+              </button>
               <button type="button" className="secondary" onClick={() => setShowHistory(true)}>
                 {t("preview.history")}
               </button>
@@ -560,6 +566,8 @@ function AppContent() {
           )}
 
           {showTwin && <BusinessTwinPanel projectId={project.id} onClose={() => setShowTwin(false)} />}
+
+          {showWhatsApp && <WhatsAppPanel projectId={project.id} onClose={() => setShowWhatsApp(false)} />}
 
           {showSearch && (
             <GlobalSearchPanel
