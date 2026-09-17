@@ -1847,6 +1847,35 @@ not a single "make it perfect" claim.
       clone/install/test/build/start cycle with a live `/api/health`
       check.
 
+- [x] **Cleaned up the two smaller findings the auth self-review left
+      open.** Extracted a single `extractBearerToken(req)` in
+      `auth/middleware.ts`, now used by both `requireAuth` and
+      `/auth/logout` instead of `/auth/logout` re-parsing the
+      `Authorization` header on its own — a fragile coupling where the two
+      call sites could silently drift apart if the extraction logic ever
+      changed in only one place. While unifying it, also fixed the
+      case-sensitive `"Bearer "` scheme match the same review flagged:
+      RFC 7235 treats the scheme name itself as case-insensitive, so a
+      client sending `bearer <token>` (lowercase) was wrongly rejected —
+      now matched with `/^Bearer\s+(.+)$/i`. This also closed a real test
+      gap: there was no test at all for `/auth/logout`, or for scheme-name
+      casing. New `app.test.ts` test drives the real HTTP routes end to
+      end — a lowercase `bearer` header is accepted, and after a real
+      logout the very same token is rejected on the next request (not
+      just asserted against a mock). Verified live too: booted the real
+      built server from a fresh clean-room clone and ran actual `curl`
+      requests against it — signed up, hit `/api/projects` with a
+      lowercase `bearer` header (200), logged out (204), then hit
+      `/api/projects` again with the exact same token and got a real 401
+      `SESSION_EXPIRED`. (The remaining finding from that review — the
+      login timing side-channel — stays deliberately unaddressed: signup's
+      own `EMAIL_TAKEN` response already lets anyone enumerate registered
+      emails, so fixing only the login path's timing wouldn't remove any
+      real risk in this app's actual threat model.) Full suite green (232
+      tests total) + both builds clean + a from-scratch clean-room
+      clone/install/test/build/start cycle with a live `/api/health`
+      check.
+
 ## Phase 3
 
 - Self-healing: production observability, automatic diagnosis and patch
