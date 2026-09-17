@@ -170,6 +170,7 @@ function renderServerJs(project: Project): string {
         required: !!f.required,
         enumValues: f.enumValues ?? null,
         enumLabels: f.enumLabels ?? null,
+        relationTo: f.relationTo ?? null,
       })),
     })),
     null,
@@ -297,6 +298,161 @@ for (const entity of ENTITIES) {
     res.status(204).end();
   });
 }
+
+// A dependency-free ZIP writer (PKZIP "store" method -- no compression),
+// the same design Forge AI's own server uses, ported here so this
+// exported app keeps its promise of zero runtime dependency on Forge AI.
+const CRC_TABLE = (() => {
+  const table = new Uint32Array(256);
+  for (let n = 0; n < 256; n++) {
+    let c = n;
+    for (let k = 0; k < 8; k++) {
+      c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+    }
+    table[n] = c >>> 0;
+  }
+  return table;
+})();
+
+function crc32(buf) {
+  let crc = 0xffffffff;
+  for (let i = 0; i < buf.length; i++) {
+    crc = CRC_TABLE[(crc ^ buf[i]) & 0xff] ^ (crc >>> 8);
+  }
+  return (crc ^ 0xffffffff) >>> 0;
+}
+
+const DOS_TIME = 0;
+const DOS_DATE = ((2024 - 1980) << 9) | (1 << 5) | 1;
+
+function buildZip(entries) {
+  const localParts = [];
+  const centralParts = [];
+  let offset = 0;
+
+  for (const entry of entries) {
+    const nameBuf = Buffer.from(entry.path, "utf8");
+    const dataBuf = Buffer.from(entry.content, "utf8");
+    const crc = crc32(dataBuf);
+
+    const localHeader = Buffer.alloc(30);
+    localHeader.writeUInt32LE(0x04034b50, 0);
+    localHeader.writeUInt16LE(20, 4);
+    localHeader.writeUInt16LE(0, 6);
+    localHeader.writeUInt16LE(0, 8);
+    localHeader.writeUInt16LE(DOS_TIME, 10);
+    localHeader.writeUInt16LE(DOS_DATE, 12);
+    localHeader.writeUInt32LE(crc, 14);
+    localHeader.writeUInt32LE(dataBuf.length, 18);
+    localHeader.writeUInt32LE(dataBuf.length, 22);
+    localHeader.writeUInt16LE(nameBuf.length, 26);
+    localHeader.writeUInt16LE(0, 28);
+    localParts.push(localHeader, nameBuf, dataBuf);
+
+    const centralHeader = Buffer.alloc(46);
+    centralHeader.writeUInt32LE(0x02014b50, 0);
+    centralHeader.writeUInt16LE(20, 4);
+    centralHeader.writeUInt16LE(20, 6);
+    centralHeader.writeUInt16LE(0, 8);
+    centralHeader.writeUInt16LE(0, 10);
+    centralHeader.writeUInt16LE(DOS_TIME, 12);
+    centralHeader.writeUInt16LE(DOS_DATE, 14);
+    centralHeader.writeUInt32LE(crc, 16);
+    centralHeader.writeUInt32LE(dataBuf.length, 20);
+    centralHeader.writeUInt32LE(dataBuf.length, 24);
+    centralHeader.writeUInt16LE(nameBuf.length, 28);
+    centralHeader.writeUInt16LE(0, 30);
+    centralHeader.writeUInt16LE(0, 32);
+    centralHeader.writeUInt16LE(0, 34);
+    centralHeader.writeUInt16LE(0, 36);
+    centralHeader.writeUInt32LE(0o644 << 16, 38);
+    centralHeader.writeUInt32LE(offset, 42);
+    centralParts.push(centralHeader, nameBuf);
+
+    offset += localHeader.length + nameBuf.length + dataBuf.length;
+  }
+
+  const centralDirectory = Buffer.concat(centralParts);
+  const centralDirectoryOffset = offset;
+
+  const end = Buffer.alloc(22);
+  end.writeUInt32LE(0x06054b50, 0);
+  end.writeUInt16LE(0, 4);
+  end.writeUInt16LE(0, 6);
+  end.writeUInt16LE(entries.length, 8);
+  end.writeUInt16LE(entries.length, 10);
+  end.writeUInt32LE(centralDirectory.length, 12);
+  end.writeUInt32LE(centralDirectoryOffset, 16);
+  end.writeUInt16LE(0, 20);
+
+  return Buffer.concat([...localParts, centralDirectory, end]);
+}
+
+// "Backup all data": one ZIP with one CSV per entity, mirroring Forge
+// AI's own live-preview backup feature and its exact CSV formatting
+// rules (BOM + CRLF, relation fields resolved to a display label, enum
+// values shown as their translated label) -- duplicated here rather than
+// imported, the same pattern every other formatting helper in this
+// exported app already follows.
+function csvEscape(value) {
+  if (/[",\\r\\n]/.test(value)) {
+    return \`"\${value.replace(/"/g, '""')}"\`;
+  }
+  return value;
+}
+
+const BACKUP_DISPLAY_FIELD_HINTS = ["name", "title"];
+function backupPickDisplayField(entity) {
+  const named = entity.fields.find((f) => BACKUP_DISPLAY_FIELD_HINTS.includes(f.name.toLowerCase()));
+  if (named) return named;
+  const firstText = entity.fields.find((f) => f.type === "text");
+  return firstText || entity.fields[0] || null;
+}
+
+function backupRecordDisplayLabel(entity, record) {
+  const field = backupPickDisplayField(entity);
+  const value = field ? record[field.name] : undefined;
+  if (value === null || value === undefined || value === "") return \`#\${record.id}\`;
+  return String(value);
+}
+
+function backupFieldDisplayValue(field, value, recordsByEntity) {
+  if (value === null || value === undefined || value === "") return "";
+  if (field.type === "relation") {
+    const targetEntity = field.relationTo ? ENTITIES.find((e) => e.name === field.relationTo) : null;
+    const records = field.relationTo ? recordsByEntity[field.relationTo] : null;
+    if (!targetEntity || !records) return \`#\${value}\`;
+    const match = records.find((r) => Number(r.id) === Number(value));
+    return match ? backupRecordDisplayLabel(targetEntity, match) : \`#\${value}\`;
+  }
+  if (field.type === "boolean") return value ? "TRUE" : "FALSE";
+  if (field.type === "enum") return (field.enumLabels && field.enumLabels[String(value)]) || String(value);
+  return String(value);
+}
+
+function entityToCsv(entity, records, recordsByEntity) {
+  const header = entity.fields.map((f) => csvEscape(f.label || f.name)).join(",");
+  const rows = records.map((record) =>
+    entity.fields.map((f) => csvEscape(backupFieldDisplayValue(f, record[f.name], recordsByEntity))).join(","),
+  );
+  return [header, ...rows].join("\\r\\n");
+}
+
+app.get("/api/backup", (_req, res) => {
+  const recordsByEntity = {};
+  for (const entity of ENTITIES) {
+    const rows = db.prepare(\`SELECT * FROM \${q(entity.name)} ORDER BY id DESC\`).all();
+    recordsByEntity[entity.name] = rows.map((r) => rowToRecord(entity, r));
+  }
+  const zipEntries = ENTITIES.map((entity) => ({
+    path: \`\${entity.name}.csv\`,
+    content: "\\uFEFF" + entityToCsv(entity, recordsByEntity[entity.name], recordsByEntity),
+  }));
+  const zip = buildZip(zipEntries);
+  res.setHeader("content-type", "application/zip");
+  res.setHeader("content-disposition", 'attachment; filename="backup.zip"');
+  res.send(zip);
+});
 
 const port = process.env.PORT || 3000;
 app.listen(port, () => console.log(\`\${${JSON.stringify(project.name)}} running at http://localhost:\${port}\`));
@@ -1548,9 +1704,14 @@ export default function App() {
     <div className="app">
       <div className="app-header">
         <h1>{TITLE}</h1>
-        <button type="button" className="search-trigger" onClick={() => setShowSearch(true)}>
-          🔍 Search <span className="shortcut-hint">Ctrl+K</span>
-        </button>
+        <div className="app-header-actions">
+          <button type="button" className="search-trigger" onClick={() => setShowSearch(true)}>
+            🔍 Search <span className="shortcut-hint">Ctrl+K</span>
+          </button>
+          <a className="backup-all-btn" href="/api/backup" download="backup.zip">
+            ⬇️ Backup All Data
+          </a>
+        </div>
       </div>
       <nav>
         {ENTITIES.map((e) => (
@@ -1643,8 +1804,11 @@ th, td { text-align: start; padding: 8px 10px; border-bottom: 1px solid #efe8da;
 .select-col { width: 1%; white-space: nowrap; }
 .app-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 20px; }
 .app-header h1 { margin: 0; }
+.app-header-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .search-trigger { padding: 8px 16px; border-radius: 8px; border: 1px solid #e6ddcc; background: #fff; cursor: pointer; font: inherit; }
 .search-trigger:hover { background: #f6f2ea; }
+.backup-all-btn { padding: 8px 16px; border-radius: 8px; border: 1px solid #e6ddcc; background: #fff; color: #241f19; text-decoration: none; font-size: 14px; display: inline-block; }
+.backup-all-btn:hover { background: #f6f2ea; }
 .shortcut-hint { margin-inline-start: 6px; padding: 1px 6px; border: 1px solid #e6ddcc; border-radius: 4px; font-size: 0.7rem; font-family: monospace; color: #83786a; }
 .search-overlay { position: fixed; inset: 0; background: rgba(36,31,25,0.45); display: flex; align-items: flex-start; justify-content: center; padding: 60px 16px; z-index: 20; }
 .search-panel { background: #fff; border-radius: 14px; padding: 20px; width: 100%; max-width: 560px; max-height: 80vh; overflow-y: auto; box-shadow: 0 12px 32px rgba(36,31,25,0.2); }

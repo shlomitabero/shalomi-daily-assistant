@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync, spawn } from "node:child_process";
-import { mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { test } from "node:test";
@@ -443,6 +443,88 @@ test("the exported app includes a real cross-entity global search, ported from t
   const stylesCss = files.find((f) => f.path === "web/src/styles.css")!.content;
   assert.match(stylesCss, /\.search-overlay/);
   assert.match(stylesCss, /\.global-search-group-selected/);
+});
+
+test("the exported App.jsx renders a real 'Backup All Data' link pointing at the generated server's own /api/backup endpoint", () => {
+  const files = generateExportFiles(project);
+  const appJsx = files.find((f) => f.path === "web/src/App.jsx")!.content;
+  assert.match(appJsx, /href="\/api\/backup"/);
+  assert.match(appJsx, /backup-all-btn/);
+});
+
+test("the generated server.js's /api/backup endpoint returns a real ZIP with one CSV per entity, containing real inserted data", async () => {
+  const files = generateExportFiles(project);
+  const serverJs = files.find((f) => f.path === "server.js")!.content;
+  assert.match(serverJs, /function buildZip\(entries\)/);
+  assert.match(serverJs, /app\.get\("\/api\/backup"/);
+
+  const dir = mkdtempSync(path.join(tmpdir(), "codegen-backup-test-"));
+  const repoRoot = path.resolve(import.meta.dirname, "../../..");
+  symlinkSync(path.join(repoRoot, "node_modules"), path.join(dir, "node_modules"));
+  writeFileSync(path.join(dir, "server.js"), serverJs);
+
+  const port = 39000 + Math.floor(Math.random() * 5000);
+  const child = spawn(process.execPath, ["--experimental-sqlite", "server.js"], {
+    cwd: dir,
+    env: { ...process.env, PORT: String(port) },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  let stderr = "";
+  child.stderr.on("data", (chunk) => {
+    stderr += chunk.toString();
+  });
+
+  try {
+    const deadline = Date.now() + 5000;
+    let lastErr: unknown;
+    while (Date.now() < deadline) {
+      if (child.exitCode !== null) {
+        throw new Error(`server.js exited early (code ${child.exitCode}):\n${stderr}`);
+      }
+      try {
+        await fetch(`http://localhost:${port}/api/entities`);
+        break;
+      } catch (err) {
+        lastErr = err;
+        await new Promise((r) => setTimeout(r, 100));
+      }
+    }
+    if (child.exitCode !== null) throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
+
+    const createCustomer = await fetch(`http://localhost:${port}/api/Customer`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ name: "Dana Levi", status: "Won" }),
+    });
+    assert.equal(createCustomer.status, 201);
+    await fetch(`http://localhost:${port}/api/Service`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ title: "Haircut" }),
+    });
+
+    const backupRes = await fetch(`http://localhost:${port}/api/backup`);
+    assert.equal(backupRes.status, 200);
+    assert.equal(backupRes.headers.get("content-type"), "application/zip");
+    const zipBuffer = Buffer.from(await backupRes.arrayBuffer());
+
+    const zipPath = path.join(dir, "backup.zip");
+    writeFileSync(zipPath, zipBuffer);
+    execFileSync("unzip", ["-t", zipPath], { stdio: "pipe" });
+    const extractDir = path.join(dir, "extracted");
+    execFileSync("unzip", ["-o", zipPath, "-d", extractDir], { stdio: "pipe" });
+
+    const customerCsv = readFileSync(path.join(extractDir, "Customer.csv"), "utf8");
+    assert.match(customerCsv, /^﻿/, "expected a UTF-8 BOM so Excel opens Hebrew text correctly");
+    assert.match(customerCsv, /Dana Levi/);
+    assert.match(customerCsv, /הצליח/, "expected the enum's translated label, not the raw stored value 'Won'");
+
+    const serviceCsv = readFileSync(path.join(extractDir, "Service.csv"), "utf8");
+    assert.match(serviceCsv, /Haircut/);
+  } finally {
+    child.kill();
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test("render.yaml's service name is a safe slug even for a project name with spaces, punctuation, and Hebrew", () => {
