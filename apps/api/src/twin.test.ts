@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { Project } from "@forge/shared";
-import { applyMigrations, insertRecord, openDatabase } from "@forge/db";
+import { applyMigrations, insertRecord, openDatabase, tableNameFor } from "@forge/db";
 import { computeBusinessTwin } from "./twin.js";
 
 const project: Project = {
@@ -152,4 +152,74 @@ test("computeBusinessTwin identifies the record most referenced across multiple 
   assert.ok(hubObservation!.includes('2 in "Orders"'));
   assert.ok(hubObservation!.includes('1 in "Tickets"'));
   assert.ok(!hubObservation!.includes("Yossi Cohen"), "Yossi Cohen has only 1 link and must not be reported as the hub");
+});
+
+test("computeBusinessTwin falls back to the next real candidate when the top-linked id no longer resolves to a real record, instead of dropping the insight entirely", () => {
+  // deleteRecord itself can't produce this state today: migrate.ts declares
+  // a real REFERENCES constraint on every relation column and openDatabase
+  // turns PRAGMA foreign_keys ON, so SQLite refuses to delete a Customer
+  // still referenced by an Order/Ticket row (confirmed by hand: the delete
+  // throws "FOREIGN KEY constraint failed"), and diffAndMigrate never drops
+  // a table either. So a dangling relation id isn't reachable through this
+  // app's own code paths right now -- this test simulates it directly
+  // (temporarily disabling FK enforcement to delete the referenced row
+  // anyway) purely to prove the fallback logic itself is correct, as cheap
+  // insurance against a future code path (or a bug in a different layer)
+  // ever producing a stale id computeRelationHubObservation has to handle.
+  const hubProject: Project = {
+    ...project,
+    description: "I need to track orders and support tickets for my customers",
+    spec: {
+      ...project.spec,
+      entities: [
+        { name: "Customer", label: "Customers", fields: [{ name: "name", type: "text", required: true }] },
+        {
+          name: "Order",
+          label: "Orders",
+          fields: [
+            { name: "total", type: "number", required: true },
+            { name: "customerId", label: "Customer", type: "relation", required: false, relationTo: "Customer" },
+          ],
+        },
+        {
+          name: "Ticket",
+          label: "Tickets",
+          fields: [
+            { name: "subject", type: "text", required: true },
+            { name: "customerId", label: "Customer", type: "relation", required: false, relationTo: "Customer" },
+          ],
+        },
+      ],
+    },
+  };
+  const db = openDatabase(":memory:");
+  applyMigrations(db, hubProject.id, hubProject.spec);
+  const [customer, order, ticket] = hubProject.spec.entities;
+  const { id: dana } = insertRecord(db, hubProject.id, customer, { name: "Dana Levi" });
+  const { id: yossi } = insertRecord(db, hubProject.id, customer, { name: "Yossi Cohen" });
+  // Dana: 3 links (the top candidate) -- Yossi: 2 links (a real, valid runner-up).
+  insertRecord(db, hubProject.id, order, { total: 50, customerId: dana });
+  insertRecord(db, hubProject.id, order, { total: 30, customerId: dana });
+  insertRecord(db, hubProject.id, ticket, { subject: "Refund", customerId: dana });
+  insertRecord(db, hubProject.id, order, { total: 10, customerId: yossi });
+  insertRecord(db, hubProject.id, ticket, { subject: "Where's my order?", customerId: yossi });
+
+  // Simulates Dana being gone while her old customerId is still sitting in
+  // two Order rows and one Ticket row -- FK enforcement (see comment above)
+  // means the app itself can never reach this state through deleteRecord,
+  // so it's forced here directly: FKs off, a raw delete of just the
+  // customers row, FKs back on for the rest of the test.
+  db.exec("PRAGMA foreign_keys = OFF;");
+  db.prepare(`DELETE FROM ${tableNameFor(hubProject.id, customer.name)} WHERE id = ?`).run(dana);
+  db.exec("PRAGMA foreign_keys = ON;");
+
+  const twin = computeBusinessTwin(db, hubProject);
+  const hubObservation = twin.observations.find((o) => o.includes("most-linked record"));
+  assert.ok(
+    hubObservation,
+    `expected the insight to fall back to Yossi Cohen (2 real links) instead of disappearing, got: ${JSON.stringify(twin.observations)}`,
+  );
+  assert.ok(hubObservation!.includes("Yossi Cohen"), `expected Yossi Cohen as the fallback hub, got: "${hubObservation}"`);
+  assert.ok(hubObservation!.includes("2 links total"));
+  assert.ok(!hubObservation!.includes("Dana Levi"), "Dana Levi was deleted and must not be reported as the hub");
 });

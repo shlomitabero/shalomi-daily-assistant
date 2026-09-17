@@ -1,5 +1,5 @@
 import type { Entity, EntityRecord, Project } from "@forge/shared";
-import { countRecords, listRecords, type ForgeDatabase } from "@forge/db";
+import { countRecords, getRecord, listRecords, type ForgeDatabase } from "@forge/db";
 import { isHebrewText } from "@forge/spec-engine";
 
 /**
@@ -116,18 +116,37 @@ function computeRelationHubObservation(db: ForgeDatabase, project: Project, hebr
     }
   }
 
-  let best: { targetName: string; id: number; total: number } | null = null;
+  // Ranked candidates, not just the single top one: a real getRecord lookup
+  // confirms the top-total id still resolves to an actual row before it's
+  // reported, falling through to the next real candidate otherwise. Today,
+  // FK constraints (see migrate.ts) and additive-only migrations mean a
+  // dangling id can't actually happen through this app's own code paths --
+  // this is cheap insurance against a future path (or a bug elsewhere)
+  // producing one anyway, so a stale reference drops just that one
+  // candidate rather than the whole insight.
+  const candidates: { targetName: string; id: number; total: number }[] = [];
   for (const [targetName, perId] of breakdownByTarget) {
     for (const [id, breakdown] of perId) {
       const total = breakdown.reduce((sum, b) => sum + b.count, 0);
-      if (total > 1 && (!best || total > best.total)) best = { targetName, id, total };
+      if (total > 1) candidates.push({ targetName, id, total });
     }
   }
-  if (!best) return [];
+  candidates.sort((a, b) => b.total - a.total);
 
-  const targetEntity = entities.find((e) => e.name === best!.targetName)!;
-  const targetRecord = listRecords(db, project.id, targetEntity).find((r) => Number(r.id) === best!.id);
-  if (!targetRecord) return [];
+  let best: { targetName: string; id: number; total: number } | null = null;
+  let targetEntity: Entity | null = null;
+  let targetRecord: EntityRecord | undefined;
+  for (const candidate of candidates) {
+    const entity = entities.find((e) => e.name === candidate.targetName)!;
+    const record = getRecord(db, project.id, entity, candidate.id);
+    if (record) {
+      best = candidate;
+      targetEntity = entity;
+      targetRecord = record;
+      break;
+    }
+  }
+  if (!best || !targetEntity || !targetRecord) return [];
 
   const breakdown = breakdownByTarget.get(best.targetName)!.get(best.id)!;
   const breakdownText = breakdown

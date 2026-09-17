@@ -1994,6 +1994,41 @@ not a single "make it perfect" claim.
       clean + a from-scratch clean-room clone/install/test/build/start
       cycle with a live `/api/health` check.
 
+- [x] **Business Twin: harden the "most-linked record" insight against a
+      stale relation id, and use a point lookup instead of a full scan.**
+      Self-reviewed `apps/api/twin.ts` and got a finding worth checking
+      carefully rather than taking at face value: the claim was that
+      `computeRelationHubObservation` picks only the single
+      highest-linked id and, if that id no longer resolves to a real
+      row (e.g. after the linked record is deleted), the whole insight
+      silently disappears instead of falling back to the next real
+      candidate. Writing the regression test for it turned up something
+      the finding got wrong: calling `deleteRecord` on a Customer still
+      referenced by Order/Ticket rows doesn't leave a dangling id at
+      all — it throws a real `FOREIGN KEY constraint failed` error.
+      Reading `packages/db/src/migrate.ts` and `connection.ts` confirmed
+      why: every relation column gets a genuine SQL `REFERENCES`
+      constraint, `openDatabase` turns `PRAGMA foreign_keys` on, and
+      `diffAndMigrate` never drops a table — so this codebase's own code
+      paths cannot currently produce the exact state the finding
+      described. Shipped the fix anyway, reframed honestly: it's cheap
+      defensive insurance against a future code path (or a bug in a
+      different layer) ever handing this function a stale id, plus a
+      genuine, unrelated efficiency win — the old code called
+      `listRecords(...).find(id)` (a full table scan) to resolve the top
+      candidate; the new code ranks all candidates above the "more than
+      one link" threshold and walks them with the existing indexed
+      `getRecord(db, projectId, entity, id)` point lookup, stopping at
+      the first one that still resolves to a real row. The regression
+      test in `apps/api/twin.test.ts` simulates the dangling-id state
+      directly (`PRAGMA foreign_keys = OFF`, a raw delete, `PRAGMA
+      foreign_keys = ON`) since the app's real `deleteRecord` path
+      cannot reach it — the test says so in its own comment, so nobody
+      mistakes it for a reproduction of a live bug. Full suite green
+      (246 tests total) + both builds clean + a from-scratch clean-room
+      clone/install/test/build/start cycle with a live `/api/health`
+      check.
+
 ## Phase 3
 
 - Self-healing: production observability, automatic diagnosis and patch
