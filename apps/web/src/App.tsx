@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import type { AgentStepEvent, Project, User } from "@forge/shared";
 import {
   answerQuestions,
+  backupProject,
   clearToken,
   createProject,
   enhanceIdea,
@@ -100,6 +101,7 @@ function AppContent() {
   const [showHistory, setShowHistory] = useState(false);
   const [showSearch, setShowSearch] = useState(false);
   const [exportBusy, setExportBusy] = useState(false);
+  const [backupBusy, setBackupBusy] = useState(false);
   const [showTwin, setShowTwin] = useState(false);
   const [refineHistory, setRefineHistory] = useState<RefineHistoryEntry[]>([]);
   const [refineRunning, setRefineRunning] = useState(false);
@@ -214,6 +216,19 @@ function AppContent() {
       setError((err as Error).message);
     } finally {
       setExportBusy(false);
+    }
+  }
+
+  async function handleBackup() {
+    if (!project) return;
+    setBackupBusy(true);
+    setError(null);
+    try {
+      await backupProject(project.id, project.name);
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setBackupBusy(false);
     }
   }
 
@@ -453,6 +468,9 @@ function AppContent() {
               </button>
               <button type="button" className="secondary" onClick={handleExport} disabled={exportBusy}>
                 {exportBusy ? t("preview.export.busy") : t("preview.export")}
+              </button>
+              <button type="button" className="secondary" onClick={handleBackup} disabled={backupBusy}>
+                {backupBusy ? t("preview.backup.busy") : t("preview.backup")}
               </button>
               <button type="button" className="secondary" onClick={() => setShowHistory(true)}>
                 {t("preview.history")}

@@ -1384,6 +1384,36 @@ not a single "make it perfect" claim.
       (181 tests: 46 spec-engine + 25 db + 44 api + 66 web) + both builds
       clean + a from-scratch clean-room clone/install/test/build/start
       cycle with a live `/api/health` check.
+- [x] **"Backup All Data" — one ZIP with every entity's CSV.** Until now,
+      getting your data out meant visiting every entity tab and clicking
+      its own CSV export button one at a time. A new "⬇️ גיבוי כל הנתונים"
+      button on the preview screen hits a new `GET /projects/:id/backup`
+      endpoint that fetches every entity's records once, builds one real
+      Excel-friendly CSV per entity (BOM + CRLF, relation fields resolved
+      to the related record's display label, enum values shown as their
+      translated label — the same formatting rules the per-tab CSV export
+      already uses), and zips them with the exact same dependency-free
+      `zip.ts` writer the code-export endpoint has used since round 4 —
+      no new zip logic, no new dependency. The formatting logic
+      (`apps/api/src/backup.ts`) intentionally mirrors rather than imports
+      `entityFormatting.ts`'s `recordsToCsv`, following this codebase's
+      established pattern of duplicating small, self-contained formatting
+      helpers per surface (live preview, exported codegen app, and now
+      the server) rather than a cross-package dependency for a few dozen
+      lines of pure formatting. Verified with a real Playwright run: built
+      a customers/appointments app, clicked the real backup button,
+      caught the real browser download, unzipped it, and confirmed
+      exactly one correctly-named CSV per entity tab, each containing a
+      real header row and real seeded data rows — not an empty or
+      placeholder file. 5 new unit tests for `backup.ts` (header
+      generation, real record formatting, relation-label resolution, CSV
+      escaping) plus a route-level test in `app.test.ts` mirroring the
+      existing export-endpoint test (refuses before build with 409,
+      returns a real ZIP with a `<EntityName>.csv` entry for every entity
+      in the built spec). Full suite green (187 tests: 46 spec-engine +
+      25 db + 50 api + 66 web) + both builds clean + a from-scratch
+      clean-room clone/install/test/build/start cycle with a live
+      `/api/health` check.
 
 ## Phase 3
 

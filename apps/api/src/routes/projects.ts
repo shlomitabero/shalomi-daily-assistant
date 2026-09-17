@@ -22,6 +22,7 @@ import { HttpError } from "../httpError.js";
 import { requireAuth } from "../auth/middleware.js";
 import { runBuildPipeline } from "../pipeline.js";
 import { generateExportFiles } from "../codegen.js";
+import { generateBackupZipEntries } from "../backup.js";
 import { buildZip } from "../zip.js";
 import { computeBusinessTwin } from "../twin.js";
 
@@ -252,6 +253,22 @@ export function createProjectsRouter(db: ForgeDatabase, provider?: SpecProvider)
       const safeName = project.name.replace(/[^A-Za-z0-9 _-]/g, "").trim() || "forge-app";
       res.setHeader("content-type", "application/zip");
       res.setHeader("content-disposition", `attachment; filename="${safeName}.zip"`);
+      res.send(zip);
+    }),
+  );
+
+  router.get(
+    "/projects/:id/backup",
+    asyncRoute(async (req, res) => {
+      const project = requireOwnedProject(db, req.params.id, req.userId!);
+      if (project.status !== "built") {
+        throw new HttpError(409, "Build the project before backing up its data", "BUILD_REQUIRED");
+      }
+      const entries = generateBackupZipEntries(db, project);
+      const zip = buildZip(entries);
+      const safeName = project.name.replace(/[^A-Za-z0-9 _-]/g, "").trim() || "forge-app";
+      res.setHeader("content-type", "application/zip");
+      res.setHeader("content-disposition", `attachment; filename="${safeName}-backup.zip"`);
       res.send(zip);
     }),
   );

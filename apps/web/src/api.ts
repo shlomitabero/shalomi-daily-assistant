@@ -221,6 +221,32 @@ export async function exportProject(projectId: string, projectName: string): Pro
   URL.revokeObjectURL(url);
 }
 
+/**
+ * Downloads a single .zip containing one CSV per entity -- the whole
+ * project's data at once, instead of visiting every tab's own CSV export
+ * button. Same blob-download mechanics as exportProject (needs the
+ * Authorization header, so a plain <a href> won't work).
+ */
+export async function backupProject(projectId: string, projectName: string): Promise<void> {
+  const token = getToken();
+  const res = await fetchApi(`/api/projects/${projectId}/backup`, {
+    headers: token ? { authorization: `Bearer ${token}` } : {},
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ error: `Request failed (${res.status})` }));
+    throw new Error(resolveErrorMessage(body as { error?: string; code?: string }));
+  }
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `${projectName.replace(/[^A-Za-z0-9 _-]/g, "").trim() || "forge-app"}-backup.zip`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
 export interface BusinessTwinEntityStat {
   name: string;
   label: string;

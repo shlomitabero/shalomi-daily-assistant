@@ -459,6 +459,45 @@ test("export refuses before build, and returns a real zip file after", async () 
   });
 });
 
+test("backup refuses before build, and returns a real zip with one CSV per entity after", async () => {
+  await withServer(async (baseUrl) => {
+    const token = await signup(baseUrl);
+    const createRes = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ description: "A CRM with customers and deals." }),
+    });
+    const { project } = (await createRes.json()) as { project: { id: string; spec: { entities: { name: string }[] } } };
+
+    const tooEarly = await fetch(`${baseUrl}/api/projects/${project.id}/backup`, { headers: authHeaders(token) });
+    assert.equal(tooEarly.status, 409);
+
+    const buildRes = await fetch(`${baseUrl}/api/projects/${project.id}/build`, {
+      method: "POST",
+      headers: authHeaders(token),
+    });
+    await collectSSE(buildRes);
+
+    const getRes = await fetch(`${baseUrl}/api/projects/${project.id}`, { headers: authHeaders(token) });
+    const { project: builtProject } = (await getRes.json()) as { project: { spec: { entities: { name: string }[] } } };
+
+    const backupRes = await fetch(`${baseUrl}/api/projects/${project.id}/backup`, { headers: authHeaders(token) });
+    assert.equal(backupRes.status, 200);
+    assert.equal(backupRes.headers.get("content-type"), "application/zip");
+    assert.match(backupRes.headers.get("content-disposition") ?? "", /attachment; filename=".*-backup\.zip"/);
+    const buffer = Buffer.from(await backupRes.arrayBuffer());
+    assert.equal(buffer.readUInt32LE(0), 0x04034b50); // real ZIP local-file-header magic
+
+    // The zip must contain a filename entry per real entity in the built
+    // spec, not a hardcoded guess -- search the raw bytes for each
+    // entity's own "<Name>.csv" local-file-header filename.
+    assert.ok(builtProject.spec.entities.length > 0);
+    for (const entity of builtProject.spec.entities) {
+      assert.ok(buffer.includes(`${entity.name}.csv`), `expected the backup zip to contain an entry for "${entity.name}.csv"`);
+    }
+  });
+});
+
 test("the idea-enhance endpoint requires auth, rejects an empty idea, and expands a real one", async () => {
   await withServer(async (baseUrl) => {
     const noAuth = await fetch(`${baseUrl}/api/ideas/enhance`, {
