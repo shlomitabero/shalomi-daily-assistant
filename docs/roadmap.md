@@ -1703,6 +1703,35 @@ not a single "make it perfect" claim.
       from-scratch clean-room clone/install/test/build/start cycle with a
       live `/api/health` check.
 
+- [x] **"Clear history" for the WhatsApp message log.** The log had no
+      ceiling and no way to wipe it — a project used for a while just
+      accumulated every test and real message forever. Added a real
+      `DELETE /projects/:id/integrations/whatsapp/messages` route (goes
+      through the same `requireOwnedProject` ownership check as every
+      other project route, so one user can never clear another's log), a
+      `clearWhatsAppMessages(db, projectId)` helper in
+      `packages/db/src/whatsapp.ts`, and a "Clear history" button in
+      `WhatsAppPanel.tsx` next to the log heading — only rendered when
+      there's actually something to clear — guarded by a
+      `window.confirm()`, the same confirmation pattern already used for
+      record deletion elsewhere in the app (`EntityPanel.tsx`). New
+      `whatsapp.test.ts` DB-level tests (wipes only the target project's
+      rows, leaves another project's untouched; a harmless no-op on an
+      empty log) and a new `app.test.ts` route-level test driving the
+      real HTTP DELETE end to end across two separate connected projects,
+      asserting only the targeted one's log was wiped. Verified live too:
+      booted a real local server with the fake-socket `WhatsAppWebManager`
+      injected (same DI seam as the retry-button round, since a real
+      Baileys/WhatsApp connection is unreachable from this sandbox), and
+      drove the real UI with Playwright — confirmed the Clear button is
+      hidden while the log is empty, sent two real messages, clicked
+      Clear, confirmed the panel shows the empty state, then made a
+      completely independent `GET /messages` call (not the panel's own
+      client state) to confirm the delete really happened server-side.
+      Full suite green (226 tests total) + both builds clean + a
+      from-scratch clean-room clone/install/test/build/start cycle with a
+      live `/api/health` check.
+
 ## Phase 3
 
 - Self-healing: production observability, automatic diagnosis and patch
