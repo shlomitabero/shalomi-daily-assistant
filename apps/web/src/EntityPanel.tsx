@@ -422,6 +422,9 @@ export function EntityPanel({
   }
 
   async function handleDelete(id: number) {
+    const record = records.find((r) => (r.id as number) === id);
+    const label = record ? recordDisplayLabel(entity, record) : `#${id}`;
+    if (!window.confirm(t("entity.confirmDelete", { label }))) return;
     setError(null);
     try {
       await deleteRecord(projectId, entity.name, id);

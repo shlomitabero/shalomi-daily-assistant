@@ -191,6 +191,7 @@ export const translations: Record<Lang, Record<string, string>> = {
     "entity.bulk.selectedCount": "{count} נבחרו",
     "entity.bulk.deleteSelected": "🗑️ מחיקת הנבחרים",
     "entity.bulk.confirmDelete": "למחוק {count} רשומות? לא ניתן לשחזר את הפעולה.",
+    "entity.confirmDelete": "למחוק את \"{label}\"? לא ניתן לשחזר את הפעולה.",
     "history.title": "🕘 ציר זמן",
     "history.close": "סגירה",
     "history.description": "כל בנייה או שיפור נשמר כאן כנקודת שחזור. חוזרים אחורה בלי לאבד מידע — אף פעולה כאן לא מוחקת נתונים קיימים.",
@@ -371,6 +372,7 @@ export const translations: Record<Lang, Record<string, string>> = {
     "entity.bulk.selectedCount": "{count} selected",
     "entity.bulk.deleteSelected": "🗑️ Delete selected",
     "entity.bulk.confirmDelete": "Delete {count} records? This can't be undone.",
+    "entity.confirmDelete": "Delete \"{label}\"? This can't be undone.",
     "history.title": "🕘 Time Machine",
     "history.close": "Close",
     "history.description":

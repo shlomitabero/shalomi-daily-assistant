@@ -1326,6 +1326,29 @@ not a single "make it perfect" claim.
       Full suite green (177 tests: 44 spec-engine + 24 db + 43 api + 66
       web) + both builds clean + a from-scratch clean-room clone/install/
       test/build/start cycle with a live `/api/health` check.
+- [x] **Confirmation dialog before deleting a single record.** A real
+      inconsistency, not a new feature: bulk-delete already asked
+      "Delete 3 records? This can't be undone." before running, but a
+      single row's own Delete button just deleted immediately with no
+      chance to back out — one careless click and a record was gone. Both
+      `EntityPanel.tsx` (live preview) and the generated
+      `EntityView.jsx` (exported app) now show a `window.confirm` naming
+      the specific record by its own display label (reusing
+      `recordDisplayLabel`, the same function relation pickers and CSV
+      export already use) before deleting it, matching the bulk-delete
+      pattern exactly. Verified with a real Playwright run covering both
+      apps: built a live Customer app, clicked Delete on a row, confirmed
+      the dialog text named that exact customer, dismissed it and
+      confirmed the row was still there, then clicked Delete again and
+      accepted, confirming the row was actually removed — then exported
+      that same app for a real download+unzip+npm install+vite build+
+      server start cycle and repeated the identical dismiss/accept check
+      against the standalone exported app's own Delete button, with the
+      same result. One content test added to `codegen.test.ts` (21 tests
+      now, up from 20). Full suite green (178 tests: 44 spec-engine + 24
+      db + 44 api + 66 web) + both builds clean + a from-scratch
+      clean-room clone/install/test/build/start cycle with a live
+      `/api/health` check.
 
 ## Phase 3
 

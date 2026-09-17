@@ -1012,6 +1012,9 @@ export function EntityView({ entity }) {
   }
 
   async function handleDelete(id) {
+    const record = records.find((r) => r.id === id);
+    const label = record ? recordDisplayLabel(entity, record) : \`#\${id}\`;
+    if (!window.confirm(\`Delete "\${label}"? This can't be undone.\`)) return;
     await deleteRecord(entity.name, id);
     setSelectedIds((prev) => {
       if (!prev.has(id)) return prev;

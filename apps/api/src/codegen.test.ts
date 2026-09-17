@@ -389,6 +389,13 @@ test("generateExportFiles includes a real render.yaml matching this repo's own p
   assert.match(readme, /render\.com/i);
 });
 
+test("the exported EntityView asks for confirmation before deleting a single record, naming it by its own display label, not just count", () => {
+  const files = generateExportFiles(project);
+  const entityViewJsx = files.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+  assert.match(entityViewJsx, /async function handleDelete\(id\) \{\s*const record = records\.find/);
+  assert.match(entityViewJsx, /window\.confirm\(`Delete "\$\{label\}"\? This can't be undone\.`\)/);
+});
+
 test("the exported EntityView renders a real CSV import (the complement to CSV export), ported from the Forge AI live preview", () => {
   const files = generateExportFiles(project);
   const entityViewJsx = files.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
