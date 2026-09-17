@@ -242,3 +242,50 @@ test("disconnect logs out the real socket, clears the live session, and keeps th
   assert.equal(stored?.phoneNumber, "972501234567");
   assert.equal(stored?.connectedAt, null);
 });
+
+test("a DB error inside a connection.update handler is caught, recorded on the session, and never escapes as an unhandled promise rejection", async () => {
+  const { manager, createdSockets, db } = setupManager();
+  const unhandled: unknown[] = [];
+  const onUnhandledRejection = (err: unknown) => unhandled.push(err);
+  process.on("unhandledRejection", onUnhandledRejection);
+
+  try {
+    await manager.connect("proj1");
+    createdSockets[0].sock.user = { id: "972501234567:12@s.whatsapp.net" };
+    db.close(); // any further write (recordWhatsAppConnected) will now throw
+    createdSockets[0].emitConnectionUpdate({ connection: "open" });
+
+    // Let the fire-and-forget async handler run to completion before asserting.
+    await new Promise((resolve) => setImmediate(resolve));
+    await new Promise((resolve) => setImmediate(resolve));
+
+    assert.deepEqual(unhandled, [], "a handler's DB error must never become an unhandled promise rejection");
+    const state = manager.getStatus("proj1");
+    assert.match(state.error ?? "", /database is not open/);
+  } finally {
+    process.removeListener("unhandledRejection", onUnhandledRejection);
+  }
+});
+
+test("a stale close event from a disconnected socket does not clobber a newer session created by a fresh connect()", async () => {
+  const { manager, createdSockets } = setupManager();
+  await manager.connect("proj1");
+  const oldSocket = createdSockets[0];
+  oldSocket.sock.user = { id: "972501234567:12@s.whatsapp.net" };
+  oldSocket.emitConnectionUpdate({ connection: "open" });
+
+  await manager.disconnect("proj1");
+  await manager.connect("proj1");
+  const newSocket = createdSockets[1];
+  newSocket.sock.user = { id: "972500000001:1@s.whatsapp.net" };
+  newSocket.emitConnectionUpdate({ connection: "open" });
+
+  // The old socket's own "close" event arrives late over the wire, after
+  // disconnect() already logged it out and after a brand new connection
+  // has since been established -- a real, plausible timing.
+  oldSocket.emitConnectionUpdate({ connection: "close" });
+
+  const state = manager.getStatus("proj1");
+  assert.equal(state.status, "connected");
+  assert.equal(state.phoneNumber, "972500000001");
+});

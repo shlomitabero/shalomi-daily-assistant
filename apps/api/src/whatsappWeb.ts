@@ -153,9 +153,26 @@ export class WhatsAppWebManager {
     try {
       const { sock, saveCreds } = await this.createSocket(this.authDirFor(projectId));
       session.sock = sock;
-      sock.ev.on("creds.update", () => void saveCreds());
-      sock.ev.on("connection.update", (update) => void this.handleConnectionUpdate(projectId, update));
-      sock.ev.on("messages.upsert", (upsert) => void this.handleIncomingMessages(projectId, upsert));
+      // Every handler below is wired with a real `.catch`, not a bare
+      // `void` -- a `void asyncFn()` discards the returned promise
+      // without attaching a rejection handler, so a thrown error inside
+      // (a DB write hitting SQLITE_BUSY, a disk error saving credentials)
+      // would become an unhandled promise rejection and crash the whole
+      // Node process, taking down every project's connection, not just
+      // this one. `session` is captured directly (not re-looked-up by
+      // projectId) so a stale event from a socket this manager has
+      // already replaced or torn down can recognize itself as stale --
+      // see the identity check at the top of handleConnectionUpdate/
+      // handleIncomingMessages.
+      sock.ev.on("creds.update", () => {
+        saveCreds().catch((err) => this.logHandlerError(projectId, err));
+      });
+      sock.ev.on("connection.update", (update) => {
+        this.handleConnectionUpdate(projectId, session, update).catch((err) => this.logHandlerError(projectId, err));
+      });
+      sock.ev.on("messages.upsert", (upsert) => {
+        this.handleIncomingMessages(projectId, session, upsert).catch((err) => this.logHandlerError(projectId, err));
+      });
     } catch (err) {
       session.status = "disconnected";
       session.error = (err as Error).message;
@@ -163,9 +180,26 @@ export class WhatsAppWebManager {
     return this.getStatus(projectId);
   }
 
-  private async handleConnectionUpdate(projectId: string, update: BaileysConnectionUpdate): Promise<void> {
+  /**
+   * Never lets a handler's rejection escape as an unhandled promise
+   * rejection (which would crash the process); records the failure on
+   * the session (if it's still the live one) so the UI can surface it
+   * instead of silently stalling.
+   */
+  private logHandlerError(projectId: string, err: unknown): void {
+    const message = err instanceof Error ? err.message : String(err);
+    // eslint-disable-next-line no-console
+    console.error(`WhatsApp handler error for project ${projectId}:`, message);
     const session = this.sessions.get(projectId);
-    if (!session) return;
+    if (session) session.error = message;
+  }
+
+  private async handleConnectionUpdate(projectId: string, session: ManagedSession, update: BaileysConnectionUpdate): Promise<void> {
+    // This event was registered on a specific socket; if the manager has
+    // since replaced or torn down that socket's session (a disconnect
+    // followed by a fresh connect, for instance), this event arrived
+    // after the fact and must not touch whatever is in the map now.
+    if (this.sessions.get(projectId) !== session) return;
 
     if (update.qr) {
       session.status = "qr";
@@ -196,12 +230,12 @@ export class WhatsAppWebManager {
     }
   }
 
-  private async handleIncomingMessages(projectId: string, upsert: BaileysMessagesUpsert): Promise<void> {
+  private async handleIncomingMessages(projectId: string, session: ManagedSession, upsert: BaileysMessagesUpsert): Promise<void> {
+    if (this.sessions.get(projectId) !== session) return;
     if (upsert.type !== "notify") return;
     const project = getProject(this.db, projectId);
     if (!project || project.status !== "built") return;
 
-    const session = this.sessions.get(projectId);
     for (const msg of upsert.messages) {
       if (msg.key.fromMe) continue;
       const remoteJid = msg.key.remoteJid;

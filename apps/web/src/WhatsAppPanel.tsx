@@ -11,6 +11,10 @@ import {
 } from "./api.js";
 
 const POLL_INTERVAL_MS = 1500;
+// A single dropped request (a momentary network blip, a cold-starting
+// backend) shouldn't permanently strand the panel in "connecting" with no
+// further updates -- only give up after several polls in a row fail.
+const MAX_CONSECUTIVE_POLL_FAILURES = 5;
 
 export function WhatsAppPanel({ projectId, onClose }: { projectId: string; onClose: () => void }) {
   const { t } = useTranslation();
@@ -24,6 +28,7 @@ export function WhatsAppPanel({ projectId, onClose }: { projectId: string; onClo
   const [sendResult, setSendResult] = useState<{ ok: boolean; text: string } | null>(null);
   const [messages, setMessages] = useState<WhatsAppMessageLogEntry[]>([]);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const pollFailuresRef = useRef(0);
 
   function stopPolling() {
     if (pollRef.current) {
@@ -34,9 +39,11 @@ export function WhatsAppPanel({ projectId, onClose }: { projectId: string; onClo
 
   function startPolling() {
     stopPolling();
+    pollFailuresRef.current = 0;
     pollRef.current = setInterval(async () => {
       try {
         const next = await getWhatsAppStatus(projectId);
+        pollFailuresRef.current = 0;
         setStatus(next);
         if (next.status === "connected" || next.status === "disconnected") {
           stopPolling();
@@ -45,8 +52,15 @@ export function WhatsAppPanel({ projectId, onClose }: { projectId: string; onClo
             setMessages(messages);
           }
         }
-      } catch {
-        stopPolling();
+      } catch (err) {
+        // A lone failed poll is likely transient -- keep trying instead of
+        // stranding the user with a QR code that never updates again.
+        // Only give up, and say so, after several in a row fail.
+        pollFailuresRef.current += 1;
+        if (pollFailuresRef.current >= MAX_CONSECUTIVE_POLL_FAILURES) {
+          stopPolling();
+          setLoadError((err as Error).message);
+        }
       }
     }, POLL_INTERVAL_MS);
   }
@@ -132,6 +146,7 @@ export function WhatsAppPanel({ projectId, onClose }: { projectId: string; onClo
             <button type="button" onClick={handleConnect} disabled={connecting}>
               {connecting ? t("whatsapp.connect.connecting") : t("whatsapp.connect.button")}
             </button>
+            {status?.error && <p className="error">{status.error}</p>}
           </div>
         )}
 
