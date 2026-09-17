@@ -552,6 +552,161 @@ function recordsToCsv(fields, records, relatedRecords) {
   return [header, ...rows].join("\\r\\n");
 }
 
+// Parses CSV text into rows of raw string cells (RFC 4180: quoted fields
+// may contain commas, newlines, and doubled-quote escapes) -- the reverse
+// of recordsToCsv, so a spreadsheet export (or a hand-edited copy of one)
+// can be imported back in. Handles CRLF and bare LF line endings, and
+// drops a single trailing blank line rather than emitting a phantom row.
+function parseCsv(text) {
+  const rows = [];
+  let row = [];
+  let field = "";
+  let inQuotes = false;
+  let i = 0;
+  const len = text.length;
+
+  function endField() {
+    row.push(field);
+    field = "";
+  }
+  function endRow() {
+    endField();
+    rows.push(row);
+    row = [];
+  }
+
+  while (i < len) {
+    const ch = text[i];
+    if (inQuotes) {
+      if (ch === '"') {
+        if (text[i + 1] === '"') {
+          field += '"';
+          i += 2;
+          continue;
+        }
+        inQuotes = false;
+        i++;
+        continue;
+      }
+      field += ch;
+      i++;
+      continue;
+    }
+    if (ch === '"') {
+      inQuotes = true;
+      i++;
+      continue;
+    }
+    if (ch === ",") {
+      endField();
+      i++;
+      continue;
+    }
+    if (ch === "\\r") {
+      if (text[i + 1] === "\\n") i++;
+      endRow();
+      i++;
+      continue;
+    }
+    if (ch === "\\n") {
+      endRow();
+      i++;
+      continue;
+    }
+    field += ch;
+    i++;
+  }
+  if (field.length > 0 || row.length > 0) endRow();
+
+  return rows;
+}
+
+function matchesImportHeader(header, field) {
+  const normalized = header.trim().toLowerCase();
+  return normalized === field.name.toLowerCase() || normalized === (field.label || "").toLowerCase();
+}
+
+// Turns parsed CSV rows into record payloads matching entity.fields --
+// the reverse of fieldDisplayValue. Columns are matched to fields by
+// header text (label or field name, case-insensitively); an unmatched
+// column is ignored. A required relation field makes every row
+// impossible to satisfy (resolving a label back to a foreign-key id
+// needs the related entity's own records loaded), so that refuses the
+// whole import with one clear error instead of guessing; an optional
+// relation column, if present, is ignored per row.
+function buildImportRecords(fields, rows) {
+  if (rows.length === 0) return { records: [], errors: [] };
+
+  const requiredRelation = fields.find((f) => f.type === "relation" && f.required);
+  if (requiredRelation) {
+    return {
+      records: [],
+      errors: [\`CSV import isn't supported yet for entities with a required relation field ("\${requiredRelation.label || requiredRelation.name}").\`],
+    };
+  }
+
+  const [header, ...dataRows] = rows;
+  const columnFields = header.map((cell) => fields.find((f) => matchesImportHeader(cell, f)) || null);
+
+  const records = [];
+  const errors = [];
+
+  dataRows.forEach((row, rowIndex) => {
+    const isBlank = row.every((cell) => cell.trim() === "");
+    if (isBlank) return;
+
+    const record = {};
+    let rowError = null;
+
+    for (const field of fields) {
+      const columnIndex = columnFields.findIndex((f) => f && f.name === field.name);
+      const raw = columnIndex === -1 ? "" : (row[columnIndex] || "").trim();
+
+      if (field.type === "relation") continue;
+
+      if (raw === "") {
+        if (field.required) {
+          rowError = \`Row \${rowIndex + 1}: missing required field "\${field.label || field.name}".\`;
+          break;
+        }
+        record[field.name] = field.type === "boolean" ? false : null;
+        continue;
+      }
+
+      if (field.type === "boolean") {
+        record[field.name] = ["true", "1", "yes"].includes(raw.toLowerCase());
+      } else if (field.type === "number") {
+        const n = Number(raw);
+        if (Number.isNaN(n)) {
+          rowError = \`Row \${rowIndex + 1}: "\${raw}" isn't a number for field "\${field.label || field.name}".\`;
+          break;
+        }
+        record[field.name] = n;
+      } else if (field.type === "enum") {
+        const byValue = field.enumValues && field.enumValues.find((v) => v.toLowerCase() === raw.toLowerCase());
+        const byLabel =
+          field.enumValues && field.enumValues.find((v) => ((field.enumLabels && field.enumLabels[v]) || v).toLowerCase() === raw.toLowerCase());
+        const resolved = byValue || byLabel;
+        if (!resolved) {
+          rowError = \`Row \${rowIndex + 1}: "\${raw}" isn't a valid option for field "\${field.label || field.name}".\`;
+          break;
+        }
+        record[field.name] = resolved;
+      } else {
+        record[field.name] = raw;
+      }
+    }
+
+    if (rowError) {
+      errors.push(rowError);
+    } else {
+      records.push(record);
+    }
+  });
+
+  return { records, errors };
+}
+
 // Picks the enum field an entity's records should be grouped into board
 // columns by, if any -- prefers a field literally named status/stage, falls
 // back to the first workable enum field (2-8 values), and returns null for
@@ -753,6 +908,10 @@ export function EntityView({ entity }) {
   const [calendarMonth, setCalendarMonth] = useState(() => new Date());
   const [selectedIds, setSelectedIds] = useState(() => new Set());
   const [relatedRecords, setRelatedRecords] = useState({});
+  const [importBusy, setImportBusy] = useState(false);
+  const [importMessage, setImportMessage] = useState(null);
+  const [importErrors, setImportErrors] = useState([]);
+  const [showImportErrors, setShowImportErrors] = useState(false);
   const boardField = useMemo(() => findBoardField(entity.fields), [entity.fields]);
   const dateField = useMemo(() => findDateField(entity.fields), [entity.fields]);
   const relationTargets = useMemo(() => {
@@ -805,6 +964,9 @@ export function EntityView({ entity }) {
     setViewMode("table");
     setCalendarMonth(new Date());
     setSelectedIds(new Set());
+    setImportMessage(null);
+    setImportErrors([]);
+    setShowImportErrors(false);
     refresh();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [entity.name]);
@@ -910,6 +1072,49 @@ export function EntityView({ entity }) {
     URL.revokeObjectURL(url);
   }
 
+  // The complement to CSV export: parses an uploaded file, converts it to
+  // record payloads (already validated client-side), then POSTs each
+  // valid row. Uses allSettled rather than assuming success once
+  // client-side validation passes, since the server has the final say.
+  async function handleImportFile(e) {
+    const file = e.target.files && e.target.files[0];
+    e.target.value = "";
+    if (!file) return;
+    setImportBusy(true);
+    setImportMessage(null);
+    setImportErrors([]);
+    setShowImportErrors(false);
+    try {
+      const text = await file.text();
+      const rows = parseCsv(text);
+      const { records: parsedRecords, errors: parseErrors } = buildImportRecords(entity.fields, rows);
+
+      if (parsedRecords.length === 0) {
+        setImportErrors(parseErrors);
+        setImportMessage(
+          parseErrors.length > 0 ? \`Import failed: \${parseErrors.length} errors. No records were created.\` : "The file contained no data rows to import.",
+        );
+        return;
+      }
+
+      const results = await Promise.allSettled(parsedRecords.map((record) => createRecord(entity.name, record)));
+      const serverErrors = results.filter((r) => r.status === "rejected").map((r) => r.reason.message);
+      const createdCount = results.length - serverErrors.length;
+      const allErrors = [...parseErrors, ...serverErrors];
+      setImportErrors(allErrors);
+      setImportMessage(
+        allErrors.length === 0
+          ? \`Imported \${createdCount} records successfully.\`
+          : \`Imported \${createdCount} records, skipped \${allErrors.length} rows.\`,
+      );
+      await refresh();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setImportBusy(false);
+    }
+  }
+
   return (
     <div className="panel">
       <h3>{entity.label}</h3>
@@ -948,6 +1153,27 @@ export function EntityView({ entity }) {
         </div>
       </form>
       {error && <p className="error">{error}</p>}
+
+      <div className="csv-import-row">
+        <label className="csv-import-label">
+          {importBusy ? "Importing…" : "⬆️ Import CSV"}
+          <input type="file" accept=".csv,text/csv" onChange={handleImportFile} disabled={importBusy} hidden />
+        </label>
+        {importMessage && <span className="muted small">{importMessage}</span>}
+        {importErrors.length > 0 && (
+          <button type="button" className="import-errors-toggle" onClick={() => setShowImportErrors((v) => !v)}>
+            {showImportErrors ? "Hide errors" : "Show errors"}
+          </button>
+        )}
+      </div>
+      {showImportErrors && importErrors.length > 0 && (
+        <ul className="csv-import-errors">
+          {importErrors.map((msg, i) => (
+            <li key={i}>{msg}</li>
+          ))}
+        </ul>
+      )}
+
       {loading ? (
         <p className="muted">Loading…</p>
       ) : records.length === 0 ? (
@@ -1403,6 +1629,13 @@ th, td { text-align: start; padding: 8px 10px; border-bottom: 1px solid #efe8da;
 .csv-export-btn { flex-shrink: 0; padding: 8px 14px; font-size: 13px; border-radius: 8px; border: 1px solid #e6ddcc; background: #fff; color: #241f19; cursor: pointer; font: inherit; }
 .csv-export-btn:hover:not(:disabled) { background: #f6f2ea; }
 .csv-export-btn:disabled { opacity: 0.55; cursor: default; }
+.csv-import-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin: 0 0 14px; }
+.csv-import-label { display: inline-flex; align-items: center; padding: 8px 14px; font-size: 13px; font-weight: 600; border-radius: 8px; background: #fff; color: #241f19; border: 1px solid #e6ddcc; cursor: pointer; font: inherit; }
+.csv-import-label:has(input:disabled) { opacity: 0.55; cursor: default; }
+.csv-import-label:hover { background: #f6f2ea; }
+.import-errors-toggle { padding: 8px 14px; font-size: 13px; border-radius: 8px; border: 1px solid #e6ddcc; background: #fff; color: #241f19; cursor: pointer; font: inherit; }
+.import-errors-toggle:hover { background: #f6f2ea; }
+.csv-import-errors { margin: -6px 0 14px; padding-inline-start: 20px; color: #c0392b; font-size: 13px; display: flex; flex-direction: column; gap: 3px; }
 .bulk-actions-bar { display: flex; align-items: center; gap: 12px; padding: 8px 12px; margin-bottom: 8px; background: #faf7f1; border: 1px solid #efe8da; border-radius: 8px; font-size: 13.5px; }
 .select-col { width: 1%; white-space: nowrap; }
 .app-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 20px; }

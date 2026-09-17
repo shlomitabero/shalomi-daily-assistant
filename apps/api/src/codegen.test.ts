@@ -389,6 +389,24 @@ test("generateExportFiles includes a real render.yaml matching this repo's own p
   assert.match(readme, /render\.com/i);
 });
 
+test("the exported EntityView renders a real CSV import (the complement to CSV export), ported from the Forge AI live preview", () => {
+  const files = generateExportFiles(project);
+  const entityViewJsx = files.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+  assert.match(entityViewJsx, /function parseCsv\(text\)/);
+  assert.match(entityViewJsx, /function buildImportRecords\(fields, rows\)/);
+  assert.match(entityViewJsx, /async function handleImportFile\(e\)/);
+  assert.match(entityViewJsx, /csv-import-label/);
+  assert.match(entityViewJsx, /Promise\.allSettled/);
+  // A required relation field refuses the whole import with one clear
+  // error rather than guessing at foreign keys -- same rule as the live
+  // preview's buildImportRecords.
+  assert.match(entityViewJsx, /CSV import isn't supported yet for entities with a required relation field/);
+
+  const stylesCss = files.find((f) => f.path === "web/src/styles.css")!.content;
+  assert.match(stylesCss, /\.csv-import-row/);
+  assert.match(stylesCss, /\.csv-import-errors/);
+});
+
 test("the exported app includes a real cross-entity global search, ported from the Forge AI live preview", () => {
   const files = generateExportFiles(project);
   const globalSearchJsx = files.find((f) => f.path === "web/src/components/GlobalSearch.jsx")!.content;

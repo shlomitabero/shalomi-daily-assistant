@@ -1302,6 +1302,30 @@ not a single "make it perfect" claim.
       green (176 tests: 44 spec-engine + 24 db + 42 api + 66 web) + both
       builds clean + a from-scratch clean-room clone/install/test/
       build/start cycle with a live `/api/health` check.
+- [x] **Ported CSV import to the exported codegen app.** Immediate
+      follow-up to the CSV import round above, same porting pattern as
+      global search before it: added `parseCsv`/`buildImportRecords` (the
+      same RFC-4180 parser and header-matched type coercion, translated
+      to plain JS) directly into the generated `EntityView.jsx`, plus an
+      always-visible import file input, per-row error reporting behind a
+      "Show errors" toggle, and the same up-front refusal for a required
+      relation field. Verified with the full real pipeline codegen
+      changes require: built a real Customer app, clicked the actual
+      export button for a real browser download, unzipped it, ran a real
+      `npm install` and `vite build`, started the generated `server.js`
+      as a real child process, then opened a second real browser against
+      that standalone server and uploaded an actual 4-row CSV file (2
+      valid rows, one missing the required name, one with an invalid
+      enum value) through the exported app's own file input — confirmed
+      exactly 2 records were created and appear in its table, the 2
+      invalid rows were correctly rejected, and both rejection reasons
+      show up under "Show errors", all inside the standalone exported
+      app with zero dependency on Forge AI. Added one content test to
+      `codegen.test.ts` (20 tests now, up from 19) checking the generated
+      `EntityView.jsx` actually contains the ported functions and CSS.
+      Full suite green (177 tests: 44 spec-engine + 24 db + 43 api + 66
+      web) + both builds clean + a from-scratch clean-room clone/install/
+      test/build/start cycle with a live `/api/health` check.
 
 ## Phase 3
 
