@@ -1876,6 +1876,61 @@ not a single "make it perfect" claim.
       clone/install/test/build/start cycle with a live `/api/health`
       check.
 
+- [x] **Self-review of `codegen.ts` — the largest file in the codebase,
+      never reviewed before — found a real crash bug and rejected a
+      colliding field name at the source.** `codegen.ts` (the exported
+      standalone-app generator, ~1,900 lines) had never had a dedicated
+      review pass. Ran `code-review` at high effort and it found that
+      every generated table hardcodes `id` and `createdAt` as built-in
+      columns — true both for the live preview's own migration code
+      (`packages/db/src/migrate.ts`) and the exported app's generated
+      `server.js` (`codegen.ts`) — and nothing anywhere stopped an
+      entity's own field from being named either one. An AI-generated
+      spec with a field literally named `id` or `createdAt` (plausible:
+      plenty of real business entities naturally have a creation-date-like
+      field) produces a duplicate-column `CREATE TABLE`, which throws
+      uncaught; for the exported app specifically, that means the whole
+      generated server crashes before it can even start listening, with
+      no Debug Agent safety net the way the live preview sometimes has.
+      Fixed at the one point every spec — heuristic, the real Anthropic
+      provider, and its own repair path in `debug.ts` — already gets
+      validated: `FieldSchema` in `packages/shared/src/index.ts` now
+      rejects a field named `id` or `createdAt` in any casing. This plugs
+      straight into `generateSpec`'s existing fallback machinery for
+      free — a bad name from the AI now just falls back to the heuristic
+      provider (which never produces one, confirmed by grep across every
+      curated entity template) instead of ever reaching either database
+      layer. New tests in `spec-engine`'s `index.test.ts` use the real
+      `AnthropicSpecProvider` class itself (not a hand-rolled stand-in
+      that would skip its own internal validation) to prove both the
+      direct rejection and the full end-to-end fallback. Verified live
+      too — and this surfaced a genuinely useful side-finding: an initial
+      verification attempt used a naive hand-written fake provider that
+      skipped the real validation step, and that let a colliding spec
+      reach `insertProject`, where it was stored successfully and then
+      crashed on the very next read — because
+      `packages/db/src/projects.ts`'s `rowToProject()` re-validates every
+      stored spec against the *current* schema on every single read with
+      a hard `.parse()`. Tightening the schema is only safe here because
+      no spec that would now be rejected could ever have been
+      successfully created via either *real* provider (both already
+      validate before returning) — but the general fragility of
+      re-validating old stored data against an evolving schema is a real,
+      separate architectural question, noted for a future round rather
+      than patched as a rushed afterthought here. Re-ran the verification
+      correctly with the real `AnthropicSpecProvider` class (only its
+      `fetchImpl` swapped, its own internal `safeParse` intact) against a
+      real running server: `providerName` came back `"anthropic-fallback"`
+      and the saved project's entities never contained the colliding
+      field. Full suite green (234 tests total) + both builds clean + a
+      from-scratch clean-room clone/install/test/build/start cycle with a
+      live `/api/health` check. (Two smaller, unrelated bugs the same
+      review found in `codegen.ts`'s CSV export/import round-trip — a
+      number formatted with `toLocaleString()` on export doesn't re-parse
+      with plain `Number()` on import, and a locale-formatted date export
+      doesn't round-trip either — are left for a dedicated CSV round-trip
+      fix later.)
+
 ## Phase 3
 
 - Self-healing: production observability, automatic diagnosis and patch
