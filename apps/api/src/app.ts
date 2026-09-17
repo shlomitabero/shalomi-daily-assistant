@@ -1,4 +1,5 @@
 import { existsSync } from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import cors from "cors";
 import express, { type Express, type NextFunction, type Request, type Response } from "express";
@@ -6,7 +7,7 @@ import { ValidationError, NotFoundError, type ForgeDatabase } from "@forge/db";
 import type { SpecProvider } from "@forge/spec-engine";
 import { createProjectsRouter } from "./routes/projects.js";
 import { createAuthRouter } from "./routes/auth.js";
-import { createWhatsAppWebhookRouter } from "./routes/whatsappWebhook.js";
+import { WhatsAppWebManager } from "./whatsappWeb.js";
 import { HttpError } from "./httpError.js";
 
 /**
@@ -15,22 +16,28 @@ import { HttpError } from "./httpError.js";
  * single free-tier host (e.g. a Render web service) needs — see
  * apps/api/src/server.ts and render.yaml. Tests never pass it, so the test
  * suite never touches the filesystem for this.
+ *
+ * `whatsapp` defaults to a real `WhatsAppWebManager` writing session files
+ * under the OS temp dir; tests that exercise WhatsApp behavior construct
+ * their own instance with a fake socket factory (see whatsappWeb.test.ts
+ * and the WhatsApp tests in app.test.ts) so they never touch the real
+ * WhatsApp network.
  */
-export function createApp(db: ForgeDatabase, provider?: SpecProvider, staticDir?: string): Express {
+export function createApp(db: ForgeDatabase, provider?: SpecProvider, staticDir?: string, whatsapp?: WhatsAppWebManager): Express {
   const app = express();
   // Render (and most single-service PaaS hosts) terminates TLS at a proxy
   // and forwards plain HTTP internally, so req.protocol would report
-  // "http" here without this -- which would make any URL this app builds
-  // from the request (e.g. the WhatsApp webhook URL shown to a project
-  // owner) silently wrong on the live site.
+  // "http" here without this.
   app.set("trust proxy", true);
   app.use(cors());
   app.use(express.json());
 
+  const whatsappManager =
+    whatsapp ?? new WhatsAppWebManager({ db, sessionsRootDir: path.join(os.tmpdir(), "forge-whatsapp-sessions") });
+
   app.get("/api/health", (_req, res) => res.json({ status: "ok" }));
   app.use("/api", createAuthRouter(db));
-  app.use("/api", createWhatsAppWebhookRouter(db));
-  app.use("/api", createProjectsRouter(db, provider));
+  app.use("/api", createProjectsRouter(db, provider, whatsappManager));
 
   if (staticDir && existsSync(staticDir)) {
     app.use(express.static(staticDir));

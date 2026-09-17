@@ -2,52 +2,65 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { openDatabase } from "./connection.js";
 import {
+  ensureWhatsAppConnectionsTable,
   ensureWhatsAppMessagesTable,
-  ensureWhatsAppSettingsTable,
-  getWhatsAppSettings,
+  getWhatsAppConnection,
   insertWhatsAppMessage,
   listWhatsAppMessages,
-  upsertWhatsAppSettings,
+  recordWhatsAppConnected,
+  recordWhatsAppDisconnected,
 } from "./whatsapp.js";
 
-test("getWhatsAppSettings returns undefined for a project with no settings saved yet", () => {
+test("getWhatsAppConnection returns undefined for a project that never connected", () => {
   const db = openDatabase(":memory:");
-  ensureWhatsAppSettingsTable(db);
-  assert.equal(getWhatsAppSettings(db, "proj1"), undefined);
+  ensureWhatsAppConnectionsTable(db);
+  assert.equal(getWhatsAppConnection(db, "proj1"), undefined);
 });
 
-test("upsertWhatsAppSettings inserts new settings and returns them back", () => {
+test("recordWhatsAppConnected stores the linked phone number and a connectedAt timestamp", () => {
   const db = openDatabase(":memory:");
-  ensureWhatsAppSettingsTable(db);
-  const saved = upsertWhatsAppSettings(db, "proj1", {
-    phoneNumberId: "123456",
-    accessToken: "EAAtoken",
-    verifyToken: "my-verify-token",
-  });
+  ensureWhatsAppConnectionsTable(db);
+  const saved = recordWhatsAppConnected(db, "proj1", "972501234567");
   assert.equal(saved.projectId, "proj1");
-  assert.equal(saved.phoneNumberId, "123456");
-  assert.equal(saved.accessToken, "EAAtoken");
-  assert.equal(saved.verifyToken, "my-verify-token");
+  assert.equal(saved.phoneNumber, "972501234567");
+  assert.ok(saved.connectedAt);
   assert.ok(saved.updatedAt);
 });
 
-test("upsertWhatsAppSettings overwrites existing settings for the same project, not creating a duplicate row", () => {
+test("recordWhatsAppConnected overwrites the previous connection for the same project, not creating a duplicate row", () => {
   const db = openDatabase(":memory:");
-  ensureWhatsAppSettingsTable(db);
-  upsertWhatsAppSettings(db, "proj1", { phoneNumberId: "111", accessToken: "old", verifyToken: "v1" });
-  const updated = upsertWhatsAppSettings(db, "proj1", { phoneNumberId: "222", accessToken: "new", verifyToken: "v2" });
-  assert.equal(updated.phoneNumberId, "222");
-  assert.equal(updated.accessToken, "new");
+  ensureWhatsAppConnectionsTable(db);
+  recordWhatsAppConnected(db, "proj1", "972500000001");
+  const updated = recordWhatsAppConnected(db, "proj1", "972500000002");
+  assert.equal(updated.phoneNumber, "972500000002");
 
-  const fetched = getWhatsAppSettings(db, "proj1");
-  assert.equal(fetched?.phoneNumberId, "222");
+  const fetched = getWhatsAppConnection(db, "proj1");
+  assert.equal(fetched?.phoneNumber, "972500000002");
 });
 
-test("settings for one project never leak into another project's read", () => {
+test("recordWhatsAppDisconnected clears connectedAt but keeps the last known phone number for display", () => {
   const db = openDatabase(":memory:");
-  ensureWhatsAppSettingsTable(db);
-  upsertWhatsAppSettings(db, "proj1", { phoneNumberId: "111", accessToken: "a", verifyToken: "v1" });
-  assert.equal(getWhatsAppSettings(db, "proj2"), undefined);
+  ensureWhatsAppConnectionsTable(db);
+  recordWhatsAppConnected(db, "proj1", "972501234567");
+  recordWhatsAppDisconnected(db, "proj1");
+
+  const fetched = getWhatsAppConnection(db, "proj1");
+  assert.equal(fetched?.phoneNumber, "972501234567");
+  assert.equal(fetched?.connectedAt, null);
+});
+
+test("recordWhatsAppDisconnected is a harmless no-op for a project that never connected", () => {
+  const db = openDatabase(":memory:");
+  ensureWhatsAppConnectionsTable(db);
+  recordWhatsAppDisconnected(db, "proj-never-connected");
+  assert.equal(getWhatsAppConnection(db, "proj-never-connected"), undefined);
+});
+
+test("connection state for one project never leaks into another project's read", () => {
+  const db = openDatabase(":memory:");
+  ensureWhatsAppConnectionsTable(db);
+  recordWhatsAppConnected(db, "proj1", "972501234567");
+  assert.equal(getWhatsAppConnection(db, "proj2"), undefined);
 });
 
 test("insertWhatsAppMessage stores a real message and listWhatsAppMessages returns it back, newest first", () => {

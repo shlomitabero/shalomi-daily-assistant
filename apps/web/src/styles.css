@@ -1440,7 +1440,6 @@ button.sort-header:hover:not(:disabled) {
   background: var(--surface);
 }
 
-.whatsapp-settings-form,
 .whatsapp-test-form {
   display: flex;
   flex-direction: column;
@@ -1451,14 +1450,13 @@ button.sort-header:hover:not(:disabled) {
   border-radius: var(--radius-md);
 }
 
-.whatsapp-settings-form h3,
 .whatsapp-test-form h3,
 .whatsapp-message-log h3 {
   margin: 0 0 4px;
   font-size: 15px;
 }
 
-.whatsapp-webhook-info {
+.whatsapp-connect-box {
   margin: 16px 0;
   padding: 14px;
   border: 1px solid var(--border);
@@ -1466,25 +1464,35 @@ button.sort-header:hover:not(:disabled) {
   background: var(--surface);
   display: flex;
   flex-direction: column;
+  align-items: flex-start;
   gap: 10px;
 }
 
-.whatsapp-webhook-field {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
+.whatsapp-qr-image {
+  width: 220px;
+  height: 220px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: #fff;
+  padding: 8px;
+  align-self: center;
 }
 
-.whatsapp-webhook-value-row {
+.whatsapp-connected-box {
+  margin: 16px 0;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
   display: flex;
-  gap: 8px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
 }
 
-.whatsapp-webhook-value-row input {
-  flex: 1;
-  min-width: 0;
-  font-family: monospace;
-  font-size: 13px;
+.whatsapp-connected-status {
+  margin: 0;
+  font-weight: 700;
 }
 
 .whatsapp-message-log {

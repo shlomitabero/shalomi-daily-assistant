@@ -2,70 +2,79 @@ import { randomUUID } from "node:crypto";
 import type { ForgeDatabase } from "./connection.js";
 
 /**
- * WhatsApp integration storage. Real, two-way sync with WhatsApp is only
- * possible through Meta's official WhatsApp Business Platform (Cloud
- * API) -- there is no other supported way for a third-party app to send
- * or receive WhatsApp messages. That means every project's owner must
- * bring their own Meta-issued credentials (a phone number id and an
- * access token) and their own verified WhatsApp Business phone number;
- * Forge AI can't create or fake that account for them. This module just
- * stores whatever credentials the project owner has entered, plus a log
- * of messages sent/received once they have.
+ * WhatsApp integration storage. Per direct user request, this does NOT use
+ * Meta's official WhatsApp Business Platform (which would require the
+ * project owner to independently obtain a Meta Business account, a
+ * verified business phone number, and an access token). Instead it
+ * connects the way WhatsApp Web/Desktop does: the project owner scans a QR
+ * code with their own personal or business WhatsApp app to link this
+ * server as an additional device -- no Meta account of any kind needed.
+ * This is an unofficial method (WhatsApp's own terms of service are
+ * written around their official clients and the Business API), carrying a
+ * real, if small, risk that WhatsApp could flag or block a number showing
+ * automated behavior -- disclosed to the user before building this, and
+ * again in the UI. This module tracks each project's last known
+ * connection (for display only -- the live connected/disconnected state
+ * always comes from the in-memory WhatsAppWebManager, since a real
+ * process restart always drops the live socket) plus the message log.
  */
 
-export interface WhatsAppSettings {
+export interface WhatsAppConnection {
   projectId: string;
-  phoneNumberId: string;
-  accessToken: string;
-  verifyToken: string;
+  /** The linked WhatsApp account's own number, once known -- null until a first successful connection. */
+  phoneNumber: string | null;
+  connectedAt: string | null;
   updatedAt: string;
 }
 
-export function ensureWhatsAppSettingsTable(db: ForgeDatabase): void {
+export function ensureWhatsAppConnectionsTable(db: ForgeDatabase): void {
   db.exec(`
-    CREATE TABLE IF NOT EXISTS whatsapp_settings (
+    CREATE TABLE IF NOT EXISTS whatsapp_connections (
       projectId TEXT PRIMARY KEY,
-      phoneNumberId TEXT NOT NULL,
-      accessToken TEXT NOT NULL,
-      verifyToken TEXT NOT NULL,
+      phoneNumber TEXT,
+      connectedAt TEXT,
       updatedAt TEXT NOT NULL
     )
   `);
 }
 
-function rowToSettings(row: Record<string, unknown>): WhatsAppSettings {
+function rowToConnection(row: Record<string, unknown>): WhatsAppConnection {
   return {
     projectId: row.projectId as string,
-    phoneNumberId: row.phoneNumberId as string,
-    accessToken: row.accessToken as string,
-    verifyToken: row.verifyToken as string,
+    phoneNumber: (row.phoneNumber as string | null) ?? null,
+    connectedAt: (row.connectedAt as string | null) ?? null,
     updatedAt: row.updatedAt as string,
   };
 }
 
-export function getWhatsAppSettings(db: ForgeDatabase, projectId: string): WhatsAppSettings | undefined {
-  const row = db.prepare("SELECT * FROM whatsapp_settings WHERE projectId = ?").get(projectId) as
+export function getWhatsAppConnection(db: ForgeDatabase, projectId: string): WhatsAppConnection | undefined {
+  const row = db.prepare("SELECT * FROM whatsapp_connections WHERE projectId = ?").get(projectId) as
     | Record<string, unknown>
     | undefined;
-  return row ? rowToSettings(row) : undefined;
+  return row ? rowToConnection(row) : undefined;
 }
 
-export function upsertWhatsAppSettings(
-  db: ForgeDatabase,
-  projectId: string,
-  settings: { phoneNumberId: string; accessToken: string; verifyToken: string },
-): WhatsAppSettings {
-  const updatedAt = new Date().toISOString();
+/** Records that a project's WhatsApp Web session successfully paired with the given phone number. */
+export function recordWhatsAppConnected(db: ForgeDatabase, projectId: string, phoneNumber: string): WhatsAppConnection {
+  const now = new Date().toISOString();
   db.prepare(
-    `INSERT INTO whatsapp_settings (projectId, phoneNumberId, accessToken, verifyToken, updatedAt)
-     VALUES (?, ?, ?, ?, ?)
+    `INSERT INTO whatsapp_connections (projectId, phoneNumber, connectedAt, updatedAt)
+     VALUES (?, ?, ?, ?)
      ON CONFLICT(projectId) DO UPDATE SET
-       phoneNumberId = excluded.phoneNumberId,
-       accessToken = excluded.accessToken,
-       verifyToken = excluded.verifyToken,
+       phoneNumber = excluded.phoneNumber,
+       connectedAt = excluded.connectedAt,
        updatedAt = excluded.updatedAt`,
-  ).run(projectId, settings.phoneNumberId, settings.accessToken, settings.verifyToken, updatedAt);
-  return getWhatsAppSettings(db, projectId)!;
+  ).run(projectId, phoneNumber, now, now);
+  return getWhatsAppConnection(db, projectId)!;
+}
+
+/** Records that a project's WhatsApp Web session was disconnected -- keeps the last known phone number for display, clears the "currently connected" timestamp. */
+export function recordWhatsAppDisconnected(db: ForgeDatabase, projectId: string): void {
+  const existing = getWhatsAppConnection(db, projectId);
+  if (!existing) return;
+  db.prepare(
+    `UPDATE whatsapp_connections SET connectedAt = NULL, updatedAt = ? WHERE projectId = ?`,
+  ).run(new Date().toISOString(), projectId);
 }
 
 export type WhatsAppMessageDirection = "in" | "out";

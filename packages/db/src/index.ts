@@ -42,13 +42,14 @@ export {
 export { generateSeedRecords } from "./seed.js";
 export { tableNameFor, assertSafeIdentifier } from "./identifiers.js";
 export {
-  ensureWhatsAppSettingsTable,
-  getWhatsAppSettings,
-  upsertWhatsAppSettings,
+  ensureWhatsAppConnectionsTable,
+  getWhatsAppConnection,
+  recordWhatsAppConnected,
+  recordWhatsAppDisconnected,
   ensureWhatsAppMessagesTable,
   insertWhatsAppMessage,
   listWhatsAppMessages,
-  type WhatsAppSettings,
+  type WhatsAppConnection,
   type WhatsAppMessage,
   type WhatsAppMessageDirection,
   type WhatsAppMessageStatus,

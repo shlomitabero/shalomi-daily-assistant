@@ -1415,72 +1415,83 @@ not a single "make it perfect" claim.
       clean-room clone/install/test/build/start cycle with a live
       `/api/health` check.
 - [x] **WhatsApp two-way sync — direct user request** ("שהאפליקציה תדע
-      להסתנכרן עם ואטסאפ"). Built against Meta's real, publicly documented
-      WhatsApp Business Platform (Cloud API), end to end:
-      - New `whatsapp_settings` and `whatsapp_messages` tables
-        (`packages/db/src/whatsapp.ts`) store each project's phone number
-        ID, access token, webhook verify token, and a full in/out message
-        log with which entity/record a message matched.
-      - `apps/api/src/whatsapp.ts` implements the real Cloud API send call
-        (`POST /{version}/{phone-number-id}/messages`), the GET webhook
-        verification handshake (echoes `hub.challenge` back as plain text
-        only when `hub.verify_token` matches), parsing of Meta's real
-        incoming-webhook payload shape, and phone-number-to-record
-        matching so an inbound message is linked to the customer (or any
-        entity with a `phone` field) that sent it.
-      - New routes: `GET`/`PUT /projects/:id/integrations/whatsapp` (the
-        access token is never echoed back to the browser, only a masked
-        `••••1234` form — re-saving other fields like the phone number ID
-        does not force retyping the secret), `POST .../send`, `GET
-        .../messages`, and the public `GET`/`POST
-        /api/webhooks/whatsapp/:projectId` webhook Meta calls directly.
-        `app.set("trust proxy", true)` was added so the webhook URL shown
-        to the user is correctly `https://` behind Render's proxy instead
-        of silently downgrading to `http://`.
-      - New "💬 WhatsApp" panel on the preview screen: settings form,
-        the real webhook URL + verify token to paste into Meta's app
-        dashboard, a test-send form, and a live in/out message log.
-      - Honest about the one real limitation: sending a message only
-        works once the project owner has their **own** Meta/WhatsApp
-        Business API account (a verified business phone number + access
-        token) — Forge AI cannot create that on anyone's behalf, since
-        it's Meta's own account/verification requirement, not a gap in
-        this feature. The panel says so up front in Hebrew. Everything
-        that does *not* require live Meta credentials — settings
-        persistence, the webhook verification handshake, incoming-webhook
-        parsing/logging, phone-to-record matching, the UI — is fully real
-        and fully tested against the app's own real running server;
-        only the outbound call to Meta's servers is tested via an
-        injectable `fetchImpl` mock, since it cannot be verified without
-        real credentials.
-      - Known v1 limitation, stated rather than hidden: the incoming
-        webhook does not yet verify Meta's `X-Hub-Signature-256` HMAC
-        signature — it relies on the project's unguessable UUID plus the
-        verify-token handshake as its access control instead.
-      - Two real bugs caught and fixed by tests before shipping: (1) a
-        message-ordering tie when two messages land in the same
-        millisecond, fixed by adding `rowid DESC` as a tiebreak; (2) phone
-        matching failing across formats because international format
-        *replaces* a local number's leading trunk "0" with the country
-        code rather than prepending to it (e.g. local "050-123-4567" vs.
-        international "972501234567") — fixed by stripping exactly one
-        leading zero after stripping non-digits.
-      - Verified with a real Playwright run against the real running app:
-        built a customer-management app, opened the WhatsApp panel,
-        confirmed the prerequisite explanation and that webhook info stays
-        hidden until settings are saved, saved real (fake-value) settings
-        through the actual form, confirmed a real webhook URL and a real
-        auto-generated verify token appear, confirmed the access-token
-        field clears instead of echoing the secret back, and attempted a
-        real test-send with fake credentials — confirmed it reports an
-        honest failure, never a fabricated success. 17 new unit tests (7
-        db, 10 business-logic) plus 5 new route tests in `app.test.ts`,
-        including a full webhook round-trip: GET verification with right
-        and wrong verify tokens, and a real POST delivery correctly
-        matched to a real customer record by phone number. Full suite
-        green (208 tests: 46 spec-engine + 32 db + 64 api + 66 web) + both
-        builds clean + a from-scratch clean-room clone/install/test/build/
-        start cycle with a live `/api/health` check.
+      להסתנכרן עם ואטסאפ"), **replaced mid-flight by a second, explicit user
+      decision.** The first version of this feature (round 19) was built
+      against Meta's official WhatsApp Business Platform (Cloud API) —
+      real settings storage, a real webhook verification handshake, real
+      Cloud API send calls. The user rejected that approach outright
+      ("לא רוצה שתבנה תלות בחשבון Meta Business" — "I don't want you to
+      build a dependency on a Meta Business account") before ever using it
+      live, and explicitly approved the only real alternative once its
+      trade-off was disclosed to her: connecting the way WhatsApp Web/
+      Desktop does — scanning a QR code with your own phone links this
+      server as an additional device, no Meta account of any kind. This is
+      an **unofficial method**, against WhatsApp's own official terms of
+      service (written around their official clients and the Business
+      API), carrying a real, if usually small, risk that a number showing
+      automated behavior gets flagged. She confirmed she understood that
+      risk and wanted this built anyway. The entire Meta-based
+      implementation (settings table, Cloud API client, webhook route) was
+      removed and replaced, not kept alongside, since she does not want
+      that dependency to exist at all:
+      - `packages/db/src/whatsapp.ts`: `whatsapp_settings` (Meta
+        credentials) replaced by `whatsapp_connections`, which only
+        remembers each project's last-known linked phone number for
+        display — the live connected/disconnected state always comes from
+        the in-memory connection manager below, since a real process
+        restart drops any live socket regardless of what a DB row says.
+        `whatsapp_messages` (the in/out log) is unchanged.
+      - New `apps/api/src/whatsappWeb.ts` (`WhatsAppWebManager`): manages
+        one real `@whiskeysockets/baileys` WhatsApp Web socket per
+        connected project — QR-code pairing, auth-state persistence to
+        disk (survives a same-process reconnect; a real redeploy still
+        requires re-scanning, exactly like unplugging a linked device),
+        sending text messages, and logging/matching incoming messages
+        using the same phone-number-matching logic from round 19
+        (`apps/api/src/whatsapp.ts`, trimmed to just that logic once the
+        Meta-specific code was removed). The socket/QR-encoder factories
+        are injectable, the same testability seam this codebase has used
+        throughout (e.g. `fetchImpl` in round 19, `SpecProvider`
+        elsewhere).
+      - New routes replacing the old settings/webhook pair: `GET
+        .../whatsapp/status` (poll target), `POST .../connect`, `POST
+        .../disconnect`, `POST .../send`, `GET .../messages`. No public
+        webhook route exists any more — Baileys delivers incoming messages
+        as a direct socket event, not an HTTP callback from a third party.
+      - The "💬 WhatsApp" panel was rebuilt around this flow: a Connect
+        button, a live QR code image once one arrives, a connected state
+        showing the linked phone number with a Disconnect button, and the
+        same test-send form and message log as before. The prerequisite
+        text now explains the QR-link method and states the ToS/risk
+        trade-off plainly instead of asking for Meta credentials.
+      - **A real, disclosed limitation found while building this, not
+        after:** this development sandbox's outbound network only tunnels
+        HTTPS through a proxy — a direct probe against the real
+        `@whiskeysockets/baileys` library confirmed the raw WebSocket
+        connection it needs to reach WhatsApp's own servers is not
+        reachable from here at all, so no real QR code could be generated
+        or verified end-to-end in this environment. Everything upstream of
+        that one live network call — connection state machine
+        (connecting → qr → connected → disconnected), QR encoding,
+        message send/receive wiring, phone-to-record matching, every HTTP
+        route, the UI — is fully real and fully tested (24 new unit tests
+        across `whatsapp.test.ts`/`whatsappWeb.test.ts`/db tests, using an
+        injected fake socket, plus 4 new route tests in `app.test.ts`
+        exercising the real HTTP connect/status/send/disconnect surface
+        end-to-end). A real Playwright run confirmed the UI correctly
+        reaches and stays in an honest "מתחבר…" (connecting) state when no
+        QR arrives, rather than fabricating one. On Render's normal
+        internet access this should work; **that specific claim is
+        unverified from here and needs a real scan on the live site to
+        confirm** — flagged plainly to the user rather than claimed as
+        proven.
+      - Known v1 limitation carried over honestly: no automatic reconnect
+        after a transient socket drop — the project owner clicks Connect
+        again. A production-grade version would reconnect automatically
+        and only give up on an explicit logout.
+      - Full suite green (214 tests: 46 spec-engine + 34 db + 68 api + 66
+        web) + both builds clean + a from-scratch clean-room clone/
+        install/test/build/start cycle with a live `/api/health` check.
 
 ## Phase 3
 

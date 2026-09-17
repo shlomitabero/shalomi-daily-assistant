@@ -307,39 +307,37 @@ export function deleteRecord(projectId: string, entityName: string, recordId: nu
 }
 
 /**
- * Real, two-way WhatsApp sync is only possible through Meta's own
- * WhatsApp Business Platform (Cloud API) -- there is no other supported
- * way for a third-party app to send or receive WhatsApp messages. These
- * calls hit Forge AI's own server, which in turn talks to Meta's real
- * Graph API once the project owner has entered their own Meta-issued
- * phoneNumberId/accessToken here; Forge AI can't create that account for
- * them.
+ * WhatsApp sync connects the way WhatsApp Web/Desktop does -- scanning a QR
+ * code with your own phone links this app as an additional device -- so no
+ * Meta Business account is needed. This is an unofficial method (against
+ * WhatsApp's own terms of service, which are written around their
+ * official clients), carrying a real, if usually small, risk that a
+ * number showing automated behavior gets flagged; the panel says so
+ * before connecting.
  */
-export interface WhatsAppSettingsView {
-  configured: boolean;
-  phoneNumberId: string | null;
-  accessTokenMasked: string | null;
-  verifyToken: string | null;
-  webhookUrl: string;
+export type WhatsAppConnectionStatus = "disconnected" | "connecting" | "qr" | "connected";
+
+export interface WhatsAppStatusView {
+  status: WhatsAppConnectionStatus;
+  qrDataUrl: string | null;
+  phoneNumber: string | null;
+  error: string | null;
 }
 
-export function getWhatsAppSettings(projectId: string): Promise<WhatsAppSettingsView> {
-  return request(`/projects/${projectId}/integrations/whatsapp`);
+export function getWhatsAppStatus(projectId: string): Promise<WhatsAppStatusView> {
+  return request(`/projects/${projectId}/integrations/whatsapp/status`);
 }
 
-export function saveWhatsAppSettings(
-  projectId: string,
-  settings: { phoneNumberId: string; accessToken?: string; verifyToken?: string },
-): Promise<WhatsAppSettingsView> {
-  return request(`/projects/${projectId}/integrations/whatsapp`, {
-    method: "PUT",
-    body: JSON.stringify(settings),
-  });
+export function connectWhatsApp(projectId: string): Promise<WhatsAppStatusView> {
+  return request(`/projects/${projectId}/integrations/whatsapp/connect`, { method: "POST" });
+}
+
+export function disconnectWhatsApp(projectId: string): Promise<WhatsAppStatusView> {
+  return request(`/projects/${projectId}/integrations/whatsapp/disconnect`, { method: "POST" });
 }
 
 export interface WhatsAppSendResult {
   ok: boolean;
-  messageId?: string;
   error?: string;
 }
 

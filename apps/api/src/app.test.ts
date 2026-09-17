@@ -1,12 +1,14 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { AgentStepEvent } from "@forge/shared";
+import type { ForgeDatabase } from "@forge/db";
 import { createApp } from "./app.js";
 import { createStore } from "./store.js";
+import { WhatsAppWebManager, type BaileysConnectionUpdate, type BaileysMessagesUpsert, type WhatsAppSocket } from "./whatsappWeb.js";
 
-async function withServer(fn: (baseUrl: string) => Promise<void>) {
+async function withServer(fn: (baseUrl: string) => Promise<void>, opts?: { whatsapp?: (db: ForgeDatabase) => WhatsAppWebManager }) {
   const db = createStore(":memory:");
-  const app = createApp(db);
+  const app = createApp(db, undefined, undefined, opts?.whatsapp?.(db));
   const server = app.listen(0);
   await new Promise<void>((resolve) => server.once("listening", resolve));
   const address = server.address();
@@ -16,6 +18,55 @@ async function withServer(fn: (baseUrl: string) => Promise<void>) {
   } finally {
     await new Promise<void>((resolve) => server.close(() => resolve()));
   }
+}
+
+/**
+ * Real Baileys sockets talk to WhatsApp's actual servers over a raw
+ * WebSocket, unreachable from this sandboxed dev environment (confirmed by
+ * a direct probe before writing this test double -- see docs/roadmap.md).
+ * These route-level tests inject a fake socket factory so the real
+ * connect/status/send/disconnect HTTP surface can still be exercised
+ * end-to-end against the app's own real running server.
+ */
+function createFakeWhatsAppSocket() {
+  let connectionUpdateHandler: ((u: BaileysConnectionUpdate) => void) | undefined;
+  let messagesUpsertHandler: ((u: BaileysMessagesUpsert) => void) | undefined;
+  const sendCalls: { jid: string; text: string }[] = [];
+  const sock: WhatsAppSocket = {
+    ev: {
+      on(event, listener) {
+        if (event === "connection.update") connectionUpdateHandler = listener as (u: BaileysConnectionUpdate) => void;
+        if (event === "messages.upsert") messagesUpsertHandler = listener as (u: BaileysMessagesUpsert) => void;
+      },
+    },
+    user: null,
+    async sendMessage(jid, content) {
+      sendCalls.push({ jid, text: content.text });
+      return {};
+    },
+    async logout() {},
+  };
+  return {
+    sock,
+    sendCalls,
+    emitConnectionUpdate: (u: BaileysConnectionUpdate) => connectionUpdateHandler?.(u),
+    emitMessagesUpsert: (u: BaileysMessagesUpsert) => messagesUpsertHandler?.(u),
+  };
+}
+
+function createTestWhatsAppManager(db: ForgeDatabase) {
+  const createdSockets: ReturnType<typeof createFakeWhatsAppSocket>[] = [];
+  const manager = new WhatsAppWebManager({
+    db,
+    sessionsRootDir: "/tmp/forge-whatsapp-apptest-sessions",
+    createSocket: async () => {
+      const fake = createFakeWhatsAppSocket();
+      createdSockets.push(fake);
+      return { sock: fake.sock, saveCreds: async () => {} };
+    },
+    qrToDataUrl: async (qr) => `data:image/png;base64,FAKE(${qr})`,
+  });
+  return { manager, createdSockets };
 }
 
 async function signup(baseUrl: string, email = `user-${Math.random()}@example.com`): Promise<string> {
@@ -498,181 +549,199 @@ test("backup refuses before build, and returns a real zip with one CSV per entit
   });
 });
 
-test("WhatsApp settings: unconfigured by default, saved settings round-trip with the access token masked, and a real webhook URL is computed from the request", async () => {
-  await withServer(async (baseUrl) => {
-    const token = await signup(baseUrl);
-    const createRes = await fetch(`${baseUrl}/api/projects`, {
-      method: "POST",
-      headers: authHeaders(token),
-      body: JSON.stringify({ description: "A CRM with customers and deals." }),
-    });
-    const { project } = (await createRes.json()) as { project: { id: string } };
+test("WhatsApp status starts disconnected, connect surfaces a real QR code, and status flips to connected once the phone links", async () => {
+  let createdSockets: ReturnType<typeof createFakeWhatsAppSocket>[] = [];
+  await withServer(
+    async (baseUrl) => {
+      const token = await signup(baseUrl);
+      const createRes = await fetch(`${baseUrl}/api/projects`, {
+        method: "POST",
+        headers: authHeaders(token),
+        body: JSON.stringify({ description: "A CRM with customers and deals." }),
+      });
+      const { project } = (await createRes.json()) as { project: { id: string } };
 
-    const before = await fetch(`${baseUrl}/api/projects/${project.id}/integrations/whatsapp`, { headers: authHeaders(token) });
-    assert.equal(before.status, 200);
-    const beforeBody = (await before.json()) as { configured: boolean; webhookUrl: string };
-    assert.equal(beforeBody.configured, false);
-    assert.match(beforeBody.webhookUrl, new RegExp(`/api/webhooks/whatsapp/${project.id}$`));
+      const before = await fetch(`${baseUrl}/api/projects/${project.id}/integrations/whatsapp/status`, { headers: authHeaders(token) });
+      assert.equal(before.status, 200);
+      const beforeBody = (await before.json()) as { status: string; phoneNumber: string | null };
+      assert.equal(beforeBody.status, "disconnected");
+      assert.equal(beforeBody.phoneNumber, null);
 
-    const saveRes = await fetch(`${baseUrl}/api/projects/${project.id}/integrations/whatsapp`, {
-      method: "PUT",
-      headers: authHeaders(token),
-      body: JSON.stringify({ phoneNumberId: "123456123", accessToken: "EAAsecrettoken1234" }),
-    });
-    assert.equal(saveRes.status, 200);
-    const saved = (await saveRes.json()) as { configured: boolean; phoneNumberId: string; accessTokenMasked: string; verifyToken: string };
-    assert.equal(saved.configured, true);
-    assert.equal(saved.phoneNumberId, "123456123");
-    // The real secret must never round-trip back to the browser.
-    assert.ok(!saved.accessTokenMasked.includes("EAAsecrettoken1234"));
-    assert.match(saved.accessTokenMasked, /1234$/);
-    assert.ok(saved.verifyToken.length > 0); // auto-generated since none was supplied
+      const connectRes = await fetch(`${baseUrl}/api/projects/${project.id}/integrations/whatsapp/connect`, {
+        method: "POST",
+        headers: authHeaders(token),
+      });
+      assert.equal(connectRes.status, 200);
+      const connectBody = (await connectRes.json()) as { status: string };
+      assert.equal(connectBody.status, "connecting");
+      assert.equal(createdSockets.length, 1);
 
-    const after = await fetch(`${baseUrl}/api/projects/${project.id}/integrations/whatsapp`, { headers: authHeaders(token) });
-    const afterBody = (await after.json()) as { configured: boolean; phoneNumberId: string };
-    assert.equal(afterBody.configured, true);
-    assert.equal(afterBody.phoneNumberId, "123456123");
+      createdSockets[0].emitConnectionUpdate({ qr: "raw-qr-string" });
+      await new Promise((resolve) => setImmediate(resolve));
 
-    // Updating just the phone number id (no re-typed access token) must
-    // succeed and keep the previously-saved token, not wipe it -- the UI
-    // never shows the real token back, so it can never re-submit it.
-    const updatePhoneOnly = await fetch(`${baseUrl}/api/projects/${project.id}/integrations/whatsapp`, {
-      method: "PUT",
-      headers: authHeaders(token),
-      body: JSON.stringify({ phoneNumberId: "999999999" }),
-    });
-    assert.equal(updatePhoneOnly.status, 200);
-    const updatedBody = (await updatePhoneOnly.json()) as { phoneNumberId: string; accessTokenMasked: string };
-    assert.equal(updatedBody.phoneNumberId, "999999999");
-    assert.match(updatedBody.accessTokenMasked, /1234$/); // same original token, still masked to its last 4 chars
-  });
+      const qrStatusRes = await fetch(`${baseUrl}/api/projects/${project.id}/integrations/whatsapp/status`, { headers: authHeaders(token) });
+      const qrStatusBody = (await qrStatusRes.json()) as { status: string; qrDataUrl: string | null };
+      assert.equal(qrStatusBody.status, "qr");
+      assert.equal(qrStatusBody.qrDataUrl, "data:image/png;base64,FAKE(raw-qr-string)");
+
+      // Simulate the phone actually scanning it.
+      createdSockets[0].sock.user = { id: "972501234567:1@s.whatsapp.net" };
+      createdSockets[0].emitConnectionUpdate({ connection: "open" });
+
+      const connectedStatusRes = await fetch(`${baseUrl}/api/projects/${project.id}/integrations/whatsapp/status`, {
+        headers: authHeaders(token),
+      });
+      const connectedBody = (await connectedStatusRes.json()) as { status: string; phoneNumber: string | null };
+      assert.equal(connectedBody.status, "connected");
+      assert.equal(connectedBody.phoneNumber, "972501234567");
+    },
+    {
+      whatsapp: (db) => {
+        const created = createTestWhatsAppManager(db);
+        createdSockets = created.createdSockets;
+        return created.manager;
+      },
+    },
+  );
 });
 
-test("WhatsApp settings: the very first save requires an access token, since there's nothing yet to keep", async () => {
-  await withServer(async (baseUrl) => {
-    const token = await signup(baseUrl);
-    const createRes = await fetch(`${baseUrl}/api/projects`, {
-      method: "POST",
-      headers: authHeaders(token),
-      body: JSON.stringify({ description: "A CRM with customers and deals." }),
-    });
-    const { project } = (await createRes.json()) as { project: { id: string } };
+test("WhatsApp send refuses with 409 before connecting", async () => {
+  await withServer(
+    async (baseUrl) => {
+      const token = await signup(baseUrl);
+      const createRes = await fetch(`${baseUrl}/api/projects`, {
+        method: "POST",
+        headers: authHeaders(token),
+        body: JSON.stringify({ description: "A CRM with customers and deals." }),
+      });
+      const { project } = (await createRes.json()) as { project: { id: string } };
 
-    const res = await fetch(`${baseUrl}/api/projects/${project.id}/integrations/whatsapp`, {
-      method: "PUT",
-      headers: authHeaders(token),
-      body: JSON.stringify({ phoneNumberId: "123456123" }),
-    });
-    assert.equal(res.status, 400);
-  });
+      const sendRes = await fetch(`${baseUrl}/api/projects/${project.id}/integrations/whatsapp/send`, {
+        method: "POST",
+        headers: authHeaders(token),
+        body: JSON.stringify({ to: "972501234567", message: "hi" }),
+      });
+      assert.equal(sendRes.status, 409);
+    },
+    { whatsapp: (db) => createTestWhatsAppManager(db).manager },
+  );
 });
 
-test("WhatsApp send refuses with 409 before settings are configured", async () => {
-  await withServer(async (baseUrl) => {
-    const token = await signup(baseUrl);
-    const createRes = await fetch(`${baseUrl}/api/projects`, {
-      method: "POST",
-      headers: authHeaders(token),
-      body: JSON.stringify({ description: "A CRM with customers and deals." }),
-    });
-    const { project } = (await createRes.json()) as { project: { id: string } };
+test("WhatsApp send succeeds once connected, is logged as an outgoing message, and disconnect via HTTP tears the session down", async () => {
+  let createdSockets: ReturnType<typeof createFakeWhatsAppSocket>[] = [];
+  await withServer(
+    async (baseUrl) => {
+      const token = await signup(baseUrl);
+      const createRes = await fetch(`${baseUrl}/api/projects`, {
+        method: "POST",
+        headers: authHeaders(token),
+        body: JSON.stringify({ description: "A CRM with customers and deals." }),
+      });
+      const { project } = (await createRes.json()) as { project: { id: string } };
 
-    const sendRes = await fetch(`${baseUrl}/api/projects/${project.id}/integrations/whatsapp/send`, {
-      method: "POST",
-      headers: authHeaders(token),
-      body: JSON.stringify({ to: "972501234567", message: "hi" }),
-    });
-    assert.equal(sendRes.status, 409);
-  });
+      await fetch(`${baseUrl}/api/projects/${project.id}/integrations/whatsapp/connect`, { method: "POST", headers: authHeaders(token) });
+      createdSockets[0].sock.user = { id: "15550001111:1@s.whatsapp.net" };
+      createdSockets[0].emitConnectionUpdate({ connection: "open" });
+
+      const sendRes = await fetch(`${baseUrl}/api/projects/${project.id}/integrations/whatsapp/send`, {
+        method: "POST",
+        headers: authHeaders(token),
+        body: JSON.stringify({ to: "972501234567", message: "מתי אפשר להגיע?" }),
+      });
+      assert.equal(sendRes.status, 200);
+      assert.deepEqual((await sendRes.json()) as { ok: boolean }, { ok: true });
+      assert.deepEqual(createdSockets[0].sendCalls, [{ jid: "972501234567@s.whatsapp.net", text: "מתי אפשר להגיע?" }]);
+
+      const messagesRes = await fetch(`${baseUrl}/api/projects/${project.id}/integrations/whatsapp/messages`, { headers: authHeaders(token) });
+      const { messages } = (await messagesRes.json()) as { messages: { direction: string; status: string; body: string }[] };
+      assert.equal(messages.length, 1);
+      assert.equal(messages[0].direction, "out");
+      assert.equal(messages[0].status, "sent");
+
+      const disconnectRes = await fetch(`${baseUrl}/api/projects/${project.id}/integrations/whatsapp/disconnect`, {
+        method: "POST",
+        headers: authHeaders(token),
+      });
+      assert.equal(disconnectRes.status, 200);
+      const disconnectedBody = (await disconnectRes.json()) as { status: string };
+      assert.equal(disconnectedBody.status, "disconnected");
+
+      // Sending after disconnecting must fail honestly again, not silently succeed.
+      const sendAfterDisconnect = await fetch(`${baseUrl}/api/projects/${project.id}/integrations/whatsapp/send`, {
+        method: "POST",
+        headers: authHeaders(token),
+        body: JSON.stringify({ to: "972501234567", message: "hi again" }),
+      });
+      assert.equal(sendAfterDisconnect.status, 409);
+    },
+    {
+      whatsapp: (db) => {
+        const created = createTestWhatsAppManager(db);
+        createdSockets = created.createdSockets;
+        return created.manager;
+      },
+    },
+  );
 });
 
-test("WhatsApp webhook: Meta's real GET verification handshake succeeds only with the right verify token, and a real POST delivery is logged and matched to the right customer record", async () => {
-  await withServer(async (baseUrl) => {
-    const token = await signup(baseUrl);
-    const createRes = await fetch(`${baseUrl}/api/projects`, {
-      method: "POST",
-      headers: authHeaders(token),
-      body: JSON.stringify({ description: "A CRM with customers and deals." }),
-    });
-    const { project } = (await createRes.json()) as { project: { id: string } };
+test("WhatsApp: a real incoming message from the linked socket is logged and matched to the right customer record", async () => {
+  let createdSockets: ReturnType<typeof createFakeWhatsAppSocket>[] = [];
+  await withServer(
+    async (baseUrl) => {
+      const token = await signup(baseUrl);
+      const createRes = await fetch(`${baseUrl}/api/projects`, {
+        method: "POST",
+        headers: authHeaders(token),
+        body: JSON.stringify({ description: "A CRM with customers and deals." }),
+      });
+      const { project } = (await createRes.json()) as { project: { id: string } };
 
-    const buildRes = await fetch(`${baseUrl}/api/projects/${project.id}/build`, {
-      method: "POST",
-      headers: authHeaders(token),
-    });
-    await collectSSE(buildRes);
+      const buildRes = await fetch(`${baseUrl}/api/projects/${project.id}/build`, { method: "POST", headers: authHeaders(token) });
+      await collectSSE(buildRes);
 
-    const saveRes = await fetch(`${baseUrl}/api/projects/${project.id}/integrations/whatsapp`, {
-      method: "PUT",
-      headers: authHeaders(token),
-      body: JSON.stringify({ phoneNumberId: "123456123", accessToken: "EAAtest", verifyToken: "my-secret-token" }),
-    });
-    assert.equal(saveRes.status, 200);
+      const createCustomerRes = await fetch(`${baseUrl}/api/projects/${project.id}/entities/Customer`, {
+        method: "POST",
+        headers: authHeaders(token),
+        body: JSON.stringify({ name: "Dana Levi", phone: "050-123-4567", status: "New" }),
+      });
+      assert.equal(createCustomerRes.status, 201);
 
-    // A real customer to match the incoming message's sender against.
-    const createCustomerRes = await fetch(`${baseUrl}/api/projects/${project.id}/entities/Customer`, {
-      method: "POST",
-      headers: authHeaders(token),
-      body: JSON.stringify({ name: "Dana Levi", phone: "050-123-4567", status: "New" }),
-    });
-    assert.equal(createCustomerRes.status, 201);
+      await fetch(`${baseUrl}/api/projects/${project.id}/integrations/whatsapp/connect`, { method: "POST", headers: authHeaders(token) });
+      createdSockets[0].sock.user = { id: "15550001111:1@s.whatsapp.net" };
+      createdSockets[0].emitConnectionUpdate({ connection: "open" });
 
-    // Wrong verify token: Meta's handshake must fail.
-    const wrongVerify = await fetch(
-      `${baseUrl}/api/webhooks/whatsapp/${project.id}?hub.mode=subscribe&hub.verify_token=wrong&hub.challenge=abc`,
-    );
-    assert.equal(wrongVerify.status, 403);
+      // This part of the flow -- a message arriving over the live socket --
+      // has no HTTP surface (unlike the old Meta webhook): Baileys delivers
+      // it as a `messages.upsert` event on the socket itself, so it's
+      // simulated directly on the fake socket the manager is holding.
+      createdSockets[0].emitMessagesUpsert({
+        type: "notify",
+        messages: [
+          {
+            key: { remoteJid: "972501234567@s.whatsapp.net", fromMe: false },
+            message: { conversation: "מתי התור שלי?" },
+          },
+        ],
+      });
 
-    // Right verify token: Meta's handshake must succeed and echo the challenge as plain text.
-    const rightVerify = await fetch(
-      `${baseUrl}/api/webhooks/whatsapp/${project.id}?hub.mode=subscribe&hub.verify_token=my-secret-token&hub.challenge=abc123`,
-    );
-    assert.equal(rightVerify.status, 200);
-    assert.equal(await rightVerify.text(), "abc123");
-
-    // A real incoming-message delivery, in Meta's own documented shape,
-    // from a phone number that matches the customer above once
-    // international-vs-local formatting is normalized.
-    const webhookPayload = {
-      object: "whatsapp_business_account",
-      entry: [
-        {
-          id: "WABA_ID",
-          changes: [
-            {
-              value: {
-                messaging_product: "whatsapp",
-                metadata: { display_phone_number: "15550001111", phone_number_id: "123456123" },
-                contacts: [{ profile: { name: "Dana L" }, wa_id: "972501234567" }],
-                messages: [
-                  { from: "972501234567", id: "wamid.XYZ", timestamp: "1700000000", type: "text", text: { body: "מתי התור שלי?" } },
-                ],
-              },
-              field: "messages",
-            },
-          ],
-        },
-      ],
-    };
-    const deliverRes = await fetch(`${baseUrl}/api/webhooks/whatsapp/${project.id}`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(webhookPayload),
-    });
-    assert.equal(deliverRes.status, 200);
-
-    const messagesRes = await fetch(`${baseUrl}/api/projects/${project.id}/integrations/whatsapp/messages`, {
-      headers: authHeaders(token),
-    });
-    const { messages } = (await messagesRes.json()) as {
-      messages: { direction: string; body: string; matchedLabel: string | null; matchedEntityName: string | null }[];
-    };
-    assert.equal(messages.length, 1);
-    assert.equal(messages[0].direction, "in");
-    assert.equal(messages[0].body, "מתי התור שלי?");
-    assert.equal(messages[0].matchedEntityName, "Customer");
-    assert.equal(messages[0].matchedLabel, "Dana Levi");
-  });
+      const messagesRes = await fetch(`${baseUrl}/api/projects/${project.id}/integrations/whatsapp/messages`, { headers: authHeaders(token) });
+      const { messages } = (await messagesRes.json()) as {
+        messages: { direction: string; body: string; matchedLabel: string | null; matchedEntityName: string | null }[];
+      };
+      assert.equal(messages.length, 1);
+      assert.equal(messages[0].direction, "in");
+      assert.equal(messages[0].body, "מתי התור שלי?");
+      assert.equal(messages[0].matchedEntityName, "Customer");
+      assert.equal(messages[0].matchedLabel, "Dana Levi");
+    },
+    {
+      whatsapp: (db) => {
+        const created = createTestWhatsAppManager(db);
+        createdSockets = created.createdSockets;
+        return created.manager;
+      },
+    },
+  );
 });
 
 test("the idea-enhance endpoint requires auth, rejects an empty idea, and expands a real one", async () => {

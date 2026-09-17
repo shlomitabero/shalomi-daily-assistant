@@ -6,7 +6,7 @@
   "main": "src/server.ts",
   "scripts": {
     "dev": "tsx watch --experimental-sqlite src/server.ts",
-    "build": "esbuild src/server.ts --bundle --platform=node --format=esm --target=node22 --outfile=dist/server.js --external:express --external:cors --external:zod",
+    "build": "esbuild src/server.ts --bundle --platform=node --format=esm --target=node22 --outfile=dist/server.js --external:express --external:cors --external:zod --external:@whiskeysockets/baileys --external:qrcode",
     "start": "node --experimental-sqlite dist/server.js",
     "start:dev": "tsx --experimental-sqlite src/server.ts",
     "test": "tsx --test --experimental-sqlite 'src/**/*.test.ts'"
@@ -15,16 +15,19 @@
     "@forge/db": "*",
     "@forge/shared": "*",
     "@forge/spec-engine": "*",
+    "@whiskeysockets/baileys": "^7.0.0-rc14",
     "cors": "^2.8.5",
     "express": "^4.21.1",
+    "qrcode": "^1.5.4",
     "zod": "^3.23.8"
   },
   "devDependencies": {
-    "tsx": "^4.19.2",
-    "typescript": "^5.6.3",
-    "@types/node": "^22.7.5",
-    "@types/express": "^4.17.21",
     "@types/cors": "^2.8.17",
-    "esbuild": "^0.28.2"
+    "@types/express": "^4.17.21",
+    "@types/node": "^22.7.5",
+    "@types/qrcode": "^1.5.6",
+    "esbuild": "^0.28.2",
+    "tsx": "^4.19.2",
+    "typescript": "^5.6.3"
   }
 }

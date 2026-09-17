@@ -1,4 +1,4 @@
-import { randomBytes, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import { Router, type Request, type Response, type NextFunction } from "express";
 import { z } from "zod";
 import type { Entity, Project } from "@forge/shared";
@@ -14,8 +14,6 @@ import {
   listRecords,
   updateRecord,
   deleteRecord,
-  getWhatsAppSettings,
-  upsertWhatsAppSettings,
   insertWhatsAppMessage,
   listWhatsAppMessages,
   type ForgeDatabase,
@@ -29,7 +27,7 @@ import { generateExportFiles } from "../codegen.js";
 import { generateBackupZipEntries } from "../backup.js";
 import { buildZip } from "../zip.js";
 import { computeBusinessTwin } from "../twin.js";
-import { sendWhatsAppMessage } from "../whatsapp.js";
+import type { WhatsAppWebManager } from "../whatsappWeb.js";
 
 const CreateProjectSchema = z.object({
   description: z.string().min(1, "description is required"),
@@ -49,27 +47,10 @@ const AnswerQuestionsSchema = z.object({
   additionalRequest: z.string().optional(),
 });
 
-const WhatsAppSettingsSchema = z.object({
-  phoneNumberId: z.string().min(1, "phoneNumberId is required"),
-  // Optional on update: the access token is never sent back to the
-  // browser once saved (see maskSecret below), so re-saving other fields
-  // (like the phone number id) shouldn't force retyping a secret the UI
-  // can't show back to confirm. Required the first time, since there's
-  // nothing yet to keep unchanged.
-  accessToken: z.string().min(1).optional(),
-  verifyToken: z.string().min(1).optional(),
-});
-
 const WhatsAppSendSchema = z.object({
   to: z.string().min(1, "to is required"),
   message: z.string().min(1, "message is required"),
 });
-
-/** Shows only the last 4 characters of a secret, so the full access token never round-trips back to the browser on every settings load. */
-function maskSecret(value: string): string {
-  if (value.length <= 4) return "••••";
-  return "•".repeat(value.length - 4) + value.slice(-4);
-}
 
 function deriveName(description: string): string {
   const words = description.trim().split(/\s+/).slice(0, 6).join(" ");
@@ -116,7 +97,7 @@ async function streamPipeline(
   res.end();
 }
 
-export function createProjectsRouter(db: ForgeDatabase, provider?: SpecProvider): Router {
+export function createProjectsRouter(db: ForgeDatabase, provider: SpecProvider | undefined, whatsapp: WhatsAppWebManager): Router {
   const router = Router();
   router.use(requireAuth(db));
 
@@ -300,59 +281,28 @@ export function createProjectsRouter(db: ForgeDatabase, provider?: SpecProvider)
     }),
   );
 
-  /**
-   * The WhatsApp webhook URL a project owner pastes into Meta's own
-   * developer console -- built from the request itself (not a hardcoded
-   * host) so it's correct in dev, in a clean-room clone, and on the live
-   * Render deployment alike.
-   */
-  function whatsappWebhookUrl(req: Request, projectId: string): string {
-    return `${req.protocol}://${req.get("host")}/api/webhooks/whatsapp/${projectId}`;
-  }
-
   router.get(
-    "/projects/:id/integrations/whatsapp",
+    "/projects/:id/integrations/whatsapp/status",
     asyncRoute(async (req, res) => {
       const project = requireOwnedProject(db, req.params.id, req.userId!);
-      const settings = getWhatsAppSettings(db, project.id);
-      res.json({
-        configured: !!settings,
-        phoneNumberId: settings?.phoneNumberId ?? null,
-        accessTokenMasked: settings ? maskSecret(settings.accessToken) : null,
-        verifyToken: settings?.verifyToken ?? null,
-        webhookUrl: whatsappWebhookUrl(req, project.id),
-      });
+      res.json(whatsapp.getStatus(project.id));
     }),
   );
 
-  router.put(
-    "/projects/:id/integrations/whatsapp",
+  router.post(
+    "/projects/:id/integrations/whatsapp/connect",
     asyncRoute(async (req, res) => {
       const project = requireOwnedProject(db, req.params.id, req.userId!);
-      const body = WhatsAppSettingsSchema.parse(req.body ?? {});
-      const existing = getWhatsAppSettings(db, project.id);
-      const accessToken = body.accessToken || existing?.accessToken;
-      if (!accessToken) {
-        throw new HttpError(400, "accessToken is required the first time you configure WhatsApp", "VALIDATION_ERROR");
-      }
-      // A verify token is a shared secret this app itself controls (not
-      // an OAuth credential from Meta), so if the owner didn't type one,
-      // reuse the existing one or generate a fresh random one -- never
-      // silently leave it empty, which would make the webhook handshake
-      // impossible to complete.
-      const verifyToken = body.verifyToken || existing?.verifyToken || randomBytes(16).toString("hex");
-      const settings = upsertWhatsAppSettings(db, project.id, {
-        phoneNumberId: body.phoneNumberId,
-        accessToken,
-        verifyToken,
-      });
-      res.json({
-        configured: true,
-        phoneNumberId: settings.phoneNumberId,
-        accessTokenMasked: maskSecret(settings.accessToken),
-        verifyToken: settings.verifyToken,
-        webhookUrl: whatsappWebhookUrl(req, project.id),
-      });
+      res.json(await whatsapp.connect(project.id));
+    }),
+  );
+
+  router.post(
+    "/projects/:id/integrations/whatsapp/disconnect",
+    asyncRoute(async (req, res) => {
+      const project = requireOwnedProject(db, req.params.id, req.userId!);
+      await whatsapp.disconnect(project.id);
+      res.json(whatsapp.getStatus(project.id));
     }),
   );
 
@@ -361,15 +311,15 @@ export function createProjectsRouter(db: ForgeDatabase, provider?: SpecProvider)
     asyncRoute(async (req, res) => {
       const project = requireOwnedProject(db, req.params.id, req.userId!);
       const { to, message } = WhatsAppSendSchema.parse(req.body ?? {});
-      const settings = getWhatsAppSettings(db, project.id);
-      if (!settings) {
-        throw new HttpError(409, "Save WhatsApp settings before sending a message", "WHATSAPP_NOT_CONFIGURED");
+      const status = whatsapp.getStatus(project.id);
+      if (status.status !== "connected") {
+        throw new HttpError(409, "Connect WhatsApp before sending a message", "WHATSAPP_NOT_CONNECTED");
       }
-      const result = await sendWhatsAppMessage(settings, to, message);
+      const result = await whatsapp.sendMessage(project.id, to, message);
       insertWhatsAppMessage(db, {
         projectId: project.id,
         direction: "out",
-        fromNumber: settings.phoneNumberId,
+        fromNumber: status.phoneNumber ?? "",
         toNumber: to,
         body: message,
         status: result.ok ? "sent" : "failed",
@@ -378,7 +328,7 @@ export function createProjectsRouter(db: ForgeDatabase, provider?: SpecProvider)
         res.status(502).json({ ok: false, error: result.error });
         return;
       }
-      res.json({ ok: true, messageId: result.messageId });
+      res.json({ ok: true });
     }),
   );
 

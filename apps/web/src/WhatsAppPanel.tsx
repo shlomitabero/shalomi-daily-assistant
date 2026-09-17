@@ -1,75 +1,95 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { useTranslation } from "./i18n/LanguageContext.js";
 import {
-  getWhatsAppSettings,
+  connectWhatsApp,
+  disconnectWhatsApp,
+  getWhatsAppStatus,
   listWhatsAppMessages,
-  saveWhatsAppSettings,
   sendWhatsAppMessage,
   type WhatsAppMessageLogEntry,
-  type WhatsAppSettingsView,
+  type WhatsAppStatusView,
 } from "./api.js";
-import { useTranslation } from "./i18n/LanguageContext.js";
 
-/**
- * Real, two-way WhatsApp sync is only possible through Meta's official
- * WhatsApp Business Platform -- there is no other supported way for a
- * third-party app to send or receive WhatsApp messages, and no way for
- * Forge AI to create that account on the project owner's behalf. This
- * panel is the real integration point: it stores the owner's own
- * Meta-issued credentials, shows the exact webhook URL + verify token
- * they need to paste into Meta's console, sends a real test message
- * through the Cloud API once configured, and lists messages actually
- * received through the webhook (matched to an entity record by phone
- * number when possible).
- */
+const POLL_INTERVAL_MS = 1500;
+
 export function WhatsAppPanel({ projectId, onClose }: { projectId: string; onClose: () => void }) {
   const { t } = useTranslation();
-  const [settings, setSettings] = useState<WhatsAppSettingsView | null>(null);
+  const [status, setStatus] = useState<WhatsAppStatusView | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
-
-  const [phoneNumberId, setPhoneNumberId] = useState("");
-  const [accessToken, setAccessToken] = useState("");
-  const [saving, setSaving] = useState(false);
-  const [saveError, setSaveError] = useState<string | null>(null);
-  const [saved, setSaved] = useState(false);
-
+  const [connecting, setConnecting] = useState(false);
+  const [disconnecting, setDisconnecting] = useState(false);
   const [testTo, setTestTo] = useState("");
   const [testMessage, setTestMessage] = useState("");
   const [sending, setSending] = useState(false);
   const [sendResult, setSendResult] = useState<{ ok: boolean; text: string } | null>(null);
-
   const [messages, setMessages] = useState<WhatsAppMessageLogEntry[]>([]);
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  function stopPolling() {
+    if (pollRef.current) {
+      clearInterval(pollRef.current);
+      pollRef.current = null;
+    }
+  }
+
+  function startPolling() {
+    stopPolling();
+    pollRef.current = setInterval(async () => {
+      try {
+        const next = await getWhatsAppStatus(projectId);
+        setStatus(next);
+        if (next.status === "connected" || next.status === "disconnected") {
+          stopPolling();
+          if (next.status === "connected") {
+            const { messages } = await listWhatsAppMessages(projectId);
+            setMessages(messages);
+          }
+        }
+      } catch {
+        stopPolling();
+      }
+    }, POLL_INTERVAL_MS);
+  }
 
   useEffect(() => {
-    getWhatsAppSettings(projectId)
+    getWhatsAppStatus(projectId)
       .then((s) => {
-        setSettings(s);
-        setPhoneNumberId(s.phoneNumberId ?? "");
+        setStatus(s);
+        if (s.status === "connecting" || s.status === "qr") startPolling();
+        if (s.status === "connected") {
+          listWhatsAppMessages(projectId).then(({ messages }) => setMessages(messages)).catch(() => {});
+        }
       })
       .catch((err) => setLoadError((err as Error).message));
-    listWhatsAppMessages(projectId)
-      .then(({ messages }) => setMessages(messages))
-      .catch(() => {
-        // The message log is a nice-to-have -- a failure here shouldn't block the settings view.
-      });
+    return () => stopPolling();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectId]);
 
-  async function handleSave(e: React.FormEvent) {
-    e.preventDefault();
-    setSaving(true);
-    setSaveError(null);
-    setSaved(false);
+  async function handleConnect() {
+    setConnecting(true);
+    setLoadError(null);
     try {
-      const result = await saveWhatsAppSettings(projectId, {
-        phoneNumberId,
-        ...(accessToken.trim() ? { accessToken: accessToken.trim() } : {}),
-      });
-      setSettings(result);
-      setAccessToken("");
-      setSaved(true);
+      const next = await connectWhatsApp(projectId);
+      setStatus(next);
+      startPolling();
     } catch (err) {
-      setSaveError((err as Error).message);
+      setLoadError((err as Error).message);
     } finally {
-      setSaving(false);
+      setConnecting(false);
+    }
+  }
+
+  async function handleDisconnect() {
+    setDisconnecting(true);
+    stopPolling();
+    try {
+      const next = await disconnectWhatsApp(projectId);
+      setStatus(next);
+      setMessages([]);
+    } catch (err) {
+      setLoadError((err as Error).message);
+    } finally {
+      setDisconnecting(false);
     }
   }
 
@@ -80,9 +100,7 @@ export function WhatsAppPanel({ projectId, onClose }: { projectId: string; onClo
     try {
       const result = await sendWhatsAppMessage(projectId, testTo, testMessage);
       setSendResult(
-        result.ok
-          ? { ok: true, text: t("whatsapp.send.success") }
-          : { ok: false, text: result.error ?? t("whatsapp.send.genericError") },
+        result.ok ? { ok: true, text: t("whatsapp.send.success") } : { ok: false, text: result.error ?? t("whatsapp.send.genericError") },
       );
       const { messages } = await listWhatsAppMessages(projectId);
       setMessages(messages);
@@ -93,14 +111,7 @@ export function WhatsAppPanel({ projectId, onClose }: { projectId: string; onClo
     }
   }
 
-  async function handleCopyWebhookUrl() {
-    if (!settings) return;
-    try {
-      await navigator.clipboard.writeText(settings.webhookUrl);
-    } catch {
-      // Clipboard access can be denied; the field is still selectable/copyable by hand.
-    }
-  }
+  const s = status?.status ?? "disconnected";
 
   return (
     <div className="history-overlay">
@@ -113,71 +124,45 @@ export function WhatsAppPanel({ projectId, onClose }: { projectId: string; onClo
         </div>
         <p className="muted small">{t("whatsapp.description")}</p>
         <p className="muted small whatsapp-prereq">{t("whatsapp.prerequisite")}</p>
-
         {loadError && <p className="error">{loadError}</p>}
 
-        <form className="whatsapp-settings-form" onSubmit={handleSave}>
-          <label className="field-row">
-            <span>{t("whatsapp.phoneNumberId")}</span>
-            <input
-              type="text"
-              value={phoneNumberId}
-              onChange={(e) => setPhoneNumberId(e.target.value)}
-              placeholder={t("whatsapp.phoneNumberId.placeholder")}
-              required
-            />
-          </label>
-          <label className="field-row">
-            <span>{t("whatsapp.accessToken")}</span>
-            <input
-              type="password"
-              value={accessToken}
-              onChange={(e) => setAccessToken(e.target.value)}
-              placeholder={settings?.configured ? (settings.accessTokenMasked ?? "") : t("whatsapp.accessToken.placeholder")}
-            />
-            {settings?.configured && <span className="muted small">{t("whatsapp.accessToken.keepHint")}</span>}
-          </label>
-          <div className="form-actions">
-            <button type="submit" disabled={saving}>
-              {saving ? t("whatsapp.saving") : t("whatsapp.save")}
+        {s === "disconnected" && (
+          <div className="whatsapp-connect-box">
+            {status?.phoneNumber && <p className="muted small">{t("whatsapp.lastConnected", { phone: status.phoneNumber })}</p>}
+            <button type="button" onClick={handleConnect} disabled={connecting}>
+              {connecting ? t("whatsapp.connect.connecting") : t("whatsapp.connect.button")}
             </button>
-          </div>
-          {saveError && <p className="error">{saveError}</p>}
-          {saved && !saveError && <p className="muted small">{t("whatsapp.saved")}</p>}
-        </form>
-
-        {settings?.configured && (
-          <div className="whatsapp-webhook-info">
-            <h3>{t("whatsapp.webhook.heading")}</h3>
-            <p className="muted small">{t("whatsapp.webhook.description")}</p>
-            <div className="whatsapp-webhook-field">
-              <span className="muted small">{t("whatsapp.webhook.urlLabel")}</span>
-              <div className="whatsapp-webhook-value-row">
-                <input type="text" readOnly value={settings.webhookUrl} onFocus={(e) => e.target.select()} />
-                <button type="button" className="secondary small" onClick={handleCopyWebhookUrl}>
-                  {t("whatsapp.webhook.copy")}
-                </button>
-              </div>
-            </div>
-            <div className="whatsapp-webhook-field">
-              <span className="muted small">{t("whatsapp.webhook.verifyTokenLabel")}</span>
-              <input type="text" readOnly value={settings.verifyToken ?? ""} onFocus={(e) => e.target.select()} />
-            </div>
           </div>
         )}
 
-        {settings?.configured && (
+        {(s === "connecting" || s === "qr") && (
+          <div className="whatsapp-connect-box">
+            {s === "connecting" && <p className="muted small">{t("whatsapp.connect.connecting")}</p>}
+            {s === "qr" && status?.qrDataUrl && (
+              <>
+                <p className="muted small">{t("whatsapp.connect.qrInstructions")}</p>
+                <img className="whatsapp-qr-image" src={status.qrDataUrl} alt={t("whatsapp.title")} />
+              </>
+            )}
+            {status?.error && <p className="error">{status.error}</p>}
+          </div>
+        )}
+
+        {s === "connected" && (
+          <div className="whatsapp-connected-box">
+            <p className="whatsapp-connected-status">{t("whatsapp.connected.as", { phone: status?.phoneNumber ?? "" })}</p>
+            <button type="button" className="secondary small" onClick={handleDisconnect} disabled={disconnecting}>
+              {disconnecting ? t("whatsapp.connected.disconnecting") : t("whatsapp.connected.disconnect")}
+            </button>
+          </div>
+        )}
+
+        {s === "connected" && (
           <form className="whatsapp-test-form" onSubmit={handleSendTest}>
             <h3>{t("whatsapp.test.heading")}</h3>
             <label className="field-row">
               <span>{t("whatsapp.test.to")}</span>
-              <input
-                type="text"
-                value={testTo}
-                onChange={(e) => setTestTo(e.target.value)}
-                placeholder={t("whatsapp.test.to.placeholder")}
-                required
-              />
+              <input type="text" value={testTo} onChange={(e) => setTestTo(e.target.value)} placeholder={t("whatsapp.test.to.placeholder")} required />
             </label>
             <label className="field-row">
               <span>{t("whatsapp.test.message")}</span>
