@@ -28,6 +28,7 @@ export function WhatsAppPanel({ projectId, onClose }: { projectId: string; onClo
   const [sending, setSending] = useState(false);
   const [sendResult, setSendResult] = useState<{ ok: boolean; text: string } | null>(null);
   const [messages, setMessages] = useState<WhatsAppMessageLogEntry[]>([]);
+  const [retryingId, setRetryingId] = useState<string | null>(null);
   const dialogRef = useDialogFocusTrap<HTMLDivElement>();
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const pollFailuresRef = useRef(0);
@@ -127,6 +128,22 @@ export function WhatsAppPanel({ projectId, onClose }: { projectId: string; onClo
     }
   }
 
+  async function handleRetry(m: WhatsAppMessageLogEntry) {
+    setRetryingId(m.id);
+    try {
+      await sendWhatsAppMessage(projectId, m.toNumber, m.body);
+      const { messages } = await listWhatsAppMessages(projectId);
+      setMessages(messages);
+    } catch {
+      // sendWhatsAppMessage already surfaces a failed send as a normal
+      // {ok:false} response logged to the message list, so a thrown error
+      // here means the request itself never reached the server -- the
+      // failed entry just stays in the log, retryable again.
+    } finally {
+      setRetryingId(null);
+    }
+  }
+
   const s = status?.status ?? "disconnected";
 
   return (
@@ -219,7 +236,21 @@ export function WhatsAppPanel({ projectId, onClose }: { projectId: string; onClo
                   </span>
                   <span className="whatsapp-log-who">{m.matchedLabel ?? (m.direction === "in" ? m.fromNumber : m.toNumber)}</span>
                   <span className="whatsapp-log-body">{m.body}</span>
-                  {m.status === "failed" && <span className="badge badge-negative">{t("whatsapp.log.failed")}</span>}
+                  {m.status === "failed" && (
+                    <>
+                      <span className="badge badge-negative">{t("whatsapp.log.failed")}</span>
+                      {s === "connected" && (
+                        <button
+                          type="button"
+                          className="secondary small"
+                          onClick={() => handleRetry(m)}
+                          disabled={retryingId === m.id}
+                        >
+                          {retryingId === m.id ? t("whatsapp.log.retrying") : t("whatsapp.log.retry")}
+                        </button>
+                      )}
+                    </>
+                  )}
                 </li>
               ))}
             </ul>

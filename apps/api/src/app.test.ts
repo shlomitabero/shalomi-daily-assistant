@@ -684,6 +684,73 @@ test("WhatsApp send succeeds once connected, is logged as an outgoing message, a
   );
 });
 
+test("WhatsApp: a failed send stays logged as failed, and retrying with the same recipient/body (what the panel's Retry button does) succeeds and adds a new sent entry", async () => {
+  let createdSockets: ReturnType<typeof createFakeWhatsAppSocket>[] = [];
+  await withServer(
+    async (baseUrl) => {
+      const token = await signup(baseUrl);
+      const createRes = await fetch(`${baseUrl}/api/projects`, {
+        method: "POST",
+        headers: authHeaders(token),
+        body: JSON.stringify({ description: "A CRM with customers and deals." }),
+      });
+      const { project } = (await createRes.json()) as { project: { id: string } };
+
+      await fetch(`${baseUrl}/api/projects/${project.id}/integrations/whatsapp/connect`, { method: "POST", headers: authHeaders(token) });
+      createdSockets[0].sock.user = { id: "15550001111:1@s.whatsapp.net" };
+      createdSockets[0].emitConnectionUpdate({ connection: "open" });
+
+      // Simulate a momentary socket write failure on the first attempt.
+      createdSockets[0].sock.sendMessage = async () => {
+        throw new Error("socket write failed");
+      };
+
+      const firstSend = await fetch(`${baseUrl}/api/projects/${project.id}/integrations/whatsapp/send`, {
+        method: "POST",
+        headers: authHeaders(token),
+        body: JSON.stringify({ to: "972501234567", message: "אפשר תור מחר?" }),
+      });
+      assert.equal(firstSend.status, 502);
+
+      const afterFirst = await fetch(`${baseUrl}/api/projects/${project.id}/integrations/whatsapp/messages`, { headers: authHeaders(token) });
+      const { messages: afterFirstMessages } = (await afterFirst.json()) as { messages: { status: string; body: string }[] };
+      assert.equal(afterFirstMessages.length, 1);
+      assert.equal(afterFirstMessages[0].status, "failed");
+
+      // The panel's Retry button re-sends the exact same recipient and body
+      // once the underlying problem (here, the socket) recovers.
+      createdSockets[0].sock.sendMessage = async (jid, content) => {
+        createdSockets[0].sendCalls.push({ jid, text: content.text });
+        return {};
+      };
+
+      const retrySend = await fetch(`${baseUrl}/api/projects/${project.id}/integrations/whatsapp/send`, {
+        method: "POST",
+        headers: authHeaders(token),
+        body: JSON.stringify({ to: "972501234567", message: "אפשר תור מחר?" }),
+      });
+      assert.equal(retrySend.status, 200);
+      assert.deepEqual((await retrySend.json()) as { ok: boolean }, { ok: true });
+
+      const afterRetry = await fetch(`${baseUrl}/api/projects/${project.id}/integrations/whatsapp/messages`, { headers: authHeaders(token) });
+      const { messages: afterRetryMessages } = (await afterRetry.json()) as { messages: { status: string; body: string }[] };
+      // The original failed entry is never mutated or removed; the retry
+      // simply appends a new, separately-logged successful attempt.
+      assert.equal(afterRetryMessages.length, 2);
+      assert.equal(afterRetryMessages[0].status, "sent");
+      assert.equal(afterRetryMessages[0].body, "אפשר תור מחר?");
+      assert.equal(afterRetryMessages[1].status, "failed");
+    },
+    {
+      whatsapp: (db) => {
+        const created = createTestWhatsAppManager(db);
+        createdSockets = created.createdSockets;
+        return created.manager;
+      },
+    },
+  );
+});
+
 test("WhatsApp: a real incoming message from the linked socket is logged and matched to the right customer record", async () => {
   let createdSockets: ReturnType<typeof createFakeWhatsAppSocket>[] = [];
   await withServer(

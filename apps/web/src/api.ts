@@ -351,9 +351,10 @@ export async function sendWhatsAppMessage(projectId: string, to: string, message
     },
     body: JSON.stringify({ to, message }),
   });
-  // A failed send (e.g. Meta rejects the token/number) is still a normal,
-  // expected response here -- surface it as data, not a thrown error, so
-  // the panel can show the real reason instead of a generic failure.
+  // A failed send (e.g. the socket drops mid-send, or the number is
+  // invalid) is still a normal, expected response here -- surface it as
+  // data, not a thrown error, so the panel can show the real reason
+  // instead of a generic failure.
   return (await res.json()) as WhatsAppSendResult;
 }
 
