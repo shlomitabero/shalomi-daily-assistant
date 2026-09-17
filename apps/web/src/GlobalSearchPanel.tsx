@@ -3,6 +3,7 @@ import type { Entity, EntityRecord } from "@forge/shared";
 import { listRecords } from "./api.js";
 import { recordDisplayLabel, searchEntityRecords, type EntitySearchResult } from "./entityFormatting.js";
 import { useTranslation } from "./i18n/LanguageContext.js";
+import { useDialogFocusTrap } from "./useDialogFocusTrap.js";
 
 /**
  * A single query box that searches every entity in the project at once,
@@ -29,6 +30,7 @@ export function GlobalSearchPanel({
   const [error, setError] = useState<string | null>(null);
   const [searched, setSearched] = useState(false);
   const [selectedIndex, setSelectedIndex] = useState<number | null>(null);
+  const dialogRef = useDialogFocusTrap<HTMLDivElement>();
 
   async function runSearch(q: string) {
     if (!q.trim()) {
@@ -89,9 +91,9 @@ export function GlobalSearchPanel({
 
   return (
     <div className="history-overlay">
-      <div className="history-panel search-panel">
+      <div className="history-panel search-panel" ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby="search-panel-title">
         <div className="history-header">
-          <h2>{t("search.title")}</h2>
+          <h2 id="search-panel-title">{t("search.title")}</h2>
           <button type="button" className="secondary" onClick={onClose}>
             {t("history.close")}
           </button>
@@ -104,6 +106,7 @@ export function GlobalSearchPanel({
             autoFocus
             className="global-search-input"
             placeholder={t("search.placeholder")}
+            aria-label={t("search.placeholder")}
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             onKeyDown={handleInputKeyDown}

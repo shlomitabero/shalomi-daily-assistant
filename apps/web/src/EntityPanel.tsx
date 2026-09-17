@@ -653,6 +653,7 @@ export function EntityPanel({
               type="text"
               className="entity-search"
               placeholder={t("entity.search.placeholder")}
+              aria-label={t("entity.search.placeholder")}
               value={search}
               onChange={(e) => setSearch(e.target.value)}
             />
@@ -767,7 +768,10 @@ export function EntityPanel({
                       />
                     </th>
                     {entity.fields.map((f) => (
-                      <th key={f.name}>
+                      <th
+                        key={f.name}
+                        aria-sort={sortField === f.name ? (sortDir === "asc" ? "ascending" : "descending") : "none"}
+                      >
                         <button type="button" className="sort-header" onClick={() => toggleSort(f.name)}>
                           {f.label ?? f.name}
                           {sortField === f.name ? (sortDir === "asc" ? " ▲" : " ▼") : ""}

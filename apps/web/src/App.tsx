@@ -504,6 +504,7 @@ function AppContent() {
                   <input
                     type="text"
                     placeholder={t("preview.refine.placeholder")}
+                    aria-label={t("preview.refine.placeholder")}
                     value={refineText}
                     onChange={(e) => setRefineText(e.target.value)}
                   />

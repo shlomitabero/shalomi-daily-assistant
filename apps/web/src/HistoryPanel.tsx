@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import type { Checkpoint, Project } from "@forge/shared";
 import { listCheckpoints, restoreCheckpoint } from "./api.js";
 import { useTranslation } from "./i18n/LanguageContext.js";
+import { useDialogFocusTrap } from "./useDialogFocusTrap.js";
 
 const LOCALE: Record<string, string> = { he: "he-IL", en: "en-US" };
 
@@ -18,6 +19,7 @@ export function HistoryPanel({
   const [checkpoints, setCheckpoints] = useState<Checkpoint[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
+  const dialogRef = useDialogFocusTrap<HTMLDivElement>();
 
   useEffect(() => {
     listCheckpoints(projectId)
@@ -40,9 +42,9 @@ export function HistoryPanel({
 
   return (
     <div className="history-overlay">
-      <div className="history-panel">
+      <div className="history-panel" ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby="history-panel-title">
         <div className="history-header">
-          <h2>{t("history.title")}</h2>
+          <h2 id="history-panel-title">{t("history.title")}</h2>
           <button type="button" className="secondary" onClick={onClose}>
             {t("history.close")}
           </button>

@@ -1592,6 +1592,49 @@ not a single "make it perfect" claim.
       same value. Full suite green (219 tests) + both builds clean + a
       from-scratch clean-room clone/install/test/build/start cycle with
       a live `/api/health` check.
+- [x] **Accessibility pass: real dialog semantics + missing labels.** A
+      general audit of the live preview (no user complaint prompted this
+      — the same self-directed quality-check pattern as the earlier
+      full-app audit round) found that all four overlay panels (History,
+      Business Twin, WhatsApp, global search) were CSS overlays with no
+      real dialog behavior: no `role="dialog"`/`aria-modal`, no focus
+      moved into the panel on open, no focus trap (Tab could walk
+      straight through the panel into the live-preview content
+      "underneath" it), and no focus returned to whatever opened it on
+      close. Also found: three search/instruction inputs relying on
+      `placeholder` alone with no `aria-label` (a screen reader
+      announces those as unlabeled fields), sortable table headers
+      exposing sort direction only as a `▲`/`▼` glyph (no `aria-sort`),
+      and the WhatsApp message log's inbound/outbound icons carrying no
+      text alternative.
+      - New `apps/web/src/useDialogFocusTrap.ts`: a small shared hook
+        (not a UI library) that moves focus into a panel on mount unless
+        something inside it already has focus (so `GlobalSearchPanel`'s
+        existing `autoFocus` search box keeps working, unchanged), traps
+        Tab/Shift+Tab within the panel's own focusable elements, and
+        restores focus to the previously-focused element (the trigger
+        button) on unmount.
+      - Applied to all four panels with `role="dialog"`, `aria-modal`,
+        and `aria-labelledby` pointing at each panel's own `<h2>` (given
+        a real `id`) — no new translation strings needed, since the
+        heading text already exists.
+      - `aria-label` added to the per-entity search box, the global
+        search box, and the refine-instruction input; `aria-sort` added
+        to sortable table headers; `aria-label` added to the WhatsApp
+        log's inbound/outbound icons (two new translated strings).
+      - Verified with a real Playwright run driving actual keyboard
+        events (not a simulated/mocked focus check): opened the History
+        panel, confirmed `role="dialog"`/`aria-modal="true"`, confirmed
+        focus moved into it on open, pressed Tab 15 times in a row and
+        confirmed focus never left the panel (a genuine trap, not just
+        the first Tab), pressed Escape and confirmed the panel closed
+        *and* focus returned to the exact trigger button that opened it,
+        then spot-checked the other three panels for the same
+        `role="dialog"` wiring and confirmed the global search box's
+        `autoFocus` still wins over the trap's own focus-on-open logic.
+        Full suite green (219 tests, unaffected) + both builds clean + a
+        from-scratch clean-room clone/install/test/build/start cycle
+        with a live `/api/health` check.
 
 ## Phase 3
 

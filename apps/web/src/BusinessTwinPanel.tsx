@@ -1,11 +1,13 @@
 import { useEffect, useState } from "react";
 import { getBusinessTwin, type BusinessTwin } from "./api.js";
 import { useTranslation } from "./i18n/LanguageContext.js";
+import { useDialogFocusTrap } from "./useDialogFocusTrap.js";
 
 export function BusinessTwinPanel({ projectId, onClose }: { projectId: string; onClose: () => void }) {
   const { t } = useTranslation();
   const [twin, setTwin] = useState<BusinessTwin | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const dialogRef = useDialogFocusTrap<HTMLDivElement>();
 
   useEffect(() => {
     getBusinessTwin(projectId)
@@ -15,9 +17,9 @@ export function BusinessTwinPanel({ projectId, onClose }: { projectId: string; o
 
   return (
     <div className="history-overlay">
-      <div className="history-panel twin-panel">
+      <div className="history-panel twin-panel" ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby="twin-panel-title">
         <div className="history-header">
-          <h2>{t("twin.title")}</h2>
+          <h2 id="twin-panel-title">{t("twin.title")}</h2>
           <button type="button" className="secondary" onClick={onClose}>
             {t("history.close")}
           </button>

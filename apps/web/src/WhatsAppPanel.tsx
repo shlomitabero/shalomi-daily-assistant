@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "./i18n/LanguageContext.js";
+import { useDialogFocusTrap } from "./useDialogFocusTrap.js";
 import {
   connectWhatsApp,
   disconnectWhatsApp,
@@ -27,6 +28,7 @@ export function WhatsAppPanel({ projectId, onClose }: { projectId: string; onClo
   const [sending, setSending] = useState(false);
   const [sendResult, setSendResult] = useState<{ ok: boolean; text: string } | null>(null);
   const [messages, setMessages] = useState<WhatsAppMessageLogEntry[]>([]);
+  const dialogRef = useDialogFocusTrap<HTMLDivElement>();
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const pollFailuresRef = useRef(0);
 
@@ -129,9 +131,15 @@ export function WhatsAppPanel({ projectId, onClose }: { projectId: string; onClo
 
   return (
     <div className="history-overlay">
-      <div className="history-panel whatsapp-panel">
+      <div
+        className="history-panel whatsapp-panel"
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="whatsapp-panel-title"
+      >
         <div className="history-header">
-          <h2>{t("whatsapp.title")}</h2>
+          <h2 id="whatsapp-panel-title">{t("whatsapp.title")}</h2>
           <button type="button" className="secondary" onClick={onClose}>
             {t("history.close")}
           </button>
@@ -206,7 +214,9 @@ export function WhatsAppPanel({ projectId, onClose }: { projectId: string; onClo
             <ul className="whatsapp-log-list">
               {messages.map((m) => (
                 <li key={m.id} className={m.direction === "in" ? "whatsapp-log-in" : "whatsapp-log-out"}>
-                  <span className="whatsapp-log-direction">{m.direction === "in" ? "⬇️" : "⬆️"}</span>
+                  <span className="whatsapp-log-direction" aria-label={m.direction === "in" ? t("whatsapp.log.incoming") : t("whatsapp.log.outgoing")}>
+                    {m.direction === "in" ? "⬇️" : "⬆️"}
+                  </span>
                   <span className="whatsapp-log-who">{m.matchedLabel ?? (m.direction === "in" ? m.fromNumber : m.toNumber)}</span>
                   <span className="whatsapp-log-body">{m.body}</span>
                   {m.status === "failed" && <span className="badge badge-negative">{t("whatsapp.log.failed")}</span>}
