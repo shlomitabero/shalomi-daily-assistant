@@ -2136,6 +2136,39 @@ not a single "make it perfect" claim.
       from-scratch clean-room clone/install/test/build/start cycle with
       a live `/api/health` check.
 
+- [x] **Deduplicated `pickDisplayField`/`recordDisplayLabel`, tracked as
+      an open cleanup item since the `twin.ts` self-review.** Three
+      files in `apps/api/src` — `twin.ts`, `whatsapp.ts`, `backup.ts` —
+      each carried a byte-identical copy of the same small helper (pick
+      a record's best display field, then render it as a short label,
+      falling back to `#<id>`). Unlike the CSV-formatting duplication
+      fixed earlier (which turned out to have three legitimately
+      different consumers — live preview, the exported standalone app,
+      and the backup ZIP — where a real bug had already crept into two
+      of the three copies independently), these three were genuinely
+      identical with zero divergence, inside the same server package, so
+      there was no "per-surface" reason to keep them separate.
+      `codegen.ts`'s own copy was deliberately left alone — it's a
+      string template generating the *exported* app's own JS file, the
+      same different-surface case as the CSV logic, not something this
+      package can import from. Extracted a real shared module,
+      `apps/api/src/displayField.ts`, and updated all three call sites
+      to import from it instead of keeping their own copy — one file
+      fewer to keep in sync the next time this logic needs a fix. Wrote
+      the first-ever direct unit tests for the new module
+      (`displayField.test.ts`) covering the name/title preference, the
+      first-text-field fallback, the last-resort first-field fallback,
+      and the `#<id>` fallback for a missing/empty value. A pure
+      refactor — no behavior change, confirmed by the full pre-existing
+      test suite (which already exercises this logic indirectly through
+      `computeBusinessTwin`, `findMatchingRecord`, and the backup ZIP
+      export) staying green throughout. Full suite green (248 tests
+      total across all 4 workspaces) + both builds clean (the API bundle
+      shrank slightly, from 223.7kb to 222.6kb, consistent with the
+      removed duplicate code) + a from-scratch clean-room
+      clone/install/test/build/start cycle with a live `/api/health`
+      check.
+
 ## Phase 3
 
 - Self-healing: production observability, automatic diagnosis and patch

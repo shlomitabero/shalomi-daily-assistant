@@ -1,5 +1,6 @@
 import type { Entity, EntityRecord, Field, Project } from "@forge/shared";
 import { listRecords, type ForgeDatabase } from "@forge/db";
+import { recordDisplayLabel } from "./displayField.js";
 
 /**
  * "Backup all data": one ZIP containing one CSV per entity, so a real
@@ -23,22 +24,6 @@ function csvEscape(value: string): string {
     return `"${value.replace(/"/g, '""')}"`;
   }
   return value;
-}
-
-const DISPLAY_FIELD_NAME_HINTS = ["name", "title"];
-
-function pickDisplayField(entity: Entity): Field | null {
-  const named = entity.fields.find((f) => DISPLAY_FIELD_NAME_HINTS.includes(f.name.toLowerCase()));
-  if (named) return named;
-  const firstText = entity.fields.find((f) => f.type === "text");
-  return firstText ?? entity.fields[0] ?? null;
-}
-
-function recordDisplayLabel(entity: Entity, record: EntityRecord): string {
-  const field = pickDisplayField(entity);
-  const value = field ? record[field.name] : undefined;
-  if (value === null || value === undefined || value === "") return `#${record.id}`;
-  return String(value);
 }
 
 /**

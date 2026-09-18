@@ -1,6 +1,7 @@
 import type { Entity, EntityRecord, Project } from "@forge/shared";
 import { countRecords, getRecord, listRecords, type ForgeDatabase } from "@forge/db";
 import { isHebrewText } from "@forge/spec-engine";
+import { recordDisplayLabel } from "./displayField.js";
 
 /**
  * The "Business Twin" — a real, honest first version of the vision's
@@ -56,23 +57,6 @@ function computeRelationCoverageObservations(db: ForgeDatabase, project: Project
     }
   }
   return observations;
-}
-
-const DISPLAY_FIELD_NAME_HINTS = ["name", "title"];
-
-/** Picks the field that best represents a record as a short human label -- prefers "name"/"title", then the first text field. */
-function pickDisplayField(entity: Entity) {
-  const named = entity.fields.find((f) => DISPLAY_FIELD_NAME_HINTS.includes(f.name.toLowerCase()));
-  if (named) return named;
-  const firstText = entity.fields.find((f) => f.type === "text");
-  return firstText ?? entity.fields[0] ?? null;
-}
-
-function recordLabel(entity: Entity, record: EntityRecord): string {
-  const field = pickDisplayField(entity);
-  const value = field ? record[field.name] : undefined;
-  if (value === null || value === undefined || value === "") return `#${record.id}`;
-  return String(value);
 }
 
 /**
@@ -152,7 +136,7 @@ function computeRelationHubObservation(db: ForgeDatabase, project: Project, hebr
   const breakdownText = breakdown
     .map((b) => (hebrew ? `${b.count} ב"${b.sourceLabel}"` : `${b.count} in "${b.sourceLabel}"`))
     .join(hebrew ? ", " : ", ");
-  const label = recordLabel(targetEntity, targetRecord);
+  const label = recordDisplayLabel(targetEntity, targetRecord);
   const entityLabel = targetEntity.label ?? targetEntity.name;
 
   return [
