@@ -75,6 +75,20 @@ export const OpenQuestionSchema = z.object({
 
 export type OpenQuestion = z.infer<typeof OpenQuestionSchema>;
 
+/**
+ * Every stored project (packages/db/src/projects.ts) and checkpoint keeps
+ * its spec as JSON and re-validates it against *this* schema on every read
+ * -- there's no migration step for old spec_json rows the way
+ * diffAndMigrate handles the SQL schema. That makes this schema
+ * append-only in practice: a new field must be `.optional()` or carry a
+ * `.default()`, and an existing field must never go from optional to
+ * required or gain a stricter validator (a new `.min()`, a narrower
+ * `z.enum`, etc.) -- any of those would make every previously-stored spec
+ * fail to parse. projects.ts's `listProjectsForOwner` treats a row that
+ * fails to parse as excluded rather than crashing the whole list, but
+ * that's a safety net for something else going wrong, not license to
+ * break this schema on purpose.
+ */
 export const ProductSpecSchema = z.object({
   summary: z.string().min(1),
   personas: z.array(z.string()).default([]),

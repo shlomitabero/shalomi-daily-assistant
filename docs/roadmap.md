@@ -2093,6 +2093,49 @@ not a single "make it perfect" claim.
       clean + a from-scratch clean-room clone/install/test/build/start
       cycle with a live `/api/health` check.
 
+- [x] **Resolved the open `rowToProject` hard-parse architectural
+      question: isolate one bad stored project instead of crashing the
+      whole list.** `rowToProject` (`packages/db/src/projects.ts`)
+      re-validates every stored project's `spec_json` against the
+      *current* `ProductSpecSchema` on every read — there's no migration
+      step for old rows the way `diffAndMigrate` handles the SQL schema.
+      `listProjectsForOwner` mapped every row through it directly, so a
+      single project whose stored spec doesn't parse against today's
+      schema (the schema can only get stricter over time — a field
+      going from optional to required, a new `.min()`, etc.) would throw
+      and take down the *entire* list for that owner, not just that one
+      project. Proved this with a real regression test before touching
+      anything: inserted one valid project plus one row with an
+      intentionally incompatible `spec_json` (via raw SQL, standing in
+      for a spec written under an older, looser version of the schema),
+      and confirmed `listProjectsForOwner` threw for the whole call.
+      Fixed with a `tryRowToProject` wrapper that catches a parse
+      failure per row, logs it loudly (with the project id) so it's
+      discoverable and fixable, and excludes just that project from the
+      list — the stored row itself is never touched, so nothing here is
+      destructive, consistent with the "never destroy work" principle
+      migrations already follow. `getProject` (the single-project fetch
+      every other route needs a *valid* project from) deliberately keeps
+      throwing — there's no reasonable project to substitute there, so
+      a clear failure is correct. Also documented the actual rule this
+      enforces directly on `ProductSpecSchema` in `packages/shared`:
+      new fields must be optional or carry a default, and no field may
+      later become required or gain a stricter validator, because
+      there's no migration path for already-stored specs. Verified live
+      end-to-end against a real running server, not just unit tests:
+      signed up, created a real project via HTTP, confirmed
+      `GET /api/projects` listed it, then inserted a second, genuinely
+      corrupted row directly into that same running server's actual
+      SQLite file, and confirmed the same `GET /api/projects` call still
+      returned `200` with the one valid project intact. First-ever
+      direct unit tests for `projects.ts`
+      (`packages/db/src/projects.test.ts` didn't exist before — this
+      module had only been exercised indirectly through
+      `apps/api/app.test.ts`'s HTTP-level tests). Full suite green (244
+      tests total across all 4 workspaces) + both builds clean + a
+      from-scratch clean-room clone/install/test/build/start cycle with
+      a live `/api/health` check.
+
 ## Phase 3
 
 - Self-healing: production observability, automatic diagnosis and patch
