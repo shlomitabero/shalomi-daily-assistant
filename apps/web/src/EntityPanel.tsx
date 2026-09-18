@@ -5,6 +5,7 @@ import {
   badgeTone,
   buildCalendarMonth,
   buildImportRecords,
+  calendarChipLabelField,
   findBoardField,
   findDateField,
   formatDateValue,
@@ -184,7 +185,7 @@ function CalendarView({
     const formatter = new Intl.DateTimeFormat(LOCALE[lang], { weekday: "short" });
     return days.slice(0, 7).map((d) => formatter.format(d.date));
   }, [days, lang]);
-  const labelField = entity.fields.find((f) => f.name !== dateField.name) ?? dateField;
+  const labelField = calendarChipLabelField(entity, dateField);
 
   return (
     <div className="calendar-view">

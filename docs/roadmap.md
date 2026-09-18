@@ -2799,6 +2799,45 @@ not a single "make it perfect" claim.
   builds clean + a from-scratch clean-room clone/install/test/build/start
   cycle with a live `/api/health` check.
 
+- **Self-review found and fixed a calendar-view label bug (fragile against
+  AI-generated specs, not currently reachable through the built-in domain
+  library).** `CalendarView`'s day-chip label (`apps/web/src/EntityPanel.tsx`,
+  and its ported twin in the exported-app template,
+  `apps/api/src/codegen.ts`) picked "whichever field happens to come first
+  after the date field" as the record's display label, instead of reusing
+  the same `pickDisplayField` rule ("name"/"title", then first text field)
+  every other view (table, board, relation picker, CSV) already uses for a
+  record's label. Checked reachability first, the same discipline as
+  earlier rounds this window: wrote a script that ran `findDateField` and
+  `pickDisplayField` against all 18 built-in domain entities with a date
+  field, and every single one happens to declare its identifying field
+  before its date field, so the two rules have always coincidentally
+  agreed there — this is real insurance against a future/AI-generated spec
+  ordering fields differently, not (yet) a currently-visible bug for any
+  built-in entity. Added `calendarChipLabelField(entity, dateField)` to
+  `apps/web/src/entityFormatting.ts` (prefers `pickDisplayField`'s result,
+  falling back to the old "first other field" rule only in the edge case
+  where `pickDisplayField` itself would have resolved to the date field),
+  wired it into `EntityPanel.tsx`'s `CalendarView`, and ported the
+  equivalent fix into `codegen.ts`'s generated `CalendarView` (which
+  already generates `pickDisplayField` earlier in the same template file
+  for `recordDisplayLabel`, so no new helper was needed there). Two new
+  tests in `entityFormatting.test.ts` using a hand-built entity (date
+  field first, then a boolean, then the real "name" field) prove the old
+  rule would have shown the boolean; a new codegen test asserts the
+  generated `CalendarView` source actually calls `pickDisplayField(entity)`
+  instead of the old blind first-field fallback. Both regressions
+  confirmed against pre-fix code via `git stash` on just the source files
+  (the live-preview test failed with a build error — the export didn't
+  exist yet; the codegen test failed on the literal old generated source
+  string). Verified live via real Playwright against real dev servers
+  (signed up, described an appointment-scheduling hair-salon app, built
+  it through the real pipeline, switched the Appointment entity to
+  Calendar view): chips correctly show "Yossi Cohen"/"Dana Levi", i.e. no
+  regression for the one reachable case. Full suite green (289 tests, up
+  from 286) + both builds clean + a from-scratch clean-room
+  clone/install/test/build/start cycle with a live `/api/health` check.
+
 ## Phase 3
 
 - Self-healing: production observability, automatic diagnosis and patch

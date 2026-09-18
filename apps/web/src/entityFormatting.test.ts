@@ -5,6 +5,7 @@ import {
   badgeTone,
   buildCalendarMonth,
   buildImportRecords,
+  calendarChipLabelField,
   findBoardField,
   findDateField,
   formatDateValue,
@@ -290,6 +291,34 @@ test("pickDisplayField falls back to the first text field, then the first field 
   assert.equal(pickDisplayField({ name: "Payment", fields: onlyNonText })?.name, "amount");
 
   assert.equal(pickDisplayField({ name: "Empty", fields: [] }), null);
+});
+
+test("calendarChipLabelField prefers the entity's real display field over whichever field merely comes first after the date field", () => {
+  // Every built-in domain entity happens to declare its "name"/"title"
+  // field before its date field, so grabbing "the first field that isn't
+  // the date field" has always coincidentally matched pickDisplayField's
+  // own result there -- but an AI-generated spec has no such ordering
+  // guarantee. Here the date field comes first, then a boolean, then the
+  // real display field ("name") -- "first non-date field" would pick the
+  // boolean.
+  const dateField: Field = { name: "scheduledAt", type: "date", required: true };
+  const fields: Field[] = [
+    dateField,
+    { name: "active", type: "boolean", required: false },
+    { name: "name", type: "text", required: true },
+  ];
+  const entity: Entity = { name: "Widget", fields };
+  assert.equal(calendarChipLabelField(entity, dateField).name, "name");
+});
+
+test("calendarChipLabelField falls back to the first other field when the entity has no name/title/text field at all", () => {
+  const dateField: Field = { name: "date", type: "date", required: true };
+  const fields: Field[] = [
+    dateField,
+    { name: "count", type: "number", required: false },
+  ];
+  const entity: Entity = { name: "Metric", fields };
+  assert.equal(calendarChipLabelField(entity, dateField).name, "count");
 });
 
 test("recordDisplayLabel shows the display field's value, falling back to #id when it's empty or missing", () => {

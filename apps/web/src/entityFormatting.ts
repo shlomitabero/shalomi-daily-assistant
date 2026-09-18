@@ -178,6 +178,24 @@ export function findDateField(fields: Field[]): Field | null {
   return named ?? dateFields[0];
 }
 
+/**
+ * Picks the field the calendar view's day-chip should show as a record's
+ * label -- reuses `pickDisplayField`'s own "name"/"title", then first text
+ * field" preference (the same rule the table/board views use for a
+ * record's label) rather than just grabbing whichever field happens to
+ * come first after the date field in the entity's declaration. The two
+ * only disagreed for a hand-built test entity, never yet for the built-in
+ * domain library (every entry there happens to declare its identifying
+ * field before its date field), but an AI-generated spec has no such
+ * guarantee, so the calendar chip could otherwise show a boolean, a
+ * status, or a foreign-key id instead of a name.
+ */
+export function calendarChipLabelField(entity: Entity, dateField: Field): Field {
+  const preferred = pickDisplayField(entity);
+  if (preferred && preferred.name !== dateField.name) return preferred;
+  return entity.fields.find((f) => f.name !== dateField.name) ?? dateField;
+}
+
 export interface CalendarDay {
   /** Midnight, local time, for this cell's date. */
   date: Date;

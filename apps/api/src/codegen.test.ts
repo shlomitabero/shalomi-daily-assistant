@@ -305,6 +305,21 @@ test("the exported EntityView renders a real month-calendar view for entities wi
   assert.match(stylesCss, /\.calendar-record-chip/);
 });
 
+test("the exported CalendarView picks its day-chip label via pickDisplayField, not just whichever field happens to come first after the date field", () => {
+  // Mirrors the live-preview fix in apps/web/src/entityFormatting.ts
+  // (calendarChipLabelField): every built-in domain entity happens to
+  // declare its "name"/"title" field before its date field, so "first
+  // field that isn't the date field" has always coincidentally agreed with
+  // the real display field there -- but an AI-generated spec has no such
+  // ordering guarantee. This asserts the generated component actually
+  // reuses pickDisplayField (already generated earlier in the same file for
+  // recordDisplayLabel) instead of the old blind first-field fallback.
+  const files = generateExportFiles(project);
+  const entityViewJsx = files.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+  const calendarViewSource = entityViewJsx.slice(entityViewJsx.indexOf("function CalendarView"));
+  assert.match(calendarViewSource, /pickDisplayField\(entity\)/);
+});
+
 test("the exported EntityView renders a real CSV export button backed by RFC-4180-correct CSV building", () => {
   const files = generateExportFiles(project);
   const entityViewJsx = files.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;

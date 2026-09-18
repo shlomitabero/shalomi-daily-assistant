@@ -940,7 +940,17 @@ function CalendarView({ entity, dateField, records, month, onPrevMonth, onNextMo
     const formatter = new Intl.DateTimeFormat(undefined, { weekday: "short" });
     return days.slice(0, 7).map((d) => formatter.format(d.date));
   }, [days]);
-  const labelField = entity.fields.find((f) => f.name !== dateField.name) || dateField;
+  // Prefer the entity's real display field ("name"/"title", or the first
+  // text field -- see pickDisplayField above) over whichever field merely
+  // comes first after the date field: every built-in domain entity happens
+  // to declare its identifying field before its date field, but an
+  // AI-generated spec has no such ordering guarantee, and "first non-date
+  // field" could otherwise land on a boolean, a status, or a foreign-key id.
+  const preferredLabelField = pickDisplayField(entity);
+  const labelField =
+    (preferredLabelField && preferredLabelField.name !== dateField.name ? preferredLabelField : null) ||
+    entity.fields.find((f) => f.name !== dateField.name) ||
+    dateField;
 
   return (
     <div className="calendar-view">
