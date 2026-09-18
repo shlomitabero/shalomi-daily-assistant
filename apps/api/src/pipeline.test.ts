@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { AgentStepEvent, Project, ProductSpec } from "@forge/shared";
-import { countRecords, ensureCheckpointsTable, ensureProjectsTable, insertProject, listRecords, openDatabase } from "@forge/db";
+import { applyMigrations, countRecords, ensureCheckpointsTable, ensureProjectsTable, insertProject, listRecords, openDatabase } from "@forge/db";
 import { runBuildPipeline } from "./pipeline.js";
 
 const brokenSpec: ProductSpec = {
@@ -152,6 +152,88 @@ test("re-running the pipeline for the same project doesn't re-seed a table that 
   const countAfterRetry = countRecords(db, project.id, customer);
   assert.equal(countAfterRetry, countAfterFirstBuild, "retrying the same build must not duplicate the sample records");
   assert.equal(listRecords(db, project.id, customer).length, countAfterFirstBuild);
+});
+
+test("the Architect step's impact summary is re-emitted with the corrected spec after a Debug Agent recovery, not left stale", async () => {
+  // requestSpecFix is free to rename/add/remove entities and fields while
+  // fixing the error -- the Architect event already streamed to the
+  // client before the Database step even ran reflects the pre-fix spec,
+  // so it can end up describing a field that was never actually built.
+  // Uses a refine (previousSpec set) so the field-name change shows up in
+  // detail.changedEntities, which a same-entity-set initial build can't
+  // exercise (a whole new entity's field names aren't itemized in detail).
+  const db = openDatabase(":memory:");
+  ensureProjectsTable(db);
+  ensureCheckpointsTable(db);
+  const previousSpec: ProductSpec = {
+    summary: "test",
+    personas: [],
+    roles: ["Admin"],
+    screens: [],
+    assumptions: [],
+    openQuestions: [],
+    entities: [{ name: "Customer", fields: [{ name: "name", type: "text", required: true }] }],
+  };
+  const brokenNextSpec: ProductSpec = {
+    ...previousSpec,
+    entities: [
+      {
+        name: "Customer",
+        fields: [
+          { name: "name", type: "text", required: true },
+          { name: "bad; DROP TABLE x;--", type: "text", required: false },
+        ],
+      },
+    ],
+  };
+  const fixedNextSpec: ProductSpec = {
+    ...previousSpec,
+    entities: [
+      {
+        name: "Customer",
+        fields: [
+          { name: "name", type: "text", required: true },
+          { name: "notes", type: "text", required: false },
+        ],
+      },
+    ],
+  };
+  applyMigrations(db, "proj1", previousSpec);
+  const project = insertProject(db, {
+    id: "proj1",
+    ownerId: "user1",
+    name: "test",
+    description: "test",
+    spec: previousSpec,
+  });
+
+  const originalKey = process.env.ANTHROPIC_API_KEY;
+  const originalFetch = globalThis.fetch;
+  process.env.ANTHROPIC_API_KEY = "test-key";
+  globalThis.fetch = (async () =>
+    new Response(JSON.stringify({ content: [{ type: "text", text: JSON.stringify(fixedNextSpec) }] }), {
+      status: 200,
+    })) as unknown as typeof fetch;
+
+  try {
+    const events = await collect(
+      runBuildPipeline(db, project, { previousSpec, nextSpec: brokenNextSpec, changeLabel: "Refine: add a field" }),
+    );
+
+    const architectSuccesses = events.filter((e) => e.agent === "Architect" && e.status === "success");
+    assert.equal(architectSuccesses.length, 2, "the Architect step must report again once the spec is corrected");
+
+    type ImpactDetail = { changedEntities: { name: string; newFieldNames: string[] }[] };
+    const finalImpact = architectSuccesses[architectSuccesses.length - 1].detail as ImpactDetail;
+    assert.deepEqual(
+      finalImpact.changedEntities,
+      [{ name: "Customer", label: "Customer", newFieldNames: ["notes"] }],
+      "the re-emitted Architect detail must reflect the corrected field, not the broken one that was never actually built",
+    );
+  } finally {
+    process.env.ANTHROPIC_API_KEY = originalKey;
+    globalThis.fetch = originalFetch;
+  }
 });
 
 test("Debug Agent reports failure clearly when its own fix attempt is also invalid", async () => {

@@ -56,6 +56,15 @@ function computeImpact(previousSpec: ProductSpec | undefined, nextSpec: ProductS
   return { newEntityNames: newEntities.map((e) => e.name), newEntities, changedEntities };
 }
 
+function architectEvent(previousSpec: ProductSpec | undefined, nextSpec: ProductSpec): AgentStepEvent {
+  const impact = computeImpact(previousSpec, nextSpec);
+  const message = previousSpec
+    ? `Impact: +${impact.newEntityNames.length} new entities (${impact.newEntityNames.join(", ") || "none"}), ` +
+      `${impact.changedEntities.length} existing entities gaining fields.`
+    : `Designed ${nextSpec.entities.length} tables for ${nextSpec.roles.length} roles.`;
+  return { agent: "Architect", status: "success", message, detail: impact };
+}
+
 function runQaChecks(
   db: ForgeDatabase,
   projectId: string,
@@ -140,12 +149,7 @@ export async function* runBuildPipeline(
   let nextSpec = options.nextSpec;
 
   yield { agent: "Architect", status: "running", message: "Designing schema from the product spec…" };
-  const impact = computeImpact(previousSpec, nextSpec);
-  const architectMessage = previousSpec
-    ? `Impact: +${impact.newEntityNames.length} new entities (${impact.newEntityNames.join(", ") || "none"}), ` +
-      `${impact.changedEntities.length} existing entities gaining fields.`
-    : `Designed ${nextSpec.entities.length} tables for ${nextSpec.roles.length} roles.`;
-  yield { agent: "Architect", status: "success", message: architectMessage, detail: impact };
+  yield architectEvent(previousSpec, nextSpec);
 
   yield { agent: "Database", status: "running", message: "Applying migration…" };
   let changes: MigrationChange[];
@@ -179,6 +183,14 @@ export async function* runBuildPipeline(
       return;
     }
     nextSpec = fixedSpec;
+    // The Architect event already streamed to the client reflected the
+    // pre-fix spec -- requestSpecFix is free to rename/add/remove
+    // entities and fields while resolving the error, so that detail can
+    // now disagree with what's actually about to be built. Re-emitting it
+    // for the corrected spec lets the UI (which keeps only the latest
+    // event per agent) replace the stale one instead of leaving it
+    // uncorrected.
+    yield architectEvent(previousSpec, nextSpec);
     yield {
       agent: "Debug",
       status: "success",

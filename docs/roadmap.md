@@ -2252,6 +2252,36 @@ not a single "make it perfect" claim.
       from-scratch clean-room clone/install/test/build/start cycle with
       a live `/api/health` check.
 
+- [x] **Fixed the last remaining `pipeline.ts` self-review finding: the
+      Architect step's impact summary could describe entities/fields
+      that were never actually built.** The Architect event streams to
+      the client (with its full `detail: impact` — new entities, and
+      per-entity new field names) before the Database step even runs.
+      When the Database step then fails and the Debug Agent recovers
+      by asking Claude for a corrected spec, `requestSpecFix` is
+      explicitly allowed to rename or restructure whatever caused the
+      error — so the already-streamed Architect detail could end up
+      describing a field name (or entity) that was never actually
+      created, with nothing correcting it afterward. Confirmed with a
+      regression test that failed against the old code first: a real
+      refine adding an unsafely-named field to an existing entity,
+      recovered by a real fake Debug Agent that renames the field,
+      asserted there should be *two* successful Architect events (the
+      original and a corrected one) with the second one's
+      `changedEntities` reflecting the actually-built field name — the
+      old code only ever emitted one, still showing the broken name.
+      Fixed by factoring the Architect event's construction into a small
+      `architectEvent()` helper and calling it again with the corrected
+      `nextSpec` right after the Debug Agent's fix succeeds; the web
+      UI's `BuildProgress` component already keeps only the latest event
+      per agent (a `Map`), so the corrected event replaces the stale one
+      automatically — no UI changes needed. This closes out every
+      finding raised by the original `pipeline.ts` self-review. Full
+      suite green (252 tests total across all 4 workspaces) + both
+      builds clean + a from-scratch clean-room
+      clone/install/test/build/start cycle with a live `/api/health`
+      check.
+
 ## Phase 3
 
 - Self-healing: production observability, automatic diagnosis and patch
