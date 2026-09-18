@@ -2561,6 +2561,36 @@ not a single "make it perfect" claim.
   both builds clean + a from-scratch clean-room clone/install/test/build/
   start cycle with a live `/api/health` check.
 
+- Checked `promptEnhancer.ts`'s `AnthropicPromptEnhancer` (the third and
+  last file in the codebase that calls the Anthropic Messages API
+  directly) for the same bug class fixed in `anthropic.ts` and `debug.ts`.
+  Two of the three applied here and two didn't, for a reason worth
+  recording rather than blindly copy-pasting all three: `extractJson`'s
+  anchored-fence-regex bug doesn't exist here at all, because this
+  enhancer returns a plain rewritten paragraph, not JSON — there's no
+  `JSON.parse`/`extractJson` step to have that bug in the first place. For
+  the same reason, `stop_reason === "max_tokens"` can't cause a JSON parse
+  failure here either (though a truncated-but-nonempty response would
+  still be silently accepted as a shorter, cut-off paragraph rather than
+  treated as a failure — a real but different, more debatable finding,
+  left open rather than guessed at, since deciding whether a truncated
+  enhancement should fail or degrade gracefully is a product call, not a
+  bug fix). The other two *did* apply, identically to the other two files:
+  `await response.json()` wasn't wrapped in try/catch (malformed body threw
+  a raw SyntaxError instead of the established descriptive-error pattern),
+  and a safety refusal (`stop_reason: "refusal"`, empty content) fell into
+  the same generic "no text content" message as any other empty response.
+  Fixed both the same way as `anthropic.ts`/`debug.ts`. Added 2 new tests
+  to `promptEnhancer.test.ts`, both proven to fail against the pre-fix code
+  first. This closes out the Anthropic-API-direct-call review across the
+  whole codebase — all three call sites (`anthropic.ts`, `debug.ts`,
+  `promptEnhancer.ts`) now handle malformed responses and refusals
+  consistently, each fixed to the extent its own shape of work (JSON spec
+  vs. plain text) actually needs. Full suite green (274 tests, up from
+  272 — spec-engine went 69→71) + both builds clean + a from-scratch
+  clean-room clone/install/test/build/start cycle with a live
+  `/api/health` check.
+
 ## Phase 3
 
 - Self-healing: production observability, automatic diagnosis and patch

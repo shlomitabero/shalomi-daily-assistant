@@ -108,9 +108,17 @@ export class AnthropicPromptEnhancer implements PromptEnhancer {
       throw new Error(`Anthropic API request failed (${response.status}): ${body}`);
     }
 
-    const payload = (await response.json()) as {
-      content?: Array<{ type: string; text?: string }>;
-    };
+    let payload: { content?: Array<{ type: string; text?: string }>; stop_reason?: string };
+    try {
+      payload = await response.json();
+    } catch (err) {
+      throw new Error(`Anthropic API response body was not valid JSON: ${(err as Error).message}`);
+    }
+
+    if (payload.stop_reason === "refusal") {
+      throw new Error("Anthropic API refused to enhance this idea (stop_reason: refusal)");
+    }
+
     const text = payload.content?.find((block) => block.type === "text")?.text;
     if (!text || text.trim().length === 0) {
       throw new Error("Anthropic API response contained no text content");

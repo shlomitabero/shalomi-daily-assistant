@@ -82,6 +82,19 @@ test("AnthropicPromptEnhancer throws when the response has no usable text", asyn
   await assert.rejects(() => enhancer.enhance("x"), /no text content/);
 });
 
+test("AnthropicPromptEnhancer throws a descriptive error when the response body isn't valid JSON, instead of an unwrapped SyntaxError -- same fix as anthropic.ts/debug.ts", async () => {
+  const fakeFetch = (async () => new Response("not json at all {", { status: 200 })) as unknown as typeof fetch;
+  const enhancer = new AnthropicPromptEnhancer({ apiKey: "test-key", fetchImpl: fakeFetch });
+  await assert.rejects(() => enhancer.enhance("x"), /Anthropic API response/);
+});
+
+test("AnthropicPromptEnhancer throws a specific error on a safety refusal (stop_reason: refusal), not the generic 'no text content' message -- same fix as anthropic.ts/debug.ts", async () => {
+  const fakeFetch = (async () =>
+    new Response(JSON.stringify({ content: [], stop_reason: "refusal" }), { status: 200 })) as unknown as typeof fetch;
+  const enhancer = new AnthropicPromptEnhancer({ apiKey: "test-key", fetchImpl: fakeFetch });
+  await assert.rejects(() => enhancer.enhance("x"), /refus/i);
+});
+
 test("enhancePrompt returns providerName alongside the enhanced text", async () => {
   const { enhanced, providerName } = await enhancePrompt("a shop with customers and orders");
   assert.equal(providerName, "heuristic");
