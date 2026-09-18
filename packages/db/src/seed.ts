@@ -85,7 +85,17 @@ function seedValueFor(field: Field, entity: Entity, index: number): unknown {
     case "boolean":
       return index % 2 === 0;
     case "date": {
-      const d = new Date(Date.now() - index * 86_400_000);
+      // A field literally named "endDate" needs to land after its record's
+      // other date field(s), not collapse to the same day -- e.g. Rental's
+      // startDate/endDate would otherwise both seed to the exact same
+      // value for a given index, making every seeded rental a visibly
+      // wrong 0-day rental. baseOffset always leaves a 3-day margin for an
+      // "end"-like field to land 3 days closer to today (chronologically
+      // after) without ever colliding, even at index 0.
+      const isEndLike = /end/i.test(field.name);
+      const baseOffset = (index + 1) * 3;
+      const dayOffset = isEndLike ? baseOffset - 3 : baseOffset;
+      const d = new Date(Date.now() - dayOffset * 86_400_000);
       return d.toISOString().slice(0, 10);
     }
     case "enum":
@@ -110,7 +120,7 @@ function seedValueFor(field: Field, entity: Entity, index: number): unknown {
 // person. MenuItem/Project/Event/Course/Pet get their own dedicated pools
 // below instead, since "a generic package" reads oddly as a dish or a
 // project name.
-const CATALOG_NAME_ENTITIES = new Set(["Service", "Product"]);
+const CATALOG_NAME_ENTITIES = new Set(["Service", "Product", "Item"]);
 
 function textSeedValueFor(fieldName: string, entityName: string, isHebrew: boolean, index: number): string {
   switch (fieldName) {

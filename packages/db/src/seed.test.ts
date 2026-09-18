@@ -289,6 +289,44 @@ test("an unrecognized field name still gets a labeled fallback value instead of 
   assert.equal(record.colorPreference, "Widget colorPreference 1");
 });
 
+test("an entity with two date fields (e.g. Rental's startDate/endDate) gets distinct values, not the same date for both", () => {
+  // seedValueFor's "date" case previously computed the value from the
+  // record index alone, ignoring the field's own name -- every seeded
+  // Rental record ended up with startDate === endDate (a 0-day rental),
+  // which is visibly wrong the moment a real UI renders it.
+  const rental: Entity = {
+    name: "Rental",
+    fields: [
+      { name: "itemName", type: "text", required: true },
+      { name: "startDate", type: "date", required: false },
+      { name: "endDate", type: "date", required: false },
+    ],
+  };
+  const [record] = generateSeedRecords(rental, 1);
+  assert.notEqual(record.startDate, record.endDate, "startDate and endDate must not collapse to the same day");
+  assert.ok((record.endDate as string) > (record.startDate as string), "endDate should be after startDate");
+});
+
+test("the generic fallback entity (Item, used when no domain keyword matches) seeds its name field as an item, not a person", () => {
+  // "Item" is DEFAULT_ENTITY's real name (packages/spec-engine/src/
+  // domainEntities.ts) -- the fallback hit whenever a description doesn't
+  // match any domain-entity keyword. It wasn't in CATALOG_NAME_ENTITIES
+  // (only Service/Product were), so its "name" field fell through to the
+  // person-name pool, seeding e.g. "Dana Levi" as a generic item's name.
+  const item: Entity = {
+    name: "Item",
+    fields: [
+      { name: "name", type: "text", required: true },
+      { name: "description", type: "longtext", required: false },
+    ],
+  };
+  const [record] = generateSeedRecords(item, 1);
+  assert.ok(
+    !["Dana Levi", "Yossi Cohen", "Michal Abraham"].includes(record.name as string),
+    `Item's name field should not be seeded as a person name, got: ${record.name}`,
+  );
+});
+
 test("seed records satisfy the real repository validation and insert cleanly", () => {
   const db = openDatabase(":memory:");
   applyMigrations(db, "proj1", {

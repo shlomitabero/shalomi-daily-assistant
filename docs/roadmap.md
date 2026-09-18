@@ -2756,6 +2756,49 @@ not a single "make it perfect" claim.
   went 50→52) + both builds clean + a from-scratch clean-room
   clone/install/test/build/start cycle with a live `/api/health` check.
 
+- Self-review (code-review skill, high effort) of `packages/db/src/seed.ts`
+  (215 lines, already had substantial tests — 308 lines — but never
+  reviewed). Fixed 2 of the 4 findings, both confirmed with a regression
+  test proven to fail against the pre-fix code first, then verified live
+  through the real UI (not just unit tests, since this file's whole output
+  is directly what a freshly built app's tables show): (1) `seedValueFor`'s
+  `"date"` case computed the seeded value purely from the record index,
+  ignoring the field's own name, so an entity with two date fields —
+  Rental's `startDate`/`endDate`, part of the built-in domain library, not
+  a hypothetical — got the exact same date for both on every seeded
+  record, i.e. every demo rental looked like a 0-day rental. Fixed by
+  detecting an "end"-like field name and offsetting it to land 3 days
+  closer to today than its record's other date field(s), with a base
+  spacing that guarantees no collision even at record index 0. (2) The
+  generic fallback entity used whenever a description matches no domain
+  keyword is literally named `"Item"` (`DEFAULT_ENTITY` in
+  `domainEntities.ts`), but `CATALOG_NAME_ENTITIES` only listed
+  `"Service"`/`"Product"`, so `Item`'s `"name"` field fell through to the
+  person-name pool — every unrecognized-description app's demo data
+  showed a generic item literally named "Dana Levi". Fixed by adding
+  `"Item"` to `CATALOG_NAME_ENTITIES`. Added 2 new tests to
+  `seed.test.ts`. Verified live end-to-end through the real UI against
+  real dev servers, using the real build pipeline (not just
+  `generateSeedRecords` in isolation): built a real project from the
+  description "עסק להשכרת ציוד לאירועים" (an equipment-rental business)
+  and confirmed the seeded Rental rows show real, distinct, chronologically
+  ordered dates (e.g. 9/12/2026 → 9/15/2026); separately built a project
+  from a deliberately unclassifiable description and confirmed the
+  fallback Item entity's seeded rows show real item-like names ("Premium
+  Upgrade", "Basic Package") instead of person names. The other 2 findings
+  from the review — required relation fields seeded with an unverified
+  `id=1` guess that can violate a real FK constraint, and dates always
+  being in the past regardless of field semantics (`dueDate`, `scheduled`)
+  — are left open: neither is reachable through the built-in domain
+  library today (every built-in relation field is `required: false`;
+  confirmed by grepping `domainEntities.ts`), and properly fixing either
+  needs a real design decision (topological seed ordering, or field-name-
+  aware forward/backward date semantics) rather than a one-line safe fix,
+  so they're noted honestly for a future round instead of rushed. Full
+  suite green (286 tests, up from 284 — db package went 52→54) + both
+  builds clean + a from-scratch clean-room clone/install/test/build/start
+  cycle with a live `/api/health` check.
+
 ## Phase 3
 
 - Self-healing: production observability, automatic diagnosis and patch
