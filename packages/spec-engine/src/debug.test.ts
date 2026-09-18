@@ -50,3 +50,40 @@ test("requestSpecFix throws a descriptive error on a non-2xx response", async ()
     /529/,
   );
 });
+
+test("requestSpecFix still extracts the JSON when the model adds prose around a fenced block, matching anthropic.ts's own fix for the same bug", async () => {
+  const withProse = "Here's the corrected spec:\n```json\n" + JSON.stringify(brokenSpec) + "\n```\nHope that helps!";
+  const fakeFetch = (async () =>
+    new Response(JSON.stringify({ content: [{ type: "text", text: withProse }] }), { status: 200 })) as unknown as typeof fetch;
+  const result = await requestSpecFix(brokenSpec, "some error", { apiKey: "test-key", fetchImpl: fakeFetch });
+  assert.equal(result.entities[0].name, "Customer");
+});
+
+test("requestSpecFix throws a descriptive error when the response body isn't valid JSON, instead of an unwrapped SyntaxError", async () => {
+  const fakeFetch = (async () => new Response("not json at all {", { status: 200 })) as unknown as typeof fetch;
+  await assert.rejects(
+    () => requestSpecFix(brokenSpec, "some error", { apiKey: "test-key", fetchImpl: fakeFetch }),
+    /Anthropic API response/,
+  );
+});
+
+test("requestSpecFix names truncation specifically when JSON parsing fails and stop_reason is max_tokens", async () => {
+  const truncated = JSON.stringify(brokenSpec).slice(0, 40);
+  const fakeFetch = (async () =>
+    new Response(JSON.stringify({ content: [{ type: "text", text: truncated }], stop_reason: "max_tokens" }), {
+      status: 200,
+    })) as unknown as typeof fetch;
+  await assert.rejects(
+    () => requestSpecFix(brokenSpec, "some error", { apiKey: "test-key", fetchImpl: fakeFetch }),
+    /truncated.*max_tokens/i,
+  );
+});
+
+test("requestSpecFix throws a specific error on a safety refusal (stop_reason: refusal)", async () => {
+  const fakeFetch = (async () =>
+    new Response(JSON.stringify({ content: [], stop_reason: "refusal" }), { status: 200 })) as unknown as typeof fetch;
+  await assert.rejects(
+    () => requestSpecFix(brokenSpec, "some error", { apiKey: "test-key", fetchImpl: fakeFetch }),
+    /refus/i,
+  );
+});

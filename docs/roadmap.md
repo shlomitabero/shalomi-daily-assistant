@@ -2536,6 +2536,31 @@ not a single "make it perfect" claim.
   spec-engine went 62→65) + both builds clean + a from-scratch clean-room
   clone/install/test/build/start cycle with a live `/api/health` check.
 
+- Ported the exact same three fixes from `anthropic.ts`'s self-review to
+  `packages/spec-engine/src/debug.ts` (`requestSpecFix`, the Debug Agent's
+  repair path), which the earlier round had already flagged as a
+  near-verbatim duplicate of `anthropic.ts`'s fetch/parse logic and
+  confirmed carried the same bugs unpatched. Read the file directly rather
+  than re-running the code-review skill, since the bugs to check for were
+  already known exactly: `extractJson`'s fence regex was anchored to the
+  whole string (same "prose around a fenced block" failure), `await
+  response.json()` wasn't wrapped in try/catch (same raw-SyntaxError-
+  instead-of-descriptive-error failure), and `stop_reason` was never
+  inspected (same generic message for both truncation and a genuinely
+  malformed response, and no refusal-specific handling). Applied the
+  identical fixes as `anthropic.ts`. Added 4 new tests to `debug.test.ts`
+  (fence-with-prose, malformed response body, `max_tokens`-truncation
+  naming, refusal naming), each proven to fail against the pre-fix code
+  first — all 4 failed exactly as expected before the fix. `debug.ts`'s
+  `roles.min(1)` equivalent (the `anthropic.ts` prompt-wording fix) was
+  deliberately not ported: `requestSpecFix`'s prompt already asks for "the
+  exact same shape as spec" starting from a spec that already has valid
+  roles, a materially different situation from generating a fresh spec
+  from a bare description, so that particular finding doesn't transfer.
+  Full suite green (272 tests, up from 268 — spec-engine went 65→69) +
+  both builds clean + a from-scratch clean-room clone/install/test/build/
+  start cycle with a live `/api/health` check.
+
 ## Phase 3
 
 - Self-healing: production observability, automatic diagnosis and patch
