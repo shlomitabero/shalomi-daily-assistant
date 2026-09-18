@@ -58,6 +58,16 @@ export function matchEntities(text: string, isHebrew: boolean): Entity[] {
   ];
 }
 
+/**
+ * Admin is added unconditionally, whatever the description says: every
+ * project has exactly one owner account (see the "single demo workspace"
+ * assumption in buildAssumptions), and that owner is always an admin of
+ * their own app, so there's no real description this should ever be
+ * absent for. Member is added only as a generic second role when nothing
+ * else was detected, so a description with no role language at all still
+ * gets a role-based-access story worth mentioning rather than a
+ * single-role spec that reads as an oversight.
+ */
 export function matchRoles(text: string, isHebrew: boolean): string[] {
   const lower = text.toLowerCase();
   const roles = new Set<string>();
@@ -75,11 +85,14 @@ export function matchRoles(text: string, isHebrew: boolean): string[] {
   return Array.from(roles);
 }
 
-function buildScreens(entities: Entity[], hasElevatedRole: boolean): Screen[] {
-  const screens: Screen[] = [];
-  if (hasElevatedRole) {
-    screens.push({ name: "Dashboard", type: "dashboard" });
-  }
+function buildScreens(entities: Entity[]): Screen[] {
+  // Every generated app gets a Dashboard: matchRoles always adds an
+  // Admin/owner role (see its own comment), since every project has a
+  // single owner even when the description never mentions roles at all --
+  // there's no description for which a real "elevated role" gate would
+  // ever come out false, so this used to carry a hasElevatedRole
+  // parameter that always evaluated true and was removed as dead weight.
+  const screens: Screen[] = [{ name: "Dashboard", type: "dashboard" }];
   for (const entity of entities) {
     screens.push({ name: `${entity.name} List`, type: "list", entity: entity.name });
     screens.push({ name: `${entity.name} Form`, type: "form", entity: entity.name });
@@ -154,8 +167,7 @@ export class HeuristicSpecProvider implements SpecProvider {
     const isHebrew = isHebrewText(description);
     const entities = matchEntities(description, isHebrew);
     const roles = matchRoles(description, isHebrew);
-    const hasElevatedRole = roles.some((r) => r === "Admin" || r === "Manager" || r === ROLE_RULES.Admin.labelHe || r === ROLE_RULES.Manager.labelHe);
-    const screens = buildScreens(entities, hasElevatedRole);
+    const screens = buildScreens(entities);
     const openQuestions = buildOpenQuestions(description, entities, isHebrew);
 
     const spec: ProductSpec = {

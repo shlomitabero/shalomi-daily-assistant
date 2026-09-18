@@ -29,6 +29,19 @@ test("falls back to a generic Item entity when nothing recognizable is mentioned
   );
 });
 
+test("even a purely personal description with no role language gets an Admin role and a Dashboard screen, by design", async () => {
+  // matchRoles always adds Admin -- every project has exactly one owner
+  // account, and that owner is always an admin of their own app -- and
+  // buildScreens always adds a Dashboard as a direct consequence. This is
+  // intentional (not dead conditional logic that happens to always be
+  // true), documented explicitly here so it isn't mistaken for an
+  // oversight later.
+  const provider = new HeuristicSpecProvider();
+  const spec = await provider.generate("I want to organize my hobby collection.");
+  assert.deepEqual(spec.roles, ["Admin", "Member"]);
+  assert.ok(spec.screens.some((s) => s.type === "dashboard"));
+});
+
 test("rejects an empty description", async () => {
   const provider = new HeuristicSpecProvider();
   await assert.rejects(() => provider.generate(""));

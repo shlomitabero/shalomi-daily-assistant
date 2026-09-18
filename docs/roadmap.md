@@ -2282,6 +2282,46 @@ not a single "make it perfect" claim.
       clone/install/test/build/start cycle with a live `/api/health`
       check.
 
+- [x] **Self-review of `heuristic.ts` (the offline spec generator, never
+      reviewed before): found and honestly resolved a case of misleading
+      dead code, not a functional bug.** The code-review found that
+      `buildScreens`'s `hasElevatedRole` parameter — meant to gate the
+      Dashboard screen on whether the description implied an Admin/Manager
+      role — always evaluates `true`: `matchRoles` unconditionally adds an
+      Admin role to every generated spec regardless of what the
+      description says, so the "elevated role" check can never come out
+      false. Confirmed empirically (both via a direct script and a real
+      HTTP request against a running server) that even a trivial,
+      purely-personal description ("I want to organize my hobby
+      collection") comes back with `roles: ["Admin", "Member"]` and a
+      Dashboard screen. Investigated whether this is actually wrong
+      before touching anything: every Forge AI project has exactly one
+      owner account (see the "single demo workspace" assumption every
+      generated spec already states), and that owner is always an admin
+      of their own app — so always including Admin, and therefore always
+      showing a Dashboard, is genuinely correct behavior, not an
+      oversight. The existing test suite already asserted
+      `roles.includes("Admin")` unconditionally, confirming this has been
+      the accepted, shipped behavior all along. So this wasn't a bug to
+      fix — it was dead conditional logic pretending to make a decision
+      it can never actually make, which could mislead a future reader
+      into thinking Dashboard is genuinely optional. Simplified: removed
+      the `hasElevatedRole` parameter and computation entirely, made
+      `buildScreens` add the Dashboard screen directly (matching the
+      real, always-true behavior), and documented the actual reasoning
+      (single-owner model) directly on `matchRoles` and `buildScreens` so
+      it isn't mistaken for an oversight again. Added the first direct
+      test asserting this behavior explicitly for a no-role-language
+      description, since nothing previously pinned it down beyond an
+      incidental assertion in an unrelated test. A pure refactor — no
+      behavior change, confirmed by the full existing test suite staying
+      green and by a real HTTP request against a from-scratch
+      clean-room-built server returning the identical roles/screens
+      before and after. Full suite green (253 tests total across all 4
+      workspaces) + both builds clean + a from-scratch clean-room
+      clone/install/test/build/start cycle with a live `/api/health`
+      check.
+
 ## Phase 3
 
 - Self-healing: production observability, automatic diagnosis and patch
