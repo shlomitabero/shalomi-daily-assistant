@@ -27,6 +27,9 @@ Rules:
   doubt, include it rather than omit it.
 - Every entity needs at least one field, and every entity should have enough fields to actually be usable
   (not just a single "name" field) unless the description is genuinely that sparse.
+- "roles" must never be an empty array. Every app has at least one role: the person who owns/runs it. For a
+  single-user app with no distinct user types, still include one role for that owner (e.g. "Admin" or
+  "Owner") rather than returning no roles at all.
 - "enum" fields must include enumValues. "relation" fields must include relationTo naming another entity.
 - State genuine assumptions you made instead of asking unnecessary questions.
 - Only ask openQuestions for decisions with no reasonable default (e.g. which payment provider) — and when

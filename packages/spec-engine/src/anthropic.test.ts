@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { AnthropicSpecProvider } from "./anthropic.js";
+import { AnthropicSpecProvider, SYSTEM_PROMPT } from "./anthropic.js";
 
 const VALID_SPEC = {
   summary: "A CRM.",
@@ -11,6 +11,16 @@ const VALID_SPEC = {
   assumptions: [],
   openQuestions: [],
 };
+
+test("SYSTEM_PROMPT explicitly tells the model roles must never be empty, matching ProductSpecSchema's roles.min(1)", () => {
+  // The schema requires at least one role, but nothing in the prompt said
+  // so -- a reasonable model response for a single-user app (roles: [])
+  // would otherwise pass every stated rule yet still fail schema
+  // validation, silently downgrading a correct LLM spec to the heuristic
+  // fallback. This just checks the prompt text carries the instruction;
+  // it can't observe real model behavior from this sandbox.
+  assert.match(SYSTEM_PROMPT, /roles.*must never be an empty array/i);
+});
 
 test("generate() returns the parsed spec on a clean JSON response", async () => {
   const fakeFetch = (async () =>

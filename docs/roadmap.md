@@ -2477,6 +2477,32 @@ not a single "make it perfect" claim.
   the open items above should also be applied there to avoid the two
   copies drifting out of sync.
 
+- Closed the safest of the three `anthropic.ts` findings left open above:
+  `SYSTEM_PROMPT` never told the model that `roles` must be non-empty, even
+  though `ProductSpecSchema.roles` requires `min(1)` — a schema/prompt
+  mismatch that could make a perfectly reasonable single-user-app response
+  (`roles: []`) fail validation and get silently downgraded to the
+  heuristic fallback. Added an explicit rule to the system prompt: every
+  app has at least one role (whoever owns/runs it), so even a single-user
+  app must still return one role (e.g. "Admin"/"Owner") rather than an
+  empty array — this also aligns the LLM provider's behavior with
+  `heuristic.ts`'s own established design (`matchRoles` always adds an
+  Admin role, confirmed by an earlier round's regression test). Honest
+  caveat, unchanged from the finding as originally reported: this sandbox
+  has no network access to `api.anthropic.com`, so there's no way to
+  observe whether a real model call would actually have hit this — the fix
+  is a documentation/prompt-alignment change verified via a text
+  assertion on `SYSTEM_PROMPT`, not a runtime behavior test (unlike the
+  two fetch/parse bugs closed in the prior round, which were fully
+  reproducible with a fake `fetchImpl`). The regression test was still
+  written and proven to fail against the pre-fix prompt text first, same
+  discipline as every other fix this session. The other two open findings
+  (`max_tokens`/`stop_reason` truncation handling, refusal detection) and
+  the `debug.ts` duplication remain open — noted as candidates for a
+  future round. Full suite green (265 tests, up from 264 — spec-engine
+  went 61→62) + both builds clean + a from-scratch clean-room
+  clone/install/test/build/start cycle with a live `/api/health` check.
+
 ## Phase 3
 
 - Self-healing: production observability, automatic diagnosis and patch
