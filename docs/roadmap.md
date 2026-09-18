@@ -2711,6 +2711,51 @@ not a single "make it perfect" claim.
   90→91) + both builds clean + a from-scratch clean-room
   clone/install/test/build/start cycle with a live `/api/health` check.
 
+- Self-review of `packages/db/src/identifiers.ts` (20 lines, zero direct
+  tests before this round — the allowlist gate every table/column name
+  must pass before ending up in a raw SQL string). Found and fixed a real,
+  quite plausibly reachable bug: `assertSafeIdentifier` only checks
+  character composition (`^[A-Za-z][A-Za-z0-9_]*$`), never against
+  SQLite's reserved-word list, and every raw SQL string in
+  `migrate.ts`/`repository.ts` interpolated table/column names unquoted.
+  Table names are always safe in practice (`tableNameFor` prefixes every
+  one with `entity_<projectId>_`, so the actual identifier can never
+  literally *be* a bare keyword), but column names — which come straight
+  from `field.name` with no such prefix — are not, and a field plausibly
+  named `order` (sort order), `group`, `key`, `index`, `default`,
+  `references`, or any of SQLite's ~130 other reserved words is an
+  entirely ordinary business field name an LLM-generated or heuristic
+  spec could produce. Confirmed with `node:sqlite` directly: `CREATE
+  TABLE t (id INTEGER PRIMARY KEY, order TEXT)` fails with `near "order":
+  syntax error`. Notably, this exact bug was already independently
+  discovered and fixed once before — but only in the exported standalone
+  app's own codegen output (`apps/api/src/codegen.ts`'s `q()` helper,
+  whose own comment literally cites "an entity or field name that happens
+  to be a SQL keyword (e.g. an 'Order' entity)" as the reason it exists)
+  — never in the live app's own database layer, which this round closes.
+  Added `quoteIdentifier` to `identifiers.ts` (double-quotes an already-
+  validated identifier — safe since `assertSafeIdentifier` guarantees no
+  quote characters to escape, same reasoning as `codegen.ts`'s `q()`) and
+  applied it to every raw-SQL identifier interpolation in `migrate.ts`
+  (`CREATE TABLE`, column definitions, `REFERENCES`, the `PRAGMA
+  table_info` used by the additive-migration diff, `ALTER TABLE ADD
+  COLUMN`) and `repository.ts` (`SELECT`/`INSERT`/`UPDATE`/`DELETE`,
+  including the dynamically-built `SET` clause). Swept the rest of the
+  codebase for the same unquoted-interpolation pattern first
+  (`twin.ts`/`backup.ts` build no raw SQL of their own — they go through
+  `repository.ts` — so they're covered by this same fix). Added a
+  regression test in `repository.test.ts` exercising a `Task` entity with
+  an `order` field through the complete real create/read/update/delete
+  cycle via the actual `node:sqlite` engine (not a mock), plus a focused
+  test in `migrate.test.ts` on `generateCreateTableStatements` itself;
+  both proven to fail against the pre-fix code first with the exact same
+  `near "order": syntax error`. This also required updating one existing
+  `migrate.test.ts` assertion that had been checking the literal unquoted
+  SQL string — a legitimate, expected consequence of the fix rather than
+  a regression. Full suite green (284 tests, up from 282 — db package
+  went 50→52) + both builds clean + a from-scratch clean-room
+  clone/install/test/build/start cycle with a live `/api/health` check.
+
 ## Phase 3
 
 - Self-healing: production observability, automatic diagnosis and patch

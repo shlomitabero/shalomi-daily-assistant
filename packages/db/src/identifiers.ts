@@ -18,3 +18,17 @@ export function tableNameFor(projectId: string, entityName: string): string {
   const safeEntity = entityName.replace(/[^A-Za-z0-9]/g, "_");
   return assertSafeIdentifier(`entity_${safeProjectId}_${safeEntity}`, "table");
 }
+
+/**
+ * Double-quotes a table/column identifier for use in a raw SQL string.
+ * assertSafeIdentifier already guarantees the value matches
+ * [A-Za-z][A-Za-z0-9_]* (no quote characters to escape), so this only needs
+ * to wrap it -- but wrapping matters: without it, a field name that happens
+ * to be a SQL reserved keyword (e.g. a field literally named "order",
+ * "group", or "key" -- all ordinary business field names) breaks every
+ * query with a syntax error, since table names are always safely prefixed
+ * by tableNameFor but column names are used bare.
+ */
+export function quoteIdentifier(value: string): string {
+  return `"${value}"`;
+}

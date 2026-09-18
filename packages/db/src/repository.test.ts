@@ -100,3 +100,46 @@ test("countRecords reflects inserts and deletes", () => {
   deleteRecord(db, "proj1", customer, a.id as number);
   assert.equal(countRecords(db, "proj1", customer), 1);
 });
+
+test("a field named after a SQL reserved keyword (e.g. 'order') works end-to-end through create/read/update/delete", () => {
+  // assertSafeIdentifier only checks character composition
+  // ([A-Za-z][A-Za-z0-9_]*), not against SQLite's reserved-word list, and
+  // field/column names (unlike table names, which tableNameFor always
+  // prefixes with "entity_<projectId>_") are used as bare, unprefixed SQL
+  // identifiers. A field plausibly named "order" (sort order), "group",
+  // "key", "index", "default", "check", "references", "value", etc. is a
+  // completely ordinary business field name that an LLM-generated or
+  // heuristic spec could produce, and this codebase already independently
+  // discovered and fixed the identical problem once, in the exported
+  // standalone app's own codegen (see codegen.ts's q() helper and its
+  // comment about "an entity or field name that happens to be a SQL
+  // keyword") -- but never applied the same fix to this, the live app's
+  // own database layer.
+  const withReservedFields: Entity = {
+    name: "Task",
+    fields: [
+      { name: "title", type: "text", required: true },
+      { name: "order", type: "number", required: false },
+      { name: "group", type: "text", required: false },
+    ],
+  };
+  const specWithReserved: ProductSpec = { ...spec, entities: [withReservedFields] };
+  const db = openDatabase(":memory:");
+  applyMigrations(db, "proj1", specWithReserved);
+
+  const created = insertRecord(db, "proj1", withReservedFields, { title: "Ship it", order: 1, group: "eng" });
+  assert.equal(created.order, 1);
+  assert.equal(created.group, "eng");
+
+  const fetched = getRecord(db, "proj1", withReservedFields, created.id as number);
+  assert.deepEqual(fetched, created);
+
+  const rows = listRecords(db, "proj1", withReservedFields);
+  assert.equal(rows.length, 1);
+
+  const updated = updateRecord(db, "proj1", withReservedFields, created.id as number, { order: 2 });
+  assert.equal(updated.order, 2);
+
+  deleteRecord(db, "proj1", withReservedFields, created.id as number);
+  assert.equal(getRecord(db, "proj1", withReservedFields, created.id as number), undefined);
+});

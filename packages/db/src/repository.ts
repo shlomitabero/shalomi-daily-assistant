@@ -1,6 +1,6 @@
 import type { Entity, EntityRecord, Field } from "@forge/shared";
 import type { ForgeDatabase } from "./connection.js";
-import { assertSafeIdentifier, tableNameFor } from "./identifiers.js";
+import { assertSafeIdentifier, quoteIdentifier, tableNameFor } from "./identifiers.js";
 
 export class ValidationError extends Error {}
 export class NotFoundError extends Error {}
@@ -61,7 +61,7 @@ export function insertRecord(
 
   const placeholders = ["?", ...columns.map(() => "?")].join(", ");
   const stmt = db.prepare(
-    `INSERT INTO ${table} (createdAt, ${columns.join(", ")}) VALUES (${placeholders})`,
+    `INSERT INTO ${quoteIdentifier(table)} (createdAt, ${columns.map(quoteIdentifier).join(", ")}) VALUES (${placeholders})`,
   );
   const result = stmt.run(createdAt, ...values);
   return getRecord(db, projectId, entity, Number(result.lastInsertRowid))!;
@@ -69,13 +69,13 @@ export function insertRecord(
 
 export function listRecords(db: ForgeDatabase, projectId: string, entity: Entity): EntityRecord[] {
   const table = tableNameFor(projectId, entity.name);
-  const rows = db.prepare(`SELECT * FROM ${table} ORDER BY id DESC`).all() as Record<string, unknown>[];
+  const rows = db.prepare(`SELECT * FROM ${quoteIdentifier(table)} ORDER BY id DESC`).all() as Record<string, unknown>[];
   return rows.map((row) => rowToRecord(entity, row));
 }
 
 export function countRecords(db: ForgeDatabase, projectId: string, entity: Entity): number {
   const table = tableNameFor(projectId, entity.name);
-  const row = db.prepare(`SELECT COUNT(*) as count FROM ${table}`).get() as { count: number };
+  const row = db.prepare(`SELECT COUNT(*) as count FROM ${quoteIdentifier(table)}`).get() as { count: number };
   return row.count;
 }
 
@@ -86,7 +86,7 @@ export function getRecord(
   id: number,
 ): EntityRecord | undefined {
   const table = tableNameFor(projectId, entity.name);
-  const row = db.prepare(`SELECT * FROM ${table} WHERE id = ?`).get(id) as
+  const row = db.prepare(`SELECT * FROM ${quoteIdentifier(table)} WHERE id = ?`).get(id) as
     | Record<string, unknown>
     | undefined;
   return row ? rowToRecord(entity, row) : undefined;
@@ -108,14 +108,14 @@ export function updateRecord(
   const merged = { ...existing, ...data };
   const values = entity.fields.map((field) => coerceValue(field, merged[field.name]));
 
-  const setClause = columns.map((c) => `${c} = ?`).join(", ");
-  db.prepare(`UPDATE ${table} SET ${setClause} WHERE id = ?`).run(...values, id);
+  const setClause = columns.map((c) => `${quoteIdentifier(c)} = ?`).join(", ");
+  db.prepare(`UPDATE ${quoteIdentifier(table)} SET ${setClause} WHERE id = ?`).run(...values, id);
   return getRecord(db, projectId, entity, id)!;
 }
 
 export function deleteRecord(db: ForgeDatabase, projectId: string, entity: Entity, id: number): void {
   const table = tableNameFor(projectId, entity.name);
-  const result = db.prepare(`DELETE FROM ${table} WHERE id = ?`).run(id);
+  const result = db.prepare(`DELETE FROM ${quoteIdentifier(table)} WHERE id = ?`).run(id);
   if (result.changes === 0) {
     throw new NotFoundError(`Record ${id} not found in ${entity.name}`);
   }

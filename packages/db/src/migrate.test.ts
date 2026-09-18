@@ -33,9 +33,9 @@ const spec: ProductSpec = {
 test("generates one CREATE TABLE per entity with correct SQL types", () => {
   const statements = generateCreateTableStatements("proj1", spec);
   assert.equal(statements.length, 2);
-  assert.match(statements[0], /CREATE TABLE IF NOT EXISTS entity_proj1_Customer/);
-  assert.match(statements[0], /name TEXT NOT NULL/);
-  assert.match(statements[1], /customerId INTEGER REFERENCES entity_proj1_Customer\(id\)/);
+  assert.match(statements[0], /CREATE TABLE IF NOT EXISTS "entity_proj1_Customer"/);
+  assert.match(statements[0], /"name" TEXT NOT NULL/);
+  assert.match(statements[1], /"customerId" INTEGER REFERENCES "entity_proj1_Customer"\(id\)/);
 });
 
 test("applyMigrations actually creates queryable tables", () => {
@@ -204,4 +204,21 @@ test("diffAndMigrate still reports a column as a real change on a retry, even th
     firstRun,
     "a column added by an earlier partial attempt must still be reported as a change relative to previousSpec",
   );
+});
+
+test("generateCreateTableStatements quotes identifiers so a field named after a SQL reserved keyword doesn't break the statement", () => {
+  // Table names are always safe (tableNameFor prefixes with
+  // "entity_<projectId>_", so the bare identifier can never literally be a
+  // reserved word), but field/column names are used unprefixed and were
+  // previously unquoted -- a field named "order", "group", "key", etc. (an
+  // entirely ordinary business field name) produced invalid SQL.
+  const specWithReservedField: ProductSpec = {
+    ...spec,
+    entities: [{ name: "Task", fields: [{ name: "order", type: "number", required: false }] }],
+  };
+  const [statement] = generateCreateTableStatements("proj1", specWithReservedField);
+  assert.match(statement, /"order" REAL/);
+
+  const db = openDatabase(":memory:");
+  assert.doesNotThrow(() => db.exec(statement));
 });

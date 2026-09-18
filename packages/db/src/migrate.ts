@@ -1,6 +1,6 @@
 import type { Entity, Field, ProductSpec } from "@forge/shared";
 import type { ForgeDatabase } from "./connection.js";
-import { assertSafeIdentifier, tableNameFor } from "./identifiers.js";
+import { assertSafeIdentifier, quoteIdentifier, tableNameFor } from "./identifiers.js";
 
 function sqlTypeFor(field: Field): string {
   switch (field.type) {
@@ -40,11 +40,11 @@ export function generateCreateTableStatements(projectId: string, spec: ProductSp
       let fk = "";
       if (field.type === "relation" && field.relationTo && entityNames.has(field.relationTo)) {
         const relatedTable = tableNameFor(projectId, field.relationTo);
-        fk = ` REFERENCES ${relatedTable}(id)`;
+        fk = ` REFERENCES ${quoteIdentifier(relatedTable)}(id)`;
       }
-      columns.push(`${columnName} ${sqlType}${notNull}${fk}`);
+      columns.push(`${quoteIdentifier(columnName)} ${sqlType}${notNull}${fk}`);
     }
-    return `CREATE TABLE IF NOT EXISTS ${table} (${columns.join(", ")})`;
+    return `CREATE TABLE IF NOT EXISTS ${quoteIdentifier(table)} (${columns.join(", ")})`;
   });
 }
 
@@ -57,7 +57,7 @@ export function applyMigrations(db: ForgeDatabase, projectId: string, spec: Prod
 
 /** The set of column names SQLite already has for a table (empty if the table doesn't exist yet). */
 function existingColumns(db: ForgeDatabase, table: string): Set<string> {
-  const rows = db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[];
+  const rows = db.prepare(`PRAGMA table_info(${quoteIdentifier(table)})`).all() as { name: string }[];
   return new Set(rows.map((r) => r.name));
 }
 
@@ -121,7 +121,7 @@ export function diffAndMigrate(
         // satisfy either constraint against a table's existing rows. The
         // column is added nullable; required-ness is still enforced by the
         // API for every write going forward.
-        db.exec(`ALTER TABLE ${table} ADD COLUMN ${columnName} ${sqlType}`);
+        db.exec(`ALTER TABLE ${quoteIdentifier(table)} ADD COLUMN ${quoteIdentifier(columnName)} ${sqlType}`);
       }
       changes.push({ type: "new_column", table, column: columnName });
     }
