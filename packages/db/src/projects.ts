@@ -76,8 +76,15 @@ export function getProject(db: ForgeDatabase, id: string): Project | undefined {
 }
 
 export function listProjectsForOwner(db: ForgeDatabase, ownerId: string): Project[] {
+  // createdAt has only millisecond resolution, so two projects created in
+  // quick succession can share the same value; ORDER BY createdAt DESC
+  // alone leaves that tie's order undefined (see the identical fix and its
+  // rationale in checkpoints.ts's listCheckpoints). rowid strictly
+  // increases with insertion order in this SQLite table (not declared
+  // WITHOUT ROWID), so it breaks the tie deterministically in favor of
+  // "most recently inserted first".
   const rows = db
-    .prepare("SELECT * FROM projects WHERE ownerId = ? ORDER BY createdAt DESC")
+    .prepare("SELECT * FROM projects WHERE ownerId = ? ORDER BY createdAt DESC, rowid DESC")
     .all(ownerId) as Record<string, unknown>[];
   return rows.map(tryRowToProject).filter((p): p is Project => p !== undefined);
 }

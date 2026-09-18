@@ -60,3 +60,22 @@ test("getProject still throws clearly for a single project whose stored spec no 
 
   assert.throws(() => getProject(db, "stale"));
 });
+
+test("listProjectsForOwner returns projects newest first even when two share the exact same createdAt millisecond", () => {
+  // createdAt is a new Date().toISOString() string with only millisecond
+  // resolution, and the query ordered purely by ORDER BY createdAt DESC
+  // with no tiebreaker -- the identical bug already found and fixed in
+  // checkpoints.ts's listCheckpoints. Two synchronous inserts (no await in
+  // between) reliably land in the same millisecond, exposing it.
+  const db = openDatabase(":memory:");
+  ensureProjectsTable(db);
+  insertProject(db, { id: "p1", ownerId: "owner1", name: "first", description: "test", spec: validSpec });
+  insertProject(db, { id: "p2", ownerId: "owner1", name: "second", description: "test", spec: validSpec });
+
+  const projects = listProjectsForOwner(db, "owner1");
+  assert.deepEqual(
+    projects.map((p) => p.id),
+    ["p2", "p1"],
+    "the most recently created project should sort first even on a createdAt tie",
+  );
+});

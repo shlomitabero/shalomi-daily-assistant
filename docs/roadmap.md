@@ -2624,6 +2624,25 @@ not a single "make it perfect" claim.
   44→49) + both builds clean + a from-scratch clean-room
   clone/install/test/build/start cycle with a live `/api/health` check.
 
+- Followed up on the checkpoint-ordering fix by grepping the rest of
+  `packages/db/src` for the same two bug shapes (`spec_json` parsed
+  without a per-row try/catch in a list function; `ORDER BY ...createdAt`
+  with no tiebreaker). `spec_json` only appears in `projects.ts` and
+  `checkpoints.ts` — both already resilient — but `projects.ts`'s own
+  `listProjectsForOwner` turned out to have the identical missing-
+  tiebreaker ordering bug just fixed in `checkpoints.ts`, in the very file
+  that pattern originated from. (`whatsapp.ts`'s message list already has
+  a `rowid DESC` tiebreaker from an earlier round, so it was already
+  clean.) Added a regression test inserting two projects synchronously
+  (no `await` between them, so they land in the same `createdAt`
+  millisecond) — reproduced in 2 of 3 runs before the fix (less
+  deterministic than the checkpoints case, but still clearly the same
+  real bug, not a coincidence) and 0 of 5 runs after. Fixed identically:
+  `ORDER BY createdAt DESC, rowid DESC`. Full suite green (280 tests, up
+  from 279 — db package went 49→50) + both builds clean + a from-scratch
+  clean-room clone/install/test/build/start cycle with a live
+  `/api/health` check.
+
 ## Phase 3
 
 - Self-healing: production observability, automatic diagnosis and patch
