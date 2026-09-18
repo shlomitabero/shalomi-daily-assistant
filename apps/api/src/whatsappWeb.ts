@@ -152,6 +152,16 @@ export class WhatsAppWebManager {
 
     try {
       const { sock, saveCreds } = await this.createSocket(this.authDirFor(projectId));
+      if (this.sessions.get(projectId) !== session) {
+        // A concurrent disconnect() (or a fresh connect()) replaced this
+        // session while createSocket() was still in flight, before this
+        // socket's event handlers were ever wired up. Nothing else in this
+        // manager holds a reference to it, so it would otherwise stay
+        // linked to the real WhatsApp account indefinitely with no code
+        // path left able to close it -- log it out immediately instead.
+        await sock.logout().catch(() => {});
+        return this.getStatus(projectId);
+      }
       session.sock = sock;
       // Every handler below is wired with a real `.catch`, not a bare
       // `void` -- a `void asyncFn()` discards the returned promise
@@ -274,8 +284,17 @@ export class WhatsAppWebManager {
     if (!session || session.status !== "connected" || !session.sock) {
       return { ok: false, error: "not_connected" };
     }
+    // The route's own schema only checks `to` is a non-empty string, not
+    // that it contains an actual phone number -- normalizePhone strips
+    // every non-digit character, so a value with no digits at all (e.g.
+    // "abc") would otherwise silently become an empty JID ("@s.whatsapp.net")
+    // handed straight to Baileys instead of failing with a clear reason.
+    const phone = normalizePhone(to);
+    if (!phone) {
+      return { ok: false, error: "invalid_phone_number" };
+    }
     try {
-      const jid = `${normalizePhone(to)}@s.whatsapp.net`;
+      const jid = `${phone}@s.whatsapp.net`;
       await session.sock.sendMessage(jid, { text: body });
       return { ok: true };
     } catch (err) {

@@ -2169,6 +2169,47 @@ not a single "make it perfect" claim.
       clone/install/test/build/start cycle with a live `/api/health`
       check.
 
+- [x] **Self-review of `whatsappWeb.ts` (never reviewed before): fixed a
+      real socket leak on a connect/disconnect race, and rejected a
+      garbage phone number before it ever reaches Baileys.** Two real
+      findings, both confirmed by regression tests against the actual
+      manager (using the same injectable-`createSocket` test double the
+      rest of this module's tests already use) before being fixed:
+      (1) `connect()` awaits `createSocket()` and only afterward assigns
+      `session.sock` and wires up the socket's event handlers — if a
+      concurrent `disconnect()` (or a fresh `connect()`) replaces or
+      deletes that session from the manager's map while `createSocket()`
+      is still in flight, the newly created real socket had nothing left
+      in the app that could ever close it: it would stay linked to the
+      real WhatsApp account indefinitely, silently consuming a
+      linked-device slot, since every event it fires gets correctly
+      ignored by the existing stale-session identity check but nothing
+      ever calls `logout()` on it. Fixed by re-checking that identity
+      immediately after `createSocket()` resolves and logging the socket
+      out right there if the session is no longer the live one, before
+      ever wiring up its handlers. (2) `sendMessage()` built the WhatsApp
+      JID from `normalizePhone(to)` without checking the result was
+      non-empty — the route's own zod schema only enforces a non-empty
+      string, not that it contains any digits, so a value like `"abc"`
+      would silently become `"@s.whatsapp.net"`, an obviously-invalid
+      JID, and reach the real socket instead of being rejected with a
+      clear reason. Fixed with an explicit empty-phone check returning
+      `invalid_phone_number`. Confirmed both were real by watching each
+      new test fail against the pre-fix code first. Verified live
+      end-to-end too, beyond the unit tests: a standalone script booted a
+      real HTTP server via `createApp`/`createStore`, drove a real
+      signup and project creation, then made real HTTP calls to
+      `/connect` and `/disconnect` with an injected socket factory whose
+      resolution was held open to force the exact race window, confirming
+      the orphaned socket's `logout()` was actually called and the final
+      status stayed `disconnected`; a second real HTTP call to `/send`
+      with `{"to": "abc"}` confirmed a `502` with `invalid_phone_number`
+      and that the real socket's `sendMessage` was never invoked. Full
+      suite green (250 tests total across all 4 workspaces) + both
+      builds clean + a from-scratch clean-room
+      clone/install/test/build/start cycle with a live `/api/health`
+      check.
+
 ## Phase 3
 
 - Self-healing: production observability, automatic diagnosis and patch

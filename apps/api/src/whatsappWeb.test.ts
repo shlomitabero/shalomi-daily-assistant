@@ -177,6 +177,22 @@ test("sendMessage refuses honestly when not connected, instead of pretending to 
   assert.equal(result.error, "not_connected");
 });
 
+test("sendMessage rejects a 'to' value with no digits at all, instead of sending to an empty JID", async () => {
+  // The route's own zod schema only enforces a non-empty string, not that
+  // it contains a real phone number -- normalizePhone("abc") strips every
+  // character, so without this check the socket would receive
+  // "@s.whatsapp.net" as a real send target.
+  const { manager, createdSockets } = setupManager();
+  await manager.connect("proj1");
+  createdSockets[0].sock.user = { id: "15550001111:1@s.whatsapp.net" };
+  createdSockets[0].emitConnectionUpdate({ connection: "open" });
+
+  const result = await manager.sendMessage("proj1", "abc", "hi");
+  assert.equal(result.ok, false);
+  assert.equal(result.error, "invalid_phone_number");
+  assert.deepEqual(createdSockets[0].sendCalls, []);
+});
+
 test("an incoming text message is logged and matched to the right customer record by phone number", async () => {
   const { manager, createdSockets, db } = setupManager();
   ensureProjectsTable(db);
@@ -265,6 +281,38 @@ test("a DB error inside a connection.update handler is caught, recorded on the s
   } finally {
     process.removeListener("unhandledRejection", onUnhandledRejection);
   }
+});
+
+test("connect() logs out the real socket immediately if the session was replaced (e.g. by a concurrent disconnect) while createSocket() was still in flight", async () => {
+  const db = openDatabase(":memory:");
+  ensureProjectsTable(db);
+  ensureWhatsAppConnectionsTable(db);
+  ensureWhatsAppMessagesTable(db);
+
+  const fake = createFakeSocket();
+  let resolveCreateSocket!: (value: { sock: WhatsAppSocket; saveCreds: () => Promise<void> }) => void;
+  const manager = new WhatsAppWebManager({
+    db,
+    sessionsRootDir: "/tmp/forge-whatsapp-test-sessions-race",
+    // Never resolves until the test says so, giving a real window for a
+    // concurrent disconnect() to run while this socket is still being
+    // created -- the same timing a slow real Baileys/`useMultiFileAuthState`
+    // call could hit in production.
+    createSocket: () => new Promise((resolve) => { resolveCreateSocket = resolve; }),
+    qrToDataUrl: async (qr) => `data:image/png;base64,FAKE(${qr})`,
+  });
+
+  const connectPromise = manager.connect("proj1");
+  await manager.disconnect("proj1");
+
+  resolveCreateSocket({ sock: fake.sock, saveCreds: async () => {} });
+  await connectPromise;
+
+  assert.ok(
+    fake.isLoggedOut(),
+    "the orphaned socket must be logged out -- otherwise it stays linked to the real WhatsApp account with nothing left able to close it",
+  );
+  assert.equal(manager.getStatus("proj1").status, "disconnected");
 });
 
 test("a stale close event from a disconnected socket does not clobber a newer session created by a fresh connect()", async () => {
