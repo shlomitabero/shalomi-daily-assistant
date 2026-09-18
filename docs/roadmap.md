@@ -2351,6 +2351,35 @@ not a single "make it perfect" claim.
       clone/install/test/build/start cycle with a live `/api/health`
       check.
 
+- [x] **Announce EntityPanel's form-error and CSV-import status messages
+      to screen readers.** Diversifying away from the last several
+      backend self-review rounds, used a research agent to find a real
+      frontend accessibility gap instead. Found: `EntityPanel.tsx`'s
+      save/delete/duplicate/bulk-delete error message (`{error && <p
+      className="error">...}`) and its CSV-import result message
+      (`{importMessage && <span>...}`) were both plain, non-live DOM
+      nodes — the same class of gap as the "waking up the server" banner
+      fixed a few rounds ago, just in a different component that fix
+      didn't touch. A sighted user sees the message appear right next to
+      the button they just used; a screen-reader user whose focus has
+      moved on (the natural resting place after a submit or an import)
+      gets no announcement that a save failed, a required field was
+      rejected, or how many CSV rows imported — confirmed via grep that
+      these were the only two remaining `role="status"`-less transient
+      status messages in the whole web app. Fixed with `role="status"`
+      on both elements, mirroring the exact pattern already established
+      on the waking banner. Verified live with a real Playwright run
+      against real dev servers: signed up, built a real project through
+      the actual UI, uploaded a genuinely malformed CSV through the real
+      file input, and confirmed a `[role="status"]` element appeared
+      with the real server-reported message ("Import failed: 1 errors.
+      No records were created."). Full suite green (254 tests — this was
+      a UI-only change with no existing component-test infrastructure to
+      extend, consistent with the same real-Playwright verification
+      approach used for the earlier waking-banner fix) + both builds
+      clean + a from-scratch clean-room clone/install/test/build/start
+      cycle with a live `/api/health` check.
+
 ## Phase 3
 
 - Self-healing: production observability, automatic diagnosis and patch

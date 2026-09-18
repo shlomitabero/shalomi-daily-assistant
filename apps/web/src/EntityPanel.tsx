@@ -618,14 +618,22 @@ export function EntityPanel({
         </div>
       </form>
 
-      {error && <p className="error">{error}</p>}
+      {error && (
+        <p className="error" role="status">
+          {error}
+        </p>
+      )}
 
       <div className="csv-import-row">
         <label className="csv-import-label">
           {importBusy ? t("entity.import.parsing") : t("entity.importCsv")}
           <input type="file" accept=".csv,text/csv" onChange={handleImportFile} disabled={importBusy} hidden />
         </label>
-        {importMessage && <span className="muted small">{importMessage}</span>}
+        {importMessage && (
+          <span className="muted small" role="status">
+            {importMessage}
+          </span>
+        )}
         {importErrors.length > 0 && (
           <button type="button" className="secondary small" onClick={() => setShowImportErrors((v) => !v)}>
             {showImportErrors ? t("entity.import.hideErrors") : t("entity.import.showErrors")}
