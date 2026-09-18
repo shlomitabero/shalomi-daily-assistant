@@ -83,9 +83,12 @@ export class AnthropicSpecProvider implements SpecProvider {
       throw new Error(`Anthropic API request failed (${response.status}): ${body}`);
     }
 
-    const payload = (await response.json()) as {
-      content?: Array<{ type: string; text?: string }>;
-    };
+    let payload: { content?: Array<{ type: string; text?: string }> };
+    try {
+      payload = await response.json();
+    } catch (err) {
+      throw new Error(`Anthropic API response body was not valid JSON: ${(err as Error).message}`);
+    }
     const text = payload.content?.find((block) => block.type === "text")?.text;
     if (!text) {
       throw new Error("Anthropic API response contained no text content");
@@ -106,9 +109,23 @@ export class AnthropicSpecProvider implements SpecProvider {
   }
 }
 
-/** Strips markdown code fences if the model wrapped its JSON despite instructions. */
+/**
+ * Strips markdown code fences and any surrounding prose if the model wrapped
+ * or introduced its JSON despite instructions. The fence regex is not
+ * anchored to the whole string, so a fenced block preceded/followed by prose
+ * (e.g. "Here's the spec:\n```json\n{...}\n```") still gets unwrapped
+ * instead of being handed to JSON.parse as-is. If there's no fenced block at
+ * all, falls back to the substring between the first "{" and the last "}".
+ */
 function extractJson(text: string): string {
   const trimmed = text.trim();
-  const fenceMatch = trimmed.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/);
-  return fenceMatch ? fenceMatch[1] : trimmed;
+  const fenceMatch = trimmed.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
+  if (fenceMatch) return fenceMatch[1];
+
+  const start = trimmed.indexOf("{");
+  const end = trimmed.lastIndexOf("}");
+  if (start !== -1 && end !== -1 && end > start) {
+    return trimmed.slice(start, end + 1);
+  }
+  return trimmed;
 }

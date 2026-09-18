@@ -2420,6 +2420,63 @@ not a single "make it perfect" claim.
   spec-engine went 51→54) + both builds clean + a from-scratch clean-room
   clone/install/test/build/start cycle with a live `/api/health` check.
 
+- Self-review (code-review skill, high effort) of
+  `packages/spec-engine/src/anthropic.ts` (114 lines, zero existing direct
+  tests — this is `AnthropicSpecProvider`, the real production LLM-backed
+  spec generator used whenever `ANTHROPIC_API_KEY` is configured; falls
+  back to the heuristic provider on any failure, per `index.ts`). Fixed the
+  two findings that were concretely reachable and independently testable
+  without depending on real model behavior, each confirmed with a
+  regression test proven to fail against the pre-fix code first:
+  (1) `extractJson`'s fence-stripping regex was anchored to the whole
+  trimmed string (`^```...```$`), so it only unwrapped a fenced block when
+  the model's entire response was exactly that block — any incidental
+  prose the model added around it (e.g. "Here's the spec:\n```json\n...")
+  despite the system prompt's explicit "no prose" instruction made
+  fence-stripping silently no-op, handing raw prose+fences to `JSON.parse`
+  and causing a spurious fallback to the heuristic provider. Fixed by
+  un-anchoring the regex to find a fenced block anywhere in the text, with
+  a further fallback to the substring between the first `{` and the last
+  `}` when there's no fenced block at all. (2) `await response.json()` was
+  the only failure path in `generate()` not wrapped in a try/catch, so a
+  malformed/truncated-but-200 response body threw a raw, unwrapped
+  `SyntaxError` instead of the descriptive `Error()` every other failure
+  path in this function produces — this matters because `index.ts`'s
+  `generateSpec` logs the caught error server-side before falling back to
+  the heuristic provider, so the message quality directly affects
+  production diagnosability. Fixed by wrapping it in try/catch with a
+  message consistent with the function's other error messages. Added
+  `anthropic.test.ts` (new file, first direct tests for this provider) —
+  7 tests covering the happy path, both fence-stripping cases (clean fence,
+  fence-with-prose), and all four existing error paths (malformed body,
+  HTTP failure, empty text, schema mismatch). Full suite green (264 tests,
+  up from 257 — spec-engine went 54→61) + both builds clean + a
+  from-scratch clean-room clone/install/test/build/start cycle with a live
+  `/api/health` check.
+
+  This review is not fully closed: it also surfaced three findings that
+  are real but weren't fixed this round because they need either a product
+  decision or real-model verification this sandbox can't do (no network
+  access to api.anthropic.com) rather than a scoped code fix — noting them
+  honestly for a future round instead of overstating this as "done":
+  `max_tokens` is hardcoded to 4096 with no `stop_reason` check, so a
+  thorough multi-entity spec (which the system prompt explicitly asks for)
+  could get silently truncated mid-JSON with no diagnostic signal that
+  truncation (vs. a genuinely malformed response) was the cause; a safety
+  refusal (`stop_reason: "refusal"`) is indistinguishable from any other
+  empty-text response, losing the API's actual refusal category/
+  explanation; and `ProductSpecSchema.roles` requires `min(1)` but the
+  system prompt never says roles must be non-empty, so a single-user-app
+  description could plausibly get a valid-but-empty `roles: []` from the
+  model and fail schema validation — this one in particular needs
+  observing real model behavior to confirm before deciding whether a
+  system-prompt tweak or a schema/parsing change is the right fix.
+  `debug.ts`'s `requestSpecFix` (the Debug Agent's repair path) duplicates
+  this same fetch/parse/validate sequence near-verbatim, including the
+  same `max_tokens`/`extractJson` characteristics, so any future fix to
+  the open items above should also be applied there to avoid the two
+  copies drifting out of sync.
+
 ## Phase 3
 
 - Self-healing: production observability, automatic diagnosis and patch
