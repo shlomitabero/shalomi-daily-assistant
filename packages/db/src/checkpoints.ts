@@ -32,6 +32,25 @@ function rowToCheckpoint(row: Record<string, unknown>): Checkpoint {
   };
 }
 
+/**
+ * ProductSpecSchema can only get stricter over time (see the identical
+ * rationale on projects.ts's tryRowToProject), so a checkpoint written by
+ * an older version of this app -- and no longer parseable against today's
+ * schema -- is a real, expected future case. Unlike a single-checkpoint
+ * fetch, a list has other valid checkpoints to still show, so one bad row
+ * is excluded rather than taking down the whole Time Machine history for
+ * the project.
+ */
+function tryRowToCheckpoint(row: Record<string, unknown>): Checkpoint | undefined {
+  try {
+    return rowToCheckpoint(row);
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error(`Checkpoint ${row.id as string} has a stored spec that no longer matches the current schema; excluded from listings until fixed.`, err);
+    return undefined;
+  }
+}
+
 export function insertCheckpoint(
   db: ForgeDatabase,
   checkpoint: { id: string; projectId: string; label: string; spec: ProductSpec },
@@ -44,10 +63,17 @@ export function insertCheckpoint(
 }
 
 export function listCheckpoints(db: ForgeDatabase, projectId: string): Checkpoint[] {
+  // createdAt has only millisecond resolution, so two checkpoints inserted
+  // in quick succession (e.g. a build's checkpoint immediately followed by
+  // a refine's) can share the same value; ORDER BY createdAt DESC alone
+  // leaves that tie's order undefined. rowid strictly increases with
+  // insertion order in this SQLite table (not declared WITHOUT ROWID), so
+  // it breaks the tie deterministically in favor of "most recently
+  // inserted first" -- exactly what "newest first" means for a tie.
   const rows = db
-    .prepare("SELECT * FROM checkpoints WHERE projectId = ? ORDER BY createdAt DESC")
+    .prepare("SELECT * FROM checkpoints WHERE projectId = ? ORDER BY createdAt DESC, rowid DESC")
     .all(projectId) as Record<string, unknown>[];
-  return rows.map(rowToCheckpoint);
+  return rows.map(tryRowToCheckpoint).filter((c): c is Checkpoint => c !== undefined);
 }
 
 export function getCheckpoint(db: ForgeDatabase, id: string): Checkpoint | undefined {

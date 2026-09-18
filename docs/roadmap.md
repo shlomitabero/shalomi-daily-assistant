@@ -2591,6 +2591,39 @@ not a single "make it perfect" claim.
   clean-room clone/install/test/build/start cycle with a live
   `/api/health` check.
 
+- Self-review of `packages/db/src/checkpoints.ts` (58 lines, zero direct
+  tests before this round — the Time Machine's storage layer: every
+  successful build or refine snapshots the resulting spec here). Found and
+  fixed 2 real bugs, both confirmed with a regression test proven to fail
+  against the pre-fix code first: (1) `listCheckpoints` had the identical
+  "one corrupt row takes down the whole list" vulnerability already fixed
+  in `projects.ts`'s `listProjectsForOwner` earlier this session — since
+  `ProductSpecSchema` can only get stricter over time, a checkpoint written
+  by an older version of the app and no longer parseable against today's
+  schema is a real, expected future case, and `rowToCheckpoint` threw
+  uncaught for every row in the loop, so one bad checkpoint made the entire
+  Time Machine history for that project vanish behind a 500 instead of
+  just hiding the one unparseable entry. Fixed with the identical pattern
+  already established for projects: a `tryRowToCheckpoint` wrapper that
+  catches, logs, and excludes just that row; `getCheckpoint` (fetching one
+  specific checkpoint, e.g. for a restore) is left throwing intentionally,
+  same reasoning as `getProject`. (2) A second, independently-discovered
+  bug while writing the ordering test for the fix above: `createdAt` is a
+  `new Date().toISOString()` string with only millisecond resolution, and
+  `listCheckpoints` ordered purely by `ORDER BY createdAt DESC` with no
+  tiebreaker — two checkpoints inserted within the same millisecond (e.g.
+  a build's checkpoint immediately followed by a refine's) got a
+  genuinely undefined relative order, confirmed to reproduce on every one
+  of 5 repeated test runs, not a one-off flake. Fixed by adding `, rowid
+  DESC` as a tiebreaker: SQLite's implicit rowid strictly increases with
+  insertion order on this table (not declared `WITHOUT ROWID`), so ties
+  now deterministically resolve to most-recently-inserted-first, matching
+  what "newest first" actually means for a tie. Added `checkpoints.test.ts`
+  (new file, 6 tests: insert, list ordering, get-missing, the two bug
+  fixes). Full suite green (279 tests, up from 274 — db package went
+  44→49) + both builds clean + a from-scratch clean-room
+  clone/install/test/build/start cycle with a live `/api/health` check.
+
 ## Phase 3
 
 - Self-healing: production observability, automatic diagnosis and patch
