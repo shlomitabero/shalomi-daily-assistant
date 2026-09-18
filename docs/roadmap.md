@@ -2838,6 +2838,46 @@ not a single "make it perfect" claim.
   from 286) + both builds clean + a from-scratch clean-room
   clone/install/test/build/start cycle with a live `/api/health` check.
 
+- **Self-review (via the `code-review` skill, high effort) of
+  `apps/api/src/pipeline.ts` found a real gap left by an earlier fix, in a
+  file nobody had reviewed directly this window.** Commit
+  `cf9a206` ("Re-emit the Architect summary after a Debug Agent recovery")
+  fixed the pipeline to emit a SECOND, corrected Architect success event
+  after a Debug Agent recovery renames/restructures whatever caused a
+  Database-step failure, since the first (already-streamed) event can
+  describe a field/entity that was never actually built. That commit
+  verified `BuildProgress.tsx` (the live AI Team screen) was already safe,
+  since its `latestByAgent` map naturally keeps the last event per agent
+  — but missed that `App.tsx`'s `summarizeRefineImpact` (the one-line
+  summary written into the refine-history/chat panel) is a SEPARATE
+  consumer of the same raw event array, and it used `events.find(...)` —
+  the FIRST match, not the last — so a recovered refine's history entry
+  still showed the broken pre-fix field name. Fixed by replacing the
+  `.find()` with a small forward loop that keeps overwriting
+  `architectEvent` on every match, so the last one (survives to) wins,
+  matching `BuildProgress.tsx`'s existing behavior; also exported the
+  previously-unexported `summarizeRefineImpact` so it has real, direct
+  unit tests for the first time (`apps/web/src/App.test.ts`, new file).
+  Confirmed the specific bug in isolation, not just the missing export:
+  reverted only the `.find()` line back to the old logic (keeping the new
+  export) and reran the 3 new tests — the 2 ordinary-case tests still
+  passed, and only the "prefers the LAST successful event" test failed,
+  showing the exact stale value the old code would have displayed; then
+  restored the real fix and all 3 passed. Live Playwright verification
+  was judged disproportionate here and skipped, honestly: reproducing the
+  actual trigger (a Database-step failure the Debug Agent then recovers
+  from, mid-refine, through the real UI) would mean deliberately
+  engineering a failure through the product surface rather than testing
+  it, and the original `cf9a206` fix itself was verified the same way
+  this one is — a focused unit/integration test with a fake Debug Agent,
+  not a live E2E reproduction — so this follows the same, already-
+  established precedent rather than a new lower bar. Full suite green
+  (292 tests, up from 289 — web package went 72→75) + both builds clean
+  (including `tsc -b`, confirming the manual loop needs no ES2023 lib
+  bump `Array.prototype.findLast` would have required) + a from-scratch
+  clean-room clone/install/test/build/start cycle with a live
+  `/api/health` check.
+
 ## Phase 3
 
 - Self-healing: production observability, automatic diagnosis and patch

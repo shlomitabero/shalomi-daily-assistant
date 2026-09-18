@@ -60,8 +60,19 @@ interface ArchitectImpactDetail {
  * the AI Team screen's own detail panel shows, not a re-statement of the
  * instruction the user already sees above it.
  */
-function summarizeRefineImpact(events: AgentStepEvent[], t: (key: string) => string): string {
-  const architectEvent = events.find((e) => e.agent === "Architect" && e.status === "success");
+export function summarizeRefineImpact(events: AgentStepEvent[], t: (key: string) => string): string {
+  // A Database-step failure the Debug Agent recovers from re-emits a
+  // second, corrected Architect success event (see pipeline.ts's
+  // architectEvent() helper being called again after the fix) -- take the
+  // LAST match here, not the first, so this reflects what was actually
+  // built rather than the stale pre-recovery detail. BuildProgress.tsx's
+  // own latestByAgent map already does this correctly (a later event
+  // naturally overwrites an earlier one for the same agent); this is the
+  // one other consumer of the raw event list that needed the same fix.
+  let architectEvent: AgentStepEvent | undefined;
+  for (const e of events) {
+    if (e.agent === "Architect" && e.status === "success") architectEvent = e;
+  }
   const detail = architectEvent?.detail as ArchitectImpactDetail | undefined;
   if (!detail) return t("preview.refineHistory.noSummary");
   const parts: string[] = [];
