@@ -2643,6 +2643,50 @@ not a single "make it perfect" claim.
   clean-room clone/install/test/build/start cycle with a live
   `/api/health` check.
 
+- Followed up with a broader `ORDER BY` grep across the whole codebase
+  (`apps/` and `packages/`, not just `createdAt`) to check whether the
+  same missing-tiebreaker bug shape existed anywhere else. It didn't:
+  `repository.ts` and `codegen.ts`'s own entity-record tables both use
+  `id INTEGER PRIMARY KEY AUTOINCREMENT` (SQLite's rowid alias, guaranteed
+  unique and monotonically increasing per insert), so their `ORDER BY id
+  DESC` was never actually at risk of a tie in the first place — closing
+  this bug class out with a negative result, not just the two positive
+  fixes already made. Then self-reviewed `apps/api/src/zip.ts` (103 lines,
+  the dependency-free ZIP writer used for code export and "Backup All
+  Data") at high effort. Found a real ZIP-spec-compliance bug: the
+  general-purpose bit flag was always written as `0`, never setting bit
+  11 (`0x0800`, the language-encoding flag) that tells a reader the
+  filename bytes are UTF-8 rather than the legacy CP437 code page. This
+  project explicitly supports non-ASCII (Hebrew) entity/field labels, so
+  a general-purpose zip writer should set this correctly rather than
+  relying on a reader's own UTF-8-guessing heuristics. Confirmed with a
+  genuinely independent check: the existing test in this file already
+  verifies against the system `unzip`, but modern `unzip` auto-detects
+  valid UTF-8 regardless of this flag, so it wouldn't have caught a
+  regression here — the new test instead shells out to Python's `zipfile`
+  module, which is spec-strict and only decodes as UTF-8 when the flag is
+  actually set. Built a zip with a Hebrew filename (`לקוחות.csv`) and
+  confirmed it came back as visible mojibake before the fix
+  (`╫£╫º╫ò╫ù╫ò╫¬.csv`) and the correct Hebrew string after. Fixed by
+  setting flags to `0x0800` in both the local and central directory
+  headers. Honest note: this isn't reachable through the app's current
+  callers today — `generateBackupZipEntries`/`generateExportFiles` only
+  ever build paths from `entity.name`, which the system prompt and this
+  session's earlier fixes already enforce as plain ASCII — so this is
+  correctness insurance in a general-purpose module, not a fix for an
+  observed production failure, stated plainly rather than overclaimed.
+  The code-review also surfaced two lower-priority, unfixed findings
+  worth recording for a future round: no Zip64 support (entry
+  count/size/offset fields hard-cap at 16-bit/32-bit limits with a raw
+  `RangeError` instead of a controlled failure once a backup exceeds
+  65,535 files or 4GB — plausible only for a very large, long-lived
+  project, not a near-term risk) and an inconsistent "version made by"
+  host byte vs. the embedded Unix permission bits in the central
+  directory (cosmetic on every extractor tested so far, but not strictly
+  spec-clean). Full suite green (281 tests, up from 280 — api package
+  went 89→90) + both builds clean + a from-scratch clean-room
+  clone/install/test/build/start cycle with a live `/api/health` check.
+
 ## Phase 3
 
 - Self-healing: production observability, automatic diagnosis and patch

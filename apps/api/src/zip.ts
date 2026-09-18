@@ -50,7 +50,7 @@ export function buildZip(entries: ZipEntry[]): Buffer {
     const localHeader = Buffer.alloc(30);
     localHeader.writeUInt32LE(0x04034b50, 0);
     localHeader.writeUInt16LE(20, 4); // version needed
-    localHeader.writeUInt16LE(0, 6); // flags
+    localHeader.writeUInt16LE(0x0800, 6); // flags: bit 11 = filename is UTF-8
     localHeader.writeUInt16LE(0, 8); // method: store
     localHeader.writeUInt16LE(DOS_TIME, 10);
     localHeader.writeUInt16LE(DOS_DATE, 12);
@@ -66,7 +66,7 @@ export function buildZip(entries: ZipEntry[]): Buffer {
     centralHeader.writeUInt32LE(0x02014b50, 0);
     centralHeader.writeUInt16LE(20, 4); // version made by
     centralHeader.writeUInt16LE(20, 6); // version needed
-    centralHeader.writeUInt16LE(0, 8); // flags
+    centralHeader.writeUInt16LE(0x0800, 8); // flags: bit 11 = filename is UTF-8
     centralHeader.writeUInt16LE(0, 10); // method
     centralHeader.writeUInt16LE(DOS_TIME, 12);
     centralHeader.writeUInt16LE(DOS_DATE, 14);
