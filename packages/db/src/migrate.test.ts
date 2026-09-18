@@ -167,3 +167,41 @@ test("diffAndMigrate is safe to call twice with the same additive change (idempo
   assert.equal(customers.length, 1);
   assert.equal(customers[0].name, "Alice");
 });
+
+test("diffAndMigrate still reports a column as a real change on a retry, even though the ALTER TABLE itself is skipped as already applied", () => {
+  // This is exactly what the pipeline's Debug Agent recovery does: the
+  // Database step calls diffAndMigrate(db, project.id, previousSpec,
+  // nextSpec), gets a real column added, then a LATER entity in the same
+  // spec throws (e.g. an unsafe field name); the Debug Agent produces a
+  // fixed spec and pipeline.ts calls diffAndMigrate again with the SAME
+  // previousSpec. The column already added on the first (partial) attempt
+  // must still show up in the second call's returned changes -- it's a
+  // real difference from previousSpec, even though physically re-running
+  // its ALTER TABLE would now be a no-op.
+  const db = openDatabase(":memory:");
+  applyMigrations(db, "proj1", spec);
+
+  const nextSpec: ProductSpec = {
+    ...spec,
+    entities: [
+      {
+        ...spec.entities[0],
+        fields: [...spec.entities[0].fields, { name: "loyaltyPoints", type: "number", required: false }],
+      },
+      spec.entities[1],
+    ],
+  };
+
+  const firstRun = diffAndMigrate(db, "proj1", spec, nextSpec);
+  assert.deepEqual(firstRun, [{ type: "new_column", table: "entity_proj1_Customer", column: "loyaltyPoints" }]);
+
+  // Retry with the identical previousSpec/nextSpec (the physical ALTER
+  // TABLE is now a no-op since the column already exists) -- the reported
+  // change list must be identical to the first run's, not silently empty.
+  const retryRun = diffAndMigrate(db, "proj1", spec, nextSpec);
+  assert.deepEqual(
+    retryRun,
+    firstRun,
+    "a column added by an earlier partial attempt must still be reported as a change relative to previousSpec",
+  );
+});

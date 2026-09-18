@@ -106,19 +106,23 @@ export function diffAndMigrate(
     for (const field of entity.fields) {
       if (prevFieldNames.has(field.name)) continue;
       const columnName = assertSafeIdentifier(field.name, "column");
-      // Defensive idempotency: the spec-level diff above should already
-      // guarantee this column is new, but SQLite's own error for adding a
-      // column that already exists ("duplicate column name") would
-      // otherwise throw and halt the whole build with no recovery path.
-      // Checking PRAGMA table_info first turns that entire failure class
-      // into a safe no-op instead — prevention over a retry loop.
-      if (currentColumns.has(columnName)) continue;
-      const sqlType = sqlTypeFor(field);
-      // NOT NULL / FK deliberately omitted: SQLite can't retroactively
-      // satisfy either constraint against a table's existing rows. The
-      // column is added nullable; required-ness is still enforced by the
-      // API for every write going forward.
-      db.exec(`ALTER TABLE ${table} ADD COLUMN ${columnName} ${sqlType}`);
+      // Whether to physically run the ALTER (has SQLite already got this
+      // column?) and whether to report it as a change (is it new relative
+      // to previousSpec?) are separate questions -- a column can be
+      // physically present already while still being new *this call*, e.g.
+      // when pipeline.ts retries diffAndMigrate with the same previousSpec
+      // after the Debug Agent fixes a later entity that made an earlier
+      // partial attempt throw. Reporting it either way keeps the returned
+      // change list an accurate diff against previousSpec regardless of
+      // what a prior, partially-failed call already applied.
+      if (!currentColumns.has(columnName)) {
+        const sqlType = sqlTypeFor(field);
+        // NOT NULL / FK deliberately omitted: SQLite can't retroactively
+        // satisfy either constraint against a table's existing rows. The
+        // column is added nullable; required-ness is still enforced by the
+        // API for every write going forward.
+        db.exec(`ALTER TABLE ${table} ADD COLUMN ${columnName} ${sqlType}`);
+      }
       changes.push({ type: "new_column", table, column: columnName });
     }
   });

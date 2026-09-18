@@ -2210,6 +2210,48 @@ not a single "make it perfect" claim.
       clone/install/test/build/start cycle with a live `/api/health`
       check.
 
+- [x] **Fixed the last open `pipeline.ts` self-review finding: a Debug
+      Agent recovery could silently under-report which schema changes
+      actually happened.** `diffAndMigrate` (`packages/db/src/migrate.ts`)
+      conflated two separate questions in one check: whether a column
+      physically needs `ALTER TABLE` (it doesn't, if a prior call already
+      added it) and whether that column counts as a *change* relative to
+      `previousSpec` (it does, regardless of whether it physically exists
+      yet). This matters because `pipeline.ts` calls `diffAndMigrate`
+      twice with the *same* `previousSpec` whenever the Debug Agent
+      recovers from a migration failure: a first call can genuinely add
+      a real column to one entity, then throw on a later entity (e.g. an
+      unsafe field name), and the retry — after the Debug Agent fixes the
+      spec — used to see that first column already present in the DB and
+      silently drop it from the returned change list, even though it's a
+      real difference from `previousSpec` the "N schema change(s)
+      applied" build-log message and detail list should have reported.
+      Confirmed with a regression test that failed against the old code
+      first (asserting a retry's changes equal the first run's; the old
+      code returned `[]`). Fixed by only using the "does it already exist
+      physically" check to skip the `ALTER TABLE` call itself, while
+      always reporting the column as a change whenever it's new relative
+      to `previousSpec` — no longer conflating "already applied" with
+      "not a change." Verified live through the actual, unmodified build
+      pipeline, not just the isolated function: a scratch script ran a
+      real two-entity refine through `runBuildPipeline` with a real fake
+      Anthropic Debug Agent (same pattern `pipeline.test.ts` already
+      uses) where the first entity's column genuinely gets added before
+      an unsafe field name on the second entity throws, and confirmed the
+      final Database step's reported changes correctly include *both*
+      the column applied before the throw and the one applied on the
+      retry after the fix. This resolves one of the two remaining
+      findings from the `pipeline.ts` self-review a few rounds back — the
+      "N schema change(s) applied" message and its detail list are now
+      accurate in every case that pipeline actually exercises. The other
+      finding (the Architect step's impact summary is computed before
+      the Debug Agent might rewrite the spec, so its already-streamed
+      message can describe entities/fields that don't match what actually
+      got built) is still open, left for a future round. Full suite green (251
+      tests total across all 4 workspaces) + both builds clean + a
+      from-scratch clean-room clone/install/test/build/start cycle with
+      a live `/api/health` check.
+
 ## Phase 3
 
 - Self-healing: production observability, automatic diagnosis and patch
