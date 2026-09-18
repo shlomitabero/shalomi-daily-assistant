@@ -149,7 +149,14 @@ function AppContent() {
       .finally(() => setCheckingSession(false));
   }, []);
 
-  const wakingBanner = waking && <p className="waking banner">{t("app.waking")}</p>;
+  // role="status" (implying aria-live="polite") so a screen-reader user is
+  // actually told the server is waking up, instead of sitting through up to
+  // a minute of silence with no way to tell a slow cold start from a hang.
+  const wakingBanner = waking && (
+    <p className="waking banner" role="status">
+      {t("app.waking")}
+    </p>
+  );
 
   if (checkingSession) {
     return (

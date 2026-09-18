@@ -2067,6 +2067,32 @@ not a single "make it perfect" claim.
       clone/install/test/build/start cycle with a live `/api/health`
       check.
 
+- [x] **Announce the "waking up the server" banner to screen readers.**
+      A small, focused accessibility fix, diversifying away from the
+      last few self-review rounds. The banner in `App.tsx` that tells a
+      user the free-tier backend is cold-starting (up to ~60 seconds,
+      per its own copy) was a plain `<p>` with no `aria-live` or
+      `role="status"` anywhere — confirmed there isn't a single one in
+      the whole web app. A sighted user sees it appear/disappear; a
+      screen reader user got total silence for up to a minute, with no
+      way to tell a slow cold start from a hang, and since the banner is
+      often the only content on screen at that point (the
+      session-checking and login screens), it could go completely
+      undiscovered if not proactively announced. Fixed with one
+      attribute: `role="status"` on the banner's `<p>`, which implies
+      `aria-live="polite"` — assistive tech announces the text as soon
+      as it mounts, no extra wiring needed since toggling `waking`
+      already mounts/unmounts the element. Verified live with a real
+      Playwright run against real dev servers: signed up for a real
+      token, then intercepted the very first `/api/auth/me` request to
+      abort it (genuinely reproducing the connection failure that
+      triggers `fetchWithWakeRetry`'s cold-start retry), confirmed a
+      `[role="status"]` element appeared with the exact translated
+      banner text, and confirmed it was removed from the DOM again once
+      the retry succeeded. Full suite green (242 tests) + both builds
+      clean + a from-scratch clean-room clone/install/test/build/start
+      cycle with a live `/api/health` check.
+
 ## Phase 3
 
 - Self-healing: production observability, automatic diagnosis and patch
