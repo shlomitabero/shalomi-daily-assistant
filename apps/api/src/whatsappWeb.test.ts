@@ -170,6 +170,23 @@ test("sendMessage succeeds once connected, addressing the real WhatsApp JID form
   assert.deepEqual(createdSockets[0].sendCalls, [{ jid: "501234567@s.whatsapp.net", text: "שלום!" }]);
 });
 
+test("sendMessage builds a real, fully-qualified JID for a number typed with a 00 international access code", async () => {
+  // Unlike the local-format case above ("050-123-4567" -> missing its
+  // country code entirely, a known, separate, already-accepted gap), a
+  // number typed as "00972-50-123-4567" (the international access code
+  // convention) IS meant to resolve to a fully-qualified number -- it
+  // must not keep a spurious leading "0" that was never part of the
+  // number, which would address a wrong/nonexistent JID.
+  const { manager, createdSockets } = setupManager();
+  await manager.connect("proj1");
+  createdSockets[0].sock.user = { id: "15550001111:1@s.whatsapp.net" };
+  createdSockets[0].emitConnectionUpdate({ connection: "open" });
+
+  const result = await manager.sendMessage("proj1", "00972-50-123-4567", "שלום!");
+  assert.equal(result.ok, true);
+  assert.deepEqual(createdSockets[0].sendCalls, [{ jid: "972501234567@s.whatsapp.net", text: "שלום!" }]);
+});
+
 test("sendMessage refuses honestly when not connected, instead of pretending to send", async () => {
   const { manager } = setupManager();
   const result = await manager.sendMessage("proj1", "972500000000", "hi");

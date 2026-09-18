@@ -2878,6 +2878,48 @@ not a single "make it perfect" claim.
   clean-room clone/install/test/build/start cycle with a live
   `/api/health` check.
 
+- **Closed a standing open question from an earlier round's honest
+  write-up: `normalizePhone` (`apps/api/src/whatsapp.ts`) stripped only a
+  single leading zero, not a full leading "00" international access
+  code.** The doc comment explained stripping one zero for the single-
+  digit national trunk prefix (Israeli local format "050-..." vs.
+  international "972-50-..."), but never addressed the two-digit "00"
+  international dialing prefix some countries' convention uses
+  ("00972-50-..." instead of "+972-50-..."), which left a spurious
+  leading "0" baked into the "normalized" result. Checked both places
+  this value is actually used before assuming which one broke: (1)
+  `findMatchingRecord`'s incoming-vs-stored comparison uses `endsWith`,
+  which turned out to already be robust to the extra digit by
+  construction (confirmed by hand-tracing the digit math, not by writing
+  a test that would have passed either way and proved nothing — an
+  earlier draft of this fix included exactly such a non-isolating test
+  and it was removed once traced through); (2) `WhatsAppWebManager.
+  sendMessage` (`apps/api/src/whatsappWeb.ts`) builds the outgoing
+  WhatsApp JID directly from this value (`${phone}@s.whatsapp.net`),
+  where the bug is real and observable: a "00"-prefixed number produced
+  an invalid JID with a leading "0" that was never part of the real
+  number. Fixed by stripping *every* leading zero (`/^0+/` instead of
+  `/^0/`), confirmed to be a strict generalization with no regression for
+  the existing single-trunk-zero case (a number is either in local format
+  with exactly one trunk zero, or already international with none — the
+  two never combine). Confirmed against pre-fix code via `git stash`:
+  both the new direct `normalizePhone` unit test and the new
+  `sendMessage` JID-construction test failed with the exact wrong value
+  (`0972501234567` / `0972501234567@s.whatsapp.net`), then passed after
+  restoring the fix. Checked `codegen.ts` for a duplicated copy the way
+  earlier rounds kept finding (`anthropic.ts`→`debug.ts`,
+  `identifiers.ts`, `entityFormatting.ts`) — none exists, since WhatsApp
+  is a live-app-only integration never ported to the exported standalone
+  app. Live Playwright verification wasn't attempted: the real trigger
+  (an actual WhatsApp Web/Baileys connection) needs a real QR scan,
+  unreachable from this sandbox by a known, already-documented
+  environment limit; the existing injected-fake-socket unit tests are
+  this file's own established, sufficient verification method (same
+  pattern the whole `whatsappWeb.test.ts` suite already uses). Full suite
+  green (294 tests, up from 292 — api package went 92→94) + both builds
+  clean + a from-scratch clean-room clone/install/test/build/start cycle
+  with a live `/api/health` check.
+
 ## Phase 3
 
 - Self-healing: production observability, automatic diagnosis and patch

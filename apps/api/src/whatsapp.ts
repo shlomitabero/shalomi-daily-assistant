@@ -12,15 +12,25 @@ import { recordDisplayLabel } from "./displayField.js";
 const PHONE_FIELD_NAME = "phone";
 
 /**
- * Keeps only digits, then strips a single leading trunk "0" -- the local
- * dialing prefix most countries' national format uses (e.g. Israeli
+ * Keeps only digits, then strips every leading zero -- the local dialing
+ * prefix most countries' national format uses (e.g. Israeli
  * "050-123-4567") is *replaced* by the country code in international
  * format ("972501234567"), not merely prefixed with it, so a naive
  * digit-only comparison would never match a real number entered in local
  * format against the same number as WhatsApp delivers it internationally.
+ *
+ * Stripping *every* leading zero, not just one, also handles the "00"
+ * international access code some countries' dialing convention uses
+ * (e.g. "00972-50-..." instead of "+972-50-..."): that's a two-digit
+ * prefix, not the same one-digit national trunk prefix above, and
+ * stripping only one zero left a spurious leading "0" baked into the
+ * result. The two cases never combine (a number is either typed in local
+ * format with one trunk zero, or in one of the international formats
+ * with none), so this is a strict generalization with no new false
+ * matches for real phone numbers.
  */
 export function normalizePhone(value: string): string {
-  return value.replace(/\D/g, "").replace(/^0/, "");
+  return value.replace(/\D/g, "").replace(/^0+/, "");
 }
 
 export interface MatchedRecord {

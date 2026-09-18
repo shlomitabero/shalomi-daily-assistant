@@ -10,6 +10,17 @@ test("normalizePhone strips non-digits and a single leading trunk zero", () => {
   assert.equal(normalizePhone(""), "");
 });
 
+test("normalizePhone strips a leading 00 international access code fully, not just one of its two zeros", () => {
+  // "00" (used when dialing out internationally from many countries,
+  // including Israel/Europe) is a two-digit access code, not the same
+  // thing as the single-zero national trunk prefix the doc comment above
+  // describes -- a real user who types a number this way (e.g. copying it
+  // from an email signature) previously ended up with a spurious leading
+  // "0" still baked into the "normalized" result.
+  assert.equal(normalizePhone("00972-50-123-4567"), "972501234567");
+  assert.equal(normalizePhone("+972-50-123-4567"), "972501234567");
+});
+
 const project: Project = {
   id: "proj1",
   ownerId: "user1",
