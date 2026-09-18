@@ -80,3 +80,34 @@ test("generate() throws a descriptive error when the model's JSON doesn't match 
   const provider = new AnthropicSpecProvider({ apiKey: "test-key", fetchImpl: fakeFetch });
   await assert.rejects(() => provider.generate("x"), /did not match ProductSpec schema/);
 });
+
+test("generate() names truncation specifically when JSON parsing fails and stop_reason is max_tokens, instead of a generic parse error", async () => {
+  // A response cut off mid-JSON by hitting the token limit is a different,
+  // actionable failure from the model genuinely returning malformed JSON --
+  // the fix is raising max_tokens, not debugging a parsing bug. Both throw
+  // from the same JSON.parse call, so this is only distinguishable by
+  // looking at stop_reason, which the prior code never inspected.
+  const truncated = JSON.stringify(VALID_SPEC).slice(0, 40);
+  const fakeFetch = (async () =>
+    new Response(JSON.stringify({ content: [{ type: "text", text: truncated }], stop_reason: "max_tokens" }), {
+      status: 200,
+    })) as unknown as typeof fetch;
+  const provider = new AnthropicSpecProvider({ apiKey: "test-key", fetchImpl: fakeFetch });
+  await assert.rejects(() => provider.generate("x"), /truncated.*max_tokens/i);
+});
+
+test("generate() throws a specific error on a safety refusal (stop_reason: refusal), not the generic 'no text content' message", async () => {
+  const fakeFetch = (async () =>
+    new Response(JSON.stringify({ content: [], stop_reason: "refusal" }), { status: 200 })) as unknown as typeof fetch;
+  const provider = new AnthropicSpecProvider({ apiKey: "test-key", fetchImpl: fakeFetch });
+  await assert.rejects(() => provider.generate("x"), /refus/i);
+});
+
+test("generate() still reports a genuinely malformed (non-truncated) JSON response with the original generic message", async () => {
+  const fakeFetch = (async () =>
+    new Response(JSON.stringify({ content: [{ type: "text", text: "{not: valid json}" }], stop_reason: "end_turn" }), {
+      status: 200,
+    })) as unknown as typeof fetch;
+  const provider = new AnthropicSpecProvider({ apiKey: "test-key", fetchImpl: fakeFetch });
+  await assert.rejects(() => provider.generate("x"), /Anthropic API response was not valid JSON/);
+});

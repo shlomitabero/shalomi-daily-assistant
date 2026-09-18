@@ -86,12 +86,17 @@ export class AnthropicSpecProvider implements SpecProvider {
       throw new Error(`Anthropic API request failed (${response.status}): ${body}`);
     }
 
-    let payload: { content?: Array<{ type: string; text?: string }> };
+    let payload: { content?: Array<{ type: string; text?: string }>; stop_reason?: string };
     try {
       payload = await response.json();
     } catch (err) {
       throw new Error(`Anthropic API response body was not valid JSON: ${(err as Error).message}`);
     }
+
+    if (payload.stop_reason === "refusal") {
+      throw new Error("Anthropic API refused to generate a spec for this request (stop_reason: refusal)");
+    }
+
     const text = payload.content?.find((block) => block.type === "text")?.text;
     if (!text) {
       throw new Error("Anthropic API response contained no text content");
@@ -101,6 +106,13 @@ export class AnthropicSpecProvider implements SpecProvider {
     try {
       parsed = JSON.parse(extractJson(text));
     } catch (err) {
+      // A response cut off by hitting max_tokens mid-JSON is a distinct,
+      // actionable failure (raise max_tokens) from the model genuinely
+      // returning malformed JSON -- surface which one this was instead of
+      // a generic parse error that looks the same either way.
+      if (payload.stop_reason === "max_tokens") {
+        throw new Error("Anthropic API response was truncated (stop_reason: max_tokens) before completing valid JSON");
+      }
       throw new Error(`Anthropic API response was not valid JSON: ${(err as Error).message}`);
     }
 

@@ -2503,6 +2503,39 @@ not a single "make it perfect" claim.
   went 61→62) + both builds clean + a from-scratch clean-room
   clone/install/test/build/start cycle with a live `/api/health` check.
 
+- Closed the remaining two of the three `anthropic.ts` findings, both of
+  which turned out to be fully testable with a fake `fetchImpl` after all
+  (the earlier round's caveat that they needed real-model observation
+  applied to confirming the model *actually returns* these `stop_reason`
+  values, not to whether the code can correctly react to them once it
+  does — that part only needed controlling the response payload, which a
+  fake `fetchImpl` does directly). `generate()` never looked at the
+  response's `stop_reason` field: (1) a response truncated mid-JSON by
+  hitting `max_tokens` and a response containing genuinely malformed JSON
+  both failed at the same `JSON.parse` call with the same generic "was
+  not valid JSON" message, even though they're different, differently-
+  actionable failures (raise `max_tokens` vs. a real parsing bug);
+  (2) a safety refusal (`stop_reason: "refusal"`, empty `content`) was
+  indistinguishable from any other empty-content response, surfacing the
+  unhelpful generic "contained no text content" instead of naming the
+  refusal. Fixed by checking `payload.stop_reason` in both places: a
+  `refusal` is now caught immediately with its own error before the text
+  extraction even runs, and a `JSON.parse` failure with
+  `stop_reason === "max_tokens"` gets a message naming truncation
+  specifically instead of the generic parse-error text (a genuinely
+  malformed response with any other `stop_reason` still gets the original
+  generic message, confirmed by a dedicated test). Added 4 new tests to
+  `anthropic.test.ts` (truncation-specific message, refusal-specific
+  message, and a check that the plain-malformed-JSON path is unchanged),
+  each proven to fail against the pre-fix code first via the same
+  git-stash technique used all session. This closes the `anthropic.ts`
+  self-review from two rounds ago in full — the only item left from it is
+  `debug.ts`'s near-identical duplication of this same fetch/parse logic,
+  which still doesn't have any of these three fixes and is a candidate for
+  its own future round. Full suite green (268 tests, up from 265 —
+  spec-engine went 62→65) + both builds clean + a from-scratch clean-room
+  clone/install/test/build/start cycle with a live `/api/health` check.
+
 ## Phase 3
 
 - Self-healing: production observability, automatic diagnosis and patch
