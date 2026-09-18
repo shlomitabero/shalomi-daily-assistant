@@ -39,7 +39,11 @@ export interface DomainEntityRule {
 
 export const DOMAIN_ENTITY_RULES: DomainEntityRule[] = [
   {
-    keywords: ["customer", "client", "lead", "לקוח", "לקוחה", "לקוחות", "קליינט"],
+    // Bare "lead" is deliberately left out -- it's a substring of "leaders"/
+    // "leadership", a common phrase in descriptions about internal team
+    // structure that has nothing to do with sales leads. "sales lead" is
+    // the actual business term and doesn't have that problem.
+    keywords: ["customer", "client", "sales lead", "לקוח", "לקוחה", "לקוחות", "קליינט"],
     labelHe: "לקוחות",
     descriptionHe: "לקוח או חברה שהעסק משרת.",
     fieldLabelsHe: {
@@ -227,7 +231,14 @@ export const DOMAIN_ENTITY_RULES: DomainEntityRule[] = [
     },
   },
   {
-    keywords: ["deal", "negotiation", "pipeline", "עסקה", "עסקאות", "משא ומתן"],
+    // Bare "deal" is deliberately left out -- it's a substring of "ideal"
+    // (an ordinary word in phrases like "ideal customer"/"ideal workflow")
+    // and of "dealership" (Vehicle's own "car dealership" keyword), so a
+    // plain car-dealership CRM description would spuriously also match
+    // here. Plural "deals" doesn't have either problem (neither "ideal"
+    // nor "dealership" contains it as a substring) and is still the
+    // natural way this entity gets mentioned ("track deals"/"our deals").
+    keywords: ["deals", "negotiation", "pipeline", "עסקה", "עסקאות", "משא ומתן"],
     labelHe: "עסקאות",
     descriptionHe: "עסקת מכירה פוטנציאלית.",
     fieldLabelsHe: { title: "כותרת", value: "שווי", stage: "שלב", owner: "אחראי/ת" },
@@ -251,9 +262,16 @@ export const DOMAIN_ENTITY_RULES: DomainEntityRule[] = [
     },
   },
   {
+    // Bare "מנה" (mem-nun-heh, "portion/dish") is deliberately left out --
+    // it's the exact 3-letter prefix of "מנהל"/"מנהלת"/"מנהלים" (manager/
+    // manageress/managers, one of the most common words in Hebrew business
+    // descriptions and this same file's own ROLE_RULES keyword for Admin).
+    // Plural "מנות" (mem-nun-vav-tav) doesn't have this problem -- Hebrew
+    // plural formation drops the ה and adds ות, so it never contains the
+    // מנהל root as a substring.
     keywords: [
       "menu", "dish", "food item", "restaurant", "cafe", "מסעדה", "מסעדות",
-      "תפריט", "מנה", "מנות", "בית קפה",
+      "תפריט", "מנות", "בית קפה",
     ],
     labelHe: "פריטי תפריט",
     descriptionHe: "מנה או מוצר בתפריט של מסעדה או בית קפה.",

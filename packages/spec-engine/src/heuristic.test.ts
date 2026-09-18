@@ -352,3 +352,50 @@ test("WorkOrder deliberately avoids Vehicle's own 'מוסך'/'מכונאי'/'gar
     "'garage'/'mechanic' alone must not spuriously match WorkOrder -- only its own distinct keywords should",
   );
 });
+
+test("Customer's 'lead' keyword doesn't spuriously match plain 'leaders'/'leadership' text", async () => {
+  const provider = new HeuristicSpecProvider();
+  const leadership = await provider.generate("An app for managing team leaders and their schedules.");
+  assert.ok(
+    !leadership.entities.some((e) => e.name === "Customer"),
+    "'leaders' alone must not spuriously match Customer via a bare 'lead' substring",
+  );
+
+  // The real business term still works.
+  const salesLead = await provider.generate("An app to capture and follow up on new sales leads.");
+  assert.ok(salesLead.entities.some((e) => e.name === "Customer"));
+});
+
+test("Deal's 'deal' keyword doesn't spuriously match 'ideal' or Vehicle's 'dealership' keyword", async () => {
+  const provider = new HeuristicSpecProvider();
+
+  const ideal = await provider.generate("An app to manage our ideal customers and their orders.");
+  assert.ok(
+    !ideal.entities.some((e) => e.name === "Deal"),
+    "'ideal' alone must not spuriously match Deal via a bare 'deal' substring",
+  );
+
+  const dealership = await provider.generate("A CRM for a car dealership to manage vehicles.");
+  assert.ok(dealership.entities.some((e) => e.name === "Vehicle"));
+  assert.ok(
+    !dealership.entities.some((e) => e.name === "Deal"),
+    "'dealership' alone must not spuriously match Deal via a bare 'deal' substring",
+  );
+
+  // The real business term still works.
+  const realDeal = await provider.generate("An app to track sales deals through our pipeline.");
+  assert.ok(realDeal.entities.some((e) => e.name === "Deal"));
+});
+
+test("MenuItem's 'מנה' keyword doesn't spuriously match 'מנהלים' (managers)", async () => {
+  const provider = new HeuristicSpecProvider();
+  const managers = await provider.generate("אפליקציה למעקב אחרי מנהלים בעסק");
+  assert.ok(
+    !managers.entities.some((e) => e.name === "MenuItem"),
+    "'מנהלים' alone must not spuriously match MenuItem via a bare 'מנה' substring",
+  );
+
+  // The real business term still works.
+  const restaurant = await provider.generate("אפליקציה לניהול תפריט ומנות למסעדה");
+  assert.ok(restaurant.entities.some((e) => e.name === "MenuItem"));
+});

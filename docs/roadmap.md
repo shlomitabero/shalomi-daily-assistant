@@ -2380,6 +2380,46 @@ not a single "make it perfect" claim.
       clean + a from-scratch clean-room clone/install/test/build/start
       cycle with a live `/api/health` check.
 
+- Self-review (code-review skill, high effort) of
+  `packages/spec-engine/src/domainEntities.ts` (1023 lines, never directly
+  reviewed before, exports the offline heuristic provider's keyword-matched
+  entity library). Found 4 real substring-collision bugs in the
+  `lower.includes(kw)` matching used by `matchEntities`/`matchRoles` in
+  `heuristic.ts` — exactly the pitfall class the file's own header comment
+  already documents and had partially guarded against (e.g. תור/תורם), but
+  missed here: (1) Customer's bare `"lead"` is a substring of
+  "leaders"/"leadership", so a description about team leadership spuriously
+  got a Customer entity; (2) Deal's bare `"deal"` is a substring of "ideal",
+  so any description saying "ideal customer(s)" spuriously got a Deal
+  entity; (3) that same `"deal"` keyword is also a substring of Vehicle's
+  own "car dealership" keyword, so a car-dealership CRM description
+  spuriously got an unrelated Deal entity too; (4) MenuItem's bare Hebrew
+  `"מנה"` (mem-nun-heh, "dish/portion") is the exact 3-letter prefix of
+  "מנהל"/"מנהלת"/"מנהלים" (manager/manageress/managers — one of the most
+  common words in Hebrew business descriptions, and this same file's own
+  ROLE_RULES keyword for Admin), so almost any Hebrew description
+  mentioning a manager role spuriously got a restaurant MenuItem entity.
+  Each empirically confirmed with a regression test proven to fail against
+  the pre-fix code first (via `git stash` on just the source file, keeping
+  the new tests): "leaders and their schedules" incorrectly matched
+  Customer, "ideal customers" and "car dealership...vehicles" incorrectly
+  matched Deal, and "מעקב אחרי מנהלים" incorrectly matched MenuItem — all
+  four confirmed failing, then confirmed passing after the fix. Fixed
+  following the file's own established convention (already used for
+  תור/תורם and "review"/"preview"): remove the colliding bare keyword,
+  keep or substitute a safe form that doesn't have the same substring
+  problem, and document why in a comment. Concretely: Customer's `"lead"`
+  → `"sales lead"`; Deal's `"deal"` → `"deals"` (plural doesn't appear as a
+  substring of either "ideal" or "dealership" — fixes both collisions with
+  one change); MenuItem's bare `"מנה"` removed, keeping the already-present
+  plural `"מנות"` (mem-nun-vav-tav — Hebrew plural formation drops the ה
+  and adds ות, so it never contains the מנהל root). Added 3 new regression
+  tests to `heuristic.test.ts`, each also checking the real business term
+  still matches correctly after the fix (e.g. "sales deals through our
+  pipeline" still matches Deal). Full suite green (257 tests, up from 254 —
+  spec-engine went 51→54) + both builds clean + a from-scratch clean-room
+  clone/install/test/build/start cycle with a live `/api/health` check.
+
 ## Phase 3
 
 - Self-healing: production observability, automatic diagnosis and patch
