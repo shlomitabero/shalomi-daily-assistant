@@ -259,6 +259,50 @@ test("disconnect logs out the real socket, clears the live session, and keeps th
   assert.equal(stored?.connectedAt, null);
 });
 
+test("connect() waits for a concurrent disconnect()'s auth-dir cleanup to finish before creating a new socket in the same directory", async () => {
+  // disconnect() deletes the session from the map immediately (so
+  // getStatus() reports "disconnected" right away) but only removes the
+  // auth dir from disk asynchronously afterward. A connect() that arrives
+  // in that window must not start useMultiFileAuthState() on a directory
+  // still being deleted -- confirmed here by holding the (injected) auth-dir
+  // removal open and checking createSocket is never called until it resolves.
+  const db = openDatabase(":memory:");
+  ensureProjectsTable(db);
+  ensureWhatsAppConnectionsTable(db);
+  ensureWhatsAppMessagesTable(db);
+
+  let resolveRemoveAuthDir!: () => void;
+  let createSocketCalls = 0;
+  const manager = new WhatsAppWebManager({
+    db,
+    sessionsRootDir: "/tmp/forge-whatsapp-test-sessions-cleanup",
+    createSocket: async () => {
+      createSocketCalls++;
+      return { sock: createFakeSocket().sock, saveCreds: async () => {} };
+    },
+    qrToDataUrl: async (qr) => `data:image/png;base64,FAKE(${qr})`,
+    removeAuthDir: () => new Promise((resolve) => { resolveRemoveAuthDir = resolve; }),
+  });
+
+  await manager.connect("proj1");
+  const disconnectPromise = manager.disconnect("proj1");
+  // Let disconnect() run past its own awaited logout() call and reach the
+  // point where it deletes the session and starts the (held-open) cleanup.
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(manager.getStatus("proj1").status, "disconnected", "status must flip before cleanup finishes");
+
+  const connectPromise = manager.connect("proj1");
+  // Give the new connect() a real turn of the event loop -- if it weren't
+  // waiting on the cleanup, createSocket would already have been called again.
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(createSocketCalls, 1, "connect() must not create a second socket while cleanup is still pending");
+
+  resolveRemoveAuthDir();
+  await disconnectPromise;
+  await connectPromise;
+  assert.equal(createSocketCalls, 2, "connect() must proceed once cleanup has actually finished");
+});
+
 test("a DB error inside a connection.update handler is caught, recorded on the session, and never escapes as an unhandled promise rejection", async () => {
   const { manager, createdSockets, db } = setupManager();
   const unhandled: unknown[] = [];

@@ -112,6 +112,8 @@ export interface WhatsAppWebManagerOptions {
   sessionsRootDir: string;
   createSocket?: (authDir: string) => Promise<{ sock: WhatsAppSocket; saveCreds: () => Promise<void> }>;
   qrToDataUrl?: (qr: string) => Promise<string>;
+  /** Kept injectable so tests can control its exact timing, the same way createSocket is -- see cleanupAuthDir. */
+  removeAuthDir?: (authDir: string) => Promise<void>;
 }
 
 export class WhatsAppWebManager {
@@ -119,17 +121,40 @@ export class WhatsAppWebManager {
   private readonly sessionsRootDir: string;
   private readonly createSocket: (authDir: string) => Promise<{ sock: WhatsAppSocket; saveCreds: () => Promise<void> }>;
   private readonly qrToDataUrl: (qr: string) => Promise<string>;
+  private readonly removeAuthDir: (authDir: string) => Promise<void>;
   private readonly sessions = new Map<string, ManagedSession>();
+  /** Tracks an in-flight authDir cleanup per project -- see cleanupAuthDir and its use in connect(). */
+  private readonly pendingCleanup = new Map<string, Promise<void>>();
 
   constructor(options: WhatsAppWebManagerOptions) {
     this.db = options.db;
     this.sessionsRootDir = options.sessionsRootDir;
     this.createSocket = options.createSocket ?? defaultCreateSocket;
     this.qrToDataUrl = options.qrToDataUrl ?? defaultQrToDataUrl;
+    this.removeAuthDir = options.removeAuthDir ?? ((dir) => rm(dir, { recursive: true, force: true }));
   }
 
   private authDirFor(projectId: string): string {
     return path.join(this.sessionsRootDir, projectId);
+  }
+
+  /**
+   * disconnect() and handleConnectionUpdate's "close" branch both delete
+   * the session from the map synchronously, then remove the auth dir from
+   * disk asynchronously -- the deletion is what makes getStatus() report
+   * "disconnected" right away, which is worth keeping immediate. But that
+   * leaves a real window where a concurrent connect() sees no session and
+   * starts useMultiFileAuthState() on the very directory this removal is
+   * still deleting files from. Tracking the removal here lets connect()
+   * wait for it to finish first, instead of racing it.
+   */
+  private cleanupAuthDir(projectId: string): Promise<void> {
+    const task = this.removeAuthDir(this.authDirFor(projectId)).catch(() => {});
+    this.pendingCleanup.set(projectId, task);
+    void task.finally(() => {
+      if (this.pendingCleanup.get(projectId) === task) this.pendingCleanup.delete(projectId);
+    });
+    return task;
   }
 
   getStatus(projectId: string): WhatsAppConnectionState {
@@ -146,6 +171,12 @@ export class WhatsAppWebManager {
     if (existing && existing.status !== "disconnected") {
       return this.getStatus(projectId);
     }
+
+    // A disconnect (or a logged-out close) may still be deleting this
+    // project's auth dir from disk -- wait for it so createSocket()
+    // below doesn't read/write into a directory being removed underneath it.
+    const pendingCleanup = this.pendingCleanup.get(projectId);
+    if (pendingCleanup) await pendingCleanup;
 
     const session: ManagedSession = { sock: null, status: "connecting", qrDataUrl: null, phoneNumber: null, error: null };
     this.sessions.set(projectId, session);
@@ -235,7 +266,7 @@ export class WhatsAppWebManager {
       this.sessions.delete(projectId);
       recordWhatsAppDisconnected(this.db, projectId);
       if (loggedOut) {
-        await rm(this.authDirFor(projectId), { recursive: true, force: true }).catch(() => {});
+        await this.cleanupAuthDir(projectId);
       }
     }
   }
@@ -276,7 +307,7 @@ export class WhatsAppWebManager {
     }
     this.sessions.delete(projectId);
     recordWhatsAppDisconnected(this.db, projectId);
-    await rm(this.authDirFor(projectId), { recursive: true, force: true }).catch(() => {});
+    await this.cleanupAuthDir(projectId);
   }
 
   async sendMessage(projectId: string, to: string, body: string): Promise<WhatsAppSendResult> {

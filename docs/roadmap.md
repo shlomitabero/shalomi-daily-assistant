@@ -2322,6 +2322,35 @@ not a single "make it perfect" claim.
       clone/install/test/build/start cycle with a live `/api/health`
       check.
 
+- [x] **Fixed the last remaining `whatsappWeb.ts` self-review finding: a
+      concurrent connect() could race a disconnect()'s auth-dir cleanup.**
+      `disconnect()` (and `handleConnectionUpdate`'s logged-out "close"
+      branch) deletes the session from the in-memory map synchronously —
+      which is what makes `getStatus()` correctly report "disconnected"
+      right away — but only removes the auth dir from disk asynchronously
+      afterward. That left a real window where a `connect()` arriving in
+      that gap saw no session, and started `useMultiFileAuthState()` on
+      the very directory still being deleted underneath it: real risk of
+      an unnecessary QR re-scan (freshly-written credential files
+      force-deleted out from under the new connection) or an unexpected
+      filesystem error neither code path accounted for. Confirmed with a
+      regression test that failed against the old code first: an injected,
+      holdable `removeAuthDir` proved `connect()` called `createSocket`
+      again before the pending cleanup had actually finished. Fixed by
+      tracking each project's in-flight cleanup in a `pendingCleanup` map
+      (a new `cleanupAuthDir()` helper shared by both call sites) and
+      having `connect()` await it before proceeding — `getStatus()`'s
+      immediacy is untouched since the session map deletion still happens
+      synchronously; only the *next* `connect()` for that same project
+      now waits for the disk cleanup already in flight. This resolves the
+      last of the three real findings raised across the whole
+      `whatsappWeb.ts` self-review a few rounds back (the socket-leak and
+      invalid-phone-number fixes landed earlier); all are now closed.
+      Full suite green (254 tests total across all 4 workspaces) + both
+      builds clean + a from-scratch clean-room
+      clone/install/test/build/start cycle with a live `/api/health`
+      check.
+
 ## Phase 3
 
 - Self-healing: production observability, automatic diagnosis and patch
