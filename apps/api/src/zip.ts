@@ -38,6 +38,18 @@ export interface ZipEntry {
 }
 
 export function buildZip(entries: ZipEntry[]): Buffer {
+  // The end-of-central-directory record's entry-count fields are 16-bit
+  // (see below), so more than 65535 entries needs the Zip64 extension
+  // format, which this writer doesn't implement. Without this check, that
+  // case fails deep inside Buffer#writeUInt16LE with a generic "value...
+  // must be <= 65535" RangeError that gives no indication this was an
+  // entry-count problem specifically.
+  if (entries.length > 0xffff) {
+    throw new Error(
+      `buildZip: ${entries.length} entries exceeds the 65535-entry limit of this writer (no Zip64 support)`,
+    );
+  }
+
   const localParts: Buffer[] = [];
   const centralParts: Buffer[] = [];
   let offset = 0;

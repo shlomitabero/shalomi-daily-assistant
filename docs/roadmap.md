@@ -2687,6 +2687,30 @@ not a single "make it perfect" claim.
   went 89→90) + both builds clean + a from-scratch clean-room
   clone/install/test/build/start cycle with a live `/api/health` check.
 
+- Closed the safer of the two findings left open from that `zip.ts`
+  review: `buildZip` had no guard for exceeding the 65,535-entry limit of
+  its non-Zip64 format, so building an archive with more entries than
+  that failed deep inside `Buffer#writeUInt16LE` with that method's own
+  generic "value... must be <= 65535" `RangeError`, giving a caller (the
+  backup/export routes) no indication this was specifically an
+  entry-count problem. Added an upfront check that throws a descriptive
+  error naming the actual cause ("N entries exceeds the 65535-entry limit
+  of this writer (no Zip64 support)") before any work begins — this is
+  the defensive-error-message fix noted as a candidate last round, not
+  full Zip64 support, which stays a real but much larger, not-near-term
+  piece of work. Added a regression test building a 65,536-entry archive;
+  proven to fail against the pre-fix code first (it did throw, but with
+  the raw generic message rather than one containing "Zip64" — the test
+  deliberately matches on that word rather than on "65535", since the
+  Buffer's own accidental message also happens to contain that number and
+  would have made the test pass even without the fix). The size/offset
+  32-bit limits and the "version made by" host-byte inconsistency remain
+  open, still far lower priority than the entry-count case since they'd
+  need a single file over 4GB or a cumulative archive over 4GB to
+  trigger. Full suite green (282 tests, up from 281 — api package went
+  90→91) + both builds clean + a from-scratch clean-room
+  clone/install/test/build/start cycle with a live `/api/health` check.
+
 ## Phase 3
 
 - Self-healing: production observability, automatic diagnosis and patch

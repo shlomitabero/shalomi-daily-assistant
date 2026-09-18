@@ -68,3 +68,18 @@ test("buildZip handles a single file and an empty archive", () => {
   const empty = buildZip([]);
   assert.equal(empty.readUInt32LE(0), 0x06054b50);
 });
+
+test("buildZip throws a clear, actionable error instead of a raw RangeError when the entry count exceeds the non-Zip64 16-bit limit", () => {
+  // The end-of-central-directory record's entry-count fields are 16-bit,
+  // so more than 65535 entries would need Zip64 (not implemented here).
+  // Without a guard, Buffer#writeUInt16LE throws its own generic
+  // "value... must be <= 65535" RangeError deep inside the function,
+  // giving a caller (e.g. the backup/export routes) no indication this
+  // was an entry-count problem specifically.
+  const tooMany = Array.from({ length: 65536 }, (_, i) => ({ path: `f${i}.txt`, content: "x" }));
+  // Matching specifically on "Zip64" (not just "65535", which the raw
+  // Buffer RangeError's own generic message also happens to contain) is
+  // what actually distinguishes the intended, descriptive error from the
+  // pre-fix accidental one.
+  assert.throws(() => buildZip(tooMany), /Zip64/i);
+});
