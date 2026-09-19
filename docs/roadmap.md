@@ -3674,6 +3674,49 @@ not a single "make it perfect" claim.
       confirming an ordinary, non-colliding description still generates a
       real heuristic spec exactly as before.
 
+- [x] **Full code-review pass on `packages/db/src/checkpoints.ts`** (the
+      next never-fully-reviewed core file, after `migrate.ts` in round
+      59). The file itself held up well — small, already reasonably
+      tested, no real bug found in it directly. But following the review
+      one level up into its only caller, the checkpoint-restore route in
+      `apps/api/src/routes/projects.ts`, turned up a genuine test-coverage
+      gap: the line that actually protects a user from restoring another
+      user's checkpoint into their own project —
+      `checkpoint.projectId !== project.id` — had zero test coverage
+      anywhere (confirmed by grepping the whole suite for
+      `CHECKPOINT_NOT_FOUND`: the only occurrence was the route itself).
+      This check matters precisely because `requireOwnedProject` alone
+      can't catch this case — the attacking user genuinely owns the
+      *target* project they're restoring into, just not the checkpoint
+      they're supplying — and `getCheckpoint()` deliberately takes no
+      `projectId` filter, leaving that cross-check entirely to the
+      caller. Added an E2E test: two separate users each build a real
+      project, the second user's own restore request against their own
+      project is given the first user's real checkpoint id, and must
+      404 with `CHECKPOINT_NOT_FOUND` while leaving their project's spec
+      completely untouched. Proved the test would actually catch a
+      regression, not just document today's behavior: temporarily
+      weakened the route's check locally (dropped the `checkpoint.
+      projectId !== project.id` half of the condition), reran the suite
+      and watched the new test fail exactly as expected, then reverted
+      and confirmed via `git diff` that no residual change remained
+      before committing — the same discipline as a `git stash` proof,
+      just applied to an uncommitted local edit instead of stashed
+      source. Also resolved, while reviewing this file, an old
+      never-confirmed finding: round 44's suspicion that
+      `generateBackupZipEntries` (`apps/api/src/backup.ts`) could produce
+      colliding ZIP entry paths for two entities differing only by case
+      (it keys each entry as `` `${entity.name}.csv` ``, the same pattern
+      as the SQL table names round 59 fixed). Traced every path a
+      `ProductSpec` can take before reaching a backup export and
+      confirmed it always passes through `ProductSpecSchema` first —
+      round 59's entity-name-collision `.refine()` already makes this
+      finding structurally impossible now, with no further code change
+      needed; noted here rather than filed as still-open. Full suite
+      green (326 tests, up from 325 — `@forge/api` 106 → 107) + both
+      builds clean + a from-scratch clean-room worktree
+      clone/install/test/build cycle.
+
 ## Phase 3
 
 - Self-healing: production observability, automatic diagnosis and patch
