@@ -15,11 +15,21 @@ const FOCUSABLE_SELECTOR =
  */
 export function useDialogFocusTrap<T extends HTMLElement>() {
   const containerRef = useRef<T>(null);
+  // Captured during render, not inside the effect below: an effect runs
+  // as a passive effect *after* React has already committed the DOM for
+  // this render, which includes applying any autoFocus inside the dialog
+  // (see GlobalSearchPanel.tsx's search input). By the time an effect ran,
+  // document.activeElement would already be that autoFocus'd element, not
+  // the real trigger (e.g. the toolbar button the user clicked to open the
+  // dialog) -- so focus would never actually return to the trigger on
+  // close. Render-phase code runs before this dialog's own DOM exists at
+  // all, so it reliably captures whatever had focus beforehand.
+  const previouslyFocusedRef = useRef<HTMLElement | null>(document.activeElement as HTMLElement | null);
 
   useEffect(() => {
     const container = containerRef.current;
     if (!container) return;
-    const previouslyFocused = document.activeElement as HTMLElement | null;
+    const previouslyFocused = previouslyFocusedRef.current;
 
     function getFocusable(): HTMLElement[] {
       return Array.from(container!.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR));
@@ -27,6 +37,15 @@ export function useDialogFocusTrap<T extends HTMLElement>() {
 
     if (!container.contains(document.activeElement)) {
       const [first] = getFocusable();
+      if (!first) {
+        // A plain element ignores .focus() unless it's given a tabIndex
+        // first (per the DOM spec) -- every current caller always renders
+        // at least a close button, so this fallback path isn't hit today,
+        // but the hook's own contract ("moves focus into the panel when it
+        // opens") should hold for any dialog built on it, including one
+        // with no focusable content yet.
+        container.tabIndex = -1;
+      }
       (first ?? container).focus();
     }
 

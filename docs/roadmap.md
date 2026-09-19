@@ -3019,6 +3019,56 @@ not a single "make it perfect" claim.
   both builds clean + a from-scratch clean-room clone/install/test/
   build/start cycle with a live `/api/health` check.
 
+- **Self-review (`code-review`, high effort) of the 3 remaining unreviewed
+  overlay panels (`GlobalSearchPanel.tsx`, `HistoryPanel.tsx`,
+  `BusinessTwinPanel.tsx`) pointed at their shared accessibility hook,
+  `useDialogFocusTrap.ts`, and found a real regression in the one thing
+  its own doc comment promises: "returns focus to whatever triggered the
+  panel once it closes."** The hook captured `previouslyFocused =
+  document.activeElement` *inside* its `useEffect`, but a passive effect
+  runs after React has already committed the DOM for that render — which
+  includes applying any `autoFocus` inside the newly-mounted dialog (only
+  `GlobalSearchPanel`'s search input has one). So by the time the effect
+  ran, `document.activeElement` was already that autoFocus'd input, not
+  the real trigger (the "🔍 Search" toolbar button) — closing the panel
+  called `.focus()` on the by-then-unmounted input (a no-op), leaving
+  focus stranded on `<body>` instead of back on the button, for the one
+  panel with autoFocus content. Fixed by capturing `previouslyFocused` in
+  a `useRef` initialized during the *render* phase (before this dialog's
+  own DOM exists at all), not inside the effect. A second, related,
+  currently-unreachable finding was fixed too: the fallback path
+  (`container.focus()` when a dialog has no focusable descendants at all)
+  silently no-ops without `tabIndex={-1}` on the container, per the DOM
+  spec — every current panel always renders a close button so this never
+  fires today, but the hook's own contract should hold for any future
+  dialog built on it regardless. A third finding (background content
+  isn't marked `aria-hidden`/`inert` while a panel is "modal", so a
+  screen-reader's virtual-cursor browse mode can still reach it) was left
+  open, honestly: real, but a materially bigger, more invasive change
+  (identifying and conditionally hiding every sibling of the active
+  overlay across `App.tsx`) than the surgical fix the first two findings
+  needed, so it wasn't folded into this round. No unit-testable surface
+  again (a focus-management React hook, no RTL in this project) — proven
+  live instead, and a genuine surprise turned up doing it: the first live
+  attempt (against `npm run dev`'s Vite server) showed the autoFocus
+  input immediately losing focus back to the trigger button the instant
+  the panel opened, which looked like the fix had made things *worse* --
+  investigated rather than assumed, and it was a React 18 `StrictMode`
+  dev-only artifact (this app wraps in `<React.StrictMode>`): a
+  passive effect's mount→cleanup→remount double-invoke simulation
+  triggered the hook's own restore-focus cleanup mid-mount, an artifact
+  that does not exist in a production build (`StrictMode`'s double-invoke
+  is stripped in production React). Rebuilding the real `apps/web`
+  production bundle and serving it from the real API's static-file
+  handler (`webDistDir` in `apps/api/src/server.ts`) reproduced a clean,
+  StrictMode-free result: pre-fix code showed the exact predicted bug
+  (autoFocus correctly lands on the input, but closing leaves focus on
+  `<body>`); the fix showed autoFocus still correct, and focus correctly
+  restored to the button on close. Full suite green (296 tests,
+  unchanged — a live-only fix) + `tsc -b` clean + both builds clean + a
+  from-scratch clean-room clone/install/test/build/start cycle with a
+  live `/api/health` check.
+
 ## Phase 3
 
 - Self-healing: production observability, automatic diagnosis and patch
