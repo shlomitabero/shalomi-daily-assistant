@@ -3521,6 +3521,60 @@ not a single "make it perfect" claim.
       since `requireAuth`'s own join already guarantees the user exists by
       the time that handler runs).
 
+- [x] **Password hashing blocked Node's single event loop for the
+      duration of every signup/login request.** This round tackles the
+      first of the two findings round 56 explicitly deferred (see above)
+      rather than rushing it in alongside a security fix.
+      `hashPassword`/`verifyPassword` called `scryptSync` directly —
+      Node has exactly one JS event loop, so every signup/login call
+      blocked that one thread for the full tens-of-milliseconds cost of
+      the hash before *any* other request, even a totally unrelated
+      `/api/projects` route, could be serviced. A burst of concurrent auth
+      attempts (legitimate traffic or a trivial DoS) would serialize
+      completely behind each other instead of the server handling them in
+      parallel. Fixed by switching to the async `crypto.scrypt` (via
+      `util.promisify`), which runs the actual hashing work on libuv's
+      threadpool instead of the main thread, keeping the event loop free
+      to service other requests while a hash computes. Propagated the
+      resulting `Promise` through both functions' signatures and their
+      three call sites in `routes/auth.ts`: signup, login, and the
+      module-level dummy-hash constant round 56 added to close the timing
+      side-channel (now a `Promise<string>` computed once at module load
+      and lazily awaited on first use, so every login after the first
+      reuses the already-resolved value with no extra cost). New test file
+      `apps/api/src/auth/password.test.ts`: correctness round-trips
+      (hash/verify matches, a wrong password fails, a malformed stored
+      hash returns `false` instead of throwing, two hashes of the same
+      password get different salts and both still verify), plus two
+      directly empirical regression tests for the actual bug — one starts
+      a `setInterval(2ms)` alongside a hash computation and asserts it
+      keeps ticking throughout (proving the event loop genuinely stayed
+      free, not just "the function returned a Promise"), the other runs
+      three hashes concurrently via `Promise.all` and asserts the total
+      wall time stays close to a single hash's time rather than roughly
+      3x as long (proving real parallelism via the threadpool, not
+      requests queued one after another behind one blocked thread).
+      Verified the measurement technique itself first with a standalone
+      `node -e` script before trusting it in the test suite: a comparable
+      `scryptSync` call scored exactly 0 event-loop ticks during its
+      run, against ~47 ticks for the async version — a stark, reliable
+      signal, not test noise. Proven against the pre-fix (`scryptSync`-
+      based) code via `git stash`: 3 of the 7 new tests failed exactly as
+      predicted (0 ticks measured during the blocking hash, and 3
+      concurrent hashes measured at 3.0x a single hash's time instead of
+      running in parallel). Also updated two stale comments this fix
+      obsoleted — `app.test.ts`'s round-56 timing-test doc comment and
+      the dummy-hash doc comment in `routes/auth.ts` — which still named
+      the now-removed `scryptSync`/`DUMMY_PASSWORD_HASH` identifiers.
+      Independently re-verified end-to-end with real `curl` requests
+      (signup, a correct-password login, and a wrong-password login) 
+      against a real built server booted in a clean-room worktree,
+      confirming the async refactor changed no observable behavior on
+      the compiled server binary. Full suite green (321 tests, up from
+      314 — `@forge/api` 98 → 105) + `tsc -b` clean + both builds clean +
+      a from-scratch clean-room worktree clone/install/test/build/start
+      cycle with a live `/api/health` check plus the curl checks above.
+
 ## Phase 3
 
 - Self-healing: production observability, automatic diagnosis and patch
