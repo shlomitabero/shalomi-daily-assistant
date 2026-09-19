@@ -19,11 +19,20 @@ import { recordDisplayLabel } from "./displayField.js";
  * dozen lines of pure formatting.
  */
 
+/**
+ * A value starting with =, +, -, @, or a tab/CR is prefixed with a leading
+ * single quote before the usual comma/quote/newline wrapping -- see the
+ * matching comment on entityFormatting.ts's own csvEscape (CSV/formula
+ * injection, CWE-1236): spreadsheet apps treat an unguarded cell like that
+ * as a formula, and a stored field can hold arbitrary text, not just
+ * values this app itself ever wrote.
+ */
 function csvEscape(value: string): string {
-  if (/[",\r\n]/.test(value)) {
-    return `"${value.replace(/"/g, '""')}"`;
+  const guarded = /^[=+\-@\t\r]/.test(value) ? `'${value}` : value;
+  if (/[",\r\n]/.test(guarded)) {
+    return `"${guarded.replace(/"/g, '""')}"`;
   }
-  return value;
+  return guarded;
 }
 
 /**

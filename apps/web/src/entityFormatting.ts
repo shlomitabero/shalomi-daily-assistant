@@ -287,12 +287,24 @@ export function relationDisplayLabel(
   return match ? recordDisplayLabel(targetEntity, match) : `#${value}`;
 }
 
-/** Wraps a CSV field in quotes (doubling any interior quotes) only when it contains a comma, quote, or newline. */
+/**
+ * Wraps a CSV field in quotes (doubling any interior quotes) only when it
+ * contains a comma, quote, or newline. A value starting with =, +, -, @,
+ * or a tab/CR is prefixed with a leading single quote first -- spreadsheet
+ * apps (Excel, Sheets, LibreOffice) interpret an unguarded cell like that
+ * as a formula, so without this a stored field value such as
+ * `=HYPERLINK("http://evil.example","click")` would execute when a real
+ * business owner opens their own exported data (CSV/formula injection,
+ * CWE-1236) -- a field can hold arbitrary text (an AI-generated spec's
+ * "notes" field, a WhatsApp-sourced message), not just values this app
+ * itself ever wrote.
+ */
 function csvEscape(value: string): string {
-  if (/[",\r\n]/.test(value)) {
-    return `"${value.replace(/"/g, '""')}"`;
+  const guarded = /^[=+\-@\t\r]/.test(value) ? `'${value}` : value;
+  if (/[",\r\n]/.test(guarded)) {
+    return `"${guarded.replace(/"/g, '""')}"`;
   }
-  return value;
+  return guarded;
 }
 
 /**

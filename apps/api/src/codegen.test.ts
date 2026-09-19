@@ -325,6 +325,11 @@ test("the exported EntityView renders a real CSV export button backed by RFC-418
   const entityViewJsx = files.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
   assert.match(entityViewJsx, /function recordsToCsv/);
   assert.match(entityViewJsx, /function csvEscape/);
+  // CSV/formula injection guard (CWE-1236): a value starting with =, +, -,
+  // or @ must be prefixed with a leading single quote before the usual
+  // comma/quote wrapping, mirroring the same fix in the live-preview app's
+  // own entityFormatting.ts and the generated server.js's backup endpoint.
+  assert.match(entityViewJsx, /\^\[=\+\\-@\\t\\r\]/);
   assert.match(entityViewJsx, /handleExportCsv/);
   assert.match(entityViewJsx, /csv-export-btn/);
   assert.match(entityViewJsx, /new Blob\(\["\\uFEFF" \+ csv\]/);
@@ -530,6 +535,16 @@ test("the generated server.js's /api/backup endpoint returns a real ZIP with one
       body: JSON.stringify({ name: "Dana Levi", status: "Won" }),
     });
     assert.equal(createCustomer.status, 201);
+    // A stored field can hold arbitrary text (an AI-generated spec's field,
+    // a WhatsApp-sourced message) -- not just values this app itself ever
+    // wrote -- so the generated backup endpoint's CSV must guard a value
+    // that would otherwise be interpreted as a spreadsheet formula when
+    // opened in Excel/Sheets/LibreOffice (CSV/formula injection, CWE-1236).
+    await fetch(`http://localhost:${port}/api/Customer`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ name: "=cmd|' /C calc'!A1", status: "New" }),
+    });
     await fetch(`http://localhost:${port}/api/Service`, {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -551,6 +566,11 @@ test("the generated server.js's /api/backup endpoint returns a real ZIP with one
     assert.match(customerCsv, /^﻿/, "expected a UTF-8 BOM so Excel opens Hebrew text correctly");
     assert.match(customerCsv, /Dana Levi/);
     assert.match(customerCsv, /הצליח/, "expected the enum's translated label, not the raw stored value 'Won'");
+    assert.match(
+      customerCsv,
+      /'=cmd\|' \/C calc'!A1/,
+      "the formula-like name must be guarded with a leading single quote, not left as a live formula",
+    );
 
     const serviceCsv = readFileSync(path.join(extractDir, "Service.csv"), "utf8");
     assert.match(serviceCsv, /Haircut/);

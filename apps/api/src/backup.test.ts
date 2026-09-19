@@ -117,3 +117,18 @@ test("a value containing a comma or quote is correctly CSV-escaped", () => {
   const lines = customerCsv.split("\r\n");
   assert.equal(lines[1], '"Says ""hi"", bye",חדש');
 });
+
+test("a value that would be interpreted as a spreadsheet formula is guarded with a leading single quote (CSV/formula injection)", () => {
+  // A stored "name" field can hold arbitrary text -- not just values this
+  // app itself ever wrote -- and Excel/Sheets/LibreOffice treat an
+  // unguarded cell starting with =, +, -, or @ as a formula to evaluate.
+  const db = openDatabase(":memory:");
+  applyMigrations(db, project.id, project.spec);
+  const customer = project.spec.entities[0];
+  insertRecord(db, project.id, customer, { name: "=cmd|' /C calc'!A1", status: "New" });
+
+  const entries = generateBackupZipEntries(db, project);
+  const customerCsv = entries.find((e) => e.path === "Customer.csv")!.content.replace(/^﻿/, "");
+  const lines = customerCsv.split("\r\n");
+  assert.equal(lines[1], "'=cmd|' /C calc'!A1,חדש");
+});

@@ -2920,6 +2920,70 @@ not a single "make it perfect" claim.
   clean + a from-scratch clean-room clone/install/test/build/start cycle
   with a live `/api/health` check.
 
+- **Self-review (via `code-review`, high effort) of `apps/api/src/twin.ts`
+  and `apps/api/src/backup.ts`, the two remaining server files this
+  window hadn't looked at directly, found a real security gap in every
+  CSV-producing code path in the app.** `twin.ts` came back clean — its
+  last substantive fix (`fc148df`/`0ea7fad`) predates this window and
+  still holds, confirmed with zero new findings. `backup.ts` surfaced a
+  real one: `csvEscape` only quoted a cell containing a comma, quote, or
+  newline, never neutralizing a leading `=`, `+`, `-`, or `@` — classic
+  CSV/formula injection (CWE-1236). A stored field can hold arbitrary
+  text (an AI-generated spec's "notes" field, a WhatsApp-sourced
+  message), and Excel/Sheets/LibreOffice execute an unguarded cell like
+  that as a formula the moment a real business owner opens their own
+  exported data. This exact `csvEscape` is deliberately duplicated 4
+  times across the codebase (the established pattern this window kept
+  re-discovering) — `apps/api/src/backup.ts`, `apps/web/src/
+  entityFormatting.ts` (live-preview per-entity CSV export), and *two*
+  copies inside `apps/api/src/codegen.ts` (the exported app's own
+  per-entity export button and its own "Backup All Data" endpoint) — so
+  the same fix was applied to all 4: a value starting with `=`, `+`, `-`,
+  `@`, or a tab/CR is now prefixed with a leading single quote before the
+  existing comma/quote/newline wrapping, which spreadsheet apps treat as
+  "force text" rather than executing. Confirmed against pre-fix code via
+  `git stash`: new unit tests in `entityFormatting.test.ts` and
+  `backup.test.ts` failed with the exact unguarded value; the existing
+  real end-to-end `codegen.test.ts` test (which boots the actual
+  generated `server.js` and hits its real `/api/backup` endpoint over
+  HTTP) was extended to insert a formula-like name and failed the same
+  way pre-fix, then passed after the fix — real proof for the generated
+  app's server-side copy, not just a source-string check; a source-string
+  assertion covers the client-side `EntityView.jsx` copy the same way
+  earlier codegen fixes in this window did. First mistake caught before
+  committing: an initial test value containing both a leading `=` and an
+  internal comma/quote produced the wrong expected string (the
+  formula-guard and the comma/quote-wrapping compose — the guard is
+  applied first, then the result gets quoted like any other value with a
+  comma/quote) — recomputed with Node directly rather than guessing, and
+  fixed the expectations, including one test that explicitly exercises
+  the composition case. Verified LIVE beyond the test suite too: booted
+  real dev servers and built a real project. First attempt to add the
+  formula-injecting record through the actual Add-record form appeared to
+  fail (the DOM showed the typed value but the outgoing POST body was
+  empty) -- before writing that up as a newly-found product bug, checked
+  it rather than trusted the first impression: the preview screen has
+  *two* `<form>` elements (the record-add form and a separate "Improve
+  the app" refine form), and the test script's own generic
+  `input[type=text]`/`button:has-text("Add")` locators had matched the
+  wrong one. A corrected, scoped locator (`form.record-form ...`)
+  confirmed the real form works exactly as intended -- no product bug, a
+  test-script mistake caught before it was recorded as one. Verification
+  then proceeded via a direct authenticated `fetch` to the real live
+  server (the same request the (working) form sends) and downloading the
+  real "Backup All Data" ZIP from the real live server over HTTP, decoded
+  with Python's `zipfile` (spec-strict): the real CSV inside contains the
+  guarded value (`'=cmd|' /C calc'!A1`) exactly as the fix intends. Full
+  suite green (296 tests, up from 294 — api package went 94→95, web
+  package went 75→76) + both builds clean + a from-scratch clean-room
+  clone/install/test/build/start cycle with a live `/api/health` check.
+  Left open, honestly, for a future round: a second, separate finding
+  from the same review — two entities sharing a name (the spec schema
+  has no uniqueness constraint on `entities[].name`) would silently
+  collide into the same ZIP path — is real but lower-severity and not yet
+  confirmed reachable through any current spec-generation path, so it
+  wasn't rushed into this round's fix.
+
 ## Phase 3
 
 - Self-healing: production observability, automatic diagnosis and patch

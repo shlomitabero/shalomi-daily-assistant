@@ -394,11 +394,16 @@ function buildZip(entries) {
 // values shown as their translated label) -- duplicated here rather than
 // imported, the same pattern every other formatting helper in this
 // exported app already follows.
+// A value starting with =, +, -, @, or a tab/CR is prefixed with a leading
+// single quote before the usual comma/quote/newline wrapping -- spreadsheet
+// apps treat an unguarded cell like that as a formula (CSV/formula
+// injection, CWE-1236), and a stored field can hold arbitrary text.
 function csvEscape(value) {
-  if (/[",\\r\\n]/.test(value)) {
-    return \`"\${value.replace(/"/g, '""')}"\`;
+  const guarded = /^[=+\\-@\\t\\r]/.test(value) ? \`'\${value}\` : value;
+  if (/[",\\r\\n]/.test(guarded)) {
+    return \`"\${guarded.replace(/"/g, '""')}"\`;
   }
-  return value;
+  return guarded;
 }
 
 const BACKUP_DISPLAY_FIELD_HINTS = ["name", "title"];
@@ -674,12 +679,16 @@ function compareValues(a, b) {
 }
 
 // Wraps a CSV field in quotes (doubling any interior quotes) only when it
-// contains a comma, quote, or newline.
+// contains a comma, quote, or newline. A value starting with =, +, -, @, or
+// a tab/CR is prefixed with a leading single quote first -- spreadsheet
+// apps treat an unguarded cell like that as a formula (CSV/formula
+// injection, CWE-1236), and a stored field can hold arbitrary text.
 function csvEscape(value) {
-  if (/[",\\r\\n]/.test(value)) {
-    return \`"\${value.replace(/"/g, '""')}"\`;
+  const guarded = /^[=+\\-@\\t\\r]/.test(value) ? \`'\${value}\` : value;
+  if (/[",\\r\\n]/.test(guarded)) {
+    return \`"\${guarded.replace(/"/g, '""')}"\`;
   }
-  return value;
+  return guarded;
 }
 
 // Renders a field's value the way a human reading a spreadsheet would

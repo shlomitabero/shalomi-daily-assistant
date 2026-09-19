@@ -240,6 +240,26 @@ test("recordsToCsv quotes a value containing a comma, quote, or newline, and dou
   assert.equal(csv, 'Notes\r\n"Says ""hi"", then leaves"');
 });
 
+test("recordsToCsv guards a value that would be interpreted as a spreadsheet formula (CSV/formula injection)", () => {
+  // A text field can hold anything a business owner or a customer typed --
+  // not just values this app itself ever wrote -- and Excel/Sheets/
+  // LibreOffice treat an unguarded cell starting with =, +, -, @, or a
+  // tab/CR as a formula to evaluate, not literal text.
+  const fields: Field[] = [{ name: "notes", label: "Notes", type: "text", required: false }];
+  assert.equal(recordsToCsv(fields, [{ notes: "=cmd|' /C calc'!A1" }], "en"), "Notes\r\n'=cmd|' /C calc'!A1");
+  assert.equal(recordsToCsv(fields, [{ notes: "+1+1" }], "en"), "Notes\r\n'+1+1");
+  assert.equal(recordsToCsv(fields, [{ notes: "-1" }], "en"), "Notes\r\n'-1");
+  assert.equal(recordsToCsv(fields, [{ notes: "@SUM(A1:A9)" }], "en"), "Notes\r\n'@SUM(A1:A9)");
+  // A value that doesn't start with one of those characters is untouched.
+  assert.equal(recordsToCsv(fields, [{ notes: "a=b" }], "en"), "Notes\r\na=b");
+  // The guard composes correctly with the existing comma/quote wrapping --
+  // the leading "'" is prepended first, then the whole (now longer) value
+  // is quoted/escaped exactly as any other value containing a comma or
+  // quote would be.
+  const withComma = recordsToCsv(fields, [{ notes: '=HYPERLINK("http://evil.example","click")' }], "en");
+  assert.equal(withComma, 'Notes\r\n"\'=HYPERLINK(""http://evil.example"",""click"")"');
+});
+
 test("recordsToCsv renders an empty/missing value as an empty CSV field, never the string \"null\" or \"undefined\"", () => {
   const fields: Field[] = [{ name: "notes", label: "Notes", type: "text", required: false }];
   const csv = recordsToCsv(fields, [{ notes: null }, { notes: undefined }, { notes: "" }] as never, "en");
