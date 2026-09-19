@@ -3405,6 +3405,70 @@ not a single "make it perfect" claim.
       worktree clone/install/test/build/start cycle with a live
       `/api/health` check plus the two curl checks above.
 
+- [x] **All three Anthropic-backed callers in `packages/spec-engine` had no
+      network timeout — a stalled connection would hang them forever.**
+      Self-review (`code-review` skill, high effort) of
+      `packages/spec-engine/src/promptEnhancer.ts` found
+      `AnthropicPromptEnhancer.enhance()` calling `fetchImpl(...)` directly
+      with no timeout. Checking the same code shape elsewhere found it
+      copied verbatim into `AnthropicSpecProvider.generate()`
+      (`anthropic.ts`) and `requestSpecFix` (`debug.ts`) — all three real
+      places this package talks to `api.anthropic.com` shared the identical
+      gap. If Anthropic's API accepts the TCP connection but never responds
+      (a network stall or an upstream hang, not an HTTP error — those were
+      already handled), the raw `fetchImpl(...)` call never resolves or
+      rejects. For `AnthropicSpecProvider` and `AnthropicPromptEnhancer`
+      this silently defeats the fallback-to-heuristic design
+      `enhancePrompt`'s own comment documents ("if the real model call
+      fails at runtime, fall back to the deterministic heuristic enhancer
+      instead of surfacing a raw 500") — a hung call never triggers the
+      `catch` block that fallback depends on, so the whole request just
+      hangs instead of degrading gracefully. For `requestSpecFix` (the
+      Debug Agent pipeline step, which has no offline fallback at all,
+      unlike the other two) a hang would freeze the entire multi-agent
+      build pipeline indefinitely with no way out — worse than either of
+      the other two cases. Fixed by adding a shared `fetchAnthropic()`
+      helper (new file `anthropicFetch.ts`) that wraps any `fetchImpl`
+      call with a real `AbortController`-based timeout (default 60s,
+      injectable per-call via a new `timeoutMs` option added to all three
+      callers' existing options interfaces), and wiring all three call
+      sites to use it instead of calling `fetchImpl` directly. Also fixed
+      a small, unrelated dead-code issue the same review flagged in
+      `promptEnhancer.ts`: a field-separator ternary
+      (`isHebrew ? ", " : ", "`) whose two branches were byte-for-byte
+      identical, which reads as if a language-specific choice had
+      deliberately been made when none had — simplified to a plain
+      `", "`. New tests: `anthropicFetch.test.ts` covers the shared helper
+      directly (resolves normally when `fetchImpl` responds before the
+      timeout; rejects with a real, verified abort once the timeout
+      elapses, checked by asserting the injected `fetchImpl` actually saw
+      its `AbortSignal` fire, not just that the promise rejected; passes a
+      genuine `fetchImpl` rejection like a DNS failure through unchanged
+      rather than misreporting it as a timeout). One wiring test added to
+      each of `anthropic.test.ts`, `debug.test.ts`, and
+      `promptEnhancer.test.ts` confirms the timeout is actually reached
+      through each real caller, using a `fetchImpl` that only resolves
+      once its `AbortSignal` fires (not a `fetchImpl` that never resolves
+      at all regardless of the signal, which would just hang the test
+      itself instead of proving anything) — plus an end-to-end test that
+      `enhancePrompt()` still falls back to the heuristic enhancer when
+      the Anthropic call times out, not just on an explicit HTTP error
+      response, closing the actual gap in the documented fallback design.
+      All 4 new timeout tests proven against the pre-fix code via
+      `git stash`: run against a live 20-second wall-clock timeout, they
+      hung indefinitely and were cancelled by the test runner as "still
+      pending" rather than failing cleanly with an assertion error — which
+      is exactly the bug this fixes, not a normal test failure. Also
+      manually verified end-to-end with a real `curl` request to
+      `POST /api/ideas/enhance` against a real built server booted in the
+      clean-room worktree (the heuristic path, since no
+      `ANTHROPIC_API_KEY` is configured in this environment), confirming
+      the refactored request/response plumbing still works correctly.
+      Full suite green (313 tests, up from 306 — `@forge/spec-engine`
+      71 → 78) + `tsc -b` clean + both builds clean + a from-scratch
+      clean-room worktree clone/install/test/build/start cycle with a
+      live `/api/health` check.
+
 ## Phase 3
 
 - Self-healing: production observability, automatic diagnosis and patch
