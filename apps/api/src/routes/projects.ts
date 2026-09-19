@@ -169,9 +169,9 @@ export function createProjectsRouter(db: ForgeDatabase, provider: SpecProvider |
 
       // Free-text answers (not just the suggested quick-pick options) and a
       // free-standing request (not tied to any specific question at all)
-      // both feed straight back into spec generation, exactly like Refine
-      // does for an already-built project — so this actually changes the
-      // spec that gets built, instead of only highlighting a chip in the UI.
+      // both feed straight back into spec generation -- so this actually
+      // changes the spec that will get built, instead of only highlighting
+      // a chip in the UI.
       const sections: string[] = [];
       if (entries.length > 0) {
         const answersText = entries.map(([question, answer]) => `- ${question}: ${answer}`).join("\n");
@@ -183,6 +183,21 @@ export function createProjectsRouter(db: ForgeDatabase, provider: SpecProvider |
       if (sections.length === 0) {
         res.json({ project });
         return;
+      }
+      // Unlike /refine, this route only calls updateProjectSpec directly --
+      // it never runs the build pipeline, so it never migrates the SQL
+      // schema to match whatever new entities/fields the regenerated spec
+      // adds. That's fine before the first build (there's no schema yet to
+      // fall out of sync with), but doing this on an already-built project
+      // would silently desync project.spec from the real database: the spec
+      // would claim an entity exists that has no table, and the very next
+      // read/write against it throws an uncaught "no such table" SQL error
+      // -- confirmed empirically, not just reasoned about. Checked only
+      // here, after the no-op early-return above, so a harmless call with
+      // no actual answers/request still succeeds post-build; /refine is the
+      // route that correctly re-runs the pipeline for a built project.
+      if (project.status === "built") {
+        throw new HttpError(409, "This project is already built; use refine to make further changes", "ALREADY_BUILT");
       }
       const combinedDescription = `${project.description}\n\n${sections.join("\n\n")}`;
       const { spec } = await generateSpec(combinedDescription, provider);

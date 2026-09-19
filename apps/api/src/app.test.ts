@@ -461,6 +461,41 @@ test("POST /build a second time on an already-built project is rejected, instead
   });
 });
 
+test("POST /answers on an already-built project is rejected, instead of silently desyncing the stored spec from the actual built schema", async () => {
+  await withServer(async (baseUrl) => {
+    const token = await signup(baseUrl);
+    const createRes = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ description: "A CRM with customers and deals." }),
+    });
+    const { project } = (await createRes.json()) as { project: { id: string } };
+
+    const buildRes = await fetch(`${baseUrl}/api/projects/${project.id}/build`, {
+      method: "POST",
+      headers: authHeaders(token),
+    });
+    assert.equal(buildRes.status, 200);
+    await collectSSE(buildRes);
+
+    const answersRes = await fetch(`${baseUrl}/api/projects/${project.id}/answers`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ additionalRequest: "Also track invoices for customers." }),
+    });
+    assert.equal(answersRes.status, 409);
+    assert.equal(((await answersRes.json()) as { code?: string }).code, "ALREADY_BUILT");
+
+    // The stored spec must be completely untouched by the rejected call --
+    // no "Invoice" entity that has no real table behind it.
+    const getRes = await fetch(`${baseUrl}/api/projects/${project.id}`, { headers: authHeaders(token) });
+    const { project: unchangedProject } = (await getRes.json()) as {
+      project: { spec: { entities: { name: string }[] } };
+    };
+    assert.deepEqual(unchangedProject.spec.entities.map((e) => e.name).sort(), ["Customer", "Deal"]);
+  });
+});
+
 test("a second user cannot see or act on the first user's project", async () => {
   await withServer(async (baseUrl) => {
     const ownerToken = await signup(baseUrl, "owner@example.com");
