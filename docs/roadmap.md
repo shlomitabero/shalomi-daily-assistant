@@ -3962,6 +3962,35 @@ not a single "make it perfect" claim.
       with the spec confirmed still listing only the entities that were
       actually built.
 
+- [x] **`PATCH`/`DELETE .../entities/:entityName/:recordId` leaked a raw
+      `NaN` into a confusing 404 instead of cleanly rejecting a malformed
+      record id.** Continued this round's own "missing symmetric
+      precondition guard" investigation into `checkpoints/:id/restore`,
+      the full WhatsApp connect/disconnect/send lifecycle (including
+      disconnect-before-ever-connecting), and the entity CRUD routes —
+      all confirmed correct and already consistently guarded (verified
+      with a real running server via a script, not just by reading the
+      code), so that specific pattern is now exhausted for this file.
+      While checking the entity routes, found a smaller but still real
+      gap: both routes do `Number(req.params.recordId)` with no
+      validation. A live probe against a real built project confirmed
+      `Number("not-a-number")` is `NaN`, and better-sqlite3 binds `NaN`
+      as a parameter without throwing — so instead of failing fast, the
+      request silently proceeded to a `404` whose message read
+      `"Record NaN not found in Customer"`, leaking the raw failed
+      coercion into a message meant for end users. Fixed by adding
+      `parseRecordId()`, which rejects anything that isn't a plain
+      non-negative integer with a clean `400 VALIDATION_ERROR` before it
+      ever reaches the database layer. Extended the existing
+      acceptance test in `app.test.ts` (rather than adding new `test()`
+      blocks) with assertions that both routes now return
+      `400`/`VALIDATION_ERROR` for a non-numeric id and that the error
+      message never contains `"NaN"`. Proven to catch a real regression
+      via `git stash` on `routes/projects.ts` alone (pre-fix: asserted
+      `400`, actually got `404`). Full suite green (336 tests, unchanged
+      test count since this extended an existing test rather than adding
+      new ones) + both builds clean.
+
 ## Phase 3
 
 - Self-healing: production observability, automatic diagnosis and patch
