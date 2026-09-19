@@ -3919,6 +3919,49 @@ not a single "make it perfect" claim.
       ALREADY_BUILT`, and the checkpoints list containing exactly one
       `"Initial build"` entry.
 
+- [x] **`POST /answers` on an already-built project silently desynced the
+      stored spec from the real database, and the very next read against
+      the "new" entity it claimed to add threw an uncaught SQL error as a
+      raw `500` — a genuine crash, not the cosmetic duplicate-checkpoint
+      issue round 65 found next door.** Direct follow-up on this round's
+      own suggested lead: check other route pairs for a missing
+      precondition guard symmetric to a sibling route's, the same pattern
+      that caught `/build`. `/answers` has no such guard at all. Unlike
+      `/build` and `/refine`, it never calls the build pipeline — it only
+      calls `updateProjectSpec` directly, so it never migrates the SQL
+      schema to match whatever new entities or fields the regenerated
+      spec adds. That's harmless before the first build (no schema yet to
+      fall out of sync with), but confirmed empirically, not just
+      reasoned about, that it's a real crash afterward: a script built a
+      real project through the real HTTP API, called `/answers` with a
+      request that added an "Invoice" entity to the *stored spec*, then
+      called `GET .../entities/Invoice` — which threw an uncaught
+      `no such table` SQLite error from deep inside `listRecords`,
+      surfacing to the client as a bare `500 INTERNAL_ERROR` instead of
+      any clean `HttpError`. Fixed by adding the same `409 ALREADY_BUILT`
+      guard `/build` now has, pointing the caller at `/refine` instead —
+      but placed carefully *after* the route's own
+      no-real-answers-submitted no-op early-return, not before it, so a
+      harmless post-build call that would change nothing still succeeds
+      rather than being needlessly rejected (an existing test already
+      covered exactly that no-op case and would have broken with the
+      guard placed too early — caught by actually running it, not
+      assumed). Also corrected the route's own doc comment, which
+      claimed to behave "exactly like Refine does for an already-built
+      project" — it doesn't: Refine re-runs the whole pipeline, migration
+      included; this route never did. New E2E test in `app.test.ts`:
+      builds a project, confirms `/answers` now `409`s with
+      `ALREADY_BUILT`, and confirms the stored spec is completely
+      unchanged (no ghost `Invoice` entity). Proven to catch a real
+      regression via `git stash` on `routes/projects.ts` alone. Full
+      suite green (336 tests, up from 335 — `@forge/api` 109 → 110) +
+      both builds clean + a from-scratch clean-room worktree
+      clone/install/test/build/start cycle, including real `curl`
+      requests against the built server reproducing the exact crash
+      scenario found empirically — now a clean `409` instead of a `500`,
+      with the spec confirmed still listing only the entities that were
+      actually built.
+
 ## Phase 3
 
 - Self-healing: production observability, automatic diagnosis and patch
