@@ -27,6 +27,32 @@ const NEGATIVE_WORDS = [
   "declined",
 ];
 
+const DATE_FORMAT = /^(\d{4})-(\d{2})-(\d{2})$/;
+
+/**
+ * Mirrors packages/db/src/repository.ts's identical check on the server
+ * side: every date field's canonical stored representation is exactly the
+ * YYYY-MM-DD shape an <input type="date"> produces, so this accepts that
+ * shape and rejects anything else, including a syntactically-shaped but
+ * calendrically impossible date like "2024-13-45" (the Date constructor
+ * silently rolls an out-of-range month/day over into a *different*, wrong
+ * date instead of rejecting it, so the parsed year/month/day are checked
+ * back against what was typed). Used by buildImportRecords below to catch
+ * a bad date column immediately with a clear per-row message, instead of
+ * only finding out from the server's own generic rejection after every
+ * row has already been POSTed.
+ */
+function isValidDateString(value: string): boolean {
+  const match = DATE_FORMAT.exec(value);
+  if (!match) return false;
+  const [, yearStr, monthStr, dayStr] = match;
+  const year = Number(yearStr);
+  const month = Number(monthStr);
+  const day = Number(dayStr);
+  const parsed = new Date(Date.UTC(year, month - 1, day));
+  return parsed.getUTCFullYear() === year && parsed.getUTCMonth() === month - 1 && parsed.getUTCDate() === day;
+}
+
 export type BadgeTone = "positive" | "negative" | "neutral";
 
 /**
@@ -526,6 +552,12 @@ export function buildImportRecords(fields: Field[], rows: string[][]): ImportRes
           break;
         }
         record[field.name] = resolved;
+      } else if (field.type === "date") {
+        if (!isValidDateString(raw)) {
+          rowError = `Row ${rowIndex + 1}: "${raw}" isn't a valid date (expected YYYY-MM-DD) for field "${field.label ?? field.name}".`;
+          break;
+        }
+        record[field.name] = raw;
       } else {
         record[field.name] = raw;
       }

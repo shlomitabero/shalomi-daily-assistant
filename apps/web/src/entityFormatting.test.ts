@@ -483,6 +483,40 @@ test("buildImportRecords reports an unparseable number and an invalid enum optio
   assert.match(result.errors[1], /Row 2.*Status/);
 });
 
+test("buildImportRecords rejects a date column value that isn't a real, well-formed calendar date", () => {
+  const fields: Field[] = [
+    { name: "name", type: "text", required: true },
+    { name: "dueDate", label: "Due Date", type: "date", required: true },
+  ];
+  const rows = [
+    ["name", "Due Date"],
+    ["Dana", "not-a-real-date"],
+    ["Yossi", "2024/01/15"],
+    ["Noa", "2024-02-30"],
+    ["Tal", "2024-01-15"],
+  ];
+  const result = buildImportRecords(fields, rows);
+  assert.deepEqual(result.records, [{ name: "Tal", dueDate: "2024-01-15" }]);
+  assert.equal(result.errors.length, 3);
+  for (const error of result.errors) {
+    assert.match(error, /Due Date/);
+  }
+});
+
+test("buildImportRecords leaves an optional, unset date field null rather than rejecting an empty cell", () => {
+  const fields: Field[] = [
+    { name: "name", type: "text", required: true },
+    { name: "followUp", label: "Follow-up", type: "date", required: false },
+  ];
+  const rows = [
+    ["name", "Follow-up"],
+    ["Dana", ""],
+  ];
+  const result = buildImportRecords(fields, rows);
+  assert.deepEqual(result.errors, []);
+  assert.deepEqual(result.records, [{ name: "Dana", followUp: null }]);
+});
+
 test("buildImportRecords skips fully blank rows silently instead of treating them as errors", () => {
   const fields: Field[] = [{ name: "name", type: "text", required: true }];
   const rows = [["name"], ["Dana"], [""], ["Yossi"]];
