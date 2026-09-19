@@ -3885,6 +3885,40 @@ not a single "make it perfect" claim.
       cleanly rejects a garbage one (`400`) — not a simulation of the
       export, the literal file a real user would download and run.
 
+- [x] **Full code-review pass on `apps/api/src/pipeline.ts`** (the
+      build/refine agent pipeline) **found the file itself solid — but
+      its caller, the `/build` route, had no precondition guard at all**,
+      unlike `/refine` right below it. `pipeline.ts`'s own logic held up
+      to close reading: the seed step already guards against
+      double-seeding via an explicit "is this table actually still
+      empty" check (not just "is it new per this diff"), and
+      `diffAndMigrate`'s own `IF NOT EXISTS`-based idempotency (rounds
+      59-60's territory) means calling the pipeline twice doesn't corrupt
+      schema or data. But `POST /projects/:id/build` had no equivalent to
+      `/refine`'s own `if (project.status !== "built") throw 409` guard.
+      Confirmed the gap empirically end-to-end, not just by reading the
+      code: built a real project through the real HTTP API, then called
+      `/build` on it a second time — it "succeeded" (`200`) both times,
+      and the project ended up with two Time Machine checkpoints both
+      labeled "Initial build", with no way to tell them apart or know the
+      second one was a redundant re-run rather than a genuine second
+      initial build. Fixed by adding the same style of guard `/refine`
+      already has: `/build` now rejects with `409 ALREADY_BUILT` once a
+      project's status is `"built"`, pointing the caller at `/refine` for
+      further changes — symmetric with `/refine`'s existing
+      `409 BUILD_REQUIRED` for the opposite precondition. New E2E test in
+      `app.test.ts`: builds a project, confirms a second `/build` call
+      `409`s with `ALREADY_BUILT`, and confirms exactly one
+      "Initial build" checkpoint exists afterward. Proven to catch a real
+      regression via `git stash` on `routes/projects.ts` alone. Full
+      suite green (335 tests, up from 334 — `@forge/api` 108 → 109) +
+      both builds clean + a from-scratch clean-room worktree
+      clone/install/test/build/start cycle, including real `curl`
+      requests against the built server reproducing the exact scenario
+      found empirically: first build `200`, second build `409
+      ALREADY_BUILT`, and the checkpoints list containing exactly one
+      `"Initial build"` entry.
+
 ## Phase 3
 
 - Self-healing: production observability, automatic diagnosis and patch
