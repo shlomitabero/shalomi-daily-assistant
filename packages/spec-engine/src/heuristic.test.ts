@@ -55,6 +55,35 @@ test("asks about payments when billing entities are implied", async () => {
   assert.ok(paymentQuestion!.options.includes("Stripe"));
 });
 
+test("asks about payments (recommending Stripe) for a donation-only description, even though it names none of PAYMENT_KEYWORDS", async () => {
+  // "donation"/"donor"/"nonprofit"/"fundraising campaign" match the
+  // Donation entity but share no substring with "payment"/"billing"/
+  // "invoice"/"checkout"/"stripe"/"subscription" -- accepting donations is
+  // plainly accepting payments, so recommending "No payments" here would be
+  // actively wrong, not just an incomplete guess.
+  const provider = new HeuristicSpecProvider();
+  const spec = await provider.generate(
+    "A donation tracking app for a small nonprofit, with donor records and fundraising campaigns.",
+  );
+  assert.deepEqual(spec.entities.map((e) => e.name), ["Donation"]);
+  const paymentQuestion = spec.openQuestions.find((q) => q.question.toLowerCase().includes("payment"));
+  assert.ok(paymentQuestion);
+  assert.equal(paymentQuestion!.recommendation, "Stripe");
+});
+
+test("asks about payments for a membership/subscription description phrased without the word 'subscription' or 'billing'", async () => {
+  // "member management" matches the Subscription entity but contains
+  // neither "subscription" nor any other PAYMENT_KEYWORDS substring, so a
+  // membership-fee business would otherwise get the same wrong "No
+  // payments" recommendation as the donation case above.
+  const provider = new HeuristicSpecProvider();
+  const spec = await provider.generate("A member management app for our gym, tracking each member and their plan.");
+  assert.deepEqual(spec.entities.map((e) => e.name), ["Subscription"]);
+  const paymentQuestion = spec.openQuestions.find((q) => q.question.toLowerCase().includes("payment"));
+  assert.ok(paymentQuestion);
+  assert.equal(paymentQuestion!.recommendation, "Stripe");
+});
+
 test("detects Hebrew input and returns Hebrew labels while keeping ASCII names", async () => {
   const provider = new HeuristicSpecProvider();
   const spec = await provider.generate(

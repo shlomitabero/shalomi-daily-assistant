@@ -17,6 +17,24 @@ const PAYMENT_KEYWORDS = [
   "תשלום", "תשלומים", "חשבונית", "חיוב", "מנוי",
 ];
 
+/**
+ * Entities whose whole purpose is receiving money, so their presence alone
+ * implies "yes, this app needs to accept payments" even when the
+ * description's own wording never hits PAYMENT_KEYWORDS -- e.g. "a donation
+ * tracker for our nonprofit, with donor records and fundraising campaigns"
+ * matches only the Donation entity and contains none of "payment"/
+ * "billing"/etc., yet accepting donations plainly means accepting payments.
+ * Same reasoning for Subscription ("a member management app with membership
+ * plans" matches Subscription via "member management"/"membership plan",
+ * neither of which contains "subscription" or "billing" as a substring).
+ * Kept as an explicit entity-name list rather than only expanding
+ * PAYMENT_KEYWORDS, since new payment-flavored keyword phrasing for these
+ * entities will keep getting added over time (see domainEntities.ts) and a
+ * keyword-only check would need updating in lockstep forever; checking the
+ * entity itself is the one place this can't silently drift out of sync.
+ */
+const BILLING_ENTITY_NAMES = new Set(["Invoice", "Order", "Donation", "Subscription"]);
+
 interface HebrewLabels {
   labelHe: string;
   descriptionHe: string;
@@ -103,7 +121,7 @@ function buildScreens(entities: Entity[]): Screen[] {
 function buildOpenQuestions(text: string, entities: Entity[], isHebrew: boolean): OpenQuestion[] {
   const lower = text.toLowerCase();
   const mentionsPayments = PAYMENT_KEYWORDS.some((kw) => lower.includes(kw));
-  const hasBillingEntity = entities.some((e) => e.name === "Invoice" || e.name === "Order");
+  const hasBillingEntity = entities.some((e) => BILLING_ENTITY_NAMES.has(e.name));
   const needsPayments = mentionsPayments || hasBillingEntity;
 
   if (isHebrew) {
