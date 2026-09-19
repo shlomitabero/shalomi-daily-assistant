@@ -206,6 +206,35 @@ test("diffAndMigrate still reports a column as a real change on a retry, even th
   );
 });
 
+test("two entities whose names collide when compared case-insensitively silently share one SQLite table instead of erroring -- this is why @forge/shared's ProductSpecSchema rejects that spec before it ever reaches this file", () => {
+  // SQLite compares identifiers case-insensitively for ASCII, even when
+  // double-quoted, so "entity_proj1_Order" and "entity_proj1_order" name
+  // the exact same table to SQLite. tableNameFor doesn't normalize case
+  // (by design -- it only strips unsafe characters), so this file has no
+  // way to tell the two apart on its own; the real fix is upstream, in
+  // ProductSpecSchema's entity-name-collision refine, which stops such a
+  // spec from ever reaching applyMigrations/diffAndMigrate in the first
+  // place. This test documents the actual mechanism that guard prevents.
+  const caseCollidingSpec: ProductSpec = {
+    ...spec,
+    entities: [
+      { name: "Order", fields: [{ name: "total", type: "number", required: true }] },
+      { name: "order", fields: [{ name: "status", type: "text", required: false }] },
+    ],
+  };
+  const db = openDatabase(":memory:");
+  applyMigrations(db, "proj1", caseCollidingSpec);
+
+  const tables = db
+    .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name != 'sqlite_sequence' ORDER BY name")
+    .all() as { name: string }[];
+  // Only ONE table exists -- the second CREATE TABLE IF NOT EXISTS silently
+  // no-op'd because SQLite already considered the name taken. A real
+  // "order" entity would never get a "status" column: every write meant
+  // for it would actually hit the "Order" table's "total" column instead.
+  assert.deepEqual(tables.map((t) => t.name), ["entity_proj1_Order"]);
+});
+
 test("generateCreateTableStatements quotes identifiers so a field named after a SQL reserved keyword doesn't break the statement", () => {
   // Table names are always safe (tableNameFor prefixes with
   // "entity_<projectId>_", so the bare identifier can never literally be a

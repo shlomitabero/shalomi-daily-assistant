@@ -98,6 +98,55 @@ test("AnthropicSpecProvider rejects a field named 'id' or 'createdAt' (both are 
   await assert.rejects(() => provider.generate("a tiny CRM"), /collides with a built-in column/);
 });
 
+test("AnthropicSpecProvider rejects two entities whose names collide when compared case-insensitively (SQLite table names are case-insensitive, so 'Order' and 'order' would silently share one table)", async () => {
+  const fakeSpec = {
+    summary: "A tiny logistics app",
+    personas: [],
+    roles: ["Admin"],
+    entities: [
+      { name: "Order", fields: [{ name: "total", type: "number", required: true }] },
+      { name: "order", fields: [{ name: "status", type: "text", required: false }] },
+    ],
+    screens: [],
+    assumptions: [],
+    openQuestions: [],
+  };
+  const fakeFetch = (async () =>
+    new Response(
+      JSON.stringify({ content: [{ type: "text", text: JSON.stringify(fakeSpec) }] }),
+      { status: 200 },
+    )) as unknown as typeof fetch;
+
+  const provider = new AnthropicSpecProvider({ apiKey: "test-key", fetchImpl: fakeFetch });
+  await assert.rejects(() => provider.generate("a tiny logistics app"), /collide when compared case-insensitively/);
+});
+
+test("a model response with two case-colliding entity names falls back to the heuristic provider end to end, instead of ever reaching the database layer with two entities mapped to one SQLite table", async () => {
+  const caseCollidingSpec = {
+    summary: "A tiny logistics app",
+    personas: [],
+    roles: ["Admin"],
+    entities: [
+      { name: "Order", fields: [{ name: "total", type: "number", required: true }] },
+      { name: "ORDER", fields: [{ name: "status", type: "text", required: false }] },
+    ],
+    screens: [],
+    assumptions: [],
+    openQuestions: [],
+  };
+  const fakeFetch = (async () =>
+    new Response(
+      JSON.stringify({ content: [{ type: "text", text: JSON.stringify(caseCollidingSpec) }] }),
+      { status: 200 },
+    )) as unknown as typeof fetch;
+  const provider = new AnthropicSpecProvider({ apiKey: "test-key", fetchImpl: fakeFetch });
+
+  const { spec, providerName } = await generateSpec("a tiny logistics app", provider);
+  assert.equal(providerName, "anthropic-fallback");
+  const lowerNames = spec.entities.map((e) => e.name.toLowerCase());
+  assert.equal(new Set(lowerNames).size, lowerNames.length);
+});
+
 test("a model response with a field named 'id' falls back to the heuristic provider end to end, instead of ever reaching the database layer with a colliding column name", async () => {
   const badFieldSpec = {
     summary: "A tiny CRM",

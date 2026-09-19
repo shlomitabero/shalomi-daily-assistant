@@ -24,6 +24,37 @@ export const FIELD_TYPES = [
  */
 const RESERVED_FIELD_NAMES = new Set(["id", "createdat"]);
 
+/**
+ * SQLite compares identifiers (table names included) case-insensitively for
+ * ASCII, even when double-quoted -- confirmed directly against this
+ * project's actual SQLite binding: `CREATE TABLE IF NOT EXISTS "Order" (...)`
+ * followed by `CREATE TABLE IF NOT EXISTS "order" (...)` creates exactly one
+ * table, "Order", and silently no-ops the second statement rather than
+ * erroring (the `IF NOT EXISTS` guard sees the two names as the same table).
+ * Both packages/db/src/migrate.ts (the live preview, table names prefixed
+ * per-project) and apps/api/src/codegen.ts (the exported standalone app,
+ * entity name used directly as the table name) create one table per entity
+ * keyed by this name -- so two entities differing only by case would
+ * silently collapse into one shared table, and every read/write for the
+ * "losing" entity would run against the "winning" entity's columns instead.
+ * Rejected here, at the one point every spec is validated, for the same
+ * reason RESERVED_FIELD_NAMES is: better a spec falls back to the heuristic
+ * provider than reach either database layer with an unreconcilable name.
+ */
+function findCaseInsensitiveDuplicateEntityNames(entities: { name: string }[]): string[] {
+  const seen = new Set<string>();
+  const dupes: string[] = [];
+  for (const entity of entities) {
+    const key = entity.name.toLowerCase();
+    if (seen.has(key)) {
+      dupes.push(entity.name);
+    } else {
+      seen.add(key);
+    }
+  }
+  return dupes;
+}
+
 export const FieldSchema = z
   .object({
     name: z.string().min(1),
@@ -87,17 +118,25 @@ export type OpenQuestion = z.infer<typeof OpenQuestionSchema>;
  * fail to parse. projects.ts's `listProjectsForOwner` treats a row that
  * fails to parse as excluded rather than crashing the whole list, but
  * that's a safety net for something else going wrong, not license to
- * break this schema on purpose.
+ * break this schema on purpose. The one sanctioned exception is closing a
+ * real data-corruption hole (as the entity-name-collision `.refine()`
+ * below does): `getProject` has no such safety net and fails loudly for
+ * that one project, which is the accepted, narrow cost of never having
+ * let an unreconcilable name reach the database layer in the first place.
  */
-export const ProductSpecSchema = z.object({
-  summary: z.string().min(1),
-  personas: z.array(z.string()).default([]),
-  roles: z.array(z.string()).min(1),
-  entities: z.array(EntitySchema).min(1),
-  screens: z.array(ScreenSchema).default([]),
-  assumptions: z.array(z.string()).default([]),
-  openQuestions: z.array(OpenQuestionSchema).default([]),
-});
+export const ProductSpecSchema = z
+  .object({
+    summary: z.string().min(1),
+    personas: z.array(z.string()).default([]),
+    roles: z.array(z.string()).min(1),
+    entities: z.array(EntitySchema).min(1),
+    screens: z.array(ScreenSchema).default([]),
+    assumptions: z.array(z.string()).default([]),
+    openQuestions: z.array(OpenQuestionSchema).default([]),
+  })
+  .refine((spec) => findCaseInsensitiveDuplicateEntityNames(spec.entities).length === 0, (spec) => ({
+    message: `Entity name(s) collide when compared case-insensitively, which SQLite table names cannot distinguish: ${findCaseInsensitiveDuplicateEntityNames(spec.entities).join(", ")} -- choose distinct names`,
+  }));
 
 export type ProductSpec = z.infer<typeof ProductSpecSchema>;
 
