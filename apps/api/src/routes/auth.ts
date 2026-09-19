@@ -27,8 +27,8 @@ const CredentialsSchema = z.object({
 const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
 
 /**
- * verifyPassword's scryptSync call costs tens of milliseconds -- login used
- * to only run it when the email matched a real user (`!record ||
+ * verifyPassword's scrypt call costs tens of milliseconds -- login used to
+ * only run it when the email matched a real user (`!record ||
  * !verifyPassword(...)` short-circuits before ever calling verifyPassword
  * when `record` is undefined), so a login for an email that doesn't exist
  * at all returned in well under 1ms while a login with the right email but
@@ -37,9 +37,11 @@ const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
  * registered emails without ever seeing a different response body or
  * status code. This dummy hash exists purely so verifyPassword (and its
  * scrypt cost) always runs exactly once per login attempt, whether or not
- * the account exists -- nothing is ever meant to match it.
+ * the account exists -- nothing is ever meant to match it. Computed once,
+ * at module load, and awaited on first use; every login after the first
+ * reuses the already-resolved value.
  */
-const DUMMY_PASSWORD_HASH = hashPassword(randomBytes(32).toString("hex"));
+const dummyPasswordHashPromise: Promise<string> = hashPassword(randomBytes(32).toString("hex"));
 
 function issueSession(db: ForgeDatabase, userId: string): string {
   const token = randomBytes(32).toString("hex");
@@ -51,7 +53,7 @@ function issueSession(db: ForgeDatabase, userId: string): string {
 export function createAuthRouter(db: ForgeDatabase): Router {
   const router = Router();
 
-  router.post("/auth/signup", (req, res, next) => {
+  router.post("/auth/signup", async (req, res, next) => {
     const parsed = CredentialsSchema.safeParse(req.body);
     if (!parsed.success) {
       next(new HttpError(400, formatValidationError(parsed.error), "VALIDATION_ERROR"));
@@ -59,7 +61,8 @@ export function createAuthRouter(db: ForgeDatabase): Router {
     }
     try {
       const { email, password } = parsed.data;
-      const user = createUser(db, { id: randomUUID(), email, passwordHash: hashPassword(password) });
+      const passwordHash = await hashPassword(password);
+      const user = createUser(db, { id: randomUUID(), email, passwordHash });
       const token = issueSession(db, user.id);
       res.status(201).json({ user, token });
     } catch (err) {
@@ -71,23 +74,27 @@ export function createAuthRouter(db: ForgeDatabase): Router {
     }
   });
 
-  router.post("/auth/login", (req, res, next) => {
+  router.post("/auth/login", async (req, res, next) => {
     const parsed = CredentialsSchema.safeParse(req.body);
     if (!parsed.success) {
       next(new HttpError(400, formatValidationError(parsed.error), "VALIDATION_ERROR"));
       return;
     }
-    const { email, password } = parsed.data;
-    const record = findUserByEmail(db, email);
-    // Always call verifyPassword, even when no such user exists (against
-    // the dummy hash above) -- see DUMMY_PASSWORD_HASH's comment for why.
-    const passwordMatches = verifyPassword(password, record?.passwordHash ?? DUMMY_PASSWORD_HASH);
-    if (!record || !passwordMatches) {
-      next(new HttpError(401, "Invalid email or password", "INVALID_CREDENTIALS"));
-      return;
+    try {
+      const { email, password } = parsed.data;
+      const record = findUserByEmail(db, email);
+      // Always call verifyPassword, even when no such user exists (against
+      // the dummy hash above) -- see dummyPasswordHashPromise's comment for why.
+      const passwordMatches = await verifyPassword(password, record?.passwordHash ?? (await dummyPasswordHashPromise));
+      if (!record || !passwordMatches) {
+        next(new HttpError(401, "Invalid email or password", "INVALID_CREDENTIALS"));
+        return;
+      }
+      const token = issueSession(db, record.id);
+      res.json({ user: { id: record.id, email: record.email, createdAt: record.createdAt }, token });
+    } catch (err) {
+      next(err);
     }
-    const token = issueSession(db, record.id);
-    res.json({ user: { id: record.id, email: record.email, createdAt: record.createdAt }, token });
   });
 
   router.get("/auth/me", requireAuth(db), (req, res, next) => {

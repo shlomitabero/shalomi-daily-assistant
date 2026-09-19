@@ -201,15 +201,15 @@ test("the Authorization scheme name is accepted case-insensitively ('bearer' wor
 });
 
 /**
- * verifyPassword's scryptSync call costs tens of milliseconds -- login used
- * to only run it when the email matched a real user (record?.passwordHash
+ * verifyPassword's scrypt call costs tens of milliseconds -- login used to
+ * only run it when the email matched a real user (record?.passwordHash
  * would be undefined otherwise, short-circuiting before verifyPassword was
  * ever called), so a login attempt for an email that doesn't exist at all
  * returned near-instantly while one for a real email with the wrong
  * password took the full scrypt cost. That's a reliable, easily-measured
  * timing side-channel an attacker could use to enumerate registered
  * emails without ever seeing a different response body or status code.
- * See docs/roadmap.md and the DUMMY_PASSWORD_HASH comment in
+ * See docs/roadmap.md and the dummyPasswordHashPromise comment in
  * apps/api/src/routes/auth.ts for the fix. This is a real wall-clock
  * timing test (not a mock), taking several samples and comparing medians
  * to stay robust against normal test-environment jitter, since the actual
