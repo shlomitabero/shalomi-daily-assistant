@@ -1,6 +1,30 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { sendWhatsAppMessage } from "./api.js";
+import { safeDownloadName, sendWhatsAppMessage } from "./api.js";
+
+test("safeDownloadName keeps Hebrew (and other Unicode) project names intact, instead of collapsing them to the fallback", () => {
+  // This product is Hebrew-first (see docs/roadmap.md), and every real
+  // project name a user actually sees comes out of Anthropic/heuristic
+  // spec generation as Hebrew text -- the <a download> attribute is read
+  // directly by the browser and has supported Unicode since HTML5, unlike
+  // an HTTP Content-Disposition header (constrained to Latin-1 by Node's
+  // http module -- see the matching, deliberately ASCII-only logic in
+  // apps/api/src/routes/projects.ts).
+  assert.equal(safeDownloadName("אפליקציה לניהול תורים למספרה", "forge-app"), "אפליקציה לניהול תורים למספרה");
+  assert.equal(safeDownloadName("My CRM App", "forge-app"), "My CRM App");
+});
+
+test("safeDownloadName strips only genuinely unsafe filename characters (path separators, Windows-reserved characters, control characters)", () => {
+  assert.equal(safeDownloadName("a/b\\c", "forge-app"), "abc");
+  assert.equal(safeDownloadName('Ord*rs: "Q1"?', "forge-app"), "Ordrs Q1");
+  assert.equal(safeDownloadName("Name\u0007<>|", "forge-app"), "Name");
+});
+
+test("safeDownloadName falls back when nothing safe is left (or the name is blank/whitespace)", () => {
+  assert.equal(safeDownloadName("///", "forge-app"), "forge-app");
+  assert.equal(safeDownloadName("   ", "forge-app"), "forge-app");
+  assert.equal(safeDownloadName("", "forge-app"), "forge-app");
+});
 
 /**
  * sendWhatsAppMessage's own send route can answer failure two different

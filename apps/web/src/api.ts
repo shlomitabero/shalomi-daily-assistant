@@ -197,6 +197,23 @@ export function streamRefine(
 }
 
 /**
+ * Turns a project's own name into a filename the browser's download
+ * mechanism can save directly. Unlike an HTTP `Content-Disposition`
+ * header (constrained to Latin-1 by Node's http module, so the server's
+ * own equivalent logic in apps/api/src/routes/projects.ts is deliberately
+ * ASCII-only), the `download` attribute on a real, rendered `<a>` element
+ * is read directly by the browser and has supported arbitrary Unicode
+ * (Hebrew included) since HTML5 -- so this only strips characters that are
+ * genuinely unsafe in a filename (path separators, Windows-reserved
+ * characters, control characters), not every non-ASCII one. This product
+ * is Hebrew-first (see docs/roadmap.md); a name like "אפליקציה לניהול
+ * תורים למספרה" used to collapse entirely to the empty-string fallback.
+ */
+export function safeDownloadName(projectName: string, fallback: string): string {
+  return projectName.replace(/[\\/:*?"<>|\u0000-\u001f]/g, "").trim() || fallback;
+}
+
+/**
  * Downloads the real, standalone exported app as a .zip and saves it via
  * the browser's normal download flow. Uses a blob (not a plain <a href>)
  * because the request needs the Authorization header.
@@ -214,7 +231,7 @@ export async function exportProject(projectId: string, projectName: string): Pro
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
-  a.download = `${projectName.replace(/[^A-Za-z0-9 _-]/g, "").trim() || "forge-app"}.zip`;
+  a.download = `${safeDownloadName(projectName, "forge-app")}.zip`;
   document.body.appendChild(a);
   a.click();
   a.remove();
@@ -240,7 +257,7 @@ export async function backupProject(projectId: string, projectName: string): Pro
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
-  a.download = `${projectName.replace(/[^A-Za-z0-9 _-]/g, "").trim() || "forge-app"}-backup.zip`;
+  a.download = `${safeDownloadName(projectName, "forge-app")}-backup.zip`;
   document.body.appendChild(a);
   a.click();
   a.remove();
