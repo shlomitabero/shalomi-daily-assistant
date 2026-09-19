@@ -221,6 +221,25 @@ for (const entity of ENTITIES) {
   db.exec(\`CREATE TABLE IF NOT EXISTS \${q(entity.name)} (\${columns.join(", ")})\`);
 }
 
+const DATE_FORMAT = /^(\\d{4})-(\\d{2})-(\\d{2})$/;
+
+// Every date field's canonical stored representation is exactly the
+// YYYY-MM-DD shape the web UI's <input type="date"> produces -- rejects
+// anything else, including a syntactically-shaped but calendrically
+// impossible date like "2024-13-45" (the Date constructor silently rolls
+// an out-of-range month/day over into a *different*, wrong date instead
+// of rejecting it, so the parsed year/month/day are checked back against
+// what was typed).
+function isValidDate(value) {
+  const match = DATE_FORMAT.exec(value);
+  if (!match) return false;
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const parsed = new Date(Date.UTC(year, month - 1, day));
+  return parsed.getUTCFullYear() === year && parsed.getUTCMonth() === month - 1 && parsed.getUTCDate() === day;
+}
+
 function coerce(field, value) {
   if (value === undefined || value === null || value === "") {
     if (field.required) throw new Error(\`Field "\${field.name}" is required\`);
@@ -237,6 +256,11 @@ function coerce(field, value) {
       throw new Error(\`Field "\${field.name}" must be one of: \${field.enumValues.join(", ")}\`);
     }
     return String(value);
+  }
+  if (field.type === "date") {
+    const str = String(value);
+    if (!isValidDate(str)) throw new Error(\`Field "\${field.name}" must be a valid date in YYYY-MM-DD format\`);
+    return str;
   }
   return String(value);
 }

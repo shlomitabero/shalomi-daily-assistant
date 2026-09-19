@@ -190,6 +190,89 @@ test("generated server.js works end-to-end for an entity named after a reserved 
   }
 });
 
+// Regression test: the exported standalone app's own coerce() function
+// (a separate copy of packages/db/src/repository.ts's coerceValue, since
+// this app has no dependency on Forge AI at runtime) validated every
+// structured field type except "date", the same gap round 62 found and
+// fixed in repository.ts -- a date field silently accepted any string at
+// all and stored it verbatim. Reproduced here against a real generated,
+// spawned server (not just the coerce() source text) so a future edit to
+// this template can't reintroduce the gap without this test catching it.
+test("generated server.js rejects a date field value that isn't a real, well-formed calendar date", async () => {
+  const dateProject: Project = {
+    ...project,
+    spec: {
+      ...project.spec,
+      entities: [
+        {
+          name: "Appointment",
+          fields: [
+            { name: "customerName", type: "text", required: true },
+            { name: "date", type: "date", required: true },
+          ],
+        },
+      ],
+    },
+  };
+  const files = generateExportFiles(dateProject);
+  const serverJs = files.find((f) => f.path === "server.js")!.content;
+
+  const dir = mkdtempSync(path.join(tmpdir(), "codegen-date-test-"));
+  const repoRoot = path.resolve(import.meta.dirname, "../../..");
+  symlinkSync(path.join(repoRoot, "node_modules"), path.join(dir, "node_modules"));
+  writeFileSync(path.join(dir, "server.js"), serverJs);
+
+  const port = 44000 + Math.floor(Math.random() * 5000);
+  const child = spawn(process.execPath, ["--experimental-sqlite", "server.js"], {
+    cwd: dir,
+    env: { ...process.env, PORT: String(port) },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  let stderr = "";
+  child.stderr.on("data", (chunk) => {
+    stderr += chunk.toString();
+  });
+
+  try {
+    const deadline = Date.now() + 5000;
+    let lastErr: unknown;
+    while (Date.now() < deadline) {
+      if (child.exitCode !== null) {
+        throw new Error(`server.js exited early (code ${child.exitCode}):\n${stderr}`);
+      }
+      try {
+        await fetch(`http://localhost:${port}/api/entities`);
+        break;
+      } catch (err) {
+        lastErr = err;
+        await new Promise((r) => setTimeout(r, 100));
+      }
+    }
+    if (child.exitCode !== null) throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
+
+    const validRes = await fetch(`http://localhost:${port}/api/Appointment`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ customerName: "Dana", date: "2026-05-20" }),
+    });
+    assert.equal(validRes.status, 201);
+    const valid = await validRes.json();
+    assert.equal(valid.record.date, "2026-05-20");
+
+    for (const bad of ["not-a-real-date-at-all", "2024/01/15", "2024-13-45", "2024-02-30"]) {
+      const badRes = await fetch(`http://localhost:${port}/api/Appointment`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ customerName: "Dana", date: bad }),
+      });
+      assert.equal(badRes.status, 400, `expected "${bad}" to be rejected as an invalid date`);
+    }
+  } finally {
+    child.kill();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test("every generated .jsx/.js file is syntactically valid, checked with a real parser (esbuild)", async () => {
   const esbuild = await import("esbuild");
   const files = generateExportFiles(project);
