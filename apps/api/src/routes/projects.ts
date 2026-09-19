@@ -21,7 +21,7 @@ import {
 } from "@forge/db";
 import type { SpecProvider } from "@forge/spec-engine";
 import { enhancePrompt, generateSpec, isHebrewText } from "@forge/spec-engine";
-import { HttpError } from "../httpError.js";
+import { formatValidationError, HttpError } from "../httpError.js";
 import { requireAuth } from "../auth/middleware.js";
 import { runBuildPipeline } from "../pipeline.js";
 import { generateExportFiles } from "../codegen.js";
@@ -113,7 +113,7 @@ export function createProjectsRouter(db: ForgeDatabase, provider: SpecProvider |
     asyncRoute(async (req, res) => {
       const parsed = EnhanceIdeaSchema.safeParse(req.body);
       if (!parsed.success) {
-        throw new HttpError(400, parsed.error.message, "VALIDATION_ERROR");
+        throw new HttpError(400, formatValidationError(parsed.error), "VALIDATION_ERROR");
       }
       const { enhanced, providerName } = await enhancePrompt(parsed.data.idea);
       res.json({ enhanced, providerName });
@@ -125,7 +125,7 @@ export function createProjectsRouter(db: ForgeDatabase, provider: SpecProvider |
     asyncRoute(async (req, res) => {
       const parsed = CreateProjectSchema.safeParse(req.body);
       if (!parsed.success) {
-        throw new HttpError(400, parsed.error.message, "VALIDATION_ERROR");
+        throw new HttpError(400, formatValidationError(parsed.error), "VALIDATION_ERROR");
       }
       const { description, name } = parsed.data;
       const { spec, providerName } = await generateSpec(description, provider);
@@ -160,7 +160,7 @@ export function createProjectsRouter(db: ForgeDatabase, provider: SpecProvider |
       const project = requireOwnedProject(db, req.params.id, req.userId!);
       const parsed = AnswerQuestionsSchema.safeParse(req.body);
       if (!parsed.success) {
-        throw new HttpError(400, parsed.error.message, "VALIDATION_ERROR");
+        throw new HttpError(400, formatValidationError(parsed.error), "VALIDATION_ERROR");
       }
       const entries = Object.entries(parsed.data.answers)
         .map(([question, answer]) => [question.trim(), answer.trim()] as const)
@@ -211,7 +211,7 @@ export function createProjectsRouter(db: ForgeDatabase, provider: SpecProvider |
       }
       const parsed = RefineSchema.safeParse(req.body);
       if (!parsed.success) {
-        throw new HttpError(400, parsed.error.message, "VALIDATION_ERROR");
+        throw new HttpError(400, formatValidationError(parsed.error), "VALIDATION_ERROR");
       }
       const { instruction } = parsed.data;
       const combinedDescription = `${project.description}\n\nAdditional requirement: ${instruction}`;
@@ -311,7 +311,11 @@ export function createProjectsRouter(db: ForgeDatabase, provider: SpecProvider |
     "/projects/:id/integrations/whatsapp/send",
     asyncRoute(async (req, res) => {
       const project = requireOwnedProject(db, req.params.id, req.userId!);
-      const { to, message } = WhatsAppSendSchema.parse(req.body ?? {});
+      const parsed = WhatsAppSendSchema.safeParse(req.body ?? {});
+      if (!parsed.success) {
+        throw new HttpError(400, formatValidationError(parsed.error), "VALIDATION_ERROR");
+      }
+      const { to, message } = parsed.data;
       const status = whatsapp.getStatus(project.id);
       if (status.status !== "connected") {
         throw new HttpError(409, "Connect WhatsApp before sending a message", "WHATSAPP_NOT_CONNECTED");

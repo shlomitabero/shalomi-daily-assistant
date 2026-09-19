@@ -977,3 +977,68 @@ test("the idea-enhance endpoint requires auth, rejects an empty idea, and expand
     assert.ok(project.spec.entities.some((e) => e.name === "Customer"));
   });
 });
+
+/**
+ * apps/api/src/routes/auth.ts already hit this exact problem and fixed it
+ * (formatValidationError, moved into httpError.ts so both routers can
+ * share it) -- but the fix was never reused here, so every failed
+ * validation on these 4 project routes sent the client Zod's raw
+ * JSON.stringify(issues) dump as its "error" text instead of readable
+ * words. See docs/roadmap.md for the bug this test covers.
+ */
+test("a validation failure on project routes returns readable text, not Zod's raw JSON issue dump", async () => {
+  await withServer(async (baseUrl) => {
+    const token = await signup(baseUrl);
+
+    const createRes = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({}),
+    });
+    assert.equal(createRes.status, 400);
+    const createBody = (await createRes.json()) as { error: string; code: string };
+    assert.equal(createBody.code, "VALIDATION_ERROR");
+    // A missing field fails Zod's own type check before the schema's custom
+    // .min(1, "...") message ever runs, so this is Zod's own "Required" --
+    // the important assertion is that it's short, readable text, not the
+    // multi-line JSON.stringify(issues) dump the pre-fix code sent.
+    assert.equal(createBody.error, "Required");
+    assert.ok(!createBody.error.includes("{"), `expected readable text, got a JSON dump: ${createBody.error}`);
+
+    const enhanceRes = await fetch(`${baseUrl}/api/ideas/enhance`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({}),
+    });
+    assert.equal(enhanceRes.status, 400);
+    assert.equal(((await enhanceRes.json()) as { error: string }).error, "Required");
+  });
+});
+
+test("WhatsApp send rejects a malformed body with 400 VALIDATION_ERROR, not a 500 from an uncaught ZodError", async () => {
+  await withServer(
+    async (baseUrl) => {
+      const token = await signup(baseUrl);
+      const createRes = await fetch(`${baseUrl}/api/projects`, {
+        method: "POST",
+        headers: authHeaders(token),
+        body: JSON.stringify({ description: "A CRM with customers and deals." }),
+      });
+      const { project } = (await createRes.json()) as { project: { id: string } };
+
+      // Not connected either, but validation runs first -- this must fail
+      // as a 400 (bad request), not the 409 "not connected" case, and
+      // definitely not a 500.
+      const sendRes = await fetch(`${baseUrl}/api/projects/${project.id}/integrations/whatsapp/send`, {
+        method: "POST",
+        headers: authHeaders(token),
+        body: JSON.stringify({ to: "", message: "" }),
+      });
+      assert.equal(sendRes.status, 400);
+      const body = (await sendRes.json()) as { error: string; code: string };
+      assert.equal(body.code, "VALIDATION_ERROR");
+      assert.equal(body.error, "to is required; message is required");
+    },
+    { whatsapp: (db) => createTestWhatsAppManager(db).manager },
+  );
+});

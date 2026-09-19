@@ -12,7 +12,7 @@ import {
 } from "@forge/db";
 import { hashPassword, verifyPassword } from "../auth/password.js";
 import { extractBearerToken, requireAuth } from "../auth/middleware.js";
-import { HttpError } from "../httpError.js";
+import { formatValidationError, HttpError } from "../httpError.js";
 
 const CredentialsSchema = z.object({
   // Emails are case-insensitive in practice (RFC 5321 makes the local part
@@ -31,11 +31,6 @@ function issueSession(db: ForgeDatabase, userId: string): string {
   const expiresAt = new Date(Date.now() + SESSION_TTL_MS).toISOString();
   createSession(db, { token, userId, expiresAt });
   return token;
-}
-
-/** ZodError.message is a JSON dump of every issue, not readable text -- join the actual issue messages instead, matching HttpError's own "message" contract of a plain, readable fallback string. */
-function formatValidationError(error: z.ZodError): string {
-  return error.issues.map((issue) => issue.message).join("; ");
 }
 
 export function createAuthRouter(db: ForgeDatabase): Router {
