@@ -200,6 +200,64 @@ test("the Authorization scheme name is accepted case-insensitively ('bearer' wor
   });
 });
 
+/**
+ * verifyPassword's scryptSync call costs tens of milliseconds -- login used
+ * to only run it when the email matched a real user (record?.passwordHash
+ * would be undefined otherwise, short-circuiting before verifyPassword was
+ * ever called), so a login attempt for an email that doesn't exist at all
+ * returned near-instantly while one for a real email with the wrong
+ * password took the full scrypt cost. That's a reliable, easily-measured
+ * timing side-channel an attacker could use to enumerate registered
+ * emails without ever seeing a different response body or status code.
+ * See docs/roadmap.md and the DUMMY_PASSWORD_HASH comment in
+ * apps/api/src/routes/auth.ts for the fix. This is a real wall-clock
+ * timing test (not a mock), taking several samples and comparing medians
+ * to stay robust against normal test-environment jitter, since the actual
+ * security property being verified only exists in real elapsed time.
+ */
+test("login takes comparable time for a wrong password on a real account vs. an email that doesn't exist at all, instead of leaking which emails are registered via response timing", async () => {
+  await withServer(async (baseUrl) => {
+    const realEmail = `timing-${Date.now()}@example.com`;
+    await signup(baseUrl, realEmail);
+
+    async function timeLogin(email: string, password: string): Promise<number> {
+      const start = process.hrtime.bigint();
+      await fetch(`${baseUrl}/api/auth/login`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ email, password }),
+      });
+      return Number(process.hrtime.bigint() - start) / 1e6;
+    }
+
+    // Warm up (first call in a fresh process can be slower for unrelated reasons).
+    await timeLogin(realEmail, "wrongpassword-warmup");
+
+    const wrongPasswordTimes: number[] = [];
+    const noSuchEmailTimes: number[] = [];
+    for (let i = 0; i < 6; i++) {
+      wrongPasswordTimes.push(await timeLogin(realEmail, "definitely-wrong-password"));
+      noSuchEmailTimes.push(await timeLogin(`nobody-${i}-${Date.now()}@example.com`, "whatever-password"));
+    }
+    const median = (values: number[]) => values.slice().sort((a, b) => a - b)[Math.floor(values.length / 2)];
+    const wrongPasswordMedian = median(wrongPasswordTimes);
+    const noSuchEmailMedian = median(noSuchEmailTimes);
+
+    // The pre-fix "no such email" path returned in well under 1ms; a real
+    // scrypt call costs tens of ms, so this floor alone already proves the
+    // expensive hash actually ran for a nonexistent email too.
+    assert.ok(
+      noSuchEmailMedian > 5,
+      `expected the "no such email" login to still pay the real password-hashing cost (>5ms), got ${noSuchEmailMedian}ms median -- the timing side-channel may not be fixed`,
+    );
+    const ratio = Math.max(wrongPasswordMedian, noSuchEmailMedian) / Math.min(wrongPasswordMedian, noSuchEmailMedian);
+    assert.ok(
+      ratio < 3,
+      `expected comparable timing between the two paths, got wrong-password=${wrongPasswordMedian}ms vs. no-such-email=${noSuchEmailMedian}ms (ratio ${ratio.toFixed(1)}x)`,
+    );
+  });
+});
+
 test("project routes reject requests without a valid session", async () => {
   await withServer(async (baseUrl) => {
     const res = await fetch(`${baseUrl}/api/projects`);

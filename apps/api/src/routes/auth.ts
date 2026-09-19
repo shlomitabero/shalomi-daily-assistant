@@ -26,6 +26,21 @@ const CredentialsSchema = z.object({
 
 const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
 
+/**
+ * verifyPassword's scryptSync call costs tens of milliseconds -- login used
+ * to only run it when the email matched a real user (`!record ||
+ * !verifyPassword(...)` short-circuits before ever calling verifyPassword
+ * when `record` is undefined), so a login for an email that doesn't exist
+ * at all returned in well under 1ms while a login with the right email but
+ * a wrong password took the full scrypt cost. That's a reliable,
+ * easily-measured timing side-channel letting an attacker enumerate
+ * registered emails without ever seeing a different response body or
+ * status code. This dummy hash exists purely so verifyPassword (and its
+ * scrypt cost) always runs exactly once per login attempt, whether or not
+ * the account exists -- nothing is ever meant to match it.
+ */
+const DUMMY_PASSWORD_HASH = hashPassword(randomBytes(32).toString("hex"));
+
 function issueSession(db: ForgeDatabase, userId: string): string {
   const token = randomBytes(32).toString("hex");
   const expiresAt = new Date(Date.now() + SESSION_TTL_MS).toISOString();
@@ -64,7 +79,10 @@ export function createAuthRouter(db: ForgeDatabase): Router {
     }
     const { email, password } = parsed.data;
     const record = findUserByEmail(db, email);
-    if (!record || !verifyPassword(password, record.passwordHash)) {
+    // Always call verifyPassword, even when no such user exists (against
+    // the dummy hash above) -- see DUMMY_PASSWORD_HASH's comment for why.
+    const passwordMatches = verifyPassword(password, record?.passwordHash ?? DUMMY_PASSWORD_HASH);
+    if (!record || !passwordMatches) {
       next(new HttpError(401, "Invalid email or password", "INVALID_CREDENTIALS"));
       return;
     }
