@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { createWakeRefCounter, listProjects, safeDownloadName, sendWhatsAppMessage } from "./api.js";
+import { createWakeRefCounter, listProjects, safeDownloadName, sendWhatsAppMessage, streamBuild } from "./api.js";
 
 test("safeDownloadName keeps Hebrew (and other Unicode) project names intact, instead of collapsing them to the fallback", () => {
   // This product is Hebrew-first (see docs/roadmap.md), and every real
@@ -138,4 +138,40 @@ test("a real HTTP error response with a body that isn't valid JSON still surface
       return true;
     },
   );
+});
+
+/**
+ * A build/refine can run for minutes, unlike every other request this app
+ * makes -- so a real network drop mid-stream is a genuine risk, not just a
+ * theoretical one. streamPipeline's SSE read loop (reader.read()) used to
+ * be the one place in api.ts left outside the translated-error layer
+ * fetchApi provides: if the connection failed partway through, the raw
+ * browser error (e.g. "network error") reached the caller untranslated
+ * -- BuildProgress.tsx renders that message directly to the user. See
+ * docs/roadmap.md for the fix.
+ */
+test("streamBuild translates a network failure mid-stream, instead of leaking the browser's raw untranslated error", async () => {
+  const events: unknown[] = [];
+  // The first chunk succeeds so the caller does get that agent-step event
+  // before the connection drops -- this isn't an immediate connect
+  // failure (already covered by fetchApi/fetchWithWakeRetry), it's a
+  // stream that was working and then broke.
+  const stream = new ReadableStream<Uint8Array>({
+    start(controller) {
+      controller.enqueue(new TextEncoder().encode('data: {"agent":"Architect","status":"running"}\n\n'));
+    },
+    pull(controller) {
+      controller.error(new TypeError("network error"));
+    },
+  });
+  const response = new Response(stream, { status: 200, headers: { "content-type": "text/event-stream" } });
+
+  await assert.rejects(
+    () => withFakeFetch(response, () => streamBuild("proj1", (event) => events.push(event))),
+    (err: Error) => {
+      assert.equal(err.message, "Couldn't reach the server. Check your connection and try again.");
+      return true;
+    },
+  );
+  assert.equal(events.length, 1);
 });

@@ -198,9 +198,21 @@ async function streamPipeline(
   const decoder = new TextDecoder();
   let buffer = "";
   for (;;) {
-    const { value, done } = await reader.read();
-    if (done) break;
-    buffer += decoder.decode(value, { stream: true });
+    // Unlike the initial fetchApi() call above, a build/refine can run for
+    // minutes -- a real network drop mid-stream is a genuine risk, and
+    // reader.read() throws the browser's raw, untranslated error for it
+    // (e.g. "network error"/"Failed to fetch") instead of a real HTTP
+    // response fetchApi could translate. Only the read itself is wrapped:
+    // a bug in onEvent or a malformed SSE frame below is a different kind
+    // of failure and shouldn't be misreported as a network problem.
+    let chunk: ReadableStreamReadResult<Uint8Array>;
+    try {
+      chunk = await reader.read();
+    } catch {
+      throw new Error(resolveErrorMessage({ code: "NETWORK_ERROR" }));
+    }
+    if (chunk.done) break;
+    buffer += decoder.decode(chunk.value, { stream: true });
     let idx: number;
     while ((idx = buffer.indexOf("\n\n")) !== -1) {
       const frame = buffer.slice(0, idx);
