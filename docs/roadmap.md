@@ -3717,6 +3717,57 @@ not a single "make it perfect" claim.
       builds clean + a from-scratch clean-room worktree
       clone/install/test/build cycle.
 
+- [x] **Full code-review pass on `packages/spec-engine/src/heuristic.ts`
+      (the last file in this window's "migrate.ts, checkpoints.ts,
+      heuristic.ts" list) found a real product-accuracy bug: the
+      heuristic provider recommended "No payments" for a donation-only or
+      membership/subscription-only description.** `buildOpenQuestions()`
+      decides whether to ask about (and recommend) a payment provider two
+      ways: a `PAYMENT_KEYWORDS` substring match against the raw
+      description, or a hardcoded check for an entity literally named
+      `"Invoice"` or `"Order"`. That entity check was never updated when
+      the `Donation` (round 64) and `Subscription` (round 61) domain
+      entities were added later, and neither entity's own trigger
+      keywords in `domainEntities.ts` ("donation", "donor", "nonprofit",
+      "fundraising campaign", "member management", "membership plan", …)
+      happen to overlap `PAYMENT_KEYWORDS` ("payment", "invoice",
+      "billing", "subscription", "checkout", "stripe", …). Confirmed
+      empirically with `node -e` before writing anything, not assumed
+      from reading the code alone: `"A donation tracking app for a small
+      nonprofit, with donor records and fundraising campaigns."` matches
+      only the `Donation` entity and got recommended `"No payments"` —
+      plainly wrong, since accepting donations is definitionally
+      accepting payments. The same gap reproduces for a membership-fee
+      description phrased as `"member management"` (no literal
+      "subscription"/"billing" substring to catch it either). Fixed by
+      replacing the two-name hardcoded check with an explicit
+      `BILLING_ENTITY_NAMES` set (`Invoice`, `Order`, `Donation`,
+      `Subscription`) checked against the matched entity itself, rather
+      than trying to keep `PAYMENT_KEYWORDS` in permanent lockstep with
+      every future payment-flavored phrasing `domainEntities.ts` might
+      ever gain — the exact drift that caused this bug in the first
+      place. Also reviewed, without acting on it: `matchEntities()`
+      pushes the *same* `DOMAIN_ENTITY_RULES` entity object reference
+      (not a clone) into its result array for non-Hebrew input — a latent
+      fragility if a future caller ever mutated a returned entity in
+      place, corrupting the shared module-level singleton for every
+      future request. Traced both current callers
+      (`HeuristicSpecProvider.generate()`, which immediately reconstructs
+      everything via `ProductSpecSchema.parse()`, and
+      `HeuristicPromptEnhancer.enhance()`, which only reads `label`/
+      `name`/`fields`) and confirmed neither mutates — not a live bug
+      today, so left as-is rather than adding defensive cloning nothing
+      currently needs (same category as round 52's `AGENT_ORDER`
+      finding). New regression tests in `heuristic.test.ts` for both
+      payment-question gaps, proven to fail against the pre-fix code via
+      `git stash` on `heuristic.ts` alone (both failed exactly as
+      predicted). Full suite green (328 tests, up from 326 —
+      `@forge/spec-engine` 80 → 82) + both builds clean + a from-scratch
+      clean-room worktree clone/install/test/build/start cycle, including
+      a real curl-driven signup + `POST /api/projects` request against
+      the built server confirming the donation description now
+      recommends Stripe.
+
 ## Phase 3
 
 - Self-healing: production observability, automatic diagnosis and patch
