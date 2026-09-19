@@ -3201,6 +3201,46 @@ not a single "make it perfect" claim.
       a from-scratch clean-room worktree clone/install/test/build/start
       cycle with a live `/api/health` check.
 
+- [x] **The JSON-parse-failure fallback error was hardcoded English,
+      unlike every other server error in this app.** Another open finding
+      deferred from the round-48 `code-review` of `apps/web/src/api.ts`:
+      `request()`, `streamPipeline()`, `exportProject()` and
+      `backupProject()` all build a fallback error body with
+      `res.json().catch(() => ({ error: `Request failed (${res.status})`
+      }))` — hit whenever a real HTTP error response's body isn't valid
+      JSON at all (e.g. a hosting platform's own plain-text 502/504 error
+      page, or any other non-JSON response, rather than this app's own
+      `{ error, code }` shape). `resolveErrorMessage` only translates a
+      body that carries a recognized `code` — with none present, it fell
+      straight through to that literal, hardcoded English string,
+      regardless of whether the user's UI was set to Hebrew. Every other
+      server error in this app is localized this way (see the
+      `error.WHATSAPP_NOT_CONNECTED` precedent from an earlier round); this
+      one path was the exception. Fixed by adding `code: "REQUEST_FAILED"`
+      to all 4 fallback bodies, with matching entries added to both
+      language dictionaries (`error.REQUEST_FAILED` in
+      `apps/web/src/i18n/language.ts`), the same pattern already used for
+      the client-synthesized `NETWORK_ERROR` code. New tests: a
+      dictionary-completeness check in `language.test.ts` mirroring the
+      existing `NETWORK_ERROR` test, and an end-to-end test in
+      `api.test.ts` that mocks a real HTTP 500 response with a plain-text
+      (non-JSON) body and confirms `listProjects()` rejects with the
+      translated message, not the raw `Request failed (500)` text. Both
+      proven against the pre-fix code via `git stash` (2 failures: the new
+      dictionary-completeness test, and the new end-to-end test asserting
+      the untranslated string). Caught my own wrong assumption while
+      writing the end-to-end test: assumed this Node test runtime would
+      resolve to Hebrew (matching `detectInitialLang`'s "no browser info
+      → Hebrew" default), but Node 22 actually exposes a global
+      `navigator` object with `navigator.language === "en-US"`, so
+      `resolveErrorMessage` resolves to English here — matching the
+      precedent already set by the existing `sendWhatsAppMessage` 409 test
+      a few rounds earlier, which I misread as expecting Hebrew until I
+      re-checked it directly. Full suite green (303 tests, up from 301 —
+      `@forge/web` 81 → 83) + `tsc -b` clean + both builds clean + a
+      from-scratch clean-room worktree clone/install/test/build/start
+      cycle with a live `/api/health` check.
+
 ## Phase 3
 
 - Self-healing: production observability, automatic diagnosis and patch
