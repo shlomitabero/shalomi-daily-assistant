@@ -304,6 +304,20 @@ function AppContent() {
     setUser(null);
     setProject(null);
     setView("home");
+    // Without these, the browser tab stays mounted (no page reload happens
+    // on logout) and the next project built in the same session -- by the
+    // same user logging back in, or a different one on a shared machine --
+    // inherits the previous project's leftover UI state: a stale
+    // activeEntity tab name that doesn't exist on the new project's spec
+    // (rendering a blank preview pane until manually re-clicked), the old
+    // project's refine-history chat entries, and half-filled form state.
+    setDescription("");
+    setError(null);
+    setActiveEntity(null);
+    setSelectedAnswers({});
+    setAdditionalRequest("");
+    setRefineText("");
+    setRefineHistory([]);
   }
 
   return (

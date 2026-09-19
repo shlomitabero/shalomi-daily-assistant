@@ -2984,6 +2984,41 @@ not a single "make it perfect" claim.
   confirmed reachable through any current spec-generation path, so it
   wasn't rushed into this round's fix.
 
+- **Self-review (`code-review`, high effort) of `apps/web/src/App.tsx`
+  found a real state-leak bug: `handleLogout` never reset several pieces
+  of per-project UI state, so the browser tab (which never reloads on
+  logout) carried the previous project's leftovers into whatever project
+  got built next in the same session.** Two concrete, confirmed symptoms:
+  (1) `activeEntity` — `handleBuildComplete`'s `setActiveEntity((prev) =>
+  prev ?? builtProject.spec.entities[0]?.name ?? null)` is deliberately
+  "only default on a genuinely fresh build" (so a *refine* on the same
+  project correctly keeps whatever tab was open) — but after a logout
+  with no reset, the *next* project's very first build sees a stale,
+  non-null `prev` from the old project, so it never picks the new
+  project's first entity; since the entity-panel render filters records
+  by `e.name === activeEntity`, an entity name that doesn't exist on the
+  new spec renders a completely blank preview pane with no tab
+  highlighted, until the user happens to click a tab themselves. (2)
+  `refineHistory` was never cleared either, so the old project's refine
+  chat-history entries kept showing in the new project's "Refine
+  history" panel. Fixed by resetting `description`, `error`,
+  `activeEntity`, `selectedAnswers`, `additionalRequest`, `refineText`,
+  and `refineHistory` in `handleLogout`. This bug has no unit-testable
+  surface (App.tsx has no React Testing Library in this project, and the
+  bug is specifically about cross-session in-memory state, not a pure
+  function), so it was proven live instead, using the same git-stash
+  discipline the unit tests use: booted real dev servers, built a real
+  "sales CRM" project (Customer/Order/Courier) as user A, clicked to the
+  last tab (Courier) to set a non-default `activeEntity`, logged out,
+  signed up as user B in the same browser tab, and built an unrelated
+  "veterinary clinic" project (Pet only) — against the pre-fix code
+  (restored via `git stash`) this reproduced exactly as predicted: 0
+  active tabs, no `record-form` rendered, a genuinely blank preview pane;
+  against the fix, 1 active tab and a working form, immediately. Full
+  suite green (296 tests, unchanged — a live-only fix) + `tsc -b` clean +
+  both builds clean + a from-scratch clean-room clone/install/test/
+  build/start cycle with a live `/api/health` check.
+
 ## Phase 3
 
 - Self-healing: production observability, automatic diagnosis and patch
