@@ -3354,6 +3354,57 @@ not a single "make it perfect" claim.
       clean + a from-scratch clean-room worktree clone/install/test/
       build/start cycle with a live `/api/health` check.
 
+- [x] **Two real validation-handling bugs in `apps/api/src/routes/projects.ts`,
+      found by its first dedicated self-review as a full route file.**
+      (1) Four routes — `POST /ideas/enhance`, `/projects`,
+      `/projects/:id/answers`, `/projects/:id/refine` — threw
+      `new HttpError(400, parsed.error.message, ...)` directly.
+      `ZodError.message` is `JSON.stringify(issues, null, 2)`, not readable
+      text: `apps/api/src/routes/auth.ts` had already hit this exact
+      problem and fixed it locally with a `formatValidationError()` helper
+      (join each issue's own `.message`), but that fix was never reused in
+      `projects.ts`, so every failed validation on these 4 core endpoints
+      sent the client a multi-line JSON blob as its user-facing error
+      string — e.g. `POST /projects` with `{}` returned an error field
+      starting with `"[\n  {\n    \"code\": \"invalid_type\"...`. (2) The
+      WhatsApp send route used `WhatsAppSendSchema.parse()` (throwing)
+      instead of the `safeParse()` + `HttpError(400, VALIDATION_ERROR)`
+      pattern every other validated route in the file already uses — a
+      malformed body (missing/empty `to` or `message`) threw an uncaught
+      `ZodError` straight into `app.ts`'s catch-all, which returned a
+      generic 500 Internal Server Error instead of a 400: the only route
+      in this file where routine bad input looked like a server crash and
+      polluted error logs with a real stack trace for what is just a
+      client mistake. Fixed both: moved `formatValidationError()` out of
+      `auth.ts` and into `httpError.ts` (next to `HttpError` itself, which
+      both routers already import) as a single shared helper, switched all
+      4 sites in `projects.ts` to use it, and switched the WhatsApp send
+      route to the same `safeParse()` + `HttpError` pattern as its
+      siblings. New end-to-end tests in `apps/api/src/app.test.ts`, run
+      against a real Express server via the existing `withServer()` test
+      harness (no mocking): one confirms a failed `POST /projects`
+      validation now returns short readable text (`"Required"` for a
+      missing field — Zod's own base type-check message, since a field
+      that's `undefined` fails type-checking before the schema's custom
+      `.min(1, "...")` message ever runs) instead of a JSON dump; the
+      other confirms WhatsApp send now returns 400/`VALIDATION_ERROR` for
+      a malformed body instead of 500. Caught my own mistake while writing
+      the first test: initially hand-guessed the expected message as the
+      schema's custom text (`"description is required"`) instead of
+      running it — recomputed directly with `node -e` and found the real
+      message for a *missing* field is Zod's own `"Required"` (the custom
+      message only fires when the field is present but fails `.min()`,
+      confirmed empirically for both the missing-field and
+      empty-string cases before finalizing the assertions). Both new tests
+      proven against the pre-fix code via `git stash` (2 failures: the raw
+      JSON-dump assertion, and 500 instead of 400 on the WhatsApp test).
+      Also verified with real `curl` requests against a real built server
+      booted in the clean-room worktree, independent of the automated test
+      suite. Full suite green (306 tests, up from 304 — `@forge/api` 95 →
+      97) + `tsc -b` clean + both builds clean + a from-scratch clean-room
+      worktree clone/install/test/build/start cycle with a live
+      `/api/health` check plus the two curl checks above.
+
 ## Phase 3
 
 - Self-healing: production observability, automatic diagnosis and patch
