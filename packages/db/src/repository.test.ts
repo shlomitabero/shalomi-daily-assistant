@@ -70,6 +70,44 @@ test("insertRecord rejects a value outside the enum", () => {
   );
 });
 
+const appointment: Entity = {
+  name: "Appointment",
+  fields: [
+    { name: "customerName", type: "text", required: true },
+    { name: "date", type: "date", required: true },
+    { name: "followUp", type: "date", required: false },
+  ],
+};
+
+function setupAppointment() {
+  const db = openDatabase(":memory:");
+  applyMigrations(db, "proj1", { ...spec, entities: [appointment] });
+  return db;
+}
+
+test("insertRecord accepts a real calendar date in YYYY-MM-DD format", () => {
+  const db = setupAppointment();
+  const created = insertRecord(db, "proj1", appointment, { customerName: "Alice", date: "2026-03-15" });
+  assert.equal(created.date, "2026-03-15");
+});
+
+test("insertRecord rejects a date field value that isn't a real, well-formed calendar date", () => {
+  const db = setupAppointment();
+  for (const bad of ["not-a-real-date-at-all", "2024/01/15", "15-01-2024", "2024-13-45", "2024-02-30"]) {
+    assert.throws(
+      () => insertRecord(db, "proj1", appointment, { customerName: "Alice", date: bad }),
+      ValidationError,
+      `expected "${bad}" to be rejected as an invalid date`,
+    );
+  }
+});
+
+test("insertRecord leaves an optional, unset date field as null rather than requiring a value", () => {
+  const db = setupAppointment();
+  const created = insertRecord(db, "proj1", appointment, { customerName: "Alice", date: "2026-03-15" });
+  assert.equal(created.followUp, null);
+});
+
 test("updateRecord merges fields and persists them", () => {
   const db = setup();
   const created = insertRecord(db, "proj1", customer, { name: "Alice", status: "New" });

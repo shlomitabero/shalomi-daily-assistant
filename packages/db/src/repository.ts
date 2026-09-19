@@ -5,6 +5,29 @@ import { assertSafeIdentifier, quoteIdentifier, tableNameFor } from "./identifie
 export class ValidationError extends Error {}
 export class NotFoundError extends Error {}
 
+const DATE_FORMAT = /^(\d{4})-(\d{2})-(\d{2})$/;
+
+/**
+ * Every date field's canonical stored representation is exactly the
+ * YYYY-MM-DD shape an <input type="date"> produces (see seed.ts's own
+ * `toISOString().slice(0, 10)` and EntityPanel.tsx's date input) --
+ * accepts that shape and rejects anything else, including a
+ * syntactically-shaped but calendrically impossible date like
+ * "2024-13-45" (the Date constructor silently rolls an out-of-range
+ * month/day over into a *different*, wrong date instead of rejecting it,
+ * so the parsed year/month/day are checked back against what was typed).
+ */
+function isValidDateString(value: string): boolean {
+  const match = DATE_FORMAT.exec(value);
+  if (!match) return false;
+  const [, yearStr, monthStr, dayStr] = match;
+  const year = Number(yearStr);
+  const month = Number(monthStr);
+  const day = Number(dayStr);
+  const parsed = new Date(Date.UTC(year, month - 1, day));
+  return parsed.getUTCFullYear() === year && parsed.getUTCMonth() === month - 1 && parsed.getUTCDate() === day;
+}
+
 function coerceValue(field: Field, raw: unknown): string | number | null {
   if (raw === undefined || raw === null || raw === "") {
     if (field.required) {
@@ -30,6 +53,13 @@ function coerceValue(field: Field, raw: unknown): string | number | null {
         );
       }
       return String(raw);
+    case "date": {
+      const str = String(raw);
+      if (!isValidDateString(str)) {
+        throw new ValidationError(`Field "${field.name}" must be a valid date in YYYY-MM-DD format`);
+      }
+      return str;
+    }
     default:
       return String(raw);
   }
