@@ -3844,6 +3844,47 @@ not a single "make it perfect" claim.
       331 — `@forge/web` 84 → 86) + both builds clean + a from-scratch
       clean-room worktree clone/install/test/build cycle.
 
+- [x] **The exported standalone app's own server had the identical
+      missing-date-validation gap rounds 62-63 already fixed twice over
+      in the live app** — closing out that pattern for a third and final
+      layer. The previous round's own stored notes claimed
+      `apps/api/src/codegen.ts` had no coercion logic at all for the
+      exported app, reasoning that meant a bigger, separate finding was
+      worth investigating; that claim turned out to be wrong on actual
+      inspection, not just an update to it — `renderServerJs()` embeds
+      its own `coerce()` function as a string template (a separate copy
+      of the same logic, since the exported app promises zero runtime
+      dependency on Forge AI), and it carries the exact same gap: validates
+      required/number/relation/boolean/enum but falls through to a bare
+      `return String(value)` for `"date"`, storing whatever string a
+      client sends with no validation. Fixed by adding a `"date"` branch
+      to the `coerce()` template, mirroring `repository.ts`'s
+      YYYY-MM-DD-plus-real-calendar-date check exactly. Verified the
+      double-backslash escaping needed inside the outer TypeScript
+      template literal actually produces a correct
+      `` /^(\d{4})-(\d{2})-(\d{2})$/ `` regex in the *generated* output
+      before trusting it (printed the real generated `server.js` text and
+      read it back), and syntax-checked the generated file with
+      `node --check`. New test in `codegen.test.ts` follows this file's
+      own established pattern for exercising generated code: generates a
+      real project with a date field, spawns the actual generated
+      `server.js` as a child process against a real SQLite file, and
+      posts real HTTP requests — a valid date creates a record, four
+      malformed/impossible dates are all rejected with `400`. Proven to
+      catch a real regression via `git stash` on `codegen.ts` alone,
+      re-run against the real spawned server each time, not just a check
+      of the source text. Full suite green (334 tests, up from 333 —
+      `@forge/api` 107 → 108) + both builds clean + a from-scratch
+      clean-room worktree clone/install/test/build cycle, plus — since
+      this fix lives inside generated *output*, not source the monorepo's
+      own server runs — a genuine end-to-end pass through the real
+      product feature on top of that: signed up, built a real
+      beauty-clinic project, downloaded its actual export ZIP via the
+      live API, unzipped it, ran the real downloaded `server.js`, and
+      confirmed with `curl` that it accepts a valid date (`201`) and now
+      cleanly rejects a garbage one (`400`) — not a simulation of the
+      export, the literal file a real user would download and run.
+
 ## Phase 3
 
 - Self-healing: production observability, automatic diagnosis and patch
