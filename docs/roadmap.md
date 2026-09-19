@@ -3614,6 +3614,66 @@ not a single "make it perfect" claim.
       worktree clone/install/test/build/start cycle with a live
       `/api/health` check plus the curl checks above.
 
+- [x] **Two entities whose names collide when compared case-insensitively
+      (e.g. "Order" and "order") could silently share one SQLite table,
+      corrupting data instead of erroring.** Found doing a full,
+      whole-file `code-review` pass on `packages/db/src/migrate.ts` —
+      this window's own designed fallback task when no other obvious
+      candidate exists. Confirmed the actual mechanism directly against
+      this project's real SQLite binding rather than assuming from SQLite
+      docs alone: `CREATE TABLE IF NOT EXISTS "Order" (...)` followed by
+      `CREATE TABLE IF NOT EXISTS "order" (...)` creates exactly *one*
+      table and silently no-ops the second statement, because SQLite
+      compares identifiers case-insensitively for ASCII even when
+      double-quoted, so `IF NOT EXISTS` sees the two names as identical.
+      `migrate.ts`'s `tableNameFor` prefixes per-project but never
+      normalizes case, and `apps/api/src/codegen.ts` (the exported
+      standalone app) uses the entity name directly as the table name
+      with the same gap — so two case-colliding entities would silently
+      collapse into one physical table, with every read/write meant for
+      the "losing" entity actually hitting the "winning" entity's columns
+      instead. Nothing in the codebase checked for this anywhere; the
+      only defense was luck (the heuristic provider's own fixed 32-entity
+      library happens not to contain a collision, verified with a script
+      rather than assumed, but an LLM-generated or refined spec has no
+      such guarantee). Fixed at the single point every `ProductSpec` is
+      already validated — `packages/shared/src/index.ts`'s
+      `ProductSpecSchema` — adding a `.refine()` that rejects a spec with
+      case-colliding entity names, the exact same pattern and rationale
+      as the existing `RESERVED_FIELD_NAMES` check for field names
+      colliding with `id`/`createdAt`. A spec that fails this now falls
+      back to the heuristic provider instead of ever reaching either
+      database layer, matching the established fallback behavior. Traced
+      every current caller of `ProductSpecSchema` (heuristic.ts's direct
+      `.parse()`, anthropic.ts's and debug.ts's `.safeParse()`, and
+      stored-project/checkpoint reads) to confirm all of them already
+      re-validate through this one path, so the fix is complete at a
+      single site. New tests: two in `spec-engine/src/index.test.ts`
+      mirroring the existing reserved-field-name tests exactly (a direct
+      rejection with the right message, and an end-to-end fallback to
+      heuristic with no colliding names in the result) — proven to fail
+      against the pre-fix schema via `git stash` on
+      `packages/shared/src/index.ts` alone (both failed as predicted, the
+      same-message assertion and the end-to-end fallback check); one in
+      `packages/db/src/migrate.test.ts` documenting the actual SQLite
+      no-op-second-CREATE-TABLE mechanism this closes off, so a future
+      reader of `migrate.ts` sees *why* uniqueness has to be enforced
+      upstream rather than assuming migrate.ts is itself safe. Also
+      updated the schema's own doc comment, which previously described it
+      as strictly "append-only" — noted that closing a real
+      data-corruption hole (as this refine and `RESERVED_FIELD_NAMES` both
+      do) is the one sanctioned exception, and that `getProject` (unlike
+      `listProjectsForOwner`) has no safety net for an old stored spec
+      that stops parsing — an accepted, narrow, already-precedented cost.
+      Full suite green (325 tests, up from 322 — `@forge/spec-engine` 78 →
+      80, `@forge/db` 54 → 55) + both builds clean (including `tsc -b` for
+      the web package, confirming the schema change type-checks cleanly
+      for every consumer) + a from-scratch clean-room worktree
+      clone/install/test/build/start cycle, including a real curl-driven
+      signup + `POST /api/projects` request against the built server
+      confirming an ordinary, non-colliding description still generates a
+      real heuristic spec exactly as before.
+
 ## Phase 3
 
 - Self-healing: production observability, automatic diagnosis and patch
