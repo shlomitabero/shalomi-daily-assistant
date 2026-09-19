@@ -66,6 +66,20 @@ function findEntity(project: Project, entityName: string): Entity {
   return entity;
 }
 
+/**
+ * `Number("abc")` is NaN, which SQLite's driver happily binds as a
+ * parameter without throwing (verified empirically) -- so without this
+ * check, a malformed :recordId in the URL silently falls through to
+ * "Record NaN not found in X", a confusing 404 that leaks the raw
+ * coercion result instead of clearly rejecting the bad input.
+ */
+function parseRecordId(raw: string): number {
+  if (!/^\d+$/.test(raw)) {
+    throw new HttpError(400, `Invalid record id "${raw}"`, "VALIDATION_ERROR");
+  }
+  return Number(raw);
+}
+
 /** 404s (rather than 403s) on a project owned by someone else, to avoid leaking existence. */
 function requireOwnedProject(db: ForgeDatabase, id: string, userId: string): Project {
   const project = getProject(db, id);
@@ -425,7 +439,7 @@ export function createProjectsRouter(db: ForgeDatabase, provider: SpecProvider |
         throw new HttpError(409, "Project has not been built yet — call POST /build first", "BUILD_REQUIRED");
       }
       const entity = findEntity(project, req.params.entityName);
-      const recordId = Number(req.params.recordId);
+      const recordId = parseRecordId(req.params.recordId);
       const record = updateRecord(db, project.id, entity, recordId, req.body ?? {});
       res.json({ record });
     }),
@@ -439,7 +453,7 @@ export function createProjectsRouter(db: ForgeDatabase, provider: SpecProvider |
         throw new HttpError(409, "Project has not been built yet — call POST /build first", "BUILD_REQUIRED");
       }
       const entity = findEntity(project, req.params.entityName);
-      const recordId = Number(req.params.recordId);
+      const recordId = parseRecordId(req.params.recordId);
       deleteRecord(db, project.id, entity, recordId);
       res.status(204).end();
     }),

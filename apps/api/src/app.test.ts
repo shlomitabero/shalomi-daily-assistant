@@ -378,6 +378,28 @@ test("full acceptance flow: idea -> spec -> AI build pipeline -> CRUD -> refine 
     });
     assert.equal(deleteRes.status, 204);
 
+    // A non-numeric :recordId must be rejected with a clean 400, not fall
+    // through to Number() producing NaN and a confusing "Record NaN not
+    // found" 404 that leaks the raw coercion result.
+    const badPatchRes = await fetch(`${baseUrl}/api/projects/${projectId}/entities/Customer/not-a-number`, {
+      method: "PATCH",
+      headers: authHeaders(token),
+      body: JSON.stringify({ status: "Won" }),
+    });
+    assert.equal(badPatchRes.status, 400);
+    const badPatchBody = (await badPatchRes.json()) as { code?: string; error?: string };
+    assert.equal(badPatchBody.code, "VALIDATION_ERROR");
+    assert.ok(!badPatchBody.error?.includes("NaN"));
+
+    const badDeleteRes = await fetch(`${baseUrl}/api/projects/${projectId}/entities/Customer/not-a-number`, {
+      method: "DELETE",
+      headers: authHeaders(token),
+    });
+    assert.equal(badDeleteRes.status, 400);
+    const badDeleteBody = (await badDeleteRes.json()) as { code?: string; error?: string };
+    assert.equal(badDeleteBody.code, "VALIDATION_ERROR");
+    assert.ok(!badDeleteBody.error?.includes("NaN"));
+
     // Refine: add a brand-new entity via natural language, additive-only.
     const refineRes = await fetch(`${baseUrl}/api/projects/${projectId}/refine`, {
       method: "POST",
