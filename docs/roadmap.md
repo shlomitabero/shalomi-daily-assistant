@@ -3319,6 +3319,41 @@ not a single "make it perfect" claim.
       from-scratch clean-room worktree clone/install/test/build/start
       cycle with a live `/api/health` check.
 
+- [x] **The signup/login mode toggle could leak a stale error into the
+      other form, and let an abandoned signup or login silently sign the
+      user in mid-request.** Self-review (`code-review` skill, high effort)
+      of `apps/web/src/AuthScreen.tsx` (its first dedicated pass). Two
+      linked bugs in the same toggle button, fixed together: (1) switching
+      between signup and login never cleared `error` — a user who got "An
+      account with this email already exists." on signup and clicked
+      "I already have an account" saw that same signup error sitting under
+      the login form, which is both confusing and factually wrong for the
+      action they were about to take (and the reverse case, a login error
+      bleeding into signup, is equally misleading); (2) the toggle button
+      stayed clickable while `busy` was `true`, unlike the submit button —
+      a user could submit signup, then click the toggle and start typing
+      different login credentials before the original request resolved;
+      when it did resolve, it would silently call `onAuthenticated` under
+      the signup account they'd already abandoned, discarding whatever
+      they were mid-way through typing with no indication anything
+      happened. Fixed by clearing the error and disabling the toggle
+      (`disabled={busy}`) in the same `onClick`, mirroring the pattern the
+      submit button already uses. No unit-testable surface (a React
+      component; this project has no jsdom/testing-library, so component
+      fixes are verified live, per established practice). Verified against
+      a real `npm run dev` server: `page.route()` mocked a 409
+      `EMAIL_TAKEN` signup response to trigger a real error, then a
+      login response delayed 2.5s to create a genuine in-flight request.
+      Confirmed via `git stash` on just the source file that the pre-fix
+      code left the stale signup error visible after switching to login
+      and kept the toggle clickable (and thus the mode switchable) while a
+      request was pending, while the post-fix code clears the error
+      immediately and disables the toggle until the request settles (then
+      correctly re-enables it). Full suite unchanged (304 tests — a
+      live-only fix, no new unit test) + `tsc -b` clean + both builds
+      clean + a from-scratch clean-room worktree clone/install/test/
+      build/start cycle with a live `/api/health` check.
+
 ## Phase 3
 
 - Self-healing: production observability, automatic diagnosis and patch
