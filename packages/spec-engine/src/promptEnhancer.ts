@@ -1,5 +1,6 @@
 import { isHebrewText } from "./domainEntities.js";
 import { matchEntities, matchRoles } from "./heuristic.js";
+import { fetchAnthropic } from "./anthropicFetch.js";
 
 const ANTHROPIC_API_URL = "https://api.anthropic.com/v1/messages";
 const ANTHROPIC_VERSION = "2023-06-01";
@@ -40,7 +41,7 @@ export class HeuristicPromptEnhancer implements PromptEnhancer {
     const roles = matchRoles(rawIdea, isHebrew);
     const entityPhrases = entities.map((e) => {
       const label = e.label ?? e.name;
-      const fields = e.fields.map((f) => f.label ?? f.name).join(isHebrew ? ", " : ", ");
+      const fields = e.fields.map((f) => f.label ?? f.name).join(", ");
       return `${label} (${fields})`;
     });
 
@@ -64,6 +65,7 @@ export interface AnthropicPromptEnhancerOptions {
   apiKey: string;
   model?: string;
   fetchImpl?: typeof fetch;
+  timeoutMs?: number;
 }
 
 /**
@@ -77,31 +79,38 @@ export class AnthropicPromptEnhancer implements PromptEnhancer {
   private readonly apiKey: string;
   private readonly model: string;
   private readonly fetchImpl: typeof fetch;
+  private readonly timeoutMs?: number;
 
   constructor(options: AnthropicPromptEnhancerOptions) {
     this.apiKey = options.apiKey;
     this.model = options.model ?? "claude-sonnet-5";
     this.fetchImpl = options.fetchImpl ?? fetch;
+    this.timeoutMs = options.timeoutMs;
   }
 
   async enhance(rawIdea: string): Promise<string> {
     if (!rawIdea || rawIdea.trim().length === 0) {
       throw new Error("rawIdea must not be empty");
     }
-    const response = await this.fetchImpl(ANTHROPIC_API_URL, {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        "x-api-key": this.apiKey,
-        "anthropic-version": ANTHROPIC_VERSION,
+    const response = await fetchAnthropic(
+      this.fetchImpl,
+      ANTHROPIC_API_URL,
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-api-key": this.apiKey,
+          "anthropic-version": ANTHROPIC_VERSION,
+        },
+        body: JSON.stringify({
+          model: this.model,
+          max_tokens: 1024,
+          system: ENHANCE_SYSTEM_PROMPT,
+          messages: [{ role: "user", content: rawIdea }],
+        }),
       },
-      body: JSON.stringify({
-        model: this.model,
-        max_tokens: 1024,
-        system: ENHANCE_SYSTEM_PROMPT,
-        messages: [{ role: "user", content: rawIdea }],
-      }),
-    });
+      this.timeoutMs,
+    );
 
     if (!response.ok) {
       const body = await response.text().catch(() => "");

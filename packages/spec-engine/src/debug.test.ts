@@ -87,3 +87,25 @@ test("requestSpecFix throws a specific error on a safety refusal (stop_reason: r
     /refus/i,
   );
 });
+
+/**
+ * requestSpecFix used to call fetchImpl directly with no timeout -- a
+ * stalled network call (TCP connects, response never arrives) would hang
+ * forever. Unlike the other two Anthropic callers in this package, this
+ * one has no offline fallback at all (see debug.ts's own comment on why),
+ * so a hang here would freeze the whole multi-agent build pipeline, not
+ * just this one step. Confirms the fix is actually wired through: a
+ * fetchImpl that only resolves once its AbortSignal fires still makes
+ * requestSpecFix reject, via the injectable timeoutMs option (see
+ * anthropicFetch.ts).
+ */
+test("requestSpecFix times out instead of hanging forever when the network call stalls", async () => {
+  const stalledFetch: typeof fetch = (_input, init) =>
+    new Promise((_resolve, reject) => {
+      init?.signal?.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError")));
+    });
+  await assert.rejects(
+    () => requestSpecFix(brokenSpec, "some error", { apiKey: "test-key", fetchImpl: stalledFetch, timeoutMs: 10 }),
+    /timed out/,
+  );
+});

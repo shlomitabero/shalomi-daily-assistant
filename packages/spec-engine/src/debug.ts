@@ -1,5 +1,6 @@
 import type { ProductSpec } from "@forge/shared";
 import { ProductSpecSchema } from "@forge/shared";
+import { fetchAnthropic } from "./anthropicFetch.js";
 
 const ANTHROPIC_API_URL = "https://api.anthropic.com/v1/messages";
 const ANTHROPIC_VERSION = "2023-06-01";
@@ -17,6 +18,7 @@ export interface RequestSpecFixOptions {
   apiKey: string;
   model?: string;
   fetchImpl?: typeof fetch;
+  timeoutMs?: number;
 }
 
 /**
@@ -56,20 +58,25 @@ export async function requestSpecFix(
   options: RequestSpecFixOptions,
 ): Promise<ProductSpec> {
   const fetchImpl = options.fetchImpl ?? fetch;
-  const response = await fetchImpl(ANTHROPIC_API_URL, {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-      "x-api-key": options.apiKey,
-      "anthropic-version": ANTHROPIC_VERSION,
+  const response = await fetchAnthropic(
+    fetchImpl,
+    ANTHROPIC_API_URL,
+    {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-api-key": options.apiKey,
+        "anthropic-version": ANTHROPIC_VERSION,
+      },
+      body: JSON.stringify({
+        model: options.model ?? "claude-sonnet-5",
+        max_tokens: 4096,
+        system: SYSTEM_PROMPT,
+        messages: [{ role: "user", content: JSON.stringify({ spec, error: errorMessage }) }],
+      }),
     },
-    body: JSON.stringify({
-      model: options.model ?? "claude-sonnet-5",
-      max_tokens: 4096,
-      system: SYSTEM_PROMPT,
-      messages: [{ role: "user", content: JSON.stringify({ spec, error: errorMessage }) }],
-    }),
-  });
+    options.timeoutMs,
+  );
 
   if (!response.ok) {
     const body = await response.text().catch(() => "");

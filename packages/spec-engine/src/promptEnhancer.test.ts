@@ -122,3 +122,31 @@ test("enhancePrompt still throws when the heuristic enhancer itself fails (no fu
   };
   await assert.rejects(() => enhancePrompt("x", failingHeuristic), /should propagate/);
 });
+
+/**
+ * AnthropicPromptEnhancer.enhance() used to call fetchImpl directly with no
+ * timeout -- a stalled network call (TCP connects, response never arrives)
+ * would hang forever. Confirms the fix is actually wired through: a
+ * fetchImpl that only resolves once its AbortSignal fires still makes
+ * enhance() reject, via the injectable timeoutMs option (see
+ * anthropicFetch.ts).
+ */
+test("AnthropicPromptEnhancer.enhance() times out instead of hanging forever when the network call stalls", async () => {
+  const stalledFetch: typeof fetch = (_input, init) =>
+    new Promise((_resolve, reject) => {
+      init?.signal?.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError")));
+    });
+  const enhancer = new AnthropicPromptEnhancer({ apiKey: "test-key", fetchImpl: stalledFetch, timeoutMs: 10 });
+  await assert.rejects(() => enhancer.enhance("x"), /timed out/);
+});
+
+test("enhancePrompt falls back to the heuristic enhancer when the Anthropic call stalls and times out, not just on an explicit error response", async () => {
+  const stalledFetch: typeof fetch = (_input, init) =>
+    new Promise((_resolve, reject) => {
+      init?.signal?.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError")));
+    });
+  const enhancer = new AnthropicPromptEnhancer({ apiKey: "test-key", fetchImpl: stalledFetch, timeoutMs: 10 });
+  const { enhanced, providerName } = await enhancePrompt("a shop with customers and orders", enhancer);
+  assert.equal(providerName, "anthropic-fallback");
+  assert.ok(enhanced.length > 0);
+});

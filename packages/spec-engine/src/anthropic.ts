@@ -1,6 +1,7 @@
 import type { ProductSpec } from "@forge/shared";
 import { ProductSpecSchema } from "@forge/shared";
 import type { SpecProvider } from "./provider.js";
+import { fetchAnthropic } from "./anthropicFetch.js";
 
 const ANTHROPIC_API_URL = "https://api.anthropic.com/v1/messages";
 const ANTHROPIC_VERSION = "2023-06-01";
@@ -46,6 +47,7 @@ export interface AnthropicProviderOptions {
   apiKey: string;
   model?: string;
   fetchImpl?: typeof fetch;
+  timeoutMs?: number;
 }
 
 /**
@@ -58,28 +60,35 @@ export class AnthropicSpecProvider implements SpecProvider {
   private readonly apiKey: string;
   private readonly model: string;
   private readonly fetchImpl: typeof fetch;
+  private readonly timeoutMs?: number;
 
   constructor(options: AnthropicProviderOptions) {
     this.apiKey = options.apiKey;
     this.model = options.model ?? "claude-sonnet-5";
     this.fetchImpl = options.fetchImpl ?? fetch;
+    this.timeoutMs = options.timeoutMs;
   }
 
   async generate(description: string): Promise<ProductSpec> {
-    const response = await this.fetchImpl(ANTHROPIC_API_URL, {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        "x-api-key": this.apiKey,
-        "anthropic-version": ANTHROPIC_VERSION,
+    const response = await fetchAnthropic(
+      this.fetchImpl,
+      ANTHROPIC_API_URL,
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-api-key": this.apiKey,
+          "anthropic-version": ANTHROPIC_VERSION,
+        },
+        body: JSON.stringify({
+          model: this.model,
+          max_tokens: 4096,
+          system: SYSTEM_PROMPT,
+          messages: [{ role: "user", content: description }],
+        }),
       },
-      body: JSON.stringify({
-        model: this.model,
-        max_tokens: 4096,
-        system: SYSTEM_PROMPT,
-        messages: [{ role: "user", content: description }],
-      }),
-    });
+      this.timeoutMs,
+    );
 
     if (!response.ok) {
       const body = await response.text().catch(() => "");

@@ -111,3 +111,19 @@ test("generate() still reports a genuinely malformed (non-truncated) JSON respon
   const provider = new AnthropicSpecProvider({ apiKey: "test-key", fetchImpl: fakeFetch });
   await assert.rejects(() => provider.generate("x"), /Anthropic API response was not valid JSON/);
 });
+
+/**
+ * generate() used to call fetchImpl directly with no timeout -- a stalled
+ * network call (TCP connects, response never arrives) would hang this
+ * forever. Confirms the fix is actually wired through: a fetchImpl that
+ * never resolves still makes generate() reject, via the injectable
+ * timeoutMs option (see anthropicFetch.ts).
+ */
+test("generate() times out instead of hanging forever when the network call stalls", async () => {
+  const stalledFetch: typeof fetch = (_input, init) =>
+    new Promise((_resolve, reject) => {
+      init?.signal?.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError")));
+    });
+  const provider = new AnthropicSpecProvider({ apiKey: "test-key", fetchImpl: stalledFetch, timeoutMs: 10 });
+  await assert.rejects(() => provider.generate("x"), /timed out/);
+});
