@@ -3282,6 +3282,43 @@ not a single "make it perfect" claim.
       clean + both builds clean + a from-scratch clean-room worktree
       clone/install/test/build/start cycle with a live `/api/health` check.
 
+- [x] **Opening a failed Seed Data step's details crashed the whole build
+      screen to a blank page.** Self-review (`code-review` skill, high
+      effort) of `apps/web/src/BuildProgress.tsx` — a file that had never
+      had a dedicated pass before, picked specifically because round 51's
+      fix touched the error-message path it renders. `AgentDetail`'s
+      "Seed Data" branch always destructured `detail` as
+      `{ seededCount, entities }` and immediately read `entities.length` —
+      but `apps/api/src/pipeline.ts` (lines 233–239) sends a plain
+      `string[]` of per-record errors as `detail` when seeding actually
+      fails (a real, reachable path: any seed record that violates a
+      constraint, e.g. a duplicate unique field, lands here), and only a
+      *successful* seed sends the `{ seededCount, entities }` object shape
+      (line 245). Clicking "Show details" on a failed Seed Data row ran
+      `entities.length` against `undefined` and threw — and since there is
+      no `ErrorBoundary` anywhere in `apps/web/src`, React 18 unmounts the
+      whole tree on an uncaught render error with nothing to catch it,
+      blanking the entire build screen. Fixed by adding an
+      `Array.isArray(detail)` check before the object-shape branch — the
+      exact pattern the "Database", "QA" and "Security" branches already
+      use for their own array-shaped details — and rendering the real
+      per-record error list in that case, the same way "Security"'s
+      warnings list already renders raw (untranslated) server-side error
+      text. No unit-testable surface (a React component; this project has
+      no jsdom/testing-library dependency, so component tests are verified
+      live instead, per established practice). Verified against a real
+      `npm run dev` server: intercepted the build SSE stream
+      (`page.route()`) to force a synthetic Seed Data failure carrying a
+      real `string[]` detail, clicked "Show details", and used
+      `git stash` on just the source file to confirm the pre-fix code
+      threw `Cannot read properties of undefined (reading 'length')`
+      (captured via Playwright's `page.on("pageerror")`) and blanked the
+      page, while the post-fix code renders the error text with zero
+      `pageerror` events. Full suite unchanged (304 tests — a live-only
+      fix, no new unit test) + `tsc -b` clean + both builds clean + a
+      from-scratch clean-room worktree clone/install/test/build/start
+      cycle with a live `/api/health` check.
+
 ## Phase 3
 
 - Self-healing: production observability, automatic diagnosis and patch
