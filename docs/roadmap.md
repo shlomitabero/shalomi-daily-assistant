@@ -3158,6 +3158,49 @@ not a single "make it perfect" claim.
       worktree clone/install/test/build/start cycle with a live
       `/api/health` check.
 
+- [x] **The "waking up the server" banner could disappear early while the
+      server was still genuinely cold-starting.** This was an open finding
+      deferred from the previous round's self-review of `apps/web/src/api.ts`:
+      `fetchApi`'s `onWaking` callback was wired straight to a single global
+      `notifyWaking` boolean. Every in-flight request (auth calls, project
+      loads, a WhatsApp status poll, the global-search fetch, etc.) runs its
+      *own* independent `fetchWithWakeRetry` retry loop, and each one calls
+      `onWaking(false)` the instant *its own* retries finish — with no idea
+      whether some other, sibling request (e.g. a background poll landing
+      at the same time as a user clicking a button) is still failing and
+      retrying. During a real cold start with more than one request in
+      flight, whichever one's own retry loop happened to finish first would
+      hide the "waking up" banner, even while another request was still
+      genuinely retrying against a server that hadn't actually woken up
+      yet — misleading the user into thinking the app was ready when it
+      wasn't. Added `createWakeRefCounter()`, which wraps the notifier so
+      it only fires `waking(false)` once every concurrent caller has
+      released it (fires `waking(true)` only on the *first* concurrent
+      caller, similarly). While writing the regression test for this fix, I
+      caught a real bug in my own first version of it: the initial
+      implementation used `active = Math.max(0, active - 1)` and then
+      checked `if (active === 0) notify(false)` — but that fires a spurious
+      `waking(false)` on an *unmatched* release (i.e. a `false` call
+      arriving when the count was already 0), since the clamped result is
+      still 0. A genuinely unreachable case in the real call site today
+      (each `fetchWithWakeRetry` call always balances its own `true`/`false`
+      pair), but wrong on its own terms as a general-purpose counter, and
+      exactly the kind of off-by-one a future caller could hit. Fixed by
+      only decrementing (and only then checking for zero) when the count is
+      already positive — an unmatched release is now a true no-op. 2 new
+      unit tests in `apps/web/src/api.test.ts` test `createWakeRefCounter`
+      directly and deterministically (no real timers needed, since the
+      counting logic itself — not `fetchWithWakeRetry`'s already-tested
+      per-call retry behavior — is what changed): one proves `waking(false)`
+      only fires after every concurrent caller releases, not the first one
+      to finish; the other proves an unmatched release never fires a
+      spurious notify. Proven against the pre-fix code via `git stash` (the
+      test file failed to even load, since the fix introduces the
+      `createWakeRefCounter` export itself). Full suite green (301 tests, up
+      from 299 — `@forge/web` 79 → 81) + `tsc -b` clean + both builds clean +
+      a from-scratch clean-room worktree clone/install/test/build/start
+      cycle with a live `/api/health` check.
+
 ## Phase 3
 
 - Self-healing: production observability, automatic diagnosis and patch
