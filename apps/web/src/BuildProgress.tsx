@@ -91,6 +91,24 @@ function AgentDetail({ agent, detail }: { agent: AgentStepEvent["agent"]; detail
     );
   }
 
+  // A failed seed step (apps/api/src/pipeline.ts) sends `detail` as a
+  // plain string[] of per-record errors, not the { seededCount, entities }
+  // shape a successful one sends -- this must be checked first, or the
+  // object-shape branch below destructures `entities` off an array and
+  // crashes on `entities.length` with no ErrorBoundary to catch it.
+  if (agent === "Seed Data" && Array.isArray(detail)) {
+    const errors = detail as string[];
+    return (
+      <ul className="detail-list">
+        {errors.map((e, i) => (
+          <li key={i} className="detail-fail">
+            {e}
+          </li>
+        ))}
+      </ul>
+    );
+  }
+
   if (agent === "Seed Data" && detail) {
     const { seededCount, entities } = detail as { seededCount: number; entities: string[] };
     if (entities.length === 0) return <p className="muted small">{t("build.detail.seed.none")}</p>;
