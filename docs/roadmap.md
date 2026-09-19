@@ -3112,6 +3112,52 @@ not a single "make it perfect" claim.
   clean + both builds clean + a from-scratch clean-room clone/install/
   test/build/start cycle with a live `/api/health` check.
 
+- [x] **Downloaded ZIP filenames no longer collapse Hebrew project names to
+      "forge-app".** Self-review of `apps/web/src/api.ts` (the client-side
+      fetch/download layer) found that both `exportProject` and
+      `backupProject` derived the saved filename with
+      `projectName.replace(/[^A-Za-z0-9 _-]/g, "").trim() || "forge-app"` —
+      which strips every character outside that ASCII whitelist. Since this
+      product is Hebrew-first and every real project name a user actually
+      sees comes out of spec generation as Hebrew text, a name like
+      "אפליקציה לניהול תורים למספרה" collapsed entirely to the empty string,
+      silently falling back to the generic "forge-app.zip" /
+      "forge-app-backup.zip" — the user's own project name never appeared
+      in their downloaded file at all. Added `safeDownloadName(projectName,
+      fallback)`, which strips only characters genuinely unsafe in a
+      filename (path separators, Windows-reserved characters, control
+      characters) and otherwise preserves the name as-is; both download
+      paths now use it. Deliberately did **not** apply the identical change
+      to the matching server-side logic in `apps/api/src/routes/projects.ts`
+      (its own `Content-Disposition`-header filename sanitizer, at lines
+      262 and 278) — that stays ASCII-only on purpose, for a real technical
+      reason rather than an oversight: Node's `res.setHeader()` requires
+      header values to stay within the Latin-1 byte range and would throw
+      at runtime on raw Hebrew text, and in any case this app's actual
+      download flow is `fetch()` + `Blob` + a real `<a download="...">`
+      element, so the filename that ends up on disk is the client-side
+      `download` attribute (which the browser reads directly and has
+      supported arbitrary Unicode since HTML5), not the HTTP header —
+      confirmed the existing server-side tests
+      (`apps/api/src/app.test.ts`, the `Content-Disposition` assertions
+      around lines 565 and 597) only check the generic
+      `/attachment; filename=".*\.zip"/` pattern and don't need updating.
+      Caught and fixed my own mistake while writing the new unit tests:
+      hand-guessed the expected output of `safeDownloadName('Ord*rs:
+      "Q1"?', "forge-app")` as `"Orders Q1"` before actually running the
+      regex, which was wrong — the real output is `"Ordrs Q1"`; recomputed
+      it directly with `node -e` before finalizing the test, re-confirming
+      the standing rule to never hand-compute a non-trivial string
+      transformation's expected value. 3 new unit tests in
+      `apps/web/src/api.test.ts`, proven against the pre-fix code via
+      `git stash` (the test file failed to even load, with `SyntaxError:
+      the requested module './api.js' does not provide an export named
+      'safeDownloadName'`, since the fix introduces the function itself).
+      Full suite green (299 tests, up from 296 — `@forge/web` 76 → 79) +
+      `tsc -b` clean + both builds clean + a from-scratch clean-room
+      worktree clone/install/test/build/start cycle with a live
+      `/api/health` check.
+
 ## Phase 3
 
 - Self-healing: production observability, automatic diagnosis and patch
