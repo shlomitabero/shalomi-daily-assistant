@@ -72,7 +72,18 @@ export function AuthScreen({ onAuthenticated }: { onAuthenticated: (user: User) 
           <button
             type="button"
             className="secondary link-button"
-            onClick={() => setMode(mode === "signup" ? "login" : "signup")}
+            disabled={busy}
+            onClick={() => {
+              // Switching forms mid-request would let an in-flight
+              // signup/login silently sign the user in under whichever
+              // account they were trying to abandon, once it resolves --
+              // so this stays disabled while busy, same as the submit
+              // button. A stale error from the form being left also
+              // shouldn't bleed into the other form (e.g. "email already
+              // taken" showing while the user is trying to log in).
+              setMode(mode === "signup" ? "login" : "signup");
+              setError(null);
+            }}
           >
             {mode === "signup" ? t("auth.toggle.toLogin") : t("auth.toggle.toSignup")}
           </button>
