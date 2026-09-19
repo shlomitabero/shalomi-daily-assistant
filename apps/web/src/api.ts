@@ -22,6 +22,33 @@ function notifyWaking(waking: boolean): void {
 }
 
 /**
+ * Wraps a waking(true/false) notifier with reference counting. Several
+ * fetchApi() calls can be in flight at once during a real cold start (e.g.
+ * a background status poll landing alongside a user action) -- each one
+ * runs its own independent fetchWithWakeRetry retry loop and calls
+ * onWaking(false) the moment *its own* retries finish, with no idea
+ * whether a sibling request is still retrying. Without this wrapper,
+ * whichever concurrent request's retry loop happens to finish first would
+ * hide the "waking up" banner while another request is still genuinely
+ * failing against a server that hasn't woken up yet. This makes the
+ * notifier only fire false once every concurrent caller has released it.
+ */
+export function createWakeRefCounter(notify: (waking: boolean) => void): (waking: boolean) => void {
+  let active = 0;
+  return (waking: boolean) => {
+    if (waking) {
+      active += 1;
+      if (active === 1) notify(true);
+    } else if (active > 0) {
+      active -= 1;
+      if (active === 0) notify(false);
+    }
+  };
+}
+
+const notifyWakingRefCounted = createWakeRefCounter(notifyWaking);
+
+/**
  * Wraps fetchWithWakeRetry so that if every retry is exhausted (the
  * backend is genuinely unreachable, not just cold-starting), the caller
  * sees a translated message instead of the browser's raw, untranslated
@@ -29,7 +56,7 @@ function notifyWaking(waking: boolean): void {
  */
 async function fetchApi(input: string, init?: RequestInit): Promise<Response> {
   try {
-    return await fetchWithWakeRetry(input, init, { onWaking: notifyWaking });
+    return await fetchWithWakeRetry(input, init, { onWaking: notifyWakingRefCounted });
   } catch {
     throw new Error(resolveErrorMessage({ code: "NETWORK_ERROR" }));
   }

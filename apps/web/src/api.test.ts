@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { safeDownloadName, sendWhatsAppMessage } from "./api.js";
+import { createWakeRefCounter, safeDownloadName, sendWhatsAppMessage } from "./api.js";
 
 test("safeDownloadName keeps Hebrew (and other Unicode) project names intact, instead of collapsing them to the fallback", () => {
   // This product is Hebrew-first (see docs/roadmap.md), and every real
@@ -24,6 +24,47 @@ test("safeDownloadName falls back when nothing safe is left (or the name is blan
   assert.equal(safeDownloadName("///", "forge-app"), "forge-app");
   assert.equal(safeDownloadName("   ", "forge-app"), "forge-app");
   assert.equal(safeDownloadName("", "forge-app"), "forge-app");
+});
+
+/**
+ * api.ts wires createWakeRefCounter between fetchApi's per-request
+ * fetchWithWakeRetry calls and the single global "waking" listener set
+ * App.tsx subscribes to (see docs/roadmap.md for the bug this covers: two
+ * concurrent in-flight requests during a real cold start, e.g. a
+ * background status poll landing alongside a user action, each ran their
+ * own independent retry loop and called onWaking(false) the moment their
+ * *own* retries finished -- hiding the "waking up" banner while a sibling
+ * request was still genuinely retrying against a server that hadn't woken
+ * up yet).
+ */
+test("createWakeRefCounter only notifies waking(false) once every concurrent caller has released it, not as soon as the first one does", () => {
+  const notified: boolean[] = [];
+  const counted = createWakeRefCounter((w) => notified.push(w));
+
+  counted(true); // request A starts retrying
+  assert.deepEqual(notified, [true]);
+
+  counted(true); // request B starts retrying too, while A is still in flight
+  assert.deepEqual(notified, [true]); // no duplicate waking(true)
+
+  counted(false); // A's own retry loop finishes first
+  assert.deepEqual(notified, [true]); // B is still waking -- banner must stay up
+
+  counted(false); // B's retry loop finishes too
+  assert.deepEqual(notified, [true, false]); // only now is it safe to hide the banner
+});
+
+test("createWakeRefCounter never lets its internal count go negative on an unmatched waking(false)", () => {
+  const notified: boolean[] = [];
+  const counted = createWakeRefCounter((w) => notified.push(w));
+
+  counted(false); // no matching waking(true) yet -- must be a no-op, not an underflow
+  assert.deepEqual(notified, []);
+
+  counted(true);
+  assert.deepEqual(notified, [true]);
+  counted(false);
+  assert.deepEqual(notified, [true, false]);
 });
 
 /**
