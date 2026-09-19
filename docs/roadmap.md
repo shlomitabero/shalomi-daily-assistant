@@ -3768,6 +3768,51 @@ not a single "make it perfect" claim.
       the built server confirming the donation description now
       recommends Stripe.
 
+- [x] **Full code-review pass on `packages/db/src/repository.ts`** (the
+      generic CRUD core — the data-layer sibling of `migrate.ts`, picked
+      since the original three-file list was exhausted last round;
+      `codegen.ts` at ~1900 lines was judged too large for one round's
+      budget and saved for a narrower future pass). `coerceValue()`
+      validates every structured field type — number, relation, boolean,
+      enum — except `"date"`, which fell through to the function's
+      `default` branch and stored `String(raw)` with zero validation.
+      Confirmed empirically with `node -e` before writing anything: a
+      required `"date"` field happily accepted the literal string
+      `"not-a-real-date-at-all!!"` and stored it verbatim, no error.
+      Checked whether the app's own real date-producing paths could ever
+      legitimately need a looser format before tightening this — `seed.
+      ts`'s own date generator (`toISOString().slice(0, 10)`) and
+      `EntityPanel.tsx`'s `<input type="date">` both only ever produce or
+      accept the canonical `YYYY-MM-DD` shape, so validating against
+      exactly that shape can't break any real caller. Also checked the
+      CSV-import client-side validator
+      (`apps/web/src/entityFormatting.ts`'s `buildImportRecords`) and
+      found the identical gap there too — a date column passes straight
+      through unchecked, same as this file did — noted as a related
+      follow-up for a future round rather than folded into this one,
+      since it's a separate file/layer with its own review budget. Fixed
+      by adding a `"date"` case to `coerceValue`'s switch: requires the
+      canonical `YYYY-MM-DD` shape and rejects a value that matches that
+      shape but isn't a real calendar date (e.g. `"2024-13-45"`,
+      `"2024-02-30"`) by round-tripping the parsed year/month/day back
+      through `Date.UTC` and checking they match what was typed — JS's
+      `Date` constructor silently rolls an out-of-range month/day over
+      into a *different*, wrong date instead of rejecting it, so a naive
+      "does `new Date(...)` produce `Invalid Date`" check alone would
+      have missed exactly that case. New tests in `repository.test.ts`: a
+      real date round-trips correctly, a representative set of
+      malformed/impossible dates are all rejected with a clear
+      `ValidationError`, and an optional unset date field still correctly
+      stays `null`. Proven to catch a real regression via `git stash` on
+      `repository.ts` alone (the malformed-date test failed against the
+      pre-fix code exactly as predicted). Full suite green (331 tests, up
+      from 328 — `@forge/db` 55 → 58) + both builds clean + a
+      from-scratch clean-room worktree clone/install/test/build/start
+      cycle, including real curl requests against the built server on a
+      real built beauty-clinic project: a valid `Appointment` date still
+      creates a record (`201`), a garbage date is now cleanly rejected
+      (`400`, `VALIDATION_ERROR`) instead of silently corrupting the row.
+
 ## Phase 3
 
 - Self-healing: production observability, automatic diagnosis and patch
