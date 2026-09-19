@@ -114,7 +114,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     },
   });
   if (!res.ok) {
-    const body = await res.json().catch(() => ({ error: `Request failed (${res.status})` }));
+    const body = await res.json().catch(() => ({ error: `Request failed (${res.status})`, code: "REQUEST_FAILED" }));
     throw new Error(resolveErrorMessage(body as { error?: string; code?: string }));
   }
   if (res.status === 204) return undefined as T;
@@ -191,7 +191,7 @@ async function streamPipeline(
     ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
   });
   if (!res.ok || !res.body) {
-    const errorBody = await res.json().catch(() => ({ error: `Request failed (${res.status})` }));
+    const errorBody = await res.json().catch(() => ({ error: `Request failed (${res.status})`, code: "REQUEST_FAILED" }));
     throw new Error(resolveErrorMessage(errorBody as { error?: string; code?: string }));
   }
   const reader = res.body.getReader();
@@ -251,7 +251,7 @@ export async function exportProject(projectId: string, projectName: string): Pro
     headers: token ? { authorization: `Bearer ${token}` } : {},
   });
   if (!res.ok) {
-    const body = await res.json().catch(() => ({ error: `Request failed (${res.status})` }));
+    const body = await res.json().catch(() => ({ error: `Request failed (${res.status})`, code: "REQUEST_FAILED" }));
     throw new Error(resolveErrorMessage(body as { error?: string; code?: string }));
   }
   const blob = await res.blob();
@@ -277,7 +277,7 @@ export async function backupProject(projectId: string, projectName: string): Pro
     headers: token ? { authorization: `Bearer ${token}` } : {},
   });
   if (!res.ok) {
-    const body = await res.json().catch(() => ({ error: `Request failed (${res.status})` }));
+    const body = await res.json().catch(() => ({ error: `Request failed (${res.status})`, code: "REQUEST_FAILED" }));
     throw new Error(resolveErrorMessage(body as { error?: string; code?: string }));
   }
   const blob = await res.blob();

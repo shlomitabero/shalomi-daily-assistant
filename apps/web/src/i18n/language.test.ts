@@ -91,6 +91,11 @@ test("NETWORK_ERROR (synthesized client-side when a network request is genuinely
   assert.ok("error.NETWORK_ERROR" in translations.en);
 });
 
+test("REQUEST_FAILED (synthesized client-side in api.ts when a real HTTP error response's body isn't valid JSON, so the server's own code/error never arrives) has both translations", () => {
+  assert.ok("error.REQUEST_FAILED" in translations.he);
+  assert.ok("error.REQUEST_FAILED" in translations.en);
+});
+
 test("every HttpError code the API can send has a Hebrew and an English translation", () => {
   // Mirrors the actual set of codes thrown across apps/api/src (see httpError.ts call sites) --
   // this is a real regression test: a new throw site without a matching dictionary entry would

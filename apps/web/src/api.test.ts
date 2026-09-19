@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { createWakeRefCounter, safeDownloadName, sendWhatsAppMessage } from "./api.js";
+import { createWakeRefCounter, listProjects, safeDownloadName, sendWhatsAppMessage } from "./api.js";
 
 test("safeDownloadName keeps Hebrew (and other Unicode) project names intact, instead of collapsing them to the fallback", () => {
   // This product is Hebrew-first (see docs/roadmap.md), and every real
@@ -113,4 +113,29 @@ test("sendWhatsAppMessage normalizes the shared {error, code} error-middleware s
   // The raw English error text is never shown directly -- it's translated
   // via the code, same as every other server error in this app.
   assert.equal(result.error, "WhatsApp got disconnected. Reconnect and try again.");
+});
+
+/**
+ * When a real HTTP error response's body isn't valid JSON at all (e.g. a
+ * proxy's own plain-text 502/504 page, not this app's server), request()'s
+ * res.json().catch() fallback used to build { error: "Request failed
+ * (500)" } with no `code` -- resolveErrorMessage has nothing to translate
+ * in that case, so it fell through to that raw, hardcoded English text
+ * even in the Hebrew UI. See docs/roadmap.md for the fix: the fallback now
+ * carries code: "REQUEST_FAILED", which does have a translation.
+ */
+test("a real HTTP error response with a body that isn't valid JSON still surfaces a translated error, not raw hardcoded English", async () => {
+  await assert.rejects(
+    () => withFakeFetch(new Response("Internal Server Error", { status: 500 }), () => listProjects()),
+    (err: Error) => {
+      // This message must be the translated string, not the raw
+      // `Request failed (500)` text the pre-fix code always threw -- which
+      // language it resolves to here just depends on this Node test
+      // runtime's global `navigator.language` (see i18n/language.ts's
+      // detectInitialLang; same precedent as the sendWhatsAppMessage 409
+      // test above).
+      assert.equal(err.message, "The request failed. Please try again shortly.");
+      return true;
+    },
+  );
 });
