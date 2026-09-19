@@ -6,7 +6,6 @@ import {
   createUser,
   deleteSession,
   findUserByEmail,
-  findUserById,
   DuplicateEmailError,
   type ForgeDatabase,
 } from "@forge/db";
@@ -97,13 +96,13 @@ export function createAuthRouter(db: ForgeDatabase): Router {
     }
   });
 
-  router.get("/auth/me", requireAuth(db), (req, res, next) => {
-    const user = findUserById(db, req.userId!);
-    if (!user) {
-      next(new HttpError(404, "User not found", "USER_NOT_FOUND"));
-      return;
-    }
-    res.json({ user });
+  router.get("/auth/me", requireAuth(db), (req, res) => {
+    // requireAuth's own lookup (an INNER JOIN against users) already proved
+    // this user row exists on this exact request -- no route in this app
+    // ever deletes a user, so re-querying it here would only ever find the
+    // same row requireAuth already fetched. Reusing that row instead of a
+    // second, always-redundant DB round-trip.
+    res.json({ user: req.user! });
   });
 
   router.post("/auth/logout", requireAuth(db), (req, res) => {

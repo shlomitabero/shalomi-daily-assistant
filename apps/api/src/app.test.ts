@@ -169,6 +169,39 @@ test("email casing is normalized: signing up as 'Dana@Example.com' can log in as
   });
 });
 
+test("GET /api/auth/me returns the signed-up user's own profile for a valid session, and 401s for a missing/garbage/expired token", async () => {
+  await withServer(async (baseUrl) => {
+    const email = `me-${Date.now()}@example.com`;
+    const signupRes = await fetch(`${baseUrl}/api/auth/signup`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ email, password: "correct-horse-battery" }),
+    });
+    assert.equal(signupRes.status, 201);
+    const { user: signedUpUser, token } = (await signupRes.json()) as {
+      user: { id: string; email: string; createdAt: string };
+      token: string;
+    };
+
+    const meRes = await fetch(`${baseUrl}/api/auth/me`, { headers: authHeaders(token) });
+    assert.equal(meRes.status, 200);
+    const { user: meUser } = (await meRes.json()) as { user: { id: string; email: string; createdAt: string } };
+    assert.deepEqual(meUser, signedUpUser);
+
+    const noHeaderRes = await fetch(`${baseUrl}/api/auth/me`);
+    assert.equal(noHeaderRes.status, 401);
+    assert.equal(((await noHeaderRes.json()) as { code?: string }).code, "AUTH_REQUIRED");
+
+    const garbageTokenRes = await fetch(`${baseUrl}/api/auth/me`, { headers: authHeaders("not-a-real-token") });
+    assert.equal(garbageTokenRes.status, 401);
+    assert.equal(((await garbageTokenRes.json()) as { code?: string }).code, "SESSION_EXPIRED");
+
+    await fetch(`${baseUrl}/api/auth/logout`, { method: "POST", headers: authHeaders(token) });
+    const afterLogoutRes = await fetch(`${baseUrl}/api/auth/me`, { headers: authHeaders(token) });
+    assert.equal(afterLogoutRes.status, 401);
+  });
+});
+
 test("an invalid signup/login payload gets a readable validation message, not a raw JSON dump of Zod's internal issues", async () => {
   await withServer(async (baseUrl) => {
     const res = await fetch(`${baseUrl}/api/auth/signup`, {

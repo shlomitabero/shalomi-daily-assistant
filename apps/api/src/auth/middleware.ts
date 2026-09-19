@@ -1,4 +1,5 @@
 import type { NextFunction, Request, Response } from "express";
+import type { User } from "@forge/shared";
 import { getSessionUser, type ForgeDatabase } from "@forge/db";
 import { HttpError } from "../httpError.js";
 
@@ -7,6 +8,7 @@ declare global {
   namespace Express {
     interface Request {
       userId?: string;
+      user?: User;
     }
   }
 }
@@ -37,6 +39,7 @@ export function requireAuth(db: ForgeDatabase) {
       return;
     }
     req.userId = user.id;
+    req.user = user;
     next();
   };
 }
