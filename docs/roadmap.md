@@ -3575,6 +3575,45 @@ not a single "make it perfect" claim.
       a from-scratch clean-room worktree clone/install/test/build/start
       cycle with a live `/api/health` check plus the curl checks above.
 
+- [x] **Closed out the second finding round 56 deferred: the genuinely
+      unreachable 404 branch in `GET /auth/me`.** Re-verified the claim
+      from scratch rather than trusting the earlier round's note —
+      re-read `requireAuth` (`apps/api/src/auth/middleware.ts`) and its
+      DB call `getSessionUser`, whose SQL does
+      `JOIN users ON users.id = sessions.userId`, and confirmed by
+      grepping the whole codebase that no `deleteUser` function (or raw
+      `DELETE FROM users`) exists anywhere — a user row, once created,
+      is never removed. So `requireAuth` running successfully on a
+      request is an unconditional proof the row still exists, and the
+      handler's own follow-up `findUserById` lookup could only ever find
+      the same row requireAuth had just fetched; the `if (!user) { 404 }`
+      branch could never fire. Fixed by having `requireAuth` attach the
+      already-fetched `User` object to the request (`req.user`, a new
+      optional field alongside the existing `req.userId`) so the handler
+      reuses it directly instead of re-querying — removing both the dead
+      branch and a redundant DB round-trip on every `/auth/me` call, not
+      just a cosmetic deletion. Along the way, noticed `GET /api/auth/me`
+      had *zero* test coverage at all (not even a happy-path check), so
+      added real E2E tests in `app.test.ts` covering: a valid session
+      returns exactly the same user object signup returned; a missing
+      Authorization header 401s with `AUTH_REQUIRED`; a garbage token
+      401s with `SESSION_EXPIRED`; and a token invalidated by `/logout`
+      401s too. This cleanup has no live bug to reproduce pre-fix (same
+      category as round 52's `AGENT_ORDER` fix — a type-safety/dead-code
+      guard against a scenario that structurally cannot occur given the
+      current codebase, not a regression to prove via `git stash`), so
+      verification instead focused on (a) proving the "never deleted"
+      premise is actually true right now via the codebase-wide grep
+      above, not just assumed, and (b) real black-box confirmation the
+      observable behavior is unchanged: built the server in a clean-room
+      worktree and hit it with real `curl` requests (signup → valid
+      token → 200 with the right profile; no header → 401; garbage token
+      → 401; token after logout → 401), matching the new tests exactly.
+      Full monorepo suite green (322 tests, up from 321 — `@forge/api`
+      105 → 106) + both builds clean + a from-scratch clean-room
+      worktree clone/install/test/build/start cycle with a live
+      `/api/health` check plus the curl checks above.
+
 ## Phase 3
 
 - Self-healing: production observability, automatic diagnosis and patch
