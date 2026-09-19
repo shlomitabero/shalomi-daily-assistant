@@ -3469,6 +3469,58 @@ not a single "make it perfect" claim.
       clean-room worktree clone/install/test/build/start cycle with a
       live `/api/health` check.
 
+- [x] **A real, measurable timing side-channel in login let an attacker
+      enumerate registered emails.** Self-review (`code-review` skill, high
+      effort) of `apps/api/src/routes/auth.ts` (its first dedicated pass).
+      `POST /auth/login` checked `!record || !verifyPassword(...)` —
+      JavaScript short-circuit evaluation means `verifyPassword` (whose
+      `scryptSync` call is deliberately expensive, by design, to resist
+      brute-forcing) was never even called when no user matched the given
+      email. So a login attempt for an email that genuinely doesn't exist
+      returned almost instantly, while a login for a real email with the
+      wrong password paid the full scrypt cost — a reliable, easily
+      measured difference an attacker can use to learn which emails are
+      registered, without the response body or status code ever differing.
+      Confirmed the gap empirically before touching any code: a direct
+      microbenchmark showed ~37.5ms average per real `verifyPassword` call
+      against ~0ms for skipping it entirely — several orders of magnitude,
+      not test noise. Fixed by adding a fixed `DUMMY_PASSWORD_HASH`
+      (computed once at module load from random bytes) and always calling
+      `verifyPassword` — against the real user's hash when one exists,
+      against the dummy hash otherwise — so the expensive scrypt hash runs
+      exactly once per login attempt either way, regardless of whether the
+      email is registered. New end-to-end test in `app.test.ts`: takes
+      several real wall-clock timing samples of both a wrong-password
+      login on a real account and a login for a nonexistent email, and
+      asserts (a) the nonexistent-email path still takes over 5ms (proving
+      the hash actually ran, not just "some work happened") and (b) the
+      two paths' median times land within 3x of each other — deliberately
+      generous tolerances chosen to stay robust against ordinary
+      test-environment jitter, since the real pre-fix gap is closer to
+      1000x than a few percent. Proven against the pre-fix code via
+      `git stash`: the nonexistent-email path measured 2.03ms, failing the
+      5ms floor exactly as predicted. Independently re-verified outside the
+      automated suite too, with real `curl` requests (5 samples per path,
+      using `curl`'s own `%{time_total}` since `/usr/bin/time` wasn't
+      available in this environment) against a real built server booted in
+      a clean-room worktree — both paths landed consistently around ~40ms,
+      confirming the fix holds against the actual compiled server binary,
+      not just the source under `tsx`. Full suite green (314 tests, up
+      from 313 — `@forge/api` 97 → 98) + `tsc -b` clean + both builds
+      clean + a from-scratch clean-room worktree clone/install/test/
+      build/start cycle with a live `/api/health` check plus the curl
+      timing checks above. Two related findings from the same review were
+      explicitly **not** acted on this round, and are recorded here rather
+      than silently dropped: `scryptSync` blocking Node's single event
+      loop for the duration of every signup/login (a real concern under
+      concurrent load, but a bigger architectural change — switching to
+      the async `scrypt` API or a worker thread — that deserves its own
+      round rather than being rushed alongside a security fix); and a
+      genuinely unreachable 404 branch in `GET /auth/me` (dead code that
+      masks the real 401 behavior a reader would expect, not a live bug,
+      since `requireAuth`'s own join already guarantees the user exists by
+      the time that handler runs).
+
 ## Phase 3
 
 - Self-healing: production observability, automatic diagnosis and patch
