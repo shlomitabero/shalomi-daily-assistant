@@ -195,6 +195,18 @@ export function createProjectsRouter(db: ForgeDatabase, provider: SpecProvider |
     "/projects/:id/build",
     asyncRoute(async (req, res) => {
       const project = requireOwnedProject(db, req.params.id, req.userId!);
+      // Mirrors /refine's own status guard below: without this, calling
+      // /build a second time on an already-built project silently
+      // "succeeds" (diffAndMigrate with no previousSpec treats every
+      // entity as new, but the seed step's own empty-table check keeps it
+      // from re-seeding real data) but still inserts a fresh checkpoint
+      // mislabeled "Initial build" every time -- the Time Machine history
+      // ends up with multiple identically-labeled checkpoints with no way
+      // to tell them apart. /refine is the correct route once a project
+      // is already built.
+      if (project.status === "built") {
+        throw new HttpError(409, "This project is already built; use refine to make further changes", "ALREADY_BUILT");
+      }
       await streamPipeline(res, db, project, {
         nextSpec: project.spec,
         changeLabel: isHebrewText(project.description) ? "בנייה ראשונית" : "Initial build",

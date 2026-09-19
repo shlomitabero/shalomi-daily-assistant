@@ -425,6 +425,42 @@ test("full acceptance flow: idea -> spec -> AI build pipeline -> CRUD -> refine 
   });
 });
 
+test("POST /build a second time on an already-built project is rejected, instead of silently inserting a second checkpoint mislabeled 'Initial build'", async () => {
+  await withServer(async (baseUrl) => {
+    const token = await signup(baseUrl);
+    const createRes = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ description: "A CRM with customers and deals." }),
+    });
+    const { project } = (await createRes.json()) as { project: { id: string } };
+
+    const firstBuildRes = await fetch(`${baseUrl}/api/projects/${project.id}/build`, {
+      method: "POST",
+      headers: authHeaders(token),
+    });
+    assert.equal(firstBuildRes.status, 200);
+    await collectSSE(firstBuildRes);
+
+    const secondBuildRes = await fetch(`${baseUrl}/api/projects/${project.id}/build`, {
+      method: "POST",
+      headers: authHeaders(token),
+    });
+    assert.equal(secondBuildRes.status, 409);
+    assert.equal(((await secondBuildRes.json()) as { code?: string }).code, "ALREADY_BUILT");
+
+    const checkpointsRes = await fetch(`${baseUrl}/api/projects/${project.id}/checkpoints`, {
+      headers: authHeaders(token),
+    });
+    const { checkpoints } = (await checkpointsRes.json()) as { checkpoints: { label: string }[] };
+    assert.deepEqual(
+      checkpoints.map((c) => c.label),
+      ["Initial build"],
+      "the rejected second build must not have inserted another checkpoint",
+    );
+  });
+});
+
 test("a second user cannot see or act on the first user's project", async () => {
   await withServer(async (baseUrl) => {
     const ownerToken = await signup(baseUrl, "owner@example.com");
