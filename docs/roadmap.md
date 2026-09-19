@@ -3069,6 +3069,49 @@ not a single "make it perfect" claim.
   from-scratch clean-room clone/install/test/build/start cycle with a
   live `/api/health` check.
 
+- **Self-review (`code-review`, high effort) of `WhatsAppPanel.tsx`'s own
+  logic (the last unreviewed piece of the WhatsApp integration, separate
+  from the shared `useDialogFocusTrap` hook already covered) found a real
+  race condition in the background "still connected?" poll added in an
+  earlier round.** `startConnectedPolling`'s 10s-interval status check
+  awaited `getWhatsAppStatus`, then called `setStatus(next)` unconditionally
+  — but `stopConnectedPolling` (called from `handleDisconnect`) only
+  cleared the interval timer, never cancelled a check *already in flight*.
+  A background check that started just before the user clicked Disconnect
+  could resolve just after, silently overwriting the fresh "disconnected"
+  state with its now-stale "connected" payload — the UI would flip back to
+  showing a live WhatsApp connection with an active Disconnect button, even
+  though the backend had already disconnected. Fixed with the same
+  `cancelled` closure-flag pattern this codebase already uses elsewhere
+  (`EntityPanel.tsx`'s `loadRelated` effect): `startConnectedPolling`
+  captures a `cancelled` flag and stores a canceller in a ref;
+  `stopConnectedPolling` now calls that canceller before clearing the
+  interval, so a check already in flight is a no-op when it resolves. A
+  second, related finding from the same review was fixed too: the
+  background poll's `catch` block had no failure cap, unlike the fast
+  QR-waiting poll it complements (`MAX_CONSECUTIVE_POLL_FAILURES`) — a
+  persistently failing background check (backend down, expired session)
+  would retry silently forever with the panel stuck showing a "Connected"
+  status the code could no longer actually confirm. Added the matching
+  `MAX_CONSECUTIVE_CONNECTED_POLL_FAILURES` threshold and error surfacing.
+  No unit-testable surface (a React component, no RTL) and the real
+  trigger — an actual Baileys/WhatsApp connection — is unreachable from
+  this sandbox, so this was verified live with `page.route()` network
+  mocking instead: intercepted the panel's own status/messages/disconnect
+  endpoints to put it in a "connected" state without any real WhatsApp
+  session, delayed the background poll's second tick by 3s to create a
+  real in-flight request, clicked Disconnect while it was still pending,
+  and checked the UI's state after the delayed response finally resolved.
+  Learning the lesson from the immediately preceding round, this was run
+  against a real production build (not `npm run dev`) to keep React
+  StrictMode's dev-only effect double-invoke out of a test that already
+  depends on precise timing and call counts. Pre-fix code reproduced the
+  race exactly as predicted (UI reverted to "connected" after the stale
+  response landed); the fix left the UI correctly showing "disconnected".
+  Full suite green (296 tests, unchanged — a live-only fix) + `tsc -b`
+  clean + both builds clean + a from-scratch clean-room clone/install/
+  test/build/start cycle with a live `/api/health` check.
+
 ## Phase 3
 
 - Self-healing: production observability, automatic diagnosis and patch

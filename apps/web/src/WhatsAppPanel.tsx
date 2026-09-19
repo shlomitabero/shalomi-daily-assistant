@@ -23,6 +23,12 @@ const MAX_CONSECUTIVE_POLL_FAILURES = 5;
 // that and refresh the UI, without hammering the server the way the fast
 // QR-waiting poll above needs to.
 const CONNECTED_POLL_INTERVAL_MS = 10000;
+// Mirrors MAX_CONSECUTIVE_POLL_FAILURES above -- without this, a
+// persistently failing background check (backend down, expired session,
+// network drop) would retry silently forever, leaving the panel stuck
+// showing a "Connected" status the code can no longer actually confirm,
+// with no indication anything is wrong.
+const MAX_CONSECUTIVE_CONNECTED_POLL_FAILURES = 5;
 
 export function WhatsAppPanel({ projectId, onClose }: { projectId: string; onClose: () => void }) {
   const { t } = useTranslation();
@@ -42,6 +48,13 @@ export function WhatsAppPanel({ projectId, onClose }: { projectId: string; onClo
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const pollFailuresRef = useRef(0);
   const connectedPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const connectedPollFailuresRef = useRef(0);
+  // Set by startConnectedPolling(), called by stopConnectedPolling() --
+  // clearInterval only stops *future* ticks; a status fetch already in
+  // flight when the user disconnects (or reconnects) keeps running and
+  // would otherwise resolve afterward and overwrite the fresh state with
+  // its now-stale "connected" payload. See stopConnectedPolling below.
+  const cancelInFlightConnectedCheckRef = useRef<(() => void) | null>(null);
 
   function stopPolling() {
     if (pollRef.current) {
@@ -55,6 +68,8 @@ export function WhatsAppPanel({ projectId, onClose }: { projectId: string; onClo
       clearInterval(connectedPollRef.current);
       connectedPollRef.current = null;
     }
+    cancelInFlightConnectedCheckRef.current?.();
+    cancelInFlightConnectedCheckRef.current = null;
   }
 
   /**
@@ -66,17 +81,31 @@ export function WhatsAppPanel({ projectId, onClose }: { projectId: string; onClo
    */
   function startConnectedPolling() {
     stopConnectedPolling();
+    connectedPollFailuresRef.current = 0;
+    let cancelled = false;
+    cancelInFlightConnectedCheckRef.current = () => {
+      cancelled = true;
+    };
     connectedPollRef.current = setInterval(async () => {
       try {
         const next = await getWhatsAppStatus(projectId);
+        if (cancelled) return;
+        connectedPollFailuresRef.current = 0;
         setStatus(next);
         if (next.status !== "connected") {
           stopConnectedPolling();
           if (next.status === "connecting" || next.status === "qr") startPolling();
         }
-      } catch {
-        // A single failed background check while connected isn't worth
-        // interrupting the user over -- just try again next tick.
+      } catch (err) {
+        if (cancelled) return;
+        // A lone failed background check isn't worth interrupting the
+        // user over -- keep trying. Only give up, and say so, after
+        // several in a row fail, same threshold as the fast poll above.
+        connectedPollFailuresRef.current += 1;
+        if (connectedPollFailuresRef.current >= MAX_CONSECUTIVE_CONNECTED_POLL_FAILURES) {
+          stopConnectedPolling();
+          setLoadError((err as Error).message);
+        }
       }
     }, CONNECTED_POLL_INTERVAL_MS);
   }
