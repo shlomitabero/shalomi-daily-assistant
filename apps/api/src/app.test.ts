@@ -448,6 +448,67 @@ test("a second user cannot see or act on the first user's project", async () => 
   });
 });
 
+test("a user cannot restore another user's checkpoint into their own project by guessing/reusing its id", async () => {
+  await withServer(async (baseUrl) => {
+    const ownerToken = await signup(baseUrl, "owner2@example.com");
+    const intruderToken = await signup(baseUrl, "intruder2@example.com");
+
+    // Owner builds a project, producing at least one real checkpoint.
+    const ownerCreateRes = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: authHeaders(ownerToken),
+      body: JSON.stringify({ description: "A CRM with customers and deals." }),
+    });
+    const { project: ownerProject } = (await ownerCreateRes.json()) as { project: { id: string } };
+    const ownerBuildRes = await fetch(`${baseUrl}/api/projects/${ownerProject.id}/build`, {
+      method: "POST",
+      headers: authHeaders(ownerToken),
+    });
+    await collectSSE(ownerBuildRes);
+    const ownerCheckpointsRes = await fetch(`${baseUrl}/api/projects/${ownerProject.id}/checkpoints`, {
+      headers: authHeaders(ownerToken),
+    });
+    const { checkpoints: ownerCheckpoints } = (await ownerCheckpointsRes.json()) as { checkpoints: { id: string }[] };
+    const ownerCheckpointId = ownerCheckpoints[0].id;
+
+    // Intruder builds their own, unrelated project.
+    const intruderCreateRes = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: authHeaders(intruderToken),
+      body: JSON.stringify({ description: "A small courier delivery business." }),
+    });
+    const { project: intruderProject } = (await intruderCreateRes.json()) as { project: { id: string } };
+    const intruderBuildRes = await fetch(`${baseUrl}/api/projects/${intruderProject.id}/build`, {
+      method: "POST",
+      headers: authHeaders(intruderToken),
+    });
+    await collectSSE(intruderBuildRes);
+
+    // Intruder owns intruderProject, but tries to restore using the owner's
+    // checkpoint id -- requireOwnedProject alone would let this through
+    // (the intruder really does own intruderProject); only the route's own
+    // `checkpoint.projectId !== project.id` cross-check stops it.
+    const crossRestoreRes = await fetch(
+      `${baseUrl}/api/projects/${intruderProject.id}/checkpoints/${ownerCheckpointId}/restore`,
+      { method: "POST", headers: authHeaders(intruderToken) },
+    );
+    assert.equal(crossRestoreRes.status, 404);
+    assert.equal(((await crossRestoreRes.json()) as { code?: string }).code, "CHECKPOINT_NOT_FOUND");
+
+    // The intruder's own project must be completely unaffected.
+    const intruderProjectAfter = await fetch(`${baseUrl}/api/projects/${intruderProject.id}`, {
+      headers: authHeaders(intruderToken),
+    });
+    const { project: intruderProjectStateAfter } = (await intruderProjectAfter.json()) as {
+      project: { spec: { entities: { name: string }[] } };
+    };
+    assert.deepEqual(
+      intruderProjectStateAfter.spec.entities.map((e) => e.name).sort(),
+      ["Courier", "Order"],
+    );
+  });
+});
+
 test("returns 400 for an empty description", async () => {
   await withServer(async (baseUrl) => {
     const token = await signup(baseUrl);
