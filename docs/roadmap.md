@@ -3241,6 +3241,47 @@ not a single "make it perfect" claim.
       from-scratch clean-room worktree clone/install/test/build/start
       cycle with a live `/api/health` check.
 
+- [x] **A network drop partway through a build or refine leaked a raw
+      browser error, instead of the translated message every other failure
+      in this app shows.** The last open finding from the round-48
+      `code-review` of `apps/web/src/api.ts`: `fetchApi` already translates
+      a failure to even *connect* (via `fetchWithWakeRetry` and the
+      `NETWORK_ERROR` code), but `streamPipeline`'s SSE read loop —
+      `reader.read()`, called repeatedly for as long as the build/refine
+      stream stays open — was the one place left outside that layer. A
+      build or refine is the one request in this app that can legitimately
+      run for minutes, so a real network drop mid-stream (not just at
+      connect time) is a genuine risk, not a theoretical one; when it
+      happened, `reader.read()` threw the browser's own untranslated error
+      (e.g. `"network error"` or `"Failed to fetch"`), and
+      `BuildProgress.tsx` renders that `Error.message` straight to the
+      user with no translation step in between. Fixed by wrapping just the
+      `reader.read()` call in a try/catch that re-throws through the same
+      `resolveErrorMessage({ code: "NETWORK_ERROR" })` path `fetchApi`
+      already uses — deliberately *not* wrapping the `onEvent` callback or
+      the SSE frame parsing below it, since a bug there is a different
+      kind of failure and misreporting it as a network problem would hide
+      the real cause. New test in `apps/web/src/api.test.ts`: builds a real
+      `ReadableStream` whose `start()` emits one valid SSE frame (so the
+      caller does receive that agent-step event) and whose `pull()` then
+      calls `controller.error(...)` on the next read — simulating a stream
+      that was genuinely working and then dropped, not a stream that never
+      opened. Confirms `streamBuild()` rejects with the translated message
+      and that the one pre-drop event still arrived. Before writing the
+      assertion, verified the exact `ReadableStream`/`getReader()` timing
+      directly with a small Node script (`start()`'s enqueued chunk is
+      always delivered by the first `read()` before `pull()` is invoked
+      again), rather than assuming it. Proven against the pre-fix code via
+      `git stash` (the new test's assertion failed with the raw
+      `"network error"` string instead of the translated one). This closes
+      out the round-48 `api.ts` self-review: all 6 findings from that
+      review are now either fixed (rounds 48–51) or explicitly deferred as
+      a documented code-cleanup item (`exportProject`/`backupProject`'s
+      duplicated download sequence — not a correctness bug). Full suite
+      green (304 tests, up from 303 — `@forge/web` 83 → 84) + `tsc -b`
+      clean + both builds clean + a from-scratch clean-room worktree
+      clone/install/test/build/start cycle with a live `/api/health` check.
+
 ## Phase 3
 
 - Self-healing: production observability, automatic diagnosis and patch
