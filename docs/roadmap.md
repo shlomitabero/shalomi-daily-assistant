@@ -3813,6 +3813,37 @@ not a single "make it perfect" claim.
       creates a record (`201`), a garbage date is now cleanly rejected
       (`400`, `VALIDATION_ERROR`) instead of silently corrupting the row.
 
+- [x] **Closed the sibling gap round 62 flagged: `apps/web/src/
+      entityFormatting.ts`'s CSV-import validator had the identical
+      unvalidated-date hole as `repository.ts` did before that round's
+      fix.** Every other field type `buildImportRecords()` handles —
+      boolean, number, enum — already validates and reports a clear
+      per-row error; a date column passed straight through unchecked, the
+      one gap left after round 62. With round 62's server-side fix
+      already live, an imported bad date no longer corrupts stored data
+      (the server now rejects it), but the failure only surfaced later as
+      a generic per-row server error after every row had already been
+      POSTed, instead of being caught immediately with a message
+      consistent with the other field types in this exact function — a
+      real UX regression from the pattern this function otherwise
+      follows throughout. Confirmed empirically with `node -e` before
+      fixing: importing a CSV with `"not-a-real-date-at-all"` in a date
+      column produced zero client-side errors. Fixed by adding the
+      identical `date` validation `repository.ts` already carries
+      (YYYY-MM-DD shape plus a real-calendar-date check via `Date.UTC`
+      round-tripping) as a new branch in `buildImportRecords`'s per-field
+      loop. Confirmed the existing CSV round-trip test (export →
+      `parseCsv` → `buildImportRecords`) already only ever produces
+      `YYYY-MM-DD` dates, so this couldn't reject anything the app's own
+      export would ever hand back to it. New tests: a date column with a
+      mix of malformed/impossible/valid values reports one clear error
+      per bad row and keeps only the valid row, and an optional empty
+      date cell still correctly becomes `null` rather than being
+      rejected. Proven to catch a real regression via `git stash` on
+      `entityFormatting.ts` alone. Full suite green (333 tests, up from
+      331 — `@forge/web` 84 → 86) + both builds clean + a from-scratch
+      clean-room worktree clone/install/test/build cycle.
+
 ## Phase 3
 
 - Self-healing: production observability, automatic diagnosis and patch
