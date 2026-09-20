@@ -4903,6 +4903,52 @@ not a single "make it perfect" claim.
       `git diff` came back empty. Full suite green (378 tests, up from
       377 — `@forge/web` 119 → 120) and both builds clean.
 
+- [x] **Fixed a real bug: sending a WhatsApp test message to a known
+      customer's number never matched it, unlike an incoming message.**
+      With real-DOM test infrastructure now saturated across every
+      React-rendering file, this round pivoted back to reading
+      previously-unaudited server code end to end
+      (`apps/api/src/pipeline.ts`, `packages/db/src/migrate.ts` +
+      `identifiers.ts`, `apps/api/src/codegen.ts`'s CSV/ZIP/calendar
+      logic, `packages/spec-engine/src/{heuristic,debug,anthropic,
+      promptEnhancer,anthropicFetch,index}.ts`, `apps/api/src/twin.ts`,
+      `packages/db/src/repository.ts`, `apps/api/src/whatsapp.ts` +
+      `whatsappWeb.ts`) looking for a genuine defect rather than
+      generating new coverage. Most of it held up — several files turned
+      out to already carry detailed comments documenting edge cases
+      (timezone-safe date parsing, CSV formula-injection guarding, the
+      additive-only migration's NOT NULL/FK omission, the 60s/180s
+      Anthropic-vs-frontend timeout relationship) that had clearly
+      already been reasoned through in earlier rounds. The one real gap:
+      `POST /projects/:id/integrations/whatsapp/send` (in
+      `apps/api/src/routes/projects.ts`) never called
+      `findMatchingRecord` (the same phone-number-to-record matcher
+      `WhatsAppWebManager.handleIncomingMessages` already uses for
+      *incoming* messages) before logging the outgoing message —
+      `matchedEntityName`/`matchedRecordId`/`matchedLabel` were always
+      `null` for anything sent from the panel's own test-send form. That
+      silently broke a promise the UI itself makes:
+      `WhatsAppPanel.tsx`'s log rendering
+      (`m.matchedLabel ?? (direction === "in" ? fromNumber : toNumber)`)
+      is written to expect matching for *both* directions, falling back
+      to the raw phone number only when nothing matched — so sending a
+      test message to an existing customer's own number always showed
+      their bare phone number in the log instead of their name, even
+      though the exact same number arriving as an *incoming* message
+      would correctly show it. Fixed by calling `findMatchingRecord`
+      before `insertWhatsAppMessage` in the `/send` handler, guarded on
+      `project.status === "built"` (mirroring
+      `handleIncomingMessages`'s own guard) since matching before a
+      first build would hit `listRecords`'s "no such table" error —
+      there's no real SQL table behind any entity yet at that point.
+      Regression-proven with `git stash` on just the route file: a new
+      `app.test.ts` case (build a CRM project, insert a Customer record
+      with phone `050-123-4567`, connect WhatsApp, send a test message to
+      `972501234567`) failed with `matchedEntityName === null` against
+      the old handler, then passed once the fix was restored. Full suite
+      green (379 tests, up from 378 — `@forge/api` 117 → 118) and both
+      builds clean.
+
 ## Phase 3
 
 - Self-healing: production observability, automatic diagnosis and patch
