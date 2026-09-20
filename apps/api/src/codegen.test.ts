@@ -858,6 +858,51 @@ test("the generated server.js's /api/backup endpoint returns a real ZIP with one
   }
 });
 
+// Regression test: the exported app's own embedded buildZip() (a
+// necessary copy of apps/api/src/zip.ts, since the exported app has zero
+// runtime dependency on this repo) had drifted from it -- missing the
+// UTF-8 general-purpose-bit-flag zip.ts's own test below documents, and
+// missing the >65535-entries guard zip.test.ts has. Neither was reachable
+// through this app's own backup endpoint (entity names are always plain
+// ASCII identifiers -- see codegen.ts's own assertSafe -- and a real
+// project has nowhere near 65535 entities), so it was never a live bug,
+// but it's still worth keeping the two copies in sync rather than letting
+// a real reader-compatibility/entry-count fix applied to zip.ts silently
+// never reach the exported app. Extracts and executes the real generated
+// buildZip/crc32/CRC_TABLE (not a reimplementation) via a direct Python
+// zipfile check, the same "spec-strict reader" technique zip.test.ts uses
+// (the system `unzip` auto-detects UTF-8 regardless of the flag, so it
+// wouldn't catch a regression here).
+test("the exported app's embedded buildZip sets the UTF-8 flag and rejects more than 65535 entries, matching the live zip.ts", () => {
+  const serverJs = generateExportFiles(project).find((f) => f.path === "server.js")!.content;
+  const crcTableSrc = serverJs.match(/const CRC_TABLE = \(\(\) => \{[\s\S]*?\n\}\)\(\);\n/)?.[0];
+  const crc32Src = serverJs.match(/function crc32\(buf\) \{[\s\S]*?\n\}\n/)?.[0];
+  const dosSrc = serverJs.match(/const DOS_TIME[\s\S]*?const DOS_DATE.*\n/)?.[0];
+  const buildZipSrc = serverJs.match(/function buildZip\(entries\) \{[\s\S]*?\n\}\n/)?.[0];
+  assert.ok(crcTableSrc && crc32Src && dosSrc && buildZipSrc, "expected to find CRC_TABLE/crc32/DOS_TIME/DOS_DATE/buildZip in generated server.js");
+
+  const buildZip = new Function(`${crcTableSrc}\n${crc32Src}\n${dosSrc}\n${buildZipSrc}\nreturn buildZip;`)();
+
+  const hebrewName = "לקוחות.csv";
+  const zip = buildZip([{ path: hebrewName, content: "a,b\n1,2\n" }]);
+  const dir = mkdtempSync(path.join(tmpdir(), "codegen-zip-utf8-test-"));
+  const zipPath = path.join(dir, "out.zip");
+  writeFileSync(zipPath, zip);
+  try {
+    const output = execFileSync(
+      "python3",
+      ["-c", "import sys, zipfile; print(zipfile.ZipFile(sys.argv[1]).namelist()[0])", zipPath],
+      { encoding: "utf8" },
+    ).trim();
+    assert.equal(output, hebrewName);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+
+  const tooMany = Array.from({ length: 65536 }, (_, i) => ({ path: `f${i}.txt`, content: "x" }));
+  assert.throws(() => buildZip(tooMany), /Zip64/i);
+});
+
 test("render.yaml's service name is a safe slug even for a project name with spaces, punctuation, and Hebrew", () => {
   const messyName: Project = { ...project, name: 'לקוחות שלי! (v2) — "Best" App?' };
   const files = generateExportFiles(messyName);

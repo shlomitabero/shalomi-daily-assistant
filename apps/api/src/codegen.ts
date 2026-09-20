@@ -350,6 +350,17 @@ const DOS_TIME = 0;
 const DOS_DATE = ((2024 - 1980) << 9) | (1 << 5) | 1;
 
 function buildZip(entries) {
+  // The end-of-central-directory record's entry-count fields (below) are
+  // 16-bit, so more than 65535 entries needs the Zip64 extension this
+  // writer doesn't implement. Without this check, that case fails deep
+  // inside Buffer#writeUInt16LE with a generic "value... must be <= 65535"
+  // RangeError that gives no indication this was an entry-count problem --
+  // matches the same guard apps/api/src/zip.ts (the live app's own ZIP
+  // writer this was ported from) already has.
+  if (entries.length > 0xffff) {
+    throw new Error(\`buildZip: \${entries.length} entries exceeds the 65535-entry limit of this writer (no Zip64 support)\`);
+  }
+
   const localParts = [];
   const centralParts = [];
   let offset = 0;
@@ -362,7 +373,7 @@ function buildZip(entries) {
     const localHeader = Buffer.alloc(30);
     localHeader.writeUInt32LE(0x04034b50, 0);
     localHeader.writeUInt16LE(20, 4);
-    localHeader.writeUInt16LE(0, 6);
+    localHeader.writeUInt16LE(0x0800, 6);
     localHeader.writeUInt16LE(0, 8);
     localHeader.writeUInt16LE(DOS_TIME, 10);
     localHeader.writeUInt16LE(DOS_DATE, 12);
@@ -377,7 +388,7 @@ function buildZip(entries) {
     centralHeader.writeUInt32LE(0x02014b50, 0);
     centralHeader.writeUInt16LE(20, 4);
     centralHeader.writeUInt16LE(20, 6);
-    centralHeader.writeUInt16LE(0, 8);
+    centralHeader.writeUInt16LE(0x0800, 8);
     centralHeader.writeUInt16LE(0, 10);
     centralHeader.writeUInt16LE(DOS_TIME, 12);
     centralHeader.writeUInt16LE(DOS_DATE, 14);
