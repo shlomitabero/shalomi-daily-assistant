@@ -134,6 +134,55 @@ test("diffAndMigrate adds a nullable column for a new field on an existing entit
   assert.equal(customers[0].loyaltyPoints, null);
 });
 
+// Regression test: if a refine changes an *existing* field's type (same
+// name, e.g. "status" going from enum to text), diffAndMigrate's own
+// prevFieldNames check used to just see the name already existed and
+// `continue`, silently reporting no change at all -- the spec would end
+// up claiming a different type than the SQLite column actually has
+// (SQLite has no cheap ALTER COLUMN TYPE, so actually converting it is a
+// real design decision, not something this diff should do on its own).
+// This doesn't fix the underlying limitation, but it must stop being
+// silent about it: a "type_changed" entry, with the actual column left
+// untouched, so the pipeline (see pipeline.ts) can surface it instead of
+// the build just reporting "0 changes" as if nothing happened.
+test("diffAndMigrate reports a type_changed entry (without altering the column) when an existing field's type changes, instead of silently reporting no change at all", () => {
+  const db = openDatabase(":memory:");
+  applyMigrations(db, "proj1", spec);
+  const customerEntity = spec.entities[0];
+  insertRecord(db, "proj1", customerEntity, { name: "Alice", status: "New" });
+
+  const nextSpec: ProductSpec = {
+    ...spec,
+    entities: [
+      {
+        ...spec.entities[0],
+        fields: [
+          spec.entities[0].fields[0],
+          { name: "status", type: "text", required: true },
+        ],
+      },
+      spec.entities[1],
+    ],
+  };
+  const changes = diffAndMigrate(db, "proj1", spec, nextSpec);
+  assert.deepEqual(changes, [
+    { type: "type_changed", table: "entity_proj1_Customer", column: "status", fromType: "enum", toType: "text" },
+  ]);
+
+  // The column's real SQL type in SQLite must be completely untouched --
+  // this test would still pass even if the column silently stayed the old
+  // type forever, which is exactly the point: reporting the change is not
+  // the same as applying it, and this proves no ALTER TABLE ran.
+  const columnInfo = db.prepare('PRAGMA table_info("entity_proj1_Customer")').all() as { name: string; type: string }[];
+  const statusColumn = columnInfo.find((c) => c.name === "status")!;
+  assert.equal(statusColumn.type, "TEXT", "enum fields are already stored as SQL TEXT, same as the new 'text' type -- this pins that coincidence so a future sqlTypeFor change doesn't silently invalidate this test's own premise");
+
+  // Existing data must survive completely unchanged.
+  const customers = listRecords(db, "proj1", spec.entities[0]);
+  assert.equal(customers.length, 1);
+  assert.equal(customers[0].status, "New");
+});
+
 test("diffAndMigrate is safe to call twice with the same additive change (idempotent, never throws)", () => {
   // Reproduces the real failure class this hardening prevents: SQLite
   // throws "duplicate column name" on a second ALTER TABLE ADD COLUMN for

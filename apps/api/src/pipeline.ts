@@ -198,10 +198,15 @@ export async function* runBuildPipeline(
       detail: { correctedSpec: fixedSpec },
     };
   }
+  const typeChanges = changes.filter((c) => c.type === "type_changed");
   yield {
     agent: "Database",
     status: "success",
-    message: `${changes.length} schema change(s) applied (${changes.filter((c) => c.type === "new_table").length} new tables, ${changes.filter((c) => c.type === "new_column").length} new columns). Nothing was dropped.`,
+    message:
+      `${changes.length} schema change(s) applied (${changes.filter((c) => c.type === "new_table").length} new tables, ${changes.filter((c) => c.type === "new_column").length} new columns). Nothing was dropped.` +
+      (typeChanges.length > 0
+        ? ` Note: ${typeChanges.map((c) => `${c.table}.${c.column} (${c.fromType} → ${c.toType})`).join(", ")} kept the original database column type — existing data was not converted.`
+        : ""),
     detail: changes,
   };
 

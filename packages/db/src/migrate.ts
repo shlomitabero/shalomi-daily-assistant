@@ -62,9 +62,12 @@ function existingColumns(db: ForgeDatabase, table: string): Set<string> {
 }
 
 export interface MigrationChange {
-  type: "new_table" | "new_column";
+  type: "new_table" | "new_column" | "type_changed";
   table: string;
   column?: string;
+  /** Only set for "type_changed": the field's old and new declared type, for a message that says what actually changed. */
+  fromType?: string;
+  toType?: string;
 }
 
 /**
@@ -75,6 +78,17 @@ export interface MigrationChange {
  * "never destroy work" principle (section 70) and with Time Machine
  * checkpoints always being safe to restore. `previousSpec` undefined means
  * this is the first build (equivalent to applyMigrations).
+ *
+ * One thing this deliberately does NOT do: if a field that already existed
+ * changes *type* (same name, e.g. "notes" going from text to number) rather
+ * than being newly added, the SQL column's own type is left exactly as it
+ * was — SQLite has no cheap, retroactive "ALTER COLUMN TYPE" (the only real
+ * fix is create-a-new-table-and-copy-with-conversion, a genuine design
+ * decision about how to handle existing rows that don't cleanly convert,
+ * not a mechanical patch). Silently doing nothing here would leave the
+ * spec claiming a type the database doesn't actually have, so this at
+ * least surfaces it as a reported "type_changed" entry (see pipeline.ts's
+ * own message for it) instead of a gap nobody can see.
  */
 export function diffAndMigrate(
   db: ForgeDatabase,
@@ -101,10 +115,22 @@ export function diffAndMigrate(
       return;
     }
 
-    const prevFieldNames = new Set(prevEntity.fields.map((f) => f.name));
+    const prevFieldsByName = new Map(prevEntity.fields.map((f) => [f.name, f]));
     const currentColumns = existingColumns(db, table);
     for (const field of entity.fields) {
-      if (prevFieldNames.has(field.name)) continue;
+      const prevField = prevFieldsByName.get(field.name);
+      if (prevField) {
+        if (prevField.type !== field.type) {
+          changes.push({
+            type: "type_changed",
+            table,
+            column: assertSafeIdentifier(field.name, "column"),
+            fromType: prevField.type,
+            toType: field.type,
+          });
+        }
+        continue;
+      }
       const columnName = assertSafeIdentifier(field.name, "column");
       // Whether to physically run the ALTER (has SQLite already got this
       // column?) and whether to report it as a change (is it new relative
