@@ -4624,6 +4624,49 @@ not a single "make it perfect" claim.
       clean process exit in the full multi-file run, and both builds
       clean.
 
+- [x] **Fixed a real bug in `BuildProgress.tsx`: the "Build failed" banner
+      scanned raw event history instead of each agent's latest status,
+      violating `pipeline.ts`'s own documented contract.** `pipeline.ts`'s
+      own comment states explicitly that "the UI ... keeps only the
+      latest event per agent" — true for the per-row status icons and
+      captions (both driven by `latestByAgent`), but not for the banner,
+      which used `events.find((e) => e.status === "failed")` against the
+      raw, ever-growing array. A Database migration failure that the
+      Debug Agent successfully auto-recovers from (`pipeline.ts`'s
+      try/catch always falls through to a fresh Database success event
+      afterward, whether or not it entered the catch) leaves that earlier
+      failed event sitting in `events` forever, so the banner — and its
+      Back button, which the JSX renders alongside the rest of the step
+      list — stayed up for the entire remainder of a build that was
+      actually still running and about to complete successfully. Fixed by
+      deriving `failedStep` from `latestByAgent`'s values instead, making
+      it consistent with everything else the component renders. Added
+      `BuildProgress.test.ts`, this project's first real-DOM test of the
+      AI Team build screen: renders the real component through a
+      realistic 15-event pipeline sequence (a recovered Database failure
+      followed by every remaining agent succeeding through to Forge) and
+      a genuine, unrecovered-failure companion case. Regression-proven via
+      `git stash`: the new "banner must not show" assertion fails against
+      the pre-fix code and passes against the fix; the companion
+      unrecovered-failure test passes against both, confirming the fix
+      didn't remove real failure detection along with the false positive.
+      Two real test-infrastructure footguns surfaced and got fixed (and
+      documented as comments in the test file, for future test files that
+      touch this component) along the way: a *third*, outer `act()`
+      wrapped around `render()` — on top of `@testing-library/react`'s own
+      and the test's `runWithEvents` helper's inner one — deadlocks
+      React's internal act-scope bookkeeping and hangs the whole
+      `node:test` process indefinitely rather than ever completing or
+      timing out on its own (caught only because this round's regression
+      proof runs under an explicit `timeout 20` shell guard, per round
+      81's own lesson); and passing a raw jsdom DOM node directly as
+      `assert.equal`'s "actual" value hangs while formatting the failure
+      message, since `node:assert`'s `util.inspect()` chokes on a jsdom
+      element's huge, circular property graph — fixed by comparing
+      booleans (`document.querySelector(...) === null`) instead of the
+      raw node. Full suite green (367 tests, up from 364 —
+      `@forge/web` 107 → 109) and both builds clean.
+
 ## Phase 3
 
 - Self-healing: production observability, automatic diagnosis and patch
