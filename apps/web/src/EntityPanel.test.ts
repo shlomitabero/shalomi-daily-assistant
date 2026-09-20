@@ -2,6 +2,13 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import { transformSync } from "esbuild";
+import { JSDOM } from "jsdom";
+import React from "react";
+import { cleanup, fireEvent, render } from "@testing-library/react";
+import type { Entity, EntityRecord } from "@forge/shared";
+import { EntityPanel } from "./EntityPanel.js";
+import { LanguageProvider } from "./i18n/LanguageContext.js";
+import { ThemeProvider } from "./theme/ThemeContext.js";
 
 const entityPanelSrc = readFileSync(new URL("./EntityPanel.tsx", import.meta.url), "utf8");
 
@@ -120,4 +127,197 @@ test("EntityPanel's handleBulkDelete still surfaces the raw error message when e
   await fn();
 
   assert.equal(capturedError, rejection.message);
+});
+
+/** Same jsdom-swap technique as useDialogFocusTrap.test.ts/BuildProgress.test.ts. */
+async function withJsdom<T>(fn: () => Promise<T> | T): Promise<T> {
+  const dom = new JSDOM("<!doctype html><html><body></body></html>", { url: "http://localhost/" });
+  const { window } = dom;
+  const replacements: Record<string, unknown> = {
+    window,
+    document: window.document,
+    navigator: window.navigator,
+    HTMLElement: window.HTMLElement,
+    Node: window.Node,
+    localStorage: window.localStorage,
+  };
+  const originalDescriptors: Record<string, PropertyDescriptor | undefined> = {};
+  for (const key of Object.keys(replacements)) {
+    originalDescriptors[key] = Object.getOwnPropertyDescriptor(globalThis, key);
+    Object.defineProperty(globalThis, key, {
+      value: replacements[key],
+      writable: true,
+      configurable: true,
+      enumerable: true,
+    });
+  }
+  try {
+    const result = await fn();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    return result;
+  } finally {
+    cleanup();
+    for (const key of Object.keys(replacements)) {
+      const original = originalDescriptors[key];
+      if (original) Object.defineProperty(globalThis, key, original);
+      else delete (globalThis as Record<string, unknown>)[key];
+    }
+  }
+}
+
+/** Polls a real-DOM condition with plain ticks (deliberately NOT wrapped in
+ * act(), per this session's own hard-won lesson in BuildProgress.test.ts: a
+ * third, outer act() nested around a render() that already fires effects
+ * inside testing-library's own act() -- plus a second, inner one from
+ * whatever async work those effects kick off -- deadlocks React's act-scope
+ * bookkeeping and hangs the whole node:test process). Bounded, not infinite,
+ * so a genuine regression fails the test instead of hanging the suite. */
+async function waitForCondition(check: () => boolean, maxTicks = 40): Promise<void> {
+  for (let i = 0; i < maxTicks; i++) {
+    if (check()) return;
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  }
+  throw new Error("waitForCondition: condition never became true");
+}
+
+const DEAL_ENTITY: Entity = {
+  name: "Deal",
+  label: "Deal",
+  fields: [
+    { name: "name", label: "Name", type: "text", required: true },
+    {
+      name: "status",
+      label: "Status",
+      type: "enum",
+      required: true,
+      enumValues: ["new", "won", "lost"],
+      enumLabels: { new: "New", won: "Won", lost: "Lost" },
+    },
+  ],
+};
+
+/**
+ * Builds a fetch mock backing listRecords/updateRecord (the only two
+ * EntityPanel calls this scenario needs -- Deal has no relation fields, so
+ * the loadRelated effect never hits the network) against a real, mutable
+ * in-memory record store, so a PATCH genuinely changes what the next GET
+ * returns -- the same round trip the real API gives the component.
+ */
+function mockRecordsFetch(store: EntityRecord[]) {
+  return async (input: string, init?: RequestInit): Promise<Response> => {
+    const method = init?.method ?? "GET";
+    if (method === "GET" && input === "/api/projects/proj1/entities/Deal") {
+      return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    const patchMatch = /^\/api\/projects\/proj1\/entities\/Deal\/(\d+)$/.exec(input);
+    if (method === "PATCH" && patchMatch) {
+      const id = Number(patchMatch[1]);
+      const record = store.find((r) => r.id === id);
+      assert.ok(record, `mock PATCH target record ${id} must exist`);
+      Object.assign(record!, JSON.parse(init!.body as string));
+      return new Response(JSON.stringify({ record }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    throw new Error(`mockRecordsFetch: unexpected request ${method} ${input}`);
+  };
+}
+
+function renderEntityPanel() {
+  return render(
+    React.createElement(
+      ThemeProvider,
+      null,
+      React.createElement(
+        LanguageProvider,
+        null,
+        React.createElement(EntityPanel, { projectId: "proj1", entity: DEAL_ENTITY, allEntities: [DEAL_ENTITY] }),
+      ),
+    ),
+  );
+}
+
+/**
+ * Regression-style coverage for a real-DOM contract the existing
+ * handleBulkDelete extraction tests above can't reach: groupByField's own
+ * doc comment says an enum value with zero matching records "still shows as
+ * a column rather than silently disappearing" -- true in isolation (see
+ * entityFormatting.test.ts), but never actually exercised through the live
+ * component tree with a real fetch round trip and a real re-render. Renders
+ * EntityPanel with a single "Deal" record in the "new" stage, switches to
+ * board view, and confirms all three declared statuses ("new"/"won"/"lost")
+ * render as columns even though two of them have no cards.
+ */
+test("EntityPanel's board view renders an empty column for every declared status, not just the ones with records", async () => {
+  await withJsdom(async () => {
+    const store: EntityRecord[] = [{ id: 1, name: "Acme Corp", status: "new" }];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = mockRecordsFetch(store) as typeof fetch;
+    try {
+      renderEntityPanel();
+      await waitForCondition(() => document.querySelector(".entity-toolbar") !== null);
+
+      const boardToggle = document.querySelectorAll(".view-toggle-btn")[1] as HTMLButtonElement;
+      fireEvent.click(boardToggle);
+      await waitForCondition(() => document.querySelectorAll(".board-column").length > 0);
+
+      assert.equal(
+        document.querySelectorAll(".board-column").length,
+        3,
+        "all 3 declared enum values must render as columns, including the 2 with zero records",
+      );
+      assert.equal(document.querySelectorAll(".board-card").length, 1, "only the 1 real record should render as a card");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
+ * Confirms the board view's move-between-columns interaction is wired
+ * correctly end to end: changing a card's own status <select> calls
+ * handleMove -> updateRecord (a real PATCH against the mock store) ->
+ * refresh() (a real re-fetch), and the record then renders under its NEW
+ * column, not its old one, once that round trip settles. A function-
+ * extraction test can check handleMove's arguments, but can't observe this
+ * two-phase state transition (PATCH, then a re-render driven by a second
+ * fetch) actually reflected back in the live DOM the way a real user would
+ * see it.
+ */
+test("EntityPanel's board view moves a card to its new column once the status change round-trips through the API", async () => {
+  await withJsdom(async () => {
+    const store: EntityRecord[] = [{ id: 1, name: "Acme Corp", status: "new" }];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = mockRecordsFetch(store) as typeof fetch;
+    try {
+      renderEntityPanel();
+      await waitForCondition(() => document.querySelector(".entity-toolbar") !== null);
+
+      const boardToggle = document.querySelectorAll(".view-toggle-btn")[1] as HTMLButtonElement;
+      fireEvent.click(boardToggle);
+      await waitForCondition(() => document.querySelectorAll(".board-card").length === 1);
+
+      const columnsBefore = document.querySelectorAll(".board-column");
+      assert.equal(columnsBefore[0].querySelectorAll(".board-card").length, 1, "the card must start in the 'new' column (index 0)");
+      assert.equal(columnsBefore[1].querySelectorAll(".board-card").length, 0, "the 'won' column (index 1) must start empty");
+
+      const moveSelect = document.querySelector(".board-card-move") as HTMLSelectElement;
+      fireEvent.change(moveSelect, { target: { value: "won" } });
+
+      await waitForCondition(() => store[0].status === "won");
+      await waitForCondition(() => {
+        const columns = document.querySelectorAll(".board-column");
+        return columns[0].querySelectorAll(".board-card").length === 0 && columns[1].querySelectorAll(".board-card").length === 1;
+      });
+
+      const columnsAfter = document.querySelectorAll(".board-column");
+      assert.equal(columnsAfter[0].querySelectorAll(".board-card").length, 0, "the 'new' column must be empty after the move");
+      assert.equal(columnsAfter[1].querySelectorAll(".board-card").length, 1, "the 'won' column must now hold the moved card");
+      assert.equal(
+        document.querySelector("p.error") === null,
+        true,
+        "a successful move must not leave an error banner showing",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
 });
