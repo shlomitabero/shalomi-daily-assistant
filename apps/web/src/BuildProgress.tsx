@@ -208,14 +208,22 @@ export function BuildProgress({
     });
   }
 
-  const failedStep = events.find((e) => e.status === "failed");
-
   // One row per agent, showing its latest status (the "running" placeholder
   // is replaced in place once that agent's success/failed event arrives).
   const latestByAgent = new Map<string, AgentStepEvent>();
   for (const event of events) {
     latestByAgent.set(event.agent, event);
   }
+
+  // Must reflect each agent's CURRENT (latest) status, not "any failure
+  // ever seen in this build's history" -- a Database failure the Debug
+  // Agent successfully recovers from (see pipeline.ts) is always followed
+  // by a fresh Database success event, but the earlier failed one stays in
+  // `events` forever. Scanning raw `events` for the first failed status
+  // would keep the "Build failed" banner (and its Back button, in place of
+  // the rest of the step list) showing for the whole remainder of a build
+  // that's actually recovering and about to complete successfully.
+  const failedStep = [...latestByAgent.values()].find((e) => e.status === "failed");
   // Debug only ever shows up if it actually ran (a real migration failure)
   // — most builds never trigger it, so it shouldn't sit there as a
   // permanent "pending" placeholder on every successful build.
