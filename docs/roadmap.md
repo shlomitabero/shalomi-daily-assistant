@@ -4182,6 +4182,32 @@ not a single "make it perfect" claim.
       the new client-side timeout). Full suite green (344 tests, up from
       342 — `@forge/web` 88 → 90) + both builds clean.
 
+- [x] **Round 72 (autonomous): finished exhausting the "compare parallel
+      handlers between live app and codegen.ts" investigation, then
+      deduplicated a small, real code smell.** With שלומי's real bug fixed
+      and no further reply from her yet, resumed the routine's own
+      priority-1 candidate: checked the remaining async functions in
+      `EntityPanel.tsx`/`EntityView` (`refresh`, `loadRelated`) and the
+      `GlobalSearchPanel`/`GlobalSearch` pair (`runSearch`) — every one of
+      them already matches between the live app and the exported app, so
+      that investigation is now genuinely exhausted for this file pair,
+      not just paused. Moved to a smaller, already-flagged candidate:
+      `apps/web/src/api.ts`'s `exportProject` and `backupProject` repeated
+      the exact same ~15-line request/blob-download sequence (auth header,
+      translate an error response, turn the blob into an `<a download>`
+      click), differing only in the URL path and the download filename.
+      Extracted the shared mechanics into a private `downloadBlob()`
+      helper; both public functions are now one-line wrappers around it.
+      Pure refactor, no behavior change — no `git stash` proof needed
+      (nothing here was broken before), but added real test coverage that
+      didn't exist for these two functions at all until now: both entry
+      points exercised through the shared helper (right URL requested,
+      right filename suffix per function, a translated error surfaced
+      without attempting a download on failure), using a minimal fake
+      `document` (Node 22 already ships a real global
+      `URL.createObjectURL`, just no `document`). Full suite green (347
+      tests, up from 344 — `@forge/web` 90 → 93) + both builds clean.
+
 ## Phase 3
 
 - Self-healing: production observability, automatic diagnosis and patch
