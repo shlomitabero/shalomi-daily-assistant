@@ -4755,6 +4755,57 @@ not a single "make it perfect" claim.
       Full suite green (372 tests, up from 371 — `@forge/web` 113 → 114)
       and both builds clean.
 
+- [x] **Found and fixed a real, previously-latent bug in this project's own
+      jsdom test infrastructure — not in any app code — while writing
+      `EntityPanel.tsx`'s search-box coverage: every real-DOM test file
+      silently couldn't type into a text `<input>`/`<textarea>` at all.**
+      `react-dom` computes two module-top-level `var`s exactly once, the
+      instant it's first imported: `canUseDOM`
+      (`typeof window !== 'undefined' && ...`) and, derived from it,
+      `isInputEventSupported`. Neither is ever recomputed. Every jsdom test
+      file in this project installs its per-test `window` via
+      `Object.defineProperty` from *inside* an async test callback
+      (`withJsdom()`), which necessarily runs after the file's own static
+      imports — and therefore after `react-dom`'s module evaluation — already
+      happened against plain Node.js, where `window` doesn't exist yet. That
+      permanently cached `isInputEventSupported = false` for the rest of the
+      process, making `react-dom` fall back, for every controlled text
+      field in every jsdom test afterward, to its ancient IE-era "input
+      event polyfill" path — which calls `activeElement.attachEvent`, an
+      IE-only API jsdom has never implemented. Confirmed both failure modes
+      empirically while diagnosing this: a hard crash
+      ("activeElement.attachEvent is not a function") once the element was
+      focused, and a silent no-op (`onChange` simply never firing)
+      otherwise — both bounded by this project's own `waitForCondition`
+      timeouts, never an outright hang. This went unnoticed until now
+      because no earlier jsdom test in this project actually depended on a
+      *typed* value reaching React state — `AuthScreen.test.ts`'s own
+      email/password `fireEvent.change` calls, for instance, only ever get
+      read back via the input's own DOM `.value` (which `fireEvent` sets
+      directly regardless of whether React's `onChange` ever ran), and its
+      assertions all key off `busy` state set by form *submission*, a
+      wholly separate, unaffected event path. Added `jsdomWarmup.ts`: a
+      one-time, side-effect-only JSDOM install that must be the first
+      import in any real-DOM test file, before anything that transitively
+      imports `react-dom`, so its one-time checks see a genuine
+      `window`/`document` and cache `true`. Applied it to every existing
+      file that renders through `react-dom` (`AuthScreen.test.ts`,
+      `BuildProgress.test.ts`, `EntityPanel.test.ts`,
+      `useDialogFocusTrap.test.ts`); `domInert.test.ts` renders no React and
+      is unaffected, left as-is. Added the two search-box tests this fix
+      unblocked: typing a query narrows the board view down to the matching
+      cards without losing the view mode or the typed text itself, and a
+      query matching nothing shows the "no results" empty state rather than
+      an all-empty board (the `visibleRecords.length === 0` branch sits
+      above the board/calendar/table branching in `EntityPanel`'s JSX, real
+      ordering to get right). Both regression-proven: removing the
+      `jsdomWarmup.ts` import made the search test fail cleanly (a bounded
+      `waitForCondition` timeout, not a hang); separately, hardcoding the
+      empty-state branch's condition to `false` made the companion test
+      fail with a precise assertion mismatch. Both reverted afterward,
+      `git diff` confirmed empty each time. Full suite green (374 tests, up
+      from 372 — `@forge/web` 114 → 116) and both builds clean.
+
 ## Phase 3
 
 - Self-healing: production observability, automatic diagnosis and patch
