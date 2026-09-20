@@ -4830,6 +4830,31 @@ not a single "make it perfect" claim.
       green (375 tests, up from 374 — `@forge/web` 116 → 117) and both
       builds clean.
 
+- [x] **Added real-DOM CSV import coverage for `EntityPanel.tsx`.**
+      `entityFormatting.test.ts` already covers `parseCsv`/`buildImportRecords`
+      in isolation, but nothing before this exercised `handleImportFile`'s
+      actual wiring through a real file upload: a genuine `File` reaching
+      `file.text()`, the parsed row genuinely POSTed via `createRecord`,
+      and the table genuinely reflecting it afterward — now that
+      `jsdomWarmup.ts` (round 86) makes typed/uploaded DOM input reliable,
+      CSV import was the natural next real-DOM gap to close. Builds a real
+      `File`/CSV via the standard jsdom-file-input technique (`.files` is
+      read-only on a real `<input type="file">`, so it's set via
+      `Object.defineProperty`, the same way a browser's own file picker
+      would populate it) and fires a real "change" event, then confirms
+      the imported record both reached the mock server (checked against
+      the mutable record store the mock POST writes into) and shows up as
+      a real row in the table after the post-import `refresh()`. New
+      coverage for already-correct code, not a bug fix —
+      `handleImportFile` already used `Promise.allSettled` correctly and
+      no fresh defect turned up on inspection. Regression-proven the way
+      this session does for coverage-only additions: temporarily removed
+      `handleImportFile`'s `await refresh();` call, confirmed the new test
+      failed via its own bounded `waitForCondition` timeout (no hang),
+      then restored the original file and confirmed `git diff` came back
+      empty. Full suite green (376 tests, up from 375 — `@forge/web`
+      117 → 118) and both builds clean.
+
 ## Phase 3
 
 - Self-healing: production observability, automatic diagnosis and patch
