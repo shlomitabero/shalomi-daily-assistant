@@ -4806,6 +4806,30 @@ not a single "make it perfect" claim.
       `git diff` confirmed empty each time. Full suite green (374 tests, up
       from 372 — `@forge/web` 114 → 116) and both builds clean.
 
+- [x] **Closed the exact gap round 86's `jsdomWarmup.ts` fix identified in
+      `AuthScreen.test.ts` itself.** That file's own two pre-existing tests
+      type into the email/password fields via `fireEvent.change`, but
+      neither ever asserted on anything downstream of it — one only checks
+      button-disabled state (driven by `busy`, set on form *submission*, a
+      wholly separate event path the onChange bug never touched) and reads
+      the input's own DOM `.value` right back (which `fireEvent` sets
+      directly regardless of whether React's `onChange` ever actually ran);
+      the other never submits at all. Neither test could have caught the
+      bug `jsdomWarmup.ts` fixed — exactly why it went unnoticed in this
+      file until `EntityPanel.test.ts`'s search-box tests exposed it
+      elsewhere. Added a test that captures the mock `fetch`'s request body
+      on submit and confirms it contains the *exact* typed email and
+      password, verifying the typed values genuinely flow through
+      `handleSubmit` into the real `signup()` request rather than sitting
+      inert in the input's own DOM node. Regression-proven directly against
+      the fix it depends on: temporarily removed
+      `import "./jsdomWarmup.js";` and reran just this test — it failed
+      with `email: ''` instead of `'dana@example.com'` in the captured
+      body, the *exact* failure mode `jsdomWarmup.ts`'s own comment
+      describes. Restored afterward, `git diff` confirmed empty. Full suite
+      green (375 tests, up from 374 — `@forge/web` 116 → 117) and both
+      builds clean.
+
 ## Phase 3
 
 - Self-healing: production observability, automatic diagnosis and patch
