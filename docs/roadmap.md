@@ -4208,6 +4208,43 @@ not a single "make it perfect" claim.
       `URL.createObjectURL`, just no `document`). Full suite green (347
       tests, up from 344 — `@forge/web` 90 → 93) + both builds clean.
 
+- [x] **Round 73 (genuinely prompted this time — שלומי said "עוד שדרוגים",
+      "more upgrades"): closed a long-open, self-identified gap instead of
+      starting a fresh hunt from scratch.** Spent a while first on a
+      broader search that came up empty: reviewed `twin.ts` (Business
+      Twin), `backup.ts`, the auth stack (`users.ts`, `password.ts`,
+      `auth/middleware.ts`, `routes/auth.ts`) and every async event
+      handler across the whole live web app for missing error handling —
+      all already solid, no new findings (the auth stack in particular
+      already normalizes email case at the schema layer and defends
+      against a login timing side-channel, both clearly deliberate).
+      While reading `migrate.ts`, noticed a real but out-of-scope-for-one-
+      round design gap: `diffAndMigrate` only ever adds new
+      tables/columns — if a refine ever changed an *existing* field's
+      type while keeping its name, the SQL column's type never updates to
+      match, which SQLite has no native `ALTER COLUMN TYPE` for fixing
+      cheaply. Documented rather than fixed (real schema-type migration
+      needs a create-new-table-and-copy strategy, a genuine design
+      decision, not a mechanical patch — added to the candidates list
+      below). Instead closed the ZIP-writer parity gap round 68 had
+      already found and explicitly left for "if it's ever worth doing":
+      `codegen.ts`'s own embedded `buildZip()` (a necessary copy of
+      `zip.ts`, since the exported app has zero runtime dependency on
+      this repo) was missing the UTF-8 general-purpose-bit-flag and the
+      >65535-entries guard `zip.ts` already has. Still not a live bug
+      today (entity names are always ASCII, entity counts are always
+      small), but worth keeping the two copies in sync so a future fix to
+      `zip.ts` doesn't silently never reach the exported app. New test
+      extracts and executes the real generated `buildZip`/`crc32`/
+      `CRC_TABLE` and checks it with Python's spec-strict `zipfile`
+      module — the same technique `zip.test.ts` already uses for the live
+      writer, since the system `unzip` auto-detects UTF-8 regardless of
+      the flag and wouldn't catch this. Proven to catch a real regression
+      via `git stash` on `codegen.ts` alone: pre-fix, a Hebrew filename
+      came back CP437-mangled mojibake through the spec-strict reader.
+      Full suite green (348 tests, up from 347 — `@forge/api` 114 → 115)
+      + both builds clean.
+
 ## Phase 3
 
 - Self-healing: production observability, automatic diagnosis and patch
