@@ -388,6 +388,40 @@ test("the exported EntityView renders a real month-calendar view for entities wi
   assert.match(stylesCss, /\.calendar-record-chip/);
 });
 
+// Regression test: `new Date("2026-09-15")` parses that date-only string
+// as UTC midnight, but the generated CalendarView's own grid cells are
+// built with `new Date(year, month, day)` (local midnight) and compared
+// with local getters -- so for any viewer whose local time is behind UTC,
+// a record was silently placed one calendar day earlier than its actual
+// stored date. Executes the real generated buildCalendarMonth/
+// isSameCalendarDay/parseFieldDate functions (extracted from real codegen
+// output, not reimplemented here) under a behind-UTC TZ, the same
+// "run the real generated code" standard the CSV-import date test uses.
+test("the exported CalendarView places a record on its correct calendar day even for a viewer in a timezone behind UTC", () => {
+  const entityViewJsx = generateExportFiles(project).find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+
+  const dateHelperSrc = entityViewJsx.match(/const CALENDAR_DATE_FORMAT[\s\S]*?\nfunction parseFieldDate\(raw\) \{[\s\S]*?\n\}\n/)?.[0];
+  const sameDaySrc = entityViewJsx.match(/function isSameCalendarDay\(a, b\) \{[\s\S]*?\n\}\n/)?.[0];
+  const buildMonthSrc = entityViewJsx.match(/function buildCalendarMonth\(records, field, year, month\) \{[\s\S]*?\n\}\n/)?.[0];
+  assert.ok(dateHelperSrc && sameDaySrc && buildMonthSrc, "expected to find parseFieldDate/isSameCalendarDay/buildCalendarMonth in generated output");
+
+  const buildCalendarMonth = new Function(`${dateHelperSrc}\n${sameDaySrc}\n${buildMonthSrc}\nreturn buildCalendarMonth;`)();
+
+  const originalTz = process.env.TZ;
+  process.env.TZ = "America/New_York";
+  try {
+    const field = { name: "date", type: "date" };
+    const records = [{ id: 1, date: "2026-09-15" }];
+    const days = buildCalendarMonth(records, field, 2026, 8); // September 2026
+    const sep14 = days.find((d) => d.inCurrentMonth && d.date.getDate() === 14);
+    const sep15 = days.find((d) => d.inCurrentMonth && d.date.getDate() === 15);
+    assert.equal(sep15.records.length, 1, "the record must land on the 15th, not shift to the 14th");
+    assert.equal(sep14.records.length, 0);
+  } finally {
+    process.env.TZ = originalTz;
+  }
+});
+
 test("the exported CalendarView picks its day-chip label via pickDisplayField, not just whichever field happens to come first after the date field", () => {
   // Mirrors the live-preview fix in apps/web/src/entityFormatting.ts
   // (calendarChipLabelField): every built-in domain entity happens to

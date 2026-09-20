@@ -211,6 +211,32 @@ test("buildCalendarMonth silently skips records with a missing or unparseable da
   );
 });
 
+// Regression test: `new Date("2026-09-15")` parses that date-only string as
+// UTC midnight, but the calendar grid's own day cells are built with
+// `new Date(year, month, day)` (local midnight) and compared with local
+// getters. For any viewer whose local time is behind UTC, that silently
+// placed a record one calendar day earlier than its actual stored date.
+// The sandbox this test normally runs in defaults to UTC, where the bug is
+// invisible, so this pins process.env.TZ to a behind-UTC zone for the
+// duration of the assertion (Node re-reads TZ per Date construction; no
+// caching to worry about) and restores it afterward so it can't leak into
+// other tests in the same process.
+test("buildCalendarMonth places a record on its correct calendar day even for a viewer in a timezone behind UTC", () => {
+  const originalTz = process.env.TZ;
+  process.env.TZ = "America/New_York";
+  try {
+    const field: Field = { name: "date", type: "date", required: true };
+    const records = [{ id: 1, date: "2026-09-15" }];
+    const days = buildCalendarMonth(records, field, 2026, 8); // September 2026
+    const sep14 = days.find((d) => d.inCurrentMonth && d.date.getDate() === 14)!;
+    const sep15 = days.find((d) => d.inCurrentMonth && d.date.getDate() === 15)!;
+    assert.equal(sep15.records.length, 1, "the record must land on the 15th, not shift to the 14th");
+    assert.equal(sep14.records.length, 0);
+  } finally {
+    process.env.TZ = originalTz;
+  }
+});
+
 test("recordsToCsv builds a header row from field labels and one row per record, with human-friendly values", () => {
   const fields: Field[] = [
     { name: "name", label: "Name", type: "text", required: true },

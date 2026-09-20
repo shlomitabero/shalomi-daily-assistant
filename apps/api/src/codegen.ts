@@ -956,6 +956,25 @@ function isSameCalendarDay(a, b) {
   return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
 }
 
+// A stored date field is always the plain "YYYY-MM-DD" shape -- passing
+// that straight to the Date constructor parses it as UTC midnight (the
+// date-only form in the Date Time String Format spec), while the calendar
+// grid's own cells (gridStart/date below) are built with new Date(year,
+// month, day), i.e. *local* midnight. Comparing the two with local getters
+// (getFullYear/getMonth/getDate) silently shifts a record back by one
+// calendar day for any viewer whose local time is behind UTC (most of the
+// Americas) -- confirmed empirically under TZ=America/New_York. Parsing
+// the YYYY-MM-DD components directly into a local Date, the same
+// construction the grid cells use, keeps both sides in the same timezone.
+const CALENDAR_DATE_FORMAT = /^(\\d{4})-(\\d{2})-(\\d{2})$/;
+function parseFieldDate(raw) {
+  const match = CALENDAR_DATE_FORMAT.exec(raw);
+  if (match) {
+    return new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]));
+  }
+  return new Date(raw);
+}
+
 // Builds a fixed 6-week (42-day) month grid starting on the Sunday on/before
 // the 1st and ending on the Saturday on/after the last day -- the standard
 // calendar-UI shape, including leading/trailing days from adjacent months
@@ -972,7 +991,7 @@ function buildCalendarMonth(records, field, year, month) {
     const dayRecords = records.filter((r) => {
       const raw = r[field.name];
       if (raw === null || raw === undefined || raw === "") return false;
-      const recordDate = new Date(String(raw));
+      const recordDate = parseFieldDate(String(raw));
       return !Number.isNaN(recordDate.getTime()) && isSameCalendarDay(recordDate, date);
     });
     days.push({ date, inCurrentMonth: date.getMonth() === month, records: dayRecords });

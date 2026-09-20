@@ -234,6 +234,28 @@ function isSameDay(a: Date, b: Date): boolean {
 }
 
 /**
+ * A stored date field is always the plain "YYYY-MM-DD" shape (see
+ * isValidDateString above) -- `new Date("2024-01-15")` parses that as UTC
+ * midnight, per the date-only form in the Date Time String Format spec,
+ * while the calendar grid's own cells (gridStart/date below) are built with
+ * `new Date(year, month, day)`, i.e. *local* midnight. Comparing the two
+ * with local getters (getFullYear/getMonth/getDate) then silently shifts a
+ * record back by one calendar day for any viewer whose local time is
+ * behind UTC (most of the Americas) -- confirmed empirically under
+ * TZ=America/New_York. Parsing the YYYY-MM-DD components directly into a
+ * *local* Date, the same construction the grid cells use, keeps both sides
+ * in the same timezone so the comparison means what it looks like it means.
+ */
+function parseFieldDate(raw: string): Date {
+  const match = DATE_FORMAT.exec(raw);
+  if (match) {
+    const [, yearStr, monthStr, dayStr] = match;
+    return new Date(Number(yearStr), Number(monthStr) - 1, Number(dayStr));
+  }
+  return new Date(raw);
+}
+
+/**
  * Builds a fixed 6-week (42-day) month grid for `month` (0-indexed, JS Date
  * convention) of `year`, starting on the Sunday on/before the 1st and
  * ending on the Saturday on/after the last day -- the standard calendar-UI
@@ -252,7 +274,7 @@ export function buildCalendarMonth(records: EntityRecord[], field: Field, year: 
     const dayRecords = records.filter((r) => {
       const raw = r[field.name];
       if (raw === null || raw === undefined || raw === "") return false;
-      const recordDate = new Date(String(raw));
+      const recordDate = parseFieldDate(String(raw));
       return !Number.isNaN(recordDate.getTime()) && isSameDay(recordDate, date);
     });
     days.push({ date, inCurrentMonth: date.getMonth() === month, records: dayRecords });
