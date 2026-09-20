@@ -32,6 +32,12 @@ export function GlobalSearchPanel({
   const [selectedIndex, setSelectedIndex] = useState<number | null>(null);
   const dialogRef = useDialogFocusTrap<HTMLDivElement>();
 
+  // Promise.allSettled rather than Promise.all: a single entity whose
+  // records fail to load (a transient network blip, a cold-starting
+  // backend) must not blank out results from every OTHER entity that
+  // searched fine -- Promise.all would reject the whole search on that
+  // one failure, showing nothing at all instead of the results a user
+  // with, say, 9 working entity tables and 1 flaky one would still want.
   async function runSearch(q: string) {
     if (!q.trim()) {
       setResults([]);
@@ -41,21 +47,27 @@ export function GlobalSearchPanel({
     }
     setLoading(true);
     setError(null);
-    try {
-      const perEntity = await Promise.all(
-        entities.map(async (entity) => {
-          const { records } = await listRecords(projectId, entity.name);
-          return searchEntityRecords(entity, records, q);
-        }),
+    const settled = await Promise.allSettled(
+      entities.map(async (entity) => {
+        const { records } = await listRecords(projectId, entity.name);
+        return searchEntityRecords(entity, records, q);
+      }),
+    );
+    const succeeded = settled
+      .filter((r): r is PromiseFulfilledResult<EntitySearchResult | null> => r.status === "fulfilled")
+      .map((r) => r.value);
+    setResults(succeeded.filter((r): r is EntitySearchResult => r !== null));
+    setSearched(true);
+    setSelectedIndex(null);
+    const failures = settled.filter((r): r is PromiseRejectedResult => r.status === "rejected");
+    if (failures.length > 0) {
+      setError(
+        failures.length === entities.length
+          ? (failures[0].reason as Error).message
+          : t("search.partialFailure", { failed: failures.length, total: entities.length }),
       );
-      setResults(perEntity.filter((r): r is EntitySearchResult => r !== null));
-      setSearched(true);
-      setSelectedIndex(null);
-    } catch (err) {
-      setError((err as Error).message);
-    } finally {
-      setLoading(false);
     }
+    setLoading(false);
   }
 
   async function handleSubmit(e: React.FormEvent) {

@@ -253,6 +253,7 @@ export const translations: Record<Lang, Record<string, string>> = {
     "search.andMore": "ועוד {count}",
     "search.jumpTo": "מעבר לטאב",
     "search.keyboardHint": "↑↓ לניווט בין התוצאות, Enter למעבר ללשונית",
+    "search.partialFailure": "החיפוש נכשל ב-{failed} מתוך {total} ישויות. התוצאות למטה הן מהישויות שכן הצליחו.",
   },
   en: {
     "brand.tagline": "Describe your business in your own words — get a working app.",
@@ -474,6 +475,7 @@ export const translations: Record<Lang, Record<string, string>> = {
     "search.andMore": "+{count} more",
     "search.jumpTo": "Go to tab",
     "search.keyboardHint": "↑↓ to navigate results, Enter to jump to a tab",
+    "search.partialFailure": "Search failed for {failed} of {total} entities. Results below are from the ones that succeeded.",
   },
 };
 

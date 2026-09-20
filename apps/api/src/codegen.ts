@@ -1674,16 +1674,20 @@ export function GlobalSearch({ entities, onClose, onJumpToEntity }) {
     }
     setLoading(true);
     setError(null);
-    try {
-      const perEntity = await Promise.all(entities.map((entity) => searchEntity(entity, q)));
-      setResults(perEntity.filter((r) => r !== null));
-      setSearched(true);
-      setSelectedIndex(null);
-    } catch (err) {
-      setError(err.message);
-    } finally {
-      setLoading(false);
+    const settled = await Promise.allSettled(entities.map((entity) => searchEntity(entity, q)));
+    const succeeded = settled.filter((r) => r.status === "fulfilled").map((r) => r.value);
+    setResults(succeeded.filter((r) => r !== null));
+    setSearched(true);
+    setSelectedIndex(null);
+    const failures = settled.filter((r) => r.status === "rejected");
+    if (failures.length > 0) {
+      setError(
+        failures.length === entities.length
+          ? failures[0].reason.message
+          : \`Search failed for \${failures.length} of \${entities.length} entities. Results below are from the ones that succeeded.\`,
+      );
     }
+    setLoading(false);
   }
 
   async function handleSubmit(e) {

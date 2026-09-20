@@ -821,6 +821,76 @@ test("the exported app includes a real cross-entity global search, ported from t
   assert.match(appJsx, /fields: CustomerEntity\.fields/);
   assert.match(appJsx, /ctrlKey \|\| e\.metaKey/);
   assert.match(appJsx, /shortcut-hint/);
+});
+
+// Regression test: runSearch used to await a bare
+// Promise.all(entities.map(searchEntity)) -- one entity whose records
+// failed to load (a transient network blip, a cold-starting backend)
+// rejected the WHOLE search, blanking out results from every OTHER
+// entity that searched fine. A user with, say, 9 working entity tables
+// and 1 flaky one got a bare error message instead of the 9 entities'
+// worth of results they could otherwise see. Runs the real generated
+// runSearch/searchEntity with a mock listRecords that fails for exactly
+// one of three entities.
+test("the exported GlobalSearch's runSearch shows results from every entity that succeeded, instead of Promise.all's all-or-nothing blanking everything on one entity's failure", async () => {
+  const files = generateExportFiles(project);
+  const globalSearchJsx = files.find((f) => f.path === "web/src/components/GlobalSearch.jsx")!.content;
+  const entityViewJsx = files.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+
+  const matchesSearchSrc = entityViewJsx.match(/export function matchesSearch\([\s\S]*?\n\}\n/)?.[0]?.replace("export ", "");
+  const searchEntitySrc = globalSearchJsx.match(/async function searchEntity\([\s\S]*?\n\}\n/)?.[0];
+  const runSearchSrc = globalSearchJsx.match(/ {2}async function runSearch\(q\) \{[\s\S]*?\n {2}\}\n/)?.[0];
+  assert.ok(
+    matchesSearchSrc && searchEntitySrc && runSearchSrc,
+    "expected to find matchesSearch/searchEntity/runSearch in generated output",
+  );
+
+  const entityA = { name: "Alpha", label: "Alpha", fields: [{ name: "name", label: "Name", type: "text" }] };
+  const entityB = { name: "Beta", label: "Beta", fields: [{ name: "name", label: "Name", type: "text" }] };
+  const entityC = { name: "Gamma", label: "Gamma", fields: [{ name: "name", label: "Name", type: "text" }] };
+  const rejection = new Error("network error");
+
+  let capturedResults: unknown[] | undefined;
+  let capturedError: string | undefined;
+
+  const fn = new Function(
+    "entities",
+    "listRecords",
+    "setLoading",
+    "setError",
+    "setResults",
+    "setSearched",
+    "setSelectedIndex",
+    `${matchesSearchSrc}\n${searchEntitySrc}\n${runSearchSrc}\nreturn runSearch;`,
+  )(
+    [entityA, entityB, entityC],
+    async (entityName: string) => {
+      if (entityName === "Beta") throw rejection;
+      return { records: [{ id: 1, name: `match-${entityName}` }] };
+    },
+    () => {},
+    (msg: string) => {
+      capturedError = msg;
+    },
+    (results: unknown[]) => {
+      capturedResults = results;
+    },
+    () => {},
+    () => {},
+  ) as (q: string) => Promise<void>;
+
+  await fn("match");
+
+  assert.deepEqual(
+    (capturedResults ?? []).map((r) => (r as { entityName: string }).entityName),
+    ["Alpha", "Gamma"],
+    "must still show results from the entities that searched successfully",
+  );
+  assert.match(
+    capturedError!,
+    /1 of 3/,
+    "a partial failure must report how many entities failed, not the raw single-entity rejection",
+  );
 
   const stylesCss = files.find((f) => f.path === "web/src/styles.css")!.content;
   assert.match(stylesCss, /\.search-overlay/);
