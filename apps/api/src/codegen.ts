@@ -1332,13 +1332,18 @@ export function EntityView({ entity }) {
     if (ids.length === 0) return;
     if (!window.confirm(\`Delete \${ids.length} records? This can't be undone.\`)) return;
     setError(null);
-    try {
-      await Promise.all(ids.map((id) => deleteRecord(entity.name, id)));
-      setSelectedIds(new Set());
-      await refresh();
-    } catch (err) {
-      setError(err.message);
+    const results = await Promise.allSettled(ids.map((id) => deleteRecord(entity.name, id)));
+    const failedIds = ids.filter((_, i) => results[i].status === "rejected");
+    setSelectedIds(new Set(failedIds));
+    if (failedIds.length > 0) {
+      const firstFailure = results.find((r) => r.status === "rejected");
+      setError(
+        failedIds.length === ids.length
+          ? firstFailure.reason.message
+          : \`\${failedIds.length} of \${ids.length} records could not be deleted.\`,
+      );
     }
+    await refresh();
   }
 
   async function handleMove(id, fieldName, value) {

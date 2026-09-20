@@ -489,18 +489,29 @@ export function EntityPanel({
     });
   }
 
+  // Promise.allSettled rather than Promise.all: a single rejected delete
+  // (a dropped connection, a record another tab already removed) must not
+  // hide the ones that *did* succeed -- Promise.all would reject on the
+  // first failure and skip both the refresh() and the selectedIds cleanup
+  // below it, leaving already-deleted rows still shown as selected in a
+  // now-stale table until the user manually reloads the page.
   async function handleBulkDelete() {
     const ids = [...selectedIds];
     if (ids.length === 0) return;
     if (!window.confirm(t("entity.bulk.confirmDelete", { count: ids.length }))) return;
     setError(null);
-    try {
-      await Promise.all(ids.map((id) => deleteRecord(projectId, entity.name, id)));
-      setSelectedIds(new Set());
-      await refresh();
-    } catch (err) {
-      setError((err as Error).message);
+    const results = await Promise.allSettled(ids.map((id) => deleteRecord(projectId, entity.name, id)));
+    const failedIds = ids.filter((_, i) => results[i].status === "rejected");
+    setSelectedIds(new Set(failedIds));
+    if (failedIds.length > 0) {
+      const firstFailure = results.find((r): r is PromiseRejectedResult => r.status === "rejected")!;
+      setError(
+        failedIds.length === ids.length
+          ? (firstFailure.reason as Error).message
+          : t("entity.bulk.partialFailure", { failed: failedIds.length, total: ids.length }),
+      );
     }
+    await refresh();
   }
 
   function handleExportCsv() {

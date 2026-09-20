@@ -595,6 +595,72 @@ test("the exported EntityView's handleDelete/handleDuplicate/handleBulkDelete/ha
   assert.equal(await runHandler(handleMoveSrc, (fn) => fn(1, "status", "Won")), rejection.message, "handleMove must call setError on failure");
 });
 
+// Regression test, separate from the one above: even after round 71 wrapped
+// handleBulkDelete in a try/catch, it still awaited a bare
+// Promise.all(ids.map(deleteRecord)) inside that try -- a single rejected
+// delete (a dropped connection, a record another tab already removed)
+// rejected the whole Promise.all immediately, so setSelectedIds(new Set())
+// and refresh() right after it never ran. Any records that DID delete
+// successfully stayed listed, and selected, in a now-stale table. Runs the
+// real generated handleBulkDelete with a mock deleteRecord that fails for
+// exactly one of three selected ids.
+test("the exported EntityView's handleBulkDelete refreshes and keeps only the ids that actually failed selected, instead of Promise.all's all-or-nothing hiding the deletes that succeeded", async () => {
+  const entityViewJsx = generateExportFiles(project).find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+  const handleBulkDeleteSrc = entityViewJsx.match(/async function handleBulkDelete\(\) \{[\s\S]*?\n  \}\n/)?.[0];
+  assert.ok(handleBulkDeleteSrc, "expected to find handleBulkDelete in generated output");
+
+  let capturedError: string | undefined;
+  let capturedSelectedIds: Set<number> | undefined;
+  let refreshCalled = 0;
+  const attemptedIds: number[] = [];
+
+  const fn = new Function(
+    "window",
+    "entity",
+    "selectedIds",
+    "setSelectedIds",
+    "setError",
+    "deleteRecord",
+    "refresh",
+    `${handleBulkDeleteSrc}\nreturn handleBulkDelete;`,
+  )(
+    { confirm: () => true },
+    { name: "Customer" },
+    new Set([1, 2, 3]),
+    (next: Set<number>) => {
+      capturedSelectedIds = next;
+    },
+    (msg: string) => {
+      capturedError = msg;
+    },
+    async (_entityName: string, id: number) => {
+      attemptedIds.push(id);
+      if (id === 2) throw new Error("record 2 network error");
+    },
+    async () => {
+      refreshCalled += 1;
+    },
+  );
+  await fn();
+
+  assert.deepEqual(
+    attemptedIds.slice().sort(),
+    [1, 2, 3],
+    "must attempt every selected id, not stop at the first failure",
+  );
+  assert.deepEqual(
+    [...capturedSelectedIds!].sort(),
+    [2],
+    "only the id that actually failed should remain selected -- the two that succeeded must be cleared",
+  );
+  assert.equal(capturedError, "1 of 3 records could not be deleted.");
+  assert.equal(
+    refreshCalled,
+    1,
+    "refresh() must still run so the table reflects the records that WERE successfully deleted, even on a partial failure",
+  );
+});
+
 test("the exported EntityView renders a real picker for relation fields, not a raw numeric ID input", () => {
   const withRelation: Project = {
     ...project,
