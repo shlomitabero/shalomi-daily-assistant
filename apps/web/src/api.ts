@@ -49,16 +49,41 @@ export function createWakeRefCounter(notify: (waking: boolean) => void): (waking
 const notifyWakingRefCounted = createWakeRefCounter(notifyWaking);
 
 /**
+ * A generous ceiling on the *whole* request, retries included -- comfortably
+ * above the server's own 60s Anthropic-call timeout (see
+ * packages/spec-engine/src/anthropicFetch.ts) plus real cold-start latency,
+ * but still a hard bound. Without this, a request whose connection succeeds
+ * but whose response never arrives (a stalled upstream call, or a Render
+ * cold start that happens not to surface as a connection-level failure)
+ * hung forever with the UI stuck on a busy spinner ("thinking it over…")
+ * and absolutely no feedback -- exactly the real report that motivated this:
+ * the home screen "just sits there" and never delivers the built app.
+ * fetchWithWakeRetry's own retry-on-thrown-error logic only helps the
+ * connection-refused case; a slow-but-not-yet-failed response sails right
+ * through it untouched, which is the gap this closes.
+ */
+const REQUEST_TIMEOUT_MS = 100_000;
+
+/**
  * Wraps fetchWithWakeRetry so that if every retry is exhausted (the
  * backend is genuinely unreachable, not just cold-starting), the caller
  * sees a translated message instead of the browser's raw, untranslated
- * network-error text (e.g. "Failed to fetch").
+ * network-error text (e.g. "Failed to fetch"). Also bounds the total wait
+ * with REQUEST_TIMEOUT_MS so a hung request fails clearly instead of
+ * spinning forever.
  */
 async function fetchApi(input: string, init?: RequestInit): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
   try {
-    return await fetchWithWakeRetry(input, init, { onWaking: notifyWakingRefCounted });
-  } catch {
+    return await fetchWithWakeRetry(input, { ...init, signal: controller.signal }, { onWaking: notifyWakingRefCounted });
+  } catch (err) {
+    if (controller.signal.aborted) {
+      throw new Error(resolveErrorMessage({ code: "REQUEST_TIMEOUT" }));
+    }
     throw new Error(resolveErrorMessage({ code: "NETWORK_ERROR" }));
+  } finally {
+    clearTimeout(timer);
   }
 }
 

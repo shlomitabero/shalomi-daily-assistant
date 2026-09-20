@@ -37,6 +37,13 @@ export async function fetchWithWakeRetry(
       try {
         return await fetchImpl(input, init);
       } catch (err) {
+        // A caller-supplied AbortSignal already firing (e.g. a client-side
+        // request timeout in api.ts) is a deliberate cancellation, not a
+        // transient cold-start hiccup -- retrying it is pointless (the
+        // signal stays aborted, so every retry would fail identically) and
+        // would burn through the whole ~49s retry backoff sleeping for no
+        // reason, on top of whatever the caller's own timeout already was.
+        if (init?.signal?.aborted) throw err;
         if (attempt >= delays.length) throw err;
         if (!waking) {
           waking = true;

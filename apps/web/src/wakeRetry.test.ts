@@ -63,6 +63,41 @@ test("fetchWithWakeRetry gives up and rethrows once every delay is exhausted, st
   assert.deepEqual(wakingEvents, [true, false]);
 });
 
+// Regression test: a caller-supplied AbortSignal already being aborted when
+// fetchImpl throws (e.g. api.ts's own client-side request timeout firing)
+// must fail immediately, not get treated as a transient cold-start failure
+// worth retrying -- the signal stays aborted, so every retry would fail the
+// same way, just after burning through the whole retry backoff for nothing.
+test("fetchWithWakeRetry does not retry when the caller's own AbortSignal already fired", async () => {
+  const controller = new AbortController();
+  controller.abort();
+  let calls = 0;
+  const wakingEvents: boolean[] = [];
+  await assert.rejects(
+    () =>
+      fetchWithWakeRetry(
+        "/x",
+        { signal: controller.signal },
+        {
+          delaysMs: [1, 1, 1],
+          fetchImpl: async () => {
+            calls += 1;
+            const err = new Error("The operation was aborted.");
+            err.name = "AbortError";
+            throw err;
+          },
+          onWaking: (w) => wakingEvents.push(w),
+          sleep: async () => {
+            throw new Error("should never sleep once the caller's own signal is already aborted");
+          },
+        },
+      ),
+    /aborted/,
+  );
+  assert.equal(calls, 1, "must fail on the first attempt, not retry");
+  assert.deepEqual(wakingEvents, [], "must never show the waking banner for a deliberate cancellation");
+});
+
 test("fetchWithWakeRetry does not retry a real HTTP error response (only a thrown network failure)", async () => {
   let calls = 0;
   const res = await fetchWithWakeRetry("/x", undefined, {

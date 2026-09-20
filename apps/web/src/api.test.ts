@@ -150,6 +150,49 @@ test("a real HTTP error response with a body that isn't valid JSON still surface
  * -- BuildProgress.tsx renders that message directly to the user. See
  * docs/roadmap.md for the fix.
  */
+/**
+ * Real report from שלומי: the home screen "thinks it over…" (createProject)
+ * and never comes back with the app -- no error, no timeout, just a
+ * spinner forever. fetchWithWakeRetry's own retry-on-thrown-error logic
+ * only covers a connection that fails outright (Render cold-starting); a
+ * request whose connection succeeds but whose response simply never
+ * arrives (a stalled Anthropic call, or a cold start that happens not to
+ * surface as a hard connection failure) sailed straight through untouched
+ * and hung indefinitely. fetchApi now bounds the whole request with a
+ * client-side AbortController timeout, so a hung request fails clearly
+ * with an actionable, translated message instead of spinning forever.
+ */
+test("fetchApi aborts a request that hangs past its timeout, instead of leaving the caller waiting forever", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const original = globalThis.fetch;
+  // A fetch that never resolves on its own -- exactly like a stalled
+  // upstream call -- but does honor the AbortSignal, the same real
+  // contract the browser's own fetch() has.
+  globalThis.fetch = ((_input: unknown, init?: RequestInit) =>
+    new Promise<Response>((_resolve, reject) => {
+      init?.signal?.addEventListener("abort", () => {
+        const err = new Error("The operation was aborted.");
+        err.name = "AbortError";
+        reject(err);
+      });
+    })) as typeof fetch;
+  try {
+    const pending = listProjects();
+    // Let the pending assertion attach its rejection handler before the
+    // timer fires, so this is a real "still waiting" -> "now it fails"
+    // transition, not a race.
+    await Promise.resolve();
+    t.mock.timers.tick(100_000);
+    await assert.rejects(pending, (err: Error) => {
+      assert.match(err.message, /taking unusually long/);
+      return true;
+    });
+  } finally {
+    globalThis.fetch = original;
+    t.mock.timers.reset();
+  }
+});
+
 test("streamBuild translates a network failure mid-stream, instead of leaking the browser's raw untranslated error", async () => {
   const events: unknown[] = [];
   // The first chunk succeeds so the caller does get that agent-step event
