@@ -4667,6 +4667,43 @@ not a single "make it perfect" claim.
       raw node. Full suite green (367 tests, up from 364 —
       `@forge/web` 107 → 109) and both builds clean.
 
+- [x] **Added real-DOM board-view coverage for `EntityPanel.tsx`** — the
+      other half of the "table/board/calendar views" candidate the
+      previous round's `BuildProgress.tsx` fix left open. `EntityPanel.tsx`
+      had zero real-DOM render coverage before this: only its
+      `handleBulkDelete` handler, via function extraction. `groupByField`
+      (`entityFormatting.ts`) carries its own doc comment promising that an
+      enum value with zero matching records "still shows as a column
+      rather than silently disappearing" — unit-tested in isolation
+      already, but never actually exercised through the live component
+      tree with a real fetch round trip and a real re-render. Added two
+      tests against a real "Deal" entity (a text field + a 3-value
+      "status" enum) rendered through the actual `EntityPanel`, backed by
+      a mock `fetch` over a real mutable in-memory record store: one
+      confirms the board view renders all 3 declared statuses as columns
+      even though 2 start with zero records; the other confirms changing a
+      card's status `<select>` actually moves that card to its new column
+      once the PATCH + `refresh()` round trip settles — a two-phase state
+      transition a function-extraction test could check the arguments of
+      but never observe reflected back in the live DOM the way a real user
+      would see it. This is new coverage for already-correct existing
+      code, not a bug fix — proven meaningful the same way this project
+      always proves that when there's no old broken behavior to `git
+      stash` back to: temporarily made `groupByField` filter out empty
+      columns, confirmed both new tests failed with precise assertion
+      messages, then restored the original file and confirmed `git diff`
+      came back empty. Careful re-reading of `EntityPanel.tsx` and
+      `entityFormatting.ts` (both already heavily hardened across many
+      earlier rounds — Promise.allSettled, CSV-injection guarding, the
+      UTC/local calendar timezone fix) turned up no fresh bug this time;
+      documented honestly as coverage-only rather than stretching for a
+      finding that wasn't there. No hang under an explicit `timeout 20`
+      shell guard; neither of the two act()/assert footguns documented in
+      `BuildProgress.test.ts` applied here, since these tests use plain
+      `render()` + `fireEvent` + polled ticks with no `act()` of their
+      own. Full suite green (369 tests, up from 367 — `@forge/web`
+      109 → 111) and both builds clean.
+
 ## Phase 3
 
 - Self-healing: production observability, automatic diagnosis and patch
