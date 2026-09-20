@@ -4357,6 +4357,48 @@ not a single "make it perfect" claim.
       the successful path is unaffected. Full suite green (354 tests, up
       from 352 — `@forge/web` 95 → 97) + both builds clean.
 
+- [x] **Round 77 (scheduled firing, no new message from שלומי): a third
+      round in the same vein as 75-76 — full independent reads of files
+      never scrutinized on their own, this time `api.ts` (456 lines,
+      previously only reviewed in round 72's narrower "dedupe
+      `exportProject`/`backupProject`" pass) and `GlobalSearchPanel.tsx`
+      (160 lines).** `api.ts` itself checked out clean on this pass — one
+      hypothesis (that `fetchApi`'s `REQUEST_TIMEOUT_MS` abort, added in
+      round 71 for the home-screen hang, might also cut off the
+      multi-minute build/refine SSE stream `streamPipeline` opens through
+      the same `fetchApi`) turned out to be unfounded after tracing it
+      through: the server (`apps/api/src/routes/projects.ts`) calls
+      `res.writeHead()` before the pipeline even starts running, so the
+      client's `fetch()` promise — and with it the `clearTimeout` that
+      disarms the abort — resolves almost immediately, well before the
+      100-second ceiling, leaving the actual multi-minute body read
+      unbounded by it. Worth writing down since it looked like a real
+      finding until verified against the server route, not just reasoned
+      about. `GlobalSearchPanel.tsx` had the same bug class round 75 and
+      76 already found twice: `runSearch` awaited a bare
+      `Promise.all(entities.map(...))` across every entity in the
+      project — one entity's records failing to load (a transient
+      network blip, a cold-starting backend) rejected the WHOLE search,
+      blanking out results from every OTHER entity that searched
+      successfully. A user with, say, 9 working entity tables and 1
+      flaky one saw a bare error message instead of the 9 entities' worth
+      of results they could otherwise have had. The identical bug existed
+      in the embedded duplicate inside `codegen.ts`'s exported
+      `GlobalSearch.jsx`. Switched both to `Promise.allSettled`: results
+      from every entity that succeeded are shown, and the error message
+      distinguishes "every entity's search failed" (unchanged wording,
+      for parity) from a genuine partial failure (new translated
+      `search.partialFailure` message, Hebrew + English). Regression-
+      proven independently for both copies via `git stash`: pre-fix code
+      in each fails the new "must still show results from the entities
+      that searched successfully" assertion (empty results instead of
+      the two that should have shown). New tests extract and execute the
+      real `runSearch`/`searchEntity` source (esbuild-stripped TypeScript
+      for the live app, raw extraction for the generated JS — same
+      techniques rounds 75-76 established). Full suite green (356 tests,
+      up from 354 — `@forge/api` 116 → 117, `@forge/web` 97 → 99) + both
+      builds clean.
+
 ## Phase 3
 
 - Self-healing: production observability, automatic diagnosis and patch
