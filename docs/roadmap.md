@@ -4070,6 +4070,44 @@ not a single "make it perfect" claim.
       tests, up from 337 — `@forge/api` 111 → 112, `@forge/web` 86 → 87)
       + both builds clean.
 
+- [x] **Every plain date field display — not just the Calendar view —
+      showed one calendar day earlier than the stored value for a viewer
+      behind UTC.** Direct follow-up on round 69's own top candidate: the
+      pre-existing `formatDateValue` test failure under
+      `TZ=America/New_York` that round left unfixed as out of scope.
+      Investigated root cause before touching anything, per the routine's
+      own instruction. It turned out to be the identical bug, not a test
+      artifact: `formatDateValue` (`apps/web/src/entityFormatting.ts`,
+      the function `EntityPanel.tsx` uses to render every date field in
+      the main record table) and the exported app's `Cell` component
+      (`apps/api/src/codegen.ts`, reused by *its* record table, the
+      Kanban board, and global search results) both parsed a stored
+      `"YYYY-MM-DD"` value with `new Date(value)` (UTC midnight) and then
+      called `toLocaleDateString()`, which renders in the *viewer's
+      local* time. Confirmed empirically under `TZ=America/New_York`
+      before fixing: `formatDateValue("2026-03-15", "en")` returned
+      `"3/14/2026"`. Since this is the exact same root cause as round
+      69's Calendar fix, and far more broadly reachable (every date
+      field shown anywhere, not just the calendar tab), this was clearly
+      worth fixing now rather than deferring again. Fixed by reusing the
+      `parseFieldDate` helper round 69 introduced in both files, instead
+      of handing the raw string to the `Date` constructor. New tests:
+      `entityFormatting.test.ts` pins `process.env.TZ` for the assertion
+      (same technique as the Calendar test); `codegen.test.ts` goes a
+      step further than a source-text match — it compiles the real
+      generated `Cell` component's JSX with `esbuild`'s own `transform`
+      (the identical tool this repo's own build already depends on) and
+      actually renders it through a minimal JSX-runtime stub, so the test
+      exercises the literal code a user's browser would run, not a
+      reimplementation. Proven to catch a real regression via `git
+      stash` on both source files (both new tests failed pre-fix with
+      exactly the `"3/14/2026"` production symptom). Re-ran the entire
+      suite under `TZ=America/New_York` one more time as a final check —
+      it now passes cleanly end to end, including the test round 69 had
+      to leave red. Full suite green under the normal (UTC) environment
+      too (341 tests, up from 339 — `@forge/api` 112 → 113, `@forge/web`
+      87 → 88) + both builds clean.
+
 ## Phase 3
 
 - Self-healing: production observability, automatic diagnosis and patch
