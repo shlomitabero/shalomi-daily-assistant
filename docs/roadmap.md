@@ -4855,6 +4855,35 @@ not a single "make it perfect" claim.
       empty. Full suite green (376 tests, up from 375 — `@forge/web`
       117 → 118) and both builds clean.
 
+- [x] **Added real-DOM keyboard-navigation coverage for
+      `GlobalSearchPanel.tsx`.** `handleInputKeyDown`'s
+      ArrowDown/ArrowUp/Enter navigation across result groups had never
+      been tested at all — not even via this project's usual
+      function-extraction technique, let alone through a real render. A
+      good fit for real-DOM coverage specifically: what matters is whether
+      the highlighted group's CSS class actually moves on screen and
+      whether Enter jumps to whichever group is currently highlighted, not
+      just that the underlying index arithmetic is correct in isolation.
+      Types a real query, submits the form, waits for two real result
+      groups (a "Customer" and an "Order" entity both matching "widget",
+      via a mocked `fetch` backing `listRecords`), then fires real
+      `keydown` events on the actual input: confirms no group is
+      highlighted before any arrow key, `ArrowDown` highlights the first
+      group, a second `ArrowDown` moves the highlight to the second,
+      `ArrowUp` moves it back, and `Enter` jumps to the currently
+      highlighted entity. New coverage for already-correct code, not a bug
+      fix — no defect turned up on inspection. Regression-proven the way
+      this session does for coverage-only additions: temporarily typo'd
+      the `ArrowDown` key check (`"ArrowDownXX"`), confirmed the new test
+      failed with a precise assertion message on the first `ArrowDown`
+      press, then restored the original file and confirmed `git diff`
+      came back empty. Full suite green (377 tests, up from 376 —
+      `@forge/web` 118 → 119) and both builds clean. (This round's push to
+      `origin` needed 4 retries past a sustained run of GitHub 504s before
+      a `git ls-remote` confirmed connectivity had recovered and the push
+      finally landed — a transient upstream outage, not anything in this
+      repository or this session's own network setup.)
+
 ## Phase 3
 
 - Self-healing: production observability, automatic diagnosis and patch
