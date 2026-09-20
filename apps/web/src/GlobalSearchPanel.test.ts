@@ -1,7 +1,15 @@
+import "./jsdomWarmup.js";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import { transformSync } from "esbuild";
+import { JSDOM } from "jsdom";
+import React from "react";
+import { cleanup, fireEvent, render } from "@testing-library/react";
+import type { Entity, EntityRecord } from "@forge/shared";
+import { GlobalSearchPanel } from "./GlobalSearchPanel.js";
+import { LanguageProvider } from "./i18n/LanguageContext.js";
+import { ThemeProvider } from "./theme/ThemeContext.js";
 
 const globalSearchPanelSrc = readFileSync(new URL("./GlobalSearchPanel.tsx", import.meta.url), "utf8");
 
@@ -119,4 +127,149 @@ test("GlobalSearchPanel's runSearch still surfaces the raw error message when ev
   await fn("match");
 
   assert.equal(capturedError, rejection.message);
+});
+
+/** Same jsdom-swap technique as useDialogFocusTrap.test.ts/EntityPanel.test.ts. */
+async function withJsdom<T>(fn: () => Promise<T> | T): Promise<T> {
+  const dom = new JSDOM("<!doctype html><html><body></body></html>", { url: "http://localhost/" });
+  const { window } = dom;
+  const replacements: Record<string, unknown> = {
+    window,
+    document: window.document,
+    navigator: window.navigator,
+    HTMLElement: window.HTMLElement,
+    Node: window.Node,
+    localStorage: window.localStorage,
+  };
+  const originalDescriptors: Record<string, PropertyDescriptor | undefined> = {};
+  for (const key of Object.keys(replacements)) {
+    originalDescriptors[key] = Object.getOwnPropertyDescriptor(globalThis, key);
+    Object.defineProperty(globalThis, key, {
+      value: replacements[key],
+      writable: true,
+      configurable: true,
+      enumerable: true,
+    });
+  }
+  try {
+    const result = await fn();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    return result;
+  } finally {
+    cleanup();
+    for (const key of Object.keys(replacements)) {
+      const original = originalDescriptors[key];
+      if (original) Object.defineProperty(globalThis, key, original);
+      else delete (globalThis as Record<string, unknown>)[key];
+    }
+  }
+}
+
+async function waitForCondition(check: () => boolean, maxTicks = 40): Promise<void> {
+  for (let i = 0; i < maxTicks; i++) {
+    if (check()) return;
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  }
+  throw new Error("waitForCondition: condition never became true");
+}
+
+const SEARCH_CUSTOMER_ENTITY: Entity = {
+  name: "Customer",
+  label: "Customer",
+  fields: [{ name: "name", label: "Name", type: "text", required: true }],
+};
+
+const SEARCH_ORDER_ENTITY: Entity = {
+  name: "Order",
+  label: "Order",
+  fields: [{ name: "note", label: "Note", type: "text", required: false }],
+};
+
+function mockGlobalSearchFetch() {
+  const customerRecords: EntityRecord[] = [{ id: 1, name: "Acme widget order" }];
+  const orderRecords: EntityRecord[] = [{ id: 1, note: "Acme widget order" }];
+  return async (input: string): Promise<Response> => {
+    if (input === "/api/projects/proj1/entities/Customer") {
+      return new Response(JSON.stringify({ records: customerRecords }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    if (input === "/api/projects/proj1/entities/Order") {
+      return new Response(JSON.stringify({ records: orderRecords }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    throw new Error(`mockGlobalSearchFetch: unexpected request ${input}`);
+  };
+}
+
+function renderGlobalSearchPanel(onJumpToEntity: (entityName: string) => void) {
+  return render(
+    React.createElement(
+      ThemeProvider,
+      null,
+      React.createElement(
+        LanguageProvider,
+        null,
+        React.createElement(GlobalSearchPanel, {
+          projectId: "proj1",
+          entities: [SEARCH_CUSTOMER_ENTITY, SEARCH_ORDER_ENTITY],
+          onClose: () => {},
+          onJumpToEntity,
+        }),
+      ),
+    ),
+  );
+}
+
+/**
+ * Real-DOM coverage for the one piece of GlobalSearchPanel that was never
+ * tested at all, not even via function extraction: handleInputKeyDown's
+ * ArrowDown/ArrowUp/Enter keyboard navigation across result groups. A real
+ * typed query, a real form submit, then real keydown events on the actual
+ * input -- confirming the highlighted group's CSS class actually moves and
+ * that Enter jumps to whichever group is currently highlighted, not just
+ * that the underlying index arithmetic is correct in isolation.
+ */
+test("GlobalSearchPanel's arrow keys move the highlighted result group and Enter jumps to it", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = mockGlobalSearchFetch() as typeof fetch;
+    const jumps: string[] = [];
+    try {
+      renderGlobalSearchPanel((entityName) => jumps.push(entityName));
+
+      const input = document.querySelector(".global-search-input") as HTMLInputElement;
+      fireEvent.change(input, { target: { value: "widget" } });
+      const form = document.querySelector("form.global-search-form")!;
+      fireEvent.submit(form);
+
+      await waitForCondition(() => document.querySelectorAll(".global-search-group").length === 2);
+
+      let groups = document.querySelectorAll(".global-search-group");
+      assert.equal(
+        [...groups].some((g) => g.classList.contains("global-search-group-selected")),
+        false,
+        "no group should be highlighted before any arrow key is pressed",
+      );
+
+      fireEvent.keyDown(input, { key: "ArrowDown" });
+      groups = document.querySelectorAll(".global-search-group");
+      assert.equal(groups[0].classList.contains("global-search-group-selected"), true, "the first ArrowDown must highlight the first group");
+
+      fireEvent.keyDown(input, { key: "ArrowDown" });
+      groups = document.querySelectorAll(".global-search-group");
+      assert.equal(groups[1].classList.contains("global-search-group-selected"), true, "a second ArrowDown must move the highlight to the second group");
+      assert.equal(groups[0].classList.contains("global-search-group-selected"), false, "the first group must no longer be highlighted");
+
+      fireEvent.keyDown(input, { key: "ArrowUp" });
+      groups = document.querySelectorAll(".global-search-group");
+      assert.equal(groups[0].classList.contains("global-search-group-selected"), true, "ArrowUp must move the highlight back to the first group");
+
+      fireEvent.keyDown(input, { key: "Enter" });
+      assert.deepEqual(
+        jumps,
+        [SEARCH_CUSTOMER_ENTITY.name],
+        "Enter must jump to whichever entity's group is currently highlighted",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
 });
