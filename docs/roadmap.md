@@ -4143,6 +4143,45 @@ not a single "make it perfect" claim.
       Full suite green (342 tests, up from 341 — `@forge/api` 113 → 114)
       + both builds clean.
 
+- [x] **A genuine, direct report from שלומי: the home screen sometimes
+      just sits on "חושבים על זה…" (thinking it over…) forever and never
+      delivers the built app.** This is the first real user-reported bug
+      in this whole project history (every entry above this one was
+      self-directed). Asked a quick clarifying question first (where
+      exactly it hangs) rather than guessing across the whole app —
+      confirmed it's specifically the initial idea-to-project step on the
+      home screen. Root cause: `fetchApi` (`apps/web/src/api.ts`) had no
+      client-side timeout at all on regular (non-streaming) requests.
+      `fetchWithWakeRetry` only retries when `fetchImpl` *throws* — a
+      connection-level failure, e.g. Render's free tier refusing a
+      connection while cold-starting — but a request whose connection
+      succeeds and then simply never gets a response (a stalled upstream
+      Anthropic call, or a cold start that happens not to surface as a
+      hard connection failure) sails straight through untouched and hangs
+      indefinitely, with the UI stuck on that same busy spinner forever.
+      Fixed by wrapping `fetchApi`'s request in an `AbortController` with
+      a 100-second ceiling — comfortably above the server's own 60s
+      Anthropic timeout (`packages/spec-engine/src/anthropicFetch.ts`)
+      plus real cold-start latency, but a hard bound, so a hung request
+      now fails clearly with an actionable, translated message ("This is
+      taking unusually long…") instead of spinning forever. Also fixed
+      `fetchWithWakeRetry` itself: it was retrying even when the caller's
+      *own* `AbortSignal` had already fired, which is pointless (the
+      signal stays aborted, so every retry fails identically) and burned
+      through the whole ~49s retry backoff while incorrectly showing the
+      "waking up" banner for what wasn't a cold start at all. New
+      regression tests: `wakeRetry.test.ts` proves the no-retry-on-abort
+      fix directly; `api.test.ts` uses `node:test`'s mock timers plus a
+      fake `fetch` that only rejects on abort (never resolving on its own,
+      exactly like a stalled call) to prove `fetchApi` actually times out.
+      Proven against the pre-fix code by literally hanging the test runner
+      itself — the exact real production symptom, not just a failed
+      assertion. Verified the fast/happy path is unaffected with a local
+      end-to-end smoke test (real signup + create project against a real
+      running server, heuristic provider, ~10ms — completely unaffected by
+      the new client-side timeout). Full suite green (344 tests, up from
+      342 — `@forge/web` 88 → 90) + both builds clean.
+
 ## Phase 3
 
 - Self-healing: production observability, automatic diagnosis and patch
