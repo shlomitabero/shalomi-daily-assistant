@@ -278,13 +278,14 @@ export function safeDownloadName(projectName: string, fallback: string): string 
 }
 
 /**
- * Downloads the real, standalone exported app as a .zip and saves it via
- * the browser's normal download flow. Uses a blob (not a plain <a href>)
- * because the request needs the Authorization header.
+ * Fetches a binary response (with the Authorization header, so a plain
+ * <a href> won't work) and saves it via the browser's normal download
+ * flow -- the shared mechanics behind exportProject and backupProject,
+ * which differed only in the URL path and the download filename.
  */
-export async function exportProject(projectId: string, projectName: string): Promise<void> {
+async function downloadBlob(path: string, downloadName: string): Promise<void> {
   const token = getToken();
-  const res = await fetchApi(`/api/projects/${projectId}/export`, {
+  const res = await fetchApi(path, {
     headers: token ? { authorization: `Bearer ${token}` } : {},
   });
   if (!res.ok) {
@@ -295,37 +296,25 @@ export async function exportProject(projectId: string, projectName: string): Pro
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
-  a.download = `${safeDownloadName(projectName, "forge-app")}.zip`;
+  a.download = downloadName;
   document.body.appendChild(a);
   a.click();
   a.remove();
   URL.revokeObjectURL(url);
 }
 
+/** Downloads the real, standalone exported app as a .zip and saves it via the browser's normal download flow. */
+export function exportProject(projectId: string, projectName: string): Promise<void> {
+  return downloadBlob(`/api/projects/${projectId}/export`, `${safeDownloadName(projectName, "forge-app")}.zip`);
+}
+
 /**
  * Downloads a single .zip containing one CSV per entity -- the whole
  * project's data at once, instead of visiting every tab's own CSV export
- * button. Same blob-download mechanics as exportProject (needs the
- * Authorization header, so a plain <a href> won't work).
+ * button.
  */
-export async function backupProject(projectId: string, projectName: string): Promise<void> {
-  const token = getToken();
-  const res = await fetchApi(`/api/projects/${projectId}/backup`, {
-    headers: token ? { authorization: `Bearer ${token}` } : {},
-  });
-  if (!res.ok) {
-    const body = await res.json().catch(() => ({ error: `Request failed (${res.status})`, code: "REQUEST_FAILED" }));
-    throw new Error(resolveErrorMessage(body as { error?: string; code?: string }));
-  }
-  const blob = await res.blob();
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = `${safeDownloadName(projectName, "forge-app")}-backup.zip`;
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  URL.revokeObjectURL(url);
+export function backupProject(projectId: string, projectName: string): Promise<void> {
+  return downloadBlob(`/api/projects/${projectId}/backup`, `${safeDownloadName(projectName, "forge-app")}-backup.zip`);
 }
 
 export interface BusinessTwinEntityStat {

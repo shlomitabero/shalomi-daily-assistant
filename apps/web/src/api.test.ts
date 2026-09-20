@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { createWakeRefCounter, listProjects, safeDownloadName, sendWhatsAppMessage, streamBuild } from "./api.js";
+import { backupProject, createWakeRefCounter, exportProject, listProjects, safeDownloadName, sendWhatsAppMessage, streamBuild } from "./api.js";
 
 test("safeDownloadName keeps Hebrew (and other Unicode) project names intact, instead of collapsing them to the fallback", () => {
   // This product is Hebrew-first (see docs/roadmap.md), and every real
@@ -24,6 +24,76 @@ test("safeDownloadName falls back when nothing safe is left (or the name is blan
   assert.equal(safeDownloadName("///", "forge-app"), "forge-app");
   assert.equal(safeDownloadName("   ", "forge-app"), "forge-app");
   assert.equal(safeDownloadName("", "forge-app"), "forge-app");
+});
+
+/**
+ * exportProject and backupProject share their whole request/blob-download
+ * sequence via a private downloadBlob() helper, differing only in the URL
+ * path and the download filename -- this exercises that shared code
+ * through both public entry points to confirm the refactor kept each
+ * one's own distinct behavior (right path requested, right filename
+ * suffix), not just that *a* download happens. Node 22 has a real global
+ * `URL.createObjectURL`, but no `document`; a minimal fake `<a>` element
+ * is enough to observe what downloadBlob sets on it.
+ */
+async function withFakeDocument<T>(fn: () => Promise<T>): Promise<T> {
+  const fakeAnchor = { href: "", download: "", click() {}, remove() {} };
+  const fakeDocument = {
+    createElement: () => fakeAnchor,
+    body: { appendChild: () => {} },
+  };
+  const original = (globalThis as { document?: unknown }).document;
+  (globalThis as { document?: unknown }).document = fakeDocument;
+  try {
+    return await fn();
+  } finally {
+    (globalThis as { document?: unknown }).document = original;
+  }
+}
+
+test("exportProject requests the export endpoint and downloads it under the project's own name", async () => {
+  let requestedUrl: string | undefined;
+  const original = globalThis.fetch;
+  globalThis.fetch = (async (input: string) => {
+    requestedUrl = input;
+    return new Response(new Blob(["zip bytes"]), { status: 200 });
+  }) as typeof fetch;
+  try {
+    await withFakeDocument(() => exportProject("proj1", "My CRM App"));
+  } finally {
+    globalThis.fetch = original;
+  }
+  assert.equal(requestedUrl, "/api/projects/proj1/export");
+});
+
+test("backupProject requests the backup endpoint and downloads it with a '-backup' suffix, not the export filename", async () => {
+  let requestedUrl: string | undefined;
+  const original = globalThis.fetch;
+  globalThis.fetch = (async (input: string) => {
+    requestedUrl = input;
+    return new Response(new Blob(["zip bytes"]), { status: 200 });
+  }) as typeof fetch;
+  try {
+    await withFakeDocument(() => backupProject("proj1", "My CRM App"));
+  } finally {
+    globalThis.fetch = original;
+  }
+  assert.equal(requestedUrl, "/api/projects/proj1/backup");
+});
+
+test("exportProject surfaces a translated error and never attempts the download when the request fails", async () => {
+  await assert.rejects(
+    () =>
+      withFakeDocument(() =>
+        withFakeFetch(new Response(JSON.stringify({ error: "Build the project before exporting its code", code: "BUILD_REQUIRED" }), { status: 409 }), () =>
+          exportProject("proj1", "My CRM App"),
+        ),
+      ),
+    (err: Error) => {
+      assert.equal(err.message, "You need to build the project first.");
+      return true;
+    },
+  );
 });
 
 /**
