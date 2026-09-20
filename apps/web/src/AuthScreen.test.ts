@@ -123,6 +123,61 @@ test("AuthScreen's mode-toggle button is genuinely inert (not just visually disa
   });
 });
 
+/**
+ * Confirms the typed email/password genuinely reach the signup request
+ * body, not just the input's own DOM `.value` -- the distinction that
+ * matters ever since jsdomWarmup.ts's own fix: react-dom's one-time
+ * `isInputEventSupported` check (see jsdomWarmup.ts's comment for the full
+ * root cause) used to get permanently cached `false` in every jsdom test
+ * file in this project, silently breaking onChange for every controlled
+ * text field -- which this test file's own earlier fireEvent.change calls
+ * on email/password never actually caught, because neither existing test
+ * here ever reads back anything derived from React state driven by those
+ * fields (only the DOM node's own `.value`, and unrelated `busy`-state
+ * button-disabled checks). This is the first test in this file to actually
+ * verify the typed values flow all the way through handleSubmit into the
+ * real request signup() sends.
+ */
+test("AuthScreen sends the exact typed email/password in the signup request body", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    let capturedBody: string | undefined;
+    globalThis.fetch = (async (_input: string, init?: RequestInit) => {
+      capturedBody = init?.body as string;
+      return new Response(JSON.stringify({ user: { id: 1, email: "dana@example.com" }, token: "tok" }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }) as typeof fetch;
+    try {
+      renderAuthScreen(() => {});
+
+      const emailInput = document.querySelector('input[type="email"]') as HTMLInputElement;
+      const passwordInput = document.querySelector('input[type="password"]') as HTMLInputElement;
+      fireEvent.change(emailInput, { target: { value: "dana@example.com" } });
+      fireEvent.change(passwordInput, { target: { value: "correct-horse-battery" } });
+
+      const form = document.querySelector("form.auth-form")!;
+      await act(async () => {
+        fireEvent.submit(form);
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+
+      assert.equal(typeof capturedBody, "string", "the signup request must actually have been sent with a body");
+      const parsed = JSON.parse(capturedBody!);
+      assert.equal(parsed.email, "dana@example.com", "the exact typed email must reach the signup request body, not a stale empty value");
+      assert.equal(
+        parsed.password,
+        "correct-horse-battery",
+        "the exact typed password must reach the signup request body, not a stale empty value",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
 test("AuthScreen's mode-toggle button works normally (and clears state) before any submit is in flight", async () => {
   await withJsdom(() => {
     renderAuthScreen(() => {});
