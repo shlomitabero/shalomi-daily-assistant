@@ -70,9 +70,18 @@ export function badgeTone(rawValue: string): BadgeTone {
   return "neutral";
 }
 
-/** Formats an ISO date string for display; returns the raw value unchanged if it isn't a valid date. */
+/**
+ * Formats a stored "YYYY-MM-DD" date field for display; returns the raw
+ * value unchanged if it isn't a valid date. Uses parseFieldDate (defined
+ * below), not `new Date(value)` directly -- the same UTC-vs-local mismatch
+ * fixed in buildCalendarMonth applies here too: `new Date("2026-03-15")`
+ * parses as UTC midnight, so toLocaleDateString (which renders in the
+ * viewer's *local* time) would print "3/14/2026" instead of "3/15/2026"
+ * for any viewer whose local time is behind UTC -- confirmed empirically
+ * under TZ=America/New_York.
+ */
 export function formatDateValue(value: string, lang: Lang): string {
-  const date = new Date(value);
+  const date = parseFieldDate(value);
   if (Number.isNaN(date.getTime())) return value;
   return date.toLocaleDateString(LOCALE[lang]);
 }

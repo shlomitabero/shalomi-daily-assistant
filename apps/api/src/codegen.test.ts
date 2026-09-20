@@ -4,6 +4,7 @@ import { mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "n
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { test } from "node:test";
+import { transformSync } from "esbuild";
 import type { Project } from "@forge/shared";
 import { generateExportFiles } from "./codegen.js";
 
@@ -417,6 +418,39 @@ test("the exported CalendarView places a record on its correct calendar day even
     const sep15 = days.find((d) => d.inCurrentMonth && d.date.getDate() === 15);
     assert.equal(sep15.records.length, 1, "the record must land on the 15th, not shift to the 14th");
     assert.equal(sep14.records.length, 0);
+  } finally {
+    process.env.TZ = originalTz;
+  }
+});
+
+// Regression test: the same UTC-vs-local mismatch as the CalendarView test
+// above, but in the main record table's per-cell date renderer (Cell,
+// reused by the table, the Kanban board, and global search results) --
+// `new Date(value)` parses a stored "YYYY-MM-DD" value as UTC midnight,
+// and toLocaleDateString renders in the viewer's *local* time, so any
+// viewer whose local time is behind UTC would see a date field displayed
+// one calendar day earlier than what's actually stored. Compiles the real
+// generated Cell component's JSX with esbuild (the same transform this
+// repo's own build uses) and actually renders it with a minimal JSX
+// runtime stub, rather than reimplementing or string-matching the logic.
+test("the exported record table's date cell shows the correct calendar day even for a viewer in a timezone behind UTC", () => {
+  const entityViewJsx = generateExportFiles(project).find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+
+  const dateHelperSrc = entityViewJsx.match(/const CALENDAR_DATE_FORMAT[\s\S]*?\nfunction parseFieldDate\(raw\) \{[\s\S]*?\n\}\n/)?.[0];
+  const cellSrc = entityViewJsx.match(/function Cell\(\{ field, value, relationLabel \}\) \{[\s\S]*?\n\}\n/)?.[0];
+  assert.ok(dateHelperSrc && cellSrc, "expected to find parseFieldDate/Cell in generated output");
+
+  const transformed = transformSync(`${dateHelperSrc}\n${cellSrc}`, { loader: "jsx", jsxFactory: "h", jsxFragment: "Frag" }).code;
+  const Cell = new Function("h", "Frag", `${transformed}\nreturn Cell;`)(
+    (_type: unknown, _props: unknown, ...children: unknown[]) => (children.length === 1 ? children[0] : children),
+    Symbol("Fragment"),
+  );
+
+  const originalTz = process.env.TZ;
+  process.env.TZ = "America/New_York";
+  try {
+    const rendered = Cell({ field: { type: "date" }, value: "2026-03-15" });
+    assert.equal(rendered, "3/15/2026", "must render the 15th, not shift back to the 14th");
   } finally {
     process.env.TZ = originalTz;
   }

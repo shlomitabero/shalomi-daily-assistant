@@ -41,6 +41,24 @@ test("formatDateValue formats a valid ISO date per locale, and leaves an invalid
   assert.equal(formatDateValue("not-a-date", "en"), "not-a-date");
 });
 
+// Regression test: same root cause as buildCalendarMonth's own timezone
+// bug above -- `new Date("2026-03-15")` parses as UTC midnight, and
+// toLocaleDateString renders in the *viewer's local* time, so for any
+// viewer whose local time is behind UTC this silently displayed one
+// calendar day earlier than the actual stored value (confirmed
+// empirically: this test failed under TZ=America/New_York before the
+// fix, showing "3/14/2026"). Pins process.env.TZ for the duration of the
+// assertion and restores it afterward, same technique as the calendar test.
+test("formatDateValue shows the correct calendar day even for a viewer in a timezone behind UTC", () => {
+  const originalTz = process.env.TZ;
+  process.env.TZ = "America/New_York";
+  try {
+    assert.match(formatDateValue("2026-03-15", "en"), /^3\/15\/2026$/);
+  } finally {
+    process.env.TZ = originalTz;
+  }
+});
+
 test("formatNumberValue adds thousands separators", () => {
   assert.equal(formatNumberValue(1234567, "en"), "1,234,567");
 });

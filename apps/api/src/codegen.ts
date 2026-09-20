@@ -691,7 +691,14 @@ function Cell({ field, value, relationLabel }) {
     return <span className={\`badge badge-\${badgeTone(value)}\`}>{label}</span>;
   }
   if (field.type === "date") {
-    const date = new Date(value);
+    // parseFieldDate (defined further down, hoisted like any function
+    // declaration) avoids the same UTC-vs-local mismatch buildCalendarMonth
+    // has below: passing a stored "YYYY-MM-DD" value straight to the Date
+    // constructor parses it as UTC midnight, so toLocaleDateString
+    // (rendered in the viewer's *local* time) would print one calendar day
+    // earlier than the actual stored date for any viewer whose local time
+    // is behind UTC.
+    const date = parseFieldDate(value);
     return <>{Number.isNaN(date.getTime()) ? value : date.toLocaleDateString()}</>;
   }
   if (field.type === "number") return <>{Number(value).toLocaleString()}</>;
