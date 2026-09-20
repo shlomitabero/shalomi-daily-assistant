@@ -4541,6 +4541,43 @@ not a single "make it perfect" claim.
       101 → 104) with no stray async errors in the full multi-file run,
       and both builds clean.
 
+- [x] **Genuine, direct report from שלומי (with a screenshot): the exact
+      "this is taking unusually long" translated error — the message added
+      to fix the original home-screen-hang report — was itself now firing
+      as a false positive on the enhance-and-build flow.** Root cause: a
+      timing-budget mismatch in `fetchApi`'s own `REQUEST_TIMEOUT_MS`
+      (100,000ms). That AbortController signal covers the *whole*
+      `fetchWithWakeRetry` call, including its own cold-start retry
+      backoff sleeps, not just the time spent on the final successful
+      attempt — `wakeRetry.ts`'s own comment already documents Render's
+      free-tier cold start as "50+ seconds," and its `DEFAULT_DELAYS_MS`
+      backoff alone sums to ~49s of that. Once a connection finally
+      succeeds, the request still has to complete, and
+      `anthropicFetch.ts`'s `ANTHROPIC_REQUEST_TIMEOUT_MS` allows the
+      server's own Anthropic call up to 60 more seconds on top. 49s of
+      retry backoff + 60s of legitimate Anthropic processing = 109s of
+      genuinely possible worst-case latency — already past the 100s
+      ceiling that was supposed to be "comfortably above" it. The
+      original round's own math (round 71) stated the right intent but
+      the number didn't actually account for the retry backoff sharing
+      the same clock as the final request's own response time. Raised
+      `REQUEST_TIMEOUT_MS` to 180,000ms: the documented 109s worst case
+      plus a full extra minute of margin for request/response transfer,
+      JSON parsing, and DB writes, rather than shaving it close to the
+      theoretical minimum again. Regression-proven via `git stash`: a new
+      test (a response landing at 120s — past the OLD ceiling,
+      comfortably inside the new one) fails against the pre-fix
+      100,000ms value with the *exact same* "taking unusually long"
+      error message visible in her screenshot, confirming this reproduces
+      her real report rather than a guessed-at cause. The existing
+      hang-detection test's mock-timer tick was updated from 100,000 to
+      180,000 to match the new ceiling it asserts against. Full suite
+      green (362 tests, up from 361 — `@forge/web` 104 → 105) + both
+      builds clean. Not yet confirmed by שלומי herself that this
+      resolves what she saw — per this Routine's standing rule, if she
+      reports it again (or anything else), that becomes the top priority
+      for whatever session sees it next, above all autonomous work.
+
 ## Phase 3
 
 - Self-healing: production observability, automatic diagnosis and patch
