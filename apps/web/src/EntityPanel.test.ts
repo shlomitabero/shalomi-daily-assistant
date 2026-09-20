@@ -1,3 +1,4 @@
+import "./jsdomWarmup.js";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
@@ -533,6 +534,109 @@ test("EntityPanel's table view header checkbox reflects none/some/all selected v
         true,
         "the bulk-actions bar must disappear once nothing is selected",
       );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
+ * Real-DOM coverage for the search box's interaction with the board view --
+ * `visibleRecords` (the search+sort-filtered array) is what actually feeds
+ * groupByField/CalendarView, not the raw `records` state, but that wiring
+ * had never been exercised through a real render with a real typed query.
+ * Confirms typing a search query that matches only 1 of 3 records narrows
+ * the board down to that 1 card while staying in board view (not resetting
+ * to table, and not losing the "declared columns always render" behavior
+ * round 83's tests already cover), and that switching view modes doesn't
+ * clear whatever the user already typed into the search box.
+ *
+ * Writing this test surfaced a real, previously-latent bug in this
+ * project's own test infrastructure, not in EntityPanel.tsx itself: see
+ * jsdomWarmup.ts's own comment for the full root cause (react-dom's
+ * `isInputEventSupported` gets permanently cached `false` the moment
+ * react-dom is first imported against plain Node.js, before any test's
+ * own per-test JSDOM window exists, silently breaking onChange for every
+ * controlled text <input>/<textarea> in every jsdom test file afterward).
+ * This is the first test in the project that actually depends on a typed
+ * value reaching React state (earlier tests typing into text fields, like
+ * AuthScreen.test.ts's email/password, only ever read back the input's own
+ * DOM `.value`, which reflects fireEvent's direct DOM write regardless of
+ * whether React's onChange ever fired) -- which is exactly why this bug
+ * went unnoticed until now.
+ */
+test("EntityPanel's search box filters the board view's cards without losing the search text or the view mode", async () => {
+  await withJsdom(async () => {
+    const store: EntityRecord[] = [
+      { id: 1, name: "Acme Corp", status: "new" },
+      { id: 2, name: "Zeta Inc", status: "new" },
+      { id: 3, name: "Omega LLC", status: "won" },
+    ];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = mockRecordsFetch(store) as typeof fetch;
+    try {
+      renderEntityPanel();
+      await waitForCondition(() => document.querySelector(".entity-toolbar") !== null);
+
+      const boardToggle = document.querySelectorAll(".view-toggle-btn")[1] as HTMLButtonElement;
+      fireEvent.click(boardToggle);
+      await waitForCondition(() => document.querySelectorAll(".board-card").length === 3);
+
+      const searchInput = document.querySelector(".entity-search") as HTMLInputElement;
+      fireEvent.change(searchInput, { target: { value: "Acme" } });
+      await waitForCondition(() => document.querySelectorAll(".board-card").length === 1);
+
+      assert.equal(document.querySelectorAll(".board-card").length, 1, "only the 1 record matching the search query must render as a card");
+      assert.equal(
+        document.querySelectorAll(".view-toggle-btn")[1].classList.contains("view-toggle-btn-active"),
+        true,
+        "typing into the search box must not reset the view mode back to table",
+      );
+      assert.equal(
+        (document.querySelector(".entity-search") as HTMLInputElement).value,
+        "Acme",
+        "the typed search text itself must still be there after the board re-rendered around it",
+      );
+      assert.equal(
+        document.querySelectorAll(".board-column").length,
+        3,
+        "every declared status must still render as a column while searching, same as with no search active",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
+ * Companion test: a search query matching nothing at all must show the
+ * dedicated "no results" empty state instead of a board with 3 columns
+ * that are all empty -- the `visibleRecords.length === 0` branch in
+ * EntityPanel's JSX sits *above* the board/calendar/table branching, so
+ * this is a real, if easy to get backwards, ordering to get right.
+ */
+test("EntityPanel's board view shows the 'no results' empty state (not an all-empty board) when the search query matches nothing", async () => {
+  await withJsdom(async () => {
+    const store: EntityRecord[] = [
+      { id: 1, name: "Acme Corp", status: "new" },
+      { id: 2, name: "Omega LLC", status: "won" },
+    ];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = mockRecordsFetch(store) as typeof fetch;
+    try {
+      renderEntityPanel();
+      await waitForCondition(() => document.querySelector(".entity-toolbar") !== null);
+
+      const boardToggle = document.querySelectorAll(".view-toggle-btn")[1] as HTMLButtonElement;
+      fireEvent.click(boardToggle);
+      await waitForCondition(() => document.querySelectorAll(".board-card").length === 2);
+
+      const searchInput = document.querySelector(".entity-search") as HTMLInputElement;
+      fireEvent.change(searchInput, { target: { value: "no such company" } });
+      await waitForCondition(() => document.querySelector(".empty-state") !== null);
+
+      assert.equal(document.querySelectorAll(".board-column").length, 0, "no board columns must render once the search matches nothing");
+      assert.equal(document.querySelectorAll(".board-card").length, 0, "no board cards must render once the search matches nothing");
     } finally {
       globalThis.fetch = originalFetch;
     }
