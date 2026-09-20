@@ -4319,6 +4319,44 @@ not a single "make it perfect" claim.
       tests, up from 349 — `@forge/api` 115 → 116, `@forge/web` 93 → 95)
       + both builds clean.
 
+- [x] **Round 76 (scheduled firing, no new message from שלומי): continued
+      round 75's newly-proven approach — read a large web file for its
+      own logic instead of only comparing it against a twin — this time
+      on `WhatsAppPanel.tsx` (363 lines), whose DB/API/UI layers had each
+      been built and reviewed piecemeal across rounds 76-88 but never
+      read start-to-finish as one piece of client-side logic on its
+      own.** Found a real race: `handleDisconnect` deliberately stops
+      both polling loops — the fast QR-waiting poll and the slow
+      background poll that notices WhatsApp itself dropping the link
+      later — *before* awaiting the disconnect request, specifically so a
+      status fetch already in flight can't resolve afterward and
+      overwrite fresher state (this exact race was already fixed once,
+      for reconnects, via `cancelInFlightConnectedCheckRef` — the file's
+      own comments document it clearly). That ordering is correct when
+      the disconnect request succeeds. But when the request itself fails
+      (a network error, an expired session), nothing actually changed
+      server-side: the panel was connected before the click, and still
+      is. The background connected-poll it had just stopped was never
+      resumed on that failure path, silently leaving an otherwise-still-
+      connected panel with zero monitoring until the user closes and
+      reopens it — the identical "stuck showing Connected with no way to
+      confirm it" failure mode the file's own
+      `MAX_CONSECUTIVE_CONNECTED_POLL_FAILURES` comment already describes
+      fixing for a *different* trigger (a persistently failing poll, not
+      a failed manual disconnect). Fixed by capturing whether the panel
+      was connected before stopping the polls, and resuming the
+      connected-poll in the catch block when it was; a genuinely
+      successful disconnect still correctly leaves it stopped, since
+      "disconnected" is a terminal state until the user clicks Connect
+      again. Regression-proven via `git stash`: pre-fix code fails the
+      new "must resume the connected-poll it just stopped" assertion (0
+      calls instead of 1). New tests extract and execute the real
+      `handleDisconnect` (esbuild-stripped TypeScript, the same technique
+      round 75 proved on `EntityPanel.tsx`) with a mock
+      `disconnectWhatsApp` that rejects, plus a companion test confirming
+      the successful path is unaffected. Full suite green (354 tests, up
+      from 352 — `@forge/web` 95 → 97) + both builds clean.
+
 ## Phase 3
 
 - Self-healing: production observability, automatic diagnosis and patch
