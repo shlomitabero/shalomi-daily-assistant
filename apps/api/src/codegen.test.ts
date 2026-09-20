@@ -535,6 +535,58 @@ test("the exported EntityView renders a real CSV import (the complement to CSV e
   assert.match(stylesCss, /\.csv-import-errors/);
 });
 
+// Regression test: the exported app's CSV import validates numbers and enum
+// values client-side (a row-numbered error before anything is even sent to
+// the server) but, until now, silently accepted any string at all for a
+// "date" field -- the same gap round 62 found in repository.ts and round 64
+// found in this very file's own server-side coerce(), just recurring a
+// third time in a fourth, independent copy: this file's *client-side*
+// buildImportRecords(), which the comment right above handleImportFile
+// claims already validates every field "client-side". Executes the actual
+// generated buildImportRecords/matchesImportHeader/isValidDate functions
+// (extracted from real codegen output, not reimplemented here) so a future
+// edit to this template can't silently reintroduce the gap.
+test("the exported EntityView's CSV import rejects a date field value that isn't a real, well-formed calendar date", () => {
+  const dateProject: Project = {
+    ...project,
+    spec: {
+      ...project.spec,
+      entities: [
+        {
+          name: "Appointment",
+          label: "Appointment",
+          fields: [
+            { name: "date", label: "Date", type: "date", required: true },
+            { name: "notes", label: "Notes", type: "text" },
+          ],
+        },
+      ],
+    },
+  };
+  const entityViewJsx = generateExportFiles(dateProject).find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+
+  const isValidDateSrc = entityViewJsx.match(/const DATE_FORMAT[\s\S]*?\nfunction isValidDate\(value\) \{[\s\S]*?\n\}\n/)?.[0];
+  const headerSrc = entityViewJsx.match(/function matchesImportHeader\(header, field\) \{[\s\S]*?\n\}\n/)?.[0];
+  const importSrc = entityViewJsx.match(/function buildImportRecords\(fields, rows\) \{[\s\S]*?\n\}\n/)?.[0];
+  assert.ok(isValidDateSrc && headerSrc && importSrc, "expected to find isValidDate/matchesImportHeader/buildImportRecords in generated output");
+
+  const buildImportRecords = new Function(`${isValidDateSrc}\n${headerSrc}\n${importSrc}\nreturn buildImportRecords;`)();
+
+  const fields = dateProject.spec.entities[0].fields;
+  const rows = [
+    ["Date", "Notes"],
+    ["2024-01-15", "valid"],
+    ["2024-13-45", "impossible date"],
+    ["not-a-date", "garbage"],
+  ];
+  const { records, errors } = buildImportRecords(fields, rows);
+
+  assert.deepEqual(records, [{ date: "2024-01-15", notes: "valid" }]);
+  assert.equal(errors.length, 2);
+  assert.match(errors[0], /Row 2: "2024-13-45" isn't a valid date/);
+  assert.match(errors[1], /Row 3: "not-a-date" isn't a valid date/);
+});
+
 test("the exported app includes a real cross-entity global search, ported from the Forge AI live preview", () => {
   const files = generateExportFiles(project);
   const globalSearchJsx = files.find((f) => f.path === "web/src/components/GlobalSearch.jsx")!.content;

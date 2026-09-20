@@ -621,6 +621,21 @@ function emptyForm(entity) {
   return form;
 }
 
+// Mirrors the same check the server's own coerce() runs (see renderServerJs)
+// -- rejecting a bad date here, before the row is ever POSTed, gives the
+// user a row-numbered CSV import error instead of a generic server error
+// with no row context attached.
+const DATE_FORMAT = /^(\\d{4})-(\\d{2})-(\\d{2})$/;
+function isValidDate(value) {
+  const match = DATE_FORMAT.exec(value);
+  if (!match) return false;
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const parsed = new Date(Date.UTC(year, month - 1, day));
+  return parsed.getUTCFullYear() === year && parsed.getUTCMonth() === month - 1 && parsed.getUTCDate() === day;
+}
+
 // Picks the field that best represents one of an entity's records as a
 // short human label -- prefers a field literally named "name"/"title",
 // falls back to the first text field, then the first field of any type.
@@ -880,6 +895,12 @@ function buildImportRecords(fields, rows) {
           break;
         }
         record[field.name] = resolved;
+      } else if (field.type === "date") {
+        if (!isValidDate(raw)) {
+          rowError = \`Row \${rowIndex + 1}: "\${raw}" isn't a valid date (expected YYYY-MM-DD) for field "\${field.label || field.name}".\`;
+          break;
+        }
+        record[field.name] = raw;
       } else {
         record[field.name] = raw;
       }
