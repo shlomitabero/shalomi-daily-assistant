@@ -49,20 +49,34 @@ export function createWakeRefCounter(notify: (waking: boolean) => void): (waking
 const notifyWakingRefCounted = createWakeRefCounter(notifyWaking);
 
 /**
- * A generous ceiling on the *whole* request, retries included -- comfortably
- * above the server's own 60s Anthropic-call timeout (see
- * packages/spec-engine/src/anthropicFetch.ts) plus real cold-start latency,
- * but still a hard bound. Without this, a request whose connection succeeds
- * but whose response never arrives (a stalled upstream call, or a Render
- * cold start that happens not to surface as a connection-level failure)
- * hung forever with the UI stuck on a busy spinner ("thinking it over…")
- * and absolutely no feedback -- exactly the real report that motivated this:
- * the home screen "just sits there" and never delivers the built app.
- * fetchWithWakeRetry's own retry-on-thrown-error logic only helps the
- * connection-refused case; a slow-but-not-yet-failed response sails right
- * through it untouched, which is the gap this closes.
+ * A generous ceiling on the *whole* request, retries included -- meant to be
+ * comfortably above the server's own 60s Anthropic-call timeout (see
+ * packages/spec-engine/src/anthropicFetch.ts's ANTHROPIC_REQUEST_TIMEOUT_MS)
+ * plus real cold-start latency, but still a hard bound. Without this, a
+ * request whose connection succeeds but whose response never arrives (a
+ * stalled upstream call, or a Render cold start that happens not to surface
+ * as a connection-level failure) hung forever with the UI stuck on a busy
+ * spinner ("thinking it over…") and absolutely no feedback -- the real
+ * report that originally motivated this.
+ *
+ * This same AbortController's signal covers every attempt inside
+ * fetchWithWakeRetry, including its own retry backoff sleeps (see
+ * wakeRetry.ts's own comment: Render's free tier can take "50+ seconds" to
+ * wake, and DEFAULT_DELAYS_MS's five delays sum to ~49s of that budget) --
+ * so the very first value here (100s) was NOT actually "comfortably above"
+ * 49s of cold-start retrying plus a 60s Anthropic call that only *starts*
+ * once the connection finally succeeds: 49 + 60 = 109s, already past the
+ * 100s ceiling. That mismatch produced exactly the same false-positive
+ * "this is taking too long" error the original 100s value was written to
+ * prevent, on a legitimately slow (cold-started + a genuinely thorough
+ * Anthropic spec) but otherwise successful request -- confirmed by a real
+ * report with a screenshot of that exact error on the enhance-and-build
+ * flow. 49 + 60 = 109s is the real worst-case legitimate total; this adds
+ * a full extra minute of margin on top of that for request/response
+ * transfer, JSON parsing, and DB writes, rather than shaving it as close
+ * as possible to the theoretical minimum again.
  */
-const REQUEST_TIMEOUT_MS = 100_000;
+const REQUEST_TIMEOUT_MS = 180_000;
 
 /**
  * Wraps fetchWithWakeRetry so that if every retry is exhausted (the

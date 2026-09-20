@@ -252,11 +252,53 @@ test("fetchApi aborts a request that hangs past its timeout, instead of leaving 
     // timer fires, so this is a real "still waiting" -> "now it fails"
     // transition, not a race.
     await Promise.resolve();
-    t.mock.timers.tick(100_000);
+    t.mock.timers.tick(180_000);
     await assert.rejects(pending, (err: Error) => {
       assert.match(err.message, /taking unusually long/);
       return true;
     });
+  } finally {
+    globalThis.fetch = original;
+    t.mock.timers.reset();
+  }
+});
+
+/**
+ * Regression test for the timing-budget mismatch a real report (with a
+ * screenshot of this exact translated error) surfaced on the
+ * enhance-and-build flow: REQUEST_TIMEOUT_MS's own AbortController signal
+ * covers every attempt inside fetchWithWakeRetry, including its retry
+ * backoff sleeps -- wakeRetry.ts's own comment documents Render's free-tier
+ * cold start as "50+ seconds", and DEFAULT_DELAYS_MS's five delays alone
+ * sum to ~49s of that. The old 100_000ms ceiling was already less than
+ * 49s of cold-start retrying plus a 60s Anthropic call (see
+ * ANTHROPIC_REQUEST_TIMEOUT_MS) that only starts once the connection
+ * finally succeeds -- 109s of legitimate worst-case latency past a 100s
+ * ceiling. This proves a response landing at 120s (past the OLD ceiling,
+ * comfortably inside the new one) now succeeds instead of being wrongly
+ * aborted.
+ */
+test("fetchApi does not falsely abort a slow-but-legitimate response that finishes within the new, larger timeout budget", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const original = globalThis.fetch;
+  globalThis.fetch = ((_input: unknown, init?: RequestInit) =>
+    new Promise<Response>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        resolve(new Response(JSON.stringify({ projects: [] }), { status: 200, headers: { "content-type": "application/json" } }));
+      }, 120_000);
+      init?.signal?.addEventListener("abort", () => {
+        clearTimeout(timer);
+        const err = new Error("The operation was aborted.");
+        err.name = "AbortError";
+        reject(err);
+      });
+    })) as typeof fetch;
+  try {
+    const pending = listProjects();
+    await Promise.resolve();
+    t.mock.timers.tick(120_000);
+    const result = await pending;
+    assert.deepEqual(result, { projects: [] });
   } finally {
     globalThis.fetch = original;
     t.mock.timers.reset();
