@@ -1261,14 +1261,19 @@ export function EntityView({ entity }) {
     const record = records.find((r) => r.id === id);
     const label = record ? recordDisplayLabel(entity, record) : \`#\${id}\`;
     if (!window.confirm(\`Delete "\${label}"? This can't be undone.\`)) return;
-    await deleteRecord(entity.name, id);
-    setSelectedIds((prev) => {
-      if (!prev.has(id)) return prev;
-      const next = new Set(prev);
-      next.delete(id);
-      return next;
-    });
-    await refresh();
+    setError(null);
+    try {
+      await deleteRecord(entity.name, id);
+      setSelectedIds((prev) => {
+        if (!prev.has(id)) return prev;
+        const next = new Set(prev);
+        next.delete(id);
+        return next;
+      });
+      await refresh();
+    } catch (err) {
+      setError(err.message);
+    }
   }
 
   // Copies a record's own field values into a real new record -- no
@@ -1277,10 +1282,15 @@ export function EntityView({ entity }) {
   async function handleDuplicate(id) {
     const record = records.find((r) => r.id === id);
     if (!record) return;
-    const copy = {};
-    for (const f of entity.fields) copy[f.name] = record[f.name];
-    await createRecord(entity.name, copy);
-    await refresh();
+    setError(null);
+    try {
+      const copy = {};
+      for (const f of entity.fields) copy[f.name] = record[f.name];
+      await createRecord(entity.name, copy);
+      await refresh();
+    } catch (err) {
+      setError(err.message);
+    }
   }
 
   function toggleSelected(id) {
@@ -1310,14 +1320,24 @@ export function EntityView({ entity }) {
     const ids = [...selectedIds];
     if (ids.length === 0) return;
     if (!window.confirm(\`Delete \${ids.length} records? This can't be undone.\`)) return;
-    await Promise.all(ids.map((id) => deleteRecord(entity.name, id)));
-    setSelectedIds(new Set());
-    await refresh();
+    setError(null);
+    try {
+      await Promise.all(ids.map((id) => deleteRecord(entity.name, id)));
+      setSelectedIds(new Set());
+      await refresh();
+    } catch (err) {
+      setError(err.message);
+    }
   }
 
   async function handleMove(id, fieldName, value) {
-    await updateRecord(entity.name, id, { [fieldName]: value });
-    await refresh();
+    setError(null);
+    try {
+      await updateRecord(entity.name, id, { [fieldName]: value });
+      await refresh();
+    } catch (err) {
+      setError(err.message);
+    }
   }
 
   function handleExportCsv() {

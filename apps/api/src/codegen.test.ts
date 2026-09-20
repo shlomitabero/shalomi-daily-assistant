@@ -520,6 +520,81 @@ test("the exported EntityView renders a real Duplicate action (table and board v
   assert.match(entityViewJsx, /<button onClick=\{onDuplicate\}>Duplicate<\/button>/);
 });
 
+// Regression test: handleDelete/handleDuplicate/handleBulkDelete/handleMove
+// each awaited a real network call (deleteRecord/createRecord/updateRecord)
+// with no try/catch at all, unlike handleSubmit and handleImportFile right
+// next to them in this same file, and unlike the live-preview app's own
+// EntityPanel.tsx, where all four of these already wrap the same calls in
+// try/catch + setError. A rejected request here (a dropped connection, an
+// unexpected server error, a record already deleted by someone else)
+// became an unhandled promise rejection with zero visible feedback -- the
+// user's click just silently did nothing. Executes the real generated
+// handler functions (extracted from real codegen output, not
+// reimplemented) with a rejecting mock of the underlying API call and
+// asserts setError actually gets called with the rejection's message.
+test("the exported EntityView's handleDelete/handleDuplicate/handleBulkDelete/handleMove surface a failed request instead of silently swallowing it", async () => {
+  const entityViewJsx = generateExportFiles(project).find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+
+  const displayFieldHintsSrc = entityViewJsx.match(/const DISPLAY_FIELD_NAME_HINTS = \[[^\]]*\];\n/)?.[0];
+  const pickDisplayFieldSrc = entityViewJsx.match(/export function pickDisplayField\(entity\) \{[\s\S]*?\n\}\n/)?.[0]?.replace("export ", "");
+  const recordDisplayLabelSrc = entityViewJsx.match(/export function recordDisplayLabel\(entity, record\) \{[\s\S]*?\n\}\n/)?.[0]?.replace("export ", "");
+  const handleDeleteSrc = entityViewJsx.match(/async function handleDelete\(id\) \{[\s\S]*?\n  \}\n/)?.[0];
+  const handleDuplicateSrc = entityViewJsx.match(/async function handleDuplicate\(id\) \{[\s\S]*?\n  \}\n/)?.[0];
+  const handleBulkDeleteSrc = entityViewJsx.match(/async function handleBulkDelete\(\) \{[\s\S]*?\n  \}\n/)?.[0];
+  const handleMoveSrc = entityViewJsx.match(/async function handleMove\(id, fieldName, value\) \{[\s\S]*?\n  \}\n/)?.[0];
+  assert.ok(
+    displayFieldHintsSrc && pickDisplayFieldSrc && recordDisplayLabelSrc && handleDeleteSrc && handleDuplicateSrc && handleBulkDeleteSrc && handleMoveSrc,
+    "expected to find DISPLAY_FIELD_NAME_HINTS/pickDisplayField/recordDisplayLabel/handleDelete/handleDuplicate/handleBulkDelete/handleMove in generated output",
+  );
+
+  const entity = project.spec.entities[0];
+  const records = [{ id: 1, name: "Dana", email: "dana@example.com", status: "New" }];
+  const rejection = new Error("network error");
+
+  async function runHandler(handlerSrc: string, invoke: (fn: (...args: unknown[]) => Promise<void>) => Promise<void>) {
+    let capturedError: string | undefined;
+    const fn = new Function(
+      "window",
+      "entity",
+      "records",
+      "selectedIds",
+      "setSelectedIds",
+      "setError",
+      "deleteRecord",
+      "createRecord",
+      "updateRecord",
+      "refresh",
+      `${displayFieldHintsSrc}\n${pickDisplayFieldSrc}\n${recordDisplayLabelSrc}\n${handlerSrc}\nreturn ${handlerSrc.match(/^async function (\w+)/)![1]};`,
+    )(
+      { confirm: () => true },
+      entity,
+      records,
+      new Set([1]),
+      () => {},
+      (msg: string) => {
+        capturedError = msg;
+      },
+      async () => {
+        throw rejection;
+      },
+      async () => {
+        throw rejection;
+      },
+      async () => {
+        throw rejection;
+      },
+      async () => {},
+    );
+    await invoke(fn);
+    return capturedError;
+  }
+
+  assert.equal(await runHandler(handleDeleteSrc, (fn) => fn(1)), rejection.message, "handleDelete must call setError on failure");
+  assert.equal(await runHandler(handleDuplicateSrc, (fn) => fn(1)), rejection.message, "handleDuplicate must call setError on failure");
+  assert.equal(await runHandler(handleBulkDeleteSrc, (fn) => fn()), rejection.message, "handleBulkDelete must call setError on failure");
+  assert.equal(await runHandler(handleMoveSrc, (fn) => fn(1, "status", "Won")), rejection.message, "handleMove must call setError on failure");
+});
+
 test("the exported EntityView renders a real picker for relation fields, not a raw numeric ID input", () => {
   const withRelation: Project = {
     ...project,
