@@ -4730,6 +4730,31 @@ not a single "make it perfect" claim.
       coverage. Full suite green (371 tests, up from 369 — `@forge/web`
       111 → 113) and both builds clean.
 
+- [x] **Added real-DOM select-all `indeterminate` coverage for
+      `EntityPanel.tsx`'s table view.** The table's "select all" header
+      checkbox is the one interactive element across all three views
+      (table/board/calendar, now all covered) a function-extraction test
+      structurally cannot verify: `indeterminate` is a live DOM property
+      set imperatively via a ref — there is no `indeterminate` HTML
+      attribute, so it never shows up in rendered markup or a component's
+      return value. Drove the full selection lifecycle through real
+      checkbox clicks: none selected (unchecked, not indeterminate) → 1 of
+      3 selected (indeterminate) → all 3 selected (checked, not
+      indeterminate) → clicking the header checkbox while fully selected
+      deselects everything rather than re-selecting or no-op'ing.
+      Regression-proven the same way as this round's other new-coverage
+      tests: temporarily hardcoded `el.indeterminate = false`, confirmed
+      the test failed at the partial-selection step with a precise
+      assertion message, then restored the original file and confirmed
+      `git diff` came back empty. Also caught and fixed a footgun in this
+      same test's own first draft before it was ever committed or run: an
+      early version passed a raw jsdom DOM node directly as `assert.equal`'s
+      "actual" value — exactly the pattern documented as a `node:assert`
+      hang risk in `BuildProgress.test.ts`'s own comments a few rounds
+      back — fixed to compare a boolean instead before ever executing it.
+      Full suite green (372 tests, up from 371 — `@forge/web` 113 → 114)
+      and both builds clean.
+
 ## Phase 3
 
 - Self-healing: production observability, automatic diagnosis and patch
