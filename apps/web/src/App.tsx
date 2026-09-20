@@ -124,6 +124,23 @@ function AppContent() {
   useEffect(() => subscribeWakeStatus(setWaking), []);
 
   /**
+   * The four overlay panels (History, Business Twin, WhatsApp, Search) are
+   * each a full-screen backdrop (see "history-overlay" in styles.css) --
+   * opening one without closing the others (e.g. Ctrl+K for search while
+   * History is already open from a toolbar click) used to stack two of
+   * them at once instead of replacing one with the other, since each
+   * "open" button only ever set its own boolean to true and never touched
+   * the rest. Routes every open through here so opening any one panel
+   * always closes the rest first.
+   */
+  function openPanel(panel: "history" | "twin" | "whatsapp" | "search") {
+    setShowHistory(panel === "history");
+    setShowTwin(panel === "twin");
+    setShowWhatsApp(panel === "whatsapp");
+    setShowSearch(panel === "search");
+  }
+
+  /**
    * Ctrl/Cmd+K opens global search from anywhere in the preview screen (a
    * command-palette convention users already know from other tools), and
    * Escape closes whichever overlay panel is currently open. Only active
@@ -135,7 +152,7 @@ function AppContent() {
     function handleKeyDown(e: KeyboardEvent) {
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") {
         e.preventDefault();
-        setShowSearch(true);
+        openPanel("search");
         return;
       }
       if (e.key === "Escape") {
@@ -494,11 +511,11 @@ function AppContent() {
           <div className="preview-header">
             <h1>{project.name}</h1>
             <div className="preview-header-actions">
-              <button type="button" className="secondary" onClick={() => setShowSearch(true)}>
+              <button type="button" className="secondary" onClick={() => openPanel("search")}>
                 {t("preview.search")}
                 <span className="shortcut-hint">Ctrl+K</span>
               </button>
-              <button type="button" className="secondary" onClick={() => setShowTwin(true)}>
+              <button type="button" className="secondary" onClick={() => openPanel("twin")}>
                 {t("preview.twin")}
               </button>
               <button type="button" className="secondary" onClick={handleExport} disabled={exportBusy}>
@@ -507,10 +524,10 @@ function AppContent() {
               <button type="button" className="secondary" onClick={handleBackup} disabled={backupBusy}>
                 {backupBusy ? t("preview.backup.busy") : t("preview.backup")}
               </button>
-              <button type="button" className="secondary" onClick={() => setShowWhatsApp(true)}>
+              <button type="button" className="secondary" onClick={() => openPanel("whatsapp")}>
                 {t("preview.whatsapp")}
               </button>
-              <button type="button" className="secondary" onClick={() => setShowHistory(true)}>
+              <button type="button" className="secondary" onClick={() => openPanel("history")}>
                 {t("preview.history")}
               </button>
             </div>

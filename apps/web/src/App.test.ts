@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { test } from "node:test";
+import { transformSync } from "esbuild";
 import type { AgentStepEvent } from "@forge/shared";
 import { summarizeRefineImpact } from "./App.js";
 
@@ -62,4 +64,47 @@ test("summarizeRefineImpact prefers the LAST successful Architect event, not the
   const summary = summarizeRefineImpact(events, t);
   assert.match(summary, /orderNote/);
   assert.doesNotMatch(summary, /DROP TABLE/);
+});
+
+/**
+ * Regression test: each of the four overlay panels (History, Business
+ * Twin, WhatsApp, Search) -- each a full-screen backdrop -- used to be
+ * opened by setting only its own "show" boolean to true, with no regard
+ * for whether another panel's boolean was already true. Clicking, say,
+ * "Business Twin" while History was already open (from an earlier click,
+ * or Ctrl+K for search) stacked two full-screen overlays instead of
+ * replacing one with the other. Extracts the real openPanel function from
+ * App.tsx, strips its TypeScript with esbuild, and runs it with mock
+ * setShowX functions to confirm every open closes the other three.
+ */
+test("App's openPanel closes every other overlay panel when opening one, instead of letting them stack", () => {
+  const appSrc = readFileSync(new URL("./App.tsx", import.meta.url), "utf8");
+  const handlerMatch = appSrc.match(
+    / {2}function openPanel\(panel: "history" \| "twin" \| "whatsapp" \| "search"\) \{[\s\S]*?\n {2}\}\n/,
+  );
+  assert.ok(handlerMatch, "expected to find openPanel in App.tsx");
+  const { code } = transformSync(handlerMatch![0], { loader: "ts" });
+
+  function run(panel: string) {
+    const state = { history: false, twin: false, whatsapp: false, search: false };
+    const fn = new Function(
+      "setShowHistory",
+      "setShowTwin",
+      "setShowWhatsApp",
+      "setShowSearch",
+      `${code}\nreturn openPanel;`,
+    )(
+      (v: boolean) => (state.history = v),
+      (v: boolean) => (state.twin = v),
+      (v: boolean) => (state.whatsapp = v),
+      (v: boolean) => (state.search = v),
+    ) as (panel: string) => void;
+    fn(panel);
+    return state;
+  }
+
+  assert.deepEqual(run("history"), { history: true, twin: false, whatsapp: false, search: false });
+  assert.deepEqual(run("twin"), { history: false, twin: true, whatsapp: false, search: false });
+  assert.deepEqual(run("whatsapp"), { history: false, twin: false, whatsapp: true, search: false });
+  assert.deepEqual(run("search"), { history: false, twin: false, whatsapp: false, search: true });
 });
