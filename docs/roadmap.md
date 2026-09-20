@@ -4399,6 +4399,47 @@ not a single "make it perfect" claim.
       up from 354 — `@forge/api` 116 → 117, `@forge/web` 97 → 99) + both
       builds clean.
 
+- [x] **Round 78 (scheduled firing, no new message from שלומי): finished
+      the `Promise.all` hunt round 77's own notes called for, then found a
+      different bug class on the same "read a file's own logic in full"
+      approach.** `grep -rn "Promise.all(" apps/web/src apps/api/src`
+      turned up exactly two remaining call sites — `EntityPanel.tsx`'s and
+      `codegen.ts`'s own `loadRelated` (the relation-field picker's data
+      loader) — and both already catch each per-entity failure *inside*
+      the `.map()` callback and resolve with a fallback `[name, []]`
+      rather than letting the promise reject, so `Promise.all` here can
+      never actually reject on a network failure; the hunt is genuinely
+      exhausted. Read `routes/auth.ts` + `auth/middleware.ts` (confirmed
+      solid again — session expiry is enforced SQL-side via `WHERE
+      sessions.expiresAt > ?`, matching round 73's earlier read),
+      `AuthScreen.tsx`, `HistoryPanel.tsx`, `BusinessTwinPanel.tsx`, and
+      `twin.ts` in full — all came back clean. Then read `App.tsx`'s own
+      logic (not just `summarizeRefineImpact`, already tested since an
+      earlier round) and found a real, easily reachable bug: the four
+      overlay panels (History, Business Twin, WhatsApp, global Search) —
+      each a full-screen backdrop — were each opened by setting only
+      their own "show" boolean to `true`, with zero regard for whether
+      another panel's boolean was already `true`. Clicking "Business
+      Twin" while History was already open (or pressing Ctrl+K for search
+      while either was open) stacked two full-screen overlays on top of
+      each other instead of replacing one with the other — a genuinely
+      broken visual state, reachable from the toolbar with no special
+      timing needed. Added an `openPanel(panel)` helper that always sets
+      exactly one of the four booleans and clears the rest, and routed
+      every "open" action (four toolbar buttons plus the Ctrl+K shortcut)
+      through it; Escape's existing "close everything" handler needed no
+      change. The exported standalone app's `App.jsx` only has the one
+      search overlay and no History/Twin/WhatsApp panels at all, so there
+      was nothing to stack there and no parity fix was needed.
+      Regression-proven via `git stash`: pre-fix `App.tsx` has no
+      `openPanel` function at all, so the new test's own extraction
+      assertion fails outright before it can even check behavior. The
+      test extracts the real function (esbuild-stripped TypeScript, the
+      technique rounds 75-77 established) and confirms each of the four
+      panel names produces exactly one `true` in the resulting state.
+      Full suite green (357 tests, up from 356 — `@forge/web` 99 → 100) +
+      both builds clean.
+
 ## Phase 3
 
 - Self-healing: production observability, automatic diagnosis and patch
