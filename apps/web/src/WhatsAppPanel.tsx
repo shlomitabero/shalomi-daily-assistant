@@ -172,6 +172,7 @@ export function WhatsAppPanel({ projectId, onClose }: { projectId: string; onClo
   }
 
   async function handleDisconnect() {
+    const wasConnected = status?.status === "connected";
     setDisconnecting(true);
     stopPolling();
     stopConnectedPolling();
@@ -181,6 +182,14 @@ export function WhatsAppPanel({ projectId, onClose }: { projectId: string; onClo
       setMessages([]);
     } catch (err) {
       setLoadError((err as Error).message);
+      // The disconnect request itself failed -- nothing changed
+      // server-side, so if we were connected before this attempt we still
+      // are. stopConnectedPolling() above already killed the background
+      // poll that would notice WhatsApp dropping the link on its own;
+      // without resuming it here, a single failed disconnect attempt
+      // silently leaves an otherwise-still-connected panel with no
+      // monitoring at all until the user closes and reopens it.
+      if (wasConnected) startConnectedPolling();
     } finally {
       setDisconnecting(false);
     }
