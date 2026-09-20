@@ -321,3 +321,132 @@ test("EntityPanel's board view moves a card to its new column once the status ch
     }
   });
 });
+
+const APPOINTMENT_ENTITY: Entity = {
+  name: "Appointment",
+  label: "Appointment",
+  fields: [
+    { name: "title", label: "Title", type: "text", required: true },
+    { name: "date", label: "Date", type: "date", required: true },
+  ],
+};
+
+function isoDateToday(): string {
+  const now = new Date();
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
+}
+
+function mockListRecordsFetch(store: EntityRecord[]) {
+  return async (input: string, init?: RequestInit): Promise<Response> => {
+    const method = init?.method ?? "GET";
+    if (method === "GET" && input === "/api/projects/proj1/entities/Appointment") {
+      return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    throw new Error(`mockListRecordsFetch: unexpected request ${method} ${input}`);
+  };
+}
+
+function renderAppointmentPanel() {
+  return render(
+    React.createElement(
+      ThemeProvider,
+      null,
+      React.createElement(
+        LanguageProvider,
+        null,
+        React.createElement(EntityPanel, {
+          projectId: "proj1",
+          entity: APPOINTMENT_ENTITY,
+          allEntities: [APPOINTMENT_ENTITY],
+        }),
+      ),
+    ),
+  );
+}
+
+/**
+ * Real-DOM coverage for the calendar view's own "+N more" overflow -- the
+ * other half of the "table/board/calendar views" candidate this round
+ * follows up on after the board-view tests above. CalendarView's own doc
+ * comment promises "a '+N more' overflow instead of an ever-growing cell";
+ * this renders a real day with 4 records on it (Appointment has a "date"
+ * field, so findDateField picks it and the calendar toggle appears) and
+ * confirms exactly 3 chips render plus the overflow count for the 4th,
+ * rather than either silently dropping the 4th record or growing the cell
+ * without bound.
+ */
+test("EntityPanel's calendar view shows at most 3 record chips per day, with a '+N more' overflow for the rest", async () => {
+  await withJsdom(async () => {
+    const today = isoDateToday();
+    const store: EntityRecord[] = [
+      { id: 1, title: "A", date: today },
+      { id: 2, title: "B", date: today },
+      { id: 3, title: "C", date: today },
+      { id: 4, title: "D", date: today },
+    ];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = mockListRecordsFetch(store) as typeof fetch;
+    try {
+      renderAppointmentPanel();
+      await waitForCondition(() => document.querySelector(".entity-toolbar") !== null);
+
+      const calendarToggle = document.querySelectorAll(".view-toggle-btn")[1] as HTMLButtonElement;
+      fireEvent.click(calendarToggle);
+      await waitForCondition(() => document.querySelectorAll(".calendar-record-chip").length > 0);
+
+      const todayDayNumber = String(new Date().getDate());
+      const dayCell = [...document.querySelectorAll(".calendar-day:not(.calendar-day-outside)")].find(
+        (cell) => cell.querySelector(".calendar-day-number")?.textContent === todayDayNumber,
+      );
+      assert.ok(dayCell, "today's cell must render in the current month's grid");
+      assert.equal(
+        dayCell!.querySelectorAll(".calendar-record-chip").length,
+        3,
+        "at most 3 chips must render even though 4 records land on this day",
+      );
+      const more = dayCell!.querySelector(".calendar-record-more");
+      assert.ok(more, "a '+N more' overflow indicator must render for the 4th record");
+      assert.match(more!.textContent ?? "", /1/, "the overflow count must reflect exactly the 1 record not shown as a chip");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
+ * Confirms clicking a calendar day's record chip actually opens that
+ * record for editing (CalendarView's onEdit prop is wired to EntityPanel's
+ * own startEdit) -- the same real-DOM/real-click contract this session's
+ * AuthScreen/BuildProgress/board-view tests already established for other
+ * components, applied to the one interactive element the calendar view has
+ * that the table/board views don't.
+ */
+test("EntityPanel's calendar view opens the clicked record for editing, with the form pre-filled", async () => {
+  await withJsdom(async () => {
+    const today = isoDateToday();
+    const store: EntityRecord[] = [{ id: 1, title: "Dana's appointment", date: today }];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = mockListRecordsFetch(store) as typeof fetch;
+    try {
+      renderAppointmentPanel();
+      await waitForCondition(() => document.querySelector(".entity-toolbar") !== null);
+
+      const calendarToggle = document.querySelectorAll(".view-toggle-btn")[1] as HTMLButtonElement;
+      fireEvent.click(calendarToggle);
+      await waitForCondition(() => document.querySelectorAll(".calendar-record-chip").length === 1);
+
+      const chip = document.querySelector(".calendar-record-chip") as HTMLButtonElement;
+      assert.equal(chip.textContent, "Dana's appointment");
+      fireEvent.click(chip);
+      await waitForCondition(() => (document.querySelector('.record-form input[type="text"]') as HTMLInputElement)?.value === "Dana's appointment");
+
+      const titleInput = document.querySelector('.record-form input[type="text"]') as HTMLInputElement;
+      const dateInput = document.querySelector('.record-form input[type="date"]') as HTMLInputElement;
+      assert.equal(titleInput.value, "Dana's appointment", "clicking the chip must pre-fill the form with that record's own title");
+      assert.equal(dateInput.value, today, "clicking the chip must pre-fill the form with that record's own date");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
