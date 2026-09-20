@@ -4245,6 +4245,40 @@ not a single "make it perfect" claim.
       Full suite green (348 tests, up from 347 — `@forge/api` 114 → 115)
       + both builds clean.
 
+- [x] **Round 74 (שלומי said "עוד שידרנגים", read as a typo for "עוד
+      שדרוגים", "more upgrades"): closed the exact design gap round 73
+      had just documented and deliberately left open — made
+      `diffAndMigrate`'s silent field-type-change gap visible instead of
+      silently invisible.** Spent a first pass reviewing `twin.ts`,
+      `backup.ts`, the full auth stack, `anthropic.ts`, `debug.ts`, and
+      `promptEnhancer.ts`/`heuristic.ts` again — all confirmed solid, no
+      new findings this time (also empirically re-verified, not just
+      reasoned through, that `.trim()` already strips a BOM per spec —
+      ruled out a hypothesized BOM-in-CSV-header bug). Also revisited the
+      long-open accessibility `inert`/`aria-hidden` fix (flagged since
+      round 46) and deliberately deferred it again: doing it properly
+      needs real DOM-behavior test coverage this project doesn't have
+      (confirmed again: no jsdom, no Playwright, `apps/web/src` has zero
+      `*.test.tsx` files), and adding a whole new test-infrastructure
+      layer is too large a scope change for one round without derailing
+      it. Instead scoped down to the smaller, well-tested half of the
+      `migrate.ts` gap: rather than attempting the full schema-type-
+      migration redesign (still a genuine, separate product/design
+      decision about how to handle existing rows that don't cleanly
+      convert — SQLite has no cheap `ALTER COLUMN TYPE`), `diffAndMigrate`
+      now detects when an existing field's declared type changed (same
+      name, different `type`) and returns a `type_changed` entry
+      (old/new type) instead of silently skipping it with no signal at
+      all. Threaded through `pipeline.ts`'s Database-step success message
+      and `BuildProgress.tsx`'s detail view (both languages) so a type
+      change that can't be safely auto-converted is at least visible to
+      whoever's watching the build, instead of the spec silently claiming
+      a type the database doesn't actually have. Proven to catch a real
+      regression via `git stash` on `migrate.ts` alone: pre-fix, the new
+      test's expected `type_changed` entry came back as an empty array —
+      the type change vanished with zero trace. Full suite green (349
+      tests, up from 348 — `@forge/db` 58 → 59) + both builds clean.
+
 ## Phase 3
 
 - Self-healing: production observability, automatic diagnosis and patch
