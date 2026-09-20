@@ -3991,6 +3991,45 @@ not a single "make it perfect" claim.
       test count since this extended an existing test rather than adding
       new ones) + both builds clean.
 
+- [x] **The exported (downloaded) app's own CSV import silently accepted
+      an invalid date, a fourth independent copy of a bug already fixed
+      three times over.** Moved on to this round's own next suggested
+      target, `apps/api/src/codegen.ts`, per its own note that the
+      `routes/projects.ts` precondition-guard pattern is now exhausted.
+      Round 62 found and fixed missing date validation in
+      `packages/db/src/repository.ts`; round 63 found the identical gap
+      independently in `apps/web/src/entityFormatting.ts`'s CSV import;
+      round 64 found it a third time in this same `codegen.ts` file's
+      own *server-side* `coerce()` (the function the exported app's
+      `server.js` runs). This round found a fourth, separate copy: the
+      exported app's *client-side* `buildImportRecords()` (generated
+      into `EntityView.jsx`), whose own comment claims a CSV row is
+      "already validated client-side" before being POSTed — true for
+      required/number/enum fields, but a `date` field fell straight
+      through to the raw-string default with zero validation. Confirmed
+      empirically before writing any fix: generated a real project with
+      a date field, extracted the actual generated `buildImportRecords`
+      function out of the real `EntityView.jsx` output (not a
+      reimplementation) via `new Function(...)`, and ran it against rows
+      containing `"2024-13-45"` and `"not-a-date"` — both were accepted
+      into `records` with zero entries in `errors`. The malformed value
+      would still eventually get rejected by the server's own
+      `coerce()` (fixed in round 64), but only after the row-numbered
+      client-side error the code already promises was silently skipped.
+      Fixed by porting the same `isValidDate`/`DATE_FORMAT` check into
+      `buildImportRecords`'s `date` branch. New test in
+      `codegen.test.ts` extracts and actually executes the real
+      generated `isValidDate`/`matchesImportHeader`/`buildImportRecords`
+      functions (the same “run the real generated code” standard the
+      round 64 date test uses for the server side) and asserts a valid
+      date passes through while `"2024-13-45"` and `"not-a-date"` are
+      rejected with row-numbered errors. Proven to catch a real
+      regression via `git stash` on `codegen.ts` alone (pre-fix: the
+      test's own regex couldn't even find the not-yet-added
+      `isValidDate` helper in the generated output). Full suite green
+      (337 tests, up from 336 — `@forge/api` 110 → 111) + both builds
+      clean.
+
 ## Phase 3
 
 - Self-healing: production observability, automatic diagnosis and patch
