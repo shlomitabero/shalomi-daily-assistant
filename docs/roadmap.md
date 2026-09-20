@@ -4279,6 +4279,46 @@ not a single "make it perfect" claim.
       the type change vanished with zero trace. Full suite green (349
       tests, up from 348 — `@forge/db` 58 → 59) + both builds clean.
 
+- [x] **Round 75 (scheduled firing, no new message from שלומי): found a
+      real, live bug via a first-ever close read of `EntityPanel.tsx`
+      (840 lines, the largest web-package file never individually
+      audited — earlier rounds only ever diffed it *against* its
+      exported-app twin for parity, never scrutinized on its own).**
+      `handleBulkDelete` awaited a bare `Promise.all(ids.map(deleteRecord))`
+      inside a try/catch — but `Promise.all` rejects the instant *any one*
+      delete rejects, which skipped both `refresh()` and the
+      `setSelectedIds(new Set())` cleanup sitting right after it. A single
+      failed delete in a multi-record selection (a dropped connection on
+      mobile, a record someone else already removed) meant every record
+      that DID delete successfully on the server stayed listed, and
+      selected, in a now-stale table — invisible data loss the UI
+      actively hid, and a retry would then re-attempt deleting records
+      that no longer existed. The exact same bug existed in both copies:
+      the live-preview `EntityPanel.tsx` and its necessary duplicate
+      embedded in `codegen.ts`'s generated `EntityView.jsx` (round 71 had
+      added try/catch to both, which papered over the *symptom* — an
+      unhandled rejection — without touching the underlying
+      `Promise.all` that caused the state loss). Switched both to
+      `Promise.allSettled`: every delete's real outcome is checked
+      individually, only the ids that genuinely failed stay selected,
+      `refresh()` always runs so the table reflects reality regardless of
+      outcome, and the error message now distinguishes "every delete in
+      the batch failed" (unchanged wording, for parity) from a real
+      partial failure (new translated `entity.bulk.partialFailure`
+      message, Hebrew + English). Proven independently for both copies
+      via `git stash`: pre-fix `EntityPanel.tsx` throws
+      `capturedSelectedIds is not iterable` because the cleanup code is
+      never reached past the one failure; pre-fix `codegen.ts`'s embedded
+      copy fails the identical new test the identical way. New tests
+      extract and execute the real handler source (esbuild-stripped
+      TypeScript for the live app — the first time this session's
+      esbuild-extraction technique has been applied to a live-app file
+      rather than only `codegen.ts`'s generated-JS output — and raw
+      extraction for the generated JS) with a mock `deleteRecord` that
+      fails on exactly one of three selected ids. Full suite green (352
+      tests, up from 349 — `@forge/api` 115 → 116, `@forge/web` 93 → 95)
+      + both builds clean.
+
 ## Phase 3
 
 - Self-healing: production observability, automatic diagnosis and patch
