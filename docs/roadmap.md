@@ -4030,6 +4030,46 @@ not a single "make it perfect" claim.
       (337 tests, up from 336 — `@forge/api` 110 → 111) + both builds
       clean.
 
+- [x] **Calendar view silently shifted a record back one calendar day for
+      any viewer in a timezone behind UTC (most of the Americas) — a real,
+      live bug in both the live-preview app and the exported app, not just
+      a divergence between them.** Continued reviewing `codegen.ts`'s
+      Kanban/Calendar generated code, one of this round's own suggested
+      targets, and found `buildCalendarMonth` (in both
+      `apps/web/src/entityFormatting.ts` and its independent copy
+      generated into the exported app's `EntityView.jsx`) parsed a stored
+      `"YYYY-MM-DD"` date field with `new Date(rawString)`. Per the Date
+      Time String Format spec, a date-only string like that parses as
+      *UTC* midnight — but the calendar grid's own day cells are built
+      with `new Date(year, month, day)`, i.e. *local* midnight, and the
+      two are compared with local getters (`getFullYear`/`getMonth`/
+      `getDate`). Confirmed empirically before touching any code: ran the
+      real `buildCalendarMonth` under `TZ=America/New_York` and watched a
+      record stored as `"2026-09-15"` land under September 14 on the
+      grid instead of the 15th. The existing test covering this exact
+      function ("places a record on the correct calendar day") only ever
+      passed because the sandbox/CI environment defaults to UTC, where
+      the bug is invisible — a real gap in test-environment coverage, not
+      just in the code. Fixed by parsing the `YYYY-MM-DD` components
+      directly into a local `Date` (the same construction the grid cells
+      already use) instead of handing the raw string to the `Date`
+      constructor, in both files independently. New regression tests in
+      both `entityFormatting.test.ts` and `codegen.test.ts` (the latter
+      extracting and executing the real generated functions, not a
+      reimplementation) pin `process.env.TZ` to a behind-UTC zone for the
+      assertion and restore it afterward, so they can't leak into other
+      tests in the same process. Proven to catch a real regression via
+      `git stash` on both source files at once (both new tests failed
+      pre-fix). Also ran the *entire* suite once under
+      `TZ=America/New_York` as extra scrutiny beyond the normal
+      verification bar — everything passed except one unrelated,
+      pre-existing test (`formatDateValue formats a valid ISO date per
+      locale`) confirmed to fail identically on pre-fix code too;
+      left for a future round rather than scope-creeping into this fix.
+      Full suite green under the normal (UTC) test environment (339
+      tests, up from 337 — `@forge/api` 111 → 112, `@forge/web` 86 → 87)
+      + both builds clean.
+
 ## Phase 3
 
 - Self-healing: production observability, automatic diagnosis and patch
