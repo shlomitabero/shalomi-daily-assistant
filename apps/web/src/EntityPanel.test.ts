@@ -642,3 +642,85 @@ test("EntityPanel's board view shows the 'no results' empty state (not an all-em
     }
   });
 });
+
+const CUSTOMER_IMPORT_ENTITY: Entity = {
+  name: "Customer",
+  label: "Customer",
+  fields: [
+    { name: "name", label: "Name", type: "text", required: true },
+    { name: "email", label: "Email", type: "text", required: false },
+  ],
+};
+
+/**
+ * Real-DOM coverage for CSV import (handleImportFile), the one EntityPanel
+ * interaction never yet exercised through a real file upload + POST +
+ * table re-render round trip -- entityFormatting.test.ts already covers
+ * parseCsv/buildImportRecords in isolation, but nothing before this
+ * confirmed the actual wiring: a real uploaded File genuinely reaches
+ * `file.text()`, the parsed row genuinely gets POSTed via createRecord,
+ * and the table genuinely reflects it afterward. Builds a real
+ * `File`/CSV via the standard jsdom-file-input technique (`.files` is
+ * read-only on a real `<input type="file">`, so it's set via
+ * Object.defineProperty, the same way a browser's own file picker would
+ * populate it) and fires a real "change" event on it.
+ */
+test("EntityPanel's CSV import creates a real record from an uploaded file and shows it in the table", async () => {
+  await withJsdom(async () => {
+    const store: EntityRecord[] = [];
+    let nextId = 1;
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/entities/Customer") {
+        return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      if (method === "POST" && input === "/api/projects/proj1/entities/Customer") {
+        const data = JSON.parse(init!.body as string);
+        const record = { id: nextId++, ...data };
+        store.push(record);
+        return new Response(JSON.stringify({ record }), { status: 201, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+    try {
+      render(
+        React.createElement(
+          ThemeProvider,
+          null,
+          React.createElement(
+            LanguageProvider,
+            null,
+            React.createElement(EntityPanel, {
+              projectId: "proj1",
+              entity: CUSTOMER_IMPORT_ENTITY,
+              allEntities: [CUSTOMER_IMPORT_ENTITY],
+            }),
+          ),
+        ),
+      );
+      await waitForCondition(() => document.querySelector(".csv-import-row") !== null);
+
+      const csvText = "name,email\nDana,dana@example.com\n";
+      const file = new File([csvText], "customers.csv", { type: "text/csv" });
+      const fileInput = document.querySelector('input[type="file"]') as HTMLInputElement;
+      Object.defineProperty(fileInput, "files", { value: [file], configurable: true });
+      fireEvent.change(fileInput);
+
+      await waitForCondition(() => document.querySelectorAll("tbody tr").length === 1);
+
+      assert.equal(document.querySelectorAll("tbody tr").length, 1, "the imported record must appear as a real row in the table");
+      assert.match(
+        document.querySelector("tbody tr")!.textContent ?? "",
+        /Dana/,
+        "the row must show the name actually parsed from the uploaded CSV, not a placeholder",
+      );
+      assert.equal(store.length, 1, "the import must have actually POSTed the parsed row to the server, not just updated local state");
+      assert.equal(store[0].name, "Dana");
+      assert.equal(store[0].email, "dana@example.com");
+      assert.equal(document.querySelector("p.error") === null, true, "a successful import must not leave an error banner showing");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
