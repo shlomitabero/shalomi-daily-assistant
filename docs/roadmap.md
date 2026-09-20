@@ -4704,6 +4704,32 @@ not a single "make it perfect" claim.
       own. Full suite green (369 tests, up from 367 — `@forge/web`
       109 → 111) and both builds clean.
 
+- [x] **Added real-DOM calendar-view coverage for `EntityPanel.tsx`** —
+      the last untested piece of "table/board/calendar views", following
+      directly on the board-view tests above. `CalendarView`'s own doc
+      comment promises two things that were never actually exercised
+      through a real render before this: "a '+N more' overflow instead of
+      an ever-growing cell", and that clicking a day's record chip opens
+      it for editing (`onEdit` wired to `EntityPanel`'s own `startEdit`).
+      Added two tests against a real "Appointment" entity (a text field +
+      a date field) — one renders 4 records landing on the same real
+      calendar day and confirms exactly 3 chips plus a "+1 more" indicator
+      render, rather than either silently dropping the 4th record or
+      letting the cell grow unbounded; the other clicks a chip and
+      confirms the record form is genuinely pre-filled with that record's
+      own field values afterward — the same real-click contract this
+      session's `AuthScreen`/`BuildProgress`/board-view tests already
+      established, applied to the calendar view's one interactive element.
+      Regression-proven the same way as the board-view tests: temporarily
+      widened the chip slice from 3 to 10 (confirmed the overflow test
+      fails — 4 chips instead of 3), separately replaced the `onEdit`
+      wiring with a no-op (confirmed the edit test fails via its own
+      *bounded* `waitForCondition` timeout, not a hang), then restored the
+      original file both times and confirmed `git diff` came back empty.
+      With this, all three EntityPanel view modes now have real-DOM
+      coverage. Full suite green (371 tests, up from 369 — `@forge/web`
+      111 → 113) and both builds clean.
+
 ## Phase 3
 
 - Self-healing: production observability, automatic diagnosis and patch
