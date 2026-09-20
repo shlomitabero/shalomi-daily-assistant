@@ -450,3 +450,91 @@ test("EntityPanel's calendar view opens the clicked record for editing, with the
     }
   });
 });
+
+const CUSTOMER_ENTITY: Entity = {
+  name: "Customer",
+  label: "Customer",
+  fields: [
+    { name: "name", label: "Name", type: "text", required: true },
+    { name: "email", label: "Email", type: "text", required: false },
+  ],
+};
+
+function mockCustomerListFetch(store: EntityRecord[]) {
+  return async (input: string, init?: RequestInit): Promise<Response> => {
+    const method = init?.method ?? "GET";
+    if (method === "GET" && input === "/api/projects/proj1/entities/Customer") {
+      return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    throw new Error(`mockCustomerListFetch: unexpected request ${method} ${input}`);
+  };
+}
+
+function renderCustomerPanel() {
+  return render(
+    React.createElement(
+      ThemeProvider,
+      null,
+      React.createElement(
+        LanguageProvider,
+        null,
+        React.createElement(EntityPanel, { projectId: "proj1", entity: CUSTOMER_ENTITY, allEntities: [CUSTOMER_ENTITY] }),
+      ),
+    ),
+  );
+}
+
+/**
+ * Real-DOM coverage for the table view's "select all" checkbox, the one
+ * interactive element in EntityPanel that a function-extraction test
+ * structurally cannot verify: `indeterminate` is a live DOM property (set
+ * imperatively via a ref, per the HTML spec -- there is no `indeterminate`
+ * HTML attribute), not something that shows up in rendered markup or a
+ * component's return value. Exercises the full selection lifecycle a real
+ * user drives through actual checkbox clicks: none selected (unchecked,
+ * not indeterminate) -> some selected (indeterminate) -> all selected
+ * (checked, not indeterminate) -> clicking the header checkbox while all
+ * are selected deselects everything, rather than the increasingly-common
+ * mistake of always selecting-all regardless of current state.
+ */
+test("EntityPanel's table view header checkbox reflects none/some/all selected via the real indeterminate DOM property", async () => {
+  await withJsdom(async () => {
+    const store: EntityRecord[] = [
+      { id: 1, name: "Dana", email: "dana@example.com" },
+      { id: 2, name: "Noa", email: "noa@example.com" },
+      { id: 3, name: "Omer", email: "omer@example.com" },
+    ];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = mockCustomerListFetch(store) as typeof fetch;
+    try {
+      renderCustomerPanel();
+      await waitForCondition(() => document.querySelectorAll("tbody .select-col input").length === 3);
+
+      const headerCheckbox = document.querySelector("thead .select-col input") as HTMLInputElement;
+      const rowCheckboxes = [...document.querySelectorAll("tbody .select-col input")] as HTMLInputElement[];
+
+      assert.equal(headerCheckbox.checked, false, "header checkbox must start unchecked with nothing selected");
+      assert.equal(headerCheckbox.indeterminate, false, "header checkbox must not be indeterminate with nothing selected");
+
+      fireEvent.click(rowCheckboxes[0]);
+      assert.equal(headerCheckbox.checked, false, "header checkbox must stay unchecked with only 1 of 3 rows selected");
+      assert.equal(headerCheckbox.indeterminate, true, "header checkbox must show indeterminate with a partial selection");
+
+      fireEvent.click(rowCheckboxes[1]);
+      fireEvent.click(rowCheckboxes[2]);
+      assert.equal(headerCheckbox.checked, true, "header checkbox must become checked once every row is selected");
+      assert.equal(headerCheckbox.indeterminate, false, "header checkbox must not be indeterminate once every row is selected");
+
+      fireEvent.click(headerCheckbox);
+      assert.equal(headerCheckbox.checked, false, "clicking the header checkbox while fully selected must deselect everything, not re-select");
+      assert.equal(headerCheckbox.indeterminate, false, "header checkbox must not be indeterminate after deselecting everything");
+      assert.equal(
+        document.querySelector(".bulk-actions-bar") === null,
+        true,
+        "the bulk-actions bar must disappear once nothing is selected",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
