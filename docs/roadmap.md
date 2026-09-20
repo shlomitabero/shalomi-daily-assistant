@@ -4108,6 +4108,41 @@ not a single "make it perfect" claim.
       too (341 tests, up from 339 — `@forge/api` 112 → 113, `@forge/web`
       87 → 88) + both builds clean.
 
+- [x] **The exported app's Delete/Duplicate/bulk-Delete/Kanban-move
+      actions silently did nothing on a failed request — no error, no
+      feedback, just a click that appeared to do nothing.** This round's
+      own first candidate (a fresh sweep for any other `new Date(dateField)`
+      occurrence of the timezone bug pattern) came back clean: every
+      remaining `new Date(...)` call in `apps/web/src` and `apps/api/src`
+      either builds a full ISO *instant* (a `createdAt` timestamp, correctly
+      displayed in local time) or is calendar-navigation UI state, not a
+      stored date field — so that specific bug class is now fully
+      exhausted across the codebase. Moved to this round's second
+      candidate instead: reviewing `codegen.ts`'s still-unaudited Kanban
+      board code. `BoardCard`'s move dropdown turned out simple (no real
+      drag-and-drop, just a `<select>`), but comparing its `handleMove`
+      handler against the live-preview app's `EntityPanel.tsx` surfaced a
+      real, clear divergence: the live app wraps `handleDelete`,
+      `handleDuplicate`, `handleBulkDelete`, and `handleMove` in
+      `try`/`catch` + `setError`, exactly like this same exported file's
+      own `handleSubmit`/`handleImportFile` already do — but all four of
+      those exported-app handlers had no error handling at all. A rejected
+      `deleteRecord`/`createRecord`/`updateRecord` call (a dropped
+      connection, an unexpected server error, a record someone else
+      already deleted) became an unhandled promise rejection with zero
+      user-visible feedback. Fixed by porting the identical
+      `try`/`catch`/`setError(err.message)` pattern from the live app into
+      all four handlers. New test extracts the real generated handler
+      functions (plus their `pickDisplayField`/`recordDisplayLabel`
+      dependencies) from real codegen output and executes them with a
+      rejecting mock of the underlying API call, asserting `setError` is
+      actually invoked with the rejection's message. Proven to catch a
+      real regression via `git stash` on `codegen.ts` alone — pre-fix, the
+      test itself threw the unhandled rejection, reproducing the exact
+      production failure mode rather than merely failing an assertion.
+      Full suite green (342 tests, up from 341 — `@forge/api` 113 → 114)
+      + both builds clean.
+
 ## Phase 3
 
 - Self-healing: production observability, automatic diagnosis and patch
