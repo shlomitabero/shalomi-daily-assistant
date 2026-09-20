@@ -988,6 +988,63 @@ test("WhatsApp send succeeds once connected, is logged as an outgoing message, a
   );
 });
 
+test("WhatsApp: sending a test message to a number that matches an existing customer's phone logs it with that customer's name, not just the raw number", async () => {
+  let createdSockets: ReturnType<typeof createFakeWhatsAppSocket>[] = [];
+  await withServer(
+    async (baseUrl) => {
+      const token = await signup(baseUrl);
+      const createRes = await fetch(`${baseUrl}/api/projects`, {
+        method: "POST",
+        headers: authHeaders(token),
+        body: JSON.stringify({ description: "A CRM with customers and deals." }),
+      });
+      const { project } = (await createRes.json()) as { project: { id: string } };
+
+      const buildRes = await fetch(`${baseUrl}/api/projects/${project.id}/build`, {
+        method: "POST",
+        headers: authHeaders(token),
+      });
+      await collectSSE(buildRes);
+
+      // Stored in local format (leading trunk zero) -- normalizePhone
+      // reconciles that against the international-format number the send
+      // request below uses, exactly like an incoming message would.
+      await fetch(`${baseUrl}/api/projects/${project.id}/entities/Customer`, {
+        method: "POST",
+        headers: authHeaders(token),
+        body: JSON.stringify({ name: "Dana Levi", phone: "050-123-4567", status: "New" }),
+      });
+
+      await fetch(`${baseUrl}/api/projects/${project.id}/integrations/whatsapp/connect`, { method: "POST", headers: authHeaders(token) });
+      createdSockets[0].sock.user = { id: "15550001111:1@s.whatsapp.net" };
+      createdSockets[0].emitConnectionUpdate({ connection: "open" });
+
+      const sendRes = await fetch(`${baseUrl}/api/projects/${project.id}/integrations/whatsapp/send`, {
+        method: "POST",
+        headers: authHeaders(token),
+        body: JSON.stringify({ to: "972501234567", message: "מתי אפשר להגיע?" }),
+      });
+      assert.equal(sendRes.status, 200);
+
+      const messagesRes = await fetch(`${baseUrl}/api/projects/${project.id}/integrations/whatsapp/messages`, { headers: authHeaders(token) });
+      const { messages } = (await messagesRes.json()) as {
+        messages: { direction: string; matchedLabel: string | null; matchedEntityName: string | null }[];
+      };
+      assert.equal(messages.length, 1);
+      assert.equal(messages[0].direction, "out");
+      assert.equal(messages[0].matchedEntityName, "Customer");
+      assert.equal(messages[0].matchedLabel, "Dana Levi");
+    },
+    {
+      whatsapp: (db) => {
+        const created = createTestWhatsAppManager(db);
+        createdSockets = created.createdSockets;
+        return created.manager;
+      },
+    },
+  );
+});
+
 test("WhatsApp: a failed send stays logged as failed, and retrying with the same recipient/body (what the panel's Retry button does) succeeds and adds a new sent entry", async () => {
   let createdSockets: ReturnType<typeof createFakeWhatsAppSocket>[] = [];
   await withServer(

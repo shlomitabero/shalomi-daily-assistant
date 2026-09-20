@@ -29,6 +29,7 @@ import { generateBackupZipEntries } from "../backup.js";
 import { buildZip } from "../zip.js";
 import { computeBusinessTwin } from "../twin.js";
 import type { WhatsAppWebManager } from "../whatsappWeb.js";
+import { findMatchingRecord } from "../whatsapp.js";
 
 const CreateProjectSchema = z.object({
   description: z.string().min(1, "description is required"),
@@ -362,12 +363,24 @@ export function createProjectsRouter(db: ForgeDatabase, provider: SpecProvider |
         throw new HttpError(409, "Connect WhatsApp before sending a message", "WHATSAPP_NOT_CONNECTED");
       }
       const result = await whatsapp.sendMessage(project.id, to, message);
+      // Mirrors the matching an incoming message gets (see
+      // WhatsAppWebManager.handleIncomingMessages): without this, the panel's
+      // own log rendering (which falls back to the matched label only when
+      // one is present, for either direction) always shows the raw phone
+      // number for a sent test message, even when `to` is a known customer's
+      // number. Only attempted once the project is actually built -- before
+      // that there is no real table behind any entity yet, and
+      // findMatchingRecord's listRecords call would throw "no such table".
+      const match = project.status === "built" ? findMatchingRecord(db, project, to) : null;
       insertWhatsAppMessage(db, {
         projectId: project.id,
         direction: "out",
         fromNumber: status.phoneNumber ?? "",
         toNumber: to,
         body: message,
+        matchedEntityName: match?.entityName ?? null,
+        matchedRecordId: match?.recordId ?? null,
+        matchedLabel: match?.label ?? null,
         status: result.ok ? "sent" : "failed",
       });
       if (!result.ok) {
