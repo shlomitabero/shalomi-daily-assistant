@@ -4440,6 +4440,60 @@ not a single "make it perfect" claim.
       Full suite green (357 tests, up from 356 — `@forge/web` 99 → 100) +
       both builds clean.
 
+- [x] **Round 79 (scheduled firing, no new message from שלומי): closed
+      several more file-level reads (`entityFormatting.ts` in full,
+      `domainEntities.ts` structurally, `heuristic.ts`, `anthropic.ts`) —
+      all clean, no new findings — then deliberately pivoted to the
+      standing, repeatedly-deferred prerequisite: real DOM test
+      infrastructure.** `entityFormatting.ts` (605 lines) had never been
+      read start-to-finish despite years of piecemeal fixes across many
+      rounds — a full read confirmed it's now genuinely solid, nothing
+      new. Wrote a structural check script for `domainEntities.ts` (1041
+      lines, likewise never read as a whole) verifying every declared
+      `entity.name` is unique across all 32 built-in entities, every
+      keyword is exclusive to one entity (no cross-entity ambiguity), and
+      every enum field's declared values have a matching Hebrew label
+      with no stray extras — all passed, zero issues. `heuristic.ts` and
+      `anthropic.ts` read clean too. This project has had zero DOM-
+      behavior test coverage since it started — every prior TSX-handler
+      test (rounds 75-78) worked around that by extracting a plain
+      function out of a `.tsx` file and running it via `new Function`
+      with mocked dependencies, which proves a function's own logic but
+      never actually renders anything, focuses anything, or dispatches a
+      real event. `useDialogFocusTrap` — the shared hook behind every
+      overlay panel (History, Business Twin, WhatsApp, GlobalSearch) that
+      traps Tab, moves focus in on mount, and restores it on unmount — is
+      exactly this kind of untestable code, and is also the direct
+      prerequisite for the accessibility fix flagged since round 46 and
+      deferred every time it came up (round 74 included) specifically for
+      lacking this. Added `jsdom` + `@testing-library/react` as
+      devDependencies and a real test for `useDialogFocusTrap`, proven
+      against actual rendering, actual `document.activeElement`, and
+      actual dispatched `KeyboardEvent`s. The test's own `withJsdom()`
+      helper swaps jsdom's `window`/`document`/`navigator`/etc. onto the
+      Node global scope for one test (the same approach
+      jest-environment-jsdom and vitest's jsdom environment use) via
+      `Object.defineProperty` rather than plain assignment — Node 22
+      defines its own read-only `navigator` global through a getter that
+      a bare `globalThis.navigator = ...` throws against — and waits one
+      macrotask tick before tearing the globals back down: React
+      re-throws any error caught while dispatching a DOM event
+      asynchronously via `setTimeout`, so without that wait such a
+      re-throw fires after the jsdom globals are already gone, surfacing
+      as a bare, misleading "window is not defined" instead of the real
+      error (confirmed by triggering exactly that before adding the
+      wait). Proved the test catches a real regression, not just "renders
+      without crashing": temporarily short-circuited the hook's
+      Tab-handling to a no-op, confirmed the test failed with Tab no
+      longer wrapping focus around, then restored the original file
+      (`git diff` came back empty). This round deliberately stops at the
+      infrastructure + one real test — the accessibility fix itself is
+      real, separable follow-up work now unblocked for a future round,
+      not something to rush into the same one. Full suite green (358
+      tests, up from 357 — `@forge/web` 100 → 101) with no stray async
+      errors in the full multi-file run, and both builds clean (needed
+      `@types/jsdom` to satisfy `tsc -b`, added alongside).
+
 ## Phase 3
 
 - Self-healing: production observability, automatic diagnosis and patch
