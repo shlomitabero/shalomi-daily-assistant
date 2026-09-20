@@ -4884,6 +4884,25 @@ not a single "make it perfect" claim.
       finally landed — a transient upstream outage, not anything in this
       repository or this session's own network setup.)
 
+- [x] **Added real-DOM send-test coverage for `WhatsAppPanel.tsx`.**
+      `handleSendTest`'s two typed text fields (recipient number, message
+      body) had never been exercised through a real render — only
+      `handleDisconnect`'s polling-resume logic had function-extraction
+      coverage. This is exactly the class of bug round 86's
+      `jsdomWarmup.ts` fix addresses. Types a real recipient/message into
+      the "connected" state's test-send form, submits it, and confirms the
+      *exact* typed values reach the real POST body `sendWhatsAppMessage`
+      sends (captured via a mocked `fetch`), not just the inputs' own DOM
+      `.value` — then confirms a successful send refreshes the message log
+      with the real server response. Regression-proven directly against
+      the fix it depends on: temporarily removed
+      `import "./jsdomWarmup.js";` and reran just this test — it failed
+      with `to: ''` instead of `'972521112233'` in the captured body, the
+      same failure mode documented in `jsdomWarmup.ts`'s own comment and
+      previously confirmed for `AuthScreen.test.ts`. Restored afterward,
+      `git diff` came back empty. Full suite green (378 tests, up from
+      377 — `@forge/web` 119 → 120) and both builds clean.
+
 ## Phase 3
 
 - Self-healing: production observability, automatic diagnosis and patch
