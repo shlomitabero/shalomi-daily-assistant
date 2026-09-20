@@ -105,3 +105,28 @@ test("useDialogFocusTrap moves focus into the dialog when it mounts, keeps Tab c
     assert.equal(document.activeElement, trigger, "closing the dialog must return focus to whatever triggered it");
   });
 });
+
+test("useDialogFocusTrap hides real sibling content from assistive tech while the dialog is mounted, and restores it on unmount", async () => {
+  await withJsdom(() => {
+    // A sibling of @testing-library's own render container -- standing in
+    // for the rest of the app (the topbar, the entity tabs, ...) that sits
+    // behind an overlay panel once one is open.
+    const restOfApp = document.createElement("main");
+    restOfApp.id = "rest-of-app";
+    document.body.appendChild(restOfApp);
+
+    const { unmount } = render(React.createElement(TestDialog));
+
+    assert.equal(
+      restOfApp.getAttribute("aria-hidden"),
+      "true",
+      "content behind the dialog must be aria-hidden while it's open",
+    );
+    assert.ok(restOfApp.hasAttribute("inert"), "content behind the dialog must be inert while it's open");
+
+    unmount();
+
+    assert.equal(restOfApp.hasAttribute("aria-hidden"), false, "aria-hidden must be lifted once the dialog closes");
+    assert.equal(restOfApp.hasAttribute("inert"), false, "inert must be lifted once the dialog closes");
+  });
+});

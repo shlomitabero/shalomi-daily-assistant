@@ -1,4 +1,5 @@
 import { useEffect, useRef } from "react";
+import { hideBackgroundFromAssistiveTech } from "./domInert.js";
 
 const FOCUSABLE_SELECTOR =
   'a[href], button:not([disabled]), textarea:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])';
@@ -10,8 +11,12 @@ const FOCUSABLE_SELECTOR =
  * This moves focus into the panel when it opens (unless something inside
  * it, like a search box's own autoFocus, already has focus), keeps
  * Tab/Shift+Tab cycling within the panel instead of leaking into the
- * (visually hidden but still focusable) content behind it, and returns
- * focus to whatever triggered the panel once it closes.
+ * (visually hidden but still focusable) content behind it, marks that
+ * background content inert/aria-hidden so a screen reader's virtual
+ * cursor can't reach it either (see domInert.ts -- Tab-trapping alone
+ * only blocks sequential keyboard navigation, not a screen reader's own
+ * swipe/arrow-key browsing of the page, which ignores tabindex entirely),
+ * and returns focus to whatever triggered the panel once it closes.
  */
 export function useDialogFocusTrap<T extends HTMLElement>() {
   const containerRef = useRef<T>(null);
@@ -30,6 +35,7 @@ export function useDialogFocusTrap<T extends HTMLElement>() {
     const container = containerRef.current;
     if (!container) return;
     const previouslyFocused = previouslyFocusedRef.current;
+    const restoreBackground = hideBackgroundFromAssistiveTech(container);
 
     function getFocusable(): HTMLElement[] {
       return Array.from(container!.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR));
@@ -70,6 +76,7 @@ export function useDialogFocusTrap<T extends HTMLElement>() {
     container.addEventListener("keydown", handleKeyDown);
     return () => {
       container.removeEventListener("keydown", handleKeyDown);
+      restoreBackground();
       previouslyFocused?.focus();
     };
   }, []);
