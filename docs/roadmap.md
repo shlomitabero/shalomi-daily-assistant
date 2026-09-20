@@ -4494,6 +4494,53 @@ not a single "make it perfect" claim.
       errors in the full multi-file run, and both builds clean (needed
       `@types/jsdom` to satisfy `tsc -b`, added alongside).
 
+- [x] **Round 80 (scheduled firing, no new message from שלומי): closed the
+      accessibility gap flagged since round 46 and repeatedly deferred
+      (round 74, round 79) for lacking real DOM test infrastructure —
+      round 79 built that infrastructure specifically to unblock this.**
+      Every overlay panel (History, Business Twin, WhatsApp,
+      GlobalSearch) already traps Tab within itself via
+      `useDialogFocusTrap`, but Tab-trapping only blocks *sequential
+      keyboard navigation* — it does nothing about a screen reader's own
+      virtual cursor (swipe/arrow-key browsing), which ignores tabindex
+      and DOM event listeners entirely and could still read and interact
+      with content that was only *visually* hidden behind an open
+      overlay. Added `domInert.ts`'s
+      `hideBackgroundFromAssistiveTech(dialogElement)`: walks from the
+      dialog up to (not including) `document.body`, and at every level
+      marks each sibling of the current node — everything NOT on the path
+      to the dialog — with the real `inert` DOM attribute plus
+      `aria-hidden`. React 18.3.1 (this project's version) has no JSX
+      `inert` prop (that landed in React 19), so this sets the attribute
+      directly via the DOM, the same way any plain-JS dialog library
+      would. Returns a cleanup function that restores exactly what it
+      changed: an element that already had `inert` set for an unrelated
+      reason keeps it, and one with a prior `aria-hidden` value gets that
+      value back rather than having the attribute stripped outright.
+      Wired into `useDialogFocusTrap` itself so all four panels get this
+      for free without each needing its own integration. Confirmed
+      empirically before relying on it: jsdom does NOT implement `inert`'s
+      actual browser behavior (focus/pointer blocking) — setting
+      `el.inert` via the IDL property is a silent no-op in jsdom — so the
+      fix and its tests use `setAttribute("inert", "")`/
+      `hasAttribute("inert")` throughout, the same content-attribute path
+      real browsers use to trigger that behavior via reflection; the
+      tests verify the correct attributes land on the correct elements
+      and get correctly lifted (the actual bug — content wasn't marked at
+      all), honestly not claiming to verify `inert`'s real focus-blocking,
+      which no test environment available to this project can currently
+      check. Regression-proven via `git stash -u` (`domInert.ts` is a new
+      file, so `-u` to include it as untracked): pre-fix code fails both
+      the new `domInert.test.ts` assertions and
+      `useDialogFocusTrap`'s new integration test ("content behind the
+      dialog must be aria-hidden while it's open" — `null !== 'true'`).
+      The exported standalone app (`codegen.ts`) has no dialog/focus-trap
+      infrastructure at all for its one overlay (global search) — a
+      separate, pre-existing gap this round's change doesn't touch or
+      worsen. Full suite green (361 tests, up from 358 — `@forge/web`
+      101 → 104) with no stray async errors in the full multi-file run,
+      and both builds clean.
+
 ## Phase 3
 
 - Self-healing: production observability, automatic diagnosis and patch
