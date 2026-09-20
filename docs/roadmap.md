@@ -4578,6 +4578,52 @@ not a single "make it perfect" claim.
       reports it again (or anything else), that becomes the top priority
       for whatever session sees it next, above all autonomous work.
 
+- [x] **Continued round 79's DOM test infrastructure into `AuthScreen.tsx`,
+      which had zero test coverage of any kind.** Its own comment explains
+      the mode-toggle button stays disabled while a signup/login request
+      is in flight, specifically so switching forms mid-request can't let
+      that request resolve and silently sign the user in under whichever
+      account they were trying to abandon. A plain function-extraction
+      test (this project's usual technique for TSX handlers before round
+      79) can check that the `disabled` attribute gets set, but can't
+      verify the actual contract that matters: a genuinely disabled HTML
+      button suppresses its click event entirely per spec, which only a
+      real DOM can prove. Renders the real `AuthScreen` wrapped in its
+      real `ThemeProvider`/`LanguageProvider`, submits the form with a
+      controllable mocked fetch, confirms both the submit and toggle
+      buttons are disabled, then confirms clicking the disabled toggle
+      button does nothing at all — the heading (driven by mode) stays
+      exactly as it was. Chased down a real footgun in this project's own
+      `withJsdom()` pattern along the way, worth remembering for future
+      test files that reuse it: using `new Promise(() => {})`
+      (permanently pending) to simulate an in-flight request leaves TWO
+      different things dangling past the end of the test —
+      `fetchApi`'s own real `setTimeout(REQUEST_TIMEOUT_MS)`, an active
+      OS-level timer never cleared since the fetch it's guarding never
+      settles, which alone kept the whole `node:test` process alive for
+      the full 3 minutes (confirmed directly: a foreground run with an
+      explicit shell-level timeout guard showed the individual tests
+      passing in ~150ms while the *process* still hadn't exited 20
+      seconds later); and the abandoned `await signup(...)` promise chain
+      itself, which `node:test`'s own runner flags on exit ("Promise
+      resolution is still pending but the event loop has already
+      resolved"). Reaching for `node:test`'s mock timers only traded one
+      failure mode for another (the mocked timer needs an explicit tick
+      that `withJsdom`'s own real-timer-based macrotask wait can't
+      provide without more plumbing). The fix that actually worked: a
+      *controllable* mock, resolved explicitly inside `act()` right after
+      the assertions that need it still pending, so every async chain the
+      test starts actually finishes before the test itself does. This is
+      a new test for already-correct existing code, not a bug fix in
+      `AuthScreen.tsx` itself — proven meaningful via the same technique
+      round 79 established for exactly this case: temporarily removed the
+      toggle button's `disabled={busy}`, confirmed the new test failed
+      with a precise assertion message, then restored the original file
+      (`git diff` came back empty). Full suite green (364 tests, up from
+      362 — `@forge/web` 105 → 107) with no stray async errors and a
+      clean process exit in the full multi-file run, and both builds
+      clean.
+
 ## Phase 3
 
 - Self-healing: production observability, automatic diagnosis and patch
