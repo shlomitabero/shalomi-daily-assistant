@@ -35,6 +35,21 @@ test("badgeTone falls back to neutral for anything unrecognized", () => {
   assert.equal(badgeTone("Some Freeform Value"), "neutral");
 });
 
+/**
+ * Regression test: the built-in InsuranceClaim domain entity's own status
+ * enum (spec-engine/domainEntities.ts) is exactly
+ * ["Submitted", "UnderReview", "Approved", "Denied", "Paid"] -- "Approved"
+ * already read as positive, but "Denied" (right next to it, an equally
+ * conclusive outcome) fell through to neutral gray, the same tone as the
+ * genuinely undecided "Submitted"/"UnderReview" states, since "denied" was
+ * missing from NEGATIVE_WORDS even though its synonym "rejected" (used by
+ * other entities, e.g. JobApplicant's own stage enum) was already there.
+ */
+test("badgeTone recognizes 'Denied' as negative, matching InsuranceClaim's real status enum", () => {
+  assert.equal(badgeTone("Denied"), "negative");
+  assert.equal(badgeTone("Approved"), "positive");
+});
+
 test("formatDateValue formats a valid ISO date per locale, and leaves an invalid one unchanged", () => {
   const result = formatDateValue("2026-03-15", "en");
   assert.match(result, /3\/15\/2026|15\/3\/2026/); // exact format is locale/engine-dependent, just confirm it parsed

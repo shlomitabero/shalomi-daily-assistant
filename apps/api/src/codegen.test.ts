@@ -1047,3 +1047,24 @@ test("render.yaml's service name is a safe slug even for a project name with spa
   const name = nameLine.split("name:")[1].trim();
   assert.match(name, /^[a-z0-9-]+$/, `render.yaml service name must be a safe slug, got: "${name}"`);
 });
+
+/**
+ * Regression test: the exported app's own badgeTone copy (a deliberate
+ * duplicate of apps/web/src/entityFormatting.ts's, per this codebase's
+ * "duplicate small formatting helpers per surface" pattern) had the same
+ * gap as the live-preview version -- the built-in InsuranceClaim domain
+ * entity's own status enum uses "Denied" right alongside "Approved", but
+ * only "Approved" read as a colored badge; "Denied" fell through to the
+ * same neutral gray as a genuinely undecided "Submitted"/"UnderReview"
+ * state. Runs the real generated badgeTone (extracted from real codegen
+ * output, not reimplemented here), not a reference copy.
+ */
+test("the exported EntityView's badgeTone classifies 'Denied' as negative, matching InsuranceClaim's real status enum", () => {
+  const entityViewJsx = generateExportFiles(project).find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+  const badgeToneSrc = entityViewJsx.match(/const POSITIVE_WORDS[\s\S]*?\nfunction badgeTone\(rawValue\) \{[\s\S]*?\n\}\n/)?.[0];
+  assert.ok(badgeToneSrc, "expected to find POSITIVE_WORDS/NEGATIVE_WORDS/badgeTone in generated output");
+
+  const badgeTone = new Function(`${badgeToneSrc}\nreturn badgeTone;`)() as (v: string) => string;
+  assert.equal(badgeTone("Denied"), "negative");
+  assert.equal(badgeTone("Approved"), "positive");
+});

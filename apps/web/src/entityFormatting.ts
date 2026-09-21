@@ -25,6 +25,13 @@ const NEGATIVE_WORDS = [
   "failed",
   "rejected",
   "declined",
+  // The built-in InsuranceClaim domain entity's own status enum (see
+  // spec-engine/domainEntities.ts) uses "Denied" right alongside "Approved"
+  // -- without this, a denied claim showed the same neutral gray badge as
+  // "Submitted"/"UnderReview" instead of reading as negative the way
+  // "Rejected" already does elsewhere, even though it's exactly as
+  // conclusive an outcome as "Approved" is positive.
+  "denied",
 ];
 
 const DATE_FORMAT = /^(\d{4})-(\d{2})-(\d{2})$/;

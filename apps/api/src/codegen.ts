@@ -685,7 +685,7 @@ function relationDisplayLabel(field, value, relatedRecords) {
 // own spec generator uses ("Won", "Lost", "Active", ...) and falls back to
 // neutral for anything else (e.g. a freeform value).
 const POSITIVE_WORDS = ["won", "completed", "active", "paid", "delivered", "success", "qualified", "shipped", "confirmed", "approved"];
-const NEGATIVE_WORDS = ["lost", "cancelled", "canceled", "inactive", "overdue", "no-show", "failed", "rejected", "declined"];
+const NEGATIVE_WORDS = ["lost", "cancelled", "canceled", "inactive", "overdue", "no-show", "failed", "rejected", "declined", "denied"];
 function badgeTone(rawValue) {
   const lower = String(rawValue).toLowerCase();
   if (POSITIVE_WORDS.some((w) => lower.includes(w))) return "positive";
