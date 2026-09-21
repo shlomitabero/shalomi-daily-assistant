@@ -5033,6 +5033,41 @@ not a single "make it perfect" claim.
       reset. Full suite green (381 tests, up from 380 — `@forge/web`
       121 → 122) and both builds clean.
 
+- [x] **Fixed a real bug: a denied insurance claim showed the same
+      neutral gray status badge as a genuinely undecided one.** Fourth
+      consecutive round (91-94) finding a real bug via full-file reading.
+      Read `apps/web/src/EntityPanel.tsx` (851 lines, the largest file in
+      the web app — clean; the select-all indeterminate checkbox, the
+      per-entity remount-via-`key` reset, and the bulk-delete/import
+      `Promise.allSettled` handling are all correctly done) end to end,
+      then its sibling `apps/web/src/entityFormatting.ts` (605 lines, the
+      shared formatting/parsing logic `EntityPanel.tsx` imports from) —
+      where `badgeTone` classifies a status enum's value into a badge
+      color by matching it against `POSITIVE_WORDS`/`NEGATIVE_WORDS`
+      keyword lists. Cross-checked every enum value the built-in domain
+      library (`spec-engine/domainEntities.ts`) actually uses against both
+      lists rather than only the values the function's own tests already
+      covered, and found one real miss: `InsuranceClaim`'s own status enum
+      is exactly `["Submitted", "UnderReview", "Approved", "Denied",
+      "Paid"]` — `"Approved"` already matched `POSITIVE_WORDS`, but
+      `"Denied"` (an equally conclusive outcome sitting right next to it)
+      fell through to the same neutral gray as the genuinely undecided
+      `"Submitted"`/`"UnderReview"` states, even though its synonym
+      `"rejected"` (used by other entities, e.g. `JobApplicant`'s own
+      stage enum) was already in `NEGATIVE_WORDS`. `apps/api/src/codegen.ts`
+      carries a deliberate duplicate copy of the same `badgeTone` for the
+      exported standalone app (this codebase's established "duplicate
+      small formatting helpers per surface" pattern) with the identical
+      gap. Fixed by adding `"denied"` to `NEGATIVE_WORDS` in both copies.
+      Regression-proven with `git stash` on both source files together: a
+      new `entityFormatting.test.ts` case failed against the old code
+      (`'neutral' !== 'negative'`) and passed once restored, and a
+      matching `codegen.test.ts` case extracted and ran the real generated
+      `badgeTone` (not a reference reimplementation) to prove the exported
+      app gets the identical fix. Full suite green (383 tests, up from
+      381 — `@forge/api` 118 → 119, `@forge/web` 122 → 123) and both
+      builds clean.
+
 ## Phase 3
 
 - Self-healing: production observability, automatic diagnosis and patch
