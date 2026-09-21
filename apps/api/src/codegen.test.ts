@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync, spawn } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { test } from "node:test";
@@ -58,6 +58,9 @@ test("generateExportFiles produces a real multi-file React (Vite) + Express proj
     "server.js",
     "vite.config.js",
     "web/index.html",
+    "web/public/icon.svg",
+    "web/public/manifest.json",
+    "web/public/sw.js",
     "web/src/App.jsx",
     "web/src/api.js",
     "web/src/components/EntityView.jsx",
@@ -1037,6 +1040,183 @@ test("the exported app's embedded buildZip sets the UTF-8 flag and rejects more 
 
   const tooMany = Array.from({ length: 65536 }, (_, i) => ({ path: `f${i}.txt`, content: "x" }));
   assert.throws(() => buildZip(tooMany), /Zip64/i);
+});
+
+// PWA support for the exported standalone app -- installable to a phone's
+// home screen, opening in its own window without browser chrome, and
+// staying usable through a flaky connection. Requested directly by שלומי
+// ("build a feature Claude doesn't have") after being asked to pick a
+// concrete direction: a real, installable app on her phone, not a browser
+// tab -- exactly what a web app manifest + service worker provide.
+
+test("generateExportFiles produces a real web app manifest naming the project, with standalone display and an SVG icon", () => {
+  const files = generateExportFiles(project);
+  const manifestFile = files.find((f) => f.path === "web/public/manifest.json");
+  assert.ok(manifestFile, "expected web/public/manifest.json in the export (Vite's publicDir, copied verbatim to dist/)");
+  const manifest = JSON.parse(manifestFile!.content);
+  assert.equal(manifest.name, project.name);
+  assert.equal(manifest.display, "standalone", "standalone display is what actually hides the browser chrome once installed");
+  assert.equal(manifest.start_url, "/");
+  assert.ok(manifest.icons.length > 0);
+  assert.ok(manifest.icons.every((icon: { src: string }) => icon.src === "/icon.svg"));
+
+  const iconFile = files.find((f) => f.path === "web/public/icon.svg")!;
+  assert.match(iconFile.content, /<svg[^>]*viewBox="0 0 192 192"/);
+  assert.match(iconFile.content, />B<\/text>/, "Beauty Clinic Manager's icon should show its initial, 'B'");
+});
+
+test("a very long project name gets a truncated short_name, so it doesn't get cut off unpredictably on a real home screen", () => {
+  const longNameProject: Project = { ...project, name: "The Complete Beauty and Wellness Clinic Management Platform" };
+  const files = generateExportFiles(longNameProject);
+  const manifest = JSON.parse(files.find((f) => f.path === "web/public/manifest.json")!.content);
+  assert.equal(manifest.name, longNameProject.name, "the full name is still kept for the install prompt/app-switcher");
+  assert.ok(manifest.short_name.length <= 14, `short_name should be truncated, got "${manifest.short_name}"`);
+});
+
+test("a Hebrew project name gets a Hebrew icon initial, not a mangled half-character from a raw UTF-16 index", () => {
+  const hebrewProject: Project = { ...project, name: "מספרת יופי" };
+  const files = generateExportFiles(hebrewProject);
+  const iconFile = files.find((f) => f.path === "web/public/icon.svg")!;
+  assert.match(iconFile.content, />מ<\/text>/);
+});
+
+test("the exported index.html links the manifest and icon, and sets a real theme-color", () => {
+  const html = generateExportFiles(project).find((f) => f.path === "web/index.html")!.content;
+  assert.match(html, /<link rel="manifest" href="\/manifest\.json" \/>/);
+  assert.match(html, /<meta name="theme-color" content="#d9622b" \/>/);
+  assert.match(html, /<link rel="apple-touch-icon" href="\/icon\.svg" \/>/);
+});
+
+test("main.jsx registers the service worker only after the app's own first render, and never lets a failed registration surface as an error", () => {
+  const mainJsx = generateExportFiles(project).find((f) => f.path === "web/src/main.jsx")!.content;
+  const renderIndex = mainJsx.indexOf("createRoot");
+  const registerIndex = mainJsx.indexOf("serviceWorker.register");
+  assert.ok(renderIndex !== -1 && registerIndex !== -1);
+  assert.ok(renderIndex < registerIndex, "registration must come after the render call, not block the app's first paint");
+  assert.match(mainJsx, /navigator\.serviceWorker\.register\("\/sw\.js"\)\.catch\(\(\) => \{\}\)/);
+});
+
+/**
+ * Regression-style behavioral test (not just a string match): runs the real
+ * generated service worker's fetch handler against a mocked self/caches/fetch,
+ * confirming a request to /api/* is never intercepted (no event.respondWith
+ * call at all -- the browser's own real network fetch runs untouched), while
+ * an ordinary static asset request IS intercepted and resolves to a real
+ * Response. A stale cached response for this app's own live business data
+ * (today's appointments, a customer list) would be actively wrong, not just
+ * out of date, so this is the one behavior that must never regress silently.
+ */
+test("the exported service worker's fetch handler never intercepts /api/ requests but does intercept ordinary static asset requests", async () => {
+  const swJs = generateExportFiles(project).find((f) => f.path === "web/public/sw.js")!.content;
+
+  const listeners: Record<string, (event: unknown) => void> = {};
+  const fakeSelf = {
+    addEventListener: (type: string, handler: (event: unknown) => void) => {
+      listeners[type] = handler;
+    },
+    skipWaiting: () => {},
+    clients: { claim: () => {} },
+  };
+  const fakeCaches = {
+    open: async () => ({ addAll: async () => {}, put: async () => {} }),
+    match: async () => undefined,
+    keys: async () => [],
+    delete: async () => {},
+  };
+  const fakeFetch = async () => new Response("ok", { status: 200 });
+
+  new Function("self", "caches", "fetch", swJs)(fakeSelf, fakeCaches, fakeFetch);
+  assert.ok(listeners.fetch, "expected the exported sw.js to register a fetch listener");
+
+  let apiRespondWithCalled = false;
+  listeners.fetch({
+    request: new Request("http://localhost/api/Customer"),
+    respondWith: () => {
+      apiRespondWithCalled = true;
+    },
+  });
+  assert.equal(apiRespondWithCalled, false, "an /api/ GET must never be intercepted with respondWith");
+
+  let assetResponsePromise: Promise<Response> | undefined;
+  listeners.fetch({
+    request: new Request("http://localhost/assets/index-abc123.js"),
+    respondWith: (p: Promise<Response>) => {
+      assetResponsePromise = p;
+    },
+  });
+  assert.ok(assetResponsePromise, "an ordinary static asset request must be intercepted");
+  const assetResponse = await assetResponsePromise!;
+  assert.equal(await assetResponse.text(), "ok");
+});
+
+/**
+ * The strongest proof this feature actually works: writes the FULL export
+ * (not just server.js, like the tests above) to a real directory, runs a
+ * real `vite build` (the exact command this export's own package.json
+ * promises), then spawns the real server.js and fetches /manifest.json,
+ * /icon.svg, and /sw.js from it -- confirming Vite's publicDir convention
+ * genuinely copies web/public/* to dist/* at the paths index.html/main.jsx
+ * actually reference, not just that the generated source strings look
+ * right in isolation.
+ */
+test("a real vite build of the exported app actually serves the manifest, icon, and service worker at the root paths the app references", async () => {
+  const files = generateExportFiles(project);
+  const dir = mkdtempSync(path.join(tmpdir(), "codegen-pwa-test-"));
+  const repoRoot = path.resolve(import.meta.dirname, "../../..");
+  symlinkSync(path.join(repoRoot, "node_modules"), path.join(dir, "node_modules"));
+  for (const file of files) {
+    const filePath = path.join(dir, file.path);
+    mkdirSync(path.dirname(filePath), { recursive: true });
+    writeFileSync(filePath, file.content);
+  }
+
+  try {
+    execFileSync(path.join(dir, "node_modules", ".bin", "vite"), ["build"], { cwd: dir, stdio: "pipe" });
+
+    const port = 34000 + Math.floor(Math.random() * 5000);
+    const child = spawn(process.execPath, ["--experimental-sqlite", "server.js"], {
+      cwd: dir,
+      env: { ...process.env, PORT: String(port) },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    let stderr = "";
+    child.stderr.on("data", (chunk) => {
+      stderr += chunk.toString();
+    });
+
+    try {
+      const deadline = Date.now() + 5000;
+      let lastErr: unknown;
+      while (Date.now() < deadline) {
+        if (child.exitCode !== null) {
+          throw new Error(`server.js exited early (code ${child.exitCode}):\n${stderr}`);
+        }
+        try {
+          const manifestRes = await fetch(`http://localhost:${port}/manifest.json`);
+          assert.equal(manifestRes.status, 200);
+          const manifest = await manifestRes.json();
+          assert.equal(manifest.name, project.name);
+
+          const iconRes = await fetch(`http://localhost:${port}/icon.svg`);
+          assert.equal(iconRes.status, 200);
+          assert.match(await iconRes.text(), /<svg/);
+
+          const swRes = await fetch(`http://localhost:${port}/sw.js`);
+          assert.equal(swRes.status, 200);
+          assert.match(await swRes.text(), /addEventListener\("fetch"/);
+          return;
+        } catch (err) {
+          lastErr = err;
+          await new Promise((r) => setTimeout(r, 150));
+        }
+      }
+      throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
+    } finally {
+      child.kill();
+    }
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test("render.yaml's service name is a safe slug even for a project name with spaces, punctuation, and Hebrew", () => {

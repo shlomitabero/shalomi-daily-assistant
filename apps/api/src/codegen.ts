@@ -33,6 +33,112 @@ function isHebrew(text: string): boolean {
   return /[֐-׿]/.test(text);
 }
 
+function escapeXml(value: string): string {
+  return value.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]!);
+}
+
+/**
+ * The character shown on the generated app icon -- `[...name][0]` (a
+ * code-point-aware iterator, not `name[0]`'s raw UTF-16 code unit) so a
+ * Hebrew letter or an emoji-led name doesn't split a surrogate pair into a
+ * broken half-character glyph.
+ */
+function appInitial(name: string): string {
+  const first = [...name.trim()][0] ?? "?";
+  return first.toUpperCase();
+}
+
+/**
+ * A single-letter app icon as inline SVG -- no image-generation dependency
+ * needed (this export's own "zero extra runtime dependency" promise), and
+ * SVG scales cleanly to whatever size a phone's home screen actually wants.
+ * Modern Android/iOS (16.4+) both accept an SVG manifest icon and
+ * apple-touch-icon directly; see renderWebIndexHtml's own comment for the
+ * one real gap this leaves (older iOS versions with no update path).
+ */
+function renderIconSvg(project: Project): string {
+  const initial = escapeXml(appInitial(project.name));
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 192 192">
+  <rect width="192" height="192" rx="40" fill="#d9622b" />
+  <text x="96" y="99" text-anchor="middle" dominant-baseline="central" font-family="-apple-system, 'Segoe UI', Roboto, sans-serif" font-size="104" font-weight="700" fill="#ffffff">${initial}</text>
+</svg>
+`;
+}
+
+/**
+ * The web app manifest that makes "Add to Home Screen"/"Install" available
+ * at all -- without it, the generated app is just a bookmarked website, the
+ * exact gap this feature closes (a real business owner installing their own
+ * AI-built app on their phone like any other app, not just a browser tab).
+ * `display: "standalone"` is what actually hides the browser chrome once
+ * installed.
+ */
+function renderManifestJson(project: Project): string {
+  const name = project.name.trim() || "Forge App";
+  return JSON.stringify(
+    {
+      name,
+      short_name: name.length > 14 ? `${name.slice(0, 13)}…` : name,
+      start_url: "/",
+      display: "standalone",
+      background_color: "#f6f2ea",
+      theme_color: "#d9622b",
+      icons: [
+        { src: "/icon.svg", sizes: "any", type: "image/svg+xml", purpose: "any" },
+        { src: "/icon.svg", sizes: "any", type: "image/svg+xml", purpose: "maskable" },
+      ],
+    },
+    null,
+    2,
+  );
+}
+
+/**
+ * A real, minimal service worker -- stale-while-revalidate for the app
+ * shell's own static files, so a flaky connection (the actual "works even
+ * on weak signal" promise of this feature) still shows the last-known UI
+ * instantly while a fresh copy loads in the background, with a cached
+ * index.html as the last-resort fallback for a fully offline navigation.
+ * Every `/api/*` request is deliberately never intercepted -- a stale
+ * cached response for this app's own live business data (a customer list,
+ * today's appointments) would be actively wrong, not just slightly out of
+ * date, so those must always hit the real network and surface a real
+ * failure rather than quietly serving stale records.
+ */
+function renderServiceWorkerJs(): string {
+  return `const CACHE_NAME = "app-shell-v1";
+
+self.addEventListener("install", (event) => {
+  event.waitUntil(caches.open(CACHE_NAME).then((cache) => cache.addAll(["/"])));
+  self.skipWaiting();
+});
+
+self.addEventListener("activate", (event) => {
+  event.waitUntil(
+    caches.keys().then((keys) => Promise.all(keys.filter((key) => key !== CACHE_NAME).map((key) => caches.delete(key)))),
+  );
+  self.clients.claim();
+});
+
+self.addEventListener("fetch", (event) => {
+  const { request } = event;
+  if (request.method !== "GET" || new URL(request.url).pathname.startsWith("/api/")) return;
+
+  event.respondWith(
+    caches.match(request).then((cached) => {
+      const network = fetch(request)
+        .then((response) => {
+          if (response.ok) caches.open(CACHE_NAME).then((cache) => cache.put(request, response.clone()));
+          return response;
+        })
+        .catch(() => cached || caches.match("/"));
+      return cached || network;
+    }),
+  );
+});
+`;
+}
+
 function renderPackageJson(project: Project): string {
   return JSON.stringify(
     {
@@ -546,6 +652,15 @@ function renderWebIndexHtml(project: Project): string {
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>${title}</title>
+<link rel="manifest" href="/manifest.json" />
+<meta name="theme-color" content="#d9622b" />
+<link rel="icon" href="/icon.svg" type="image/svg+xml" />
+<!-- apple-touch-icon technically wants a raster PNG on iOS versions before
+     16.4 (2023) -- an SVG here is a known, accepted gap rather than adding
+     an image-generation dependency to keep this a real trade-off, not an
+     overlooked one; every current iOS/Android/desktop browser installs
+     correctly from this SVG alone. -->
+<link rel="apple-touch-icon" href="/icon.svg" />
 </head>
 <body>
 <div id="root"></div>
@@ -566,6 +681,17 @@ createRoot(document.getElementById("root")).render(
     <App />
   </StrictMode>,
 );
+
+// Registered after the initial render, not before -- a failed/slow
+// registration must never block the app's own first paint. Also why this
+// swallows a rejection instead of surfacing it: a browser with no service
+// worker support (or one that blocks it, e.g. some in-app webviews) should
+// silently fall back to a normal, always-online page rather than error.
+if ("serviceWorker" in navigator) {
+  window.addEventListener("load", () => {
+    navigator.serviceWorker.register("/sw.js").catch(() => {});
+  });
+}
 `;
 }
 
@@ -1990,6 +2116,14 @@ export function generateExportFiles(project: Project): { path: string; content: 
     { path: "vite.config.js", content: renderViteConfig() },
     { path: "server.js", content: renderServerJs(project) },
     { path: "web/index.html", content: renderWebIndexHtml(project) },
+    // Under web/public/, not web/src/ -- Vite's default publicDir (relative
+    // to the "web" root vite.config.js declares) copies these verbatim into
+    // dist/ at build time, so they end up served at exactly the root paths
+    // (/manifest.json, /icon.svg, /sw.js) index.html/main.jsx reference,
+    // both in `vite dev` and after a real `vite build`.
+    { path: "web/public/manifest.json", content: renderManifestJson(project) },
+    { path: "web/public/icon.svg", content: renderIconSvg(project) },
+    { path: "web/public/sw.js", content: renderServiceWorkerJs() },
     { path: "web/src/main.jsx", content: renderMainJsx() },
     { path: "web/src/App.jsx", content: renderAppJsx(project) },
     { path: "web/src/api.js", content: renderApiJs() },
