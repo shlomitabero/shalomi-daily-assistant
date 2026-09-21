@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import { transformSync } from "esbuild";
-import type { AgentStepEvent } from "@forge/shared";
+import type { AgentStepEvent, Entity, Project } from "@forge/shared";
 import { summarizeRefineImpact } from "./App.js";
 
 const t = (key: string) => key;
@@ -107,4 +107,99 @@ test("App's openPanel closes every other overlay panel when opening one, instead
   assert.deepEqual(run("twin"), { history: false, twin: true, whatsapp: false, search: false });
   assert.deepEqual(run("whatsapp"), { history: false, twin: false, whatsapp: true, search: false });
   assert.deepEqual(run("search"), { history: false, twin: false, whatsapp: false, search: true });
+});
+
+function makeEntity(name: string): Entity {
+  return { name, fields: [{ name: "name", type: "text", required: true }] };
+}
+
+function makeProject(entities: Entity[]): Project {
+  return {
+    id: "proj1",
+    ownerId: "user1",
+    name: "Test Project",
+    description: "d",
+    spec: {
+      summary: "s",
+      personas: [],
+      roles: ["Admin"],
+      entities,
+      screens: [],
+      assumptions: [],
+      openQuestions: [],
+    },
+    status: "built",
+    createdAt: new Date().toISOString(),
+  };
+}
+
+/**
+ * Regression test: after a refine completes, handleBuildComplete kept
+ * whatever entity tab was active before the refine ran unconditionally
+ * (`setActiveEntity((prev) => prev ?? ...)` only falls back to the first
+ * entity when `prev` was null in the first place -- otherwise it always
+ * keeps `prev` as-is). A refine's regenerated spec is free to drop an
+ * entity the previous one had (e.g. an instruction like "remove deals
+ * tracking, focus on invoices"), so if the entity that was active before
+ * the refine isn't in the new spec at all, the preview pane's own
+ * `.filter((e) => e.name === activeEntity)` finds nothing -- the pane goes
+ * blank with no tab visibly selected, exactly the "stale activeEntity"
+ * failure mode handleLogout's own cleanup already guards against
+ * elsewhere in this same file, just not here.
+ */
+test("App's handleBuildComplete falls back to the first entity when the previously-active one was dropped by a refine, but keeps it when it's still present", () => {
+  const appSrc = readFileSync(new URL("./App.tsx", import.meta.url), "utf8");
+  const handlerMatch = appSrc.match(/ {2}function handleBuildComplete\(builtProject: Project\) \{[\s\S]*?\n {2}\}\n/);
+  assert.ok(handlerMatch, "expected to find handleBuildComplete in App.tsx");
+  const { code } = transformSync(handlerMatch![0], { loader: "ts" });
+
+  function runHandleBuildComplete(initialActiveEntity: string | null, builtProject: Project) {
+    let activeEntity: string | null = initialActiveEntity;
+    const fn = new Function(
+      "refineRunning",
+      "pendingRefineInstruction",
+      "refineEvents",
+      "t",
+      "summarizeRefineImpact",
+      "setRefineHistory",
+      "setProject",
+      "setActiveEntity",
+      "setRefineText",
+      "setAdditionalRequest",
+      "setRefineRunning",
+      "setView",
+      `${code}\nreturn handleBuildComplete;`,
+    )(
+      false, // refineRunning: false keeps this focused on the activeEntity logic itself, which runs unconditionally either way
+      { current: null },
+      { current: [] },
+      (key: string) => key,
+      summarizeRefineImpact,
+      () => {},
+      () => {},
+      (updater: string | null | ((prev: string | null) => string | null)) => {
+        activeEntity = typeof updater === "function" ? (updater as (prev: string | null) => string | null)(activeEntity) : updater;
+      },
+      () => {},
+      () => {},
+      () => {},
+      () => {},
+    ) as (builtProject: Project) => void;
+    fn(builtProject);
+    return activeEntity;
+  }
+
+  const rebuiltWithoutDeal = makeProject([makeEntity("Customer"), makeEntity("Invoice")]);
+  assert.equal(
+    runHandleBuildComplete("Deal", rebuiltWithoutDeal),
+    "Customer",
+    "a dropped active entity must fall back to the new spec's first entity, not stay stale",
+  );
+
+  const rebuiltWithCustomer = makeProject([makeEntity("Invoice"), makeEntity("Customer")]);
+  assert.equal(
+    runHandleBuildComplete("Customer", rebuiltWithCustomer),
+    "Customer",
+    "an active entity that's still present in the new spec must be kept, not reset to the first one",
+  );
 });

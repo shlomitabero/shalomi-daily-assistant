@@ -309,7 +309,18 @@ function AppContent() {
     }
     pendingRefineInstruction.current = null;
     setProject(builtProject);
-    setActiveEntity((prev) => prev ?? builtProject.spec.entities[0]?.name ?? null);
+    // A refine's regenerated spec is free to drop an entity the previous
+    // one had (the AI provider isn't guaranteed to keep every entity, e.g.
+    // an instruction like "remove deals tracking, focus on invoices" --
+    // see routes/projects.ts's own comment on /refine). Keeping the stale
+    // `prev` tab name in that case leaves the entity-tabs filter matching
+    // nothing (`.filter((e) => e.name === activeEntity)`), so the preview
+    // pane goes blank with no tab visibly selected until the user manually
+    // clicks another one -- the same "stale activeEntity" failure mode
+    // handleLogout's own cleanup below already guards against.
+    setActiveEntity((prev) =>
+      prev && builtProject.spec.entities.some((e) => e.name === prev) ? prev : (builtProject.spec.entities[0]?.name ?? null),
+    );
     setRefineText("");
     setAdditionalRequest("");
     setRefineRunning(false);
