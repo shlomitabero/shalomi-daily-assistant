@@ -5122,6 +5122,44 @@ not a single "make it perfect" claim.
       genuinely can. Full suite green (390 tests, up from 383 —
       `@forge/api` 119 → 126) and both builds clean.
 
+- [x] **Fixed a real bug: `GlobalSearchPanel.tsx`'s search could show
+      stale results from an older, slower query.** Back to the
+      full-file-reading discipline (rounds 91-94) after the PWA feature
+      request — this round's own note to itself paid off directly: read
+      `GlobalSearchPanel.tsx` (172 lines) specifically looking for the
+      *same* race-condition class already found and fixed twice this
+      session (`HistoryPanel.tsx`'s concurrent restore, `App.tsx`'s stale
+      `activeEntity`), and found a third instance. `runSearch` had no
+      guard against two overlapping calls: submitting a search, then
+      editing the query and submitting again before the first search's
+      own network round trip finished — a slow first search, or just an
+      impatient double-Enter (Enter falls through to a real form submit
+      whenever nothing is highlighted yet, which is the *normal* state
+      right after any search completes, since arrow keys are needed to
+      highlight a group first) — started a second, independent
+      `runSearch` call while the first was still in flight. Nothing
+      stopped the first (now-stale) call's own `setResults` from running
+      *after* the second (newer) call's `setResults` had already updated
+      the screen, silently replacing the correct, current results with
+      stale ones for a query the user had already moved past — no error,
+      no visible sign anything had raced, just the wrong data on screen.
+      Fixed with a request-generation counter (`searchRequestId`, a
+      `useRef` bumped once per `runSearch` call): after its own network
+      round trip, a call checks whether a newer call has already started
+      before applying its results, discarding itself silently if so — the
+      exact same shape of fix already used for `HistoryPanel.tsx`'s
+      version of this bug. Regression-proven with `git stash` on
+      `GlobalSearchPanel.tsx` alone: a new, *deterministic* (not
+      timing-based) test using this file's own established
+      `esbuild.transformSync` + `new Function` extraction technique holds
+      the first search's `listRecords` call open past the second search's
+      own completion, then only resolves it afterward — failed against
+      the old code (the stale call's `setResults` fired a second time,
+      `2 !== 1`) and passed once the fix was restored, alongside a further
+      case confirming the fresh results were applied correctly in the
+      first place. Full suite green (391 tests, up from 390 —
+      `@forge/web` 123 → 124) and both builds clean.
+
 ## Phase 3
 
 - Self-healing: production observability, automatic diagnosis and patch
