@@ -55,12 +55,21 @@ export function WhatsAppPanel({ projectId, onClose }: { projectId: string; onClo
   // would otherwise resolve afterward and overwrite the fresh state with
   // its now-stale "connected" payload. See stopConnectedPolling below.
   const cancelInFlightConnectedCheckRef = useRef<(() => void) | null>(null);
+  // The same guard as cancelInFlightConnectedCheckRef above, for this
+  // panel's *other* poll: startPolling's own getWhatsAppStatus call can
+  // already be in flight when the user disconnects (or reconnects) mid-QR-
+  // wait, and clearInterval alone doesn't stop that one call from resolving
+  // afterward and overwriting the fresh, correct state with a stale
+  // "connecting"/"qr" payload.
+  const cancelInFlightPollRef = useRef<(() => void) | null>(null);
 
   function stopPolling() {
     if (pollRef.current) {
       clearInterval(pollRef.current);
       pollRef.current = null;
     }
+    cancelInFlightPollRef.current?.();
+    cancelInFlightPollRef.current = null;
   }
 
   function stopConnectedPolling() {
@@ -113,9 +122,14 @@ export function WhatsAppPanel({ projectId, onClose }: { projectId: string; onClo
   function startPolling() {
     stopPolling();
     pollFailuresRef.current = 0;
+    let cancelled = false;
+    cancelInFlightPollRef.current = () => {
+      cancelled = true;
+    };
     pollRef.current = setInterval(async () => {
       try {
         const next = await getWhatsAppStatus(projectId);
+        if (cancelled) return;
         pollFailuresRef.current = 0;
         setStatus(next);
         if (next.status === "connected" || next.status === "disconnected") {
@@ -127,6 +141,7 @@ export function WhatsAppPanel({ projectId, onClose }: { projectId: string; onClo
           }
         }
       } catch (err) {
+        if (cancelled) return;
         // A lone failed poll is likely transient -- keep trying instead of
         // stranding the user with a QR code that never updates again.
         // Only give up, and say so, after several in a row fail.

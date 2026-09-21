@@ -129,6 +129,99 @@ test("WhatsAppPanel's handleDisconnect does not resume connected-polling after a
   assert.equal(startConnectedPollingCalls, 0, "a genuinely successful disconnect must not resume connected-polling");
 });
 
+/**
+ * Regression test: unlike startConnectedPolling (which already guards
+ * against this via cancelInFlightConnectedCheckRef), startPolling's own
+ * getWhatsAppStatus call had no protection against a call already in
+ * flight when stopPolling() runs (from handleDisconnect, or a fresh
+ * handleConnect while still mid-QR-wait) -- clearInterval only stops
+ * *future* ticks, so that one already-in-flight request would still
+ * resolve afterward and call setStatus with its now-stale "connecting"/
+ * "qr" payload, silently clobbering whatever correct status was set in
+ * the meantime. Extracts the real stopPolling + startPolling from
+ * WhatsAppPanel.tsx (not stopConnectedPolling/startConnectedPolling,
+ * which startPolling only references as a free variable here), injects a
+ * fake setInterval that captures the tick callback for manual, synchronous
+ * control instead of waiting on real 1.5s timers, and a controllable
+ * getWhatsAppStatus mock to hold one request open past an external
+ * stopPolling() call.
+ */
+test("WhatsAppPanel's startPolling discards a getWhatsAppStatus response that resolves after stopPolling() was already called", async () => {
+  const stopMatch = whatsAppPanelSrc.match(/ {2}function stopPolling\(\) \{[\s\S]*?\n {2}\}\n/);
+  const startMatch = whatsAppPanelSrc.match(/ {2}function startPolling\(\) \{[\s\S]*?\n {2}\}\n/);
+  assert.ok(stopMatch, "expected to find stopPolling in WhatsAppPanel.tsx");
+  assert.ok(startMatch, "expected to find startPolling in WhatsAppPanel.tsx");
+  const { code } = transformSync(`${stopMatch![0]}\n${startMatch![0]}`, { loader: "ts" });
+
+  let tickFn: (() => Promise<void>) | undefined;
+  const fakeSetInterval = ((fn: () => Promise<void>) => {
+    tickFn = fn;
+    return 1 as unknown as ReturnType<typeof setInterval>;
+  }) as typeof setInterval;
+  const fakeClearInterval = (() => {
+    tickFn = undefined;
+  }) as typeof clearInterval;
+
+  let resolveGetStatus!: (value: { status: string }) => void;
+  const heldStatus = new Promise((resolve) => {
+    resolveGetStatus = resolve;
+  });
+  const capturedStatuses: unknown[] = [];
+
+  const pollRef = { current: null as unknown };
+  const cancelInFlightPollRef = { current: null as (() => void) | null };
+  const pollFailuresRef = { current: 0 };
+
+  const { stopPolling, startPolling } = new Function(
+    "pollRef",
+    "cancelInFlightPollRef",
+    "pollFailuresRef",
+    "setInterval",
+    "clearInterval",
+    "getWhatsAppStatus",
+    "setStatus",
+    "listWhatsAppMessages",
+    "setMessages",
+    "startConnectedPolling",
+    "setLoadError",
+    "MAX_CONSECUTIVE_POLL_FAILURES",
+    "POLL_INTERVAL_MS",
+    "projectId",
+    `${code}\nreturn { stopPolling, startPolling };`,
+  )(
+    pollRef,
+    cancelInFlightPollRef,
+    pollFailuresRef,
+    fakeSetInterval,
+    fakeClearInterval,
+    () => heldStatus,
+    (next: unknown) => {
+      capturedStatuses.push(next);
+    },
+    async () => ({ messages: [] }),
+    () => {},
+    () => {},
+    () => {},
+    5,
+    1500,
+    "proj1",
+  ) as { stopPolling: () => void; startPolling: () => void };
+
+  startPolling();
+  assert.ok(tickFn, "expected startPolling to register an interval callback");
+  const tickPromise = tickFn!();
+
+  // Simulate the external stopPolling() call a real handleDisconnect (or a
+  // fresh handleConnect) makes while this tick's own getWhatsAppStatus is
+  // still in flight.
+  stopPolling();
+
+  resolveGetStatus({ status: "qr" });
+  await tickPromise;
+
+  assert.deepEqual(capturedStatuses, [], "a status that resolves after stopPolling() must never reach setStatus");
+});
+
 /** Same jsdom-swap technique as useDialogFocusTrap.test.ts/EntityPanel.test.ts. */
 async function withJsdom<T>(fn: () => Promise<T> | T): Promise<T> {
   const dom = new JSDOM("<!doctype html><html><body></body></html>", { url: "http://localhost/" });
