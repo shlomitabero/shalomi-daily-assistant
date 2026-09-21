@@ -5160,6 +5160,45 @@ not a single "make it perfect" claim.
       first place. Full suite green (391 tests, up from 390 —
       `@forge/web` 123 → 124) and both builds clean.
 
+- [x] **Fixed a real bug: `WhatsAppPanel.tsx`'s fast QR-waiting poll had
+      no protection against a stale in-flight status check — the same
+      race pattern that its own sibling poll, one function away in the
+      same file, already guards against.** Sixth consecutive round
+      (91-96) finding a genuine bug, and the fourth instance of the exact
+      same race-condition class this session keeps finding
+      (`HistoryPanel.tsx`'s concurrent restore, `App.tsx`'s stale
+      `activeEntity`, `GlobalSearchPanel.tsx`'s stale search) — this time
+      inside a file that had *already* fixed this exact problem for one
+      of its two polling loops but not the other. `startConnectedPolling`
+      (the slow background "is WhatsApp still linked" poll) guards its
+      own `getWhatsAppStatus` call with `cancelInFlightConnectedCheckRef`,
+      whose own comment spells out precisely why: `clearInterval` only
+      stops *future* ticks, so a status fetch already in flight when the
+      user disconnects (or reconnects) keeps running and would otherwise
+      resolve afterward and overwrite the fresh state with its own stale
+      payload. `startPolling` (the fast QR-waiting poll) calls the exact
+      same `getWhatsAppStatus`, is stopped by the exact same
+      `handleConnect`/`handleDisconnect` call sites — but never got the
+      same guard. Without it, a `getWhatsAppStatus` call already in
+      flight when `stopPolling()` runs still resolves afterward and calls
+      `setStatus` with its now-stale `"connecting"`/`"qr"` payload,
+      silently clobbering whatever correct status (e.g. a genuinely
+      successful disconnect) was set in the meantime — no error, no
+      visible sign anything raced, just the wrong status shown. Fixed
+      with the identical `cancelInFlightPollRef` pattern
+      `cancelInFlightConnectedCheckRef` already established two functions
+      away in this same file. Regression-proven with `git stash` on
+      `WhatsAppPanel.tsx` alone: extracted the real `stopPolling` +
+      `startPolling` via this file's own established
+      `esbuild.transformSync` + `new Function` technique, injected a fake
+      `setInterval` to capture the tick callback for manual, synchronous
+      control instead of waiting on real 1.5s timers, and a controllable
+      `getWhatsAppStatus` mock held open past an external `stopPolling()`
+      call — failed against the old code (`setStatus` was called with the
+      stale `{status: "qr"}` payload) and passed once the fix was
+      restored. Full suite green (392 tests, up from 391 — `@forge/web`
+      124 → 125) and both builds clean.
+
 ## Phase 3
 
 - Self-healing: production observability, automatic diagnosis and patch
