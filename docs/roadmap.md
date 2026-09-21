@@ -4949,6 +4949,48 @@ not a single "make it perfect" claim.
       green (379 tests, up from 378 — `@forge/api` 117 → 118) and both
       builds clean.
 
+- [x] **Fixed a real bug: `HistoryPanel.tsx` let two Time Machine
+      restores race each other.** Continuing the same read-the-code
+      discipline from the previous round (checkpoint restore/export/
+      backup routes in `routes/projects.ts`, `backup.ts`, `zip.ts`,
+      `packages/db/src/{checkpoints,projects,users}.ts`,
+      `packages/shared/src/index.ts`'s `ProductSpecSchema`), most of it
+      held up — the additive-only-migration safety net, the case-
+      insensitive entity-name collision guard, and the append-only-schema
+      discipline on stored specs are all already exactly as careful as
+      earlier rounds' comments describe. `HistoryPanel.tsx` and
+      `BusinessTwinPanel.tsx` had never received any test coverage at all
+      (not even function-extraction), so this round read both closely —
+      `BusinessTwinPanel.tsx` is pure read-only rendering with nothing to
+      find, but `HistoryPanel.tsx`'s restore button only disabled the one
+      row matching the in-flight `busyId`
+      (`disabled={busyId === checkpoint.id}`), leaving every *other*
+      checkpoint's restore button clickable while a restore request was
+      still pending. Clicking a second checkpoint's button in that window
+      fired a second, concurrent `restoreCheckpoint` request — whichever
+      response landed last would silently overwrite the other's result via
+      `onRestored`, with no error and no visible sign anything had raced.
+      Fixed by disabling every restore button while *any* restore is in
+      flight (`disabled={busyId !== null}`) — confirmed empirically first,
+      with a standalone script, that a disabled button's `fireEvent.click`
+      never reaches React's `onClick` in this project's jsdom setup, so
+      the fix genuinely prevents the second request rather than just
+      hiding a button that still worked underneath. Regression-proven with
+      `git stash` on `HistoryPanel.tsx` alone: a new `HistoryPanel.test.ts`
+      (the project's first real-DOM coverage for this file) holds the
+      first checkpoint's restore request open, clicks the second
+      checkpoint's restore button, and asserts the second request never
+      fires — failed against the old code (the second request *did* fire)
+      and passed once the fix was restored. Also had to guard the test's
+      own held-open fetch mock in a `finally` (resolve it if the
+      assertions above threw first) to avoid leaking the real, un-mocked
+      180s `REQUEST_TIMEOUT_MS` timer `api.ts`'s `request()` starts —
+      confirmed by first hitting that exact hang against the old code
+      before adding the guard, the same "permanently-pending fetch mock"
+      footgun documented from earlier rounds, now also proven from the
+      failure side, not just avoided. Full suite green (380 tests, up
+      from 379 — `@forge/web` 120 → 121) and both builds clean.
+
 ## Phase 3
 
 - Self-healing: production observability, automatic diagnosis and patch
