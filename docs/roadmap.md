@@ -4991,6 +4991,48 @@ not a single "make it perfect" claim.
       failure side, not just avoided. Full suite green (380 tests, up
       from 379 — `@forge/web` 120 → 121) and both builds clean.
 
+- [x] **Fixed a real bug: `App.tsx` could leave the preview pane blank
+      after a refine dropped the active entity.** Third consecutive round
+      (91, 92, 93) finding a genuine bug via full-file reading rather than
+      generating new coverage for already-correct code. This round read
+      `apps/api/src/auth/{middleware,password}.ts` and
+      `apps/api/src/routes/auth.ts` (all clean — the timing-attack guard
+      on login, the case-insensitive email normalization, and the
+      scrypt/timingSafeEqual password verification are all exactly as
+      careful as their own comments describe) and `apps/web/src/api.ts`
+      (470 lines, also clean) before landing on `App.tsx`, the 637-line
+      file that wires every screen together and had never been read as a
+      whole. `handleBuildComplete` — the shared completion handler for
+      both the very first build and every subsequent refine — set the
+      active entity tab with `setActiveEntity((prev) => prev ?? ...)`:
+      that only falls back to the rebuilt spec's first entity when `prev`
+      was `null` (the first build), so once a tab was ever selected it
+      stayed selected across every future refine, unconditionally — even
+      when the refine's regenerated spec no longer contains that entity
+      at all. A refine instruction like "remove deals tracking, focus on
+      invoices" is a perfectly ordinary thing to ask for and a real spec
+      provider (see `routes/projects.ts`'s own `/refine` comment) is free
+      to actually drop the entity in response — when that happens, the
+      preview pane's own `.filter((e) => e.name === activeEntity)` finds
+      nothing, so the pane goes blank with no tab visibly selected until
+      the user manually clicks another one. This is the *exact* "stale
+      activeEntity" failure mode `handleLogout`'s own cleanup in this same
+      file already explicitly guards against (its comment describes this
+      precise scenario) — just not applied to the refine-completion path
+      where it can also happen. Fixed by keeping `prev` only when it's
+      still present in the rebuilt spec's entities, falling back to the
+      first entity otherwise (matching the very first build's own
+      behavior). Regression-proven with `git stash` on `App.tsx` alone:
+      extracted the real `handleBuildComplete` via the same
+      `esbuild.transformSync` + `new Function` technique this file's own
+      `openPanel` test already established, ran it with a previously-
+      active entity absent from the rebuilt spec — failed against the old
+      code (`'Deal' !== 'Customer'`, stayed on the dropped tab) and passed
+      once the fix was restored, while a second case confirmed a
+      still-present active entity is correctly kept rather than needlessly
+      reset. Full suite green (381 tests, up from 380 — `@forge/web`
+      121 → 122) and both builds clean.
+
 ## Phase 3
 
 - Self-healing: production observability, automatic diagnosis and patch
