@@ -66,10 +66,16 @@ export function HistoryPanel({
                     {t("history.screenCount", { count: checkpoint.spec.entities.length })}
                   </div>
                 </div>
+                {/* Disabled while ANY restore is in flight, not just this
+                    row's own -- otherwise clicking a second checkpoint's
+                    button while the first restore is still pending fires a
+                    second concurrent restoreCheckpoint request, and
+                    whichever response lands last silently overwrites the
+                    other's result via onRestored. */}
                 <button
                   type="button"
                   onClick={() => handleRestore(checkpoint.id)}
-                  disabled={busyId === checkpoint.id}
+                  disabled={busyId !== null}
                 >
                   {busyId === checkpoint.id ? t("history.restore.busy") : t("history.restore")}
                 </button>
