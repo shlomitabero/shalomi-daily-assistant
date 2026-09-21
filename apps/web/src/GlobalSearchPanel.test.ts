@@ -52,6 +52,7 @@ test("GlobalSearchPanel's runSearch shows results from every entity that succeed
     "setResults",
     "setSearched",
     "setSelectedIndex",
+    "searchRequestId",
     `${code}\nreturn runSearch;`,
   )(
     [entityA, entityB, entityC],
@@ -71,6 +72,7 @@ test("GlobalSearchPanel's runSearch shows results from every entity that succeed
     },
     () => {},
     () => {},
+    { current: 0 },
   ) as (q: string) => Promise<void>;
 
   await fn("match");
@@ -106,6 +108,7 @@ test("GlobalSearchPanel's runSearch still surfaces the raw error message when ev
     "setResults",
     "setSearched",
     "setSelectedIndex",
+    "searchRequestId",
     `${code}\nreturn runSearch;`,
   )(
     [entityA],
@@ -122,11 +125,101 @@ test("GlobalSearchPanel's runSearch still surfaces the raw error message when ev
     () => {},
     () => {},
     () => {},
+    { current: 0 },
   ) as (q: string) => Promise<void>;
 
   await fn("match");
 
   assert.equal(capturedError, rejection.message);
+});
+
+/**
+ * Regression test: runSearch had no guard against two overlapping calls --
+ * submitting a search, then editing the query and submitting again before
+ * the first search's network round trip finished (a realistic case: a slow
+ * first search, or just an impatient double-Enter) started a second,
+ * independent runSearch call while the first was still in flight. Nothing
+ * stopped the FIRST (now stale) call's own setResults from running after
+ * the second (newer, more recent) call's setResults already updated the
+ * screen, silently replacing the correct, current results with stale ones
+ * for a query the user had already moved past -- the same class of race
+ * this session already found and fixed in HistoryPanel.tsx's concurrent
+ * restore and App.tsx's stale activeEntity. Deterministic, not timing-based:
+ * holds the FIRST search's listRecords call open past the SECOND search's
+ * own completion, then only resolves it afterward, to prove the late
+ * arrival can't clobber the newer result.
+ */
+test("GlobalSearchPanel's runSearch ignores a stale, still-in-flight search's results once a newer search has already completed", async () => {
+  const handlerMatch = globalSearchPanelSrc.match(/ {2}async function runSearch\(q: string\) \{[\s\S]*?\n {2}\}\n/);
+  const { code } = transformSync(handlerMatch![0], { loader: "ts" });
+
+  const entityA = { name: "Alpha", label: "Alpha", fields: [] };
+
+  function fakeSearchEntityRecords(entity: { name: string; label: string }, records: unknown[]) {
+    return { entityName: entity.name, entityLabel: entity.label, totalMatches: records.length, sample: records };
+  }
+
+  let listRecordsCallCount = 0;
+  let resolveFirstCall!: () => void;
+  const firstCallHeld = new Promise<void>((resolve) => {
+    resolveFirstCall = resolve;
+  });
+
+  const capturedResultsByCall: unknown[][] = [];
+  const searchRequestId = { current: 0 };
+
+  const fn = new Function(
+    "entities",
+    "projectId",
+    "listRecords",
+    "searchEntityRecords",
+    "t",
+    "setLoading",
+    "setError",
+    "setResults",
+    "setSearched",
+    "setSelectedIndex",
+    "searchRequestId",
+    `${code}\nreturn runSearch;`,
+  )(
+    [entityA],
+    "proj1",
+    async () => {
+      listRecordsCallCount += 1;
+      if (listRecordsCallCount === 1) {
+        await firstCallHeld; // the stale "first" search's own network call stays open
+        return { records: [{ id: 1, name: "stale-result" }] };
+      }
+      return { records: [{ id: 2, name: "fresh-result" }] };
+    },
+    fakeSearchEntityRecords,
+    (key: string) => key,
+    () => {},
+    () => {},
+    (results: unknown[]) => {
+      capturedResultsByCall.push(results);
+    },
+    () => {},
+    () => {},
+    searchRequestId,
+  ) as (q: string) => Promise<void>;
+
+  const stalePromise = fn("first query");
+  await Promise.resolve(); // let the stale call actually start and reach its held-open listRecords call
+  const freshPromise = fn("second query");
+  await freshPromise;
+
+  assert.equal(capturedResultsByCall.length, 1, "the fresh (second) search must have applied its own results");
+  assert.deepEqual((capturedResultsByCall[0][0] as { sample: unknown[] }).sample, [{ id: 2, name: "fresh-result" }]);
+
+  resolveFirstCall();
+  await stalePromise;
+
+  assert.equal(
+    capturedResultsByCall.length,
+    1,
+    "the stale (first) search resolving afterward must never call setResults again and overwrite the fresh results",
+  );
 });
 
 /** Same jsdom-swap technique as useDialogFocusTrap.test.ts/EntityPanel.test.ts. */

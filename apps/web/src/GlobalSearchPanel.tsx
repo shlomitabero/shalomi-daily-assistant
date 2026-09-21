@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import type { Entity, EntityRecord } from "@forge/shared";
 import { listRecords } from "./api.js";
 import { recordDisplayLabel, searchEntityRecords, type EntitySearchResult } from "./entityFormatting.js";
@@ -31,6 +31,11 @@ export function GlobalSearchPanel({
   const [searched, setSearched] = useState(false);
   const [selectedIndex, setSelectedIndex] = useState<number | null>(null);
   const dialogRef = useDialogFocusTrap<HTMLDivElement>();
+  // Bumped once per runSearch call, so a stale search whose network round
+  // trip just happens to take longer than a newer one's can recognize
+  // itself as superseded (see the guard right after the await below)
+  // instead of overwriting the newer, still-correct results on screen.
+  const searchRequestId = useRef(0);
 
   // Promise.allSettled rather than Promise.all: a single entity whose
   // records fail to load (a transient network blip, a cold-starting
@@ -45,6 +50,7 @@ export function GlobalSearchPanel({
       setSelectedIndex(null);
       return;
     }
+    const requestId = ++searchRequestId.current;
     setLoading(true);
     setError(null);
     const settled = await Promise.allSettled(
@@ -53,6 +59,13 @@ export function GlobalSearchPanel({
         return searchEntityRecords(entity, records, q);
       }),
     );
+    // A later call to runSearch (the user editing/resubmitting the query
+    // before this one's own network round trip finished) has already
+    // bumped searchRequestId past what this call captured -- applying
+    // this call's results now would silently replace the newer, correct
+    // ones on screen with stale ones for a query the user has already
+    // moved past.
+    if (searchRequestId.current !== requestId) return;
     const succeeded = settled
       .filter((r): r is PromiseFulfilledResult<EntitySearchResult | null> => r.status === "fulfilled")
       .map((r) => r.value);
