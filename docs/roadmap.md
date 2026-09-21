@@ -5068,6 +5068,60 @@ not a single "make it perfect" claim.
       381 — `@forge/api` 118 → 119, `@forge/web` 122 → 123) and both
       builds clean.
 
+- [x] **Made the exported standalone app installable as a real PWA.**
+      Direct request from שלומי — "build a feature Claude doesn't have" —
+      clarified (she picked from a short set of concrete options) to: the
+      app she builds should install on her phone's home screen like a
+      real app, not stay a browser tab. Added the three pieces a browser
+      actually checks before offering "Add to Home Screen"/"Install", to
+      `apps/api/src/codegen.ts`'s export output:
+      `web/public/manifest.json` (name/truncated `short_name`,
+      `display: "standalone"` — what actually hides the browser chrome
+      once installed — theme/background colors matching the exported
+      app's own palette, an SVG icon); `web/public/icon.svg` (a
+      single-letter icon from the project name's own first character,
+      taken via a code-point-aware iterator so a Hebrew letter or an
+      emoji-led name can't split into a broken half-glyph — no
+      image-generation dependency needed, keeping this export's "zero
+      extra runtime dependency" promise); `web/public/sw.js` (a real
+      stale-while-revalidate service worker for static assets, with a
+      cached-`index.html` fallback for offline navigation, so a weak
+      connection — the other half of what she asked for — still shows
+      the last-known UI instantly instead of a blank failed load).
+      `/api/*` requests are deliberately never intercepted by the service
+      worker: a stale cached response for this app's own live business
+      data — today's appointments, a customer list — would be actively
+      wrong, not just out of date. `web/index.html` links the manifest
+      and icon and sets `theme-color`; `main.jsx` registers the service
+      worker only after the app's own first render (never blocks first
+      paint) and swallows a failed registration, so a webview with no SW
+      support falls back to ordinary always-online behavior instead of
+      erroring. These live under `web/public/`, not `web/src/` — Vite's
+      default `publicDir` (relative to the `"web"` root `vite.config.js`
+      already declares) copies them verbatim into `dist/` at build time,
+      landing at exactly the root paths (`/manifest.json`, `/icon.svg`,
+      `/sw.js`) `index.html`/`main.jsx` reference. Verified genuinely
+      end-to-end, not just via generated-source string matching: one new
+      test runs the real generated service worker's `fetch` handler
+      against a mocked `self`/`caches`/`fetch` to prove an `/api/`
+      request is never intercepted (no `respondWith` call at all) while
+      an ordinary static asset request is; another writes the *entire*
+      export (not just `server.js`, unlike this file's other spawn-based
+      tests) to a real temp directory, runs an actual `vite build` (the
+      exact command this export's own `package.json` promises), spawns
+      the real `server.js`, and fetches `/manifest.json`, `/icon.svg`,
+      and `/sw.js` from it — confirming Vite's `publicDir` convention
+      genuinely wires the files through, not just that the generated
+      source looks right in isolation. Scoped to the exported/self-hosted
+      app specifically, not Forge AI's own shared live-preview `apps/web`
+      — that single SPA has no per-project route at all (no
+      `react-router`, just client-side view state reset to the home
+      screen on load), so a manifest on it could only ever install one
+      generic "Forge AI" icon that always opens to the wrong screen,
+      never a specific business's own app the way the exported deploy
+      genuinely can. Full suite green (390 tests, up from 383 —
+      `@forge/api` 119 → 126) and both builds clean.
+
 ## Phase 3
 
 - Self-healing: production observability, automatic diagnosis and patch
