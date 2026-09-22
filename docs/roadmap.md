@@ -5666,6 +5666,46 @@ not a single "make it perfect" claim.
       `git diff` on `users.ts`. Full suite green (420 tests, up from 419
       — `@forge/api` 141 → 142) and both builds clean.
 
+- [x] **Real production incident, reported live by שלומי: "לא מצליח ליישם
+      בקשה, רושם שגיאה שרת עמוס" ("can't get a request through, shows a
+      'server busy' error") — a direct consequence of this session's own
+      round 106-107 work, found and fixed the same session.** The new
+      `PIPELINE_IN_PROGRESS` code (added in round 106 to guard concurrent
+      `/build`/`/refine`/`/answers` calls) and the pre-existing
+      `ALREADY_BUILT` code both had **no entry at all** in
+      `apps/web/src/i18n/language.ts`'s translation dictionary —
+      `resolveErrorMessage` silently falls back to the raw English
+      `error` string for any unrecognized code, so on her Hebrew-first
+      UI she saw untranslated English text instead of a real message,
+      which she reasonably paraphrased as "the server is busy." Traced
+      by grepping every actual `new HttpError(status, message, "CODE")`
+      call site across `apps/api/src` and diffing against the
+      dictionary: `ALREADY_BUILT`, `PIPELINE_IN_PROGRESS`, and (less
+      urgently, since it already has a translation) `WHATSAPP_NOT_CONNECTED`
+      were all missing from the *test's* hand-maintained `knownCodes`
+      list too — meaning `language.test.ts`'s own "every HttpError code
+      has a translation" test had already silently drifted out of sync
+      with reality, which is exactly how this shipped undetected.
+      Added Hebrew and English translations for both codes. Root-caused
+      the test itself, not just patched the symptom: replaced the
+      hardcoded `knownCodes` array with `findThrownHttpErrorCodes()`, a
+      real scan of every `.ts` file under `apps/api/src` for
+      `new HttpError(...)` call sites via regex, so any *future*
+      untranslated code fails this test loudly instead of reaching a
+      real user silently. Regression-proven twice: (1) the scan's own
+      regex first failed on `ALREADY_BUILT` specifically, because its
+      message text ("...already built; use refine...") contains a
+      semicolon that an earlier, over-narrow `[^;]*?` pattern couldn't
+      cross — fixed to `[\s\S]*?`, verified against a dedicated sanity
+      test that asserts the scan actually finds all 5 real known codes;
+      (2) with the scan working, temporarily removed the two new
+      translation entries, confirmed the coverage test failed exactly as
+      it should have when this bug first shipped, restored them. Pushed
+      immediately as a live-incident fix (not queued for the next
+      scheduled round) since שלומי was actively blocked. Full suite
+      green (421 tests, up from 420 — `@forge/web` 127 → 128, net +1
+      after replacing one test with two) and both builds clean.
+
 ## Phase 3
 
 - Self-healing: production observability, automatic diagnosis and patch
