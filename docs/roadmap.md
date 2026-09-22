@@ -5508,6 +5508,41 @@ not a single "make it perfect" claim.
       `git diff`. Full suite green (412 tests, up from 408 — `@forge/api`
       130 → 134) and both builds clean.
 
+- [x] **Fifteenth consecutive round (91-105) — `packages/db/src/seed.ts`
+      turned out already excellently covered; found the real gap one
+      layer up, in the route that calls it.** Read `seed.ts` seriously for
+      the first time this session (flagged as never examined across 14
+      rounds), expecting to find something — instead found 20 existing
+      tests in `seed.test.ts` covering every domain entity's believable
+      values, the `rating` 1-5 domain clamp, and (already fixed in a much
+      earlier round, with its own regression test) the exact
+      `startDate`/`endDate` same-day collision bug this technique is
+      built to catch. Cross-checked the `/end/i` field-name regex against
+      every real date-field name across all entities in
+      `domainEntities.ts` for a false-positive match (the same
+      hint-list-vs-real-data technique that caught `DATE_FIELD_NAME_HINTS`
+      in an earlier round) — none exists today. An honest negative result.
+      Moved one layer up to `apps/api/src/routes/projects.ts`'s
+      `deriveName` (picks a new project's display name from its
+      description when the client doesn't supply an explicit `name`) and
+      found it was *never* exercised by any test at all — every existing
+      project-creation test either passes an explicit `name` or a normal
+      multi-word description and never once reads back `project.name`.
+      Two real, distinct branches were completely uncovered: the 6-word
+      truncation, and the `"Untitled Project"` fallback for a description
+      that's non-empty by character count (passing the API's own
+      `z.string().min(1)` check, which counts *before* trimming) but
+      whitespace-only, so it trims to zero words. Exported `deriveName`
+      and added `apps/api/src/routes/projects.test.ts` with 5 direct unit
+      tests. Regression-proven with the deliberate-break technique:
+      temporarily removed the `words.length > 0 ?` fallback ternary so
+      the function always returned (possibly empty) `words`, confirmed
+      exactly the two whitespace/empty-input tests failed while the
+      truncation and normal-input tests still passed, restored the real
+      code, confirmed the only surviving diff was the intentional `export`
+      keyword and its one-line doc comment. Full suite green (417 tests,
+      up from 412 — `@forge/api` 134 → 139) and both builds clean.
+
 ## Phase 3
 
 - Self-healing: production observability, automatic diagnosis and patch
