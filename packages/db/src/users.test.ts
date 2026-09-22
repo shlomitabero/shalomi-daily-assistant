@@ -65,3 +65,38 @@ test("getSessionUser still works correctly around the cleanup -- a real user can
   const user = getSessionUser(db, "real-token");
   assert.equal(user?.email, "dana@example.com");
 });
+
+/**
+ * This is the actual security boundary requireAuth (apps/api/src/auth/
+ * middleware.ts) depends on: getSessionUser's own SQL filters on
+ * `expiresAt > ?`. Every existing test that calls it, though, only ever
+ * passes a token that's either genuinely still valid, was never created
+ * (a "garbage" string), or was already deleted by logout -- none of those
+ * exercise a session row that actually EXISTS in the table with a real,
+ * already-past expiresAt, which is the one case that specifically proves
+ * the expiry comparison itself works. Inserted directly (like the very
+ * first test in this file) rather than via createSession, so its own
+ * opportunistic pruning doesn't remove the row before getSessionUser gets
+ * a chance to (correctly or not) filter it.
+ */
+test("getSessionUser returns undefined for a session token that still exists in the table but whose expiresAt has already passed", () => {
+  const db = openDatabase(":memory:");
+  ensureUsersTable(db);
+  db.prepare("INSERT INTO users (id, email, passwordHash, createdAt) VALUES (?, ?, ?, ?)").run(
+    "u1",
+    "dana@example.com",
+    "hash",
+    new Date().toISOString(),
+  );
+  db.prepare("INSERT INTO sessions (token, userId, expiresAt) VALUES (?, ?, ?)").run(
+    "long-expired-token",
+    "u1",
+    new Date(Date.now() - HOUR_MS).toISOString(),
+  );
+
+  // The row is genuinely still there -- this isn't testing deletion.
+  const stillPresent = db.prepare("SELECT token FROM sessions WHERE token = ?").get("long-expired-token");
+  assert.ok(stillPresent, "the expired session row must still exist in the table for this test to mean anything");
+
+  assert.equal(getSessionUser(db, "long-expired-token"), undefined);
+});
