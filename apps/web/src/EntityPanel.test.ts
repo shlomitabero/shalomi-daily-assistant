@@ -130,6 +130,81 @@ test("EntityPanel's handleBulkDelete still surfaces the raw error message when e
   assert.equal(capturedError, rejection.message);
 });
 
+/**
+ * Regression test: refresh() is called from many independent places
+ * (handleSubmit, handleDelete, handleDuplicate, handleBulkDelete,
+ * handleImportFile, handleMove, and the mount/entity-change effect) with
+ * no guard against two calls overlapping. handleDuplicate in particular
+ * has no confirmation dialog, so a user double-clicking "duplicate" on
+ * two different rows in quick succession starts two overlapping
+ * refresh() calls -- if the first (now stale) call's own listRecords
+ * round trip happens to resolve after the second (newer) call's, its
+ * setRecords silently clobbered the newer, correct table with stale
+ * data, the same race this session already found and fixed in
+ * HistoryPanel.tsx/App.tsx/GlobalSearchPanel.tsx/WhatsAppPanel.tsx/
+ * codegen.ts's GlobalSearch.jsx. Deterministic, not timing-based: holds
+ * the FIRST refresh's listRecords call open past the SECOND refresh's
+ * own completion. Runs the real generated refresh function.
+ */
+test("EntityPanel's refresh ignores a stale, still-in-flight refresh's records once a newer refresh has already completed", async () => {
+  const handlerMatch = entityPanelSrc.match(/ {2}async function refresh\(\) \{[\s\S]*?\n {2}\}\n/);
+  assert.ok(handlerMatch, "expected to find refresh in EntityPanel.tsx");
+  const { code } = transformSync(handlerMatch![0], { loader: "ts" });
+
+  let listRecordsCallCount = 0;
+  let resolveFirstCall!: () => void;
+  const firstCallHeld = new Promise<void>((resolve) => {
+    resolveFirstCall = resolve;
+  });
+  const capturedRecordsByCall: unknown[][] = [];
+  const refreshRequestId = { current: 0 };
+
+  const fn = new Function(
+    "refreshRequestId",
+    "setLoading",
+    "listRecords",
+    "projectId",
+    "entity",
+    "setRecords",
+    "setError",
+    `${code}\nreturn refresh;`,
+  )(
+    refreshRequestId,
+    () => {},
+    async () => {
+      listRecordsCallCount += 1;
+      if (listRecordsCallCount === 1) {
+        await firstCallHeld; // the stale "first" refresh's own network call stays open
+        return { records: [{ id: 1, name: "stale" }] };
+      }
+      return { records: [{ id: 2, name: "fresh" }] };
+    },
+    "proj1",
+    { name: "Customer" },
+    (records: unknown[]) => {
+      capturedRecordsByCall.push(records);
+    },
+    () => {},
+  ) as () => Promise<void>;
+
+  const stalePromise = fn();
+  await Promise.resolve(); // let the stale call actually start and reach its held-open listRecords call
+  const freshPromise = fn();
+  await freshPromise;
+
+  assert.equal(capturedRecordsByCall.length, 1, "the fresh (second) refresh must have applied its own records");
+  assert.deepEqual(capturedRecordsByCall[0], [{ id: 2, name: "fresh" }]);
+
+  resolveFirstCall();
+  await stalePromise;
+
+  assert.equal(
+    capturedRecordsByCall.length,
+    1,
+    "the stale (first) refresh resolving afterward must never call setRecords again and overwrite the fresh records",
+  );
+});
+
 /** Same jsdom-swap technique as useDialogFocusTrap.test.ts/BuildProgress.test.ts. */
 async function withJsdom<T>(fn: () => Promise<T> | T): Promise<T> {
   const dom = new JSDOM("<!doctype html><html><body></body></html>", { url: "http://localhost/" });

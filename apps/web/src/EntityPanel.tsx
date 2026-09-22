@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { Entity, EntityRecord, Field } from "@forge/shared";
 import { createRecord, deleteRecord, listRecords, updateRecord } from "./api.js";
 import {
@@ -330,6 +330,12 @@ export function EntityPanel({
   const [importMessage, setImportMessage] = useState<string | null>(null);
   const [importErrors, setImportErrors] = useState<string[]>([]);
   const [showImportErrors, setShowImportErrors] = useState(false);
+  // Bumped once per refresh() call, so a stale refresh whose listRecords
+  // round trip just happens to take longer than a newer one's (triggered
+  // by an overlapping action, e.g. duplicating two rows back to back)
+  // can recognize itself as superseded and skip overwriting the newer,
+  // still-correct records already on screen.
+  const refreshRequestId = useRef(0);
   const boardField = useMemo(() => findBoardField(entity.fields), [entity.fields]);
   const dateField = useMemo(() => findDateField(entity.fields), [entity.fields]);
   const relationTargets = useMemo(() => {
@@ -365,14 +371,17 @@ export function EntityPanel({
   }, [projectId, relationTargets]);
 
   async function refresh() {
+    const requestId = ++refreshRequestId.current;
     setLoading(true);
     try {
       const { records } = await listRecords(projectId, entity.name);
+      if (refreshRequestId.current !== requestId) return;
       setRecords(records);
     } catch (err) {
+      if (refreshRequestId.current !== requestId) return;
       setError((err as Error).message);
     } finally {
-      setLoading(false);
+      if (refreshRequestId.current === requestId) setLoading(false);
     }
   }
 
