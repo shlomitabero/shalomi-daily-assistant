@@ -5588,6 +5588,42 @@ not a single "make it perfect" claim.
       that touches this helper, not just this one. Full suite green (418
       tests, up from 417 — `@forge/api` 139 → 140) and both builds clean.
 
+- [x] **Seventeenth consecutive round (91-107) — extended round 106's
+      concurrent-pipeline guard to `/answers`, the one route that had the
+      exact same race and wasn't covered.** Directly followed round 106's
+      own candidate list back into `apps/api/src/routes/projects.ts`,
+      this time auditing every other route for the same "read
+      `project.spec`, await something, write `project.spec`" shape that
+      made `/build` and `/refine` racy. `/checkpoints/:id/restore` turned
+      out to be immune structurally, not by luck: `getCheckpoint`,
+      `diffAndMigrate`, and `updateProjectSpec` are all synchronous SQLite
+      calls with no `await` in between, so a single request runs to
+      completion in one JS turn — there's no window for another request
+      to interleave. `/answers`, though, has *exactly* round 106's shape:
+      reads `project.spec` (via `project.description` and the
+      not-yet-built check), awaits `generateSpec`, then calls
+      `updateProjectSpec` — and critically, it was never added to round
+      106's `activePipelines` guard, so two concurrent `/answers` calls
+      (or an `/answers` racing a `/refine`/`/build`) on the same
+      not-yet-built project could still silently race: whichever finishes
+      last overwrites `project.spec`, and since `/answers` never migrates
+      the DB at all, the loser's answers don't even leave a trace of a
+      migrated-but-orphaned table behind — they just vanish outright.
+      Extended the existing `activePipelines` guard to cover `/answers`
+      too, so all three routes now share one lock per project id. Proven
+      with the identical gated-`SpecProvider` two-HTTP-request technique
+      from round 106, adapted for `/answers`' schema (`additionalRequest`
+      text instead of an `instruction`). Regression-proven with the
+      deliberate-break technique: removed just the new `/answers` guard
+      check, confirmed the test failed cleanly and fast (200 instead of
+      409, no hang — `withServer`'s round-106 `closeAllConnections()` fix
+      keeps this kind of test's failure path fast for any future test of
+      this shape too), restored the guard, confirmed the test passes
+      again and the rest of the file (including round 106's own
+      `/refine` concurrency test) still passes unchanged. Full suite
+      green (419 tests, up from 418 — `@forge/api` 140 → 141) and both
+      builds clean.
+
 ## Phase 3
 
 - Self-healing: production observability, automatic diagnosis and patch
