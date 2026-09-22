@@ -2,13 +2,17 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { AgentStepEvent } from "@forge/shared";
 import type { ForgeDatabase } from "@forge/db";
+import { HeuristicSpecProvider, type SpecProvider } from "@forge/spec-engine";
 import { createApp } from "./app.js";
 import { createStore } from "./store.js";
 import { WhatsAppWebManager, type BaileysConnectionUpdate, type BaileysMessagesUpsert, type WhatsAppSocket } from "./whatsappWeb.js";
 
-async function withServer(fn: (baseUrl: string) => Promise<void>, opts?: { whatsapp?: (db: ForgeDatabase) => WhatsAppWebManager }) {
+async function withServer(
+  fn: (baseUrl: string) => Promise<void>,
+  opts?: { whatsapp?: (db: ForgeDatabase) => WhatsAppWebManager; provider?: SpecProvider },
+) {
   const db = createStore(":memory:");
-  const app = createApp(db, undefined, undefined, opts?.whatsapp?.(db));
+  const app = createApp(db, opts?.provider, undefined, opts?.whatsapp?.(db));
   const server = app.listen(0);
   await new Promise<void>((resolve) => server.once("listening", resolve));
   const address = server.address();
@@ -16,6 +20,14 @@ async function withServer(fn: (baseUrl: string) => Promise<void>, opts?: { whats
   try {
     await fn(`http://127.0.0.1:${port}`);
   } finally {
+    // server.close()'s own callback doesn't fire until every open
+    // connection closes on its own -- a keep-alive socket sitting idle
+    // (e.g. from two concurrent fetches to this same origin in one test)
+    // can leave it waiting out a multi-minute keep-alive timeout instead
+    // of actually closing. closeAllConnections() destroys any still-open
+    // sockets immediately so teardown never depends on client-side
+    // keep-alive behavior.
+    server.closeAllConnections();
     await new Promise<void>((resolve) => server.close(() => resolve()));
   }
 }
@@ -1342,5 +1354,133 @@ test("WhatsApp send rejects a malformed body with 400 VALIDATION_ERROR, not a 50
       assert.equal(body.error, "to is required; message is required");
     },
     { whatsapp: (db) => createTestWhatsAppManager(db).manager },
+  );
+});
+
+/**
+ * A real SpecProvider whose `generate` blocks on a manually-released gate
+ * the first time it's called after `arm()`, so a test can deterministically
+ * pause a request mid-flight (right after it would normally call the
+ * AI/heuristic provider) and fire a second request while the first is
+ * still "running" -- without relying on real timing/setTimeout races.
+ *
+ * Only the *first* post-arm call blocks; any later call (e.g. a second
+ * concurrent request that a missing concurrency guard wrongly let through)
+ * resolves immediately instead of piling onto the same gate -- otherwise,
+ * with the guard genuinely missing, both calls would block on the same
+ * never-released gate and the test would hang instead of failing cleanly.
+ */
+function createGatedProvider() {
+  const inner = new HeuristicSpecProvider();
+  let armed = false;
+  let firstCallSeen = false;
+  let markStarted = () => {};
+  let startedPromise: Promise<void> = Promise.resolve();
+  let release = () => {};
+  let gate: Promise<void> = Promise.resolve();
+  const provider: SpecProvider = {
+    name: inner.name,
+    async generate(description) {
+      if (armed && !firstCallSeen) {
+        firstCallSeen = true;
+        markStarted();
+        await gate;
+      }
+      return inner.generate(description);
+    },
+  };
+  return {
+    provider,
+    arm() {
+      armed = true;
+      startedPromise = new Promise((resolve) => {
+        markStarted = resolve;
+      });
+      gate = new Promise((resolve) => {
+        release = resolve;
+      });
+    },
+    waitUntilStarted: () => startedPromise,
+    release: () => release(),
+  };
+}
+
+test("two concurrent /refine calls on the same project: the second is rejected with 409 instead of silently racing and overwriting the first's spec", async () => {
+  const gated = createGatedProvider();
+  await withServer(
+    async (baseUrl) => {
+      const token = await signup(baseUrl);
+      const createRes = await fetch(`${baseUrl}/api/projects`, {
+        method: "POST",
+        headers: authHeaders(token),
+        body: JSON.stringify({ description: "A CRM with customers and deals." }),
+      });
+      const { project } = (await createRes.json()) as { project: { id: string } };
+
+      const buildRes = await fetch(`${baseUrl}/api/projects/${project.id}/build`, {
+        method: "POST",
+        headers: authHeaders(token),
+      });
+      assert.equal(buildRes.status, 200);
+      await collectSSE(buildRes);
+
+      // Arm the gate only now -- signup/create/build must all run at full
+      // speed, only the refine call below should actually block.
+      gated.arm();
+      const refineAPromise = fetch(`${baseUrl}/api/projects/${project.id}/refine`, {
+        method: "POST",
+        headers: authHeaders(token),
+        body: JSON.stringify({ instruction: "Also track invoices for customers." }),
+      });
+      // Never left as an unhandled rejection if an assertion on B throws
+      // before this test ever reaches `await refineAPromise` below -- the
+      // real result is still awaited and asserted on further down.
+      refineAPromise.catch(() => {});
+      // Waits until refine A's handler has actually reached (and is
+      // blocked inside) its generateSpec call -- which, in the real route,
+      // happens strictly after it registers itself as the project's
+      // active pipeline. Without this wait, firing B immediately after A
+      // (without awaiting A) would race the test itself.
+      await gated.waitUntilStarted();
+
+      const refineBRes = await fetch(`${baseUrl}/api/projects/${project.id}/refine`, {
+        method: "POST",
+        headers: authHeaders(token),
+        body: JSON.stringify({ instruction: "Also track shipments for orders." }),
+      });
+      // Read (and release the gate) inside a finally: refine A's connection
+      // must never be left dangling -- on the correct 409 JSON path this is
+      // a no-op ordering, but if the guard were ever missing, B's response
+      // would be an SSE stream instead and .json() would throw, which must
+      // still release A so it can finish instead of leaking an open
+      // connection into withServer's own teardown.
+      let refineBBody: { code?: string } = {};
+      try {
+        refineBBody = (await refineBRes.json()) as { code?: string };
+      } finally {
+        gated.release();
+      }
+      assert.equal(refineBRes.status, 409);
+      assert.equal(refineBBody.code, "PIPELINE_IN_PROGRESS");
+
+      // Now confirm refine A itself completed normally -- the guard rejects
+      // a second concurrent call, it doesn't wedge the first one.
+      const refineARes = await refineAPromise;
+      assert.equal(refineARes.status, 200);
+      const refineAEvents = await collectSSE(refineARes);
+      assert.ok(refineAEvents.every((e) => e.status !== "failed"));
+
+      // And a THIRD refine, sent only after A has genuinely finished, must
+      // succeed -- the guard must release the project once its pipeline is
+      // done, not leave it permanently locked.
+      const refineCRes = await fetch(`${baseUrl}/api/projects/${project.id}/refine`, {
+        method: "POST",
+        headers: authHeaders(token),
+        body: JSON.stringify({ instruction: "Also track payments." }),
+      });
+      assert.equal(refineCRes.status, 200);
+      await collectSSE(refineCRes);
+    },
+    { provider: gated.provider },
   );
 });

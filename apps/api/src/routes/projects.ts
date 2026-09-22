@@ -119,6 +119,24 @@ export function createProjectsRouter(db: ForgeDatabase, provider: SpecProvider |
   router.use(requireAuth(db));
 
   /**
+   * /build and /refine both read `project.spec` once at the start of the
+   * request, then spend real time (an AI/heuristic spec-generation call,
+   * then a migration) before writing it back via updateProjectSpec. Two
+   * such requests for the *same* project running concurrently (e.g. a
+   * double-click, or two open tabs) would each still be working from the
+   * spec that was current when they started -- the one that finishes last
+   * overwrites project.spec with its own result, silently discarding
+   * whatever entities/fields the other one added (its migration already
+   * ran and the DB table exists, additive-only, but nothing in the
+   * overwritten spec points at it any more, so the API can no longer see
+   * or write to it). Tracked in-memory rather than in the DB: this process
+   * is the only writer of project.spec (a single Node process backs this
+   * whole app -- see app.ts's own comment on `staticDir`), so there's
+   * nothing this needs to survive a restart for.
+   */
+  const activePipelines = new Set<string>();
+
+  /**
    * The Prompt Architect Agent: takes a short, rough idea and rewrites it
    * into a fuller, more detailed prompt (same AI-or-heuristic provider seam
    * as generateSpec), without creating a project yet -- the client decides
@@ -238,10 +256,18 @@ export function createProjectsRouter(db: ForgeDatabase, provider: SpecProvider |
       if (project.status === "built") {
         throw new HttpError(409, "This project is already built; use refine to make further changes", "ALREADY_BUILT");
       }
-      await streamPipeline(res, db, project, {
-        nextSpec: project.spec,
-        changeLabel: isHebrewText(project.description) ? "בנייה ראשונית" : "Initial build",
-      });
+      if (activePipelines.has(project.id)) {
+        throw new HttpError(409, "A build or refine is already running for this project", "PIPELINE_IN_PROGRESS");
+      }
+      activePipelines.add(project.id);
+      try {
+        await streamPipeline(res, db, project, {
+          nextSpec: project.spec,
+          changeLabel: isHebrewText(project.description) ? "בנייה ראשונית" : "Initial build",
+        });
+      } finally {
+        activePipelines.delete(project.id);
+      }
     }),
   );
 
@@ -256,14 +282,22 @@ export function createProjectsRouter(db: ForgeDatabase, provider: SpecProvider |
       if (!parsed.success) {
         throw new HttpError(400, formatValidationError(parsed.error), "VALIDATION_ERROR");
       }
-      const { instruction } = parsed.data;
-      const combinedDescription = `${project.description}\n\nAdditional requirement: ${instruction}`;
-      const { spec: nextSpec } = await generateSpec(combinedDescription, provider);
-      await streamPipeline(res, db, project, {
-        previousSpec: project.spec,
-        nextSpec,
-        changeLabel: isHebrewText(instruction) ? `שיפור: ${instruction}` : `Refine: ${instruction}`,
-      });
+      if (activePipelines.has(project.id)) {
+        throw new HttpError(409, "A build or refine is already running for this project", "PIPELINE_IN_PROGRESS");
+      }
+      activePipelines.add(project.id);
+      try {
+        const { instruction } = parsed.data;
+        const combinedDescription = `${project.description}\n\nAdditional requirement: ${instruction}`;
+        const { spec: nextSpec } = await generateSpec(combinedDescription, provider);
+        await streamPipeline(res, db, project, {
+          previousSpec: project.spec,
+          nextSpec,
+          changeLabel: isHebrewText(instruction) ? `שיפור: ${instruction}` : `Refine: ${instruction}`,
+        });
+      } finally {
+        activePipelines.delete(project.id);
+      }
     }),
   );
 
