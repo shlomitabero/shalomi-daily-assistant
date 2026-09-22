@@ -5706,6 +5706,51 @@ not a single "make it perfect" claim.
       green (421 tests, up from 420 — `@forge/web` 127 → 128, net +1
       after replacing one test with two) and both builds clean.
 
+- [x] **Also that round: שלומי sent a second real message showing the
+      cold-start "waking up" screen with visible frustration ("זה מה
+      שאתה יוצר!!!!"). Traced to `render.yaml`'s `plan: free` — Render's
+      free tier sleeps after ~15 minutes idle and takes up to a minute to
+      wake, and the "waking up" UI is deliberate (task #46) so the app
+      doesn't look stuck, not a bug. Explained this honestly and offered
+      three real options (paid Render plan for always-on; a self-ping
+      keep-alive with an explicit tradeoff disclosed — it consumes
+      Render's shared free-tier compute-hour quota and isn't a 100%
+      guarantee against sleeping; or leave it as-is) and asked which she
+      wants, rather than unilaterally spending her money or her account's
+      free-tier hours on her behalf. No answer yet as of this entry — the
+      standing instruction is that her next message on this is the
+      absolute top priority the moment it arrives.**
+
+- [x] **Nineteenth consecutive round (91-109) — entities CRUD's
+      updateRecord race turned out already safe by construction, same as
+      round 107/108's findings, and is now directly proven by a real
+      test.** Followed round 108's own candidate list into
+      `packages/db/src/repository.ts`. `insertRecord` and `deleteRecord`
+      are plain single-statement operations with nothing to race.
+      `updateRecord` does have the read-then-write shape round 106 had
+      to guard for `project.spec` (`getRecord`, merge the caller's
+      partial `data` into it, write the merged row back) — but confirmed,
+      the same way round 107 confirmed `/checkpoints/:id/restore` and
+      round 108 confirmed `auth.ts`'s signup, that every step here (both
+      inside `updateRecord` and in the PATCH route handler wrapping it)
+      is synchronous `node:sqlite` with zero `await` in between, so two
+      concurrent PATCH requests can't actually interleave: whichever
+      handler's JS turn runs second reads the first's already-committed
+      write and merges correctly on top of it. Never directly exercised
+      though — every existing CRUD test only PATCHes sequentially. Added
+      a real two-concurrent-HTTP-request test (`Promise.all`, no
+      artificial gate needed) proving two concurrent PATCHes to the same
+      record, touching different fields, both survive without either
+      clobbering the other back to a stale value. Regression-proven with
+      the deliberate-break technique on the pre-existing, already-correct
+      `updateRecord`: temporarily replaced its `{ ...existing, ...data }`
+      merge with `{ ...data }` alone, confirmed the test caught the
+      resulting 400 (the required `name` field vanished on the request
+      that only touched `status`), restored the original code, confirmed
+      an empty `git diff` on `repository.ts`. Full suite green (422
+      tests, up from 421 — `@forge/api` 142 → 143) and both builds
+      clean.
+
 ## Phase 3
 
 - Self-healing: production observability, automatic diagnosis and patch
