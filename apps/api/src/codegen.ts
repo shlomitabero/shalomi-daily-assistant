@@ -1088,7 +1088,7 @@ function groupByField(records, field) {
 // by, if any -- prefers a field literally named "date" or a few other
 // common date-ish names, then falls back to the first date field; returns
 // null for an entity with no date field at all.
-const DATE_FIELD_NAME_HINTS = ["date", "appointmentdate", "scheduledat", "eventdate", "duedate"];
+const DATE_FIELD_NAME_HINTS = ["date", "appointmentdate", "scheduleddate", "eventdate", "duedate"];
 function findDateField(fields) {
   const dateFields = fields.filter((f) => f.type === "date");
   if (dateFields.length === 0) return null;

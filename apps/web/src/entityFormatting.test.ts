@@ -187,6 +187,27 @@ test("findDateField falls back to the first date field when nothing is named dat
   assert.equal(findDateField(fields)?.name, "scheduledFor");
 });
 
+/**
+ * Regression test: DATE_FIELD_NAME_HINTS lists "scheduledat" as a
+ * recognized hint, but every real date field in the domain library
+ * (spec-engine/domainEntities.ts) follows an "XxxDate" naming convention
+ * -- startDate, endDate, dueDate, shipDate, and (the one this hint was
+ * presumably meant to catch) WorkOrder's own "scheduledDate" -- never an
+ * "XxxAt" convention. "scheduledDate".toLowerCase() is "scheduleddate",
+ * which the misspelled "scheduledat" hint never matches, so this hint was
+ * silently dead: it currently has no visible effect only because
+ * WorkOrder happens to have just one date field (the fallback picks it
+ * anyway). An entity with scheduledDate alongside another, less relevant
+ * date field would get the wrong one preferred with no error.
+ */
+test("findDateField recognizes 'scheduledDate' as a known date-field name, matching the domain library's own WorkOrder entity", () => {
+  const fields: Field[] = [
+    { name: "createdNote", type: "date", required: false },
+    { name: "scheduledDate", type: "date", required: true },
+  ];
+  assert.equal(findDateField(fields)?.name, "scheduledDate");
+});
+
 test("findDateField returns null for an entity with no date field", () => {
   const fields: Field[] = [{ name: "name", type: "text", required: true }];
   assert.equal(findDateField(fields), null);

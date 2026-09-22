@@ -426,6 +426,28 @@ test("the exported CalendarView places a record on its correct calendar day even
   }
 });
 
+// Regression test: DATE_FIELD_NAME_HINTS lists "scheduledat" as a
+// recognized hint, but every real date field in the domain library
+// (spec-engine/domainEntities.ts) follows an "XxxDate" naming convention
+// -- including WorkOrder's own "scheduledDate", the field this hint was
+// presumably meant to catch. "scheduledDate".toLowerCase() is
+// "scheduleddate", which the misspelled "scheduledat" hint never
+// matches, so this hint was silently dead in the exported app too (the
+// same duplicated-code gap as the live-preview version). Runs the real
+// generated findDateField, not a reimplementation.
+test("the exported EntityView's findDateField recognizes 'scheduledDate' as a known date-field name, matching the domain library's own WorkOrder entity", () => {
+  const entityViewJsx = generateExportFiles(project).find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+  const findDateFieldSrc = entityViewJsx.match(/const DATE_FIELD_NAME_HINTS[\s\S]*?\nfunction findDateField\(fields\) \{[\s\S]*?\n\}\n/)?.[0];
+  assert.ok(findDateFieldSrc, "expected to find DATE_FIELD_NAME_HINTS/findDateField in generated output");
+
+  const findDateField = new Function(`${findDateFieldSrc}\nreturn findDateField;`)() as (fields: unknown[]) => { name: string } | null;
+  const fields = [
+    { name: "createdNote", type: "date" },
+    { name: "scheduledDate", type: "date" },
+  ];
+  assert.equal(findDateField(fields)?.name, "scheduledDate");
+});
+
 // Regression test: the same UTC-vs-local mismatch as the CalendarView test
 // above, but in the main record table's per-cell date renderer (Cell,
 // reused by the table, the Kanban board, and global search results) --

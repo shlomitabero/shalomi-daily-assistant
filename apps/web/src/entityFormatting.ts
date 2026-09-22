@@ -203,7 +203,7 @@ export function groupByField(records: EntityRecord[], field: Field): BoardColumn
   }));
 }
 
-const DATE_FIELD_NAME_HINTS = ["date", "appointmentdate", "scheduledat", "eventdate", "duedate"];
+const DATE_FIELD_NAME_HINTS = ["date", "appointmentdate", "scheduleddate", "eventdate", "duedate"];
 
 /**
  * Picks the date field an entity's records should be plotted on a calendar
