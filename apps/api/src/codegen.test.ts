@@ -864,6 +864,7 @@ test("the exported GlobalSearch's runSearch shows results from every entity that
     "setResults",
     "setSearched",
     "setSelectedIndex",
+    "searchRequestId",
     `${matchesSearchSrc}\n${searchEntitySrc}\n${runSearchSrc}\nreturn runSearch;`,
   )(
     [entityA, entityB, entityC],
@@ -880,6 +881,7 @@ test("the exported GlobalSearch's runSearch shows results from every entity that
     },
     () => {},
     () => {},
+    { current: 0 },
   ) as (q: string) => Promise<void>;
 
   await fn("match");
@@ -898,6 +900,91 @@ test("the exported GlobalSearch's runSearch shows results from every entity that
   const stylesCss = files.find((f) => f.path === "web/src/styles.css")!.content;
   assert.match(stylesCss, /\.search-overlay/);
   assert.match(stylesCss, /\.global-search-group-selected/);
+});
+
+/**
+ * Regression test: the exported app's own GlobalSearch.jsx is a deliberate
+ * duplicate of the live-preview GlobalSearchPanel.tsx's runSearch, and it
+ * had the exact same stale-async-overwrites-newer-setState race this
+ * session already found and fixed in GlobalSearchPanel.tsx itself (round
+ * 95) -- a second, more recent search that resolves before a slower first
+ * one lets the first search's late-arriving setResults silently clobber
+ * the newer, correct results on screen. Deterministic, not timing-based:
+ * holds the FIRST search's listRecords call open past the SECOND search's
+ * own completion. Runs the real generated runSearch/searchEntity.
+ */
+test("the exported GlobalSearch's runSearch ignores a stale, still-in-flight search's results once a newer search has already completed", async () => {
+  const files = generateExportFiles(project);
+  const globalSearchJsx = files.find((f) => f.path === "web/src/components/GlobalSearch.jsx")!.content;
+  const entityViewJsx = files.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+
+  const matchesSearchSrc = entityViewJsx.match(/export function matchesSearch\([\s\S]*?\n\}\n/)?.[0]?.replace("export ", "");
+  const searchEntitySrc = globalSearchJsx.match(/async function searchEntity\([\s\S]*?\n\}\n/)?.[0];
+  const runSearchSrc = globalSearchJsx.match(/ {2}async function runSearch\(q\) \{[\s\S]*?\n {2}\}\n/)?.[0];
+  assert.ok(
+    matchesSearchSrc && searchEntitySrc && runSearchSrc,
+    "expected to find matchesSearch/searchEntity/runSearch in generated output",
+  );
+
+  const entityA = { name: "Alpha", label: "Alpha", fields: [{ name: "name", label: "Name", type: "text" }] };
+
+  let listRecordsCallCount = 0;
+  let resolveFirstCall!: () => void;
+  const firstCallHeld = new Promise<void>((resolve) => {
+    resolveFirstCall = resolve;
+  });
+  const capturedResultsByCall: unknown[][] = [];
+  const searchRequestId = { current: 0 };
+
+  const fn = new Function(
+    "entities",
+    "listRecords",
+    "setLoading",
+    "setError",
+    "setResults",
+    "setSearched",
+    "setSelectedIndex",
+    "searchRequestId",
+    `${matchesSearchSrc}\n${searchEntitySrc}\n${runSearchSrc}\nreturn runSearch;`,
+  )(
+    [entityA],
+    async () => {
+      listRecordsCallCount += 1;
+      if (listRecordsCallCount === 1) {
+        await firstCallHeld; // the stale "first" search's own network call stays open
+        return { records: [{ id: 1, name: "stale-target" }] };
+      }
+      return { records: [{ id: 2, name: "fresh-target" }] };
+    },
+    () => {},
+    () => {},
+    (results: unknown[]) => {
+      capturedResultsByCall.push(results);
+    },
+    () => {},
+    () => {},
+    searchRequestId,
+  ) as (q: string) => Promise<void>;
+
+  const stalePromise = fn("target");
+  await Promise.resolve(); // let the stale call actually start and reach its held-open listRecords call
+  const freshPromise = fn("target");
+  await freshPromise;
+
+  assert.equal(capturedResultsByCall.length, 1, "the fresh (second) search must have applied its own results");
+  assert.deepEqual(
+    (capturedResultsByCall[0][0] as { sample: unknown[] }).sample,
+    [{ id: 2, name: "fresh-target" }],
+  );
+
+  resolveFirstCall();
+  await stalePromise;
+
+  assert.equal(
+    capturedResultsByCall.length,
+    1,
+    "the stale (first) search resolving afterward must never call setResults again and overwrite the fresh results",
+  );
 });
 
 test("the exported App.jsx renders a real 'Backup All Data' link pointing at the generated server's own /api/backup endpoint", () => {

@@ -1765,7 +1765,7 @@ export function EntityView({ entity }) {
  * too, by construction.
  */
 function renderGlobalSearchJsx(): string {
-  return `import { useState } from "react";
+  return `import { useRef, useState } from "react";
 import { listRecords } from "../api.js";
 import { matchesSearch, recordDisplayLabel } from "./EntityView.jsx";
 
@@ -1790,6 +1790,10 @@ export function GlobalSearch({ entities, onClose, onJumpToEntity }) {
   const [error, setError] = useState(null);
   const [searched, setSearched] = useState(false);
   const [selectedIndex, setSelectedIndex] = useState(null);
+  // Bumped once per runSearch call, so a stale search whose network round
+  // trip just happens to take longer than a newer one's can recognize
+  // itself as superseded and skip applying its now-outdated results.
+  const searchRequestId = useRef(0);
 
   async function runSearch(q) {
     if (!q.trim()) {
@@ -1798,9 +1802,11 @@ export function GlobalSearch({ entities, onClose, onJumpToEntity }) {
       setSelectedIndex(null);
       return;
     }
+    const requestId = ++searchRequestId.current;
     setLoading(true);
     setError(null);
     const settled = await Promise.allSettled(entities.map((entity) => searchEntity(entity, q)));
+    if (searchRequestId.current !== requestId) return;
     const succeeded = settled.filter((r) => r.status === "fulfilled").map((r) => r.value);
     setResults(succeeded.filter((r) => r !== null));
     setSearched(true);
