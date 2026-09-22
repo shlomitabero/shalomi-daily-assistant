@@ -5463,6 +5463,51 @@ not a single "make it perfect" claim.
       Full suite green (408 tests, up from 407 — `@forge/db` 68 → 69) and
       both builds clean.
 
+- [x] **Fourteenth consecutive round (91-104) — the most extensive honest
+      negative-result sweep yet, closing with one small but genuine
+      coverage gap in `formatValidationError`.** Followed round 103's own
+      candidate list into the authorization/ownership area and found the
+      codebase already extremely well covered there: `requireOwnedProject`
+      is the single choke point every one of `routes/projects.ts`'s 22
+      routes goes through (confirmed by counting route registrations
+      against call sites), a dedicated test already proves a second user
+      gets a 404 (not a leaky 403) on another user's project, and a
+      second, more sophisticated test already proves a user can't restore
+      another user's checkpoint by reusing its id even into a project
+      they genuinely own — exactly the class of bug this technique has
+      caught elsewhere this session. Entity records turned out structurally
+      immune to that same class (each project+entity pair gets its own
+      SQL table via `tableNameFor`, not a shared table filtered by a
+      foreign key, so there's no id to cross-reuse). Checked
+      `extractBearerToken`'s case-insensitivity (already tested),
+      login's timing-attack mitigation against email enumeration (already
+      has a real multi-sample timing test), and WhatsApp message-log
+      cross-project isolation (already tested) — all genuinely solid.
+      Swept the whole `spec-engine` AI-provider layer (`anthropic.ts`,
+      `debug.ts`, `promptEnhancer.ts`, `anthropicFetch.ts`, `index.ts`)
+      end to end: every error path (timeout, refusal, truncation vs.
+      malformed JSON, schema mismatch, fenced/unfenced/prose-wrapped
+      responses, SQLite-reserved-keyword and case-collision entity/field
+      names) already has dedicated tests, including the specific
+      fallback-still-fails-when-heuristic-also-fails edge case. Also
+      re-verified `zip.ts`: real `unzip -t` integrity checks, a
+      spec-strict Python `zipfile` cross-check for the UTF-8 filename
+      flag, and the already-fixed >65535-entries Zip64 guard. Closed with
+      one genuine, if modest, gap that technique did surface:
+      `formatValidationError` (shared by every route's 400 response) had
+      no direct unit test anywhere — every existing test exercises it
+      only through an HTTP round-trip and checks that a single expected
+      issue's message appears somewhere in the response, never that
+      *every* simultaneous issue survives the join, in order, separated
+      by `"; "`. Added `apps/api/src/httpError.test.ts`. Regression-proven
+      with the deliberate-break technique: temporarily changed the
+      function to return only `issues[0]?.message`, confirmed exactly the
+      multi-issue test failed (single-issue and JSON-dump-prevention
+      tests still passed, correctly narrowing the failure to the join
+      behavior specifically), restored the real code, confirmed an empty
+      `git diff`. Full suite green (412 tests, up from 408 — `@forge/api`
+      130 → 134) and both builds clean.
+
 ## Phase 3
 
 - Self-healing: production observability, automatic diagnosis and patch
