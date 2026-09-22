@@ -1588,3 +1588,68 @@ test("two concurrent /answers calls on the same not-yet-built project: the secon
     { provider: gated.provider },
   );
 });
+
+/**
+ * updateRecord (packages/db/src/repository.ts) reads the current row
+ * (getRecord), merges the caller's partial `data` into it, then writes the
+ * merged result back -- a read-then-write shape structurally identical to
+ * the ones round 106 had to guard for project.spec. The difference here:
+ * every step, in both the repository function and the PATCH route handler
+ * wrapping it, is synchronous SQLite with no `await` in between, so two
+ * concurrent PATCH requests can't actually interleave -- whichever's
+ * handler runs second (in JS-turn order, not necessarily arrival order)
+ * reads the first's already-committed write and correctly merges on top of
+ * it. This was never directly exercised: existing CRUD tests only ever
+ * PATCH sequentially. Proves the two concurrent partial updates below
+ * (different fields on the same record) both survive, rather than one
+ * silently clobbering the other back to a stale value.
+ */
+test("two concurrent PATCH requests to the same record, touching different fields, both survive -- neither clobbers the other back to a stale value", async () => {
+  await withServer(async (baseUrl) => {
+    const token = await signup(baseUrl);
+    const createRes = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ description: "A CRM with customers and deals." }),
+    });
+    const { project } = (await createRes.json()) as { project: { id: string } };
+
+    const buildRes = await fetch(`${baseUrl}/api/projects/${project.id}/build`, {
+      method: "POST",
+      headers: authHeaders(token),
+    });
+    await collectSSE(buildRes);
+
+    const recordRes = await fetch(`${baseUrl}/api/projects/${project.id}/entities/Customer`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ name: "Dana Levi", email: "dana@example.com", status: "New" }),
+    });
+    assert.equal(recordRes.status, 201);
+    const { record } = (await recordRes.json()) as { record: { id: number } };
+
+    const [patchNameRes, patchStatusRes] = await Promise.all([
+      fetch(`${baseUrl}/api/projects/${project.id}/entities/Customer/${record.id}`, {
+        method: "PATCH",
+        headers: authHeaders(token),
+        body: JSON.stringify({ name: "Dana Cohen" }),
+      }),
+      fetch(`${baseUrl}/api/projects/${project.id}/entities/Customer/${record.id}`, {
+        method: "PATCH",
+        headers: authHeaders(token),
+        body: JSON.stringify({ status: "Won" }),
+      }),
+    ]);
+    assert.equal(patchNameRes.status, 200);
+    assert.equal(patchStatusRes.status, 200);
+
+    const listRes = await fetch(`${baseUrl}/api/projects/${project.id}/entities/Customer`, {
+      headers: authHeaders(token),
+    });
+    const { records } = (await listRes.json()) as { records: { id: number; name: string; status: string; email: string }[] };
+    const final = records.find((r) => r.id === record.id)!;
+    assert.equal(final.name, "Dana Cohen", "the name update must not have been lost");
+    assert.equal(final.status, "Won", "the status update must not have been lost");
+    assert.equal(final.email, "dana@example.com", "an untouched field must survive both partial updates unchanged");
+  });
+});
