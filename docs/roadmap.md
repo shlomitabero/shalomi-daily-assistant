@@ -5543,6 +5543,51 @@ not a single "make it perfect" claim.
       keyword and its one-line doc comment. Full suite green (417 tests,
       up from 412 — `@forge/api` 134 → 139) and both builds clean.
 
+- [x] **Sixteenth consecutive round (91-106) — found and fixed a genuine
+      server-side race condition: concurrent /build or /refine calls on
+      the same project silently overwrite each other's spec changes.**
+      Followed round 105's own candidate list into `apps/api/src/routes/
+      projects.ts`'s `/build` and `/refine` handlers, this time hunting
+      for real shared-state races (not React `setState`, the family this
+      session exhausted in rounds 91-100 — see roadmap). Both routes read
+      `project.spec` once at request start, then spend real async time
+      (a spec-generation call, then a migration) before writing it back
+      via `updateProjectSpec`. Two such requests for the *same* project
+      running concurrently — a double-click, or two open tabs — each
+      still work from the spec that was current when *they* started, so
+      whichever finishes last silently overwrites `project.spec` with its
+      own result: the other request's migration already ran against the
+      DB (additive-only, so the table/columns genuinely exist), but
+      nothing in the now-overwritten spec points at it any more, so the
+      API can no longer see or write to it through the normal entity
+      routes. No existing test exercised two genuinely concurrent
+      requests to the same project at all. Fixed with an in-memory
+      `Set<projectId>` tracking active pipelines, rejecting a second
+      concurrent build/refine with `409 PIPELINE_IN_PROGRESS` — mirroring
+      the existing `ALREADY_BUILT`/`BUILD_REQUIRED` guards already on
+      these same routes. Proven with a real two-HTTP-request test in
+      `app.test.ts`: a gated `SpecProvider` test double blocks its first
+      post-arm `generate()` call on a manually-released gate (any later
+      call passes straight through, so a missing guard can't leave both
+      requests deadlocked on the same gate) — this deterministically
+      holds refine A open while refine B fires, without any timing-based
+      `setTimeout` race. Regression-proven with the deliberate-break
+      technique: removed just the `/refine` guard check, confirmed the
+      test now fails (B gets a real 200 SSE stream instead of 409, so
+      `.json()` on it throws a clean `SyntaxError` — the intended
+      failure signature), restored the guard, confirmed the test passes
+      again. While building this test, `withServer`'s own teardown
+      turned out to have an unrelated but real bug of its own: two
+      concurrent fetches to the same test server can leave an idle
+      keep-alive socket open, and `server.close()`'s callback doesn't
+      fire until every open connection closes on its own — so a failed
+      assertion could leave the whole test run hanging on a multi-minute
+      keep-alive timeout instead of failing fast. Fixed by calling
+      `server.closeAllConnections()` before `server.close()` in
+      `withServer`'s `finally`, benefiting every current and future test
+      that touches this helper, not just this one. Full suite green (418
+      tests, up from 417 — `@forge/api` 139 → 140) and both builds clean.
+
 ## Phase 3
 
 - Self-healing: production observability, automatic diagnosis and patch
