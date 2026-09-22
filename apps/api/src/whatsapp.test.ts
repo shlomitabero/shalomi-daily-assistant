@@ -61,6 +61,36 @@ test("findMatchingRecord finds a real record whose stored phone matches the inco
   assert.equal(match!.label, "Dana Levi");
 });
 
+/**
+ * Regression test for the OTHER direction of findMatchingRecord's
+ * shorter/longer swap: the test above only ever exercises the case where
+ * the STORED phone normalizes shorter than the incoming number (local
+ * format vs. WhatsApp's own international format) -- the ternary's other
+ * branch, where the stored number is the longer one, had no test
+ * exercising it at all. The swap exists specifically so the match works
+ * regardless of which side happens to be longer (findMatchingRecord's own
+ * docstring makes no assumption about which); a future edit that
+ * "simplified" the ternary into always treating the incoming number as
+ * the longer one (a plausible-looking simplification, since in today's
+ * only tested case it happens to be true) would silently break matching
+ * for a record stored in full international format matched against a
+ * shorter incoming value, with no test catching it.
+ */
+test("findMatchingRecord matches when the STORED phone normalizes longer than the incoming number, not just the reverse", () => {
+  const db = openDatabase(":memory:");
+  applyMigrations(db, project.id, project.spec);
+  const customer = project.spec.entities[0];
+  const inserted = insertRecord(db, project.id, customer, { name: "Yossi Cohen", phone: "+972-50-123-4567" });
+
+  // Shorter than the stored, normalized number above (12 digits) -- exactly
+  // the reverse length relationship of the sibling test.
+  const match = findMatchingRecord(db, project, "501234567");
+  assert.ok(match);
+  assert.equal(match!.entityName, "Customer");
+  assert.equal(match!.recordId, inserted.id);
+  assert.equal(match!.label, "Yossi Cohen");
+});
+
 test("findMatchingRecord returns null for a genuinely unknown number instead of guessing", () => {
   const db = openDatabase(":memory:");
   applyMigrations(db, project.id, project.spec);
