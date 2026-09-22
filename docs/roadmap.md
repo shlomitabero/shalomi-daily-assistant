@@ -5388,6 +5388,42 @@ not a single "make it perfect" claim.
       suite green (398 tests, up from 396 — `@forge/web` 126 → 127,
       `@forge/api` 129 → 130) and both builds clean.
 
+- [x] **Added dedicated test coverage for `identifiers.ts`'s SQL-injection
+      defense — a genuine, security-relevant gap, not a cosmetic one.**
+      Twelfth consecutive round (91-102) with a genuine finding. Cross-
+      checked round 101's other two candidates first: `BOARD_FIELD_NAME_HINTS`
+      (`["status", "stage"]`) and `DISPLAY_FIELD_NAME_HINTS`
+      (`["name", "title"]`) both checked out clean against every real field
+      name across all 32 domain-library entities (every multi-enum entity's
+      real "status"/"stage" field is correctly preferred over its other
+      enum field by the board hint; every entity that has a "name"/"title"
+      field already declares it first, so the display hint's fallback
+      would pick the same field regardless) — a genuine negative result,
+      unlike `DATE_FIELD_NAME_HINTS` in round 101. Pivoted to
+      `packages/db/src/identifiers.ts`, whose `assertSafeIdentifier` is
+      explicitly documented as this codebase's SQL-injection defense
+      ("every identifier that ends up in a raw SQL string must pass
+      through this allowlist first") — a genuinely more consequential
+      class of file than a cosmetic hint typo. Discovered it had never had
+      a dedicated test file: every existing test that touches it (through
+      `migrate.test.ts`, `repository.test.ts`, `twin.test.ts`) only ever
+      passes well-formed identifiers, so its actual job — rejecting a
+      malicious or malformed one — had zero direct proof it works, despite
+      the regex itself being correct on inspection. Added
+      `packages/db/src/identifiers.test.ts`: acceptance of ordinary
+      identifiers, rejection of a SQL-injection payload disguised as a
+      field name, rejection of a leading-digit/whitespace/dot/quote-
+      character identifier, rejection of an empty string, the error
+      message naming both the identifier kind and the actual bad value,
+      and `tableNameFor`'s own sanitizing of a malicious `projectId` (the
+      one place a value reaches a raw SQL string without being validated
+      against a spec first) into safe characters. Regression-proven with
+      the deliberate-break technique for already-correct code: temporarily
+      made `assertSafeIdentifier` a no-op, confirmed 5 of the 9 new tests
+      failed, restored the real code, confirmed an empty `git diff`. Full
+      suite green (407 tests, up from 398 — `@forge/db` 59 → 68) and both
+      builds clean.
+
 ## Phase 3
 
 - Self-healing: production observability, automatic diagnosis and patch
