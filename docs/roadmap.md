@@ -5238,6 +5238,40 @@ not a single "make it perfect" claim.
       logic instead of a mock. Full suite green (393 tests, up from 392
       — `@forge/api` 126 → 127) and both builds clean.
 
+- [x] **Fixed a real bug: `EntityPanel.tsx`'s `refresh()` had no
+      protection against two overlapping calls, and it's the single most
+      widely-called async function in the component.** Eighth
+      consecutive round (91-98) finding a genuine bug, and the sixth
+      instance of the exact same race-condition class this session keeps
+      finding. `refresh()` is called independently from
+      `handleSubmit`, `handleDelete`, `handleDuplicate`,
+      `handleBulkDelete`, `handleImportFile`, `handleMove`, and the
+      mount/entity-change effect — seven different call sites, any two of
+      which can overlap. The easiest real trigger: `handleDuplicate` has
+      no confirmation dialog (unlike delete, which the code deliberately
+      exempts from confirmation for exactly this reason per its own
+      comment), so a user double-clicking "duplicate" on two different
+      rows in quick succession starts two overlapping `refresh()` calls.
+      Since `refresh()` awaited `listRecords` and called `setRecords`
+      unconditionally, if the first (now stale) call's own network round
+      trip happened to resolve after the second (newer) call's, its
+      `setRecords` silently clobbered the newer, correct table with
+      stale data — no error, no visible sign anything raced, just rows
+      that were supposed to be there missing (or already-deleted rows
+      reappearing) until the next action re-triggered a refresh. Fixed
+      with the same `refreshRequestId` `useRef` pattern used everywhere
+      else this bug class has turned up: bumped at the start of each
+      `refresh()` call, checked immediately after the `listRecords` await
+      resolves, before `setRecords`/`setError`/`setLoading` run.
+      Regression-proven with `git stash` on `EntityPanel.tsx` alone: a
+      new test extracts the real `refresh` function via this file's own
+      established `esbuild.transformSync` + `new Function` technique and
+      holds the first call's `listRecords` open past the second call's
+      own completion — failed against the old code (`setRecords` called
+      twice, 2 !== 1) and passed once the fix was restored. Full suite
+      green (394 tests, up from 393 — `@forge/web` 125 → 126) and both
+      builds clean.
+
 ## Phase 3
 
 - Self-healing: production observability, automatic diagnosis and patch
