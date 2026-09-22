@@ -5347,6 +5347,47 @@ not a single "make it perfect" claim.
       `git diff`. Full suite green (396 tests, up from 395 — `@forge/api`
       128 → 129) and both builds clean.
 
+- [x] **Fixed a real bug: `DATE_FIELD_NAME_HINTS` listed a misspelled,
+      permanently-dead hint that never matched any real field in the
+      domain library.** Eleventh consecutive round (91-101) with a
+      genuine finding, following round 100's own guidance to pivot away
+      from the exhausted race-condition vein toward fresh territory —
+      found by reviewing `packages/spec-engine/src` fresh (unexamined in
+      rounds 91-100) and cross-checking `findDateField`'s hint list
+      against every real date-field name actually used across all 32
+      entities in `domainEntities.ts`, the same "grep the real domain
+      library and check by hand" technique that caught `badgeTone`'s
+      missing "denied" value in round 94. Every date field in the domain
+      library follows an "XxxDate" naming convention — `startDate`,
+      `endDate`, `dueDate`, `shipDate`, and (the one this hint was
+      presumably meant to catch) `WorkOrder`'s own `scheduledDate` — but
+      the hint list had `"scheduledat"`, which `"scheduledDate"`'s
+      lowercased form (`"scheduleddate"`) never matches. This hint was
+      silently dead — currently invisible only because `WorkOrder`
+      happens to declare exactly one date field, so `findDateField`'s
+      fallback-to-first-date-field picks the right one anyway regardless
+      of whether the hint matched. Any entity with `scheduledDate`
+      alongside a second, less relevant date field (plausible for an
+      AI-generated spec, which has no ordering guarantee the built-in
+      domain library happens to honor) would silently get the wrong
+      field preferred for its calendar view, with no error. Fixed the
+      typo (`"scheduledat"` → `"scheduleddate"`) in both the live-preview
+      `entityFormatting.ts` and its `codegen.ts` duplicate. Also checked
+      the other three hints for the same dormancy: `"appointmentdate"`
+      and `"eventdate"` are likewise never matched by any real field
+      (`Appointment`/`Event` both just use `"date"`, already the first,
+      always-matching hint), so left as harmless, honestly-dead
+      placeholders rather than pretending to fix a problem they don't
+      actually cause; `"duedate"` does match a real field and was already
+      correct. Regression-proven in both files with the deliberate-break
+      technique (temporarily reverted each file's own change, confirmed
+      the new test failed, restored the fix): a constructed entity with
+      `createdNote` (date) declared before `scheduledDate` (date) — the
+      old, buggy hint picked `createdNote` (the naive first-field
+      fallback); the fixed hint correctly picks `scheduledDate`. Full
+      suite green (398 tests, up from 396 — `@forge/web` 126 → 127,
+      `@forge/api` 129 → 130) and both builds clean.
+
 ## Phase 3
 
 - Self-healing: production observability, automatic diagnosis and patch
