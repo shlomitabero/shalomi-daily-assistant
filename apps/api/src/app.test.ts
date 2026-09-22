@@ -153,6 +153,58 @@ test("signup rejects a duplicate email and login rejects a wrong password", asyn
   });
 });
 
+/**
+ * createUser (packages/db/src/users.ts) does its "does this email already
+ * exist" SELECT and its INSERT back to back with no `await` between them --
+ * both run on node:sqlite's synchronous DatabaseSync, so the whole check
+ * is one atomic JS turn no other request's code can interleave into.
+ * signup's only real await is hashPassword, whose scrypt call is
+ * genuinely offloaded to libuv's threadpool (see auth/password.ts's own
+ * comment on why) -- so two concurrent signups for the same email
+ * naturally overlap there, in real wall-clock time, with no artificial
+ * gate needed to prove it. This was never actually exercised by any
+ * existing test: the "rejects a duplicate email" test above only ever
+ * sends the second signup after the first has already fully completed.
+ */
+test("two concurrent signups for the same email: exactly one succeeds, and the loser gets a clean 409 EMAIL_TAKEN, never a raw SQL error or a duplicate row", async () => {
+  await withServer(async (baseUrl) => {
+    const email = `race-${Date.now()}@example.com`;
+    const [resA, resB] = await Promise.all([
+      fetch(`${baseUrl}/api/auth/signup`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ email, password: "correct-horse-battery-a" }),
+      }),
+      fetch(`${baseUrl}/api/auth/signup`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ email, password: "correct-horse-battery-b" }),
+      }),
+    ]);
+
+    const statuses = [resA.status, resB.status].sort();
+    assert.deepEqual(statuses, [201, 409], "exactly one of the two concurrent signups must succeed");
+
+    const loserRes = resA.status === 409 ? resA : resB;
+    const loserBody = (await loserRes.json()) as { code?: string; error?: string };
+    assert.equal(loserBody.code, "EMAIL_TAKEN", "the loser must get a clean, recognizable error code, not a raw SQL constraint message");
+    assert.ok(!/UNIQUE constraint|SQLITE/i.test(loserBody.error ?? ""), `must not leak a raw SQL error: ${loserBody.error}`);
+
+    // Only one account for this email should exist -- log in with the
+    // winning password to prove there's exactly one, not a silently
+    // created duplicate row.
+    const winnerRes = resA.status === 201 ? resA : resB;
+    const winnerPassword = resA.status === 201 ? "correct-horse-battery-a" : "correct-horse-battery-b";
+    assert.equal(winnerRes.status, 201);
+    const loginRes = await fetch(`${baseUrl}/api/auth/login`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ email, password: winnerPassword }),
+    });
+    assert.equal(loginRes.status, 200);
+  });
+});
+
 test("email casing is normalized: signing up as 'Dana@Example.com' can log in as 'dana@example.com', and a second signup with different casing is rejected as a duplicate", async () => {
   await withServer(async (baseUrl) => {
     const signupRes = await fetch(`${baseUrl}/api/auth/signup`, {
