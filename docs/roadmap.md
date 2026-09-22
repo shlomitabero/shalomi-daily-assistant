@@ -5303,6 +5303,50 @@ not a single "make it perfect" claim.
       passed once the fix was restored. Full suite green (395 tests, up
       from 394 — `@forge/api` 127 → 128) and both builds clean.
 
+- [x] **Tenth consecutive round (91-100) with a genuine finding — this
+      time an honest negative result on the race-condition hunt, plus a
+      real, separate test-coverage gap closed.** Systematically checked
+      whether the other `useRef` race guards fixed this session
+      (`GlobalSearchPanel`'s `searchRequestId`, `WhatsAppPanel`'s
+      `cancelInFlight*`, `EntityPanel`'s `refreshRequestId`) had an
+      unfixed duplicate in `codegen.ts`: WhatsApp integration and Time
+      Machine checkpoints aren't part of the exported app at all (no
+      duplicate exists to check), and `App.tsx`'s handlers are already
+      guarded by disabled buttons rather than needing a ref (verified
+      empirically that every busy-triggering button actually has
+      `disabled={busy}`/etc., so the UI itself prevents the overlapping
+      calls that made the other cases exploitable). Cross-checked every
+      other duplicated helper between the live-preview
+      `entityFormatting.ts` and `codegen.ts`'s generated strings —
+      `parseCsv`, `buildImportRecords`, `isValidDate`/`isValidDateString`
+      (both of codegen.ts's two copies), `compareValues`, `csvEscape`,
+      `buildCalendarMonth`/`parseFieldDate` (including its own
+      `TZ=America/New_York` regression coverage) — byte-for-byte against
+      each other; all matched. Read `migrate.ts` end to end: its one
+      known gap (retroactive column type conversion) is already
+      correctly surfaced as a reported `type_changed` entry rather than
+      silently swallowed, and fixing it for real requires a genuine
+      product decision (what happens to existing rows that don't
+      cleanly convert) this process isn't positioned to make
+      unilaterally — left as-is, consistent with the routine's own
+      standing guidance to ask שלומי rather than decide. Reviewed
+      `whatsapp.ts`'s `findMatchingRecord` phone-matching logic and
+      found a genuine, separate gap: its `shorter`/`longer` ternary swap
+      (so matching works regardless of which of the stored vs. incoming
+      number happens to normalize longer) had every existing test
+      exercise only ONE of its two branches — the reverse direction
+      (a stored phone in full international format matched against a
+      shorter incoming number) was completely untested, meaning a future
+      "simplification" that assumed the incoming number is always the
+      longer one (true in every previously-tested case) would have
+      silently broken matching with nothing to catch it. Added that
+      missing regression test and proved it actually exercises the swap:
+      temporarily hardcoded `shorter`/`longer` without the ternary,
+      confirmed the new test failed against that broken version, then
+      restored the real (already-correct) code and confirmed an empty
+      `git diff`. Full suite green (396 tests, up from 395 — `@forge/api`
+      128 → 129) and both builds clean.
+
 ## Phase 3
 
 - Self-healing: production observability, automatic diagnosis and patch
