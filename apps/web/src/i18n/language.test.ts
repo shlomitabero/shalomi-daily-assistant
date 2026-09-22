@@ -1,6 +1,39 @@
 import assert from "node:assert/strict";
+import { readdirSync, readFileSync } from "node:fs";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { test } from "node:test";
 import { detectInitialLang, dirFor, resolveErrorMessage, translate, translations } from "./language.js";
+
+/**
+ * Walks apps/api/src and extracts every `new HttpError(status, message,
+ * "CODE")` call site's code, so the translation-coverage test below checks
+ * against the real, current set of codes the API can actually send instead
+ * of a hand-maintained list that can silently drift out of sync -- which is
+ * exactly how PIPELINE_IN_PROGRESS and ALREADY_BUILT shipped with no
+ * translation at all until a real user hit the untranslated fallback.
+ */
+function findThrownHttpErrorCodes(): Set<string> {
+  const apiSrcDir = fileURLToPath(new URL("../../../api/src", import.meta.url));
+  const codes = new Set<string>();
+  const codePattern = /new HttpError\(\s*\d+\s*,[\s\S]*?"([A-Z_]+)"\s*\)/g;
+
+  function walk(dir: string): void {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      const fullPath = join(dir, entry.name);
+      if (entry.isDirectory()) {
+        walk(fullPath);
+      } else if (entry.isFile() && entry.name.endsWith(".ts") && !entry.name.endsWith(".test.ts")) {
+        const contents = readFileSync(fullPath, "utf-8");
+        for (const match of contents.matchAll(codePattern)) {
+          codes.add(match[1]);
+        }
+      }
+    }
+  }
+  walk(apiSrcDir);
+  return codes;
+}
 
 test("detectInitialLang trusts a valid stored value", () => {
   assert.equal(detectInitialLang("en"), "en");
@@ -97,26 +130,25 @@ test("REQUEST_FAILED (synthesized client-side in api.ts when a real HTTP error r
 });
 
 test("every HttpError code the API can send has a Hebrew and an English translation", () => {
-  // Mirrors the actual set of codes thrown across apps/api/src (see httpError.ts call sites) --
-  // this is a real regression test: a new throw site without a matching dictionary entry would
-  // silently fall back to the raw English message instead of failing loudly.
-  const knownCodes = [
-    "VALIDATION_ERROR",
-    "EMAIL_TAKEN",
-    "INVALID_CREDENTIALS",
-    "USER_NOT_FOUND",
-    "AUTH_REQUIRED",
-    "SESSION_EXPIRED",
-    "ENTITY_NOT_FOUND",
-    "PROJECT_NOT_FOUND",
-    "BUILD_REQUIRED",
-    "CHECKPOINT_NOT_FOUND",
-    "NOT_FOUND",
-    "INTERNAL_ERROR",
-  ];
-  for (const code of knownCodes) {
+  // Scans the real apps/api/src source (see findThrownHttpErrorCodes above)
+  // instead of checking against a hand-maintained list -- a hardcoded list
+  // already silently missed ALREADY_BUILT, PIPELINE_IN_PROGRESS, and
+  // WHATSAPP_NOT_CONNECTED, which is exactly the failure mode this test
+  // exists to catch: a new HttpError call site with no matching dictionary
+  // entry falls back to a raw, untranslated English message for a
+  // Hebrew-speaking user instead of failing this test loudly.
+  const thrownCodes = findThrownHttpErrorCodes();
+  assert.ok(thrownCodes.size > 10, `expected to find many HttpError codes in apps/api/src, only found ${thrownCodes.size} -- the source scan itself may be broken`);
+  for (const code of thrownCodes) {
     const key = `error.${code}`;
     assert.ok(key in translations.he, `missing Hebrew translation for ${key}`);
     assert.ok(key in translations.en, `missing English translation for ${key}`);
+  }
+});
+
+test("findThrownHttpErrorCodes actually finds the known, real HttpError codes (sanity check on the scan itself)", () => {
+  const thrownCodes = findThrownHttpErrorCodes();
+  for (const code of ["VALIDATION_ERROR", "PROJECT_NOT_FOUND", "PIPELINE_IN_PROGRESS", "ALREADY_BUILT", "WHATSAPP_NOT_CONNECTED"]) {
+    assert.ok(thrownCodes.has(code), `scan should have found "${code}" being thrown somewhere in apps/api/src`);
   }
 });
