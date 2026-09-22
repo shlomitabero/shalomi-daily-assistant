@@ -5424,6 +5424,45 @@ not a single "make it perfect" claim.
       suite green (407 tests, up from 398 — `@forge/db` 59 → 68) and both
       builds clean.
 
+- [x] **Closed a second security-relevant test-coverage gap using the
+      same technique as round 102: `getSessionUser` had no test proving
+      it actually rejects a genuinely expired session.** Thirteenth
+      consecutive round (91-103) with a genuine finding. Grepped the
+      whole codebase for "injection"/"XSS"/"sanitiz"/"defense
+      against"/"guard against"/"CWE-" comments to find more
+      security-documented-but-unproven code the way round 102 found
+      `identifiers.ts`; every hit besides `identifiers.ts` itself turned
+      out to already be genuinely covered (`backup.ts`'s own `csvEscape`
+      copy — the third duplicate of the CSV/formula-injection guard,
+      alongside `entityFormatting.ts`'s and `codegen.ts`'s — already had
+      a real end-to-end test through `generateBackupZipEntries`;
+      `migrate.ts` already has dedicated identifier-sanitizing tests).
+      Pivoted to auth/session code instead and found the real gap:
+      `getSessionUser`'s SQL filters on `sessions.expiresAt > ?` — the
+      actual boundary `requireAuth` (`apps/api/src/auth/middleware.ts`)
+      depends on to reject a stale session — but every existing test that
+      calls it (`users.test.ts`, `app.test.ts`'s HTTP-level auth tests)
+      only ever passes a token that's still valid, was never created (a
+      "garbage" string), or was already deleted by logout. None of those
+      exercise a session row that genuinely *exists* in the table with a
+      real, already-past `expiresAt`, the one case that specifically
+      proves the expiry comparison itself works rather than some other
+      rejection path (missing row, deleted row). A prior round
+      (documented earlier in this file) added the first direct tests for
+      this module at all, but even that round's coverage stopped short of
+      this specific case. Added the missing test to
+      `packages/db/src/users.test.ts`, inserting the session row directly
+      (bypassing `createSession`'s own opportunistic pruning, so the row
+      is still present when `getSessionUser` runs) and asserting the row
+      exists before asserting it's rejected, so the test can't pass for
+      the wrong reason. Regression-proven with the deliberate-break
+      technique: temporarily dropped the `AND sessions.expiresAt > ?`
+      clause from the query, confirmed the new test failed (an expired
+      session authenticated successfully — a real, if temporary, auth
+      bypass), restored the real query, confirmed an empty `git diff`.
+      Full suite green (408 tests, up from 407 — `@forge/db` 68 → 69) and
+      both builds clean.
+
 ## Phase 3
 
 - Self-healing: production observability, automatic diagnosis and patch
