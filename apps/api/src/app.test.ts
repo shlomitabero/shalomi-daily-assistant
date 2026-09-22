@@ -1484,3 +1484,55 @@ test("two concurrent /refine calls on the same project: the second is rejected w
     { provider: gated.provider },
   );
 });
+
+test("two concurrent /answers calls on the same not-yet-built project: the second is rejected with 409 instead of silently racing and losing the first's answers", async () => {
+  const gated = createGatedProvider();
+  await withServer(
+    async (baseUrl) => {
+      const token = await signup(baseUrl);
+      const createRes = await fetch(`${baseUrl}/api/projects`, {
+        method: "POST",
+        headers: authHeaders(token),
+        body: JSON.stringify({ description: "A CRM with customers and deals." }),
+      });
+      const { project } = (await createRes.json()) as { project: { id: string } };
+
+      // Arm only now -- project creation itself must run at full speed.
+      gated.arm();
+      const answersAPromise = fetch(`${baseUrl}/api/projects/${project.id}/answers`, {
+        method: "POST",
+        headers: authHeaders(token),
+        body: JSON.stringify({ additionalRequest: "Also track invoices for customers." }),
+      });
+      answersAPromise.catch(() => {});
+      await gated.waitUntilStarted();
+
+      const answersBRes = await fetch(`${baseUrl}/api/projects/${project.id}/answers`, {
+        method: "POST",
+        headers: authHeaders(token),
+        body: JSON.stringify({ additionalRequest: "Also track shipments for orders." }),
+      });
+      let answersBBody: { code?: string } = {};
+      try {
+        answersBBody = (await answersBRes.json()) as { code?: string };
+      } finally {
+        gated.release();
+      }
+      assert.equal(answersBRes.status, 409);
+      assert.equal(answersBBody.code, "PIPELINE_IN_PROGRESS");
+
+      const answersARes = await answersAPromise;
+      assert.equal(answersARes.status, 200);
+
+      // Released once A finishes -- a later, non-concurrent /answers call
+      // must still succeed normally.
+      const answersCRes = await fetch(`${baseUrl}/api/projects/${project.id}/answers`, {
+        method: "POST",
+        headers: authHeaders(token),
+        body: JSON.stringify({ additionalRequest: "Also track payments." }),
+      });
+      assert.equal(answersCRes.status, 200);
+    },
+    { provider: gated.provider },
+  );
+});

@@ -119,20 +119,23 @@ export function createProjectsRouter(db: ForgeDatabase, provider: SpecProvider |
   router.use(requireAuth(db));
 
   /**
-   * /build and /refine both read `project.spec` once at the start of the
-   * request, then spend real time (an AI/heuristic spec-generation call,
-   * then a migration) before writing it back via updateProjectSpec. Two
-   * such requests for the *same* project running concurrently (e.g. a
-   * double-click, or two open tabs) would each still be working from the
-   * spec that was current when they started -- the one that finishes last
-   * overwrites project.spec with its own result, silently discarding
-   * whatever entities/fields the other one added (its migration already
-   * ran and the DB table exists, additive-only, but nothing in the
-   * overwritten spec points at it any more, so the API can no longer see
-   * or write to it). Tracked in-memory rather than in the DB: this process
-   * is the only writer of project.spec (a single Node process backs this
-   * whole app -- see app.ts's own comment on `staticDir`), so there's
-   * nothing this needs to survive a restart for.
+   * /build, /refine, and /answers each read `project.spec` once at the
+   * start of the request, then spend real time (an AI/heuristic
+   * spec-generation call, and for /build and /refine also a migration)
+   * before writing it back via updateProjectSpec. Two such requests for
+   * the *same* project running concurrently (e.g. a double-click, or two
+   * open tabs) would each still be working from the spec that was current
+   * when they started -- the one that finishes last overwrites
+   * project.spec with its own result, silently discarding whatever
+   * entities/fields the other one added (for /build and /refine, that
+   * other request's migration already ran and the DB table exists,
+   * additive-only, but nothing in the overwritten spec points at it any
+   * more, so the API can no longer see or write to it; for /answers,
+   * which never migrates, it's a plain lost update -- the answers just
+   * vanish). Tracked in-memory rather than in the DB: this process is the
+   * only writer of project.spec (a single Node process backs this whole
+   * app -- see app.ts's own comment on `staticDir`), so there's nothing
+   * this needs to survive a restart for.
    */
   const activePipelines = new Set<string>();
 
@@ -233,10 +236,18 @@ export function createProjectsRouter(db: ForgeDatabase, provider: SpecProvider |
       if (project.status === "built") {
         throw new HttpError(409, "This project is already built; use refine to make further changes", "ALREADY_BUILT");
       }
-      const combinedDescription = `${project.description}\n\n${sections.join("\n\n")}`;
-      const { spec } = await generateSpec(combinedDescription, provider);
-      const updated = updateProjectSpec(db, project.id, spec);
-      res.json({ project: updated });
+      if (activePipelines.has(project.id)) {
+        throw new HttpError(409, "A build or refine is already running for this project", "PIPELINE_IN_PROGRESS");
+      }
+      activePipelines.add(project.id);
+      try {
+        const combinedDescription = `${project.description}\n\n${sections.join("\n\n")}`;
+        const { spec } = await generateSpec(combinedDescription, provider);
+        const updated = updateProjectSpec(db, project.id, spec);
+        res.json({ project: updated });
+      } finally {
+        activePipelines.delete(project.id);
+      }
     }),
   );
 
