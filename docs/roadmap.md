@@ -5624,6 +5624,48 @@ not a single "make it perfect" claim.
       green (419 tests, up from 418 — `@forge/api` 140 → 141) and both
       builds clean.
 
+- [x] **Eighteenth consecutive round (91-108) — `whatsappWeb.ts`'s
+      connect/disconnect races turned out already exhaustively covered;
+      confirmed and directly tested a genuinely different one in
+      `auth.ts`'s signup.** Read `apps/api/src/whatsappWeb.ts` (round
+      107's top candidate) looking for an uncovered connect()/disconnect()
+      race, and found the opposite of a gap: `WhatsAppWebManager` already
+      documents and handles this exact class of bug in its own code
+      comments (a `pendingCleanup` map so a fresh `connect()` waits out a
+      disconnect's still-running auth-dir deletion instead of racing it;
+      an identity check after `createSocket()` resolves that detects a
+      concurrent disconnect replaced the session mid-flight and logs out
+      the now-orphaned socket instead of leaking it) — and both scenarios
+      already have dedicated tests that hold a fake `createSocket`/
+      `removeAuthDir` open with a manually-released promise to force the
+      exact interleaving, not just sequential calls. An honest negative
+      result: this file has had more race-condition attention than
+      almost anything else in the codebase. Pivoted to round 108's
+      candidate #2: `auth.ts`'s signup, whose only `await` (`hashPassword`)
+      happens *before* `createUser`'s SELECT-then-INSERT duplicate-email
+      check — is there a window for two concurrent signups with the same
+      email to both get through? Traced it down to `packages/db/src/
+      connection.ts`: this project uses `node:sqlite`'s synchronous
+      `DatabaseSync`, so `createUser`'s check-then-write is one atomic JS
+      turn nothing else can interleave into — genuinely safe by
+      construction, the same structural-immunity shape as round 107's
+      `/checkpoints/:id/restore` finding. Unlike that finding, though,
+      this one had never been directly exercised at all: the existing
+      "rejects a duplicate email" test only ever sends the second signup
+      strictly after the first fully completes. Added a real two-HTTP-
+      request test firing both signups via `Promise.all` — no artificial
+      gate needed, since `hashPassword`'s `scrypt` call is genuinely
+      offloaded to libuv's threadpool (see `auth/password.ts`'s own
+      comment), so real overlap happens naturally; ran it 5x to confirm
+      it isn't flaky. Regression-proven with the deliberate-break
+      technique on the pre-existing, already-correct `createUser`:
+      temporarily removed its duplicate-email SELECT check, confirmed the
+      new test caught the resulting raw `UNIQUE constraint failed` 500
+      (instead of the clean 409 `EMAIL_TAKEN` production code always
+      returns), restored the original function, confirmed an empty
+      `git diff` on `users.ts`. Full suite green (420 tests, up from 419
+      — `@forge/api` 141 → 142) and both builds clean.
+
 ## Phase 3
 
 - Self-healing: production observability, automatic diagnosis and patch
