@@ -664,6 +664,79 @@ test("the exported EntityView's handleBulkDelete refreshes and keeps only the id
   );
 });
 
+/**
+ * Regression test: the exported app's own EntityView.jsx is a deliberate
+ * duplicate of the live-preview EntityPanel.tsx, and its refresh() had
+ * the exact same stale-async-overwrites-newer-setState race this session
+ * already found and fixed in EntityPanel.tsx itself -- refresh() is
+ * called independently from handleSubmit/handleDelete/handleDuplicate/
+ * handleBulkDelete/handleImportFile/handleMove/the mount effect, with no
+ * guard against two calls overlapping. handleDuplicate in particular has
+ * no confirmation dialog, so a user double-clicking "duplicate" on two
+ * rows in quick succession starts two overlapping refresh() calls, and
+ * if the first (now stale) call's listRecords resolved after the second
+ * (newer) call's, its setRecords silently clobbered the newer, correct
+ * table with stale data. Deterministic, not timing-based: holds the
+ * FIRST refresh's listRecords call open past the SECOND refresh's own
+ * completion. Runs the real generated refresh function.
+ */
+test("the exported EntityView's refresh ignores a stale, still-in-flight refresh's records once a newer refresh has already completed", async () => {
+  const entityViewJsx = generateExportFiles(project).find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+  const refreshSrc = entityViewJsx.match(/ {2}async function refresh\(\) \{[\s\S]*?\n {2}\}\n/)?.[0];
+  assert.ok(refreshSrc, "expected to find refresh in generated output");
+
+  let listRecordsCallCount = 0;
+  let resolveFirstCall!: () => void;
+  const firstCallHeld = new Promise<void>((resolve) => {
+    resolveFirstCall = resolve;
+  });
+  const capturedRecordsByCall: unknown[][] = [];
+  const refreshRequestId = { current: 0 };
+
+  const fn = new Function(
+    "refreshRequestId",
+    "setLoading",
+    "listRecords",
+    "entity",
+    "setRecords",
+    "setError",
+    `${refreshSrc}\nreturn refresh;`,
+  )(
+    refreshRequestId,
+    () => {},
+    async () => {
+      listRecordsCallCount += 1;
+      if (listRecordsCallCount === 1) {
+        await firstCallHeld; // the stale "first" refresh's own network call stays open
+        return { records: [{ id: 1, name: "stale" }] };
+      }
+      return { records: [{ id: 2, name: "fresh" }] };
+    },
+    { name: "Customer" },
+    (records: unknown[]) => {
+      capturedRecordsByCall.push(records);
+    },
+    () => {},
+  ) as () => Promise<void>;
+
+  const stalePromise = fn();
+  await Promise.resolve(); // let the stale call actually start and reach its held-open listRecords call
+  const freshPromise = fn();
+  await freshPromise;
+
+  assert.equal(capturedRecordsByCall.length, 1, "the fresh (second) refresh must have applied its own records");
+  assert.deepEqual(capturedRecordsByCall[0], [{ id: 2, name: "fresh" }]);
+
+  resolveFirstCall();
+  await stalePromise;
+
+  assert.equal(
+    capturedRecordsByCall.length,
+    1,
+    "the stale (first) refresh resolving afterward must never call setRecords again and overwrite the fresh records",
+  );
+});
+
 test("the exported EntityView renders a real picker for relation fields, not a raw numeric ID input", () => {
   const withRelation: Project = {
     ...project,

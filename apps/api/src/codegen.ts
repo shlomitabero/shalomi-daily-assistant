@@ -744,7 +744,7 @@ function renderEntityViewJsx(project: Project): string {
     2,
   );
 
-  return `import { useEffect, useMemo, useState } from "react";
+  return `import { useEffect, useMemo, useRef, useState } from "react";
 import { createRecord, deleteRecord, listRecords, updateRecord } from "../api.js";
 
 // See the comment on generateExportFiles' allEntitiesJson for why this
@@ -1295,6 +1295,12 @@ export function EntityView({ entity }) {
   const [importMessage, setImportMessage] = useState(null);
   const [importErrors, setImportErrors] = useState([]);
   const [showImportErrors, setShowImportErrors] = useState(false);
+  // Bumped once per refresh() call, so a stale refresh whose listRecords
+  // round trip just happens to take longer than a newer one's (triggered
+  // by an overlapping action, e.g. duplicating two rows back to back)
+  // can recognize itself as superseded and skip overwriting the newer,
+  // still-correct records already on screen.
+  const refreshRequestId = useRef(0);
   const boardField = useMemo(() => findBoardField(entity.fields), [entity.fields]);
   const dateField = useMemo(() => findDateField(entity.fields), [entity.fields]);
   const relationTargets = useMemo(() => {
@@ -1328,14 +1334,17 @@ export function EntityView({ entity }) {
   }, [relationTargets]);
 
   async function refresh() {
+    const requestId = ++refreshRequestId.current;
     setLoading(true);
     try {
       const { records } = await listRecords(entity.name);
+      if (refreshRequestId.current !== requestId) return;
       setRecords(records);
     } catch (err) {
+      if (refreshRequestId.current !== requestId) return;
       setError(err.message);
     } finally {
-      setLoading(false);
+      if (refreshRequestId.current === requestId) setLoading(false);
     }
   }
 
