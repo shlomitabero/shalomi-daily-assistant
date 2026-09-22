@@ -54,7 +54,8 @@ const WhatsAppSendSchema = z.object({
   message: z.string().min(1, "message is required"),
 });
 
-function deriveName(description: string): string {
+/** Exported for direct unit testing of the word-truncation and empty-input fallback below. */
+export function deriveName(description: string): string {
   const words = description.trim().split(/\s+/).slice(0, 6).join(" ");
   return words.length > 0 ? words : "Untitled Project";
 }
