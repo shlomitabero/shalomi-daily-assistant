@@ -817,6 +817,44 @@ test("generateExportFiles includes a real render.yaml matching this repo's own p
   assert.match(readme, /render\.com/i);
 });
 
+// Round 117/118 found and fixed the exact same untested boolean-CSV gap
+// in two other independent copies of this formatting logic
+// (apps/api/src/backup.ts and codegen.ts's own server-side
+// backupFieldDisplayValue). This is a THIRD, separate copy -- the
+// per-entity "Export CSV" button's client-side fieldDisplayValue/
+// recordsToCsv, embedded in the exported app's EntityView.jsx -- and the
+// existing tests above only ever check for the functions' *presence*
+// (regex-matching their signatures), never their actual rendered output
+// for any field type. Extracts and executes the real generated
+// csvEscape/fieldDisplayValue/recordsToCsv (not a reimplementation), the
+// same technique round 118 introduced for this file.
+test("the exported EntityView's own CSV-export formatting renders booleans as TRUE/FALSE and enum values as their translated labels", () => {
+  const files = generateExportFiles(project);
+  const entityViewJsx = files.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+  const csvEscapeSrc = entityViewJsx.match(/function csvEscape\(value\) \{[\s\S]*?\n\}\n/)?.[0];
+  const fieldDisplayValueSrc = entityViewJsx.match(/function fieldDisplayValue\(field, value, relatedRecords\) \{[\s\S]*?\n\}\n/)?.[0];
+  const recordsToCsvSrc = entityViewJsx.match(/function recordsToCsv\(fields, records, relatedRecords\) \{[\s\S]*?\n\}\n/)?.[0];
+  assert.ok(csvEscapeSrc && fieldDisplayValueSrc && recordsToCsvSrc, "expected to find csvEscape/fieldDisplayValue/recordsToCsv in the generated EntityView.jsx");
+
+  const { recordsToCsv } = new Function(`${csvEscapeSrc}\n${fieldDisplayValueSrc}\n${recordsToCsvSrc}\nreturn { recordsToCsv };`)();
+
+  const fields = [
+    { name: "title", label: "Title", type: "text" },
+    { name: "done", label: "Done", type: "boolean" },
+    { name: "status", label: "Status", type: "enum", enumLabels: { New: "New", Won: "Won!" } },
+  ];
+  const records = [
+    { title: "Task A", done: true, status: "Won" },
+    { title: "Task B", done: false, status: "New" },
+  ];
+
+  const csv = recordsToCsv(fields, records, {});
+  const lines = csv.split("\r\n");
+  assert.equal(lines[0], "Title,Done,Status");
+  assert.equal(lines[1], "Task A,TRUE,Won!");
+  assert.equal(lines[2], "Task B,FALSE,New");
+});
+
 test("the exported EntityView asks for confirmation before deleting a single record, naming it by its own display label, not just count", () => {
   const files = generateExportFiles(project);
   const entityViewJsx = files.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
