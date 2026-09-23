@@ -5985,6 +5985,28 @@ not a single "make it perfect" claim.
       (440 tests, up from 439 — `@forge/api` 147 → 148) and both builds
       clean.
 
+- [x] **Round 119 — found a *third* independent copy of the same
+      boolean/enum CSV-formatting logic inside `codegen.ts`, and this one
+      had zero output coverage at all, not even the partial coverage
+      round 117/118's copies started from.** `codegen.ts` embeds the
+      per-entity "Export CSV" button's client-side `fieldDisplayValue`/
+      `recordsToCsv` inside the generated `EntityView.jsx` template — a
+      separate function from round 118's server-side
+      `backupFieldDisplayValue`. The existing tests around it
+      (`codegen.test.ts` lines 792-802, 827-843) only ever regex-matched
+      the functions' *presence and signatures*; nothing ever executed
+      them and checked the actual CSV string a real export would produce,
+      for any field type. Extracted and executed the real generated
+      `csvEscape`/`fieldDisplayValue`/`recordsToCsv` via regex +
+      `new Function` (the technique round 118 introduced for this file)
+      and asserted on the real output: a boolean renders `TRUE`/`FALSE`
+      and an enum value resolves to its translated label. Regression
+      -proven: temporarily lowercased the generated `"TRUE"`/`"FALSE"` to
+      `"true"`/`"false"` in this template, confirmed exactly the new test
+      failed, restored the original code, confirmed an empty `git diff`
+      on `codegen.ts`. Full suite green (441 tests, up from 440 —
+      `@forge/api` 148 → 149) and both builds clean.
+
 ## Phase 3
 
 - Self-healing: production observability, automatic diagnosis and patch
