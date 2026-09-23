@@ -6232,6 +6232,53 @@ not a single "make it perfect" claim.
       `@forge/api` 164 → 168, `@forge/web` 134 → 138) and both builds
       clean.
 
+- [x] **Round 125 — a sixth follow-on, back to the Business Twin: a
+      "possible duplicate" observation.** Flags two records within the
+      same entity that share the exact same display name (e.g. two
+      "Customer" records both named "Dana Levi") -- a real, actionable
+      signal for a real small business (an accidental double-import, a
+      contact entered twice) without ever claiming to know *why* they
+      match, the same honesty principle every other Business Twin
+      observation already follows (round 63's relation-coverage gaps,
+      round 65's most-linked record). Reuses `displayField.ts`'s own
+      `pickDisplayField`/`recordDisplayLabel` -- the exact same field
+      every other part of this app already uses to represent a record --
+      rather than inventing a second notion of "the record's name".
+
+      Deliberately restricted to an entity whose picked display field is
+      actually `text`: `pickDisplayField` falls back to an entity's first
+      field of *any* type when there's no name/title/text field at all,
+      and two records genuinely coincide on a field like that constantly
+      (two unrelated shipments that both happen to weigh 5kg) without
+      being duplicates in any meaningful sense. This wasn't a hypothetical
+      worry -- a first draft of this test suite (a "Shipment" entity with
+      only a `weight: number` field) caught the exact false positive:
+      "In 'Shipments', 2 records share the name '5' — possibly a
+      duplicate." Fixed by skipping duplicate-detection entirely for an
+      entity with no text display field, not by trying to special-case
+      the message.
+
+      No web-side code needed at all: `BusinessTwinPanel.tsx` already
+      renders the `observations` array generically, so this new
+      observation string appears automatically wherever it's pushed into
+      that array server-side -- this round's entire diff lives in
+      `apps/api/src/twin.ts` and its test file.
+
+      Verified with the deliberate-break-and-restore discipline
+      (temporarily removed the "picked display field must be text" guard,
+      confirmed exactly the false-positive-on-a-number-field test failed
+      with that same bogus "share the name '5'" observation, restored,
+      confirmed an empty `git diff`), **and** a full Playwright pass
+      against the real running dev server: signed up, built a real CRM
+      project through the actual AI pipeline (not a seeded shortcut),
+      added a second "Dana Levi" customer alongside the one the Seed Data
+      agent already created on its own, opened the Business Twin panel,
+      and confirmed the new observation appears correctly alongside the
+      existing "most active" and relation-coverage insights. Full suite
+      green (483 tests, up from 479 -- `@forge/api` 168 → 172;
+      `@forge/web` unchanged at 138, since no client-side code was needed)
+      and both builds clean.
+
 ## Phase 3
 
 - Self-healing: production observability, automatic diagnosis and patch
