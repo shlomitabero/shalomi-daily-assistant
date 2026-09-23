@@ -6546,6 +6546,40 @@ not a single "make it perfect" claim.
       503 -- `@forge/web` 150 → 151; `@forge/db`/`@forge/api` unchanged,
       purely client-side) and both builds clean.
 
+- [x] **Round 132 — pin/favorite a project on the home screen.** "Your
+      projects" (round 3-ish, extended many times since) has always sorted
+      newest-first, server-side, with no way to change that -- once
+      someone has a handful of projects, the one they actually touch every
+      day can end up buried below others they haven't opened in weeks.
+
+      Added a star toggle on each project card. Pinning moves that project
+      to the front of the list; everything else -- pinned or not -- keeps
+      its own existing relative order otherwise, so pinning never
+      reshuffles anything beyond moving the pinned ones forward. New
+      `pinnedProjects.ts` holds this as three small pure functions
+      (`getPinnedIds`, `togglePinned`, `sortByPinned`) backed by
+      `localStorage`, matching the app's existing convention for
+      per-viewer-only preferences (theme, language) that don't need a
+      server round trip or to be shared across a project's other
+      collaborators -- a deliberate choice, since the star toggle needed
+      nothing further from the server at all (the full project list is
+      already fetched; this only ever reorders it client-side).
+
+      Verified with the deliberate-break-and-restore discipline: swapped
+      `[...pinned, ...unpinned]` for `[...unpinned, ...pinned]` in
+      `sortByPinned`, confirmed the reordering test failed with pinned
+      projects pushed to the BACK instead of the front -- restored,
+      confirmed a clean re-run (new file). **And** a full Playwright pass
+      against the real running dev server: built two real projects
+      ("Alpha" then "Beta", newest-first so Beta listed first by default),
+      pinned Alpha via its star, confirmed it jumped to the front and its
+      star filled in, reloaded the page and confirmed the pin survived
+      (real localStorage persistence, not the view-state-doesn't-persist
+      quirk that resets everything server-driven on reload), then unpinned
+      it and confirmed the natural newest-first order returned. Full suite
+      green (510 tests, up from 504 -- `@forge/web` 151 → 157; `@forge/db`/
+      `@forge/api` unchanged, purely client-side) and both builds clean.
+
 ## Phase 3
 
 - Self-healing: production observability, automatic diagnosis and patch
