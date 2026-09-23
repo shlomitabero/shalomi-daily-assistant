@@ -5787,6 +5787,31 @@ not a single "make it perfect" claim.
       `@forge/shared` now runs as its own workspace for the first time,
       contributing 11) and both builds clean.
 
+- [x] **Twenty-first consecutive round (91-111) — round 110's own fix
+      turned out incomplete: the root `npm test` command still silently
+      skipped `@forge/shared`.** Followed round 110's own candidate list
+      to check for other workspaces with the same missing-test-infra
+      shape it had just found and fixed. Found something more specific
+      and more directly a loose end from round 110 itself: the root
+      `package.json`'s `"test"` script — the actual command
+      `npm test` runs, the one a contributor or a future CI setup would
+      actually invoke — hardcodes each workspace by name
+      (`--workspace=@forge/spec-engine`, `...db`, `...api`, `...web`)
+      rather than iterating all workspaces, and still didn't list
+      `@forge/shared` even after last round added real tests there. The
+      11 new tests existed and passed, but only reachable via
+      `npm run test --workspaces --if-present` (this session's own
+      verification command) — the project's own documented `npm test`
+      would keep silently never running them. Verified empirically
+      rather than just reasoning about it: `git stash`ed the fix, ran
+      `npm test`, confirmed `@forge/shared`'s own test output never
+      appears (only incidental mentions of "@forge/shared" inside other
+      packages' test *names*, not its own suite running); restored the
+      fix, ran `npm test` again, confirmed `@forge/shared@0.1.0 test`
+      now runs first in the chain and reports 11/11. One-line fix to
+      the root `"test"` script. Full suite still green (433 tests) and
+      both builds clean.
+
 ## Phase 3
 
 - Self-healing: production observability, automatic diagnosis and patch
