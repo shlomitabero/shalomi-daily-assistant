@@ -6417,6 +6417,58 @@ not a single "make it perfect" claim.
       `POST /entities/:entityName` route per duplicate, no new server-side
       code needed) and both builds clean.
 
+- [x] **Round 129 — Business Twin: download the snapshot as a shareable
+      report.** The Business Twin panel (round 24, extended in rounds 63,
+      65, 125) could only be viewed on-screen -- there was no way to save
+      or share the actual snapshot. "PDF export" was the obvious first
+      instinct (it had been sitting in the trigger prompt's own suggestion
+      list since round 124), but was deliberately ruled out this round:
+      the 14 standard PDF fonts are Latin-only, so a dependency-free PDF
+      writer (this codebase's established pattern, per `zip.ts`) would
+      need an embedded/subsetted Hebrew font to avoid literally garbled
+      or missing glyphs for this app's Hebrew-first audience -- a
+      materially bigger, riskier undertaking than this feature's value
+      justifies in one round. Plain UTF-8 text has no such limitation,
+      is just as shareable (WhatsApp, email, paste anywhere), and was the
+      actual chosen approach.
+
+      New `twinReport.ts` exports a pure `formatTwinReport(twin,
+      projectName, lang, t)` -- title, generated-at timestamp, summary,
+      roles, one line per entity's record count, the total, and the
+      existing observations list, each section correctly omitted (not
+      printed as an empty heading) when there's nothing to show -- plus
+      `downloadTwinReport`, which saves that text as a real `.txt` file
+      via a Blob + a synthetic `<a download>` click, the same download
+      mechanics `api.ts`'s `downloadBlob` already uses for export/backup,
+      but skipping the network round-trip entirely since the twin data is
+      already sitting in `BusinessTwinPanel`'s own React state -- no new
+      server route needed. Wired a "Download report" button into the
+      panel's header, next to Close.
+
+      Verified with the deliberate-break-and-restore discipline: removed
+      the `if (twin.roles.length > 0)` guard around the roles line,
+      confirmed the "omits the roles line and observations section when
+      there are none" test failed with a real stray "Roles: " line in
+      the output -- restored, confirmed an empty `git diff` (new file, so
+      confirmed via a clean re-run instead). **And** a full Playwright
+      pass against the real running dev server: built a real project from
+      a Hebrew idea ("חנות פרחים עם לקוחות והזמנות"), opened Business
+      Twin, clicked "Download report", intercepted the real browser
+      download event, and read back the actual saved file's bytes --
+      confirmed the Hebrew title, summary, roles, per-entity counts, and
+      observations all round-tripped correctly through the Blob/UTF-8
+      path with zero page errors. (Also discovered and ruled out, via an
+      isolated bare-HTML repro, a genuine Chromium/Playwright quirk
+      unrelated to this feature's code: a blob-URL download whose
+      `download` attribute is pure Hebrew reports `suggestedFilename()`
+      as the generic string "download" in this test environment --
+      reproducible with zero relation to React or this app's code, and
+      an existing, identical limitation `backupProject`/`exportProject`
+      already share for any Hebrew project name; the file's actual saved
+      content was unaffected.) Full suite green (502 tests, up from 498
+      -- `@forge/web` 145 → 149; `@forge/db`/`@forge/api` unchanged, no
+      server-side code needed) and both builds clean.
+
 ## Phase 3
 
 - Self-healing: production observability, automatic diagnosis and patch
