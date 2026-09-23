@@ -118,6 +118,57 @@ test("a value containing a comma or quote is correctly CSV-escaped", () => {
   assert.equal(lines[1], '"Says ""hi"", bye",חדש');
 });
 
+test("a boolean field renders as Excel's own TRUE/FALSE convention -- and unlike every other field type, an unset boolean is never left blank", () => {
+  // Every other field type (text, enum, number, relation) already has its
+  // own test above, but this backup.ts CSV writer is a standalone copy of
+  // entityFormatting.ts's formatting logic (see the file's own top comment
+  // on why it's duplicated, not imported) -- its boolean branch had never
+  // been exercised here at all.
+  //
+  // `false` is falsy but isn't null/undefined/"", so it reaches the
+  // boolean branch and renders "FALSE" rather than the empty-value guard.
+  // More surprising: an omitted boolean field renders "FALSE" too, not
+  // blank -- packages/db/src/repository.ts's rowToRecord coerces a
+  // boolean column's stored NULL through `Boolean(value)`, so a never-set
+  // boolean is indistinguishable from an explicit `false` by the time it
+  // reaches this CSV writer at all. Confirmed empirically before writing
+  // this assertion (an initial version of this test assumed the unset
+  // case renders blank, like other field types, and failed against the
+  // real code -- see round 117's roadmap entry).
+  const boolProject: Project = {
+    ...project,
+    spec: {
+      ...project.spec,
+      entities: [
+        {
+          name: "Task",
+          label: "משימות",
+          fields: [
+            { name: "title", label: "כותרת", type: "text", required: true },
+            { name: "done", label: "בוצע", type: "boolean", required: false },
+          ],
+        },
+      ],
+    },
+  };
+  const db = openDatabase(":memory:");
+  applyMigrations(db, boolProject.id, boolProject.spec);
+  const task = boolProject.spec.entities[0];
+  insertRecord(db, boolProject.id, task, { title: "Finished", done: true });
+  insertRecord(db, boolProject.id, task, { title: "Not finished", done: false });
+  insertRecord(db, boolProject.id, task, { title: "Never set" });
+
+  const entries = generateBackupZipEntries(db, boolProject);
+  const taskCsv = entries.find((e) => e.path === "Task.csv")!.content.replace(/^﻿/, "");
+  // listRecords returns newest-first (ORDER BY id DESC), so the rows are
+  // in reverse insertion order.
+  const lines = taskCsv.split("\r\n");
+  assert.equal(lines[0], "כותרת,בוצע");
+  assert.equal(lines[1], "Never set,FALSE");
+  assert.equal(lines[2], "Not finished,FALSE");
+  assert.equal(lines[3], "Finished,TRUE");
+});
+
 test("a value that would be interpreted as a spreadsheet formula is guarded with a leading single quote (CSV/formula injection)", () => {
   // A stored "name" field can hold arbitrary text -- not just values this
   // app itself ever wrote -- and Excel/Sheets/LibreOffice treat an
