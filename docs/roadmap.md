@@ -5861,6 +5861,34 @@ not a single "make it perfect" claim.
       (435 tests, up from 434 — `@forge/api` 144 → 145) and both builds
       clean.
 
+- [ ] **Round 114 — responded to real user reports (a live "server busy"
+      error and frustration at the Render free-tier cold-start screen) by
+      building an automated keep-alive ping; discovered mid-implementation
+      that it can't fire yet, for a reason bigger than a wrong branch
+      name.** Added `.github/workflows/keep-alive.yml`: a GitHub Actions
+      `schedule` (every 10 minutes) that curls `/api/health` on the live
+      app, keeping it under Render free tier's ~15-minute spin-down
+      window. Pushed to this repo's working branch
+      (`claude/forge-ai-platform-u9an5m`, commit `19c18f4`) — then found
+      that GitHub only ever evaluates `schedule`-triggered workflows on a
+      repository's **default branch**, and this repo's default branch
+      (`claude/from-zero-game-design-2b0jli`) is not a stale copy of this
+      project — it's a **different application entirely** ("FROM ZERO", a
+      business-tycoon game, with its own `render.yaml` deploying its own
+      Render service by that exact branch name). Confirmed via the GitHub
+      API (`list_branches`, `get_file_contents`, `list_commits`): the two
+      branches share a repo but not a codebase. Because Render pins an
+      explicit `branch:` in each project's own `render.yaml`, changing
+      *GitHub's* default-branch setting to `claude/forge-ai-platform-u9an5m`
+      would not touch either app's deployment — but it's a repository
+      setting change with no API tool available here, and pushing the
+      workflow file directly onto the other project's branch would also
+      cross a standing "never push to a different branch without explicit
+      permission" rule either way. Reported this honestly to שלומי and
+      asked for a one-click fix on her end rather than guessing; this item
+      stays open until she responds and the workflow is confirmed to
+      actually run on schedule (`actions_list` → `list_workflow_runs`).
+
 ## Phase 3
 
 - Self-healing: production observability, automatic diagnosis and patch
