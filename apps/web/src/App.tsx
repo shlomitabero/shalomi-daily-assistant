@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { AgentStepEvent, Project, User } from "@forge/shared";
 import {
   answerQuestions,
@@ -27,6 +27,7 @@ import { WhatsAppPanel } from "./WhatsAppPanel.js";
 import { CollaboratorsPanel } from "./CollaboratorsPanel.js";
 import { ChangePasswordPanel } from "./ChangePasswordPanel.js";
 import { ProjectNameEditor } from "./ProjectNameEditor.js";
+import { getPinnedIds, sortByPinned, togglePinned } from "./pinnedProjects.js";
 import { LanguageProvider, useTranslation } from "./i18n/LanguageContext.js";
 import { LanguageSwitcher } from "./i18n/LanguageSwitcher.js";
 import { ThemeProvider } from "./theme/ThemeContext.js";
@@ -125,12 +126,15 @@ function AppContent() {
   const [showCollaborators, setShowCollaborators] = useState(false);
   const [showChangePassword, setShowChangePassword] = useState(false);
   const [myProjects, setMyProjects] = useState<Project[]>([]);
+  const [pinnedIds, setPinnedIds] = useState<Set<string>>(() => getPinnedIds());
   const [cloningId, setCloningId] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [refineHistory, setRefineHistory] = useState<RefineHistoryEntry[]>([]);
   const [refineRunning, setRefineRunning] = useState(false);
   const pendingRefineInstruction = useRef<string | null>(null);
   const refineEvents = useRef<AgentStepEvent[]>([]);
+
+  const sortedMyProjects = useMemo(() => sortByPinned(myProjects, pinnedIds), [myProjects, pinnedIds]);
 
   useEffect(() => subscribeWakeStatus(setWaking), []);
 
@@ -472,9 +476,18 @@ function AppContent() {
             <div className="my-projects">
               <h2>{t("home.myProjects.heading")}</h2>
               <ul className="my-projects-list">
-                {myProjects.map((p) => (
+                {sortedMyProjects.map((p) => (
                   <li key={p.id}>
                     <div className="my-project-card">
+                      <button
+                        type="button"
+                        className={pinnedIds.has(p.id) ? "my-project-pin my-project-pin-active" : "my-project-pin"}
+                        aria-label={pinnedIds.has(p.id) ? t("home.myProjects.unpin") : t("home.myProjects.pin")}
+                        title={pinnedIds.has(p.id) ? t("home.myProjects.unpin") : t("home.myProjects.pin")}
+                        onClick={() => setPinnedIds(togglePinned(p.id))}
+                      >
+                        {pinnedIds.has(p.id) ? "⭐" : "☆"}
+                      </button>
                       <button type="button" className="my-project-open" onClick={() => openExistingProject(p)}>
                         <strong>{p.name}</strong>
                         {p.ownerId !== user.id && <span className="chip">{t("home.myProjects.shared")}</span>}
