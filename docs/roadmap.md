@@ -6007,6 +6007,54 @@ not a single "make it perfect" claim.
       on `codegen.ts`. Full suite green (441 tests, up from 440 —
       `@forge/api` 148 → 149) and both builds clean.
 
+- [x] **Round 120 — real user feedback ("אתה רק מוצא בעיות, תפתח את הקוד
+      שיהיה מושלם" — "you only find problems, develop the code to be
+      great") redirected this session from bug-hunting back to shipping a
+      real, visible feature: project collaborators.** Closed the honest
+      gap `docs/security.md` has documented since the first auth work —
+      "No RBAC / organizations... single-owner-per-project... no team
+      sharing" — to its first real version: an owner can invite any other
+      existing Forge AI user by email as a collaborator, who then gets
+      identical full read/write access to the project (build, refine,
+      every entity's records, exports, WhatsApp, Time Machine) through the
+      exact same `requireProjectAccess` check every route already used
+      (renamed from `requireOwnedProject`, now owner-OR-collaborator);
+      managing who has access stays owner-only via a separate, stricter
+      `requireProjectOwner`. New `packages/db/src/collaborators.ts`
+      (`project_collaborators` table), `projects.ts`'s new
+      `listProjectsForUser` (owned ∪ collaborated-on, one `LEFT JOIN`, no
+      duplicate rows even when a user is both), three new routes
+      (`GET`/`POST`/`DELETE .../collaborators`, guarding against an
+      unknown email or the owner's own email), a new `CollaboratorsPanel`
+      (invite/remove for the owner, read-only for a collaborator), and
+      full Hebrew/English translations.
+
+      Verifying this in a real browser surfaced a second, genuinely
+      unplanned gap: `listProjects()` had zero UI consumers before this —
+      every login always landed on "create something new" with no way
+      back into a project you'd already made, **owner included** (`project`
+      is plain in-memory React state with nothing behind it once the tab
+      reloads). Without fixing that too, an invited collaborator would
+      have had real API access but no way to actually discover or open
+      the project. Added a "Your projects" list to the home screen
+      (`openExistingProject` routes a built project to preview, a draft
+      back to spec review), which incidentally also fixes this for every
+      existing user, not just collaborators.
+
+      Verified two ways: the full regression-proof discipline (temporarily
+      reverted `requireProjectAccess` to owner-only, confirmed exactly the
+      new "collaborator gains access" test failed; temporarily hardcoded
+      `openExistingProject`'s view to `"preview"`, confirmed exactly its
+      new test failed; both restored, empty `git diff` each time), **and**
+      a full real-browser Playwright pass against the actual running dev
+      server in both languages — signup, invite, the collaborator's home
+      screen showing the shared project with a "Shared" badge, opening it
+      with full access, and the same panel correctly read-only (no invite
+      form, no remove buttons) from the collaborator's own side; RTL/Hebrew
+      layout confirmed too. Full suite green (454 tests, up from 441 —
+      `@forge/api` 149 → 154, `@forge/web` 130 → 131, `@forge/db` 69 → 76)
+      and both builds clean.
+
 ## Phase 3
 
 - Self-healing: production observability, automatic diagnosis and patch
