@@ -5751,6 +5751,42 @@ not a single "make it perfect" claim.
       tests, up from 421 — `@forge/api` 142 → 143) and both builds
       clean.
 
+- [x] **Twentieth consecutive round (91-110) — `packages/shared` had no
+      test infrastructure at all, and its own core validation had never
+      been directly exercised anywhere.** Followed round 109's own
+      candidate list into `packages/shared/src/index.ts`, never examined
+      this session. Found two compounding gaps: (1) the package's own
+      `package.json` had no `"test"` script and didn't even declare
+      `zod` as a dependency despite it being the package's entire
+      implementation — it only resolved via npm workspace hoisting —
+      which meant this package was silently skipped by every
+      `npm run test --workspaces --if-present` run across the whole
+      session, invisible unless someone opened the directory directly;
+      (2) `FieldSchema`'s two `.refine()` checks (an `enum` field must
+      declare `enumValues`, a `relation` field must declare
+      `relationTo`) had never been exercised by any test in the
+      codebase, not even indirectly — every existing fixture using an
+      enum/relation field, across `packages/db`, `apps/api`, and
+      `apps/web`, already supplies valid `enumValues`/`relationTo`,
+      since those fixtures exist to test unrelated behavior. Fixed the
+      package infrastructure (added the `"test"` script and the missing
+      `zod`/`tsx`/`typescript`/`@types/node` entries, matching every
+      sibling package's `package.json` shape) and added
+      `packages/shared/src/index.test.ts`, this package's first-ever
+      test file: both refine rejections, `RESERVED_FIELD_NAMES` for
+      both "id" and "createdAt" across several case variants (previously
+      only "createdAt" was exercised anywhere, and only indirectly
+      through an `AnthropicSpecProvider` test), the entity-name
+      case-collision refine, and a couple of the plain schema shape
+      checks. Regression-proven with the deliberate-break technique on
+      the pre-existing, already-correct enum refine: temporarily
+      replaced its predicate with `() => true`, confirmed exactly the
+      two enum-rejection tests failed while the other nine passed,
+      restored the original code, confirmed an empty `git diff` on
+      `index.ts`. Full suite green (433 tests, up from 422 —
+      `@forge/shared` now runs as its own workspace for the first time,
+      contributing 11) and both builds clean.
+
 ## Phase 3
 
 - Self-healing: production observability, automatic diagnosis and patch
