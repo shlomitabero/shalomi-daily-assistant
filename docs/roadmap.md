@@ -5938,6 +5938,31 @@ not a single "make it perfect" claim.
       `displayField.ts`. Full suite green (438 tests, up from 437 —
       `@forge/api` 146 → 147) and both builds clean.
 
+- [x] **Round 117 — a fresh pass on `apps/api/src/backup.ts` (the "backup
+      all data" ZIP/CSV export), unexamined this session: every field
+      type except `boolean` already had its own test.** `backup.ts`'s
+      `fieldDisplayValue` is a standalone copy of
+      `entityFormatting.ts`'s CSV formatting (duplicated on purpose per
+      the file's own top comment), and its `field.type === "boolean"`
+      branch — Excel's `TRUE`/`FALSE` convention — had zero coverage.
+      Writing the test surfaced a genuinely non-obvious invariant along
+      the way, caught only by running the test rather than reasoning
+      about it: an **omitted** boolean field renders `"FALSE"`, not
+      blank, unlike every other field type. The cause is one layer down,
+      in `packages/db/src/repository.ts`'s `rowToRecord`, which coerces a
+      boolean column's stored `NULL` through `Boolean(value)` — so an
+      unset boolean is indistinguishable from an explicit `false` by the
+      time a record ever reaches `backup.ts`. A first draft of this test
+      assumed the unset case would render blank (matching text/number/
+      enum/relation's behavior) and failed against the real code; fixed
+      by reading `repository.ts` directly instead of continuing to guess,
+      then locked in the real, verified behavior. Regression-proven:
+      temporarily lowercased the rendered `"TRUE"`/`"FALSE"` to
+      `"true"`/`"false"`, confirmed exactly the new test failed, restored
+      the original code, confirmed an empty `git diff` on `backup.ts`.
+      Full suite green (439 tests, up from 438 — `@forge/api` 146 → 147)
+      and both builds clean.
+
 ## Phase 3
 
 - Self-healing: production observability, automatic diagnosis and patch
