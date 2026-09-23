@@ -5835,6 +5835,32 @@ not a single "make it perfect" claim.
       tests, up from 433 — `@forge/api` 143 → 144) and both builds
       clean.
 
+- [x] **Twenty-third consecutive round (91-113) — the more complex
+      tie-break round 112 flagged as unexplored: `computeRelationHubObservation`'s
+      `candidates.sort()` has no explicit rule for two equally-linked
+      records.** `candidates.sort((a, b) => b.total - a.total)` leaves a
+      genuine tie's winner to whichever candidate happens to land first
+      in the array before the (stable) sort — itself just a side effect
+      of `listRecords`' `ORDER BY id DESC` (`repository.ts`) and `Map`
+      insertion order, not a deliberate rule. Reasoning about nested
+      `Map` insertion order by hand across two loops is exactly the kind
+      of thing that's easy to get wrong, so determined the actual
+      current winner empirically first, with a throwaway probe script
+      (deleted before committing, never part of the real change): with
+      two customers genuinely tied at 2 links each, the one whose
+      *most-recently-inserted* record comes first wins — not the
+      customer created first, which a reader skimming the code might
+      otherwise assume "wins" on a tie. Locked in with a direct test.
+      Regression-proven with the deliberate-break technique on the
+      pre-existing, already-correct sort: temporarily added an
+      ascending-id secondary key (`|| a.id - b.id`) to the comparator,
+      confirmed exactly the new tie-break test failed while the other 7
+      tests in `twin.test.ts` (including round 112's own tie-break test
+      in the same file) still passed, restored the original one-key
+      sort, confirmed an empty `git diff` on `twin.ts`. Full suite green
+      (435 tests, up from 434 — `@forge/api` 144 → 145) and both builds
+      clean.
+
 ## Phase 3
 
 - Self-healing: production observability, automatic diagnosis and patch
