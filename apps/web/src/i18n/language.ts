@@ -89,6 +89,8 @@ export const translations: Record<Lang, Record<string, string>> = {
     "auth.highlights.item4": "כשמוכנים, מורידים קוד React אמיתי שרץ גם מחוץ ל-Forge AI.",
     "home.myProjects.heading": "הפרויקטים שלכם",
     "home.myProjects.shared": "שותפות",
+    "home.myProjects.duplicate": "שכפול",
+    "home.myProjects.duplicate.busy": "משכפל…",
     "home.title": "מה תרצו לבנות?",
     "home.placeholder": "לדוגמה: אפליקציה לניהול תורים למספרה, עם לקוחות, עובדים ושירותים, ולוח בקרה למנהל/ת.",
     "home.submit.busy": "חושבים על זה…",
@@ -318,6 +320,8 @@ export const translations: Record<Lang, Record<string, string>> = {
     "auth.highlights.item4": "When you're ready, download real React code that runs outside Forge AI too.",
     "home.myProjects.heading": "Your projects",
     "home.myProjects.shared": "Shared",
+    "home.myProjects.duplicate": "Duplicate",
+    "home.myProjects.duplicate.busy": "Duplicating…",
     "home.title": "What do you want to build?",
     "home.placeholder":
       "e.g. An appointment-management app for a hair salon, with customers, staff and services, and an admin dashboard.",

@@ -4,6 +4,7 @@ import {
   answerQuestions,
   backupProject,
   clearToken,
+  cloneProject,
   createProject,
   enhanceIdea,
   exportProject,
@@ -120,6 +121,7 @@ function AppContent() {
   const [showWhatsApp, setShowWhatsApp] = useState(false);
   const [showCollaborators, setShowCollaborators] = useState(false);
   const [myProjects, setMyProjects] = useState<Project[]>([]);
+  const [cloningId, setCloningId] = useState<string | null>(null);
   const [refineHistory, setRefineHistory] = useState<RefineHistoryEntry[]>([]);
   const [refineRunning, setRefineRunning] = useState(false);
   const pendingRefineInstruction = useRef<string | null>(null);
@@ -206,6 +208,27 @@ function AppContent() {
     setProject(p);
     setActiveEntity(p.spec.entities[0]?.name ?? null);
     setView(p.status === "built" ? "preview" : "spec");
+  }
+
+  /**
+   * Clones a project's blueprint (spec + description) into a brand-new
+   * draft the requester owns -- never the source's actual data, so this
+   * is safe to offer on a shared project too (see the API route's own
+   * comment). Jumps straight into the new project's spec review screen,
+   * same as creating one from scratch, rather than leaving the user on
+   * the home screen wondering whether anything happened.
+   */
+  async function handleDuplicateProject(p: Project) {
+    setCloningId(p.id);
+    setError(null);
+    try {
+      const { project: cloned } = await cloneProject(p.id);
+      openExistingProject(cloned);
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setCloningId(null);
+    }
   }
 
   // role="status" (implying aria-live="polite") so a screen-reader user is
@@ -415,10 +438,20 @@ function AppContent() {
               <ul className="my-projects-list">
                 {myProjects.map((p) => (
                   <li key={p.id}>
-                    <button type="button" className="my-project-card" onClick={() => openExistingProject(p)}>
-                      <strong>{p.name}</strong>
-                      {p.ownerId !== user.id && <span className="chip">{t("home.myProjects.shared")}</span>}
-                    </button>
+                    <div className="my-project-card">
+                      <button type="button" className="my-project-open" onClick={() => openExistingProject(p)}>
+                        <strong>{p.name}</strong>
+                        {p.ownerId !== user.id && <span className="chip">{t("home.myProjects.shared")}</span>}
+                      </button>
+                      <button
+                        type="button"
+                        className="secondary my-project-duplicate"
+                        disabled={cloningId !== null}
+                        onClick={() => handleDuplicateProject(p)}
+                      >
+                        {cloningId === p.id ? t("home.myProjects.duplicate.busy") : t("home.myProjects.duplicate")}
+                      </button>
+                    </div>
                   </li>
                 ))}
               </ul>

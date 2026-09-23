@@ -217,6 +217,36 @@ export function createProjectsRouter(db: ForgeDatabase, provider: SpecProvider |
   );
 
   /**
+   * Clones a project's spec (and description) into a brand-new project
+   * owned by whoever asked -- the owner, or a collaborator making their
+   * own personal starting point from a shared one. Deliberately does NOT
+   * copy the source project's actual data (real customer records, etc.):
+   * the clone always starts as a fresh "draft", exactly like a newly
+   * described idea, so the requester chooses when (and whether) to build
+   * it and get its own freshly generated seed data -- never someone
+   * else's real business data landing in a new project without them
+   * asking for that specifically. requireProjectAccess (not
+   * requireProjectOwner) since reading a project you have access to and
+   * making your own personal copy of its blueprint doesn't touch the
+   * original at all.
+   */
+  router.post(
+    "/projects/:id/clone",
+    asyncRoute(async (req, res) => {
+      const source = requireProjectAccess(db, req.params.id, req.userId!);
+      const suffix = isHebrewText(source.description) ? " (עותק)" : " (copy)";
+      const cloned = insertProject(db, {
+        id: randomUUID(),
+        ownerId: req.userId!,
+        name: `${source.name}${suffix}`,
+        description: source.description,
+        spec: source.spec,
+      });
+      res.status(201).json({ project: cloned });
+    }),
+  );
+
+  /**
    * Project sharing (see collaborators.ts's own module comment): the owner
    * or any current collaborator can see who has access; only the owner can
    * change who does. Listed by requireProjectAccess first so a collaborator

@@ -194,6 +194,10 @@ export function listProjects(): Promise<{ projects: Project[] }> {
   return request("/projects");
 }
 
+export function cloneProject(projectId: string): Promise<{ project: Project }> {
+  return request(`/projects/${projectId}/clone`, { method: "POST" });
+}
+
 /**
  * Sends the user's answers to the spec's open questions (quick-pick or
  * freely typed), and/or a free-standing request not tied to any specific

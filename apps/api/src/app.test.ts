@@ -758,6 +758,106 @@ test("inviting the project owner's own email is rejected rather than silently ac
   });
 });
 
+test("cloning a project creates a brand-new draft owned by the requester, with the same spec but a distinguishing name, and never copies real data", async () => {
+  await withServer(async (baseUrl) => {
+    const ownerToken = await signup(baseUrl, "clone-owner1@example.com");
+    const createRes = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: authHeaders(ownerToken),
+      body: JSON.stringify({ description: "A CRM with customers and deals." }),
+    });
+    const { project } = (await createRes.json()) as { project: { id: string; name: string; status: string } };
+
+    // Build it and insert a real record, specifically to prove the clone
+    // never carries that data over -- only the blueprint.
+    const buildRes = await fetch(`${baseUrl}/api/projects/${project.id}/build`, {
+      method: "POST",
+      headers: authHeaders(ownerToken),
+    });
+    await collectSSE(buildRes);
+    const builtRes = await fetch(`${baseUrl}/api/projects/${project.id}`, { headers: authHeaders(ownerToken) });
+    const { project: builtProject } = (await builtRes.json()) as {
+      project: { spec: { entities: { name: string }[] } };
+    };
+    const firstEntity = builtProject.spec.entities[0].name;
+    await fetch(`${baseUrl}/api/projects/${project.id}/entities/${firstEntity}`, {
+      method: "POST",
+      headers: authHeaders(ownerToken),
+      body: JSON.stringify({ name: "Real customer, not a template" }),
+    });
+
+    const cloneRes = await fetch(`${baseUrl}/api/projects/${project.id}/clone`, {
+      method: "POST",
+      headers: authHeaders(ownerToken),
+    });
+    assert.equal(cloneRes.status, 201);
+    const { project: cloned } = (await cloneRes.json()) as {
+      project: { id: string; name: string; ownerId: string; status: string; description: string; spec: unknown };
+    };
+
+    assert.notEqual(cloned.id, project.id, "the clone must be a genuinely new project, not the same one");
+    assert.equal(cloned.status, "draft", "a clone starts fresh, even though the source was already built");
+    assert.match(cloned.name, /copy/i);
+    assert.deepEqual(cloned.spec, builtProject.spec, "the clone's blueprint should match the source exactly");
+
+    // The clone has no real database yet (status: draft) -- confirms no
+    // data, not just no *visible* data, since there's nothing to query.
+    const cloneEntitiesRes = await fetch(`${baseUrl}/api/projects/${cloned.id}/entities/${firstEntity}`, {
+      headers: authHeaders(ownerToken),
+    });
+    assert.equal(cloneEntitiesRes.status, 409, "the clone hasn't been built yet, so its own table doesn't exist");
+  });
+});
+
+test("a collaborator (not the owner) can also clone a shared project, becoming the owner of their own independent copy", async () => {
+  await withServer(async (baseUrl) => {
+    const ownerToken = await signup(baseUrl, "clone-owner2@example.com");
+    const collabToken = await signup(baseUrl, "clone-collab2@example.com");
+    const createRes = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: authHeaders(ownerToken),
+      body: JSON.stringify({ description: "A CRM with customers and deals." }),
+    });
+    const { project } = (await createRes.json()) as { project: { id: string } };
+    await fetch(`${baseUrl}/api/projects/${project.id}/collaborators`, {
+      method: "POST",
+      headers: authHeaders(ownerToken),
+      body: JSON.stringify({ email: "clone-collab2@example.com" }),
+    });
+
+    const cloneRes = await fetch(`${baseUrl}/api/projects/${project.id}/clone`, {
+      method: "POST",
+      headers: authHeaders(collabToken),
+    });
+    assert.equal(cloneRes.status, 201);
+    const { project: cloned } = (await cloneRes.json()) as { project: { ownerId: string } };
+
+    // Verify by fetching /me instead of trusting a client-suppliable value.
+    const meRes = await fetch(`${baseUrl}/api/auth/me`, { headers: authHeaders(collabToken) });
+    const { user: collabUser } = (await meRes.json()) as { user: { id: string } };
+    assert.equal(cloned.ownerId, collabUser.id, "the collaborator, not the original owner, should own the clone");
+  });
+});
+
+test("cloning someone else's project you have no access to still 404s, the same as any other project route", async () => {
+  await withServer(async (baseUrl) => {
+    const ownerToken = await signup(baseUrl, "clone-owner3@example.com");
+    const outsiderToken = await signup(baseUrl, "clone-outsider3@example.com");
+    const createRes = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: authHeaders(ownerToken),
+      body: JSON.stringify({ description: "A CRM with customers and deals." }),
+    });
+    const { project } = (await createRes.json()) as { project: { id: string } };
+
+    const cloneRes = await fetch(`${baseUrl}/api/projects/${project.id}/clone`, {
+      method: "POST",
+      headers: authHeaders(outsiderToken),
+    });
+    assert.equal(cloneRes.status, 404);
+  });
+});
+
 test("a user cannot restore another user's checkpoint into their own project by guessing/reusing its id", async () => {
   await withServer(async (baseUrl) => {
     const ownerToken = await signup(baseUrl, "owner2@example.com");
