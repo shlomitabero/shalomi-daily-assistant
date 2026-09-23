@@ -6327,6 +6327,56 @@ not a single "make it perfect" claim.
       Full suite green (489 tests, up from 483 -- `@forge/api` 172 → 176,
       `@forge/web` 138 → 140) and both builds clean.
 
+- [x] **Round 127 — an eighth follow-on, extending round 126's entity-
+      label rename one level down: inline field display-label rename.**
+      A single field's label (e.g. a "phone" field shown as "טלפון נייד")
+      had the exact same gap entities had before round 126 -- set once by
+      spec generation, no way to fix an awkward one short of a full
+      natural-language Refine round-trip. New
+      `PATCH /projects/:id/entities/:entityName/fields/:fieldName/label`,
+      another direct `updateProjectSpec` write with no migration (a new
+      `findField` helper, 404 `FIELD_NOT_FOUND`, mirrors `findEntity`'s
+      own existence check), and a new `FieldLabelEditor` on the client.
+
+      This one genuinely differs from `ProjectNameEditor`/
+      `EntityLabelEditor`, not just in what it edits: a field's label
+      lives inside a `<label>` that already wraps the real form input
+      (needed for correct label/input association), and a native
+      `<label>` forwards a click on its own non-interactive content to
+      that wrapped input. Making the label text itself the click-to-edit
+      target the way the two earlier editors do would also refocus the
+      actual field input on every click. Used a dedicated small
+      pencil-icon `<button>` instead, with `preventDefault`/
+      `stopPropagation` on its click, so starting an edit never touches
+      the sibling input's focus -- and wrote a jsdom test specifically
+      for that click-forwarding contract (render `FieldLabelEditor` inside
+      a real `<label>` with its own click handler, click the rename
+      button, assert the wrapping label's handler never fired), not just
+      for the rename itself.
+
+      Verified with the deliberate-break-and-restore discipline at three
+      separate points -- api: temporarily wrote the new value into
+      `field.name` instead of `field.label`, confirmed the test's own
+      subsequent field lookup broke with a real `TypeError` (the same
+      "would have corrupted the real column mapping" proof round 126's
+      entity version gave); web save path: temporarily removed the actual
+      `renameFieldLabel` call, confirmed exactly the "saves a real change"
+      test failed; web focus-safety: temporarily removed
+      `stopPropagation` from the edit button's click handler, confirmed
+      exactly the new label-click-forwarding test failed -- each restored
+      afterward with the full suite green again. **And** a full Playwright
+      pass against the real running dev server: built a real CRM project,
+      clicked a field's rename button, and confirmed via
+      `document.activeElement` in real Chromium (not just assumed from
+      the jsdom test, which can't fully settle a real click-forwarding
+      question the way round 122's blur-on-unmount discovery already
+      taught this session to distrust) that the rename input -- not the
+      sibling `FieldInput` -- genuinely receives focus; renamed it to
+      Hebrew text, confirmed it persisted across a reload, then confirmed
+      Escape correctly cancels a second edit without saving. Full suite
+      green (496 tests, up from 489 -- `@forge/api` 176 → 180, `@forge/web`
+      140 → 143) and both builds clean.
+
 ## Phase 3
 
 - Self-healing: production observability, automatic diagnosis and patch
