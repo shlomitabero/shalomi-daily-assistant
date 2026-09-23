@@ -1809,3 +1809,56 @@ button.sort-header:hover:not(:disabled) {
   --shadow-md: 0 8px 24px rgba(0, 0, 0, 0.4);
   --shadow-lift: 0 10px 30px rgba(239, 125, 67, 0.25);
 }
+
+.print-record-sheet {
+  display: none;
+}
+
+.print-record-sheet h1 {
+  font-size: 20px;
+  margin: 0 0 16px;
+}
+
+.print-record-sheet dl {
+  margin: 0;
+}
+
+.print-field {
+  display: flex;
+  gap: 12px;
+  padding: 8px 0;
+  border-bottom: 1px solid #ccc;
+}
+
+.print-field dt {
+  flex: 0 0 160px;
+  font-weight: 600;
+  color: #444;
+}
+
+.print-field dd {
+  margin: 0;
+  flex: 1;
+}
+
+.print-record-footer {
+  margin-top: 24px;
+  font-size: 12px;
+  color: #666;
+}
+
+@media print {
+  body * {
+    visibility: hidden;
+  }
+  .print-record-sheet,
+  .print-record-sheet * {
+    visibility: visible !important;
+  }
+  .print-record-sheet {
+    display: block !important;
+    position: absolute;
+    inset: 0;
+    padding: 24px;
+  }
+}

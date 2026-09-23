@@ -966,3 +966,55 @@ test("EntityPanel's CSV import creates a real record from an uploaded file and s
     }
   });
 });
+
+/**
+ * New in this round: a per-row "Print" action fills the always-mounted
+ * (but on-screen-hidden, via styles.css) `.print-record-sheet` with that
+ * ONE record's fields and calls `window.print()` -- the sheet's own
+ * visibility switch (screen: none; @media print: visible while everything
+ * else is hidden) is pure CSS and can't be exercised by jsdom, but the
+ * DOM/data wiring this test actually owns -- clicking row 2's "Print"
+ * button populates the sheet with row 2's fields, not row 1's or an empty
+ * one, and genuinely calls the browser print API -- is real and worth
+ * pinning.
+ */
+test("EntityPanel's Print action fills the print sheet with that record's own fields and calls window.print", async () => {
+  await withJsdom(async () => {
+    const store: EntityRecord[] = [
+      { id: 1, name: "Acme Corp", status: "new" },
+      { id: 2, name: "Globex", status: "won" },
+    ];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = mockRecordsFetch(store) as typeof fetch;
+    const originalPrint = window.print;
+    let printCalls = 0;
+    window.print = () => {
+      printCalls += 1;
+    };
+    try {
+      renderEntityPanel();
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 2);
+
+      assert.equal(
+        document.querySelector(".print-record-sheet")!.textContent,
+        "",
+        "the print sheet must be empty until a row's Print action is actually clicked",
+      );
+
+      const rows = document.querySelectorAll("table tbody tr");
+      const globexRow = Array.from(rows).find((r) => /Globex/.test(r.textContent ?? ""))!;
+      const printBtn = Array.from(globexRow.querySelectorAll("button")).find((b) => b.textContent?.includes("Print"))!;
+      fireEvent.click(printBtn);
+
+      await waitForCondition(() => printCalls === 1);
+
+      const sheetText = document.querySelector(".print-record-sheet")!.textContent ?? "";
+      assert.match(sheetText, /Globex/, "the print sheet must show the clicked row's own name, not another row's");
+      assert.match(sheetText, /Won/, "the print sheet must show the clicked row's own status label");
+      assert.doesNotMatch(sheetText, /Acme Corp/, "the print sheet must not include the OTHER record's data");
+    } finally {
+      globalThis.fetch = originalFetch;
+      window.print = originalPrint;
+    }
+  });
+});

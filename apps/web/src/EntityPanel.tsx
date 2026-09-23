@@ -80,6 +80,57 @@ function Cell({
  * select to move it directly to another column, and the same Edit/Delete
  * actions the table row has.
  */
+/**
+ * The only DOM this renders is meant to be seen by a printer, never a
+ * screen -- styles.css keeps `.print-record-sheet` at `display: none` on
+ * screen, and a `@media print` rule hides everything else in the page
+ * (via `visibility: hidden`) while un-hiding this one element. That's why
+ * this always renders (never conditionally, so its `display: none` never
+ * has to fight a mount/unmount race with `window.print()`) and just shows
+ * nothing when there's no record queued to print.
+ */
+function RecordPrintSheet({
+  entity,
+  record,
+  lang,
+  t,
+  allEntities,
+  relatedRecords,
+}: {
+  entity: Entity;
+  record: EntityRecord | null;
+  lang: Lang;
+  t: (key: string, params?: Record<string, string | number>) => string;
+  allEntities: Entity[];
+  relatedRecords: RelatedRecordsByEntity;
+}) {
+  if (!record) return <div className="print-record-sheet" />;
+  return (
+    <div className="print-record-sheet">
+      <h1>{entity.label ?? entity.name}</h1>
+      <dl>
+        {entity.fields.map((f) => (
+          <div key={f.name} className="print-field">
+            <dt>{f.label ?? f.name}</dt>
+            <dd>
+              <Cell
+                field={f}
+                value={record[f.name]}
+                lang={lang}
+                t={t}
+                relationLabel={
+                  f.type === "relation" ? relationDisplayLabel(f, record[f.name], allEntities, relatedRecords) : undefined
+                }
+              />
+            </dd>
+          </div>
+        ))}
+      </dl>
+      <p className="print-record-footer">{t("entity.print.generatedAt", { date: new Date().toLocaleString(LOCALE[lang]) })}</p>
+    </div>
+  );
+}
+
 function BoardCard({
   entity,
   boardField,
@@ -335,6 +386,7 @@ export function EntityPanel({
   const [importMessage, setImportMessage] = useState<string | null>(null);
   const [importErrors, setImportErrors] = useState<string[]>([]);
   const [showImportErrors, setShowImportErrors] = useState(false);
+  const [recordToPrint, setRecordToPrint] = useState<EntityRecord | null>(null);
   // Bumped once per refresh() call, so a stale refresh whose listRecords
   // round trip just happens to take longer than a newer one's (triggered
   // by an overlapping action, e.g. duplicating two rows back to back)
@@ -405,6 +457,22 @@ export function EntityPanel({
     void refresh();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [entity.name]);
+
+  useEffect(() => {
+    if (!recordToPrint) return;
+    // Deferred a tick so the just-set record has actually rendered into
+    // .print-record-sheet before the print dialog opens and captures it.
+    const timer = setTimeout(() => window.print(), 0);
+    return () => clearTimeout(timer);
+  }, [recordToPrint]);
+
+  useEffect(() => {
+    function clearPrintedRecord() {
+      setRecordToPrint(null);
+    }
+    window.addEventListener("afterprint", clearPrintedRecord);
+    return () => window.removeEventListener("afterprint", clearPrintedRecord);
+  }, []);
 
   function toggleSort(fieldName: string) {
     if (sortField !== fieldName) {
@@ -897,6 +965,9 @@ export function EntityPanel({
                         <button type="button" onClick={() => handleDuplicate(record.id as number)}>
                           {t("entity.duplicate")}
                         </button>
+                        <button type="button" onClick={() => setRecordToPrint(record)}>
+                          {t("entity.print")}
+                        </button>
                         <button type="button" className="danger" onClick={() => handleDelete(record.id as number)}>
                           {t("entity.delete")}
                         </button>
@@ -909,6 +980,14 @@ export function EntityPanel({
           )}
         </>
       )}
+      <RecordPrintSheet
+        entity={entity}
+        record={recordToPrint}
+        lang={lang}
+        t={t}
+        allEntities={allEntities}
+        relatedRecords={relatedRecords}
+      />
     </div>
   );
 }
