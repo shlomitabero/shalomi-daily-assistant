@@ -6657,6 +6657,53 @@ not a single "make it perfect" claim.
       180 → 183; `@forge/db`/`@forge/web` unchanged, all new logic lives in
       `twin.ts`) and both builds clean.
 
+- [x] **Round 135 — a "What would change?" diff preview on Time Machine
+      checkpoints.** Yet another different part of the app (round 134 was
+      Business Twin, rounds 130-133 were the home screen) -- the History
+      panel hadn't been touched since its original build. Restoring a
+      checkpoint never destroys any data (migrations are additive-only, per
+      the restore route's own comment), but it DOES move which
+      entities/fields the live screens currently show -- so a real question
+      before clicking Restore is "what will disappear from what I see right
+      now?", and the panel had no way to answer it beyond guessing from a
+      timestamp and an entity count.
+
+      Added a "What would change?" toggle per checkpoint, computed entirely
+      client-side via a new `computeCheckpointDiff(currentSpec,
+      checkpointSpec)` -- both specs are already fully in hand (the
+      checkpoint's own and the currently-open project's), so no new server
+      route was needed. It's deliberately the reverse direction of
+      pipeline.ts's existing `computeImpact` (which reports what a build
+      newly ADDS going forward, for the AI Team screen): this one reports
+      which entities present now are missing from the checkpoint (would be
+      removed) and which fields on entities that survive would be removed
+      too.
+
+      Along the way, adding a second button per checkpoint row broke an
+      existing test's `.checkpoint-list button` selector (it silently
+      started clicking the new toggle instead of Restore) -- fixed by
+      giving the restore button its own `.checkpoint-restore-btn` class,
+      a real, if narrowly-scoped, regression this round's own change caused
+      and fixed before moving on, not just a pre-existing gap.
+
+      Verified with the deliberate-break-and-restore discipline: inverted
+      the field-removal filter's condition (`checkpointFieldNames.has`
+      instead of `!checkpointFieldNames.has`), confirmed every one of the 5
+      new `computeCheckpointDiff` tests failed with exactly the wrong
+      fields reported as removed -- restored, confirmed a clean re-run.
+      **And** a full Playwright pass against the real running dev server:
+      built a real CRM, refined it with "Add invoice tracking" (a real
+      structural change -- a recognized domain-entity keyword this
+      heuristic engine actually acts on, unlike a plain-English field
+      request it doesn't parse, discovered by first trying and disproving a
+      weaker instruction), opened Time Machine, expanded "What would
+      change?" on the pre-refine checkpoint and confirmed it correctly named
+      the real new "Invoice" entity as something that would be removed, and
+      confirmed the post-refine checkpoint (matching the current spec
+      exactly) correctly reported "No changes" instead. Full suite green
+      (521 tests, up from 515 -- `@forge/web` 159 → 165; `@forge/db`/
+      `@forge/api` unchanged, purely client-side) and both builds clean.
+
 ## Phase 3
 
 - Self-healing: production observability, automatic diagnosis and patch
