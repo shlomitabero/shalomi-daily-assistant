@@ -1031,6 +1031,39 @@ button.sort-header:hover:not(:disabled) {
   flex-wrap: wrap;
 }
 
+.project-name {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+  padding: 4px 8px;
+  margin: -4px -8px;
+  transition: background 0.12s ease;
+}
+
+.project-name:hover {
+  background: var(--surface-raised);
+}
+
+.project-name-edit-icon {
+  font-size: 16px;
+  opacity: 0.5;
+}
+
+.project-name-edit {
+  flex: 1;
+  min-width: 220px;
+}
+
+.project-name-edit input {
+  font: inherit;
+  font-size: 26px;
+  font-weight: 700;
+  letter-spacing: -0.015em;
+  padding: 4px 8px;
+}
+
 .shortcut-hint {
   margin-inline-start: 6px;
   padding: 1px 6px;

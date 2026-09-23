@@ -24,6 +24,7 @@ import { GlobalSearchPanel } from "./GlobalSearchPanel.js";
 import { HistoryPanel } from "./HistoryPanel.js";
 import { WhatsAppPanel } from "./WhatsAppPanel.js";
 import { CollaboratorsPanel } from "./CollaboratorsPanel.js";
+import { ProjectNameEditor } from "./ProjectNameEditor.js";
 import { LanguageProvider, useTranslation } from "./i18n/LanguageContext.js";
 import { LanguageSwitcher } from "./i18n/LanguageSwitcher.js";
 import { ThemeProvider } from "./theme/ThemeContext.js";
@@ -599,7 +600,7 @@ function AppContent() {
       {view === "preview" && project && (
         <main className="preview">
           <div className="preview-header">
-            <h1>{project.name}</h1>
+            <ProjectNameEditor project={project} onRenamed={setProject} />
             <div className="preview-header-actions">
               <button type="button" className="secondary" onClick={() => openPanel("search")}>
                 {t("preview.search")}

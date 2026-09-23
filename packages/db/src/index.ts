@@ -23,6 +23,7 @@ export {
   listProjectsForUser,
   markProjectBuilt,
   updateProjectSpec,
+  updateProjectName,
 } from "./projects.js";
 export {
   ensureProjectCollaboratorsTable,

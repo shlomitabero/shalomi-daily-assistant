@@ -10,6 +10,7 @@ import {
   listProjectsForUser,
   diffAndMigrate,
   updateProjectSpec,
+  updateProjectName,
   insertRecord,
   listRecords,
   updateRecord,
@@ -61,6 +62,10 @@ const WhatsAppSendSchema = z.object({
 
 const AddCollaboratorSchema = z.object({
   email: z.string().email("a valid email is required"),
+});
+
+const RenameProjectSchema = z.object({
+  name: z.string().trim().min(1, "name is required"),
 });
 
 /** Exported for direct unit testing of the word-truncation and empty-input fallback below. */
@@ -213,6 +218,27 @@ export function createProjectsRouter(db: ForgeDatabase, provider: SpecProvider |
     "/projects/:id",
     asyncRoute(async (req, res) => {
       res.json({ project: requireProjectAccess(db, req.params.id, req.userId!) });
+    }),
+  );
+
+  /**
+   * A project's name is otherwise only ever set once at creation
+   * (deriveName's auto-derived first few words of the description), with
+   * no way to fix it -- including the generic "(copy)" suffix a clone
+   * starts with. requireProjectAccess (not requireProjectOwner): a
+   * collaborator has the exact same full read/write access as the owner
+   * everywhere else, and a project's display name is no different.
+   */
+  router.patch(
+    "/projects/:id/name",
+    asyncRoute(async (req, res) => {
+      const project = requireProjectAccess(db, req.params.id, req.userId!);
+      const parsed = RenameProjectSchema.safeParse(req.body);
+      if (!parsed.success) {
+        throw new HttpError(400, formatValidationError(parsed.error), "VALIDATION_ERROR");
+      }
+      const updated = updateProjectName(db, project.id, parsed.data.name);
+      res.json({ project: updated });
     }),
   );
 

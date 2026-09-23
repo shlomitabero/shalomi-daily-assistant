@@ -858,6 +858,86 @@ test("cloning someone else's project you have no access to still 404s, the same 
   });
 });
 
+test("the owner can rename a project, and a collaborator can too since they have identical full access", async () => {
+  await withServer(async (baseUrl) => {
+    const ownerToken = await signup(baseUrl, "rename-owner1@example.com");
+    const collabToken = await signup(baseUrl, "rename-collab1@example.com");
+    const createRes = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: authHeaders(ownerToken),
+      body: JSON.stringify({ description: "A CRM with customers and deals." }),
+    });
+    const { project } = (await createRes.json()) as { project: { id: string } };
+    await fetch(`${baseUrl}/api/projects/${project.id}/collaborators`, {
+      method: "POST",
+      headers: authHeaders(ownerToken),
+      body: JSON.stringify({ email: "rename-collab1@example.com" }),
+    });
+
+    const ownerRenameRes = await fetch(`${baseUrl}/api/projects/${project.id}/name`, {
+      method: "PATCH",
+      headers: authHeaders(ownerToken),
+      body: JSON.stringify({ name: "My Real Business Name" }),
+    });
+    assert.equal(ownerRenameRes.status, 200);
+    const { project: renamedByOwner } = (await ownerRenameRes.json()) as { project: { name: string } };
+    assert.equal(renamedByOwner.name, "My Real Business Name");
+
+    const collabRenameRes = await fetch(`${baseUrl}/api/projects/${project.id}/name`, {
+      method: "PATCH",
+      headers: authHeaders(collabToken),
+      body: JSON.stringify({ name: "Renamed By The Collaborator" }),
+    });
+    assert.equal(collabRenameRes.status, 200);
+    const { project: renamedByCollab } = (await collabRenameRes.json()) as { project: { name: string } };
+    assert.equal(renamedByCollab.name, "Renamed By The Collaborator");
+  });
+});
+
+test("renaming a project rejects an empty or whitespace-only name instead of silently accepting it", async () => {
+  await withServer(async (baseUrl) => {
+    const ownerToken = await signup(baseUrl, "rename-owner2@example.com");
+    const createRes = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: authHeaders(ownerToken),
+      body: JSON.stringify({ description: "A CRM with customers and deals." }),
+    });
+    const { project } = (await createRes.json()) as { project: { id: string; name: string } };
+
+    const blankRes = await fetch(`${baseUrl}/api/projects/${project.id}/name`, {
+      method: "PATCH",
+      headers: authHeaders(ownerToken),
+      body: JSON.stringify({ name: "   " }),
+    });
+    assert.equal(blankRes.status, 400);
+
+    // Confirm the rejected request never touched the stored name.
+    const getRes = await fetch(`${baseUrl}/api/projects/${project.id}`, { headers: authHeaders(ownerToken) });
+    const { project: unchanged } = (await getRes.json()) as { project: { name: string } };
+    assert.equal(unchanged.name, project.name);
+  });
+});
+
+test("renaming a project you have no access to still 404s, the same as any other project route", async () => {
+  await withServer(async (baseUrl) => {
+    const ownerToken = await signup(baseUrl, "rename-owner3@example.com");
+    const outsiderToken = await signup(baseUrl, "rename-outsider3@example.com");
+    const createRes = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: authHeaders(ownerToken),
+      body: JSON.stringify({ description: "A CRM with customers and deals." }),
+    });
+    const { project } = (await createRes.json()) as { project: { id: string } };
+
+    const renameRes = await fetch(`${baseUrl}/api/projects/${project.id}/name`, {
+      method: "PATCH",
+      headers: authHeaders(outsiderToken),
+      body: JSON.stringify({ name: "Hijacked Name" }),
+    });
+    assert.equal(renameRes.status, 404);
+  });
+});
+
 test("a user cannot restore another user's checkpoint into their own project by guessing/reusing its id", async () => {
   await withServer(async (baseUrl) => {
     const ownerToken = await signup(baseUrl, "owner2@example.com");

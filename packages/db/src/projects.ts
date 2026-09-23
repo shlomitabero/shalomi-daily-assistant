@@ -123,3 +123,18 @@ export function updateProjectSpec(db: ForgeDatabase, id: string, spec: ProductSp
   if (!project) throw new Error(`Project ${id} not found`);
   return project;
 }
+
+/**
+ * A project's name is otherwise only ever set once, at creation
+ * (deriveName's auto-derived first few words of the description) -- with
+ * no way to fix an awkward auto-generated name, or the generic "(copy)"
+ * suffix a clone starts with (see the clone route), short of deleting and
+ * recreating the whole project. The caller is responsible for validating
+ * `name` (non-empty after trimming) before calling this.
+ */
+export function updateProjectName(db: ForgeDatabase, id: string, name: string): Project {
+  db.prepare("UPDATE projects SET name = ? WHERE id = ?").run(name, id);
+  const project = getProject(db, id);
+  if (!project) throw new Error(`Project ${id} not found`);
+  return project;
+}

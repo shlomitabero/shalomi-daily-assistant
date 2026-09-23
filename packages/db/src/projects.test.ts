@@ -3,7 +3,14 @@ import { test } from "node:test";
 import type { ProductSpec } from "@forge/shared";
 import { openDatabase } from "./connection.js";
 import { ensureProjectCollaboratorsTable, addCollaborator } from "./collaborators.js";
-import { ensureProjectsTable, getProject, insertProject, listProjectsForOwner, listProjectsForUser } from "./projects.js";
+import {
+  ensureProjectsTable,
+  getProject,
+  insertProject,
+  listProjectsForOwner,
+  listProjectsForUser,
+  updateProjectName,
+} from "./projects.js";
 
 const validSpec: ProductSpec = {
   summary: "test",
@@ -111,4 +118,23 @@ test("listProjectsForUser returns each project exactly once even when the user i
     ["p1"],
     "should not list the same project twice",
   );
+});
+
+test("updateProjectName changes only the name, leaving every other field (spec, description, status, ownerId) untouched", () => {
+  const db = openDatabase(":memory:");
+  ensureProjectsTable(db);
+  const project = insertProject(db, {
+    id: "p1",
+    ownerId: "owner1",
+    name: "Auto-derived name",
+    description: "the original description",
+    spec: validSpec,
+  });
+
+  const renamed = updateProjectName(db, project.id, "My Actual Business Name");
+  assert.equal(renamed.name, "My Actual Business Name");
+  assert.equal(renamed.description, project.description);
+  assert.equal(renamed.ownerId, project.ownerId);
+  assert.equal(renamed.status, project.status);
+  assert.deepEqual(renamed.spec, project.spec);
 });

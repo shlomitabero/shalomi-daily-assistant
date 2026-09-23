@@ -198,6 +198,10 @@ export function cloneProject(projectId: string): Promise<{ project: Project }> {
   return request(`/projects/${projectId}/clone`, { method: "POST" });
 }
 
+export function renameProject(projectId: string, name: string): Promise<{ project: Project }> {
+  return request(`/projects/${projectId}/name`, { method: "PATCH", body: JSON.stringify({ name }) });
+}
+
 /**
  * Sends the user's answers to the spec's open questions (quick-pick or
  * freely typed), and/or a free-standing request not tied to any specific
