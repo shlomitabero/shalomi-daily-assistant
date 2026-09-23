@@ -2,12 +2,26 @@ import { useEffect, useState } from "react";
 import { getBusinessTwin, type BusinessTwin } from "./api.js";
 import { useTranslation } from "./i18n/LanguageContext.js";
 import { useDialogFocusTrap } from "./useDialogFocusTrap.js";
+import { downloadTwinReport, formatTwinReport } from "./twinReport.js";
 
-export function BusinessTwinPanel({ projectId, onClose }: { projectId: string; onClose: () => void }) {
-  const { t } = useTranslation();
+export function BusinessTwinPanel({
+  projectId,
+  projectName,
+  onClose,
+}: {
+  projectId: string;
+  projectName: string;
+  onClose: () => void;
+}) {
+  const { t, lang } = useTranslation();
   const [twin, setTwin] = useState<BusinessTwin | null>(null);
   const [error, setError] = useState<string | null>(null);
   const dialogRef = useDialogFocusTrap<HTMLDivElement>();
+
+  function handleDownload() {
+    if (!twin) return;
+    downloadTwinReport(formatTwinReport(twin, projectName, lang, t), projectName);
+  }
 
   useEffect(() => {
     getBusinessTwin(projectId)
@@ -20,9 +34,16 @@ export function BusinessTwinPanel({ projectId, onClose }: { projectId: string; o
       <div className="history-panel twin-panel" ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby="twin-panel-title">
         <div className="history-header">
           <h2 id="twin-panel-title">{t("twin.title")}</h2>
-          <button type="button" className="secondary" onClick={onClose}>
-            {t("history.close")}
-          </button>
+          <div className="history-header-actions">
+            {twin && (
+              <button type="button" className="secondary" onClick={handleDownload}>
+                {t("twin.downloadReport")}
+              </button>
+            )}
+            <button type="button" className="secondary" onClick={onClose}>
+              {t("history.close")}
+            </button>
+          </div>
         </div>
         <p className="muted small">{t("twin.description")}</p>
 

@@ -755,7 +755,9 @@ function AppContent() {
             />
           )}
 
-          {showTwin && <BusinessTwinPanel projectId={project.id} onClose={() => setShowTwin(false)} />}
+          {showTwin && (
+            <BusinessTwinPanel projectId={project.id} projectName={project.name} onClose={() => setShowTwin(false)} />
+          )}
 
           {showWhatsApp && <WhatsAppPanel projectId={project.id} onClose={() => setShowWhatsApp(false)} />}
 
