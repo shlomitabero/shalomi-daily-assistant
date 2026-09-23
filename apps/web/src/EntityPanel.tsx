@@ -324,6 +324,7 @@ export function EntityPanel({
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
+  const [statusFilter, setStatusFilter] = useState("");
   const [sortField, setSortField] = useState<string | null>(null);
   const [sortDir, setSortDir] = useState<SortDirection>("asc");
   const [viewMode, setViewMode] = useState<ViewMode>("table");
@@ -393,6 +394,7 @@ export function EntityPanel({
     setForm(emptyForm(entity));
     setEditingId(null);
     setSearch("");
+    setStatusFilter("");
     setSortField(null);
     setViewMode("table");
     setCalendarMonth(new Date());
@@ -413,10 +415,12 @@ export function EntityPanel({
     }
   }
 
-  const visibleRecords = useMemo(
-    () => sortRecords(records.filter((r) => matchesSearch(r, entity.fields, search)), sortField, sortDir),
-    [records, entity.fields, search, sortField, sortDir],
-  );
+  const visibleRecords = useMemo(() => {
+    const matched = records.filter((r) => matchesSearch(r, entity.fields, search));
+    const filtered =
+      boardField && statusFilter ? matched.filter((r) => String(r[boardField.name] ?? "") === statusFilter) : matched;
+    return sortRecords(filtered, sortField, sortDir);
+  }, [records, entity.fields, search, statusFilter, boardField, sortField, sortDir]);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -718,6 +722,21 @@ export function EntityPanel({
               value={search}
               onChange={(e) => setSearch(e.target.value)}
             />
+            {boardField && (
+              <select
+                className="entity-status-filter"
+                aria-label={t("entity.filter.byField", { field: boardField.label ?? boardField.name })}
+                value={statusFilter}
+                onChange={(e) => setStatusFilter(e.target.value)}
+              >
+                <option value="">{t("entity.filter.allValues", { field: boardField.label ?? boardField.name })}</option>
+                {(boardField.enumValues ?? []).map((v) => (
+                  <option key={v} value={v}>
+                    {boardField.enumLabels?.[v] ?? v}
+                  </option>
+                ))}
+              </select>
+            )}
             {(boardField || dateField) && (
               <div className="view-toggle" role="group">
                 <button

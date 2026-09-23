@@ -469,6 +469,45 @@ test("EntityPanel's board view renders an empty column for every declared status
 });
 
 /**
+ * New in this round: a "Filter by <field>" dropdown next to the search box,
+ * scoped to whichever enum field the board view already uses (findBoardField
+ * -- usually "status"/"stage"), so a long table can be narrowed to one
+ * status without leaving table view. Renders with 3 records across 2
+ * statuses, picks "won" from the new filter select, and confirms the table
+ * narrows to exactly the matching row -- then confirms clearing the filter
+ * (back to "All") restores every row, proving it's a live, reversible
+ * filter and not a one-way destructive narrowing.
+ */
+test("EntityPanel's status filter dropdown narrows the table to matching records, and clearing it restores the rest", async () => {
+  await withJsdom(async () => {
+    const store: EntityRecord[] = [
+      { id: 1, name: "Acme Corp", status: "new" },
+      { id: 2, name: "Globex", status: "won" },
+      { id: 3, name: "Initech", status: "lost" },
+    ];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = mockRecordsFetch(store) as typeof fetch;
+    try {
+      renderEntityPanel();
+      await waitForCondition(() => document.querySelector(".entity-toolbar") !== null);
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 3);
+
+      const filterSelect = document.querySelector(".entity-status-filter") as HTMLSelectElement;
+      assert.ok(filterSelect, "expected a status filter dropdown in the toolbar");
+
+      fireEvent.change(filterSelect, { target: { value: "won" } });
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 1);
+      assert.match(document.querySelector("table tbody tr")!.textContent ?? "", /Globex/);
+
+      fireEvent.change(filterSelect, { target: { value: "" } });
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 3);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * Confirms the board view's move-between-columns interaction is wired
  * correctly end to end: changing a card's own status <select> calls
  * handleMove -> updateRecord (a real PATCH against the mock store) ->

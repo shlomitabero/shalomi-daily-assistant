@@ -651,6 +651,12 @@ tbody tr:hover {
   flex: 1;
 }
 
+.entity-status-filter {
+  max-width: 200px;
+  margin-bottom: 0;
+  flex-shrink: 0;
+}
+
 .view-toggle {
   display: flex;
   gap: 4px;
