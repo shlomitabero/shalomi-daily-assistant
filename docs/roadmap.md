@@ -6507,6 +6507,45 @@ not a single "make it perfect" claim.
       `@forge/api` unchanged, purely a client-side view filter) and both
       builds clean.
 
+- [x] **Round 131 — a per-record Print action.** Business apps built on
+      Forge regularly hold things a real business needs to hand someone on
+      paper -- an order, a work order, an insurance claim -- and the only
+      way to print one before this round was the browser's own page print,
+      which captured the whole cluttered app chrome (topbar, sidebar, the
+      record-entry form) around one row's data.
+
+      Added a "🖨️ Print" row action next to Edit/Duplicate/Delete. It
+      fills an always-mounted `RecordPrintSheet` with that one record's
+      fields (reusing the same `Cell` renderer the table already uses, so
+      badges/dates/numbers/relations format identically) and calls
+      `window.print()`. The visibility switch is pure CSS, the standard
+      "print only this element" technique: `.print-record-sheet` is
+      `display: none` on screen, and a `@media print` rule sets
+      `visibility: hidden` on everything in `body`, then re-declares
+      `visibility: visible` (and `display: block`) on just the sheet and
+      its children. Deliberately NOT a dependency-free PDF writer (the
+      pattern round 129 already ruled out for the same reason): the real
+      browser print pipeline renders Hebrew text correctly out of the
+      box, so there's no font-embedding risk to solve at all here.
+
+      Verified with the deliberate-break-and-restore discipline: changed
+      the Print button's handler to always queue `visibleRecords[0]`
+      instead of the actual clicked row's record, confirmed the new test
+      (click row 2's Print button, expect the sheet to show row 2's own
+      data) failed with the sheet instead showing row 1's "Acme Corp" --
+      restored, confirmed the diff matched only the intended change.
+      **And** a full Playwright pass against the real running dev server
+      that couldn't be faked by a DOM-only check: confirmed the sheet's
+      real `display` is `none` on ordinary screen media (not just
+      logically empty), stubbed `window.print` and confirmed it fires
+      exactly once on click, then used Playwright's own print-media
+      emulation (not a mock) to confirm the sheet's computed `display`
+      flips to visible, the topbar's computed `visibility` becomes
+      `hidden`, and the sheet's actual rendered text contains that
+      record's real field values. Full suite green (504 tests, up from
+      503 -- `@forge/web` 150 → 151; `@forge/db`/`@forge/api` unchanged,
+      purely client-side) and both builds clean.
+
 ## Phase 3
 
 - Self-healing: production observability, automatic diagnosis and patch
