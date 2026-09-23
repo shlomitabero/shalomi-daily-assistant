@@ -372,3 +372,68 @@ test("computeBusinessTwin phrases the duplicate observation in Hebrew for a Hebr
   const twin = computeBusinessTwin(db, project);
   assert.ok(twin.observations.some((o) => o.includes("יתכן כפילות")));
 });
+
+/** Backdates a real record's own createdAt column directly (insertRecord always stamps "now", with no override param), the same raw-SQL technique the most-linked-record fallback test above already uses via tableNameFor. */
+function backdateRecord(db: ReturnType<typeof openDatabase>, projectId: string, entityName: string, recordId: number, daysAgo: number) {
+  const isoDate = new Date(Date.now() - daysAgo * 24 * 60 * 60 * 1000).toISOString();
+  db.prepare(`UPDATE ${tableNameFor(projectId, entityName)} SET createdAt = ? WHERE id = ?`).run(isoDate, recordId);
+}
+
+test("computeBusinessTwin reports how many records were added in the last week, counting only the genuinely recent ones", () => {
+  const db = openDatabase(":memory:");
+  const enProject: Project = { ...project, description: "I need a CRM for customers and appointments" };
+  applyMigrations(db, enProject.id, enProject.spec);
+  const customer = enProject.spec.entities[0];
+  insertRecord(db, enProject.id, customer, { name: "Dana Levi" });
+  insertRecord(db, enProject.id, customer, { name: "Yossi Cohen" });
+  const old = insertRecord(db, enProject.id, customer, { name: "Noa Peretz" });
+  backdateRecord(db, enProject.id, customer.name, old.id as number, 14);
+
+  const twin = computeBusinessTwin(db, enProject);
+  const activityObservation = twin.observations.find((o) => o.includes("added in the last week"));
+  assert.ok(activityObservation, `expected a recent-activity observation, got: ${JSON.stringify(twin.observations)}`);
+  assert.ok(activityObservation!.includes("2 records"), `expected exactly the 2 fresh records counted, got: "${activityObservation}"`);
+});
+
+test("computeBusinessTwin flags an entity with real records but none added in the last 30 days as stale, and stays silent for one with recent activity", () => {
+  const db = openDatabase(":memory:");
+  const enProject: Project = {
+    ...project,
+    description: "I need a CRM for customers and appointments",
+    spec: {
+      ...project.spec,
+      entities: [
+        { name: "Customer", label: "Customers", fields: [{ name: "name", type: "text", required: true }] },
+        { name: "Appointment", label: "Appointments", fields: [{ name: "title", type: "text", required: true }] },
+      ],
+    },
+  };
+  applyMigrations(db, enProject.id, enProject.spec);
+  const [customer, appointment] = enProject.spec.entities;
+
+  // Customer: every record is old -> stale.
+  const staleCustomer = insertRecord(db, enProject.id, customer, { name: "Dana Levi" });
+  backdateRecord(db, enProject.id, customer.name, staleCustomer.id as number, 45);
+
+  // Appointment: one old record, but one recent one too -> NOT stale.
+  const oldAppt = insertRecord(db, enProject.id, appointment, { title: "Old haircut" });
+  backdateRecord(db, enProject.id, appointment.name, oldAppt.id as number, 45);
+  insertRecord(db, enProject.id, appointment, { title: "New haircut" });
+
+  const twin = computeBusinessTwin(db, enProject);
+  const staleObservation = twin.observations.find((o) => o.includes("No new records added in the last 30 days"));
+  assert.ok(staleObservation, `expected a stale-entity observation, got: ${JSON.stringify(twin.observations)}`);
+  assert.ok(staleObservation!.includes("Customers"), `expected the stale Customer entity named, got: "${staleObservation}"`);
+  assert.ok(!staleObservation!.includes("Appointments"), "Appointment has a recent record and must not be flagged stale");
+});
+
+test("computeBusinessTwin phrases the activity observations in Hebrew for a Hebrew description", () => {
+  const db = openDatabase(":memory:");
+  applyMigrations(db, project.id, project.spec);
+  const customer = project.spec.entities[0];
+  const old = insertRecord(db, project.id, customer, { name: "Dana Levi" });
+  backdateRecord(db, project.id, customer.name, old.id as number, 45);
+
+  const twin = computeBusinessTwin(db, project);
+  assert.ok(twin.observations.some((o) => o.includes("לא נוספו רשומות חדשות ב-30 הימים האחרונים")));
+});

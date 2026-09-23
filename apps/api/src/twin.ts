@@ -193,6 +193,56 @@ function computeDuplicateObservations(db: ForgeDatabase, project: Project, hebre
   return observations;
 }
 
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * Two genuine facts read off each record's own `createdAt` (a real column
+ * every table has -- see repository.ts's insertRecord -- not a guess): how
+ * much data actually arrived in the last week, and which entities with
+ * real records haven't seen a single new one in the last 30 days. The
+ * second one is the more actionable half for a real small business -- an
+ * entity that USED to get data but has clearly gone stale (a process that
+ * quietly stopped, a form nobody fills out anymore) is a genuinely
+ * different signal from the existing "unused" observation above, which
+ * only catches an entity that never had any data at all.
+ */
+function computeActivityObservations(db: ForgeDatabase, project: Project, hebrew: boolean): string[] {
+  const observations: string[] = [];
+  const now = Date.now();
+  let recentCount = 0;
+  const staleEntities: string[] = [];
+
+  for (const entity of project.spec.entities) {
+    const records = listRecords(db, project.id, entity);
+    if (records.length === 0) continue;
+
+    let newestAgeMs = Infinity;
+    for (const record of records) {
+      const createdMs = new Date(String(record.createdAt)).getTime();
+      if (Number.isNaN(createdMs)) continue;
+      const ageMs = now - createdMs;
+      if (ageMs <= 7 * DAY_MS) recentCount += 1;
+      if (ageMs < newestAgeMs) newestAgeMs = ageMs;
+    }
+    if (newestAgeMs > 30 * DAY_MS) staleEntities.push(entity.label ?? entity.name);
+  }
+
+  if (recentCount > 0) {
+    observations.push(
+      hebrew ? `${recentCount} רשומות נוספו בשבוע האחרון.` : `${recentCount} record${recentCount === 1 ? "" : "s"} added in the last week.`,
+    );
+  }
+  if (staleEntities.length > 0) {
+    const names = staleEntities.join(hebrew ? ", " : ", ");
+    observations.push(
+      hebrew
+        ? `לא נוספו רשומות חדשות ב-30 הימים האחרונים ב: ${names}.`
+        : `No new records added in the last 30 days in: ${names}.`,
+    );
+  }
+  return observations;
+}
+
 export function computeBusinessTwin(db: ForgeDatabase, project: Project): BusinessTwin {
   const hebrew = isHebrewText(project.description);
   const entities: BusinessTwinEntityStat[] = project.spec.entities.map((entity) => ({
@@ -235,6 +285,7 @@ export function computeBusinessTwin(db: ForgeDatabase, project: Project): Busine
     observations.push(...computeRelationHubObservation(db, project, hebrew));
     observations.push(...computeRelationCoverageObservations(db, project, hebrew));
     observations.push(...computeDuplicateObservations(db, project, hebrew));
+    observations.push(...computeActivityObservations(db, project, hebrew));
   }
 
   return {
