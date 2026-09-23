@@ -67,6 +67,13 @@ interface ArchitectImpactDetail {
  * the AI Team screen's own detail panel shows, not a re-statement of the
  * instruction the user already sees above it.
  */
+/** Case-insensitive substring match on project name, then pinned-first sort -- the two independent steps "Your projects" narrows and reorders by. */
+export function filterAndSortProjects(projects: Project[], search: string, pinnedIds: Set<string>): Project[] {
+  const query = search.trim().toLowerCase();
+  const matched = query ? projects.filter((p) => p.name.toLowerCase().includes(query)) : projects;
+  return sortByPinned(matched, pinnedIds);
+}
+
 export function summarizeRefineImpact(events: AgentStepEvent[], t: (key: string) => string): string {
   // A Database-step failure the Debug Agent recovers from re-emits a
   // second, corrected Architect success event (see pipeline.ts's
@@ -127,6 +134,7 @@ function AppContent() {
   const [showChangePassword, setShowChangePassword] = useState(false);
   const [myProjects, setMyProjects] = useState<Project[]>([]);
   const [pinnedIds, setPinnedIds] = useState<Set<string>>(() => getPinnedIds());
+  const [projectSearch, setProjectSearch] = useState("");
   const [cloningId, setCloningId] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [refineHistory, setRefineHistory] = useState<RefineHistoryEntry[]>([]);
@@ -134,7 +142,10 @@ function AppContent() {
   const pendingRefineInstruction = useRef<string | null>(null);
   const refineEvents = useRef<AgentStepEvent[]>([]);
 
-  const sortedMyProjects = useMemo(() => sortByPinned(myProjects, pinnedIds), [myProjects, pinnedIds]);
+  const visibleMyProjects = useMemo(
+    () => filterAndSortProjects(myProjects, projectSearch, pinnedIds),
+    [myProjects, projectSearch, pinnedIds],
+  );
 
   useEffect(() => subscribeWakeStatus(setWaking), []);
 
@@ -475,8 +486,21 @@ function AppContent() {
           {myProjects.length > 0 && (
             <div className="my-projects">
               <h2>{t("home.myProjects.heading")}</h2>
+              {myProjects.length > 5 && (
+                <input
+                  type="text"
+                  className="my-projects-search"
+                  placeholder={t("home.myProjects.search.placeholder")}
+                  aria-label={t("home.myProjects.search.placeholder")}
+                  value={projectSearch}
+                  onChange={(e) => setProjectSearch(e.target.value)}
+                />
+              )}
+              {visibleMyProjects.length === 0 ? (
+                <p className="muted">{t("home.myProjects.search.noResults")}</p>
+              ) : (
               <ul className="my-projects-list">
-                {sortedMyProjects.map((p) => (
+                {visibleMyProjects.map((p) => (
                   <li key={p.id}>
                     <div className="my-project-card">
                       <button
@@ -514,6 +538,7 @@ function AppContent() {
                   </li>
                 ))}
               </ul>
+              )}
             </div>
           )}
           <h1>{t("home.title")}</h1>

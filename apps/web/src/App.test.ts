@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import { transformSync } from "esbuild";
 import type { AgentStepEvent, Entity, Project } from "@forge/shared";
-import { summarizeRefineImpact } from "./App.js";
+import { filterAndSortProjects, summarizeRefineImpact } from "./App.js";
 
 const t = (key: string) => key;
 
@@ -64,6 +64,57 @@ test("summarizeRefineImpact prefers the LAST successful Architect event, not the
   const summary = summarizeRefineImpact(events, t);
   assert.match(summary, /orderNote/);
   assert.doesNotMatch(summary, /DROP TABLE/);
+});
+
+/**
+ * New in this round: a search box narrows "Your projects" by name once
+ * there are enough of them to matter. filterAndSortProjects is the pure
+ * function driving it -- case-insensitive substring match, then the same
+ * pinned-first ordering pinnedProjects.test.ts already covers in
+ * isolation, applied together in the order the UI actually needs them
+ * (narrow first, THEN reorder what's left -- not the other way around,
+ * which would still work here but is the more fragile order to compose in
+ * general, e.g. if a future match ever depended on position).
+ */
+test("filterAndSortProjects narrows by a case-insensitive substring match on the project name", () => {
+  const alpha = { ...makeProject([]), id: "p1", name: "Alpha CRM" };
+  const beta = { ...makeProject([]), id: "p2", name: "Beta Inventory" };
+  const gamma = { ...makeProject([]), id: "p3", name: "Gamma Scheduling" };
+  const projects = [alpha, beta, gamma];
+
+  assert.deepEqual(
+    filterAndSortProjects(projects, "beta", new Set()).map((p) => p.id),
+    ["p2"],
+  );
+  assert.deepEqual(
+    filterAndSortProjects(projects, "CRM", new Set()).map((p) => p.id),
+    ["p1"],
+    "must match case-insensitively",
+  );
+  assert.deepEqual(
+    filterAndSortProjects(projects, "  ", new Set()).map((p) => p.id),
+    ["p1", "p2", "p3"],
+    "a blank/whitespace-only query must show everything, not match nothing",
+  );
+  assert.deepEqual(filterAndSortProjects(projects, "nonexistent", new Set()), []);
+});
+
+test("filterAndSortProjects applies the pinned-first sort to whatever the search already narrowed down to", () => {
+  const alpha = { ...makeProject([]), id: "p1", name: "Alpha Project" };
+  const beta = { ...makeProject([]), id: "p2", name: "Beta Project" };
+  const gamma = { ...makeProject([]), id: "p3", name: "Gamma Project" };
+  const projects = [alpha, beta, gamma];
+
+  assert.deepEqual(
+    filterAndSortProjects(projects, "project", new Set(["gamma-does-not-exist"])).map((p) => p.id),
+    ["p1", "p2", "p3"],
+    "pinning an id not present in the list must not crash or reorder anything",
+  );
+  assert.deepEqual(
+    filterAndSortProjects(projects, "project", new Set(["p3"])).map((p) => p.id),
+    ["p3", "p1", "p2"],
+    "the pinned match must move to the front of the already-narrowed results",
+  );
 });
 
 /**

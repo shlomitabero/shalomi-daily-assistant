@@ -224,6 +224,11 @@ h2 {
   margin-bottom: 32px;
 }
 
+.my-projects-search {
+  max-width: 280px;
+  margin: 12px 0 0;
+}
+
 .my-projects-list {
   list-style: none;
   margin: 12px 0 0;
