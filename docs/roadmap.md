@@ -6580,6 +6580,40 @@ not a single "make it perfect" claim.
       green (510 tests, up from 504 -- `@forge/web` 151 → 157; `@forge/db`/
       `@forge/api` unchanged, purely client-side) and both builds clean.
 
+- [x] **Round 133 — search box for "Your projects" once there are enough
+      to matter.** A natural follow-on to round 132's pin: pinning helps
+      keep one favorite handy, but scrolling/scanning a growing grid to
+      find a specific OTHER project by eye doesn't scale. Added a search
+      box, shown once there are more than 5 projects (so it doesn't
+      clutter a short list), that narrows by a case-insensitive substring
+      match on the project's name.
+
+      Extracted the combined filter-then-sort into an exported
+      `filterAndSortProjects(projects, search, pinnedIds)` -- mirroring
+      this same file's existing `summarizeRefineImpact` pattern (an
+      exported pure function backing a piece of JSX, directly importable
+      by a test rather than needing a full component render) -- and
+      deliberately composed in that order (narrow first, THEN apply the
+      pinned-first sort to what's left), so a search and a pin always
+      agree with each other instead of one silently undoing the other.
+
+      Verified with the deliberate-break-and-restore discipline: dropped
+      `.trim()` from the query normalization, confirmed the "a blank/
+      whitespace-only query must show everything" test failed by matching
+      NOTHING instead (a lone space is truthy, so it flowed straight into
+      the substring filter) -- restored, confirmed a clean diff. **And** a
+      full Playwright pass against the real running dev server: seeded 6
+      real projects directly via the API (fast and deterministic, since
+      this feature only cares about names in the list, not built status),
+      confirmed the search box only appears once there are 6, searched
+      "bakery" and got exactly the 2 real matches (not a coincidental
+      count), searched "CLINIC" in uppercase and confirmed it still
+      matched the lowercase-stored name, confirmed the "no results"
+      message appears for a query matching nothing, and confirmed clearing
+      the box restores all 6. Full suite green (512 tests, up from 510 --
+      `@forge/web` 157 → 159; `@forge/db`/`@forge/api` unchanged, purely
+      client-side) and both builds clean.
+
 ## Phase 3
 
 - Self-healing: production observability, automatic diagnosis and patch
