@@ -1023,6 +1023,118 @@ test("renaming a project you have no access to still 404s, the same as any other
   });
 });
 
+test("the owner can rename an entity's display label, and a collaborator can too -- the entity's real name/table is untouched", async () => {
+  await withServer(async (baseUrl) => {
+    const ownerToken = await signup(baseUrl, "entity-label-owner1@example.com");
+    const collabToken = await signup(baseUrl, "entity-label-collab1@example.com");
+    const createRes = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: authHeaders(ownerToken),
+      body: JSON.stringify({ description: "A CRM with customers and deals." }),
+    });
+    const { project } = (await createRes.json()) as { project: { id: string; spec: { entities: { name: string }[] } } };
+    const entityName = project.spec.entities[0].name;
+    await fetch(`${baseUrl}/api/projects/${project.id}/collaborators`, {
+      method: "POST",
+      headers: authHeaders(ownerToken),
+      body: JSON.stringify({ email: "entity-label-collab1@example.com" }),
+    });
+
+    const buildRes = await fetch(`${baseUrl}/api/projects/${project.id}/build`, { method: "POST", headers: authHeaders(ownerToken) });
+    await collectSSE(buildRes);
+
+    const ownerRes = await fetch(`${baseUrl}/api/projects/${project.id}/entities/${entityName}/label`, {
+      method: "PATCH",
+      headers: authHeaders(ownerToken),
+      body: JSON.stringify({ label: "הלקוחות שלי" }),
+    });
+    assert.equal(ownerRes.status, 200);
+    const { project: relabeled } = (await ownerRes.json()) as { project: { spec: { entities: { name: string; label?: string }[] } } };
+    const renamedEntity = relabeled.spec.entities.find((e) => e.name === entityName)!;
+    assert.equal(renamedEntity.label, "הלקוחות שלי");
+    assert.equal(renamedEntity.name, entityName, "the entity's real name (and therefore its real data table) must be untouched");
+
+    // The real data table must still work after the label change -- proves
+    // this was purely a spec metadata edit, not something that desynced
+    // the spec from the live database (a 404/500 here would mean the
+    // route somehow broke the entity's real name -> table mapping).
+    const listRes = await fetch(`${baseUrl}/api/projects/${project.id}/entities/${entityName}`, {
+      headers: authHeaders(ownerToken),
+    });
+    assert.equal(listRes.status, 200);
+
+    const collabRes = await fetch(`${baseUrl}/api/projects/${project.id}/entities/${entityName}/label`, {
+      method: "PATCH",
+      headers: authHeaders(collabToken),
+      body: JSON.stringify({ label: "Relabeled by the collaborator" }),
+    });
+    assert.equal(collabRes.status, 200);
+    const { project: relabeledByCollab } = (await collabRes.json()) as { project: { spec: { entities: { name: string; label?: string }[] } } };
+    assert.equal(relabeledByCollab.spec.entities.find((e) => e.name === entityName)!.label, "Relabeled by the collaborator");
+  });
+});
+
+test("renaming an entity's label rejects an empty or whitespace-only value", async () => {
+  await withServer(async (baseUrl) => {
+    const token = await signup(baseUrl, "entity-label-owner2@example.com");
+    const createRes = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ description: "A CRM with customers and deals." }),
+    });
+    const { project } = (await createRes.json()) as { project: { id: string; spec: { entities: { name: string }[] } } };
+    const entityName = project.spec.entities[0].name;
+
+    const res = await fetch(`${baseUrl}/api/projects/${project.id}/entities/${entityName}/label`, {
+      method: "PATCH",
+      headers: authHeaders(token),
+      body: JSON.stringify({ label: "   " }),
+    });
+    assert.equal(res.status, 400);
+  });
+});
+
+test("renaming a non-existent entity's label 404s, the same as any other entity route", async () => {
+  await withServer(async (baseUrl) => {
+    const token = await signup(baseUrl, "entity-label-owner3@example.com");
+    const createRes = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ description: "A CRM with customers and deals." }),
+    });
+    const { project } = (await createRes.json()) as { project: { id: string } };
+
+    const res = await fetch(`${baseUrl}/api/projects/${project.id}/entities/NoSuchEntity/label`, {
+      method: "PATCH",
+      headers: authHeaders(token),
+      body: JSON.stringify({ label: "Anything" }),
+    });
+    assert.equal(res.status, 404);
+    assert.equal(((await res.json()) as { code?: string }).code, "ENTITY_NOT_FOUND");
+  });
+});
+
+test("renaming an entity's label on a project you have no access to still 404s, the same as any other project route", async () => {
+  await withServer(async (baseUrl) => {
+    const ownerToken = await signup(baseUrl, "entity-label-owner4@example.com");
+    const outsiderToken = await signup(baseUrl, "entity-label-outsider4@example.com");
+    const createRes = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: authHeaders(ownerToken),
+      body: JSON.stringify({ description: "A CRM with customers and deals." }),
+    });
+    const { project } = (await createRes.json()) as { project: { id: string; spec: { entities: { name: string }[] } } };
+    const entityName = project.spec.entities[0].name;
+
+    const res = await fetch(`${baseUrl}/api/projects/${project.id}/entities/${entityName}/label`, {
+      method: "PATCH",
+      headers: authHeaders(outsiderToken),
+      body: JSON.stringify({ label: "Hijacked Label" }),
+    });
+    assert.equal(res.status, 404);
+  });
+});
+
 test("the owner can delete a built project, and afterward the project, its real data, its checkpoint, and a collaborator's access are all genuinely gone -- not just hidden", async () => {
   await withServer(async (baseUrl) => {
     const ownerToken = await signup(baseUrl, "delete-owner1@example.com");

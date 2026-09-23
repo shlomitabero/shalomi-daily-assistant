@@ -69,6 +69,10 @@ const RenameProjectSchema = z.object({
   name: z.string().trim().min(1, "name is required"),
 });
 
+const RenameEntityLabelSchema = z.object({
+  label: z.string().trim().min(1, "label is required"),
+});
+
 /** Exported for direct unit testing of the word-truncation and empty-input fallback below. */
 export function deriveName(description: string): string {
   const words = description.trim().split(/\s+/).slice(0, 6).join(" ");
@@ -636,6 +640,38 @@ export function createProjectsRouter(db: ForgeDatabase, provider: SpecProvider |
       const entity = findEntity(project, req.params.entityName);
       const record = insertRecord(db, project.id, entity, req.body ?? {});
       res.status(201).json({ record });
+    }),
+  );
+
+  /**
+   * An entity's display label (e.g. "Customer" shown as "לקוחות") was
+   * otherwise only ever set once, by spec generation -- fixing an awkward
+   * auto-generated label meant a full natural-language Refine round-trip
+   * (a real AI/heuristic call plus a migration, even though nothing about
+   * the actual schema needs to change). `label` is pure display metadata
+   * (see EntitySchema's own comment) -- entity.name, the real table name,
+   * is never touched -- so this is a direct updateProjectSpec write, no
+   * migration involved. requireProjectAccess (not requireProjectOwner),
+   * consistent with every other spec-editing action a collaborator can
+   * already do. Registered before the .../:recordId PATCH route below so
+   * a request to .../entities/Customer/label is never mistaken for an
+   * update to a record literally named "label".
+   */
+  router.patch(
+    "/projects/:id/entities/:entityName/label",
+    asyncRoute(async (req, res) => {
+      const project = requireProjectAccess(db, req.params.id, req.userId!);
+      const entity = findEntity(project, req.params.entityName);
+      const parsed = RenameEntityLabelSchema.safeParse(req.body);
+      if (!parsed.success) {
+        throw new HttpError(400, formatValidationError(parsed.error), "VALIDATION_ERROR");
+      }
+      const nextSpec = {
+        ...project.spec,
+        entities: project.spec.entities.map((e) => (e.name === entity.name ? { ...e, label: parsed.data.label } : e)),
+      };
+      const updated = updateProjectSpec(db, project.id, nextSpec);
+      res.json({ project: updated });
     }),
   );
 

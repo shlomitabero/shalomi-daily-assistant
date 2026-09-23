@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { Entity, EntityRecord, Field } from "@forge/shared";
+import type { Entity, EntityRecord, Field, Project } from "@forge/shared";
 import { createRecord, deleteRecord, listRecords, updateRecord } from "./api.js";
+import { EntityLabelEditor } from "./EntityLabelEditor.js";
 import {
   badgeTone,
   buildCalendarMonth,
@@ -308,10 +309,12 @@ export function EntityPanel({
   projectId,
   entity,
   allEntities,
+  onEntityRenamed,
 }: {
   projectId: string;
   entity: Entity;
   allEntities: Entity[];
+  onEntityRenamed: (project: Project) => void;
 }) {
   const { t, lang } = useTranslation();
   const [records, setRecords] = useState<EntityRecord[]>([]);
@@ -603,7 +606,7 @@ export function EntityPanel({
 
   return (
     <div className="entity-panel">
-      <h3>{entity.label ?? entity.name}</h3>
+      <EntityLabelEditor entity={entity} projectId={projectId} onRenamed={onEntityRenamed} />
       {entity.description && <p className="muted">{entity.description}</p>}
 
       <form className="record-form" onSubmit={handleSubmit}>

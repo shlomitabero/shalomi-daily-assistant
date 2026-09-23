@@ -737,6 +737,7 @@ function AppContent() {
                     projectId={project.id}
                     entity={entity}
                     allEntities={project.spec.entities}
+                    onEntityRenamed={setProject}
                   />
                 ))}
             </div>

@@ -305,7 +305,12 @@ function renderEntityPanel() {
       React.createElement(
         LanguageProvider,
         null,
-        React.createElement(EntityPanel, { projectId: "proj1", entity: DEAL_ENTITY, allEntities: [DEAL_ENTITY] }),
+        React.createElement(EntityPanel, {
+          projectId: "proj1",
+          entity: DEAL_ENTITY,
+          allEntities: [DEAL_ENTITY],
+          onEntityRenamed: () => {},
+        }),
       ),
     ),
   );
@@ -435,6 +440,7 @@ function renderAppointmentPanel() {
           projectId: "proj1",
           entity: APPOINTMENT_ENTITY,
           allEntities: [APPOINTMENT_ENTITY],
+          onEntityRenamed: () => {},
         }),
       ),
     ),
@@ -554,7 +560,12 @@ function renderCustomerPanel() {
       React.createElement(
         LanguageProvider,
         null,
-        React.createElement(EntityPanel, { projectId: "proj1", entity: CUSTOMER_ENTITY, allEntities: [CUSTOMER_ENTITY] }),
+        React.createElement(EntityPanel, {
+          projectId: "proj1",
+          entity: CUSTOMER_ENTITY,
+          allEntities: [CUSTOMER_ENTITY],
+          onEntityRenamed: () => {},
+        }),
       ),
     ),
   );
@@ -770,6 +781,7 @@ test("EntityPanel's CSV import creates a real record from an uploaded file and s
               projectId: "proj1",
               entity: CUSTOMER_IMPORT_ENTITY,
               allEntities: [CUSTOMER_IMPORT_ENTITY],
+              onEntityRenamed: () => {},
             }),
           ),
         ),
