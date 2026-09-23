@@ -6377,6 +6377,46 @@ not a single "make it perfect" claim.
       green (496 tests, up from 489 -- `@forge/api` 176 → 180, `@forge/web`
       140 → 143) and both builds clean.
 
+- [x] **Round 128 — a ninth follow-on, moving away from the rename series
+      to a different gap: "Duplicate selected" for bulk-select.**
+      Bulk-select + bulk-delete already existed (round 53), and a single
+      record already had its own "Duplicate" quick action (round 89), but
+      there was no way to duplicate several selected records at once -- a
+      real time-saver for cloning a handful of near-identical entries
+      (e.g. several similar service listings) without repeating the
+      single-record duplicate one row at a time.
+
+      `handleBulkDuplicate` deliberately reuses two things already proven
+      correct rather than inventing new logic: `handleDuplicate`'s own
+      per-record field-copy (`id`/`createdAt` excluded, server-assigned),
+      and `handleBulkDelete`'s own `Promise.allSettled` resilience pattern
+      -- a single rejected create must not hide the ones that DID
+      succeed, and must not stop the batch from attempting the rest. No
+      confirmation dialog, for the same reason `handleDuplicate` has none:
+      duplicating creates rather than destroys. Selection clears on full
+      success; a partial failure keeps only the actually-failed ids
+      selected, ready for a retry -- the exact same contract
+      `handleBulkDelete` already established, just for creates instead of
+      deletes.
+
+      Verified with the deliberate-break-and-restore discipline:
+      temporarily swapped `Promise.allSettled` for a plain `Promise.all`
+      wrapped in try/catch (a plausible-looking "simplification"),
+      confirmed exactly the "keeps only the failed ids selected, and
+      still refreshes on partial failure" test failed with a real
+      `TypeError` (`setSelectedIds` is never called down the
+      all-or-nothing path when one create rejects) -- restored, confirmed
+      an empty `git diff`. **And** a full Playwright pass against the
+      real running dev server: built a real CRM project, selected 2 of
+      the seeded records, clicked "Duplicate selected", confirmed the
+      table grew from 2 to 4 rows, confirmed the selection (and the
+      bulk-actions bar) cleared after the full success, and confirmed the
+      2 new records persisted across a reload. Full suite green (498
+      tests, up from 496 -- `@forge/web` 143 → 145; `@forge/api`/
+      `@forge/db` unchanged, since this reuses the existing single-record
+      `POST /entities/:entityName` route per duplicate, no new server-side
+      code needed) and both builds clean.
+
 ## Phase 3
 
 - Self-healing: production observability, automatic diagnosis and patch
