@@ -1179,6 +1179,39 @@ test("the generated server.js's /api/backup endpoint returns a real ZIP with one
   }
 });
 
+// Round 117 found that apps/api/src/backup.ts's boolean CSV rendering was
+// completely untested -- and that an *omitted* boolean field renders
+// "FALSE", not blank, because rowToRecord coerces a stored NULL through
+// Boolean(value) before the CSV writer ever sees it. This exported app's
+// server.js has its own independent copy of that exact same rowToRecord +
+// backupFieldDisplayValue pair (see codegen.ts's template), so the same
+// gap and the same invariant apply here too -- confirmed by extracting and
+// executing the real generated functions (not a reimplementation), the
+// same technique the buildZip test below uses, rather than the heavier
+// spawn-a-real-server approach the /api/backup integration test above
+// uses (unnecessary here since no HTTP or real SQLite round-trip is
+// involved).
+test("the exported server.js's own rowToRecord + backupFieldDisplayValue render a boolean as TRUE/FALSE, and an omitted boolean as FALSE rather than blank", () => {
+  const serverJs = generateExportFiles(project).find((f) => f.path === "server.js")!.content;
+  const rowToRecordSrc = serverJs.match(/function rowToRecord\(entity, row\) \{[\s\S]*?\n\}\n/)?.[0];
+  const backupFieldDisplayValueSrc = serverJs.match(/function backupFieldDisplayValue\(field, value, recordsByEntity\) \{[\s\S]*?\n\}\n/)?.[0];
+  assert.ok(rowToRecordSrc, "expected to find rowToRecord in generated server.js");
+  assert.ok(backupFieldDisplayValueSrc, "expected to find backupFieldDisplayValue in generated server.js");
+
+  const { rowToRecord, backupFieldDisplayValue } = new Function(
+    `${rowToRecordSrc}\n${backupFieldDisplayValueSrc}\nreturn { rowToRecord, backupFieldDisplayValue };`,
+  )();
+
+  const entity = { name: "Task", fields: [{ name: "done", type: "boolean" }] };
+  const trueRecord = rowToRecord(entity, { id: 1, createdAt: "", done: 1 });
+  const falseRecord = rowToRecord(entity, { id: 2, createdAt: "", done: 0 });
+  const unsetRecord = rowToRecord(entity, { id: 3, createdAt: "" }); // no "done" column value at all
+
+  assert.equal(backupFieldDisplayValue(entity.fields[0], trueRecord.done, {}), "TRUE");
+  assert.equal(backupFieldDisplayValue(entity.fields[0], falseRecord.done, {}), "FALSE");
+  assert.equal(backupFieldDisplayValue(entity.fields[0], unsetRecord.done, {}), "FALSE");
+});
+
 // Regression test: the exported app's own embedded buildZip() (a
 // necessary copy of apps/api/src/zip.ts, since the exported app has zero
 // runtime dependency on this repo) had drifted from it -- missing the
