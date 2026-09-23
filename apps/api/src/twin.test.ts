@@ -246,3 +246,62 @@ test("computeBusinessTwin falls back to the next real candidate when the top-lin
   assert.ok(hubObservation!.includes("2 links total"));
   assert.ok(!hubObservation!.includes("Dana Levi"), "Dana Levi was deleted and must not be reported as the hub");
 });
+
+/**
+ * computeRelationHubObservation has no explicit tie-break rule for two
+ * candidates with the exact same total link count -- whichever ends up
+ * first in the `candidates` array before the (stable) sort wins, and that
+ * position is itself just a side effect of iteration order: listRecords
+ * returns rows `ORDER BY id DESC` (repository.ts), so the customer id
+ * attached to the *most recently inserted* Order row is the first one
+ * Map-inserted into `countsById`/`perId`, and so the first candidate
+ * pushed. Confirmed empirically (not just reasoned about) before writing
+ * this test: with Dana and Yossi genuinely tied at 2 links each, Yossi
+ * -- whose most recent Order row has the highest id -- wins, even though
+ * Dana was created first and would win any "first customer" or "lowest
+ * id" tiebreaker a reader might otherwise assume. This is worth locking
+ * in specifically because it's an *accidental* consequence of iteration
+ * order, not a deliberate rule -- exactly the kind of thing a future
+ * refactor (switching a Map to a plain object, changing which order
+ * results are fetched in, "simplifying" the sort) could silently flip
+ * with nothing to catch it.
+ */
+test("computeBusinessTwin's most-linked-record insight has a real, if accidental, tie-break rule: the candidate whose most recently inserted record comes first wins", () => {
+  const hubProject: Project = {
+    ...project,
+    description: "I need to track orders for my customers",
+    spec: {
+      ...project.spec,
+      entities: [
+        { name: "Customer", label: "Customers", fields: [{ name: "name", type: "text", required: true }] },
+        {
+          name: "Order",
+          label: "Orders",
+          fields: [
+            { name: "total", type: "number", required: true },
+            { name: "customerId", label: "Customer", type: "relation", required: false, relationTo: "Customer" },
+          ],
+        },
+      ],
+    },
+  };
+  const db = openDatabase(":memory:");
+  applyMigrations(db, hubProject.id, hubProject.spec);
+  const [customer, order] = hubProject.spec.entities;
+  const { id: dana } = insertRecord(db, hubProject.id, customer, { name: "Dana Levi" });
+  const { id: yossi } = insertRecord(db, hubProject.id, customer, { name: "Yossi Cohen" });
+  // Genuinely tied at 2 links each -- Yossi's orders were inserted last,
+  // so his customerId is the first one encountered when listRecords'
+  // DESC-ordered rows are scanned.
+  insertRecord(db, hubProject.id, order, { total: 50, customerId: dana });
+  insertRecord(db, hubProject.id, order, { total: 30, customerId: dana });
+  insertRecord(db, hubProject.id, order, { total: 20, customerId: yossi });
+  insertRecord(db, hubProject.id, order, { total: 10, customerId: yossi });
+
+  const twin = computeBusinessTwin(db, hubProject);
+  const hubObservation = twin.observations.find((o) => o.includes("most-linked record"));
+  assert.ok(hubObservation, `expected a most-linked-record observation even on a tie, got: ${JSON.stringify(twin.observations)}`);
+  assert.ok(hubObservation!.includes("Yossi Cohen"), `expected Yossi Cohen (most-recently-inserted tie-break winner) as the hub, got: "${hubObservation}"`);
+  assert.ok(hubObservation!.includes("2 links total"));
+  assert.ok(!hubObservation!.includes("Dana Levi"), "Dana Levi has the same link count but was created first, and must lose the tie under the current rule");
+});
