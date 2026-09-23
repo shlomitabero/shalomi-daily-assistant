@@ -26,6 +26,122 @@ const entityPanelSrc = readFileSync(new URL("./EntityPanel.tsx", import.meta.url
  * the "ts" loader alone is enough), and runs it with a mock deleteRecord
  * that fails for exactly one of several selected ids.
  */
+/**
+ * Same Promise.allSettled resilience test as handleBulkDelete's own below,
+ * applied to the new handleBulkDuplicate: a single rejected createRecord
+ * call must not hide the duplicates that DID succeed, and must not stop
+ * the loop from even attempting the remaining ids.
+ */
+test("EntityPanel's handleBulkDuplicate refreshes and keeps only the ids that actually failed selected, instead of one rejection hiding the duplicates that succeeded", async () => {
+  const handlerMatch = entityPanelSrc.match(/ {2}async function handleBulkDuplicate\(\) \{[\s\S]*?\n {2}\}\n/);
+  assert.ok(handlerMatch, "expected to find handleBulkDuplicate in EntityPanel.tsx");
+  const { code } = transformSync(handlerMatch![0], { loader: "ts" });
+
+  let capturedError: string | undefined;
+  let capturedSelectedIds: Set<number> | undefined;
+  let refreshCalled = 0;
+  const attemptedCopies: Record<string, unknown>[] = [];
+
+  const entity: Entity = { name: "Customer", fields: [{ name: "name", type: "text", required: true }] };
+  const records: EntityRecord[] = [
+    { id: 1, createdAt: "x", name: "Alice" },
+    { id: 2, createdAt: "x", name: "Bob" },
+    { id: 3, createdAt: "x", name: "Carol" },
+  ];
+
+  const fn = new Function(
+    "t",
+    "projectId",
+    "entity",
+    "records",
+    "selectedIds",
+    "setError",
+    "createRecord",
+    "setSelectedIds",
+    "refresh",
+    `${code}\nreturn handleBulkDuplicate;`,
+  )(
+    (key: string, params?: Record<string, unknown>) => (params ? `${key}:${JSON.stringify(params)}` : key),
+    "proj1",
+    entity,
+    records,
+    new Set([1, 2, 3]),
+    (msg: string | null) => {
+      capturedError = msg ?? undefined;
+    },
+    async (_projectId: string, _entityName: string, copy: Record<string, unknown>) => {
+      attemptedCopies.push(copy);
+      if (copy.name === "Bob") throw new Error("record 2 network error");
+    },
+    (next: Set<number>) => {
+      capturedSelectedIds = next;
+    },
+    async () => {
+      refreshCalled += 1;
+    },
+  ) as () => Promise<void>;
+
+  await fn();
+
+  assert.deepEqual(
+    attemptedCopies.map((c) => c.name).sort(),
+    ["Alice", "Bob", "Carol"],
+    "must attempt every selected id, not stop at the first failure",
+  );
+  assert.deepEqual(
+    [...capturedSelectedIds!].sort(),
+    [2],
+    "only the id that actually failed to duplicate should remain selected -- the two that succeeded must be cleared",
+  );
+  assert.match(
+    capturedError!,
+    /entity\.bulk\.duplicatePartialFailure/,
+    "a partial failure must surface the translated duplicate-partial-failure message, not the raw single-record rejection",
+  );
+  assert.equal(refreshCalled, 1, "refresh() must still run so the table shows the records that WERE successfully duplicated");
+});
+
+test("EntityPanel's handleBulkDuplicate still surfaces the raw error message when every duplicate in the batch fails", async () => {
+  const handlerMatch = entityPanelSrc.match(/ {2}async function handleBulkDuplicate\(\) \{[\s\S]*?\n {2}\}\n/);
+  const { code } = transformSync(handlerMatch![0], { loader: "ts" });
+
+  let capturedError: string | undefined;
+  const rejection = new Error("network error");
+  const entity: Entity = { name: "Customer", fields: [{ name: "name", type: "text", required: true }] };
+  const records: EntityRecord[] = [{ id: 1, createdAt: "x", name: "Alice" }];
+
+  const fn = new Function(
+    "t",
+    "projectId",
+    "entity",
+    "records",
+    "selectedIds",
+    "setError",
+    "createRecord",
+    "setSelectedIds",
+    "refresh",
+    `${code}\nreturn handleBulkDuplicate;`,
+  )(
+    (key: string) => key,
+    "proj1",
+    entity,
+    records,
+    new Set([1]),
+    (msg: string | null) => {
+      capturedError = msg ?? undefined;
+    },
+    async () => {
+      throw rejection;
+    },
+    () => {},
+    async () => {},
+  ) as () => Promise<void>;
+
+  await fn();
+
+  assert.equal(capturedError, rejection.message);
+});
+
 test("EntityPanel's handleBulkDelete refreshes and keeps only the ids that actually failed selected, instead of Promise.all's all-or-nothing hiding the deletes that succeeded", async () => {
   const handlerMatch = entityPanelSrc.match(/ {2}async function handleBulkDelete\(\) \{[\s\S]*?\n {2}\}\n/);
   assert.ok(handlerMatch, "expected to find handleBulkDelete in EntityPanel.tsx");

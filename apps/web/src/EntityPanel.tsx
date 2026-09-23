@@ -502,6 +502,37 @@ export function EntityPanel({
     });
   }
 
+  // Same Promise.allSettled resilience as handleBulkDelete below, and the
+  // same per-record copy logic as the single-record handleDuplicate above
+  // -- a quick way to create several similar entries at once (e.g.
+  // several near-identical service listings) without repeating single
+  // duplicates one at a time. No confirmation, for the same reason
+  // handleDuplicate has none: duplicating creates rather than destroys.
+  async function handleBulkDuplicate() {
+    const ids = [...selectedIds];
+    if (ids.length === 0) return;
+    setError(null);
+    const results = await Promise.allSettled(
+      ids.map((id) => {
+        const record = records.find((r) => (r.id as number) === id);
+        const copy: Record<string, unknown> = {};
+        if (record) for (const field of entity.fields) copy[field.name] = record[field.name];
+        return createRecord(projectId, entity.name, copy);
+      }),
+    );
+    const failedIds = ids.filter((_, i) => results[i].status === "rejected");
+    setSelectedIds(new Set(failedIds));
+    if (failedIds.length > 0) {
+      const firstFailure = results.find((r): r is PromiseRejectedResult => r.status === "rejected")!;
+      setError(
+        failedIds.length === ids.length
+          ? (firstFailure.reason as Error).message
+          : t("entity.bulk.duplicatePartialFailure", { failed: failedIds.length, total: ids.length }),
+      );
+    }
+    await refresh();
+  }
+
   // Promise.allSettled rather than Promise.all: a single rejected delete
   // (a dropped connection, a record another tab already removed) must not
   // hide the ones that *did* succeed -- Promise.all would reject on the
@@ -773,6 +804,9 @@ export function EntityPanel({
               {selectedIds.size > 0 && (
                 <div className="bulk-actions-bar">
                   <span>{t("entity.bulk.selectedCount", { count: selectedIds.size })}</span>
+                  <button type="button" className="secondary" onClick={handleBulkDuplicate}>
+                    {t("entity.bulk.duplicateSelected")}
+                  </button>
                   <button type="button" className="danger" onClick={handleBulkDelete}>
                     {t("entity.bulk.deleteSelected")}
                   </button>
