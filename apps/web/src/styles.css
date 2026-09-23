@@ -1099,6 +1099,34 @@ button.sort-header:hover:not(:disabled) {
   padding: 3px 6px;
 }
 
+.field-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.field-label-edit-btn {
+  background: none;
+  border: none;
+  padding: 0;
+  font-size: 11px;
+  opacity: 0.4;
+  cursor: pointer;
+  line-height: 1;
+}
+
+.field-label-edit-btn:hover {
+  opacity: 0.8;
+}
+
+.field-label-edit input {
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 500;
+  padding: 2px 4px;
+  width: 100%;
+}
+
 .shortcut-hint {
   margin-inline-start: 6px;
   padding: 1px 6px;

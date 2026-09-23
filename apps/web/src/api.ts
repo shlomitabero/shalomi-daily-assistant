@@ -210,6 +210,18 @@ export function renameEntityLabel(projectId: string, entityName: string, label: 
   return request(`/projects/${projectId}/entities/${entityName}/label`, { method: "PATCH", body: JSON.stringify({ label }) });
 }
 
+export function renameFieldLabel(
+  projectId: string,
+  entityName: string,
+  fieldName: string,
+  label: string,
+): Promise<{ project: Project }> {
+  return request(`/projects/${projectId}/entities/${entityName}/fields/${fieldName}/label`, {
+    method: "PATCH",
+    body: JSON.stringify({ label }),
+  });
+}
+
 export function deleteProject(projectId: string): Promise<void> {
   return request(`/projects/${projectId}`, { method: "DELETE" });
 }

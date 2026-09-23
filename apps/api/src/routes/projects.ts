@@ -73,6 +73,10 @@ const RenameEntityLabelSchema = z.object({
   label: z.string().trim().min(1, "label is required"),
 });
 
+const RenameFieldLabelSchema = z.object({
+  label: z.string().trim().min(1, "label is required"),
+});
+
 /** Exported for direct unit testing of the word-truncation and empty-input fallback below. */
 export function deriveName(description: string): string {
   const words = description.trim().split(/\s+/).slice(0, 6).join(" ");
@@ -85,6 +89,14 @@ function findEntity(project: Project, entityName: string): Entity {
     throw new HttpError(404, `Entity "${entityName}" is not part of this project's spec`, "ENTITY_NOT_FOUND");
   }
   return entity;
+}
+
+function findField(entity: Entity, fieldName: string) {
+  const field = entity.fields.find((f) => f.name === fieldName);
+  if (!field) {
+    throw new HttpError(404, `Field "${fieldName}" is not part of entity "${entity.name}"`, "FIELD_NOT_FOUND");
+  }
+  return field;
 }
 
 /**
@@ -669,6 +681,39 @@ export function createProjectsRouter(db: ForgeDatabase, provider: SpecProvider |
       const nextSpec = {
         ...project.spec,
         entities: project.spec.entities.map((e) => (e.name === entity.name ? { ...e, label: parsed.data.label } : e)),
+      };
+      const updated = updateProjectSpec(db, project.id, nextSpec);
+      res.json({ project: updated });
+    }),
+  );
+
+  /**
+   * A field's display label (e.g. a "phone" field shown as "טלפון נייד")
+   * has the exact same story as an entity's own label above: set once by
+   * spec generation, pure display metadata that never touches the real
+   * column name, so this is another direct updateProjectSpec write with
+   * no migration. Path shape (.../fields/:fieldName/label) can never
+   * collide with .../:entityName/:recordId below since it's a distinct,
+   * longer route -- unlike the entity-label route, there's no registration-
+   * order concern here.
+   */
+  router.patch(
+    "/projects/:id/entities/:entityName/fields/:fieldName/label",
+    asyncRoute(async (req, res) => {
+      const project = requireProjectAccess(db, req.params.id, req.userId!);
+      const entity = findEntity(project, req.params.entityName);
+      const field = findField(entity, req.params.fieldName);
+      const parsed = RenameFieldLabelSchema.safeParse(req.body);
+      if (!parsed.success) {
+        throw new HttpError(400, formatValidationError(parsed.error), "VALIDATION_ERROR");
+      }
+      const nextSpec = {
+        ...project.spec,
+        entities: project.spec.entities.map((e) =>
+          e.name === entity.name
+            ? { ...e, fields: e.fields.map((f) => (f.name === field.name ? { ...f, label: parsed.data.label } : f)) }
+            : e,
+        ),
       };
       const updated = updateProjectSpec(db, project.id, nextSpec);
       res.json({ project: updated });

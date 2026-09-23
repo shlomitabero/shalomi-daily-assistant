@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { Entity, EntityRecord, Field, Project } from "@forge/shared";
 import { createRecord, deleteRecord, listRecords, updateRecord } from "./api.js";
 import { EntityLabelEditor } from "./EntityLabelEditor.js";
+import { FieldLabelEditor } from "./FieldLabelEditor.js";
 import {
   badgeTone,
   buildCalendarMonth,
@@ -612,10 +613,7 @@ export function EntityPanel({
       <form className="record-form" onSubmit={handleSubmit}>
         {entity.fields.map((field) => (
           <label key={field.name} className="field-row">
-            <span>
-              {field.label ?? field.name}
-              {field.required ? " *" : ""}
-            </span>
+            <FieldLabelEditor entityName={entity.name} field={field} projectId={projectId} onRenamed={onEntityRenamed} />
             <FieldInput
               field={field}
               value={form[field.name]}
