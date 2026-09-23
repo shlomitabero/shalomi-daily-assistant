@@ -159,6 +159,88 @@ test("App's openExistingProject routes a built project to the live preview and a
   assert.deepEqual(run(draftProject), { project: draftProject, activeEntity: "Customer", view: "spec" });
 });
 
+/**
+ * Regression test for handleDeleteProject (the home-screen "Your
+ * projects" list's delete button): a real, irreversible action gated
+ * behind window.confirm -- declining the confirm must leave everything
+ * untouched (no API call, myProjects list unchanged), while confirming
+ * must call the real deleteProject API function and then remove exactly
+ * the deleted project from myProjects, leaving every other project alone.
+ * Extracts the real function from App.tsx the same way the openPanel and
+ * openExistingProject tests above do, rather than reimplementing its logic.
+ */
+test("App's handleDeleteProject only calls the API and updates myProjects after window.confirm returns true, and leaves everything untouched when the user cancels", async () => {
+  const appSrc = readFileSync(new URL("./App.tsx", import.meta.url), "utf8");
+  const handlerMatch = appSrc.match(/ {2}async function handleDeleteProject\(p: Project\) \{[\s\S]*?\n {2}\}\n/);
+  assert.ok(handlerMatch, "expected to find handleDeleteProject in App.tsx");
+  const { code } = transformSync(handlerMatch![0], { loader: "ts" });
+
+  function run(
+    project: Project,
+    initialMyProjects: Project[],
+    opts: { confirmReturns: boolean; deleteProjectFn: (id: string) => Promise<void> },
+  ) {
+    const state: { myProjects: Project[]; deletingId: string | null; error: string | null } = {
+      myProjects: initialMyProjects,
+      deletingId: "not-yet-called",
+      error: "not-yet-called",
+    };
+    const confirmCalls: string[] = [];
+    const fn = new Function(
+      "window",
+      "t",
+      "deleteProject",
+      "setDeletingId",
+      "setError",
+      "setMyProjects",
+      `${code}\nreturn handleDeleteProject;`,
+    )(
+      { confirm: (message: string) => (confirmCalls.push(message), opts.confirmReturns) },
+      (key: string) => key,
+      opts.deleteProjectFn,
+      (v: string | null) => (state.deletingId = v),
+      (v: string | null) => (state.error = v),
+      (updater: (prev: Project[]) => Project[]) => (state.myProjects = updater(state.myProjects)),
+    ) as (p: Project) => Promise<void>;
+    return { fn, state, confirmCalls };
+  }
+
+  const target = makeProject([makeEntity("Customer")]);
+  target.id = "delete-me";
+  const other = makeProject([makeEntity("Customer")]);
+  other.id = "keep-me";
+
+  // Declining the confirm dialog must call neither the API nor any setter.
+  let deleteApiCalls = 0;
+  const declined = run(target, [target, other], {
+    confirmReturns: false,
+    deleteProjectFn: async () => {
+      deleteApiCalls += 1;
+    },
+  });
+  await declined.fn(target);
+  assert.equal(deleteApiCalls, 0, "declining the confirm must never call the delete API");
+  assert.deepEqual(declined.state.myProjects, [target, other], "myProjects must be untouched when cancelled");
+  assert.equal(declined.state.deletingId, "not-yet-called", "setDeletingId must never be called when cancelled");
+
+  // Confirming must call the real API function and remove only the deleted project.
+  deleteApiCalls = 0;
+  let deletedId: string | null = null;
+  const confirmed = run(target, [target, other], {
+    confirmReturns: true,
+    deleteProjectFn: async (id: string) => {
+      deleteApiCalls += 1;
+      deletedId = id;
+    },
+  });
+  await confirmed.fn(target);
+  assert.equal(deleteApiCalls, 1);
+  assert.equal(deletedId, "delete-me");
+  assert.deepEqual(confirmed.state.myProjects, [other], "only the deleted project should be removed from the list");
+  assert.equal(confirmed.state.deletingId, null, "deletingId must be cleared again once the delete finishes");
+  assert.equal(confirmed.state.error, null);
+});
+
 function makeEntity(name: string): Entity {
   return { name, fields: [{ name: "name", type: "text", required: true }] };
 }

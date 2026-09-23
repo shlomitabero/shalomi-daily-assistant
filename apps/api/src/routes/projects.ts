@@ -11,6 +11,7 @@ import {
   diffAndMigrate,
   updateProjectSpec,
   updateProjectName,
+  deleteProject,
   insertRecord,
   listRecords,
   updateRecord,
@@ -269,6 +270,29 @@ export function createProjectsRouter(db: ForgeDatabase, provider: SpecProvider |
         spec: source.spec,
       });
       res.status(201).json({ project: cloned });
+    }),
+  );
+
+  /**
+   * Permanently deletes a project -- requireProjectOwner, not
+   * requireProjectAccess: unlike renaming or cloning, this affects every
+   * collaborator's access too (nobody can even see this project's data
+   * again), so it's deliberately not something a collaborator can do to
+   * someone else's project on their own initiative. Tears down any *live*
+   * WhatsApp Web socket first (that in-memory state lives in this process,
+   * outside packages/db's reach -- see WhatsAppWebManager's own comment),
+   * then deleteProject (packages/db) does the rest: drops the project's
+   * real generated data tables, checkpoints, collaborator grants, and
+   * WhatsApp connection/message history. Irreversible -- the client is
+   * expected to confirm with the user before calling this.
+   */
+  router.delete(
+    "/projects/:id",
+    asyncRoute(async (req, res) => {
+      const project = requireProjectOwner(db, req.params.id, req.userId!);
+      await whatsapp.disconnect(project.id).catch(() => {});
+      deleteProject(db, project);
+      res.status(204).end();
     }),
   );
 

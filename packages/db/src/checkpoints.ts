@@ -82,3 +82,8 @@ export function getCheckpoint(db: ForgeDatabase, id: string): Checkpoint | undef
     | undefined;
   return row ? rowToCheckpoint(row) : undefined;
 }
+
+/** Part of deleteProject's cleanup (projects.ts) -- a deleted project's history has nothing left to restore. */
+export function deleteCheckpointsForProject(db: ForgeDatabase, projectId: string): void {
+  db.prepare("DELETE FROM checkpoints WHERE projectId = ?").run(projectId);
+}

@@ -40,6 +40,11 @@ export function isCollaborator(db: ForgeDatabase, projectId: string, userId: str
   return row !== undefined;
 }
 
+/** Part of deleteProject's cleanup (projects.ts) -- nobody has access to a project that no longer exists. */
+export function removeAllCollaborators(db: ForgeDatabase, projectId: string): void {
+  db.prepare("DELETE FROM project_collaborators WHERE projectId = ?").run(projectId);
+}
+
 export function listCollaborators(db: ForgeDatabase, projectId: string): ProjectCollaborator[] {
   const rows = db
     .prepare(

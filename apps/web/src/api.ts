@@ -202,6 +202,10 @@ export function renameProject(projectId: string, name: string): Promise<{ projec
   return request(`/projects/${projectId}/name`, { method: "PATCH", body: JSON.stringify({ name }) });
 }
 
+export function deleteProject(projectId: string): Promise<void> {
+  return request(`/projects/${projectId}`, { method: "DELETE" });
+}
+
 /**
  * Sends the user's answers to the spec's open questions (quick-pick or
  * freely typed), and/or a free-standing request not tied to any specific

@@ -24,11 +24,13 @@ export {
   markProjectBuilt,
   updateProjectSpec,
   updateProjectName,
+  deleteProject,
 } from "./projects.js";
 export {
   ensureProjectCollaboratorsTable,
   addCollaborator,
   removeCollaborator,
+  removeAllCollaborators,
   isCollaborator,
   listCollaborators,
 } from "./collaborators.js";
@@ -48,6 +50,7 @@ export {
   insertCheckpoint,
   listCheckpoints,
   getCheckpoint,
+  deleteCheckpointsForProject,
 } from "./checkpoints.js";
 export { generateSeedRecords } from "./seed.js";
 export { tableNameFor, assertSafeIdentifier } from "./identifiers.js";
@@ -60,6 +63,7 @@ export {
   insertWhatsAppMessage,
   listWhatsAppMessages,
   clearWhatsAppMessages,
+  deleteWhatsAppData,
   type WhatsAppConnection,
   type WhatsAppMessage,
   type WhatsAppMessageDirection,

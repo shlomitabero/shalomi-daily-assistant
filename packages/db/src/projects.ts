@@ -1,6 +1,10 @@
 import type { Project, ProductSpec } from "@forge/shared";
 import { ProductSpecSchema } from "@forge/shared";
 import type { ForgeDatabase } from "./connection.js";
+import { tableNameFor, quoteIdentifier } from "./identifiers.js";
+import { deleteCheckpointsForProject } from "./checkpoints.js";
+import { removeAllCollaborators } from "./collaborators.js";
+import { deleteWhatsAppData } from "./whatsapp.js";
 
 export function ensureProjectsTable(db: ForgeDatabase): void {
   db.exec(`
@@ -137,4 +141,26 @@ export function updateProjectName(db: ForgeDatabase, id: string, name: string): 
   const project = getProject(db, id);
   if (!project) throw new Error(`Project ${id} not found`);
   return project;
+}
+
+/**
+ * Permanently deletes a project and everything that belongs only to it:
+ * its real generated data tables (one per entity, via tableNameFor -- the
+ * same naming migrate.ts uses to create them), Time Machine checkpoints,
+ * collaborator grants, and WhatsApp connection/message history. Unlike
+ * migrations (additive-only by design, see ADR 0002), this is genuinely
+ * destructive and irreversible -- callers must have already confirmed
+ * that with the user, and (for WhatsApp) torn down any *live* socket via
+ * WhatsAppWebManager.disconnect first, since that in-memory state lives in
+ * apps/api, outside this package's reach.
+ */
+export function deleteProject(db: ForgeDatabase, project: Project): void {
+  for (const entity of project.spec.entities) {
+    const table = tableNameFor(project.id, entity.name);
+    db.exec(`DROP TABLE IF EXISTS ${quoteIdentifier(table)}`);
+  }
+  deleteCheckpointsForProject(db, project.id);
+  removeAllCollaborators(db, project.id);
+  deleteWhatsAppData(db, project.id);
+  db.prepare("DELETE FROM projects WHERE id = ?").run(project.id);
 }

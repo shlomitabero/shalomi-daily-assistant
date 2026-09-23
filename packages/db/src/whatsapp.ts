@@ -180,3 +180,15 @@ export function listWhatsAppMessages(db: ForgeDatabase, projectId: string, limit
 export function clearWhatsAppMessages(db: ForgeDatabase, projectId: string): void {
   db.prepare("DELETE FROM whatsapp_messages WHERE projectId = ?").run(projectId);
 }
+
+/**
+ * Part of deleteProject's cleanup (projects.ts) -- unlike clearWhatsAppMessages,
+ * also drops the connection row itself (phone number, last-connected timestamp),
+ * not just the message log, since the project it describes no longer exists.
+ * Callers must tear down any *live* socket via WhatsAppWebManager.disconnect
+ * first (that in-memory state lives in apps/api, outside this package).
+ */
+export function deleteWhatsAppData(db: ForgeDatabase, projectId: string): void {
+  db.prepare("DELETE FROM whatsapp_connections WHERE projectId = ?").run(projectId);
+  db.prepare("DELETE FROM whatsapp_messages WHERE projectId = ?").run(projectId);
+}

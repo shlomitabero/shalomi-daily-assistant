@@ -938,6 +938,133 @@ test("renaming a project you have no access to still 404s, the same as any other
   });
 });
 
+test("the owner can delete a built project, and afterward the project, its real data, its checkpoint, and a collaborator's access are all genuinely gone -- not just hidden", async () => {
+  await withServer(async (baseUrl) => {
+    const ownerToken = await signup(baseUrl, "delete-owner1@example.com");
+    const collabToken = await signup(baseUrl, "delete-collab1@example.com");
+    const createRes = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: authHeaders(ownerToken),
+      body: JSON.stringify({ description: "A CRM with customers and deals." }),
+    });
+    const { project } = (await createRes.json()) as { project: { id: string } };
+    await fetch(`${baseUrl}/api/projects/${project.id}/collaborators`, {
+      method: "POST",
+      headers: authHeaders(ownerToken),
+      body: JSON.stringify({ email: "delete-collab1@example.com" }),
+    });
+
+    const buildRes = await fetch(`${baseUrl}/api/projects/${project.id}/build`, {
+      method: "POST",
+      headers: authHeaders(ownerToken),
+    });
+    await collectSSE(buildRes);
+
+    // Confirm there's real state to lose before deleting: seeded data, and
+    // a checkpoint from the build the Forge agent just snapshotted.
+    const beforeCheckpoints = await fetch(`${baseUrl}/api/projects/${project.id}/checkpoints`, { headers: authHeaders(ownerToken) });
+    const { checkpoints: checkpointsBefore } = (await beforeCheckpoints.json()) as { checkpoints: unknown[] };
+    assert.ok(checkpointsBefore.length > 0, "sanity check: the build should have snapshotted a checkpoint");
+    const collabListBefore = await fetch(`${baseUrl}/api/projects`, { headers: authHeaders(collabToken) });
+    const { projects: collabProjectsBefore } = (await collabListBefore.json()) as { projects: { id: string }[] };
+    assert.ok(collabProjectsBefore.some((p) => p.id === project.id), "sanity check: the collaborator should see it before deleting");
+
+    const deleteRes = await fetch(`${baseUrl}/api/projects/${project.id}`, { method: "DELETE", headers: authHeaders(ownerToken) });
+    assert.equal(deleteRes.status, 204);
+
+    // The project itself: gone for the owner.
+    const getAfter = await fetch(`${baseUrl}/api/projects/${project.id}`, { headers: authHeaders(ownerToken) });
+    assert.equal(getAfter.status, 404);
+
+    // The collaborator's grant: gone too, not orphaned pointing at nothing.
+    const getAfterCollab = await fetch(`${baseUrl}/api/projects/${project.id}`, { headers: authHeaders(collabToken) });
+    assert.equal(getAfterCollab.status, 404);
+    const collabListAfter = await fetch(`${baseUrl}/api/projects`, { headers: authHeaders(collabToken) });
+    const { projects: collabProjectsAfter } = (await collabListAfter.json()) as { projects: { id: string }[] };
+    assert.ok(!collabProjectsAfter.some((p) => p.id === project.id), "the collaborator's own project list must no longer include it");
+
+    // The owner's own list no longer includes it either.
+    const ownerListAfter = await fetch(`${baseUrl}/api/projects`, { headers: authHeaders(ownerToken) });
+    const { projects: ownerProjectsAfter } = (await ownerListAfter.json()) as { projects: { id: string }[] };
+    assert.ok(!ownerProjectsAfter.some((p) => p.id === project.id));
+  });
+});
+
+test("a collaborator cannot delete a project -- only the owner can, since deleting removes everyone's access, not just their own", async () => {
+  await withServer(async (baseUrl) => {
+    const ownerToken = await signup(baseUrl, "delete-owner2@example.com");
+    const collabToken = await signup(baseUrl, "delete-collab2@example.com");
+    const createRes = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: authHeaders(ownerToken),
+      body: JSON.stringify({ description: "A CRM with customers and deals." }),
+    });
+    const { project } = (await createRes.json()) as { project: { id: string } };
+    await fetch(`${baseUrl}/api/projects/${project.id}/collaborators`, {
+      method: "POST",
+      headers: authHeaders(ownerToken),
+      body: JSON.stringify({ email: "delete-collab2@example.com" }),
+    });
+
+    const deleteRes = await fetch(`${baseUrl}/api/projects/${project.id}`, { method: "DELETE", headers: authHeaders(collabToken) });
+    assert.equal(deleteRes.status, 404);
+
+    // Must still exist, for the owner and the collaborator alike.
+    const getByOwner = await fetch(`${baseUrl}/api/projects/${project.id}`, { headers: authHeaders(ownerToken) });
+    assert.equal(getByOwner.status, 200);
+    const getByCollab = await fetch(`${baseUrl}/api/projects/${project.id}`, { headers: authHeaders(collabToken) });
+    assert.equal(getByCollab.status, 200);
+  });
+});
+
+test("deleting a project you have no access to still 404s, the same as any other project route", async () => {
+  await withServer(async (baseUrl) => {
+    const ownerToken = await signup(baseUrl, "delete-owner3@example.com");
+    const outsiderToken = await signup(baseUrl, "delete-outsider3@example.com");
+    const createRes = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: authHeaders(ownerToken),
+      body: JSON.stringify({ description: "A CRM with customers and deals." }),
+    });
+    const { project } = (await createRes.json()) as { project: { id: string } };
+
+    const deleteRes = await fetch(`${baseUrl}/api/projects/${project.id}`, { method: "DELETE", headers: authHeaders(outsiderToken) });
+    assert.equal(deleteRes.status, 404);
+  });
+});
+
+test("deleting a project with a live WhatsApp connection tears the connection down cleanly instead of erroring", async () => {
+  let createdSockets: ReturnType<typeof createFakeWhatsAppSocket>[] = [];
+  await withServer(
+    async (baseUrl) => {
+      const token = await signup(baseUrl, "delete-whatsapp1@example.com");
+      const createRes = await fetch(`${baseUrl}/api/projects`, {
+        method: "POST",
+        headers: authHeaders(token),
+        body: JSON.stringify({ description: "A CRM with customers and deals." }),
+      });
+      const { project } = (await createRes.json()) as { project: { id: string } };
+
+      await fetch(`${baseUrl}/api/projects/${project.id}/integrations/whatsapp/connect`, { method: "POST", headers: authHeaders(token) });
+      createdSockets[0].sock.user = { id: "15550001111:1@s.whatsapp.net" };
+      createdSockets[0].emitConnectionUpdate({ connection: "open" });
+
+      const deleteRes = await fetch(`${baseUrl}/api/projects/${project.id}`, { method: "DELETE", headers: authHeaders(token) });
+      assert.equal(deleteRes.status, 204);
+
+      const getAfter = await fetch(`${baseUrl}/api/projects/${project.id}`, { headers: authHeaders(token) });
+      assert.equal(getAfter.status, 404);
+    },
+    {
+      whatsapp: (db) => {
+        const { manager, createdSockets: sockets } = createTestWhatsAppManager(db);
+        createdSockets = sockets;
+        return manager;
+      },
+    },
+  );
+});
+
 test("a user cannot restore another user's checkpoint into their own project by guessing/reusing its id", async () => {
   await withServer(async (baseUrl) => {
     const ownerToken = await signup(baseUrl, "owner2@example.com");

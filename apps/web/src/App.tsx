@@ -6,6 +6,7 @@ import {
   clearToken,
   cloneProject,
   createProject,
+  deleteProject,
   enhanceIdea,
   exportProject,
   getToken,
@@ -123,6 +124,7 @@ function AppContent() {
   const [showCollaborators, setShowCollaborators] = useState(false);
   const [myProjects, setMyProjects] = useState<Project[]>([]);
   const [cloningId, setCloningId] = useState<string | null>(null);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
   const [refineHistory, setRefineHistory] = useState<RefineHistoryEntry[]>([]);
   const [refineRunning, setRefineRunning] = useState(false);
   const pendingRefineInstruction = useRef<string | null>(null);
@@ -229,6 +231,32 @@ function AppContent() {
       setError((err as Error).message);
     } finally {
       setCloningId(null);
+    }
+  }
+
+  /**
+   * Permanently deletes a project (the API's own requireProjectOwner
+   * restricts this to the owner -- a collaborator only has read/write
+   * access to the project's data, not the right to take it away from
+   * everyone else, so this button is only ever rendered for the owner in
+   * the first place). Irreversible, so it's gated behind a plain
+   * window.confirm, matching this codebase's one existing delete
+   * confirmation (EntityPanel's own record-delete). Updates myProjects
+   * directly instead of re-fetching the whole list, since the home
+   * screen's own listProjects() effect only re-runs on a `view` change,
+   * not after every mutation.
+   */
+  async function handleDeleteProject(p: Project) {
+    if (!window.confirm(t("home.myProjects.confirmDelete", { name: p.name }))) return;
+    setDeletingId(p.id);
+    setError(null);
+    try {
+      await deleteProject(p.id);
+      setMyProjects((prev) => prev.filter((existing) => existing.id !== p.id));
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setDeletingId(null);
     }
   }
 
@@ -452,6 +480,16 @@ function AppContent() {
                       >
                         {cloningId === p.id ? t("home.myProjects.duplicate.busy") : t("home.myProjects.duplicate")}
                       </button>
+                      {p.ownerId === user.id && (
+                        <button
+                          type="button"
+                          className="secondary danger my-project-delete"
+                          disabled={deletingId !== null}
+                          onClick={() => handleDeleteProject(p)}
+                        >
+                          {deletingId === p.id ? t("home.myProjects.delete.busy") : t("home.myProjects.delete")}
+                        </button>
+                      )}
                     </div>
                   </li>
                 ))}

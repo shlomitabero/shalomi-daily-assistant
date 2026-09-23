@@ -2,9 +2,21 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { ProductSpec } from "@forge/shared";
 import { openDatabase } from "./connection.js";
-import { ensureProjectCollaboratorsTable, addCollaborator } from "./collaborators.js";
+import { ensureProjectCollaboratorsTable, addCollaborator, isCollaborator } from "./collaborators.js";
+import { ensureCheckpointsTable, insertCheckpoint, listCheckpoints } from "./checkpoints.js";
+import { applyMigrations } from "./migrate.js";
+import { insertRecord } from "./repository.js";
+import {
+  ensureWhatsAppConnectionsTable,
+  ensureWhatsAppMessagesTable,
+  recordWhatsAppConnected,
+  insertWhatsAppMessage,
+  getWhatsAppConnection,
+  listWhatsAppMessages,
+} from "./whatsapp.js";
 import {
   ensureProjectsTable,
+  deleteProject,
   getProject,
   insertProject,
   listProjectsForOwner,
@@ -137,4 +149,73 @@ test("updateProjectName changes only the name, leaving every other field (spec, 
   assert.equal(renamed.ownerId, project.ownerId);
   assert.equal(renamed.status, project.status);
   assert.deepEqual(renamed.spec, project.spec);
+});
+
+test("deleteProject removes the project row, its real generated data table, checkpoints, collaborators, and WhatsApp history -- not just some of them", () => {
+  const db = openDatabase(":memory:");
+  ensureProjectsTable(db);
+  ensureProjectCollaboratorsTable(db);
+  ensureCheckpointsTable(db);
+  ensureWhatsAppConnectionsTable(db);
+  ensureWhatsAppMessagesTable(db);
+
+  const project = insertProject(db, {
+    id: "to-delete",
+    ownerId: "owner1",
+    name: "Project to delete",
+    description: "will be deleted",
+    spec: validSpec,
+  });
+  applyMigrations(db, project.id, project.spec);
+  const record = insertRecord(db, project.id, project.spec.entities[0], { name: "a real customer" });
+  insertCheckpoint(db, { id: "cp1", projectId: project.id, label: "build", spec: project.spec });
+  addCollaborator(db, project.id, "collaborator1");
+  recordWhatsAppConnected(db, project.id, "15551234567");
+  insertWhatsAppMessage(db, {
+    projectId: project.id,
+    direction: "in",
+    fromNumber: "15551234567",
+    toNumber: "15557654321",
+    body: "hi",
+    status: "received",
+  });
+
+  // A second, untouched project proves deleteProject scopes every cleanup
+  // query to the deleted project's id -- not a blunt "wipe everything"
+  // that would also destroy an unrelated project's own data.
+  const other = insertProject(db, {
+    id: "keep-me",
+    ownerId: "owner1",
+    name: "Untouched project",
+    description: "must survive",
+    spec: validSpec,
+  });
+  applyMigrations(db, other.id, other.spec);
+  insertRecord(db, other.id, other.spec.entities[0], { name: "a customer that must survive" });
+  insertCheckpoint(db, { id: "cp-other", projectId: other.id, label: "build", spec: other.spec });
+  addCollaborator(db, other.id, "collaborator1");
+  recordWhatsAppConnected(db, other.id, "15559999999");
+
+  assert.equal(record.id > 0, true, "sanity check: the record was really inserted before deleting");
+
+  deleteProject(db, project);
+
+  assert.equal(getProject(db, project.id), undefined, "the project row itself should be gone");
+  assert.deepEqual(listCheckpoints(db, project.id), [], "checkpoints should be gone");
+  assert.equal(isCollaborator(db, project.id, "collaborator1"), false, "collaborator grant should be gone");
+  assert.equal(getWhatsAppConnection(db, project.id), undefined, "WhatsApp connection row should be gone");
+  assert.deepEqual(listWhatsAppMessages(db, project.id), [], "WhatsApp message log should be gone");
+  assert.throws(
+    () => db.prepare(`SELECT * FROM "entity_to_delete_Customer"`).all(),
+    /no such table/,
+    "the project's real generated data table should be dropped, not just orphaned",
+  );
+
+  // The untouched project must be completely unaffected.
+  assert.notEqual(getProject(db, other.id), undefined, "the other project must still exist");
+  assert.equal(listCheckpoints(db, other.id).length, 1, "the other project's checkpoint must survive");
+  assert.equal(isCollaborator(db, other.id, "collaborator1"), true, "the other project's collaborator must survive");
+  assert.notEqual(getWhatsAppConnection(db, other.id), undefined, "the other project's WhatsApp connection must survive");
+  const otherCount = db.prepare(`SELECT COUNT(*) as c FROM "entity_keep_me_Customer"`).get() as { c: number };
+  assert.equal(otherCount.c, 1, "the other project's real data table and its row must survive");
 });
