@@ -5889,6 +5889,34 @@ not a single "make it perfect" claim.
       stays open until she responds and the workflow is confirmed to
       actually run on schedule (`actions_list` → `list_workflow_runs`).
 
+- [x] **Round 115 — while the round 114 default-branch question stayed
+      open with שלומי, widened the i18n scan beyond `error.*` (a direction
+      flagged since round 109): nothing checked whether a UI-facing
+      translation key a component actually calls exists at all.**
+      `apps/web/src/i18n/language.test.ts` already checked `he`/`en`
+      dictionary symmetry against each other and every `HttpError` code
+      the API can throw, but never checked the other direction: whether a
+      key a component calls via `t("...")` is itself a real dictionary
+      entry. Because `translate()` deliberately never throws (falls back
+      to the raw key string instead), a typo'd or renamed key just
+      renders literal text like `entity.dupplicate` on screen for a real
+      user, with nothing failing loudly — the same failure shape as
+      `PIPELINE_IN_PROGRESS`/`ALREADY_BUILT` shipping untranslated
+      (round 109), just for UI keys instead of server error codes. Added
+      `findUsedTranslationKeys()`, which scans every `.ts`/`.tsx` file
+      under `apps/web/src` (mirroring `findThrownHttpErrorCodes`'s
+      approach) for literal `t("...")` call sites — found 163 real call
+      sites across 9 components today, all already covered, now locked in
+      as an invariant. Regression-proven: temporarily removed
+      `"entity.duplicate"` from `translations.he`, ran the suite, confirmed
+      both the new test and the existing he/en-symmetry test failed with
+      the expected messages, restored the entry, confirmed an empty
+      `git diff` on `language.ts`. Full suite green (437 tests, up from
+      435 — `@forge/web` 128 → 130) and both builds clean. Known
+      limitation, same as the HttpError scan: a dynamically-built key
+      (`t(someVariable)`) can't be statically checked; none exist in this
+      codebase today.
+
 ## Phase 3
 
 - Self-healing: production observability, automatic diagnosis and patch
