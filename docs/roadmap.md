@@ -6279,6 +6279,54 @@ not a single "make it perfect" claim.
       `@forge/web` unchanged at 138, since no client-side code was needed)
       and both builds clean.
 
+- [x] **Round 126 — a seventh follow-on: inline entity display-label
+      rename.** An entity's display label (e.g. "Customer" shown as
+      "לקוחות") was otherwise only ever set once, by spec generation,
+      with no way to fix an awkward auto-generated one short of a full
+      natural-language Refine round-trip -- a real AI/heuristic call plus
+      a migration, even though nothing about the actual schema needs to
+      change for a pure display-text edit. New
+      `PATCH /projects/:id/entities/:entityName/label`: since `label` is
+      pure display metadata (`EntitySchema`'s own comment) and
+      `entity.name` -- the real table name -- is never touched, this is
+      a direct `updateProjectSpec` write with no migration involved at
+      all. Uses `requireProjectAccess`, consistent with every other
+      spec-editing action a collaborator can already do (rename, clone),
+      not the stricter owner-only gate delete uses. Registered before the
+      existing `.../:entityName/:recordId` PATCH route so a request to
+      `.../label` is never mistaken for an update to a record literally
+      named "label".
+
+      On the client, a new `EntityLabelEditor` component mirrors
+      `ProjectNameEditor` (round 122) almost exactly -- click to edit,
+      Enter or blur saves, Escape cancels, the same spurious-save-on-
+      unmount guard for the same underlying reason -- and replaces the
+      entity panel's static heading. The entity-tabs nav (which already
+      maps over `project.spec.entities` on every render) picks up the new
+      label automatically once `onRenamed` bubbles the updated project up
+      to `App.tsx`'s `setProject`, with no separate wiring needed for the
+      tab itself -- one save updates both the panel heading and the tab
+      in the same render.
+
+      Verified with the deliberate-break-and-restore discipline at both
+      layers -- api: temporarily wrote the new value into `entity.name`
+      instead of `entity.label`, confirmed the test's own subsequent
+      entity lookup broke with a real `TypeError` (proving the break
+      really would have corrupted the entity's real name/table mapping in
+      production, not just its display text); web: temporarily removed
+      the actual `renameEntityLabel` API call from `save()`, confirmed
+      exactly the "saves a real change" test failed -- each restored
+      afterward with the full suite green again. **And** a full
+      Playwright pass against the real running dev server: built a real
+      CRM project through the actual AI pipeline, renamed the Customer
+      entity's label to Hebrew text, confirmed both the panel heading AND
+      the entity-tabs nav updated immediately (RTL layout correct too),
+      reloaded and reopened the project from the home screen to confirm
+      the rename persisted server-side (not just local React state), then
+      confirmed Escape correctly cancels a second edit without saving.
+      Full suite green (489 tests, up from 483 -- `@forge/api` 172 → 176,
+      `@forge/web` 138 → 140) and both builds clean.
+
 ## Phase 3
 
 - Self-healing: production observability, automatic diagnosis and patch
