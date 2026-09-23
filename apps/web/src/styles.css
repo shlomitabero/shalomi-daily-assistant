@@ -433,6 +433,10 @@ button.danger:hover:not(:disabled) {
   color: var(--danger);
 }
 
+.success {
+  color: var(--success);
+}
+
 .error.banner {
   background: var(--danger-soft);
   border: 1px solid var(--danger);

@@ -1,7 +1,15 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { openDatabase } from "./connection.js";
-import { createSession, deleteExpiredSessions, ensureUsersTable, getSessionUser } from "./users.js";
+import {
+  createSession,
+  createUser,
+  deleteExpiredSessions,
+  ensureUsersTable,
+  getPasswordHash,
+  getSessionUser,
+  updatePasswordHash,
+} from "./users.js";
 
 const HOUR_MS = 60 * 60 * 1000;
 
@@ -99,4 +107,31 @@ test("getSessionUser returns undefined for a session token that still exists in 
   assert.ok(stillPresent, "the expired session row must still exist in the table for this test to mean anything");
 
   assert.equal(getSessionUser(db, "long-expired-token"), undefined);
+});
+
+test("updatePasswordHash replaces the stored hash, and getPasswordHash reads it back -- leaving every other field untouched", () => {
+  const db = openDatabase(":memory:");
+  ensureUsersTable(db);
+  const user = createUser(db, { id: "u1", email: "dana@example.com", passwordHash: "original-hash" });
+
+  assert.equal(getPasswordHash(db, user.id), "original-hash");
+
+  updatePasswordHash(db, user.id, "new-hash");
+  assert.equal(getPasswordHash(db, user.id), "new-hash");
+
+  // Nothing else about the row should have moved.
+  const row = db.prepare("SELECT * FROM users WHERE id = ?").get(user.id) as {
+    id: string;
+    email: string;
+    createdAt: string;
+  };
+  assert.equal(row.id, user.id);
+  assert.equal(row.email, user.email);
+  assert.equal(row.createdAt, user.createdAt);
+});
+
+test("getPasswordHash returns undefined for a user id that doesn't exist", () => {
+  const db = openDatabase(":memory:");
+  ensureUsersTable(db);
+  assert.equal(getPasswordHash(db, "no-such-user"), undefined);
 });

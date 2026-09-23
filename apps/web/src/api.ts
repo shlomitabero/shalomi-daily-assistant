@@ -177,6 +177,10 @@ export async function logout(): Promise<void> {
   clearToken();
 }
 
+export function changePassword(currentPassword: string, newPassword: string): Promise<void> {
+  return request("/auth/password", { method: "PATCH", body: JSON.stringify({ currentPassword, newPassword }) });
+}
+
 export function createProject(description: string): Promise<{ project: Project; providerName: string }> {
   return request("/projects", { method: "POST", body: JSON.stringify({ description }) });
 }

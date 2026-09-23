@@ -100,3 +100,15 @@ export function getSessionUser(db: ForgeDatabase, token: string): User | undefin
 export function deleteSession(db: ForgeDatabase, token: string): void {
   db.prepare("DELETE FROM sessions WHERE token = ?").run(token);
 }
+
+/** For the change-password route: verifying the caller's *current* password before accepting a new one. Not part of the public User type, so this stays its own narrow lookup rather than widening findUserById. */
+export function getPasswordHash(db: ForgeDatabase, userId: string): string | undefined {
+  const row = db.prepare("SELECT passwordHash FROM users WHERE id = ?").get(userId) as
+    | { passwordHash: string }
+    | undefined;
+  return row?.passwordHash;
+}
+
+export function updatePasswordHash(db: ForgeDatabase, userId: string, passwordHash: string): void {
+  db.prepare("UPDATE users SET passwordHash = ? WHERE id = ?").run(passwordHash, userId);
+}

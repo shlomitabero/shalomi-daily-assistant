@@ -6,6 +6,8 @@ import {
   createUser,
   deleteSession,
   findUserByEmail,
+  getPasswordHash,
+  updatePasswordHash,
   DuplicateEmailError,
   type ForgeDatabase,
 } from "@forge/db";
@@ -24,6 +26,11 @@ const CredentialsSchema = z.object({
 });
 
 const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
+
+const ChangePasswordSchema = z.object({
+  currentPassword: z.string().min(1, "currentPassword is required"),
+  newPassword: z.string().min(8, "newPassword must be at least 8 characters"),
+});
 
 /**
  * verifyPassword's scrypt call costs tens of milliseconds -- login used to
@@ -110,6 +117,39 @@ export function createAuthRouter(db: ForgeDatabase): Router {
     // the token is guaranteed present here.
     deleteSession(db, extractBearerToken(req)!);
     res.status(204).end();
+  });
+
+  /**
+   * There was previously no way to change a password once an account
+   * existed -- a genuine gap for anyone actually using this app day to
+   * day. Requires the *current* password (not just the session token) so
+   * someone briefly at an already-logged-in device can't silently lock
+   * the real owner out; unlike signup/login there's no account to
+   * enumerate here (the caller is already proven to be this exact user by
+   * requireAuth), so this doesn't need the timing-side-channel defense
+   * login uses. Doesn't invalidate any other active session -- this app's
+   * session model has no bulk-revoke-by-user mechanism to begin with, and
+   * adding one is a bigger change than this route's own scope.
+   */
+  router.patch("/auth/password", requireAuth(db), async (req, res, next) => {
+    const parsed = ChangePasswordSchema.safeParse(req.body);
+    if (!parsed.success) {
+      next(new HttpError(400, formatValidationError(parsed.error), "VALIDATION_ERROR"));
+      return;
+    }
+    try {
+      const { currentPassword, newPassword } = parsed.data;
+      const storedHash = getPasswordHash(db, req.userId!);
+      if (!storedHash || !(await verifyPassword(currentPassword, storedHash))) {
+        next(new HttpError(401, "Current password is incorrect", "INVALID_CURRENT_PASSWORD"));
+        return;
+      }
+      const newHash = await hashPassword(newPassword);
+      updatePasswordHash(db, req.userId!, newHash);
+      res.status(204).end();
+    } catch (err) {
+      next(err);
+    }
   });
 
   return router;

@@ -43,6 +43,8 @@ export {
   getSessionUser,
   deleteSession,
   deleteExpiredSessions,
+  getPasswordHash,
+  updatePasswordHash,
   DuplicateEmailError,
 } from "./users.js";
 export {

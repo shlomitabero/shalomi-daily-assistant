@@ -355,6 +355,91 @@ test("login takes comparable time for a wrong password on a real account vs. an 
   });
 });
 
+test("changing your password with the correct current password works, and only the new password logs in afterward", async () => {
+  await withServer(async (baseUrl) => {
+    const email = `change-pw-1-${Date.now()}@example.com`;
+    const signupRes = await fetch(`${baseUrl}/api/auth/signup`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ email, password: "original-password" }),
+    });
+    const { token } = (await signupRes.json()) as { token: string };
+
+    const changeRes = await fetch(`${baseUrl}/api/auth/password`, {
+      method: "PATCH",
+      headers: authHeaders(token),
+      body: JSON.stringify({ currentPassword: "original-password", newPassword: "brand-new-password" }),
+    });
+    assert.equal(changeRes.status, 204);
+
+    const oldLogin = await fetch(`${baseUrl}/api/auth/login`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ email, password: "original-password" }),
+    });
+    assert.equal(oldLogin.status, 401, "the old password must no longer work");
+
+    const newLogin = await fetch(`${baseUrl}/api/auth/login`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ email, password: "brand-new-password" }),
+    });
+    assert.equal(newLogin.status, 200, "the new password must now work");
+  });
+});
+
+test("changing your password with the wrong current password is rejected, and the password stays unchanged", async () => {
+  await withServer(async (baseUrl) => {
+    const email = `change-pw-2-${Date.now()}@example.com`;
+    const signupRes = await fetch(`${baseUrl}/api/auth/signup`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ email, password: "original-password" }),
+    });
+    const { token } = (await signupRes.json()) as { token: string };
+
+    const changeRes = await fetch(`${baseUrl}/api/auth/password`, {
+      method: "PATCH",
+      headers: authHeaders(token),
+      body: JSON.stringify({ currentPassword: "totally-wrong-password", newPassword: "brand-new-password" }),
+    });
+    assert.equal(changeRes.status, 401);
+    assert.equal(((await changeRes.json()) as { code?: string }).code, "INVALID_CURRENT_PASSWORD");
+
+    const originalStillWorks = await fetch(`${baseUrl}/api/auth/login`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ email, password: "original-password" }),
+    });
+    assert.equal(originalStillWorks.status, 200, "the original password must still work after a rejected change");
+  });
+});
+
+test("changing your password rejects a new password shorter than 8 characters, the same minimum signup enforces", async () => {
+  await withServer(async (baseUrl) => {
+    const token = await signup(baseUrl, `change-pw-3-${Date.now()}@example.com`);
+    const changeRes = await fetch(`${baseUrl}/api/auth/password`, {
+      method: "PATCH",
+      headers: authHeaders(token),
+      body: JSON.stringify({ currentPassword: "correct-horse-battery", newPassword: "short" }),
+    });
+    assert.equal(changeRes.status, 400);
+    assert.equal(((await changeRes.json()) as { code?: string }).code, "VALIDATION_ERROR");
+  });
+});
+
+test("changing your password requires a valid session, the same as any other authenticated route", async () => {
+  await withServer(async (baseUrl) => {
+    const res = await fetch(`${baseUrl}/api/auth/password`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ currentPassword: "whatever", newPassword: "brand-new-password" }),
+    });
+    assert.equal(res.status, 401);
+    assert.equal(((await res.json()) as { code?: string }).code, "AUTH_REQUIRED");
+  });
+});
+
 test("project routes reject requests without a valid session", async () => {
   await withServer(async (baseUrl) => {
     const res = await fetch(`${baseUrl}/api/projects`);

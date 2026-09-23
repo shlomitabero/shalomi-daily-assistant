@@ -25,6 +25,7 @@ import { GlobalSearchPanel } from "./GlobalSearchPanel.js";
 import { HistoryPanel } from "./HistoryPanel.js";
 import { WhatsAppPanel } from "./WhatsAppPanel.js";
 import { CollaboratorsPanel } from "./CollaboratorsPanel.js";
+import { ChangePasswordPanel } from "./ChangePasswordPanel.js";
 import { ProjectNameEditor } from "./ProjectNameEditor.js";
 import { LanguageProvider, useTranslation } from "./i18n/LanguageContext.js";
 import { LanguageSwitcher } from "./i18n/LanguageSwitcher.js";
@@ -122,6 +123,7 @@ function AppContent() {
   const [showTwin, setShowTwin] = useState(false);
   const [showWhatsApp, setShowWhatsApp] = useState(false);
   const [showCollaborators, setShowCollaborators] = useState(false);
+  const [showChangePassword, setShowChangePassword] = useState(false);
   const [myProjects, setMyProjects] = useState<Project[]>([]);
   const [cloningId, setCloningId] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
@@ -450,11 +452,16 @@ function AppContent() {
           <ThemeSwitcher />
           <LanguageSwitcher />
           <span className="muted small">{user.email}</span>
+          <button type="button" className="secondary" onClick={() => setShowChangePassword(true)}>
+            {t("topbar.changePassword")}
+          </button>
           <button type="button" className="secondary" onClick={handleLogout}>
             {t("topbar.logout")}
           </button>
         </div>
       </header>
+
+      {showChangePassword && <ChangePasswordPanel onClose={() => setShowChangePassword(false)} />}
 
       {wakingBanner}
       {error && <p className="error banner">{error}</p>}
