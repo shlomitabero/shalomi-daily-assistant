@@ -35,6 +35,42 @@ function findThrownHttpErrorCodes(): Set<string> {
   return codes;
 }
 
+/**
+ * Walks the whole apps/web/src UI source tree and extracts every literal
+ * `t("some.key")` call (the `t` helper from useTranslation()/LanguageContext),
+ * so the coverage test below checks against every translation key a
+ * component can actually request at runtime -- not just the `error.*`
+ * codes findThrownHttpErrorCodes already covers. A typo'd or renamed key
+ * used in a component but missing from one of the dictionaries doesn't
+ * throw: `translate()` silently falls back to the raw key string, so a
+ * real user would just see literal text like "entity.dupplicate" on
+ * screen instead of a translated label, with nothing failing loudly.
+ * Only literal string-argument calls are found (a dynamic key built from
+ * a variable can't be statically checked); that mirrors the same known
+ * limitation as findThrownHttpErrorCodes above.
+ */
+function findUsedTranslationKeys(): Set<string> {
+  const webSrcDir = fileURLToPath(new URL("..", import.meta.url));
+  const keys = new Set<string>();
+  const keyPattern = /\bt\(\s*["'`]([A-Za-z0-9_.]+)["'`]/g;
+
+  function walk(dir: string): void {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      const fullPath = join(dir, entry.name);
+      if (entry.isDirectory()) {
+        walk(fullPath);
+      } else if (entry.isFile() && /\.tsx?$/.test(entry.name) && !entry.name.endsWith(".test.ts") && !entry.name.endsWith(".test.tsx")) {
+        const contents = readFileSync(fullPath, "utf-8");
+        for (const match of contents.matchAll(keyPattern)) {
+          keys.add(match[1]);
+        }
+      }
+    }
+  }
+  walk(webSrcDir);
+  return keys;
+}
+
 test("detectInitialLang trusts a valid stored value", () => {
   assert.equal(detectInitialLang("en"), "en");
   assert.equal(detectInitialLang("he"), "he");
@@ -150,5 +186,26 @@ test("findThrownHttpErrorCodes actually finds the known, real HttpError codes (s
   const thrownCodes = findThrownHttpErrorCodes();
   for (const code of ["VALIDATION_ERROR", "PROJECT_NOT_FOUND", "PIPELINE_IN_PROGRESS", "ALREADY_BUILT", "WHATSAPP_NOT_CONNECTED"]) {
     assert.ok(thrownCodes.has(code), `scan should have found "${code}" being thrown somewhere in apps/api/src`);
+  }
+});
+
+test("every translation key a UI component actually requests via t(...) exists in both Hebrew and English", () => {
+  // Scans the real apps/web/src component source (see findUsedTranslationKeys
+  // above) instead of just checking the two dictionaries against each other:
+  // a key can be present in both `he` and `en` and still not be the key a
+  // component actually calls, or a component can call a key that's in
+  // neither -- neither case is caught by the he/en symmetry tests above.
+  const usedKeys = findUsedTranslationKeys();
+  assert.ok(usedKeys.size > 100, `expected to find many t(...) calls across apps/web/src, only found ${usedKeys.size} -- the source scan itself may be broken`);
+  for (const key of usedKeys) {
+    assert.ok(key in translations.he, `component calls t("${key}") but translations.he has no such key`);
+    assert.ok(key in translations.en, `component calls t("${key}") but translations.en has no such key`);
+  }
+});
+
+test("findUsedTranslationKeys actually finds known, real t(...) call sites (sanity check on the scan itself)", () => {
+  const usedKeys = findUsedTranslationKeys();
+  for (const key of ["topbar.logout", "entity.duplicate", "whatsapp.title", "search.title", "lang.he"]) {
+    assert.ok(usedKeys.has(key), `scan should have found t("${key}") being called somewhere in apps/web/src`);
   }
 });
