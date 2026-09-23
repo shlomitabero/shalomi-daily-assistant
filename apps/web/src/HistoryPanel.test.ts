@@ -131,6 +131,7 @@ test("HistoryPanel disables every restore button while one restore is in flight,
             null,
             React.createElement(HistoryPanel, {
               projectId: "proj1",
+              currentSpec: cp1.spec,
               onRestored: (project: Project) => restoredProjects.push(project.id),
               onClose: () => {},
             }),
@@ -139,7 +140,7 @@ test("HistoryPanel disables every restore button while one restore is in flight,
       );
       await waitForCondition(() => document.querySelectorAll(".checkpoint-list li").length === 2);
 
-      const buttons = Array.from(document.querySelectorAll(".checkpoint-list button")) as HTMLButtonElement[];
+      const buttons = Array.from(document.querySelectorAll(".checkpoint-restore-btn")) as HTMLButtonElement[];
       assert.equal(buttons.length, 2, "expected one restore button per checkpoint");
 
       // Click the first checkpoint's restore button -- its request is held
@@ -175,6 +176,88 @@ test("HistoryPanel disables every restore button while one restore is in flight,
         resolveRestore1(new Response("{}", { status: 200, headers: { "content-type": "application/json" } }));
         await new Promise((resolve) => setTimeout(resolve, 0));
       }
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
+ * New in this round: a "What would change?" toggle per checkpoint, showing
+ * what restoring it would remove from the CURRENT spec -- restoring itself
+ * never deletes data (migrations are additive-only), but it does hide
+ * entities/fields the live screens currently show, which is exactly the
+ * thing a real user would want to know before clicking Restore. Renders
+ * with a currentSpec that has an entity (Invoice) and a field
+ * (loyaltyPoints) the checkpoint doesn't have, expands the diff, and
+ * confirms both real differences are named -- then checks a checkpoint
+ * that's identical to the current spec reports "no changes" instead of an
+ * empty, silent list.
+ */
+test("HistoryPanel's 'What would change?' toggle shows the real entities/fields restoring would remove, and 'no changes' when there are none", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    const olderCheckpoint = makeCheckpoint("cp-older", "Initial build");
+    // Same shape as currentSpec below, so restoring THIS one changes nothing.
+    const identicalCheckpoint = makeCheckpoint("cp-identical", "Just before now");
+    identicalCheckpoint.spec = {
+      ...identicalCheckpoint.spec,
+      entities: [
+        {
+          name: "Customer",
+          fields: [
+            { name: "name", type: "text", required: true },
+            { name: "loyaltyPoints", type: "number", required: false },
+          ],
+        },
+        { name: "Invoice", fields: [{ name: "total", type: "number", required: true }] },
+      ],
+    };
+
+    const currentSpec = identicalCheckpoint.spec;
+
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/checkpoints") {
+        return new Response(JSON.stringify({ checkpoints: [olderCheckpoint, identicalCheckpoint] }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+
+    try {
+      render(
+        React.createElement(
+          ThemeProvider,
+          null,
+          React.createElement(
+            LanguageProvider,
+            null,
+            React.createElement(HistoryPanel, {
+              projectId: "proj1",
+              currentSpec,
+              onRestored: () => {},
+              onClose: () => {},
+            }),
+          ),
+        ),
+      );
+      await waitForCondition(() => document.querySelectorAll(".checkpoint-list li").length === 2);
+
+      const items = document.querySelectorAll(".checkpoint-list li");
+      const olderToggle = items[0].querySelector(".detail-toggle") as HTMLButtonElement;
+      fireEvent.click(olderToggle);
+      await waitForCondition(() => items[0].querySelector(".detail-list") !== null);
+      const olderDiffText = items[0].querySelector(".detail-list")!.textContent ?? "";
+      assert.match(olderDiffText, /Invoice/, "expected the missing Invoice entity to be named");
+      assert.match(olderDiffText, /loyaltyPoints/, "expected the missing loyaltyPoints field to be named");
+
+      const identicalToggle = items[1].querySelector(".detail-toggle") as HTMLButtonElement;
+      fireEvent.click(identicalToggle);
+      await waitForCondition(() => /No changes/.test(items[1].textContent ?? ""));
+      assert.equal(items[1].querySelector(".detail-list"), null, "an identical checkpoint must show the no-changes message, not an empty list");
+    } finally {
       globalThis.fetch = originalFetch;
     }
   });

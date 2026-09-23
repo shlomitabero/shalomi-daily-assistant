@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
-import type { Checkpoint, Project } from "@forge/shared";
+import type { Checkpoint, Project, ProductSpec } from "@forge/shared";
 import { listCheckpoints, restoreCheckpoint } from "./api.js";
+import { computeCheckpointDiff } from "./checkpointDiff.js";
 import { useTranslation } from "./i18n/LanguageContext.js";
 import { useDialogFocusTrap } from "./useDialogFocusTrap.js";
 
@@ -8,10 +9,12 @@ const LOCALE: Record<string, string> = { he: "he-IL", en: "en-US" };
 
 export function HistoryPanel({
   projectId,
+  currentSpec,
   onRestored,
   onClose,
 }: {
   projectId: string;
+  currentSpec: ProductSpec;
   onRestored: (project: Project) => void;
   onClose: () => void;
 }) {
@@ -19,6 +22,7 @@ export function HistoryPanel({
   const [checkpoints, setCheckpoints] = useState<Checkpoint[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
+  const [expandedId, setExpandedId] = useState<string | null>(null);
   const dialogRef = useDialogFocusTrap<HTMLDivElement>();
 
   useEffect(() => {
@@ -55,32 +59,63 @@ export function HistoryPanel({
           <p className="muted">{t("history.empty")}</p>
         ) : (
           <ul className="checkpoint-list">
-            {checkpoints.map((checkpoint) => (
-              <li key={checkpoint.id}>
-                <div>
-                  <strong>{checkpoint.label}</strong>
-                  <div className="muted small">
-                    {new Date(checkpoint.createdAt).toLocaleString(LOCALE[lang])}
+            {checkpoints.map((checkpoint) => {
+              const diff = computeCheckpointDiff(currentSpec, checkpoint.spec);
+              const hasChanges = diff.removedEntities.length > 0 || diff.changedEntities.length > 0;
+              const isOpen = expandedId === checkpoint.id;
+              return (
+                <li key={checkpoint.id}>
+                  <div>
+                    <strong>{checkpoint.label}</strong>
+                    <div className="muted small">
+                      {new Date(checkpoint.createdAt).toLocaleString(LOCALE[lang])}
+                    </div>
+                    <div className="muted small">
+                      {t("history.screenCount", { count: checkpoint.spec.entities.length })}
+                    </div>
+                    <button
+                      type="button"
+                      className="link-button detail-toggle"
+                      onClick={() => setExpandedId(isOpen ? null : checkpoint.id)}
+                    >
+                      {isOpen ? t("build.detail.hide") : t("history.diff.show")}
+                    </button>
+                    {isOpen && (
+                      <div className="agent-detail">
+                        {!hasChanges ? (
+                          <p className="muted small">{t("history.diff.noChanges")}</p>
+                        ) : (
+                          <ul className="detail-list">
+                            {diff.removedEntities.map((e) => (
+                              <li key={e.name}>{t("history.diff.entityRemoved", { entity: e.label })}</li>
+                            ))}
+                            {diff.changedEntities.map((e) => (
+                              <li key={e.name}>
+                                {t("history.diff.entityLostFields", { entity: e.label, fields: e.removedFieldNames.join(", ") })}
+                              </li>
+                            ))}
+                          </ul>
+                        )}
+                      </div>
+                    )}
                   </div>
-                  <div className="muted small">
-                    {t("history.screenCount", { count: checkpoint.spec.entities.length })}
-                  </div>
-                </div>
-                {/* Disabled while ANY restore is in flight, not just this
-                    row's own -- otherwise clicking a second checkpoint's
-                    button while the first restore is still pending fires a
-                    second concurrent restoreCheckpoint request, and
-                    whichever response lands last silently overwrites the
-                    other's result via onRestored. */}
-                <button
-                  type="button"
-                  onClick={() => handleRestore(checkpoint.id)}
-                  disabled={busyId !== null}
-                >
-                  {busyId === checkpoint.id ? t("history.restore.busy") : t("history.restore")}
-                </button>
-              </li>
-            ))}
+                  {/* Disabled while ANY restore is in flight, not just this
+                      row's own -- otherwise clicking a second checkpoint's
+                      button while the first restore is still pending fires a
+                      second concurrent restoreCheckpoint request, and
+                      whichever response lands last silently overwrites the
+                      other's result via onRestored. */}
+                  <button
+                    type="button"
+                    className="checkpoint-restore-btn"
+                    onClick={() => handleRestore(checkpoint.id)}
+                    disabled={busyId !== null}
+                  >
+                    {busyId === checkpoint.id ? t("history.restore.busy") : t("history.restore")}
+                  </button>
+                </li>
+              );
+            })}
           </ul>
         )}
       </div>

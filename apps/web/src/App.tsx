@@ -784,6 +784,7 @@ function AppContent() {
           {showHistory && (
             <HistoryPanel
               projectId={project.id}
+              currentSpec={project.spec}
               onClose={() => setShowHistory(false)}
               onRestored={(restored) => {
                 setProject(restored);
