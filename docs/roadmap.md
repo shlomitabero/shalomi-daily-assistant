@@ -6183,6 +6183,55 @@ not a single "make it perfect" claim.
       `@forge/api` 160 → 164, `@forge/web` 133 → 134) and both builds
       clean.
 
+- [x] **Round 124 — a fifth follow-on in the same visible-features vein,
+      moving from project-level actions to an account-level one: "Change
+      password" from the topbar.** There was previously no way to change
+      your account password once signed up at all, a real gap for anyone
+      actually using this app day to day, not a theoretical one. New
+      `PATCH /auth/password` (`packages/db`'s new narrow
+      `getPasswordHash`/`updatePasswordHash` helpers, scoped to this one
+      need rather than widening the public `User` type with a field
+      nothing else should ever read) requires the *current* password, not
+      just a valid session token -- so someone briefly at an
+      already-logged-in device can't silently lock the real owner out.
+      Unlike login, this route doesn't need the timing-side-channel
+      defense (`dummyPasswordHashPromise`) login uses, since `requireAuth`
+      has already proven the caller's identity before this route's own
+      code ever runs -- there's no account to enumerate. Deliberately does
+      *not* invalidate any other active session on a successful change:
+      this app's session model has no bulk-revoke-by-user mechanism at
+      all, and building one is a bigger change than this route's own
+      scope, so it's documented as a known, honest limitation rather than
+      silently assumed away. On the client, a new `ChangePasswordPanel`
+      (matching this codebase's existing overlay-panel pattern) opens from
+      a new button next to "Log out" in the topbar -- available from every
+      screen (home, spec review, building, preview), not just the project
+      preview, since it's an account-level action, not a project one. A
+      client-side confirm-new-password field catches a typo before it's
+      ever sent to the server.
+
+      Verified with the deliberate-break-and-restore discipline at all
+      three layers -- db: temporarily turned `updatePasswordHash` into a
+      no-op, confirmed the new test's specific "hash actually changed"
+      assertion failed and nothing else; api: temporarily removed the
+      `verifyPassword` check entirely, confirmed exactly the
+      wrong-current-password test failed (204 instead of the expected 401
+      `INVALID_CURRENT_PASSWORD`); web: temporarily removed the
+      new-password/confirm-password mismatch guard, confirmed exactly the
+      "declines on mismatch, never calls the API" assertion failed -- each
+      restored afterward with an empty `git diff` on that specific change.
+      **And** a full Playwright pass against the real running dev server:
+      signed up, tried the wrong current password (rejected with a clear
+      "incorrect" error, nothing changed), tried a mismatched confirmation
+      (rejected client-side, no request ever sent), changed the password
+      for real (a visible success message), logged out, confirmed the OLD
+      password is now rejected on login and the NEW one logs in
+      successfully -- the strongest possible proof the change genuinely
+      persisted server-side, not just in local component state. Full
+      suite green (479 tests, up from 469 -- `@forge/db` 78 → 80,
+      `@forge/api` 164 → 168, `@forge/web` 134 → 138) and both builds
+      clean.
+
 ## Phase 3
 
 - Self-healing: production observability, automatic diagnosis and patch
