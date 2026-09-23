@@ -6614,6 +6614,49 @@ not a single "make it perfect" claim.
       `@forge/web` 157 → 159; `@forge/db`/`@forge/api` unchanged, purely
       client-side) and both builds clean.
 
+- [x] **Round 134 — recent-activity and stale-entity observations for
+      Business Twin.** A deliberate return to the Business Twin (last
+      touched at round 129) rather than a fourth straight round on "Your
+      projects" (rounds 130-133 all lived there) -- three-plus rounds on
+      the same screen risked becoming the same kind of narrow, repetitive
+      work שלומי originally pushed back on, so this round moved to a
+      different part of the app entirely.
+
+      Reads a fact every record already carries for free -- its own
+      `createdAt` column, stamped by `insertRecord` on every insert, never
+      previously surfaced in the Twin -- to add two new observations: how
+      many records were added in the last week (across the whole
+      project), and which entities that genuinely DO have real records
+      haven't had a single new one added in the last 30 days. The second
+      is a materially different signal from the existing "no records yet
+      in: X" observation just above it, which only ever catches an entity
+      that never had ANY data -- this one catches an entity that USED to
+      get data and has since gone quiet (a process that stopped, a form
+      nobody fills out anymore), which is a genuinely different and more
+      actionable thing for a real small business to notice.
+
+      Verified with the deliberate-break-and-restore discipline: flipped
+      the "track each entity's most-recent record's age" logic to track
+      the OLDEST record's age instead (init `-Infinity` + `>` instead of
+      `Infinity` + `<`), confirmed the test asserting "an entity with one
+      recent record among older ones must NOT be flagged stale" failed --
+      Appointment (one 45-day-old record, one fresh one) got wrongly
+      flagged alongside the genuinely all-old Customer entity -- restored,
+      confirmed an empty `git diff`. **And** a full Playwright pass against
+      the real running dev server, going a step further than a mocked
+      date: built a real CRM project, confirmed the "records added in the
+      last week" observation read "4" right after the build (the real
+      seed data), then ran a raw `node --experimental-sqlite` script
+      against the *same live sqlite file this exact dev server process was
+      reading from* (not a separate test DB) to backdate only the Customer
+      entity's 2 rows to 45 days ago, reloaded the Business Twin panel, and
+      confirmed the count dropped to "2" (just Order's still-fresh rows)
+      and a new "No new records added in the last 30 days in: Customer"
+      observation appeared, naming exactly the entity that was actually
+      backdated. Full suite green (515 tests, up from 512 -- `@forge/api`
+      180 → 183; `@forge/db`/`@forge/web` unchanged, all new logic lives in
+      `twin.ts`) and both builds clean.
+
 ## Phase 3
 
 - Self-healing: production observability, automatic diagnosis and patch
