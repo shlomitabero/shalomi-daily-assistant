@@ -6092,6 +6092,49 @@ not a single "make it perfect" claim.
       (457 tests, up from 454 — `@forge/api` 154 → 157) and both builds
       clean.
 
+- [x] **Round 122 — a third follow-on in the same visible-features vein:
+      inline project rename.** The project name was previously fixed
+      forever at creation — auto-derived from the first few words of the
+      description by `deriveName`, including a clone's generic "(copy)"
+      suffix from round 121 — with no way to fix a bad or generic name
+      afterward. `PATCH /projects/:id/name` (Zod-validated, rejects an
+      empty/whitespace-only name with 400) uses `requireProjectAccess`, not
+      `requireProjectOwner`, so a collaborator can rename too, consistent
+      with the existing full-access sharing model; a new `ProjectNameEditor`
+      component (extracted out of `App.tsx` for independent testability,
+      matching this codebase's existing panel-component pattern) replaces
+      the static preview-screen `<h1>`: click to edit, Enter or blur saves,
+      Escape cancels without saving.
+
+      Building the Escape-cancel path surfaced a genuine testing-
+      infrastructure limitation worth recording: a jsdom-based regression
+      test for "Escape cancels without saving" did **not** catch a
+      deliberately reintroduced bug (removing the guard against a spurious
+      save-on-unmount race, where Escape's `setEditing(false)` unmounts the
+      focused input). Two throwaway probe scripts (not committed) pinned
+      down why — jsdom does not fire a `blur` event when the focused
+      element is removed from the DOM, but real Chromium reliably does.
+      The guard is real and necessary for production correctness even
+      though no jsdom unit test in this codebase's current tooling can
+      directly prove it fixes that exact race; `ProjectNameEditor.test.ts`'s
+      own comment documents this honestly instead of overclaiming what the
+      jsdom test proves.
+
+      Verified three ways: the regular jsdom test suite (2 new component
+      tests, 3 new API route tests, 1 new db-layer test), the
+      deliberate-break-and-restore discipline for the db layer, and — since
+      jsdom couldn't settle the Escape question on its own — a full
+      Playwright pass against real Chromium on the actual running dev
+      server: opened a seeded project, renamed it via a real blur, reloaded
+      the page and reopened the project from the home screen to confirm the
+      new name persisted server-side (not just in local React state, and
+      not just visible without a reload), then re-entered edit mode, typed
+      over it, and pressed Escape — confirming the previously-saved name
+      was kept, not the newly-typed text and not a revert to the original
+      auto-derived name. Full suite green (467 tests, up from 457 —
+      `@forge/db` 76 → 77, `@forge/api` 157 → 160, `@forge/web` 131 → 133)
+      and both builds clean.
+
 ## Phase 3
 
 - Self-healing: production observability, automatic diagnosis and patch
