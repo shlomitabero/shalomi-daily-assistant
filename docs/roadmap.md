@@ -5812,6 +5812,29 @@ not a single "make it perfect" claim.
       the root `"test"` script. Full suite still green (433 tests) and
       both builds clean.
 
+- [x] **Twenty-second consecutive round (91-112) — `apps/api/src/twin.ts`
+      (Business Twin), never systematically examined this session,
+      turned out to already have 6 sophisticated tests including a
+      deliberately-forced dangling-relation-id edge case; found one
+      genuinely untested tie-break rule.** `computeBusinessTwin`'s
+      `mostActive` reduce uses a strict `e.count > best.count`
+      comparison, so a genuine tie between two entities' record counts
+      keeps whichever one is declared earlier in `project.spec.entities`
+      — a real, deliberate choice, not an arbitrary reduce artifact —
+      but nothing verified it. A future edit that changed `>` to `>=`
+      (an easy, plausible-looking "simplification") would silently flip
+      which entity a real user sees reported as "most active" whenever
+      their data happens to tie, with no test failing to catch it. Added
+      a direct test locking in the current, earlier-wins behavior.
+      Regression-proven with the deliberate-break technique on the
+      pre-existing, already-correct code: temporarily changed the
+      comparison to `>=`, confirmed the new test caught the resulting
+      flip (the test's fixture reports "Appointment" as most active
+      instead of the correct "Customer"), restored the original `>`,
+      confirmed an empty `git diff` on `twin.ts`. Full suite green (434
+      tests, up from 433 — `@forge/api` 143 → 144) and both builds
+      clean.
+
 ## Phase 3
 
 - Self-healing: production observability, automatic diagnosis and patch
