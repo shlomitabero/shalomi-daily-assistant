@@ -6055,6 +6055,43 @@ not a single "make it perfect" claim.
       `@forge/api` 149 → 154, `@forge/web` 130 → 131, `@forge/db` 69 → 76)
       and both builds clean.
 
+- [x] **Round 121 — a natural follow-on to round 120: "Duplicate" a
+      project as a template for a new one.** `POST /projects/:id/clone`
+      copies a project's spec + description into a brand-new project
+      owned by whoever asked — the owner, or a collaborator making their
+      own personal starting point from one shared with them — but
+      deliberately never the source's actual data. The clone always
+      starts as a fresh `"draft"`, exactly like describing a new idea
+      from scratch, so nobody's real business records land in a new
+      project without them explicitly building it themselves. Reuses
+      `requireProjectAccess` (not `requireProjectOwner`), since cloning
+      your own copy of a blueprint you already have access to doesn't
+      touch the original at all. A "Duplicate" button on each home-screen
+      project card lands straight on the clone's spec review screen.
+      (Restructured `.my-project-card` from a single clickable button
+      into a card containing a borderless "open" button plus a separate
+      "Duplicate" button, since a `<button>` can't nest inside another
+      `<button>`.)
+
+      Verified two ways: 3 new API tests (built a project, inserted a
+      real record, confirmed the clone's own table doesn't exist yet
+      since it's unbuilt — proving no data carries over, not just that
+      none is *visible*; a collaborator's clone is owned by the
+      collaborator, not the original owner, verified against their real
+      `/auth/me` identity rather than trusting a client-supplied value;
+      an outsider with no access still gets a 404 cloning it, same as
+      every other project route), regression-proven with the
+      deliberate-break technique (temporarily made the clone keep the
+      source's `ownerId` instead of the requester's — a plausible-looking
+      mistake — confirmed exactly the collaborator-ownership test failed,
+      restored, confirmed an empty `git diff`) — **and** a full
+      real-browser Playwright pass against the actual running dev server:
+      build a project, click Duplicate from the home screen, land on the
+      clone's spec review with the same entities, return home and see
+      both the original and the "(copy)" clone listed. Full suite green
+      (457 tests, up from 454 — `@forge/api` 154 → 157) and both builds
+      clean.
+
 ## Phase 3
 
 - Self-healing: production observability, automatic diagnosis and patch
