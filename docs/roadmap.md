@@ -5917,6 +5917,27 @@ not a single "make it perfect" claim.
       (`t(someVariable)`) can't be statically checked; none exist in this
       codebase today.
 
+- [x] **Round 116 — `apps/api/src/displayField.ts`, never examined this
+      session, had a real untested tie-break: `DISPLAY_FIELD_NAME_HINTS`
+      lists `"name"` before `"title"`, which reads like a priority order,
+      but the actual code doesn't honor that order at all.**
+      `pickDisplayField` iterates `entity.fields` (not the hints list) and
+      returns the first field whose own name matches any hint — so an
+      entity that happens to declare a `title` field before its `name`
+      field gets `title` as its display label, not `name`, contradicting
+      what the hints array's own ordering suggests. Confirmed empirically
+      with a quick throwaway probe before writing the real test. Added a
+      test locking in the current, field-declaration-order behavior with
+      both orderings (title-before-name and name-before-title). Regression
+      -proven with the deliberate-break technique: temporarily rewrote the
+      lookup to walk `DISPLAY_FIELD_NAME_HINTS` in its own order instead
+      (a plausible-looking "fix" toward what the array's order implies),
+      confirmed exactly the new test failed while every other
+      `displayField.test.ts` test still passed, restored the original
+      one-line `find()`, confirmed an empty `git diff` on
+      `displayField.ts`. Full suite green (438 tests, up from 437 —
+      `@forge/api` 146 → 147) and both builds clean.
+
 ## Phase 3
 
 - Self-healing: production observability, automatic diagnosis and patch
