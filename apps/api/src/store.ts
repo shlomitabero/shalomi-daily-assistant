@@ -3,6 +3,7 @@ import { dirname } from "node:path";
 import {
   openDatabase,
   ensureProjectsTable,
+  ensureProjectCollaboratorsTable,
   ensureUsersTable,
   ensureCheckpointsTable,
   ensureWhatsAppConnectionsTable,
@@ -16,6 +17,7 @@ export function createStore(path: string): ForgeDatabase {
   }
   const db = openDatabase(path);
   ensureProjectsTable(db);
+  ensureProjectCollaboratorsTable(db);
   ensureUsersTable(db);
   ensureCheckpointsTable(db);
   ensureWhatsAppConnectionsTable(db);

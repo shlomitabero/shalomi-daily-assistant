@@ -1,4 +1,4 @@
-import type { AgentStepEvent, Checkpoint, EntityRecord, Project, User } from "@forge/shared";
+import type { AgentStepEvent, Checkpoint, EntityRecord, Project, ProjectCollaborator, User } from "@forge/shared";
 import {
   detectInitialLang,
   resolveErrorMessage as resolveErrorMessageForLang,
@@ -388,6 +388,18 @@ export function updateRecord(
 
 export function deleteRecord(projectId: string, entityName: string, recordId: number): Promise<void> {
   return request(`/projects/${projectId}/entities/${entityName}/${recordId}`, { method: "DELETE" });
+}
+
+export function listCollaborators(projectId: string): Promise<{ collaborators: ProjectCollaborator[] }> {
+  return request(`/projects/${projectId}/collaborators`);
+}
+
+export function addCollaborator(projectId: string, email: string): Promise<{ collaborators: ProjectCollaborator[] }> {
+  return request(`/projects/${projectId}/collaborators`, { method: "POST", body: JSON.stringify({ email }) });
+}
+
+export function removeCollaborator(projectId: string, userId: string): Promise<void> {
+  return request(`/projects/${projectId}/collaborators/${userId}`, { method: "DELETE" });
 }
 
 /**

@@ -89,6 +89,27 @@ export function listProjectsForOwner(db: ForgeDatabase, ownerId: string): Projec
   return rows.map(tryRowToProject).filter((p): p is Project => p !== undefined);
 }
 
+/**
+ * Everything listProjectsForOwner returns, plus any project someone else
+ * owns but has added this user to as a collaborator (see collaborators.ts).
+ * A LEFT JOIN rather than a UNION so ORDER BY can still reference
+ * projects.rowid for the same tie-break listProjectsForOwner uses --
+ * project_collaborators' own PRIMARY KEY (projectId, userId) guarantees at
+ * most one matching join row per project for this specific userId, so this
+ * never needs a DISTINCT to avoid duplicate rows.
+ */
+export function listProjectsForUser(db: ForgeDatabase, userId: string): Project[] {
+  const rows = db
+    .prepare(
+      `SELECT projects.* FROM projects
+       LEFT JOIN project_collaborators ON project_collaborators.projectId = projects.id AND project_collaborators.userId = ?
+       WHERE projects.ownerId = ? OR project_collaborators.userId = ?
+       ORDER BY projects.createdAt DESC, projects.rowid DESC`,
+    )
+    .all(userId, userId, userId) as Record<string, unknown>[];
+  return rows.map(tryRowToProject).filter((p): p is Project => p !== undefined);
+}
+
 export function markProjectBuilt(db: ForgeDatabase, id: string): Project {
   db.prepare("UPDATE projects SET status = ? WHERE id = ?").run("built", id);
   const project = getProject(db, id);

@@ -605,6 +605,159 @@ test("a second user cannot see or act on the first user's project", async () => 
   });
 });
 
+test("the project owner can invite an existing user as a collaborator, and the collaborator immediately gains full access", async () => {
+  await withServer(async (baseUrl) => {
+    const ownerToken = await signup(baseUrl, "owner-collab1@example.com");
+    const collabToken = await signup(baseUrl, "collab1@example.com");
+
+    const createRes = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: authHeaders(ownerToken),
+      body: JSON.stringify({ description: "A CRM with customers and deals." }),
+    });
+    const { project } = (await createRes.json()) as { project: { id: string } };
+
+    // Before being invited, this is exactly the "second user" case above.
+    const beforeInvite = await fetch(`${baseUrl}/api/projects/${project.id}`, { headers: authHeaders(collabToken) });
+    assert.equal(beforeInvite.status, 404);
+
+    const inviteRes = await fetch(`${baseUrl}/api/projects/${project.id}/collaborators`, {
+      method: "POST",
+      headers: authHeaders(ownerToken),
+      body: JSON.stringify({ email: "collab1@example.com" }),
+    });
+    assert.equal(inviteRes.status, 201);
+    const { collaborators } = (await inviteRes.json()) as { collaborators: { email: string }[] };
+    assert.deepEqual(
+      collaborators.map((c) => c.email),
+      ["collab1@example.com"],
+    );
+
+    const afterInvite = await fetch(`${baseUrl}/api/projects/${project.id}`, { headers: authHeaders(collabToken) });
+    assert.equal(afterInvite.status, 200);
+
+    // The invited user's own project list now includes it too, alongside (not instead of) their own owned projects.
+    const listRes = await fetch(`${baseUrl}/api/projects`, { headers: authHeaders(collabToken) });
+    const { projects } = (await listRes.json()) as { projects: { id: string }[] };
+    assert.deepEqual(
+      projects.map((p) => p.id),
+      [project.id],
+    );
+  });
+});
+
+test("the owner can remove a collaborator, which revokes their access again", async () => {
+  await withServer(async (baseUrl) => {
+    const ownerToken = await signup(baseUrl, "owner-collab2@example.com");
+    const collabToken = await signup(baseUrl, "collab2@example.com");
+
+    const createRes = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: authHeaders(ownerToken),
+      body: JSON.stringify({ description: "A CRM with customers and deals." }),
+    });
+    const { project } = (await createRes.json()) as { project: { id: string } };
+
+    await fetch(`${baseUrl}/api/projects/${project.id}/collaborators`, {
+      method: "POST",
+      headers: authHeaders(ownerToken),
+      body: JSON.stringify({ email: "collab2@example.com" }),
+    });
+    const collabListRes = await fetch(`${baseUrl}/api/projects/${project.id}/collaborators`, {
+      headers: authHeaders(ownerToken),
+    });
+    const { collaborators } = (await collabListRes.json()) as { collaborators: { userId: string }[] };
+    const collabUserId = collaborators[0].userId;
+
+    const removeRes = await fetch(`${baseUrl}/api/projects/${project.id}/collaborators/${collabUserId}`, {
+      method: "DELETE",
+      headers: authHeaders(ownerToken),
+    });
+    assert.equal(removeRes.status, 204);
+
+    const afterRemove = await fetch(`${baseUrl}/api/projects/${project.id}`, { headers: authHeaders(collabToken) });
+    assert.equal(afterRemove.status, 404);
+  });
+});
+
+test("a collaborator (not the owner) cannot invite or remove other collaborators", async () => {
+  await withServer(async (baseUrl) => {
+    const ownerToken = await signup(baseUrl, "owner-collab3@example.com");
+    const collabToken = await signup(baseUrl, "collab3@example.com");
+    await signup(baseUrl, "third-party@example.com");
+
+    const createRes = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: authHeaders(ownerToken),
+      body: JSON.stringify({ description: "A CRM with customers and deals." }),
+    });
+    const { project } = (await createRes.json()) as { project: { id: string } };
+    await fetch(`${baseUrl}/api/projects/${project.id}/collaborators`, {
+      method: "POST",
+      headers: authHeaders(ownerToken),
+      body: JSON.stringify({ email: "collab3@example.com" }),
+    });
+
+    // A collaborator has full read/write access to the project itself, but
+    // managing who else has that access stays owner-only -- 404, the same
+    // existence-hiding treatment as an outsider gets, not a 403.
+    const inviteAsCollab = await fetch(`${baseUrl}/api/projects/${project.id}/collaborators`, {
+      method: "POST",
+      headers: authHeaders(collabToken),
+      body: JSON.stringify({ email: "third-party@example.com" }),
+    });
+    assert.equal(inviteAsCollab.status, 404);
+
+    const removeAsCollab = await fetch(`${baseUrl}/api/projects/${project.id}/collaborators/anyone`, {
+      method: "DELETE",
+      headers: authHeaders(collabToken),
+    });
+    assert.equal(removeAsCollab.status, 404);
+  });
+});
+
+test("inviting an email with no Forge AI account returns a clear error instead of silently doing nothing", async () => {
+  await withServer(async (baseUrl) => {
+    const ownerToken = await signup(baseUrl, "owner-collab4@example.com");
+    const createRes = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: authHeaders(ownerToken),
+      body: JSON.stringify({ description: "A CRM with customers and deals." }),
+    });
+    const { project } = (await createRes.json()) as { project: { id: string } };
+
+    const inviteRes = await fetch(`${baseUrl}/api/projects/${project.id}/collaborators`, {
+      method: "POST",
+      headers: authHeaders(ownerToken),
+      body: JSON.stringify({ email: "nobody-signed-up-with-this@example.com" }),
+    });
+    assert.equal(inviteRes.status, 404);
+    const body = (await inviteRes.json()) as { code: string };
+    assert.equal(body.code, "COLLABORATOR_USER_NOT_FOUND");
+  });
+});
+
+test("inviting the project owner's own email is rejected rather than silently accepted", async () => {
+  await withServer(async (baseUrl) => {
+    const ownerToken = await signup(baseUrl, "owner-collab5@example.com");
+    const createRes = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: authHeaders(ownerToken),
+      body: JSON.stringify({ description: "A CRM with customers and deals." }),
+    });
+    const { project } = (await createRes.json()) as { project: { id: string } };
+
+    const inviteRes = await fetch(`${baseUrl}/api/projects/${project.id}/collaborators`, {
+      method: "POST",
+      headers: authHeaders(ownerToken),
+      body: JSON.stringify({ email: "owner-collab5@example.com" }),
+    });
+    assert.equal(inviteRes.status, 400);
+    const body = (await inviteRes.json()) as { code: string };
+    assert.equal(body.code, "CANNOT_ADD_OWNER_AS_COLLABORATOR");
+  });
+});
+
 test("a user cannot restore another user's checkpoint into their own project by guessing/reusing its id", async () => {
   await withServer(async (baseUrl) => {
     const ownerToken = await signup(baseUrl, "owner2@example.com");

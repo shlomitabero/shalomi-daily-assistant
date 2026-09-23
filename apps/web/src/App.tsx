@@ -8,6 +8,7 @@ import {
   enhanceIdea,
   exportProject,
   getToken,
+  listProjects,
   logout,
   me,
   streamBuild,
@@ -21,6 +22,7 @@ import { EntityPanel } from "./EntityPanel.js";
 import { GlobalSearchPanel } from "./GlobalSearchPanel.js";
 import { HistoryPanel } from "./HistoryPanel.js";
 import { WhatsAppPanel } from "./WhatsAppPanel.js";
+import { CollaboratorsPanel } from "./CollaboratorsPanel.js";
 import { LanguageProvider, useTranslation } from "./i18n/LanguageContext.js";
 import { LanguageSwitcher } from "./i18n/LanguageSwitcher.js";
 import { ThemeProvider } from "./theme/ThemeContext.js";
@@ -116,6 +118,8 @@ function AppContent() {
   const [backupBusy, setBackupBusy] = useState(false);
   const [showTwin, setShowTwin] = useState(false);
   const [showWhatsApp, setShowWhatsApp] = useState(false);
+  const [showCollaborators, setShowCollaborators] = useState(false);
+  const [myProjects, setMyProjects] = useState<Project[]>([]);
   const [refineHistory, setRefineHistory] = useState<RefineHistoryEntry[]>([]);
   const [refineRunning, setRefineRunning] = useState(false);
   const pendingRefineInstruction = useRef<string | null>(null);
@@ -124,19 +128,20 @@ function AppContent() {
   useEffect(() => subscribeWakeStatus(setWaking), []);
 
   /**
-   * The four overlay panels (History, Business Twin, WhatsApp, Search) are
-   * each a full-screen backdrop (see "history-overlay" in styles.css) --
-   * opening one without closing the others (e.g. Ctrl+K for search while
-   * History is already open from a toolbar click) used to stack two of
-   * them at once instead of replacing one with the other, since each
-   * "open" button only ever set its own boolean to true and never touched
-   * the rest. Routes every open through here so opening any one panel
-   * always closes the rest first.
+   * The five overlay panels (History, Business Twin, WhatsApp,
+   * Collaborators, Search) are each a full-screen backdrop (see
+   * "history-overlay" in styles.css) -- opening one without closing the
+   * others (e.g. Ctrl+K for search while History is already open from a
+   * toolbar click) used to stack two of them at once instead of replacing
+   * one with the other, since each "open" button only ever set its own
+   * boolean to true and never touched the rest. Routes every open through
+   * here so opening any one panel always closes the rest first.
    */
-  function openPanel(panel: "history" | "twin" | "whatsapp" | "search") {
+  function openPanel(panel: "history" | "twin" | "whatsapp" | "collaborators" | "search") {
     setShowHistory(panel === "history");
     setShowTwin(panel === "twin");
     setShowWhatsApp(panel === "whatsapp");
+    setShowCollaborators(panel === "collaborators");
     setShowSearch(panel === "search");
   }
 
@@ -160,6 +165,7 @@ function AppContent() {
         setShowTwin(false);
         setShowSearch(false);
         setShowWhatsApp(false);
+        setShowCollaborators(false);
       }
     }
     window.addEventListener("keydown", handleKeyDown);
@@ -176,6 +182,31 @@ function AppContent() {
       .catch(() => clearToken())
       .finally(() => setCheckingSession(false));
   }, []);
+
+  /**
+   * `project` is plain in-memory React state with nothing behind it once
+   * the tab reloads or a fresh login happens -- there was previously no way
+   * back into a project you'd already created, not even your own, since
+   * nothing ever called listProjects(). That also meant a collaborator
+   * invited to someone else's project (see CollaboratorsPanel) had no way
+   * to actually reach it: the API granted them real access immediately,
+   * but the UI never showed them anything beyond "start something new".
+   * Reloading on every return to the home screen (not just once on login)
+   * keeps this list correct after creating a project, being removed as a
+   * collaborator, etc., without needing a dedicated refresh action.
+   */
+  useEffect(() => {
+    if (!user || view !== "home") return;
+    listProjects()
+      .then(({ projects }) => setMyProjects(projects))
+      .catch(() => setMyProjects([]));
+  }, [user, view]);
+
+  function openExistingProject(p: Project) {
+    setProject(p);
+    setActiveEntity(p.spec.entities[0]?.name ?? null);
+    setView(p.status === "built" ? "preview" : "spec");
+  }
 
   // role="status" (implying aria-live="polite") so a screen-reader user is
   // actually told the server is waking up, instead of sitting through up to
@@ -378,6 +409,21 @@ function AppContent() {
 
       {view === "home" && (
         <main className="home">
+          {myProjects.length > 0 && (
+            <div className="my-projects">
+              <h2>{t("home.myProjects.heading")}</h2>
+              <ul className="my-projects-list">
+                {myProjects.map((p) => (
+                  <li key={p.id}>
+                    <button type="button" className="my-project-card" onClick={() => openExistingProject(p)}>
+                      <strong>{p.name}</strong>
+                      {p.ownerId !== user.id && <span className="chip">{t("home.myProjects.shared")}</span>}
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
           <h1>{t("home.title")}</h1>
           <form onSubmit={handleDescribe}>
             <textarea
@@ -538,6 +584,9 @@ function AppContent() {
               <button type="button" className="secondary" onClick={() => openPanel("whatsapp")}>
                 {t("preview.whatsapp")}
               </button>
+              <button type="button" className="secondary" onClick={() => openPanel("collaborators")}>
+                {t("preview.collaborators")}
+              </button>
               <button type="button" className="secondary" onClick={() => openPanel("history")}>
                 {t("preview.history")}
               </button>
@@ -629,6 +678,14 @@ function AppContent() {
           {showTwin && <BusinessTwinPanel projectId={project.id} onClose={() => setShowTwin(false)} />}
 
           {showWhatsApp && <WhatsAppPanel projectId={project.id} onClose={() => setShowWhatsApp(false)} />}
+
+          {showCollaborators && (
+            <CollaboratorsPanel
+              projectId={project.id}
+              isOwner={user?.id === project.ownerId}
+              onClose={() => setShowCollaborators(false)}
+            />
+          )}
 
           {showSearch && (
             <GlobalSearchPanel

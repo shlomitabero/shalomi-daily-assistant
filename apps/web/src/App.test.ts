@@ -67,46 +67,96 @@ test("summarizeRefineImpact prefers the LAST successful Architect event, not the
 });
 
 /**
- * Regression test: each of the four overlay panels (History, Business
- * Twin, WhatsApp, Search) -- each a full-screen backdrop -- used to be
- * opened by setting only its own "show" boolean to true, with no regard
- * for whether another panel's boolean was already true. Clicking, say,
- * "Business Twin" while History was already open (from an earlier click,
- * or Ctrl+K for search) stacked two full-screen overlays instead of
+ * Regression test: each of the five overlay panels (History, Business
+ * Twin, WhatsApp, Collaborators, Search) -- each a full-screen backdrop --
+ * used to be opened by setting only its own "show" boolean to true, with no
+ * regard for whether another panel's boolean was already true. Clicking,
+ * say, "Business Twin" while History was already open (from an earlier
+ * click, or Ctrl+K for search) stacked two full-screen overlays instead of
  * replacing one with the other. Extracts the real openPanel function from
  * App.tsx, strips its TypeScript with esbuild, and runs it with mock
- * setShowX functions to confirm every open closes the other three.
+ * setShowX functions to confirm every open closes the other four.
  */
 test("App's openPanel closes every other overlay panel when opening one, instead of letting them stack", () => {
   const appSrc = readFileSync(new URL("./App.tsx", import.meta.url), "utf8");
   const handlerMatch = appSrc.match(
-    / {2}function openPanel\(panel: "history" \| "twin" \| "whatsapp" \| "search"\) \{[\s\S]*?\n {2}\}\n/,
+    / {2}function openPanel\(panel: "history" \| "twin" \| "whatsapp" \| "collaborators" \| "search"\) \{[\s\S]*?\n {2}\}\n/,
   );
   assert.ok(handlerMatch, "expected to find openPanel in App.tsx");
   const { code } = transformSync(handlerMatch![0], { loader: "ts" });
 
   function run(panel: string) {
-    const state = { history: false, twin: false, whatsapp: false, search: false };
+    const state = { history: false, twin: false, whatsapp: false, collaborators: false, search: false };
     const fn = new Function(
       "setShowHistory",
       "setShowTwin",
       "setShowWhatsApp",
+      "setShowCollaborators",
       "setShowSearch",
       `${code}\nreturn openPanel;`,
     )(
       (v: boolean) => (state.history = v),
       (v: boolean) => (state.twin = v),
       (v: boolean) => (state.whatsapp = v),
+      (v: boolean) => (state.collaborators = v),
       (v: boolean) => (state.search = v),
     ) as (panel: string) => void;
     fn(panel);
     return state;
   }
 
-  assert.deepEqual(run("history"), { history: true, twin: false, whatsapp: false, search: false });
-  assert.deepEqual(run("twin"), { history: false, twin: true, whatsapp: false, search: false });
-  assert.deepEqual(run("whatsapp"), { history: false, twin: false, whatsapp: true, search: false });
-  assert.deepEqual(run("search"), { history: false, twin: false, whatsapp: false, search: true });
+  assert.deepEqual(run("history"), { history: true, twin: false, whatsapp: false, collaborators: false, search: false });
+  assert.deepEqual(run("twin"), { history: false, twin: true, whatsapp: false, collaborators: false, search: false });
+  assert.deepEqual(run("whatsapp"), { history: false, twin: false, whatsapp: true, collaborators: false, search: false });
+  assert.deepEqual(run("collaborators"), { history: false, twin: false, whatsapp: false, collaborators: true, search: false });
+  assert.deepEqual(run("search"), { history: false, twin: false, whatsapp: false, collaborators: false, search: true });
+});
+
+/**
+ * Regression test for a real behavioral choice in openExistingProject
+ * (the handler the new "Your projects" home-screen list uses to jump back
+ * into a project someone already created or was added to as a
+ * collaborator): a "built" project should open straight to the live
+ * preview, but a project that was only ever created/answered but never
+ * built has no real database behind it yet, so it must open to the spec
+ * review screen instead -- opening a draft straight to "preview" would
+ * show a live-preview screen with no working CRUD behind it. Extracts the
+ * real function from App.tsx (not a reimplementation) the same way the
+ * openPanel test above does.
+ */
+test("App's openExistingProject routes a built project to the live preview and a draft project back to spec review", () => {
+  const appSrc = readFileSync(new URL("./App.tsx", import.meta.url), "utf8");
+  const handlerMatch = appSrc.match(/ {2}function openExistingProject\(p: Project\) \{[\s\S]*?\n {2}\}\n/);
+  assert.ok(handlerMatch, "expected to find openExistingProject in App.tsx");
+  const { code } = transformSync(handlerMatch![0], { loader: "ts" });
+
+  function run(project: Project) {
+    const state: { project: Project | null; activeEntity: string | null; view: string | null } = {
+      project: null,
+      activeEntity: null,
+      view: null,
+    };
+    const fn = new Function(
+      "setProject",
+      "setActiveEntity",
+      "setView",
+      `${code}\nreturn openExistingProject;`,
+    )(
+      (p: Project) => (state.project = p),
+      (name: string | null) => (state.activeEntity = name),
+      (v: string) => (state.view = v),
+    ) as (p: Project) => void;
+    fn(project);
+    return state;
+  }
+
+  const builtProject = makeProject([makeEntity("Customer")]);
+  builtProject.status = "built";
+  assert.deepEqual(run(builtProject), { project: builtProject, activeEntity: "Customer", view: "preview" });
+
+  const draftProject = makeProject([makeEntity("Customer")]);
+  draftProject.status = "draft";
+  assert.deepEqual(run(draftProject), { project: draftProject, activeEntity: "Customer", view: "spec" });
 });
 
 function makeEntity(name: string): Entity {

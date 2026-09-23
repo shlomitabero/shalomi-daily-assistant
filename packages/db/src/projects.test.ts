@@ -2,7 +2,8 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { ProductSpec } from "@forge/shared";
 import { openDatabase } from "./connection.js";
-import { ensureProjectsTable, getProject, insertProject, listProjectsForOwner } from "./projects.js";
+import { ensureProjectCollaboratorsTable, addCollaborator } from "./collaborators.js";
+import { ensureProjectsTable, getProject, insertProject, listProjectsForOwner, listProjectsForUser } from "./projects.js";
 
 const validSpec: ProductSpec = {
   summary: "test",
@@ -77,5 +78,37 @@ test("listProjectsForOwner returns projects newest first even when two share the
     projects.map((p) => p.id),
     ["p2", "p1"],
     "the most recently created project should sort first even on a createdAt tie",
+  );
+});
+
+test("listProjectsForUser includes a project someone else owns when this user has been added as a collaborator on it, alongside their own owned projects", () => {
+  const db = openDatabase(":memory:");
+  ensureProjectsTable(db);
+  ensureProjectCollaboratorsTable(db);
+  const owned = insertProject(db, { id: "owned", ownerId: "alice", name: "Alice's project", description: "test", spec: validSpec });
+  const sharedWithAlice = insertProject(db, { id: "shared", ownerId: "bob", name: "Bob's project", description: "test", spec: validSpec });
+  insertProject(db, { id: "not-shared", ownerId: "bob", name: "Bob's other project", description: "test", spec: validSpec });
+  addCollaborator(db, sharedWithAlice.id, "alice");
+
+  const projects = listProjectsForUser(db, "alice");
+  assert.deepEqual(
+    new Set(projects.map((p) => p.id)),
+    new Set([owned.id, sharedWithAlice.id]),
+    "alice should see her own project and the one she collaborates on, but not bob's unrelated project",
+  );
+});
+
+test("listProjectsForUser returns each project exactly once even when the user is both its owner and (redundantly) listed as a collaborator", () => {
+  const db = openDatabase(":memory:");
+  ensureProjectsTable(db);
+  ensureProjectCollaboratorsTable(db);
+  const project = insertProject(db, { id: "p1", ownerId: "alice", name: "test", description: "test", spec: validSpec });
+  addCollaborator(db, project.id, "alice");
+
+  const projects = listProjectsForUser(db, "alice");
+  assert.deepEqual(
+    projects.map((p) => p.id),
+    ["p1"],
+    "should not list the same project twice",
   );
 });

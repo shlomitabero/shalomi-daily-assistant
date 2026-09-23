@@ -20,9 +20,17 @@ export {
   insertProject,
   getProject,
   listProjectsForOwner,
+  listProjectsForUser,
   markProjectBuilt,
   updateProjectSpec,
 } from "./projects.js";
+export {
+  ensureProjectCollaboratorsTable,
+  addCollaborator,
+  removeCollaborator,
+  isCollaborator,
+  listCollaborators,
+} from "./collaborators.js";
 export {
   ensureUsersTable,
   createUser,

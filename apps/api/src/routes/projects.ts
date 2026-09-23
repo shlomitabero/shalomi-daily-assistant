@@ -7,7 +7,7 @@ import {
   getProject,
   insertProject,
   listCheckpoints,
-  listProjectsForOwner,
+  listProjectsForUser,
   diffAndMigrate,
   updateProjectSpec,
   insertRecord,
@@ -17,6 +17,11 @@ import {
   insertWhatsAppMessage,
   listWhatsAppMessages,
   clearWhatsAppMessages,
+  addCollaborator,
+  removeCollaborator,
+  isCollaborator,
+  listCollaborators,
+  findUserByEmail,
   type ForgeDatabase,
 } from "@forge/db";
 import type { SpecProvider } from "@forge/spec-engine";
@@ -54,6 +59,10 @@ const WhatsAppSendSchema = z.object({
   message: z.string().min(1, "message is required"),
 });
 
+const AddCollaboratorSchema = z.object({
+  email: z.string().email("a valid email is required"),
+});
+
 /** Exported for direct unit testing of the word-truncation and empty-input fallback below. */
 export function deriveName(description: string): string {
   const words = description.trim().split(/\s+/).slice(0, 6).join(" ");
@@ -82,8 +91,24 @@ function parseRecordId(raw: string): number {
   return Number(raw);
 }
 
-/** 404s (rather than 403s) on a project owned by someone else, to avoid leaking existence. */
-function requireOwnedProject(db: ForgeDatabase, id: string, userId: string): Project {
+/**
+ * 404s (rather than 403s) on a project this user has no access to -- either
+ * it doesn't exist, or it belongs to someone else and this user isn't a
+ * collaborator on it -- to avoid leaking existence either way. A
+ * collaborator gets identical access to the owner through every route that
+ * calls this (see collaborators.ts's own module comment); only managing the
+ * collaborator list itself is owner-only, via requireProjectOwner below.
+ */
+function requireProjectAccess(db: ForgeDatabase, id: string, userId: string): Project {
+  const project = getProject(db, id);
+  if (!project || (project.ownerId !== userId && !isCollaborator(db, id, userId))) {
+    throw new HttpError(404, `Project "${id}" not found`, "PROJECT_NOT_FOUND");
+  }
+  return project;
+}
+
+/** Stricter than requireProjectAccess: for actions only the owner may take (inviting/removing a collaborator). */
+function requireProjectOwner(db: ForgeDatabase, id: string, userId: string): Project {
   const project = getProject(db, id);
   if (!project || project.ownerId !== userId) {
     throw new HttpError(404, `Project "${id}" not found`, "PROJECT_NOT_FOUND");
@@ -180,21 +205,65 @@ export function createProjectsRouter(db: ForgeDatabase, provider: SpecProvider |
   router.get(
     "/projects",
     asyncRoute(async (req, res) => {
-      res.json({ projects: listProjectsForOwner(db, req.userId!) });
+      res.json({ projects: listProjectsForUser(db, req.userId!) });
     }),
   );
 
   router.get(
     "/projects/:id",
     asyncRoute(async (req, res) => {
-      res.json({ project: requireOwnedProject(db, req.params.id, req.userId!) });
+      res.json({ project: requireProjectAccess(db, req.params.id, req.userId!) });
+    }),
+  );
+
+  /**
+   * Project sharing (see collaborators.ts's own module comment): the owner
+   * or any current collaborator can see who has access; only the owner can
+   * change who does. Listed by requireProjectAccess first so a collaborator
+   * gets the same 404-not-403 existence-hiding treatment as every other
+   * route if they've lost access since their last page load.
+   */
+  router.get(
+    "/projects/:id/collaborators",
+    asyncRoute(async (req, res) => {
+      const project = requireProjectAccess(db, req.params.id, req.userId!);
+      res.json({ collaborators: listCollaborators(db, project.id) });
+    }),
+  );
+
+  router.post(
+    "/projects/:id/collaborators",
+    asyncRoute(async (req, res) => {
+      const project = requireProjectOwner(db, req.params.id, req.userId!);
+      const parsed = AddCollaboratorSchema.safeParse(req.body);
+      if (!parsed.success) {
+        throw new HttpError(400, formatValidationError(parsed.error), "VALIDATION_ERROR");
+      }
+      const invited = findUserByEmail(db, parsed.data.email);
+      if (!invited) {
+        throw new HttpError(404, `No account found for "${parsed.data.email}"`, "COLLABORATOR_USER_NOT_FOUND");
+      }
+      if (invited.id === project.ownerId) {
+        throw new HttpError(400, "The project owner already has full access", "CANNOT_ADD_OWNER_AS_COLLABORATOR");
+      }
+      addCollaborator(db, project.id, invited.id);
+      res.status(201).json({ collaborators: listCollaborators(db, project.id) });
+    }),
+  );
+
+  router.delete(
+    "/projects/:id/collaborators/:userId",
+    asyncRoute(async (req, res) => {
+      const project = requireProjectOwner(db, req.params.id, req.userId!);
+      removeCollaborator(db, project.id, req.params.userId);
+      res.status(204).end();
     }),
   );
 
   router.post(
     "/projects/:id/answers",
     asyncRoute(async (req, res) => {
-      const project = requireOwnedProject(db, req.params.id, req.userId!);
+      const project = requireProjectAccess(db, req.params.id, req.userId!);
       const parsed = AnswerQuestionsSchema.safeParse(req.body);
       if (!parsed.success) {
         throw new HttpError(400, formatValidationError(parsed.error), "VALIDATION_ERROR");
@@ -254,7 +323,7 @@ export function createProjectsRouter(db: ForgeDatabase, provider: SpecProvider |
   router.post(
     "/projects/:id/build",
     asyncRoute(async (req, res) => {
-      const project = requireOwnedProject(db, req.params.id, req.userId!);
+      const project = requireProjectAccess(db, req.params.id, req.userId!);
       // Mirrors /refine's own status guard below: without this, calling
       // /build a second time on an already-built project silently
       // "succeeds" (diffAndMigrate with no previousSpec treats every
@@ -285,7 +354,7 @@ export function createProjectsRouter(db: ForgeDatabase, provider: SpecProvider |
   router.post(
     "/projects/:id/refine",
     asyncRoute(async (req, res) => {
-      const project = requireOwnedProject(db, req.params.id, req.userId!);
+      const project = requireProjectAccess(db, req.params.id, req.userId!);
       if (project.status !== "built") {
         throw new HttpError(409, "Build the project before refining it", "BUILD_REQUIRED");
       }
@@ -315,7 +384,7 @@ export function createProjectsRouter(db: ForgeDatabase, provider: SpecProvider |
   router.get(
     "/projects/:id/checkpoints",
     asyncRoute(async (req, res) => {
-      const project = requireOwnedProject(db, req.params.id, req.userId!);
+      const project = requireProjectAccess(db, req.params.id, req.userId!);
       res.json({ checkpoints: listCheckpoints(db, project.id) });
     }),
   );
@@ -323,7 +392,7 @@ export function createProjectsRouter(db: ForgeDatabase, provider: SpecProvider |
   router.post(
     "/projects/:id/checkpoints/:checkpointId/restore",
     asyncRoute(async (req, res) => {
-      const project = requireOwnedProject(db, req.params.id, req.userId!);
+      const project = requireProjectAccess(db, req.params.id, req.userId!);
       const checkpoint = getCheckpoint(db, req.params.checkpointId);
       if (!checkpoint || checkpoint.projectId !== project.id) {
         throw new HttpError(404, `Checkpoint "${req.params.checkpointId}" not found`, "CHECKPOINT_NOT_FOUND");
@@ -341,7 +410,7 @@ export function createProjectsRouter(db: ForgeDatabase, provider: SpecProvider |
   router.get(
     "/projects/:id/export",
     asyncRoute(async (req, res) => {
-      const project = requireOwnedProject(db, req.params.id, req.userId!);
+      const project = requireProjectAccess(db, req.params.id, req.userId!);
       if (project.status !== "built") {
         throw new HttpError(409, "Build the project before exporting its code", "BUILD_REQUIRED");
       }
@@ -357,7 +426,7 @@ export function createProjectsRouter(db: ForgeDatabase, provider: SpecProvider |
   router.get(
     "/projects/:id/backup",
     asyncRoute(async (req, res) => {
-      const project = requireOwnedProject(db, req.params.id, req.userId!);
+      const project = requireProjectAccess(db, req.params.id, req.userId!);
       if (project.status !== "built") {
         throw new HttpError(409, "Build the project before backing up its data", "BUILD_REQUIRED");
       }
@@ -373,7 +442,7 @@ export function createProjectsRouter(db: ForgeDatabase, provider: SpecProvider |
   router.get(
     "/projects/:id/integrations/whatsapp/status",
     asyncRoute(async (req, res) => {
-      const project = requireOwnedProject(db, req.params.id, req.userId!);
+      const project = requireProjectAccess(db, req.params.id, req.userId!);
       res.json(whatsapp.getStatus(project.id));
     }),
   );
@@ -381,7 +450,7 @@ export function createProjectsRouter(db: ForgeDatabase, provider: SpecProvider |
   router.post(
     "/projects/:id/integrations/whatsapp/connect",
     asyncRoute(async (req, res) => {
-      const project = requireOwnedProject(db, req.params.id, req.userId!);
+      const project = requireProjectAccess(db, req.params.id, req.userId!);
       res.json(await whatsapp.connect(project.id));
     }),
   );
@@ -389,7 +458,7 @@ export function createProjectsRouter(db: ForgeDatabase, provider: SpecProvider |
   router.post(
     "/projects/:id/integrations/whatsapp/disconnect",
     asyncRoute(async (req, res) => {
-      const project = requireOwnedProject(db, req.params.id, req.userId!);
+      const project = requireProjectAccess(db, req.params.id, req.userId!);
       await whatsapp.disconnect(project.id);
       res.json(whatsapp.getStatus(project.id));
     }),
@@ -398,7 +467,7 @@ export function createProjectsRouter(db: ForgeDatabase, provider: SpecProvider |
   router.post(
     "/projects/:id/integrations/whatsapp/send",
     asyncRoute(async (req, res) => {
-      const project = requireOwnedProject(db, req.params.id, req.userId!);
+      const project = requireProjectAccess(db, req.params.id, req.userId!);
       const parsed = WhatsAppSendSchema.safeParse(req.body ?? {});
       if (!parsed.success) {
         throw new HttpError(400, formatValidationError(parsed.error), "VALIDATION_ERROR");
@@ -440,7 +509,7 @@ export function createProjectsRouter(db: ForgeDatabase, provider: SpecProvider |
   router.get(
     "/projects/:id/integrations/whatsapp/messages",
     asyncRoute(async (req, res) => {
-      const project = requireOwnedProject(db, req.params.id, req.userId!);
+      const project = requireProjectAccess(db, req.params.id, req.userId!);
       res.json({ messages: listWhatsAppMessages(db, project.id) });
     }),
   );
@@ -448,7 +517,7 @@ export function createProjectsRouter(db: ForgeDatabase, provider: SpecProvider |
   router.delete(
     "/projects/:id/integrations/whatsapp/messages",
     asyncRoute(async (req, res) => {
-      const project = requireOwnedProject(db, req.params.id, req.userId!);
+      const project = requireProjectAccess(db, req.params.id, req.userId!);
       clearWhatsAppMessages(db, project.id);
       res.status(204).end();
     }),
@@ -457,7 +526,7 @@ export function createProjectsRouter(db: ForgeDatabase, provider: SpecProvider |
   router.get(
     "/projects/:id/twin",
     asyncRoute(async (req, res) => {
-      const project = requireOwnedProject(db, req.params.id, req.userId!);
+      const project = requireProjectAccess(db, req.params.id, req.userId!);
       if (project.status !== "built") {
         throw new HttpError(409, "Build the project before viewing its Business Twin", "BUILD_REQUIRED");
       }
@@ -468,7 +537,7 @@ export function createProjectsRouter(db: ForgeDatabase, provider: SpecProvider |
   router.get(
     "/projects/:id/entities/:entityName",
     asyncRoute(async (req, res) => {
-      const project = requireOwnedProject(db, req.params.id, req.userId!);
+      const project = requireProjectAccess(db, req.params.id, req.userId!);
       if (project.status !== "built") {
         throw new HttpError(409, "Project has not been built yet — call POST /build first", "BUILD_REQUIRED");
       }
@@ -480,7 +549,7 @@ export function createProjectsRouter(db: ForgeDatabase, provider: SpecProvider |
   router.post(
     "/projects/:id/entities/:entityName",
     asyncRoute(async (req, res) => {
-      const project = requireOwnedProject(db, req.params.id, req.userId!);
+      const project = requireProjectAccess(db, req.params.id, req.userId!);
       if (project.status !== "built") {
         throw new HttpError(409, "Project has not been built yet — call POST /build first", "BUILD_REQUIRED");
       }
@@ -493,7 +562,7 @@ export function createProjectsRouter(db: ForgeDatabase, provider: SpecProvider |
   router.patch(
     "/projects/:id/entities/:entityName/:recordId",
     asyncRoute(async (req, res) => {
-      const project = requireOwnedProject(db, req.params.id, req.userId!);
+      const project = requireProjectAccess(db, req.params.id, req.userId!);
       if (project.status !== "built") {
         throw new HttpError(409, "Project has not been built yet — call POST /build first", "BUILD_REQUIRED");
       }
@@ -507,7 +576,7 @@ export function createProjectsRouter(db: ForgeDatabase, provider: SpecProvider |
   router.delete(
     "/projects/:id/entities/:entityName/:recordId",
     asyncRoute(async (req, res) => {
-      const project = requireOwnedProject(db, req.params.id, req.userId!);
+      const project = requireProjectAccess(db, req.params.id, req.userId!);
       if (project.status !== "built") {
         throw new HttpError(409, "Project has not been built yet — call POST /build first", "BUILD_REQUIRED");
       }

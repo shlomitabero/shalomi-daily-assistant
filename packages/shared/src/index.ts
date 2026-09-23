@@ -170,6 +170,15 @@ export const CheckpointSchema = z.object({
 
 export type Checkpoint = z.infer<typeof CheckpointSchema>;
 
+/** A user (other than the owner) who's been granted full access to a project — see packages/db/src/collaborators.ts. */
+export const ProjectCollaboratorSchema = z.object({
+  userId: z.string(),
+  email: z.string().email(),
+  addedAt: z.string(),
+});
+
+export type ProjectCollaborator = z.infer<typeof ProjectCollaboratorSchema>;
+
 /** A single generated record's data, keyed by field name. Values are JSON-safe. */
 export type EntityRecord = Record<string, string | number | boolean | null>;
 

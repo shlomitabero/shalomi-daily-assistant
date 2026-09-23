@@ -19,10 +19,17 @@ real threats to a smaller, concrete list:
   There is no email verification and no password reset flow yet — see
   "Before any real deployment" below.
 - **Authorization / multi-tenancy.** Every project has an `ownerId`.
-  `requireOwnedProject` returns 404 — not 403 — for a project that doesn't
-  exist *or* belongs to someone else, so the API never confirms a project
-  ID's existence to a non-owner. Covered by an explicit cross-user test in
+  `requireProjectAccess` returns 404 — not 403 — for a project that doesn't
+  exist, belongs to someone else, *and* isn't shared with the requesting
+  user, so the API never confirms a project ID's existence to anyone
+  without access to it. Covered by an explicit cross-user test in
   `apps/api/src/app.test.ts`.
+- **Project sharing (collaborators).** An owner can grant another existing
+  user identical full access to a project (`packages/db/src/collaborators.ts`);
+  managing who has that access — inviting or removing — is enforced
+  owner-only by a separate, stricter `requireProjectOwner` check, covered
+  by its own cross-user tests. This is still a flat grant, not a roles
+  system — see "No RBAC / organizations" below for what that would add.
 - **SQL injection.** No table or column name is ever built from
   string-concatenated, unsanitized input. `packages/db/src/identifiers.ts`
   sanitizes project IDs and entity names, and rejects (rather than
@@ -55,9 +62,12 @@ real threats to a smaller, concrete list:
 - **No rate limiting.** `POST /api/projects` and `POST /api/projects/:id/refine`
   call a real LLM API when configured; nothing currently stops abuse of
   either endpoint, or of `/api/auth/signup` (account-creation spam).
-- **No RBAC / organizations.** Auth is single-owner-per-project; there is no
-  `Workspace`/`WorkspaceMember` concept, so no team sharing and no roles
-  beyond "the owner can do everything."
+- **No RBAC / organizations.** A project can now be shared with other
+  individual users (see "Project sharing" above), but there is still no
+  `Workspace`/`WorkspaceMember` concept and no roles: every collaborator
+  gets identical full access to everything the owner can do except manage
+  who else has access — no read-only or entity-scoped permission level
+  exists yet.
 - **No CSRF protection**, since auth is bearer-token-in-header (not a
   cookie), which is inherently not CSRF-vulnerable — this is a property of
   the current design, not a gap, but would need revisiting if cookie-based
