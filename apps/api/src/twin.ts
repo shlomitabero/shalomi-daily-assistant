@@ -1,7 +1,7 @@
 import type { Entity, EntityRecord, Project } from "@forge/shared";
 import { countRecords, getRecord, listRecords, type ForgeDatabase } from "@forge/db";
 import { isHebrewText } from "@forge/spec-engine";
-import { recordDisplayLabel } from "./displayField.js";
+import { pickDisplayField, recordDisplayLabel } from "./displayField.js";
 
 /**
  * The "Business Twin" — a real, honest first version of the vision's
@@ -146,6 +146,53 @@ function computeRelationHubObservation(db: ForgeDatabase, project: Project, hebr
   ];
 }
 
+/**
+ * Flags records within the same entity that share the exact same display
+ * label (the same field pickDisplayField/recordDisplayLabel already uses
+ * to represent a record everywhere else in this app -- usually "name" or
+ * "title") -- e.g. two "Customer" records both named "Dana Levi". This is
+ * genuinely actionable for a real small business (a duplicate contact
+ * entered twice, an accidental double-import) without ever claiming to
+ * know *why* they match, same as every other Business Twin observation.
+ * recordDisplayLabel falls back to a record's own unique "#<id>" when an
+ * entity has no usable display field, so two records can never collide on
+ * that fallback and produce a false positive there -- but pickDisplayField
+ * itself falls back further, to the entity's first field of *any* type,
+ * when there's no "name"/"title" hint and no text field at all. Two
+ * records genuinely coincide on that kind of field all the time (e.g. two
+ * unrelated shipments that both happen to weigh 5kg) without being
+ * duplicates in any meaningful sense, so this only runs for an entity
+ * whose picked display field is actually text -- the one case where two
+ * records sharing that exact value really does suggest the same person or
+ * thing was entered twice.
+ */
+function computeDuplicateObservations(db: ForgeDatabase, project: Project, hebrew: boolean): string[] {
+  const observations: string[] = [];
+  for (const entity of project.spec.entities) {
+    const displayField = pickDisplayField(entity);
+    if (!displayField || displayField.type !== "text") continue;
+    const records = listRecords(db, project.id, entity);
+    if (records.length < 2) continue;
+
+    const countByLabel = new Map<string, number>();
+    for (const record of records) {
+      const label = recordDisplayLabel(entity, record);
+      countByLabel.set(label, (countByLabel.get(label) ?? 0) + 1);
+    }
+
+    const entityLabel = entity.label ?? entity.name;
+    for (const [label, count] of countByLabel) {
+      if (count < 2) continue;
+      observations.push(
+        hebrew
+          ? `ב"${entityLabel}", ${count} רשומות חולקות את השם "${label}" — יתכן כפילות.`
+          : `In "${entityLabel}", ${count} records share the name "${label}" — possibly a duplicate.`,
+      );
+    }
+  }
+  return observations;
+}
+
 export function computeBusinessTwin(db: ForgeDatabase, project: Project): BusinessTwin {
   const hebrew = isHebrewText(project.description);
   const entities: BusinessTwinEntityStat[] = project.spec.entities.map((entity) => ({
@@ -187,6 +234,7 @@ export function computeBusinessTwin(db: ForgeDatabase, project: Project): Busine
     }
     observations.push(...computeRelationHubObservation(db, project, hebrew));
     observations.push(...computeRelationCoverageObservations(db, project, hebrew));
+    observations.push(...computeDuplicateObservations(db, project, hebrew));
   }
 
   return {

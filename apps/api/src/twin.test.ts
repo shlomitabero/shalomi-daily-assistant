@@ -305,3 +305,70 @@ test("computeBusinessTwin's most-linked-record insight has a real, if accidental
   assert.ok(hubObservation!.includes("2 links total"));
   assert.ok(!hubObservation!.includes("Dana Levi"), "Dana Levi has the same link count but was created first, and must lose the tie under the current rule");
 });
+
+test("computeBusinessTwin flags two records that share the exact same display name as a possible duplicate", () => {
+  const db = openDatabase(":memory:");
+  const enProject: Project = { ...project, description: "I need a CRM for customers and appointments" };
+  applyMigrations(db, enProject.id, enProject.spec);
+  const customer = enProject.spec.entities[0];
+  insertRecord(db, enProject.id, customer, { name: "Dana Levi" });
+  insertRecord(db, enProject.id, customer, { name: "Dana Levi" });
+  insertRecord(db, enProject.id, customer, { name: "Yossi Cohen" });
+
+  const twin = computeBusinessTwin(db, enProject);
+  const dupObservation = twin.observations.find((o) => o.includes("possibly a duplicate"));
+  assert.ok(dupObservation, `expected a duplicate observation, got: ${JSON.stringify(twin.observations)}`);
+  assert.ok(dupObservation!.includes("2 records"));
+  assert.ok(dupObservation!.includes("Dana Levi"));
+  assert.ok(!dupObservation!.includes("Yossi Cohen"), "Yossi Cohen appears only once and must not be reported");
+});
+
+test("computeBusinessTwin stays silent about duplicates when every record's display name is genuinely unique", () => {
+  const db = openDatabase(":memory:");
+  const enProject: Project = { ...project, description: "I need a CRM for customers and appointments" };
+  applyMigrations(db, enProject.id, enProject.spec);
+  const customer = enProject.spec.entities[0];
+  insertRecord(db, enProject.id, customer, { name: "Dana Levi" });
+  insertRecord(db, enProject.id, customer, { name: "Yossi Cohen" });
+
+  const twin = computeBusinessTwin(db, enProject);
+  assert.ok(!twin.observations.some((o) => o.includes("possibly a duplicate")));
+});
+
+test("computeBusinessTwin never flags two records as duplicates just because they share the same value on a non-text fallback field", () => {
+  // Shipment has no "name"/"title" field and no text field at all, so
+  // pickDisplayField falls back to the only field it has -- "weight", a
+  // number. Two unrelated shipments that happen to both weigh 5kg are not
+  // duplicates in any meaningful sense; duplicate-detection must skip an
+  // entity entirely rather than flag every coincidental numeric match.
+  const noNameProject: Project = {
+    ...project,
+    description: "I need to track shipments",
+    spec: {
+      ...project.spec,
+      entities: [{ name: "Shipment", label: "Shipments", fields: [{ name: "weight", type: "number", required: true }] }],
+    },
+  };
+  const db = openDatabase(":memory:");
+  applyMigrations(db, noNameProject.id, noNameProject.spec);
+  const shipment = noNameProject.spec.entities[0];
+  insertRecord(db, noNameProject.id, shipment, { weight: 5 });
+  insertRecord(db, noNameProject.id, shipment, { weight: 5 });
+
+  const twin = computeBusinessTwin(db, noNameProject);
+  assert.ok(
+    !twin.observations.some((o) => o.includes("possibly a duplicate")),
+    `an entity with no text display field must never be flagged for duplicates, got: ${JSON.stringify(twin.observations)}`,
+  );
+});
+
+test("computeBusinessTwin phrases the duplicate observation in Hebrew for a Hebrew description", () => {
+  const db = openDatabase(":memory:");
+  applyMigrations(db, project.id, project.spec);
+  const customer = project.spec.entities[0];
+  insertRecord(db, project.id, customer, { name: "Dana Levi" });
+  insertRecord(db, project.id, customer, { name: "Dana Levi" });
+
+  const twin = computeBusinessTwin(db, project);
+  assert.ok(twin.observations.some((o) => o.includes("יתכן כפילות")));
+});
