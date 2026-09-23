@@ -55,6 +55,29 @@ test("computeBusinessTwin identifies the most active entity and unused ones from
   assert.ok(twin.observations.some((o) => o.includes("תורים")));
 });
 
+/**
+ * mostActive's reduce uses a strict `>` comparison, so a tie keeps
+ * whichever entity was already `best` -- the earlier one in
+ * project.spec.entities order -- rather than the later one with the same
+ * count. This is a real, deterministic choice (not an arbitrary "whatever
+ * the reduce happens to do"), but nothing verified it: a change from `>`
+ * to `>=` would silently flip which entity wins a tie, with the wrong one
+ * reported as "most active" to a real user, and no test would catch it.
+ */
+test("computeBusinessTwin breaks a tie in mostActive by keeping the earlier entity in spec order, not the later one with the same count", () => {
+  const db = openDatabase(":memory:");
+  applyMigrations(db, project.id, project.spec);
+  const [customer, appointment] = project.spec.entities;
+  insertRecord(db, project.id, customer, { name: "Alice" });
+  insertRecord(db, project.id, customer, { name: "Bob" });
+  insertRecord(db, project.id, appointment, { title: "Haircut" });
+  insertRecord(db, project.id, appointment, { title: "Color" });
+
+  const twin = computeBusinessTwin(db, project);
+  assert.equal(twin.mostActive?.name, "Customer", `expected the earlier-declared entity to win a genuine tie, got: ${twin.mostActive?.name}`);
+  assert.equal(twin.mostActive?.count, 2);
+});
+
 test("computeBusinessTwin phrases observations in English for an English description", () => {
   const db = openDatabase(":memory:");
   const enProject: Project = { ...project, description: "I need a CRM for customers and appointments" };
