@@ -6135,6 +6135,54 @@ not a single "make it perfect" claim.
       `@forge/db` 76 → 77, `@forge/api` 157 → 160, `@forge/web` 131 → 133)
       and both builds clean.
 
+- [x] **Round 123 — a fourth follow-on in the same visible-features vein:
+      "Delete" a project from the home screen.** Once a project existed
+      there was previously no way to get rid of it, not even a mistaken,
+      empty, or unwanted one. `DELETE /projects/:id` deletes it for real
+      and cascades everything that belongs only to it: the project row,
+      its real generated data tables (one per entity), Time Machine
+      checkpoints, collaborator grants, and WhatsApp connection/message
+      history -- not just the project row with everything else silently
+      orphaned. Each of those cleanups was added as its own small,
+      exported bulk-delete function on the module that already owns that
+      table (`deleteCheckpointsForProject`, `removeAllCollaborators`,
+      `deleteWhatsAppData`), with a new `deleteProject` in `projects.ts`
+      orchestrating them plus dropping the real per-entity data tables via
+      the same `tableNameFor` naming `migrate.ts` uses to create them.
+      Unlike rename and clone (round 122/121, both `requireProjectAccess`
+      since a collaborator has identical full access), this route uses
+      the stricter `requireProjectOwner`: deleting removes *every*
+      collaborator's access too, so it's deliberately not something a
+      collaborator can trigger on a project they don't own. Also tears
+      down any *live* WhatsApp Web socket via `WhatsAppWebManager.disconnect`
+      before the DB cleanup, since that in-memory connection state lives
+      in apps/api, outside packages/db's reach. On the home screen, a
+      danger-styled "Delete" button appears on each project card only for
+      its owner, gated behind `window.confirm` naming the project --
+      matching this codebase's one existing delete confirmation
+      (`EntityPanel`'s own record-delete).
+
+      Verified with the deliberate-break-and-restore discipline at all
+      three layers -- db: temporarily skipped the entity-table-drop loop,
+      confirmed the new test's specific "table should be dropped"
+      assertion failed and nothing else; api: temporarily swapped
+      `requireProjectOwner` for `requireProjectAccess`, confirmed exactly
+      the "a collaborator cannot delete" test failed (204 instead of the
+      expected 404); web: temporarily removed the `window.confirm` guard,
+      confirmed exactly the "declining must not delete" assertion failed
+      -- each restored afterward with an empty `git diff` on that specific
+      change. **And** a full Playwright pass against the real running dev
+      server with two real logged-in users (an owner and a collaborator,
+      each their own browser context): confirmed the collaborator never
+      sees a delete button on the project shared with them, dismissing the
+      confirm dialog leaves everything untouched, accepting it removes
+      exactly that project while a second, untouched project survives,
+      the deletion persists across a page reload (not just local React
+      state), and the collaborator loses access too once reloaded. Full
+      suite green (469 tests, up from 467 -- `@forge/db` 77 → 78,
+      `@forge/api` 160 → 164, `@forge/web` 133 → 134) and both builds
+      clean.
+
 ## Phase 3
 
 - Self-healing: production observability, automatic diagnosis and patch
