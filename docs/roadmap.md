@@ -6469,6 +6469,44 @@ not a single "make it perfect" claim.
       -- `@forge/web` 145 → 149; `@forge/db`/`@forge/api` unchanged, no
       server-side code needed) and both builds clean.
 
+- [x] **Round 130 — a status filter dropdown for the entity table view.**
+      Free-text search already existed (round 67), but there was no way
+      to narrow a long table down to just one status/stage (e.g. only
+      "Won" deals, only "Approved" insurance claims, only "Pending"
+      orders) without switching to board view and scanning one column by
+      eye -- a real, common business need once an entity has more than a
+      handful of records.
+
+      Added a "Filter by <field>" `<select>` next to the search box,
+      scoped to the same enum field `findBoardField` already picks out
+      for the board view (usually "status"/"stage") -- reusing an
+      existing, proven field-selection heuristic rather than inventing a
+      new one, and consistent with the board view's own concept of "the
+      one field this entity is organized by". The filter is applied
+      inside `visibleRecords`, the single memo table view, board view,
+      calendar view, bulk-select, and CSV export all already read from --
+      so filtering to one status narrows all of them at once, including
+      CSV export (exporting only the currently-filtered rows), with no
+      separate wiring needed per view.
+
+      Verified with the deliberate-break-and-restore discipline: replaced
+      the filter's `matched.filter(...)` with a no-op passthrough,
+      confirmed the new test (select "won" in the dropdown, expect the
+      table to narrow from 3 rows to 1) failed with `waitForCondition:
+      condition never became true` since the table never actually
+      narrowed -- restored, confirmed an empty `git diff`. **And** a full
+      Playwright pass against the real running dev server: built a real
+      CRM project with sales-stage records, selected "New" in the filter,
+      confirmed the table narrowed from 2 rows to 1 and the one visible
+      row's own badge read "New" (not just a shorter list -- the *right*
+      row), cleared the filter back to "All" and confirmed all rows
+      returned, then reloaded and reopened the project to confirm the
+      underlying records themselves were untouched by the filter (a pure
+      view-state feature, not a destructive one). Full suite green (503
+      tests, up from 502 -- `@forge/web` 149 → 150; `@forge/db`/
+      `@forge/api` unchanged, purely a client-side view filter) and both
+      builds clean.
+
 ## Phase 3
 
 - Self-healing: production observability, automatic diagnosis and patch
