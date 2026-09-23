@@ -5963,6 +5963,28 @@ not a single "make it perfect" claim.
       Full suite green (439 tests, up from 438 — `@forge/api` 146 → 147)
       and both builds clean.
 
+- [x] **Round 118 — followed round 117's finding into `apps/api/src/codegen.ts`
+      (the standalone-app exporter): its own independent copy of
+      `rowToRecord`/`backupFieldDisplayValue`, embedded in the generated
+      `server.js` template, had the exact same untested boolean gap.**
+      Because the exported app has zero runtime dependency on this repo,
+      `codegen.ts` duplicates the live API's backup-CSV logic verbatim
+      into a template string — and none of `codegen.test.ts`'s existing
+      1432 lines (nor its shared `project` fixture) ever exercised a
+      boolean field. Same invariant applies here too: an omitted boolean
+      renders `"FALSE"`, not blank. Extracted and executed the real
+      generated `rowToRecord`/`backupFieldDisplayValue` via regex +
+      `new Function` — the same technique the file's existing `buildZip`
+      test already uses — rather than spawning a full server process (no
+      HTTP or real SQLite round-trip needed here) or editing the shared
+      `project` fixture other tests in the file depend on for exact
+      output. Regression-proven: temporarily lowercased the generated
+      `"TRUE"`/`"FALSE"` to `"true"`/`"false"` in `codegen.ts`'s template,
+      confirmed exactly the new test failed, restored the original code,
+      confirmed an empty `git diff` on `codegen.ts`. Full suite green
+      (440 tests, up from 439 — `@forge/api` 147 → 148) and both builds
+      clean.
+
 ## Phase 3
 
 - Self-healing: production observability, automatic diagnosis and patch
