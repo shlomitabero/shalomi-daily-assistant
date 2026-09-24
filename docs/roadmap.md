@@ -7500,6 +7500,66 @@ not a single "make it perfect" claim.
       `@forge/shared`/`@forge/spec-engine`/`@forge/db`/`@forge/api`
       unchanged) and both builds clean.
 
+- [x] **Round 154 — "Download History" for the WhatsApp message log.**
+      Diversified away from the last 5 rounds' screens (home, Business
+      Twin, Time Machine, spec review, AI Team build) to the WhatsApp
+      panel, untouched since round 145. Read `WhatsAppPanel.tsx` and
+      found the message log had no way to keep a real record of a
+      conversation before using the panel's own "Clear history"
+      button, which is irreversible -- exactly the gap Business Twin's
+      report download (round 129) and Backup All Data (round 75)
+      already closed for their own screens, and this app's own
+      established "don't lose data to an irreversible action without
+      an escape hatch" pattern.
+
+      New `whatsappLog.ts` mirrors `twinReport.ts`'s own established
+      format/download pattern exactly (plain UTF-8 text, not a PDF, for
+      the same Hebrew-font reason twinReport.ts's own doc comment
+      gives): `formatWhatsAppLog` renders each message's real
+      timestamp, direction, sender/recipient, body, and failed status;
+      `downloadWhatsAppLog` saves it via the same Blob-URL/anchor
+      mechanics `downloadTwinReport` uses. Added a "Download History"
+      button next to "Clear history" in the log header (same
+      `messages.length > 0` visibility condition, so an empty log never
+      offers to download nothing), wired through a new `projectName`
+      prop threaded from `App.tsx`'s existing `project.name`.
+
+      Verified with the deliberate-break-and-restore discipline, twice:
+      first dropped the `matchedLabel ??` fallback in
+      `formatWhatsAppLog` (a plausible oversight) -- re-ran the unit
+      tests, which failed on exactly the missing-contact-name case;
+      restored and confirmed via `diff` against a pre-break copy that
+      the file matched byte-for-byte. Then separately changed the
+      download button's visibility condition from `messages.length > 0`
+      to `messages.length > 1` (a plausible off-by-one) -- re-ran the
+      real-DOM test, which failed on exactly that assertion; restored
+      and confirmed the same byte-for-byte match. Updating three
+      pre-existing `WhatsAppPanel.test.ts` render call sites to pass the
+      new required `projectName` prop their own harness needed once the
+      real component started requiring it. **And** a real Playwright
+      pass against real running dev servers: a real WhatsApp connection
+      needs an actual phone scanning a live QR code (unofficial
+      WhatsApp Web sync, not Meta's Business API -- see
+      `WhatsAppPanel.tsx`'s own doc comment), unreachable in this
+      sandbox -- same category of limitation as the missing
+      `ANTHROPIC_API_KEY` blocking real AI-provider Playwright coverage
+      elsewhere in this log. What IS real-browser-verifiable was
+      verified for real: built a real app, opened the real WhatsApp
+      panel, and confirmed the new `projectName` prop and
+      `whatsappLog.js` import wire up cleanly at runtime with no console
+      errors (a clean `tsc` build alone doesn't catch a component-mount
+      crash), and that the empty-log guard correctly hides the download
+      button in the real disconnected state. The connected+download
+      flow itself (button appears with real messages, clicking it
+      drives a real Blob-URL anchor download with the real project name
+      in the filename) is covered by `WhatsAppPanel.test.ts`'s own
+      jsdom-based component test, which mocks the fetch responses to a
+      real "connected" status + real messages and asserts on the real
+      rendered DOM and the real anchor's `click()`/`download`
+      attribute. Full suite green (558 tests, up from 552 --
+      `@forge/web` 192 → 198; `@forge/shared`/`@forge/spec-engine`/
+      `@forge/db`/`@forge/api` unchanged) and both builds clean.
+
 ## Phase 3
 
 - Self-healing: production observability, automatic diagnosis and patch
