@@ -7033,6 +7033,54 @@ not a single "make it perfect" claim.
       `@forge/db`/`@forge/api` unchanged, purely client-side) and both
       builds clean.
 
+- [x] **Round 144 — a Back button on the spec-review screen.** A genuinely
+      different screen from the last five (Your projects, AI Team build,
+      Business Twin, Time Machine, refine/chat) -- the "Here's what we
+      understood" spec-review step, barely touched since its original
+      rounds 27/29. Found by reading `App.tsx`'s own view-transition wiring:
+      the ONLY way out of this screen was forward, via "Build the app" --
+      changing your mind about the idea (a typo, the wrong idea entirely,
+      wanting to reconsider the generated entities first) meant logging out
+      entirely, or hoping the browser's own back button didn't leave the
+      SPA in some broken half-state. Every other screen in this app already
+      has a real way back (`BuildProgress`'s own `onBack`, `HistoryPanel`/
+      `BusinessTwinPanel`/etc.'s close buttons) -- this was the one
+      genuinely stranded screen.
+
+      Added a real "Back" button next to "Build the app", wired to a new
+      `handleBackToHome` that does a careful, non-destructive reset:
+      switches the view home, clears the now-abandoned draft project from
+      state along with its own `selectedAnswers`/`additionalRequest` (tied
+      specifically to that draft's own open questions, not whatever gets
+      created next) -- but deliberately leaves `description` untouched, so
+      the idea text already typed is still sitting in the textarea, ready
+      to tweak and resubmit rather than retyped from scratch. The draft
+      project itself is never deleted server-side -- `createProject` had
+      already made it real, and (confirmed by reading `listProjectsForUser`)
+      it stays fully reachable and re-openable from "Your projects", the
+      exact same as any other never-built draft; the existing Delete button
+      there is already the honest way to clean it up if unwanted, matching
+      this app's "never silently delete data" convention seen throughout.
+
+      Verified with the deliberate-break-and-restore discipline: dropped
+      the `setSelectedAnswers({})` call (a genuinely plausible one-line
+      omission among four reset calls), re-ran the new test -- it failed
+      with the exact expected leftover state (`{"Which plan?": "Pro"}`
+      surviving instead of being cleared), restored the file, confirmed via
+      `diff` against a pre-break copy that it matched byte-for-byte. **And**
+      a full Playwright pass against the real running dev server: signed
+      up, described a real idea, landed on the real spec-review screen with
+      a real draft project already created server-side, clicked the real
+      Back button, confirmed landing back on the real home screen with the
+      exact same description text still pre-filled in the textarea -- then
+      confirmed the abandoned draft genuinely still appeared in "Your
+      projects" (not silently deleted), and that reopening it correctly
+      routed back to spec review with its own spec intact, exactly as a
+      draft-status project always has. Full suite green (538 tests, up
+      from 537 -- `@forge/web` 181 → 182; `@forge/shared`/
+      `@forge/spec-engine`/`@forge/db`/`@forge/api` unchanged, purely
+      client-side) and both builds clean.
+
 ## Phase 3
 
 - Self-healing: production observability, automatic diagnosis and patch
