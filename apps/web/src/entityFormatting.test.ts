@@ -11,6 +11,7 @@ import {
   formatDateValue,
   formatNumberValue,
   groupByField,
+  isSameMonth,
   matchesSearch,
   parseCsv,
   pickDisplayField,
@@ -289,6 +290,24 @@ test("buildCalendarMonth places a record on its correct calendar day even for a 
   } finally {
     process.env.TZ = originalTz;
   }
+});
+
+/**
+ * New in this round: the calendar view's own "Today" button (added
+ * because there was previously no quick way back to the current month
+ * once you'd navigated away with prev/next) is disabled exactly when it
+ * would be a no-op -- already showing the current month. isSameMonth is
+ * the pure comparison driving that disabled state.
+ */
+test("isSameMonth is true for two dates in the same calendar month, regardless of day", () => {
+  assert.equal(isSameMonth(new Date(2026, 8, 1), new Date(2026, 8, 30)), true);
+  assert.equal(isSameMonth(new Date(2026, 8, 15), new Date(2026, 8, 15)), true);
+});
+
+test("isSameMonth is false across a month boundary, even by a single day, and across the same month in a different year", () => {
+  assert.equal(isSameMonth(new Date(2026, 8, 30), new Date(2026, 9, 1)), false, "Sep 30 and Oct 1 are different months");
+  assert.equal(isSameMonth(new Date(2026, 0, 1), new Date(2026, 11, 31)), false, "January and December of the same year are different months");
+  assert.equal(isSameMonth(new Date(2025, 8, 15), new Date(2026, 8, 15)), false, "same month/day but a different YEAR must not count as the same month");
 });
 
 test("recordsToCsv builds a header row from field labels and one row per record, with human-friendly values", () => {

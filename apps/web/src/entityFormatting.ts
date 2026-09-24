@@ -249,6 +249,11 @@ function isSameDay(a: Date, b: Date): boolean {
   return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
 }
 
+/** Whether two dates fall in the same calendar month+year -- used to disable the calendar view's own "Today" button once it's already showing the current month, instead of leaving a pointless no-op click available. */
+export function isSameMonth(a: Date, b: Date): boolean {
+  return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth();
+}
+
 /**
  * A stored date field is always the plain "YYYY-MM-DD" shape (see
  * isValidDateString above) -- `new Date("2024-01-15")` parses that as UTC

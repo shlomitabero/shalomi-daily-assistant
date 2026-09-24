@@ -688,6 +688,49 @@ test("EntityPanel's calendar view opens the clicked record for editing, with the
   });
 });
 
+/**
+ * Real-DOM coverage for the calendar view's new "Today" button: before this
+ * round there was no quick way back to the current month once you'd
+ * navigated away with prev/next -- you had to click "prev" or "next"
+ * however many times it took, one month at a time. Confirms the button
+ * starts disabled (already on the current month), becomes enabled and
+ * actually navigates the grid back to the current month's label after
+ * clicking "next" twice, and returns to disabled once there.
+ */
+test("EntityPanel's calendar view 'Today' button is disabled on the current month, and navigates back to it after paging away", async () => {
+  await withJsdom(async () => {
+    const today = isoDateToday();
+    const store: EntityRecord[] = [{ id: 1, title: "Dana's appointment", date: today }];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = mockListRecordsFetch(store) as typeof fetch;
+    try {
+      renderAppointmentPanel();
+      await waitForCondition(() => document.querySelector(".entity-toolbar") !== null);
+
+      const calendarToggle = document.querySelectorAll(".view-toggle-btn")[1] as HTMLButtonElement;
+      fireEvent.click(calendarToggle);
+      await waitForCondition(() => document.querySelector(".calendar-month-label") !== null);
+
+      const todayBtn = document.querySelector(".calendar-today-btn") as HTMLButtonElement;
+      const monthLabel = () => document.querySelector(".calendar-month-label")!.textContent;
+      const currentMonthLabel = monthLabel();
+      assert.equal(todayBtn.disabled, true, "the Today button must start disabled -- the calendar already shows the current month");
+
+      const nextBtn = document.querySelectorAll(".calendar-nav button")[2] as HTMLButtonElement;
+      fireEvent.click(nextBtn);
+      fireEvent.click(nextBtn);
+      await waitForCondition(() => monthLabel() !== currentMonthLabel);
+      assert.equal(todayBtn.disabled, false, "paging away from the current month must enable the Today button");
+
+      fireEvent.click(todayBtn);
+      await waitForCondition(() => monthLabel() === currentMonthLabel);
+      assert.equal(todayBtn.disabled, true, "clicking Today must return to the current month and disable itself again");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
 const CUSTOMER_ENTITY: Entity = {
   name: "Customer",
   label: "Customer",

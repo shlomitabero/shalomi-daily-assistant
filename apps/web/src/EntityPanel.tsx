@@ -14,6 +14,7 @@ import {
   formatDateValue,
   formatNumberValue,
   groupByField,
+  isSameMonth,
   LOCALE,
   matchesSearch,
   parseCsv,
@@ -216,6 +217,7 @@ function CalendarView({
   t,
   onPrevMonth,
   onNextMonth,
+  onToday,
   onEdit,
 }: {
   entity: Entity;
@@ -226,6 +228,7 @@ function CalendarView({
   t: (key: string, params?: Record<string, string | number>) => string;
   onPrevMonth: () => void;
   onNextMonth: () => void;
+  onToday: () => void;
   onEdit: (record: EntityRecord) => void;
 }) {
   const year = month.getFullYear();
@@ -240,10 +243,14 @@ function CalendarView({
     return days.slice(0, 7).map((d) => formatter.format(d.date));
   }, [days, lang]);
   const labelField = calendarChipLabelField(entity, dateField);
+  const isCurrentMonth = isSameMonth(month, new Date());
 
   return (
     <div className="calendar-view">
       <div className="calendar-nav">
+        <button type="button" className="secondary calendar-today-btn" onClick={onToday} disabled={isCurrentMonth}>
+          {t("entity.calendar.today")}
+        </button>
         <button type="button" onClick={onPrevMonth} aria-label={t("entity.calendar.prev")}>
           ‹
         </button>
@@ -933,6 +940,7 @@ export function EntityPanel({
               t={t}
               onPrevMonth={() => setCalendarMonth((m) => new Date(m.getFullYear(), m.getMonth() - 1, 1))}
               onNextMonth={() => setCalendarMonth((m) => new Date(m.getFullYear(), m.getMonth() + 1, 1))}
+              onToday={() => setCalendarMonth(new Date())}
               onEdit={startEdit}
             />
           ) : (
