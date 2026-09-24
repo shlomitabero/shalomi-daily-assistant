@@ -1616,6 +1616,16 @@ button.sort-header:hover:not(:disabled) {
   margin: 10px 0 0;
 }
 
+.twin-error-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.twin-error-row .error {
+  margin: 0;
+}
+
 .twin-stats {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(110px, 1fr));

@@ -25,10 +25,16 @@ export function BusinessTwinPanel({
     downloadTwinReport(formatTwinReport(twin, projectName, lang, t), projectName);
   }
 
-  useEffect(() => {
+  function loadTwin() {
+    setError(null);
     getBusinessTwin(projectId)
       .then(({ twin }) => setTwin(twin))
       .catch((err) => setError((err as Error).message));
+  }
+
+  useEffect(() => {
+    loadTwin();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectId]);
 
   return (
@@ -49,7 +55,14 @@ export function BusinessTwinPanel({
         </div>
         <p className="muted small">{t("twin.description")}</p>
 
-        {error && <p className="error">{error}</p>}
+        {error && (
+          <div className="twin-error-row">
+            <p className="error">{error}</p>
+            <button type="button" className="secondary small" onClick={loadTwin}>
+              {t("twin.retry")}
+            </button>
+          </div>
+        )}
         {!twin && !error && <p className="muted">{t("twin.loading")}</p>}
 
         {twin && (

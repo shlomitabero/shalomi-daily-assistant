@@ -170,3 +170,55 @@ test("BusinessTwinPanel's stat tile has a real accessible label naming which ent
     }
   });
 });
+
+/**
+ * New in this round: a failed initial fetch (a transient network blip, a
+ * cold-starting backend) used to permanently strand the panel showing only
+ * the error message, with no way to recover except closing and reopening
+ * it. Mocks a fetch that rejects the FIRST call and succeeds the second, to
+ * confirm the real Retry button actually re-triggers the same fetch (not
+ * just clears the error text) and the panel recovers to show the real twin
+ * data once that second call succeeds.
+ */
+test("BusinessTwinPanel's Retry button re-fetches after a failed load and recovers to show the real data", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    let callCount = 0;
+    globalThis.fetch = (async (input: string): Promise<Response> => {
+      if (input === "/api/projects/proj1/twin") {
+        callCount += 1;
+        // A real HTTP error response (not a thrown/rejected fetch) --
+        // request()'s own fetchWithWakeRetry only retries a genuine
+        // thrown network failure, never a resolved non-2xx response, so
+        // this deterministically fails exactly once without tripping its
+        // real retry-with-backoff loop (which sleeps for real time this
+        // test's own tick-based waitForCondition can't fast-forward).
+        if (callCount === 1) {
+          return new Response(JSON.stringify({ error: "Server error", code: "REQUEST_FAILED" }), {
+            status: 500,
+            headers: { "content-type": "application/json" },
+          });
+        }
+        return new Response(JSON.stringify({ twin: TWIN }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${input}`);
+    }) as typeof fetch;
+    try {
+      renderTwinPanel(() => {});
+      await waitForCondition(() => document.querySelector(".error") !== null);
+
+      const retryButton = Array.from(document.querySelectorAll("button")).find((b) => b.textContent === "Try again");
+      assert.ok(retryButton, "expected a Retry button once the initial load fails");
+      assert.equal(callCount, 1, "must not have retried on its own yet");
+
+      fireEvent.click(retryButton!);
+      await waitForCondition(() => document.querySelector(".twin-total") !== null);
+
+      assert.equal(callCount, 2, "clicking Retry must trigger a real second fetch call");
+      assert.equal(document.querySelector(".error"), null, "the error must be cleared once the retry succeeds");
+      assert.match(document.querySelector(".twin-total")!.textContent ?? "", /16/, "must show the real data once the retry succeeds");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
