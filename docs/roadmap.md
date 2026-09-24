@@ -7684,6 +7684,57 @@ not a single "make it perfect" claim.
       `@forge/shared`/`@forge/spec-engine`/`@forge/db`/`@forge/api`
       unchanged) and both builds clean.
 
+- [x] **Round 158 — persist the home screen's idea draft across a
+      reload.** Diversified to the home screen, untouched since round
+      149. Read through this app's own existing localStorage usage
+      (`pinnedProjects.ts`, `columnVisibility.ts`, `api.ts`'s language
+      and auth-token persistence) and found one clear inconsistency:
+      every other piece of "what you're currently working on" state
+      already survives a reload except the actual idea textarea
+      itself -- the one most likely to represent real, hard-to-retype
+      work (a thoughtfully-written business description). An
+      accidental refresh or a closed tab silently discarded it, with
+      no warning.
+
+      New `ideaDraft.ts` mirrors `pinnedProjects.ts`'s own established
+      pattern exactly (`getIdeaDraft`/`saveIdeaDraft`/`clearIdeaDraft`,
+      wrapped in the same try/catch-for-private-mode convention).
+      Wired into `App.tsx`: `description`'s own initial state now reads
+      the saved draft via a lazy `useState` initializer, every edit
+      (typing, picking an example chip, an AI-enhanced rewrite) saves
+      it, and logout -- this app's own existing "start fresh" moment,
+      which already clears `description` in memory -- now also clears
+      the persisted draft, so it doesn't linger for the next person on
+      a shared machine.
+
+      Verified with the deliberate-break-and-restore discipline,
+      twice: first dropped `saveIdeaDraft`'s own blank-text guard (a
+      plausible oversight) -- re-ran the unit tests, which failed on
+      exactly the whitespace-only case; restored and confirmed via
+      `diff` against a pre-break copy that the file matched
+      byte-for-byte. This codebase's own convention keeps `App.tsx`
+      entirely function-extraction-tested (no real-DOM render of the
+      whole component exists, unlike the smaller per-panel files), so
+      the wiring itself was verified live instead: dropped the
+      `saveIdeaDraft` call from the textarea's own `onChange` handler,
+      re-ran the SAME Playwright script used for real verification
+      below against the real running dev server, confirmed it failed
+      exactly as expected (the draft never reached real localStorage,
+      so the reload-restore never happened); restored and confirmed
+      via `diff` that the file matched byte-for-byte, then re-ran the
+      same script to confirm it passed again. **And** the real
+      Playwright pass itself: typed a real, realistic idea into the
+      real textarea, waited for it to actually land in real
+      `localStorage` (not just the in-memory input value), did a
+      genuine `page.reload()` -- a real fresh page load and React
+      mount, not a simulated one -- and confirmed the exact same text
+      was restored into the real textarea; then logged out for real
+      and confirmed the real persisted draft was gone from
+      `localStorage` afterward. Full suite green (572 tests, up from
+      567 -- `@forge/web` 207 → 212; `@forge/shared`/
+      `@forge/spec-engine`/`@forge/db`/`@forge/api` unchanged) and both
+      builds clean.
+
 ## Phase 3
 
 - Self-healing: production observability, automatic diagnosis and patch
