@@ -1,4 +1,4 @@
-import type { ProductSpec } from "@forge/shared";
+import type { Checkpoint, ProductSpec } from "@forge/shared";
 
 export interface CheckpointDiff {
   removedEntities: { name: string; label: string }[];
@@ -69,4 +69,20 @@ export function isCheckpointCurrent(currentSpec: ProductSpec, checkpointSpec: Pr
   }
 
   return true;
+}
+
+/**
+ * Case-insensitive substring match on a checkpoint's own label -- a real
+ * refine's label ("Refine: add invoice tracking") always carries the
+ * actual instruction that produced it (see apps/api/src/routes/projects.ts's
+ * changeLabel), so this is genuinely searchable, not just cosmetic text.
+ * Every build/refine adds one more entry to this list forever (there's no
+ * cap and no delete), so a project with a long history had no way to find
+ * one specific checkpoint besides scrolling and reading every label --
+ * mirrors filterAndSortProjects' own convention for "Your projects".
+ */
+export function filterCheckpoints(checkpoints: Checkpoint[], search: string): Checkpoint[] {
+  const query = search.trim().toLowerCase();
+  if (!query) return checkpoints;
+  return checkpoints.filter((c) => c.label.toLowerCase().includes(query));
 }

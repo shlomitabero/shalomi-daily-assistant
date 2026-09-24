@@ -423,3 +423,71 @@ test("HistoryPanel marks the checkpoint matching the current spec with a 'Curren
     }
   });
 });
+
+/**
+ * New in this round: every build/refine adds one more checkpoint forever
+ * (no cap, no delete), so a project with a long real history had no way to
+ * find one specific checkpoint besides scrolling and reading every label.
+ * Mirrors "Your projects" own search box convention (only shown once the
+ * list is actually long enough to need it -- more than 5 entries). Renders
+ * 6 real checkpoints (crossing that threshold), types a real search that
+ * matches exactly 2 of them, and confirms the live DOM narrows to exactly
+ * those 2 -- then clears the search and confirms all 6 come back.
+ */
+test("HistoryPanel's search box (shown once there are more than 5 checkpoints) narrows the real list by label, and clearing it restores the rest", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    const checkpoints = [
+      makeCheckpoint("cp1", "Initial build"),
+      makeCheckpoint("cp2", "Refine: add invoice tracking"),
+      makeCheckpoint("cp3", "Refine: add customer notes"),
+      makeCheckpoint("cp4", "Refine: fix invoice totals"),
+      makeCheckpoint("cp5", "Refine: add reminders"),
+      makeCheckpoint("cp6", "Refine: add tags"),
+    ];
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/checkpoints") {
+        return new Response(JSON.stringify({ checkpoints }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+
+    try {
+      render(
+        React.createElement(
+          ThemeProvider,
+          null,
+          React.createElement(
+            LanguageProvider,
+            null,
+            React.createElement(HistoryPanel, {
+              projectId: "proj1",
+              currentSpec: checkpoints[0].spec,
+              onRestored: () => {},
+              onClose: () => {},
+            }),
+          ),
+        ),
+      );
+      await waitForCondition(() => document.querySelectorAll(".checkpoint-list li").length === 6);
+
+      const searchBox = document.querySelector(".history-search") as HTMLInputElement;
+      assert.ok(searchBox, "expected a search box once there are more than 5 checkpoints");
+
+      fireEvent.change(searchBox, { target: { value: "invoice" } });
+      await waitForCondition(() => document.querySelectorAll(".checkpoint-list li").length === 2);
+      const narrowedLabels = Array.from(document.querySelectorAll(".checkpoint-list li strong")).map((el) => el.textContent);
+      assert.deepEqual(
+        narrowedLabels.sort(),
+        ["Refine: add invoice tracking", "Refine: fix invoice totals"].sort(),
+        "must show exactly the checkpoints whose real label contains the search text, and no others",
+      );
+
+      fireEvent.change(searchBox, { target: { value: "" } });
+      await waitForCondition(() => document.querySelectorAll(".checkpoint-list li").length === 6);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});

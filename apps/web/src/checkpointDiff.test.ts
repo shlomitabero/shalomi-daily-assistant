@@ -1,10 +1,14 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import type { ProductSpec } from "@forge/shared";
-import { computeCheckpointDiff, isCheckpointCurrent } from "./checkpointDiff.js";
+import type { Checkpoint, ProductSpec } from "@forge/shared";
+import { computeCheckpointDiff, filterCheckpoints, isCheckpointCurrent } from "./checkpointDiff.js";
 
 function makeSpec(entities: ProductSpec["entities"]): ProductSpec {
   return { summary: "s", personas: [], roles: ["Admin"], entities, screens: [], assumptions: [], openQuestions: [] };
+}
+
+function makeCheckpoint(label: string): Checkpoint {
+  return { id: label, projectId: "p1", label, spec: makeSpec([]), createdAt: "2026-01-01T00:00:00.000Z" };
 }
 
 test("computeCheckpointDiff reports an entity present now but missing from the checkpoint as removed", () => {
@@ -124,4 +128,44 @@ test("isCheckpointCurrent is false when the checkpoint is missing an entity, mis
     false,
     "a checkpoint with a field the current spec DOESN'T have must not count as current -- restoring it would gain a field, not leave you where you are",
   );
+});
+
+/**
+ * New in this round: every build/refine adds one more checkpoint forever
+ * (no cap, no delete), so a project with a long history had no way to find
+ * one specific checkpoint besides scrolling and reading every label. A
+ * real refine's own label always carries the actual instruction that
+ * produced it (e.g. "Refine: add invoice tracking"), so a plain
+ * case-insensitive substring match is genuinely useful, not cosmetic.
+ */
+test("filterCheckpoints matches checkpoints whose label contains the search text, case-insensitively", () => {
+  const checkpoints = [
+    makeCheckpoint("Initial build"),
+    makeCheckpoint("Refine: add invoice tracking"),
+    makeCheckpoint("Refine: add customer notes"),
+  ];
+  assert.deepEqual(
+    filterCheckpoints(checkpoints, "invoice").map((c) => c.label),
+    ["Refine: add invoice tracking"],
+  );
+  assert.deepEqual(
+    filterCheckpoints(checkpoints, "INVOICE").map((c) => c.label),
+    ["Refine: add invoice tracking"],
+    "must match case-insensitively",
+  );
+  assert.deepEqual(
+    filterCheckpoints(checkpoints, "refine").map((c) => c.label),
+    ["Refine: add invoice tracking", "Refine: add customer notes"],
+  );
+});
+
+test("filterCheckpoints returns every checkpoint unchanged when the search is blank or whitespace-only", () => {
+  const checkpoints = [makeCheckpoint("Initial build"), makeCheckpoint("Refine: add invoice tracking")];
+  assert.deepEqual(filterCheckpoints(checkpoints, ""), checkpoints);
+  assert.deepEqual(filterCheckpoints(checkpoints, "   "), checkpoints);
+});
+
+test("filterCheckpoints returns an empty list when nothing matches, instead of falling back to everything", () => {
+  const checkpoints = [makeCheckpoint("Initial build"), makeCheckpoint("Refine: add invoice tracking")];
+  assert.deepEqual(filterCheckpoints(checkpoints, "zzz-no-such-checkpoint"), []);
 });

@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import type { Checkpoint, Project, ProductSpec } from "@forge/shared";
 import { listCheckpoints, restoreCheckpoint } from "./api.js";
-import { computeCheckpointDiff, isCheckpointCurrent } from "./checkpointDiff.js";
+import { computeCheckpointDiff, filterCheckpoints, isCheckpointCurrent } from "./checkpointDiff.js";
 import { useTranslation } from "./i18n/LanguageContext.js";
 import { useDialogFocusTrap } from "./useDialogFocusTrap.js";
 
@@ -23,7 +23,9 @@ export function HistoryPanel({
   const [error, setError] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [search, setSearch] = useState("");
   const dialogRef = useDialogFocusTrap<HTMLDivElement>();
+  const visibleCheckpoints = filterCheckpoints(checkpoints, search);
 
   useEffect(() => {
     listCheckpoints(projectId)
@@ -56,11 +58,23 @@ export function HistoryPanel({
         </div>
         <p className="muted small">{t("history.description")}</p>
         {error && <p className="error">{error}</p>}
+        {checkpoints.length > 5 && (
+          <input
+            type="text"
+            className="history-search"
+            placeholder={t("history.search.placeholder")}
+            aria-label={t("history.search.placeholder")}
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+          />
+        )}
         {checkpoints.length === 0 ? (
           <p className="muted">{t("history.empty")}</p>
+        ) : visibleCheckpoints.length === 0 ? (
+          <p className="muted">{t("history.search.noResults")}</p>
         ) : (
           <ul className="checkpoint-list">
-            {checkpoints.map((checkpoint) => {
+            {visibleCheckpoints.map((checkpoint) => {
               const diff = computeCheckpointDiff(currentSpec, checkpoint.spec);
               const hasChanges = diff.removedEntities.length > 0 || diff.changedEntities.length > 0;
               const isOpen = expandedId === checkpoint.id;
