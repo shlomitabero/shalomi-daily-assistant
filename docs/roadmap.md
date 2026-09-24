@@ -6861,6 +6861,57 @@ not a single "make it perfect" claim.
       `@forge/db`/`@forge/api` unchanged, purely client-side) and both
       builds clean.
 
+- [x] **Round 140 — a live elapsed timer on the AI Team build screen.**
+      A genuinely different screen from the last five (Time Machine,
+      Collaborators, WhatsApp, Entity table, Your projects) -- read
+      `BuildProgress.tsx` fresh since it hadn't been touched in a long
+      time, and found a real gap: a multi-agent build can take a real,
+      noticeable stretch of wall-clock time, but the screen never showed
+      how long it had actually been running. Someone watching a build that
+      takes 20+ seconds has no way to tell "still genuinely working" from
+      "silently stuck" -- the per-step captions update, but there was no
+      running clock anywhere.
+
+      Added a `formatElapsedTime(ms)` helper (m:ss, zero-padded seconds,
+      clamped to zero for any negative/clock-skew input) and a ticking
+      "⏱️ 0:07" display next to the existing "Step X of N" subtitle,
+      updating once a second via `setInterval` while the build runs. The
+      trickier part: freezing it at the EXACT final duration the instant
+      the build finishes, rather than drifting up to a second past the
+      real finish time waiting for the next tick, or (the regression this
+      guards against) never stopping at all and continuing to climb for
+      the rest of the page's lifetime after the build is long done.
+
+      Verified with the deliberate-break-and-restore discipline: removed
+      the `finished` early-return + freeze so the interval never stopped,
+      re-ran the new test -- it failed exactly as expected (asserting the
+      timer stayed at "0:10" after the build finished, it kept climbing to
+      "0:15"), restored the file, confirmed via `diff` against a pre-break
+      copy that it matched byte-for-byte. The regression test itself uses
+      `node:test`'s own fake timers (`t.mock.timers.enable({ apis:
+      ["setInterval", "Date"] })`) to deterministically tick through 3s,
+      then 10s of simulated time while "running", confirm the freeze
+      happens the instant a controlled `run()` promise resolves, then tick
+      5 MORE simulated seconds and confirm the displayed time genuinely
+      never moved -- proving the interval itself stopped, not just that
+      the display happened to look right at one moment. **And** a real
+      Playwright pass against the real running dev server: signed up,
+      started a real build, and read the real DOM element (not a mock)
+      immediately after clicking "Build the app" -- confirmed a real
+      `⏱️ m:ss`-shaped reading and a real `aria-label="Time elapsed"` were
+      present on the actual rendered timer, and that the whole real build
+      completed end to end with the new `setInterval`-driven effect
+      running alongside it and zero page errors. (This dev pipeline's
+      deterministic, non-AI build steps finish and unmount the build
+      screen in well under a second, too fast for a real click-through run
+      to reliably catch a live *second* tick the way the fake-timer unit
+      test deterministically does -- documented honestly in the script
+      itself, with the actual tick-by-tick and freeze behavior covered
+      rigorously by that unit test instead.) Full suite green (533 tests,
+      up from 531 -- `@forge/web` 175 → 177; `@forge/shared`/
+      `@forge/spec-engine`/`@forge/db`/`@forge/api` unchanged, purely
+      client-side) and both builds clean.
+
 ## Phase 3
 
 - Self-healing: production observability, automatic diagnosis and patch
