@@ -6950,6 +6950,48 @@ not a single "make it perfect" claim.
       `@forge/shared`/`@forge/spec-engine`/`@forge/db`/`@forge/api`
       unchanged, purely client-side) and both builds clean.
 
+- [x] **Round 142 — confirm before restoring a Time Machine checkpoint.**
+      Back to Time Machine (last touched round 135), flagged explicitly as
+      a candidate gap in round 141's own trigger notes and confirmed real
+      by reading `HistoryPanel.tsx` fresh: clicking "Restore" fired the
+      real API call immediately, with zero confirmation -- the only
+      real destructive-feeling action left in this app without one
+      (deleting a project, round 123; removing a collaborator, round 136,
+      both already have this exact gate). The "What would change?" diff
+      toggle (round 135) already lets you preview the effect first, but
+      nothing stopped clicking Restore without ever opening it.
+
+      Added the identical `window.confirm(...)` gate this codebase already
+      uses elsewhere, naming the checkpoint's own label. Changed
+      `handleRestore`'s signature from taking a bare `checkpointId` to
+      the full `Checkpoint` object, since the confirm message needs its
+      `label` too and the call site already has the whole object in hand
+      from the render loop.
+
+      Verified with the deliberate-break-and-restore discipline: called
+      `window.confirm(...)` but stopped checking its return value (a
+      genuinely plausible mistake -- the dialog would still visibly pop up,
+      just do nothing with the answer), re-ran the new test -- it failed
+      exactly as expected (the restore API was called even after declining),
+      restored the file, confirmed via `diff` against a pre-break copy that
+      it matched byte-for-byte. Also had to fix one pre-existing test (the
+      round-135 concurrency regression test) that clicked Restore without
+      ever expecting a confirm dialog -- added the same `window.confirm =
+      () => true` mock this file's own new test and CollaboratorsPanel's
+      (round 136) already use, since that test's actual concern is the
+      concurrency guard, not the new dialog. **And** a full Playwright pass
+      against the real running dev server using Playwright's own native
+      `page.on("dialog")` handling, not a mock: built a real app, ran a
+      real refine ("add invoice tracking") to get a second real checkpoint,
+      opened Time Machine, clicked Restore and DISMISSED the real
+      browser-native dialog -- confirmed its exact real message text named
+      the checkpoint, and confirmed the checkpoint list was genuinely
+      unchanged afterward -- then clicked Restore again and ACCEPTED it,
+      confirming the panel actually closed and the real preview screen
+      came back. Full suite green (536 tests, up from 535 -- `@forge/web`
+      179 → 180; `@forge/shared`/`@forge/spec-engine`/`@forge/db`/
+      `@forge/api` unchanged, purely client-side) and both builds clean.
+
 ## Phase 3
 
 - Self-healing: production observability, automatic diagnosis and patch
