@@ -1100,6 +1100,10 @@ function isSameCalendarDay(a, b) {
   return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
 }
 
+function isSameCalendarMonth(a, b) {
+  return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth();
+}
+
 // A stored date field is always the plain "YYYY-MM-DD" shape -- passing
 // that straight to the Date constructor parses it as UTC midnight (the
 // date-only form in the Date Time String Format spec), while the calendar
@@ -1148,11 +1152,12 @@ function buildCalendarMonth(records, field, year, month) {
 // shape every entity gets. Each day cell shows a chip per record landing on
 // that date (click to edit), with a "+N more" overflow instead of an
 // ever-growing cell.
-function CalendarView({ entity, dateField, records, month, onPrevMonth, onNextMonth, onEdit }) {
+function CalendarView({ entity, dateField, records, month, onPrevMonth, onNextMonth, onToday, onEdit }) {
   const year = month.getFullYear();
   const monthIndex = month.getMonth();
   const days = useMemo(() => buildCalendarMonth(records, dateField, year, monthIndex), [records, dateField, year, monthIndex]);
   const monthLabel = month.toLocaleDateString(undefined, { month: "long", year: "numeric" });
+  const isCurrentMonth = isSameCalendarMonth(month, new Date());
   const weekdayLabels = useMemo(() => {
     const formatter = new Intl.DateTimeFormat(undefined, { weekday: "short" });
     return days.slice(0, 7).map((d) => formatter.format(d.date));
@@ -1172,6 +1177,7 @@ function CalendarView({ entity, dateField, records, month, onPrevMonth, onNextMo
   return (
     <div className="calendar-view">
       <div className="calendar-nav">
+        <button type="button" className="calendar-today-btn" onClick={onToday} disabled={isCurrentMonth}>Today</button>
         <button type="button" onClick={onPrevMonth}>‹</button>
         <span className="calendar-month-label">{monthLabel}</span>
         <button type="button" onClick={onNextMonth}>›</button>
@@ -1691,6 +1697,7 @@ export function EntityView({ entity }) {
               month={calendarMonth}
               onPrevMonth={() => setCalendarMonth((m) => new Date(m.getFullYear(), m.getMonth() - 1, 1))}
               onNextMonth={() => setCalendarMonth((m) => new Date(m.getFullYear(), m.getMonth() + 1, 1))}
+              onToday={() => setCalendarMonth(new Date())}
               onEdit={startEdit}
             />
           ) : (
@@ -2065,6 +2072,8 @@ th, td { text-align: start; padding: 8px 10px; border-bottom: 1px solid #efe8da;
 .calendar-view { display: flex; flex-direction: column; gap: 10px; }
 .calendar-nav { display: flex; align-items: center; justify-content: center; gap: 16px; }
 .calendar-nav button { padding: 4px 12px; font-size: 16px; line-height: 1; border-radius: 6px; border: 1px solid #e6ddcc; background: #fff; cursor: pointer; }
+.calendar-today-btn { font-size: 13px; }
+.calendar-today-btn:disabled { opacity: 0.55; cursor: default; }
 .calendar-month-label { font-weight: 600; min-width: 140px; text-align: center; }
 .calendar-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px; }
 .calendar-weekday { text-align: center; color: #83786a; font-size: 12px; text-transform: uppercase; letter-spacing: 0.04em; font-weight: 600; padding-bottom: 4px; }

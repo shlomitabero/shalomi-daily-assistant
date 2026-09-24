@@ -426,6 +426,41 @@ test("the exported CalendarView places a record on its correct calendar day even
   }
 });
 
+// The exported CalendarView had prev/next month navigation but no quick way
+// back to the current month once you'd paged away -- the same gap the
+// live-preview app's own EntityPanel.tsx had before round 146 added a
+// "Today" button there. Ports the identical fix here: a real
+// isSameCalendarMonth(a, b) helper (mirroring isSameCalendarDay right above
+// it) drives a Today button's disabled state. Executes the real generated
+// isSameCalendarMonth function, extracted from real codegen output.
+test("the exported CalendarView's isSameCalendarMonth is true only for two dates in the same calendar month and year", () => {
+  const entityViewJsx = generateExportFiles(project).find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+  const sameMonthSrc = entityViewJsx.match(/function isSameCalendarMonth\(a, b\) \{[\s\S]*?\n\}\n/)?.[0];
+  assert.ok(sameMonthSrc, "expected to find isSameCalendarMonth in generated output");
+
+  const isSameCalendarMonth = new Function(`${sameMonthSrc}\nreturn isSameCalendarMonth;`)() as (a: Date, b: Date) => boolean;
+
+  assert.equal(isSameCalendarMonth(new Date(2026, 8, 1), new Date(2026, 8, 30)), true, "same month/year, different day");
+  assert.equal(isSameCalendarMonth(new Date(2026, 8, 30), new Date(2026, 9, 1)), false, "across a month boundary");
+  assert.equal(isSameCalendarMonth(new Date(2025, 8, 15), new Date(2026, 8, 15)), false, "same month but a different year");
+});
+
+// Confirms the Today button is actually wired into CalendarView's JSX
+// (disabled by isCurrentMonth, calling onToday), not just that the helper
+// function above exists in isolation -- the same "static-check the JSX
+// plus execute the real helper" split this file already uses for board/
+// calendar view coverage.
+test("the exported CalendarView renders a Today button wired to onToday and disabled on the current month", () => {
+  const entityViewJsx = generateExportFiles(project).find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+  const calendarViewSource = entityViewJsx.slice(entityViewJsx.indexOf("function CalendarView"), entityViewJsx.indexOf("function CalendarView") + 2000);
+  assert.match(calendarViewSource, /calendar-today-btn/);
+  assert.match(calendarViewSource, /onClick=\{onToday\}/);
+  assert.match(calendarViewSource, /disabled=\{isCurrentMonth\}/);
+
+  const stylesCss = generateExportFiles(project).find((f) => f.path === "web/src/styles.css")!.content;
+  assert.match(stylesCss, /\.calendar-today-btn/);
+});
+
 // Regression test: DATE_FIELD_NAME_HINTS lists "scheduledat" as a
 // recognized hint, but every real date field in the domain library
 // (spec-engine/domainEntities.ts) follows an "XxxDate" naming convention
