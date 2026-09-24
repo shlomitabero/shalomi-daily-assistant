@@ -121,6 +121,7 @@ test("HistoryPanel disables every restore button while one restore is in flight,
       throw new Error(`unexpected request ${method} ${input}`);
     }) as typeof fetch;
 
+    const originalConfirm = globalThis.window?.confirm;
     try {
       render(
         React.createElement(
@@ -139,6 +140,10 @@ test("HistoryPanel disables every restore button while one restore is in flight,
         ),
       );
       await waitForCondition(() => document.querySelectorAll(".checkpoint-list li").length === 2);
+      // This test's own concern is the concurrency guard, not the confirm
+      // dialog (covered separately below) -- always confirm so restore
+      // actually proceeds.
+      globalThis.window.confirm = (() => true) as typeof window.confirm;
 
       const buttons = Array.from(document.querySelectorAll(".checkpoint-restore-btn")) as HTMLButtonElement[];
       assert.equal(buttons.length, 2, "expected one restore button per checkpoint");
@@ -177,6 +182,84 @@ test("HistoryPanel disables every restore button while one restore is in flight,
         await new Promise((resolve) => setTimeout(resolve, 0));
       }
       globalThis.fetch = originalFetch;
+      if (originalConfirm) globalThis.window.confirm = originalConfirm;
+    }
+  });
+});
+
+/**
+ * New in this round: restoring a checkpoint (unlike every other real
+ * destructive-feeling action in this app -- deleting a project, round 123;
+ * removing a collaborator, round 136) had NO confirmation at all, even
+ * though it changes which entities/fields the live screens currently show
+ * (the "What would change?" toggle above already lets you preview that,
+ * but nothing stopped you from clicking Restore without ever opening it).
+ * Mirrors CollaboratorsPanel's own confirm gate exactly: declining must
+ * leave both the checkpoint list and the server untouched.
+ */
+test("HistoryPanel's restore button asks for confirmation naming the checkpoint, and declining never calls the restore API", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    const originalConfirm = globalThis.window.confirm;
+    const cp = makeCheckpoint("cp1", "Refine: add invoice tracking");
+    let restoreCalls = 0;
+    let confirmMessage: string | undefined;
+
+    globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/checkpoints") {
+        return new Response(JSON.stringify({ checkpoints: [cp] }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      if (method === "POST" && input === "/api/projects/proj1/checkpoints/cp1/restore") {
+        restoreCalls += 1;
+        return new Response(JSON.stringify({ project: { id: "proj1" } }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+    globalThis.window.confirm = ((message: string) => {
+      confirmMessage = message;
+      return false;
+    }) as typeof window.confirm;
+
+    try {
+      render(
+        React.createElement(
+          ThemeProvider,
+          null,
+          React.createElement(
+            LanguageProvider,
+            null,
+            React.createElement(HistoryPanel, {
+              projectId: "proj1",
+              currentSpec: cp.spec,
+              onRestored: () => {},
+              onClose: () => {},
+            }),
+          ),
+        ),
+      );
+      await waitForCondition(() => document.querySelectorAll(".checkpoint-list li").length === 1);
+
+      const restoreBtn = document.querySelector(".checkpoint-restore-btn") as HTMLButtonElement;
+      fireEvent.click(restoreBtn);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      assert.match(
+        confirmMessage ?? "",
+        /Refine: add invoice tracking/,
+        "the confirm message must name the actual checkpoint being restored",
+      );
+      assert.equal(restoreCalls, 0, "declining the confirm must never call the restore API");
+      assert.equal(document.querySelectorAll(".checkpoint-list li").length, 1, "the checkpoint must still be listed after declining");
+    } finally {
+      globalThis.fetch = originalFetch;
+      globalThis.window.confirm = originalConfirm;
     }
   });
 });

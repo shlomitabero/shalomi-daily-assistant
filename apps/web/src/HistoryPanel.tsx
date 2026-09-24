@@ -31,11 +31,12 @@ export function HistoryPanel({
       .catch((err) => setError((err as Error).message));
   }, [projectId]);
 
-  async function handleRestore(checkpointId: string) {
-    setBusyId(checkpointId);
+  async function handleRestore(checkpoint: Checkpoint) {
+    if (!window.confirm(t("history.confirmRestore", { label: checkpoint.label }))) return;
+    setBusyId(checkpoint.id);
     setError(null);
     try {
-      const { project } = await restoreCheckpoint(projectId, checkpointId);
+      const { project } = await restoreCheckpoint(projectId, checkpoint.id);
       onRestored(project);
     } catch (err) {
       setError((err as Error).message);
@@ -108,7 +109,7 @@ export function HistoryPanel({
                   <button
                     type="button"
                     className="checkpoint-restore-btn"
-                    onClick={() => handleRestore(checkpoint.id)}
+                    onClick={() => handleRestore(checkpoint)}
                     disabled={busyId !== null}
                   >
                     {busyId === checkpoint.id ? t("history.restore.busy") : t("history.restore")}
