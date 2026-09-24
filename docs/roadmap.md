@@ -7305,6 +7305,44 @@ not a single "make it perfect" claim.
       this round added no new automated test, matching round 139's own
       precedent for this exact class of change) and both builds clean.
 
+- [x] **Round 150 — show the real total-records count in the Business
+      Twin panel.** Back to Business Twin (last touched round 141, 9
+      rounds back), a fresh gap found by reading `computeBusinessTwin`
+      in `apps/api/src/twin.ts`: it has always computed a real
+      `totalRecords` figure, already included in the downloadable text
+      report (round 129's `twinReport.ts`) -- but the live panel
+      itself never showed it. Seeing your app's total record count
+      meant downloading a file to read a number already sitting in
+      memory the whole time. The same "server-stored-but-never-
+      rendered field" pattern this session keeps finding, this time on
+      a field that was already halfway exposed (via the report) rather
+      than fully hidden.
+
+      Added a "N total records across your app" line right below the
+      role chips and above the per-entity stat tiles, reusing the
+      exact `totalRecords` field the panel already received from the
+      API -- no new endpoint or server change needed.
+
+      Verified with the deliberate-break-and-restore discipline:
+      swapped `twin.totalRecords` for `twin.entities.length` (a
+      genuinely plausible mix-up between two numeric fields sitting on
+      the same object), re-ran the new test, which failed with exactly
+      that wrong number (2 instead of 16); restored and confirmed via
+      `diff` against a pre-break copy that the file matched byte-for-
+      byte. **And** a full Playwright pass against the real running dev
+      server: built a real Customer-management app and discovered
+      along the way -- not a bug in this feature, a real gotcha hit
+      while writing the verification script -- that the entity's own
+      required "status" enum silently drops a record server-side with
+      no error banner if left on its placeholder option; fixed the
+      script to select a real status value, added 3 real customer
+      records through the real form, opened the real Business Twin
+      panel, and confirmed it showed the exact real total (5: 2 seed +
+      3 added), not a stale or wrong number. Full suite green (547
+      tests, up from 546 -- `@forge/web` 186 → 187; `@forge/shared`/
+      `@forge/spec-engine`/`@forge/db`/`@forge/api` unchanged) and both
+      builds clean.
+
 ## Phase 3
 
 - Self-healing: production observability, automatic diagnosis and patch
