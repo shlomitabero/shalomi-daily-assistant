@@ -30,10 +30,18 @@ import { ProjectNameEditor } from "./ProjectNameEditor.js";
 import { getPinnedIds, sortByPinned, togglePinned } from "./pinnedProjects.js";
 import { LanguageProvider, useTranslation } from "./i18n/LanguageContext.js";
 import { LanguageSwitcher } from "./i18n/LanguageSwitcher.js";
+import type { Lang } from "./i18n/language.js";
 import { ThemeProvider } from "./theme/ThemeContext.js";
 import { ThemeSwitcher } from "./theme/ThemeSwitcher.js";
 
 type View = "home" | "spec" | "building" | "preview";
+
+const LOCALE: Record<string, string> = { he: "he-IL", en: "en-US" };
+
+/** A project card's own creation date, locale-formatted -- separated out (rather than inlined in the JSX) purely so it's directly unit-testable, matching this file's own summarizeRefineImpact/filterAndSortProjects convention. */
+export function formatProjectCreatedDate(createdAt: string, lang: Lang): string {
+  return new Date(createdAt).toLocaleDateString(LOCALE[lang]);
+}
 
 /**
  * Clickable starting points on the home screen -- fills the textarea with a
@@ -110,7 +118,7 @@ export default function App() {
 }
 
 function AppContent() {
-  const { t } = useTranslation();
+  const { t, lang } = useTranslation();
   const [user, setUser] = useState<User | null>(null);
   const [checkingSession, setCheckingSession] = useState(true);
   const [waking, setWaking] = useState(false);
@@ -515,6 +523,9 @@ function AppContent() {
                       <button type="button" className="my-project-open" onClick={() => openExistingProject(p)}>
                         <strong>{p.name}</strong>
                         {p.ownerId !== user.id && <span className="chip">{t("home.myProjects.shared")}</span>}
+                        <span className="my-project-created muted small">
+                          {t("home.myProjects.createdOn", { date: formatProjectCreatedDate(p.createdAt, lang) })}
+                        </span>
                       </button>
                       <button
                         type="button"

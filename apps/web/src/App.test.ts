@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import { transformSync } from "esbuild";
 import type { AgentStepEvent, Entity, Project } from "@forge/shared";
-import { filterAndSortProjects, summarizeRefineImpact } from "./App.js";
+import { filterAndSortProjects, formatProjectCreatedDate, summarizeRefineImpact } from "./App.js";
 
 const t = (key: string) => key;
 
@@ -114,6 +114,29 @@ test("filterAndSortProjects applies the pinned-first sort to whatever the search
     filterAndSortProjects(projects, "project", new Set(["p3"])).map((p) => p.id),
     ["p3", "p1", "p2"],
     "the pinned match must move to the front of the already-narrowed results",
+  );
+});
+
+/**
+ * New in this round: each project card on the home screen now shows its own
+ * creation date, so a returning user with several projects can tell at a
+ * glance which is the recent one they were just working on vs. an old one
+ * from months ago -- information the card never surfaced before. Confirms
+ * the real locale each language actually renders with (matching the same
+ * LOCALE-map convention HistoryPanel/CollaboratorsPanel/WhatsAppPanel
+ * already use), not just that SOME string comes back.
+ */
+test("formatProjectCreatedDate renders a real locale-formatted date, in each language's own locale", () => {
+  const createdAt = "2026-03-15T14:32:00.000Z";
+  const expectedHe = new Date(createdAt).toLocaleDateString("he-IL");
+  const expectedEn = new Date(createdAt).toLocaleDateString("en-US");
+
+  assert.equal(formatProjectCreatedDate(createdAt, "he"), expectedHe);
+  assert.equal(formatProjectCreatedDate(createdAt, "en"), expectedEn);
+  assert.notEqual(
+    formatProjectCreatedDate(createdAt, "he"),
+    formatProjectCreatedDate(createdAt, "en"),
+    "the two locales must not silently render the exact same string -- that would mean the language argument is being ignored",
   );
 });
 
