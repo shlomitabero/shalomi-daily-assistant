@@ -129,6 +129,7 @@ export const translations: Record<Lang, Record<string, string>> = {
     "home.examples.crm.label": "CRM למכירות",
     "home.examples.crm.text": "מערכת CRM לניהול לידים ולקוחות, עם שלבי מכירה, פגישות ומעקב הזדמנויות.",
     "spec.title": "ככה הבנו את זה",
+    "spec.back": "חזרה",
     "spec.roles.heading": "מי ישתמש באפליקציה",
     "spec.entities.heading": "המסכים שנבנה",
     "spec.assumptions.heading": "הנחות שעשינו",
@@ -409,6 +410,7 @@ export const translations: Record<Lang, Record<string, string>> = {
     "home.examples.crm.text":
       "A CRM for managing leads and customers, with sales stages, meetings, and opportunity tracking.",
     "spec.title": "Here's what we understood",
+    "spec.back": "Back",
     "spec.roles.heading": "Who will use the app",
     "spec.entities.heading": "The screens we'll build",
     "spec.assumptions.heading": "Assumptions we made",

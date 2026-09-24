@@ -434,3 +434,55 @@ test("App's handleBuildComplete falls back to the first entity when the previous
     "an active entity that's still present in the new spec must be kept, not reset to the first one",
   );
 });
+
+/**
+ * New in this round: the spec-review screen (the "Here's what we
+ * understood" step between describing an idea and building it) had no way
+ * back to the home screen at all -- only forward, via "Build the app".
+ * Extracts the real handleBackToHome function the same way the other
+ * App.tsx handler tests above do, and confirms it does the full, correct
+ * reset: switches the view, clears the now-abandoned draft project and its
+ * open-question answers/additional-request text (both tied to that
+ * specific draft, not whatever gets created next) -- but does NOT touch
+ * `description`, so the idea text the user already typed is still there
+ * to tweak and resubmit rather than being wiped.
+ */
+test("App's handleBackToHome resets view/project/selectedAnswers/additionalRequest, but leaves description untouched", () => {
+  const appSrc = readFileSync(new URL("./App.tsx", import.meta.url), "utf8");
+  const handlerMatch = appSrc.match(/ {2}function handleBackToHome\(\) \{[\s\S]*?\n {2}\}\n/);
+  assert.ok(handlerMatch, "expected to find handleBackToHome in App.tsx");
+  const { code } = transformSync(handlerMatch![0], { loader: "ts" });
+
+  const state: { view: string; project: Project | null; selectedAnswers: Record<string, string>; additionalRequest: string } = {
+    view: "spec",
+    project: makeProject([makeEntity("Customer")]),
+    selectedAnswers: { "Which plan?": "Pro" },
+    additionalRequest: "also add a discount field",
+  };
+
+  let setDescriptionCalls = 0;
+  const fn = new Function(
+    "setView",
+    "setProject",
+    "setSelectedAnswers",
+    "setAdditionalRequest",
+    "setDescription",
+    `${code}\nreturn handleBackToHome;`,
+  )(
+    (v: string) => (state.view = v),
+    (p: Project | null) => (state.project = p),
+    (a: Record<string, string>) => (state.selectedAnswers = a),
+    (r: string) => (state.additionalRequest = r),
+    () => {
+      setDescriptionCalls += 1;
+    },
+  ) as () => void;
+
+  fn();
+
+  assert.equal(state.view, "home", "must navigate back to the home view");
+  assert.equal(state.project, null, "must clear the abandoned draft project, not leave it lingering in state");
+  assert.deepEqual(state.selectedAnswers, {}, "must clear answers tied to the abandoned draft's own open questions");
+  assert.equal(state.additionalRequest, "", "must clear the additional-request text tied to the abandoned draft");
+  assert.equal(setDescriptionCalls, 0, "must never touch description -- the typed idea text should survive going back");
+});

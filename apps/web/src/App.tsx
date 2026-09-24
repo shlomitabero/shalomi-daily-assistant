@@ -358,6 +358,19 @@ function AppContent() {
     }
   }
 
+  // Leaves the just-created draft project exactly as-is (never deletes it
+  // -- it's still reachable and re-openable from "Your projects", same as
+  // any other unbuilt draft) and just navigates back. Keeps `description`
+  // populated so the idea text is still there to tweak and resubmit, but
+  // clears selectedAnswers/additionalRequest since those answered the
+  // now-abandoned draft's own open questions, not whatever gets created next.
+  function handleBackToHome() {
+    setView("home");
+    setProject(null);
+    setSelectedAnswers({});
+    setAdditionalRequest("");
+  }
+
   async function handleExport() {
     if (!project) return;
     setExportBusy(true);
@@ -683,9 +696,14 @@ function AppContent() {
             />
           </section>
 
-          <button type="button" onClick={handleBuild} disabled={busy}>
-            {busy ? t("spec.build.busy") : t("spec.build.submit")}
-          </button>
+          <div className="form-actions">
+            <button type="button" className="secondary" onClick={handleBackToHome} disabled={busy}>
+              {t("spec.back")}
+            </button>
+            <button type="button" onClick={handleBuild} disabled={busy}>
+              {busy ? t("spec.build.busy") : t("spec.build.submit")}
+            </button>
+          </div>
         </main>
       )}
 
