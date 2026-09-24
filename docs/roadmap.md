@@ -7165,6 +7165,57 @@ not a single "make it perfect" claim.
       `@forge/spec-engine`/`@forge/db`/`@forge/api` unchanged, purely
       client-side) and both builds clean.
 
+- [x] **Round 147 — port the calendar "Today" button to the exported
+      codegen app.** Round 146 added a Today button to the live-preview
+      `EntityPanel`'s calendar view, but the exported (downloadable)
+      standalone app has its own entirely separate `CalendarView`
+      implementation inside `codegen.ts` -- a genuinely different area
+      of the codebase from anything touched in rounds 142-146, and one
+      this project has an established, repeated pattern of following up
+      on (calendar view itself: round 49 → 50; board view: 47 → 48; CSV
+      export/import, bulk actions, "Duplicate record", etc., all got the
+      same live-preview-then-codegen two-step). Without this round, a
+      person who exported their app after round 146 would get a
+      calendar view stuck one round behind the one they'd actually used
+      and liked.
+
+      Added `isSameCalendarMonth(a, b)` right next to the file's
+      existing `isSameCalendarDay`, and wired an identical Today button
+      into the generated `CalendarView`'s nav -- same disabled-when-
+      already-current-month behavior, same `onToday` prop threaded
+      through from the `calendarMonth` state setter at the render call
+      site. The exported app's own CSS turned out simpler than the
+      live-preview app's: `.calendar-nav button` there was never
+      wrapped in the aggressive global `button` reset that round 141/
+      145/146 all had to fight with explicit overrides, so this needed
+      only a small `.calendar-today-btn:disabled { opacity: 0.55; }`
+      rule, matching the export's own existing `.csv-export-btn:disabled`
+      convention.
+
+      Verified with the deliberate-break-and-restore discipline, twice:
+      first narrowed `isSameCalendarMonth` to compare only `getMonth()`
+      (dropping the year check, the exact same class of mistake round
+      146 tested) -- re-ran the new test, which failed on the same-
+      month/different-year case; restored and confirmed via `diff`
+      against a pre-break copy that the file matched byte-for-byte. Then
+      separately dropped `disabled={isCurrentMonth}` from the generated
+      button's own JSX -- re-ran the JSX-wiring test, which failed on
+      the same assertion; restored and confirmed the same byte-for-byte
+      match. **And** the strongest verification this codegen feature
+      can get: generated a real export for a project with an
+      "Appointment" entity, ran a real `vite build` of it (the literal
+      command the export's own package.json promises, not a mock),
+      spawned the real generated `server.js`, and drove the actual
+      running app with real Playwright/Chromium -- filled in and
+      submitted the real record form, opened the real calendar view,
+      paged forward two real months, clicked the real Today button, and
+      confirmed the actual DOM month label returned to "September 2026"
+      and the button disabled itself again, against the literal
+      standalone app a person receives from the Export button, not the
+      live-preview app. Full suite green (544 tests, up from 542 --
+      `@forge/api` 183 → 185; `@forge/shared`/`@forge/spec-engine`/
+      `@forge/db`/`@forge/web` unchanged) and both builds clean.
+
 ## Phase 3
 
 - Self-healing: production observability, automatic diagnosis and patch
