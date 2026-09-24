@@ -7403,6 +7403,57 @@ not a single "make it perfect" claim.
       `@forge/shared`/`@forge/spec-engine`/`@forge/db`/`@forge/api`
       unchanged) and both builds clean.
 
+- [x] **Round 152 — show which spec provider actually built the spec, on
+      the spec-review screen.** Considered Collaborators (untouched
+      since round 136, the oldest candidate) but its own data model is
+      already fully surfaced (userId/email/addedAt, all shown) with no
+      real gap to close without a bigger roles/permissions redesign.
+      Found the real gap instead by reading `createProject`'s own
+      response type in `api.ts`: `generateSpec` in
+      `packages/spec-engine/src/index.ts` has always returned a real
+      `providerName` -- `"heuristic"` (no `ANTHROPIC_API_KEY`
+      configured), `"anthropic"` (a real Claude call succeeded), or
+      `"anthropic-fallback"` (a real AI call failed and silently
+      degraded to the deterministic engine, deliberately tagged
+      `-fallback` so it's never confused with a normal heuristic
+      response, per that function's own doc comment) -- but the client
+      only ever destructured `{ project }` off it, discarding that one
+      honest signal entirely. Matches this app's own "genuine fact, no
+      fabricated insight" ethos already established by Business Twin.
+
+      Added a `specProvider` state threaded through both
+      `createProject` call sites (the plain describe flow and the
+      enhance-then-build flow), reset when reopening an existing
+      project (never captured for it) or abandoning a draft via Back.
+      `specProviderLabel(providerName, t)` is the pure mapping to what
+      the spec-review screen shows -- a plain note for the normal
+      heuristic/AI-success cases, styled as a real error specifically
+      for the fallback case, since a silent AI failure is a genuinely
+      different, worth-flagging event from ordinary success.
+
+      Verified with the deliberate-break-and-restore discipline:
+      swapped the `"anthropic"` and `"anthropic-fallback"` cases -- a
+      genuinely plausible copy-paste mistake between two names sharing
+      a prefix, and exactly the confusion the function's own doc
+      comment warns against -- re-ran the unit test, which failed with
+      exactly that swap; restored and confirmed via `diff` against a
+      pre-break copy that the file matched byte-for-byte. Updating two
+      pre-existing extraction-based tests (`openExistingProject`,
+      `handleBackToHome`) to pass the new `setSpecProvider` callback
+      their own harness needed once the real handlers started calling
+      it. **And** a full Playwright pass against the real running dev
+      server: this sandbox has no `ANTHROPIC_API_KEY` configured, so
+      the real server-side `selectProvider()` genuinely falls back to
+      the heuristic engine -- built a real app and confirmed the real
+      spec-review screen showed the exact expected heuristic note,
+      styled as a plain note rather than an error, then navigated back
+      and reopened that same draft from "Your projects" and confirmed
+      the note is genuinely absent, since that info was never captured
+      for a re-opened project. Full suite green (551 tests, up from
+      550 -- `@forge/web` 190 → 191; `@forge/shared`/
+      `@forge/spec-engine`/`@forge/db`/`@forge/api` unchanged) and
+      both builds clean.
+
 ## Phase 3
 
 - Self-healing: production observability, automatic diagnosis and patch
