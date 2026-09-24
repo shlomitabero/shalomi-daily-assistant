@@ -6735,6 +6735,41 @@ not a single "make it perfect" claim.
       165 → 167; `@forge/db`/`@forge/api` unchanged, purely client-side) and
       both builds clean.
 
+- [x] **Round 137 — show each WhatsApp message's real timestamp in the log.**
+      A fifth different screen in a row (home screen, Business Twin, Time
+      Machine, Collaborators, now WhatsApp) -- and, like round 136, a real
+      gap found by reading the panel's own code rather than guessing:
+      `WhatsAppMessageLogEntry` has always carried a genuine `createdAt`
+      (stamped by `insertWhatsAppMessage` on every insert), but the log
+      row's own markup never rendered it at all -- a message history with
+      no visible time information is strictly less useful than any real
+      chat log.
+
+      Added it as a locale-formatted, non-wrapping timestamp at the end of
+      each row, matching the exact same `LOCALE` map + `toLocaleString`
+      pattern this file's own HistoryPanel/CollaboratorsPanel already use.
+
+      Verified with the deliberate-break-and-restore discipline: removed
+      the new timestamp span, confirmed the new test failed with "expected
+      a timestamp element in the message log row" -- restored, confirmed
+      the diff matched only the intended change. **And** a real-browser
+      Playwright pass with an honest, disclosed limitation: a genuine
+      WhatsApp connection needs a real phone to scan a QR code (not
+      possible in this environment), and the panel's own pre-existing
+      architecture only ever fetches the message log once actually
+      connected -- neither of which this round's change touches. Rather
+      than skip real-browser verification, intercepted just the two
+      WhatsApp API calls at the network level (`page.route`) so the real
+      component tree still mounted, fetched, and rendered in a genuine
+      Chromium layout engine: confirmed the exact real timestamp string
+      appeared exactly matching `toLocaleString`'s own output, and used
+      `getBoundingClientRect`/`getComputedStyle` to confirm the real
+      browser's flex layout keeps it on one line (`white-space: nowrap`,
+      not wrapped across rows) -- the kind of layout fact only a real
+      layout engine, not jsdom, can confirm. Full suite green (524 tests,
+      up from 523 -- `@forge/web` 167 → 168; `@forge/db`/`@forge/api`
+      unchanged, purely client-side) and both builds clean.
+
 ## Phase 3
 
 - Self-healing: production observability, automatic diagnosis and patch
