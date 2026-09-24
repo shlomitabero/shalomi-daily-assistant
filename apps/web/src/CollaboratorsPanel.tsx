@@ -53,7 +53,8 @@ export function CollaboratorsPanel({
     }
   }
 
-  async function handleRemove(userId: string) {
+  async function handleRemove(userId: string, email: string) {
+    if (!window.confirm(t("collab.confirmRemove", { email }))) return;
     setRemovingUserId(userId);
     setError(null);
     try {
@@ -107,7 +108,12 @@ export function CollaboratorsPanel({
                   <div className="muted small">{new Date(c.addedAt).toLocaleDateString(LOCALE[lang])}</div>
                 </div>
                 {isOwner && (
-                  <button type="button" className="secondary" onClick={() => handleRemove(c.userId)} disabled={removingUserId !== null}>
+                  <button
+                    type="button"
+                    className="secondary"
+                    onClick={() => handleRemove(c.userId, c.email)}
+                    disabled={removingUserId !== null}
+                  >
                     {removingUserId === c.userId ? t("collab.remove.busy") : t("collab.remove")}
                   </button>
                 )}
