@@ -25,6 +25,14 @@ const AGENT_KEY: Record<AgentStepEvent["agent"], string> = {
 
 const AGENT_ORDER: AgentStepEvent["agent"][] = ["Architect", "Database", "Debug", "Seed Data", "QA", "Security", "Forge"];
 
+/** m:ss for anything under an hour (the realistic range for a build) -- a raw ms count is never what a person watching a build wants to read. */
+export function formatElapsedTime(ms: number): string {
+  const totalSeconds = Math.max(0, Math.floor(ms / 1000));
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return `${minutes}:${String(seconds).padStart(2, "0")}`;
+}
+
 function StatusIcon({ status }: { status: AgentStepEvent["status"] }) {
   if (status === "success") return <span className="step-icon step-success">✓</span>;
   if (status === "failed") return <span className="step-icon step-failed">✕</span>;
@@ -180,6 +188,8 @@ export function BuildProgress({
   const [finished, setFinished] = useState(false);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const started = useRef(false);
+  const [startedAt] = useState(() => Date.now());
+  const [elapsedMs, setElapsedMs] = useState(0);
 
   useEffect(() => {
     if (started.current) return;
@@ -189,6 +199,20 @@ export function BuildProgress({
       .catch((err) => setError((err as Error).message));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Ticks once a second while the build is still running, so a person
+  // watching a multi-step build knows it's actually progressing rather
+  // than silently stuck -- and stops (leaving the final, exact duration
+  // frozen on screen) the instant `finished` flips, rather than drifting
+  // up to a second past the real finish time waiting for the next tick.
+  useEffect(() => {
+    if (finished) {
+      setElapsedMs(Date.now() - startedAt);
+      return;
+    }
+    const interval = setInterval(() => setElapsedMs(Date.now() - startedAt), 1000);
+    return () => clearInterval(interval);
+  }, [finished, startedAt]);
 
   useEffect(() => {
     if (!finished) return;
@@ -237,6 +261,10 @@ export function BuildProgress({
       {!compact && <h1>{title}</h1>}
       <p className={compact ? "muted small" : "muted"}>
         {t("build.subtitle", { current: Math.min(doneCount + 1, visibleAgents.length), total: visibleAgents.length })}
+        {" · "}
+        <span className="build-elapsed" aria-label={t("build.elapsed.label")}>
+          ⏱️ {formatElapsedTime(elapsedMs)}
+        </span>
       </p>
       <ol className="agent-steps">
         {visibleAgents.map((agent) => {

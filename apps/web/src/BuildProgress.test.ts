@@ -5,7 +5,7 @@ import { JSDOM } from "jsdom";
 import React from "react";
 import { act, cleanup, render } from "@testing-library/react";
 import type { AgentStepEvent } from "@forge/shared";
-import { BuildProgress } from "./BuildProgress.js";
+import { BuildProgress, formatElapsedTime } from "./BuildProgress.js";
 import { LanguageProvider } from "./i18n/LanguageContext.js";
 import { ThemeProvider } from "./theme/ThemeContext.js";
 
@@ -153,6 +153,84 @@ test("BuildProgress does not show the failed-build banner once a failed step is 
     // confirms the fix reads status from latestByAgent consistently, not
     // just for the banner but for what a real user actually sees per row.
     assert.equal(document.querySelectorAll(".step-success").length, 7);
+  });
+});
+
+test("formatElapsedTime renders m:ss, zero-padding seconds under 10", () => {
+  assert.equal(formatElapsedTime(0), "0:00");
+  assert.equal(formatElapsedTime(5000), "0:05");
+  assert.equal(formatElapsedTime(65000), "1:05");
+  assert.equal(formatElapsedTime(600000), "10:00");
+  assert.equal(formatElapsedTime(-500), "0:00", "a negative/clock-skew value must clamp to zero, not render a negative time");
+});
+
+/**
+ * New in this round: a build can take a real, noticeable stretch of time
+ * across several agent steps, and until now the screen gave no sense of
+ * how long it had actually been running -- someone watching had no way to
+ * tell "still working" from "stuck". Uses node:test's own fake timers
+ * (mocking both setInterval and Date, since the ticker reads Date.now()
+ * each tick) to deterministically advance time without a real multi-second
+ * wait: confirms the displayed time actually advances tick by tick while
+ * the build is running, and -- the regression this guards against -- that
+ * it freezes at the exact moment the build finishes rather than continuing
+ * to climb for the rest of the page's lifetime.
+ */
+test("BuildProgress's elapsed timer ticks once a second while running, and freezes at the exact final duration once the build finishes", async (t) => {
+  await withJsdom(async () => {
+    t.mock.timers.enable({ apis: ["setInterval", "Date"] });
+    try {
+      let resolveRun!: () => void;
+      const runPromise = new Promise<void>((resolve) => {
+        resolveRun = resolve;
+      });
+      const run = (onEvent: (event: AgentStepEvent) => void) => {
+        onEvent({ agent: "Architect", status: "running", message: "…" });
+        return runPromise;
+      };
+
+      render(
+        React.createElement(
+          ThemeProvider,
+          null,
+          React.createElement(
+            LanguageProvider,
+            null,
+            React.createElement(BuildProgress, { title: "Building", run, onComplete: () => {}, onBack: () => {} }),
+          ),
+        ),
+      );
+
+      const elapsedText = () => document.querySelector(".build-elapsed")!.textContent ?? "";
+      assert.match(elapsedText(), /0:00/, "must start at 0:00, not some stale/undefined value");
+
+      act(() => {
+        t.mock.timers.tick(3000);
+      });
+      assert.match(elapsedText(), /0:03/, "must tick to reflect 3 real (mocked) seconds having passed while still running");
+
+      act(() => {
+        t.mock.timers.tick(7000);
+      });
+      assert.match(elapsedText(), /0:10/, "must keep ticking -- 10 total seconds now");
+
+      await act(async () => {
+        resolveRun();
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      });
+      assert.match(elapsedText(), /0:10/, "must freeze at the real elapsed time the instant the build finishes");
+
+      act(() => {
+        t.mock.timers.tick(5000);
+      });
+      assert.match(
+        elapsedText(),
+        /0:10/,
+        "must NOT keep climbing after the build has already finished -- the interval must actually stop, not just get ignored visually",
+      );
+    } finally {
+      t.mock.timers.reset();
+    }
   });
 });
 
