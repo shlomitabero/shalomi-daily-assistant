@@ -758,6 +758,43 @@ function emptyForm(entity) {
   return form;
 }
 
+// Which of an entity's own columns the "Columns" menu has hidden from its
+// table view, persisted per entity (this single-tenant exported app has no
+// project id to scope by, unlike the live-preview app's own
+// columnVisibility.ts) so the choice survives a reload.
+const HIDDEN_COLUMNS_STORAGE_KEY = "forge_hidden_columns";
+function readHiddenColumnsStore() {
+  try {
+    const raw = localStorage.getItem(HIDDEN_COLUMNS_STORAGE_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) return {};
+    return parsed;
+  } catch {
+    return {};
+  }
+}
+function writeHiddenColumnsStore(store) {
+  try {
+    localStorage.setItem(HIDDEN_COLUMNS_STORAGE_KEY, JSON.stringify(store));
+  } catch {
+    // localStorage can be unavailable (private mode) -- the choice just won't survive a reload.
+  }
+}
+function getHiddenColumns(entityName) {
+  const store = readHiddenColumnsStore();
+  return new Set(Array.isArray(store[entityName]) ? store[entityName] : []);
+}
+function toggleColumnVisibility(entityName, fieldName) {
+  const store = readHiddenColumnsStore();
+  const hidden = new Set(Array.isArray(store[entityName]) ? store[entityName] : []);
+  if (hidden.has(fieldName)) hidden.delete(fieldName);
+  else hidden.add(fieldName);
+  store[entityName] = [...hidden];
+  writeHiddenColumnsStore(store);
+  return hidden;
+}
+
 // Mirrors the same check the server's own coerce() runs (see renderServerJs)
 // -- rejecting a bad date here, before the row is ever POSTed, gives the
 // user a row-numbered CSV import error instead of a generic server error
@@ -1301,6 +1338,8 @@ export function EntityView({ entity }) {
   const [importMessage, setImportMessage] = useState(null);
   const [importErrors, setImportErrors] = useState([]);
   const [showImportErrors, setShowImportErrors] = useState(false);
+  const [hiddenFields, setHiddenFields] = useState(() => getHiddenColumns(entity.name));
+  const [columnsMenuOpen, setColumnsMenuOpen] = useState(false);
   // Bumped once per refresh() call, so a stale refresh whose listRecords
   // round trip just happens to take longer than a newer one's (triggered
   // by an overlapping action, e.g. duplicating two rows back to back)
@@ -1365,6 +1404,8 @@ export function EntityView({ entity }) {
     setImportMessage(null);
     setImportErrors([]);
     setShowImportErrors(false);
+    setHiddenFields(getHiddenColumns(entity.name));
+    setColumnsMenuOpen(false);
     refresh();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [entity.name]);
@@ -1376,6 +1417,17 @@ export function EntityView({ entity }) {
     } else {
       setSortDir((d) => (d === "asc" ? "desc" : "asc"));
     }
+  }
+
+  // Which columns actually render in the table -- CSV export intentionally
+  // ignores this and always includes every field, the same "whole-record
+  // action" distinction the live-preview app's own EntityPanel makes.
+  const visibleFields = useMemo(() => entity.fields.filter((f) => !hiddenFields.has(f.name)), [entity.fields, hiddenFields]);
+
+  function handleToggleColumn(fieldName) {
+    const visibleCount = entity.fields.length - hiddenFields.size;
+    if (!hiddenFields.has(fieldName) && visibleCount <= 1) return; // keep at least one column visible
+    setHiddenFields(toggleColumnVisibility(entity.name, fieldName));
   }
 
   const visibleRecords = useMemo(() => {
@@ -1660,6 +1712,21 @@ export function EntityView({ entity }) {
             <button type="button" className="csv-export-btn" onClick={handleExportCsv} disabled={visibleRecords.length === 0}>
               ⬇️ Export CSV
             </button>
+            <div className="columns-menu-wrapper">
+              <button type="button" className="columns-menu-btn" onClick={() => setColumnsMenuOpen((v) => !v)} aria-expanded={columnsMenuOpen}>
+                🧩 Columns
+              </button>
+              {columnsMenuOpen && (
+                <div className="columns-menu-panel">
+                  {entity.fields.map((f) => (
+                    <label key={f.name} className="columns-menu-item">
+                      <input type="checkbox" checked={!hiddenFields.has(f.name)} onChange={() => handleToggleColumn(f.name)} />
+                      {f.label}
+                    </label>
+                  ))}
+                </div>
+              )}
+            </div>
           </div>
           {visibleRecords.length === 0 ? (
             <div className="empty-state">
@@ -1726,7 +1793,7 @@ export function EntityView({ entity }) {
                         onChange={toggleSelectAllVisible}
                       />
                     </th>
-                    {entity.fields.map((f) => (
+                    {visibleFields.map((f) => (
                       <th key={f.name}>
                         <button type="button" className="sort-header" onClick={() => toggleSort(f.name)}>
                           {f.label}
@@ -1743,7 +1810,7 @@ export function EntityView({ entity }) {
                       <td className="select-col">
                         <input type="checkbox" checked={selectedIds.has(r.id)} onChange={() => toggleSelected(r.id)} />
                       </td>
-                      {entity.fields.map((f) => (
+                      {visibleFields.map((f) => (
                         <td key={f.name}>
                           <Cell
                             field={f}
@@ -2087,6 +2154,11 @@ th, td { text-align: start; padding: 8px 10px; border-bottom: 1px solid #efe8da;
 .csv-export-btn { flex-shrink: 0; padding: 8px 14px; font-size: 13px; border-radius: 8px; border: 1px solid #e6ddcc; background: #fff; color: #241f19; cursor: pointer; font: inherit; }
 .csv-export-btn:hover:not(:disabled) { background: #f6f2ea; }
 .csv-export-btn:disabled { opacity: 0.55; cursor: default; }
+.columns-menu-wrapper { position: relative; flex-shrink: 0; }
+.columns-menu-btn { padding: 8px 14px; font-size: 13px; border-radius: 8px; border: 1px solid #e6ddcc; background: #fff; color: #241f19; cursor: pointer; font: inherit; }
+.columns-menu-btn:hover { background: #f6f2ea; }
+.columns-menu-panel { position: absolute; z-index: 20; top: calc(100% + 6px); inset-inline-end: 0; min-width: 180px; padding: 8px; display: flex; flex-direction: column; gap: 6px; background: #fff; border: 1px solid #e6ddcc; border-radius: 10px; box-shadow: 0 8px 24px rgba(36,31,25,0.12); }
+.columns-menu-item { display: flex; align-items: center; gap: 8px; font-size: 13px; cursor: pointer; }
 .csv-import-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin: 0 0 14px; }
 .csv-import-label { display: inline-flex; align-items: center; padding: 8px 14px; font-size: 13px; font-weight: 600; border-radius: 8px; background: #fff; color: #241f19; border: 1px solid #e6ddcc; cursor: pointer; font: inherit; }
 .csv-import-label:has(input:disabled) { opacity: 0.55; cursor: default; }

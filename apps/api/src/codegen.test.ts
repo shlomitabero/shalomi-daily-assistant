@@ -548,6 +548,70 @@ test("the exported EntityView renders a real CSV export button backed by RFC-418
   assert.match(stylesCss, /\.csv-export-btn/);
 });
 
+// The live-preview app's own EntityPanel.tsx got a "Columns" menu (hide/show
+// individual table columns, persisted in localStorage) in round 138, but the
+// exported app's separate CalendarView-style EntityView.jsx never picked it
+// up -- the same live-preview-then-codegen gap round 147 found and fixed for
+// the calendar view's own Today button. Confirms the menu, the
+// visibleFields filtering (applied to the table header/body but NOT to CSV
+// export, matching the live-preview app's own "whole-record action" rule),
+// and the persistence helpers are all actually present in the generated
+// output.
+test("the exported EntityView renders a 'Columns' menu to hide/show individual table columns, ported from the Forge AI live preview", () => {
+  const files = generateExportFiles(project);
+  const entityViewJsx = files.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+  assert.match(entityViewJsx, /function getHiddenColumns/);
+  assert.match(entityViewJsx, /function toggleColumnVisibility/);
+  assert.match(entityViewJsx, /columns-menu-btn/);
+  assert.match(entityViewJsx, /columns-menu-panel/);
+  assert.match(entityViewJsx, /visibleFields/);
+  // The table header/body must use the filtered list...
+  assert.match(entityViewJsx, /\{visibleFields\.map\(\(f\) => \(\s*<th/);
+  assert.match(entityViewJsx, /\{visibleFields\.map\(\(f\) => \(\s*<td/);
+  // ...but CSV export must still see every field, hidden or not.
+  const handleExportCsvSrc = entityViewJsx.match(/function handleExportCsv\(\) \{[\s\S]*?\n {2}\}\n/)?.[0];
+  assert.ok(handleExportCsvSrc, "expected to find handleExportCsv in generated output");
+  assert.doesNotMatch(handleExportCsvSrc!, /visibleFields/, "CSV export must ignore hidden columns, the same as the live-preview app");
+
+  const stylesCss = files.find((f) => f.path === "web/src/styles.css")!.content;
+  assert.match(stylesCss, /\.columns-menu-panel/);
+});
+
+// Executes the real generated getHiddenColumns/toggleColumnVisibility
+// functions (extracted from real codegen output, not reimplemented) against
+// a fake localStorage, the same "run the real generated code" standard this
+// file's other persistence-backed tests use.
+test("the exported EntityView's getHiddenColumns/toggleColumnVisibility persist per entity via a real localStorage round trip", () => {
+  const entityViewJsx = generateExportFiles(project).find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+  const storageKeySrc = entityViewJsx.match(/const HIDDEN_COLUMNS_STORAGE_KEY[\s\S]*?\nfunction toggleColumnVisibility\(entityName, fieldName\) \{[\s\S]*?\n\}\n/)?.[0];
+  assert.ok(storageKeySrc, "expected to find the hidden-columns persistence helpers in generated output");
+
+  const store: Record<string, string> = {};
+  const fakeLocalStorage = {
+    getItem: (key: string) => store[key] ?? null,
+    setItem: (key: string, value: string) => {
+      store[key] = value;
+    },
+  };
+  const { getHiddenColumns, toggleColumnVisibility } = new Function(
+    "localStorage",
+    `${storageKeySrc}\nreturn { getHiddenColumns, toggleColumnVisibility };`,
+  )(fakeLocalStorage) as {
+    getHiddenColumns: (entityName: string) => Set<string>;
+    toggleColumnVisibility: (entityName: string, fieldName: string) => Set<string>;
+  };
+
+  assert.deepEqual([...getHiddenColumns("Customer")], [], "a never-touched entity starts with no hidden columns");
+
+  const afterFirstToggle = toggleColumnVisibility("Customer", "email");
+  assert.deepEqual([...afterFirstToggle], ["email"]);
+  assert.deepEqual([...getHiddenColumns("Customer")], ["email"], "the hidden state must actually persist to localStorage, not just live in memory");
+  assert.deepEqual([...getHiddenColumns("Deal")], [], "hiding a column on one entity must not affect a different entity");
+
+  const afterSecondToggle = toggleColumnVisibility("Customer", "email");
+  assert.deepEqual([...afterSecondToggle], [], "toggling the same field again must un-hide it");
+});
+
 test("the exported EntityView renders real bulk-select + bulk-delete for table rows", () => {
   const files = generateExportFiles(project);
   const entityViewJsx = files.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
