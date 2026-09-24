@@ -7125,6 +7125,46 @@ not a single "make it perfect" claim.
       `@forge/spec-engine`/`@forge/db`/`@forge/api` unchanged, purely
       client-side) and both builds clean.
 
+- [x] **Round 146 — a "Today" button on the entity calendar view.** Back
+      to the Entity table screen (last touched 8 rounds ago at round 138,
+      with the Columns menu), a fresh gap found by reading `CalendarView`
+      inside `EntityPanel.tsx`: it already had prev/next month navigation
+      (round 49), but no way to jump straight back to the current month
+      once you'd paged away -- you had to click prev/next repeatedly, one
+      month at a time, with nothing marking how far you'd wandered.
+
+      Added a "Today" button to the calendar nav, disabled exactly when
+      it would be a no-op (already showing the current month), driven by
+      a new pure `isSameMonth(a, b)` helper in `entityFormatting.ts`
+      alongside the file's existing private `isSameDay`. Clicking it
+      resets `calendarMonth` state straight to `new Date()`, the same
+      state `onPrevMonth`/`onNextMonth` already drive.
+
+      Verified with the deliberate-break-and-restore discipline, twice:
+      first narrowed `isSameMonth` to compare only `getMonth()` (dropping
+      the year check) -- a genuinely plausible mistake, since two dates a
+      year apart in the same calendar month look identical at a glance --
+      re-ran the unit tests, which failed on exactly the same-month/
+      different-year case; restored and confirmed via `diff` against a
+      pre-break copy that the file matched byte-for-byte. Then separately
+      dropped `disabled={isCurrentMonth}` from the button's own JSX --
+      re-ran the new real-DOM test, which failed on the "must start
+      disabled" assertion; restored and confirmed the same byte-for-byte
+      match. **And** a full Playwright pass against the real running dev
+      server: signed up, built a real app from "Manage appointments with
+      clients, including the appointment date, client name, and notes"
+      (the heuristic spec-engine produced a real 2-entity app -- Customer
+      and Appointment), switched to the Appointment entity's tab (the
+      one with a real `date` field), opened its calendar view, paged
+      forward two real months, clicked the real Today button, and
+      confirmed the actual DOM month label returned to "September 2026"
+      and the button disabled itself again -- not a mock, an actual
+      round trip through the real heuristic spec generator, the real
+      build pipeline, and a real Chromium render. Full suite green (542
+      tests, up from 539 -- `@forge/web` 183 → 186; `@forge/shared`/
+      `@forge/spec-engine`/`@forge/db`/`@forge/api` unchanged, purely
+      client-side) and both builds clean.
+
 ## Phase 3
 
 - Self-healing: production observability, automatic diagnosis and patch
