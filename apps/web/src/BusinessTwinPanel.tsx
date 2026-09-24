@@ -62,6 +62,8 @@ export function BusinessTwinPanel({
               ))}
             </div>
 
+            <p className="muted small twin-total">{t("twin.totalRecords", { count: twin.totalRecords })}</p>
+
             <div className="twin-stats">
               {twin.entities.map((e) => (
                 <button

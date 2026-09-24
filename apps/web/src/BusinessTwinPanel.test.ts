@@ -125,6 +125,31 @@ test("BusinessTwinPanel's stat tiles are clickable and call onJumpToEntity with 
   });
 });
 
+/**
+ * New in this round: computeBusinessTwin has always computed a real
+ * totalRecords figure -- it was already included in the downloadable text
+ * report (round 129's twinReport.ts) -- but the live panel itself never
+ * showed it; you'd have to download a file just to see a number already
+ * sitting in memory. Confirms the real count from the fetched twin renders
+ * on screen, not a hardcoded placeholder or the wrong field (e.g. entity
+ * count instead of record count).
+ */
+test("BusinessTwinPanel shows the real total-records count from the fetched twin, not a placeholder", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = mockTwinFetch() as typeof fetch;
+    try {
+      renderTwinPanel(() => {});
+      await waitForCondition(() => document.querySelector(".twin-total") !== null);
+
+      const totalEl = document.querySelector(".twin-total");
+      assert.match(totalEl!.textContent ?? "", /16/, "must show the real totalRecords value (16) from the fetched twin, not a placeholder or the entity count (2)");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
 test("BusinessTwinPanel's stat tile has a real accessible label naming which entity it jumps to", async () => {
   await withJsdom(async () => {
     const originalFetch = globalThis.fetch;
