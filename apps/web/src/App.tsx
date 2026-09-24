@@ -44,6 +44,25 @@ export function formatProjectCreatedDate(createdAt: string, lang: Lang): string 
 }
 
 /**
+ * createProject's own response has always carried a real providerName
+ * ("heuristic", "anthropic", or "anthropic-fallback" -- see
+ * generateSpec's own doc comment in packages/spec-engine/src/index.ts,
+ * which tags a real AI failure as "-fallback" specifically so it's never
+ * silently mistaken for the normal no-API-key heuristic response) -- but
+ * the client only ever destructured `{ project }` off it, discarding the
+ * one honest signal for whether a spec was actually AI-generated or the
+ * deterministic engine took over, including the case where a real AI
+ * failure degraded silently. Returns null for a re-opened existing
+ * project, where this information was never captured.
+ */
+export function specProviderLabel(providerName: string | null, t: (key: string) => string): string | null {
+  if (providerName === null) return null;
+  if (providerName === "anthropic") return t("spec.provider.ai");
+  if (providerName === "anthropic-fallback") return t("spec.provider.aiFallback");
+  return t("spec.provider.heuristic");
+}
+
+/**
  * Clickable starting points on the home screen -- fills the textarea with a
  * fuller example description instead of leaving new users staring at an
  * empty box with no sense of what a good description looks like. Also
@@ -131,6 +150,11 @@ function AppContent() {
   const [view, setView] = useState<View>("home");
   const [description, setDescription] = useState("");
   const [project, setProject] = useState<Project | null>(null);
+  // Which spec provider actually built the CURRENT draft's spec -- null for
+  // a re-opened existing project (createProject's own response is the only
+  // source of this, and it isn't stored on the project itself, so there's
+  // nothing honest to show once you've navigated away and come back).
+  const [specProvider, setSpecProvider] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [enhanceBusy, setEnhanceBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -241,6 +265,7 @@ function AppContent() {
   function openExistingProject(p: Project) {
     setProject(p);
     setActiveEntity(p.spec.entities[0]?.name ?? null);
+    setSpecProvider(null);
     setView(p.status === "built" ? "preview" : "spec");
   }
 
@@ -324,8 +349,9 @@ function AppContent() {
     setBusy(true);
     setError(null);
     try {
-      const { project } = await createProject(description);
+      const { project, providerName } = await createProject(description);
       setProject(project);
+      setSpecProvider(providerName);
       setView("spec");
     } catch (err) {
       setError((err as Error).message);
@@ -348,8 +374,9 @@ function AppContent() {
     try {
       const { enhanced } = await enhanceIdea(description);
       setDescription(enhanced);
-      const { project } = await createProject(enhanced);
+      const { project, providerName } = await createProject(enhanced);
       setProject(project);
+      setSpecProvider(providerName);
       setView("spec");
     } catch (err) {
       setError((err as Error).message);
@@ -367,6 +394,7 @@ function AppContent() {
   function handleBackToHome() {
     setView("home");
     setProject(null);
+    setSpecProvider(null);
     setSelectedAnswers({});
     setAdditionalRequest("");
   }
@@ -619,6 +647,11 @@ function AppContent() {
         <main className="spec-review">
           <h1>{t("spec.title")}</h1>
           <p>{project.spec.summary}</p>
+          {specProviderLabel(specProvider, t) && (
+            <p className={specProvider === "anthropic-fallback" ? "error" : "muted small"}>
+              {specProviderLabel(specProvider, t)}
+            </p>
+          )}
 
           <section>
             <h2>{t("spec.roles.heading")}</h2>

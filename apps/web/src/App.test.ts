@@ -3,7 +3,13 @@ import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import { transformSync } from "esbuild";
 import type { AgentStepEvent, Entity, Project } from "@forge/shared";
-import { filterAndSortProjects, formatProjectCreatedDate, formatRefineTimestamp, summarizeRefineImpact } from "./App.js";
+import {
+  filterAndSortProjects,
+  formatProjectCreatedDate,
+  formatRefineTimestamp,
+  specProviderLabel,
+  summarizeRefineImpact,
+} from "./App.js";
 
 const t = (key: string) => key;
 
@@ -141,6 +147,32 @@ test("formatProjectCreatedDate renders a real locale-formatted date, in each lan
 });
 
 /**
+ * New in this round: createProject's own response has always carried a
+ * real providerName ("heuristic" / "anthropic" / "anthropic-fallback" --
+ * see generateSpec's own doc comment in spec-engine), but the client only
+ * ever destructured `{ project }` off it, discarding the one honest
+ * signal for whether the spec was actually AI-generated, the deterministic
+ * engine took over as normal, or a real AI failure silently degraded.
+ * specProviderLabel is the pure mapping from that raw value to what the
+ * spec-review screen actually shows.
+ */
+test("specProviderLabel maps each real providerName to its own distinct label, and null (a re-opened project) to no label at all", () => {
+  assert.equal(specProviderLabel("anthropic", t), "spec.provider.ai");
+  assert.equal(specProviderLabel("anthropic-fallback", t), "spec.provider.aiFallback");
+  assert.equal(specProviderLabel("heuristic", t), "spec.provider.heuristic");
+  assert.equal(
+    specProviderLabel(null, t),
+    null,
+    "a re-opened existing project never captured this, so there's nothing honest to show -- must not silently claim any provider",
+  );
+  assert.notEqual(
+    specProviderLabel("anthropic", t),
+    specProviderLabel("anthropic-fallback", t),
+    "a real AI failure that silently fell back must never be shown as an indistinguishable success",
+  );
+});
+
+/**
  * New in this round: each entry in the refine history chat log (the
  * running record of every "Improve the app" instruction and its real
  * impact) never showed WHEN it happened -- with several refines in the
@@ -230,19 +262,22 @@ test("App's openExistingProject routes a built project to the live preview and a
   const { code } = transformSync(handlerMatch![0], { loader: "ts" });
 
   function run(project: Project) {
-    const state: { project: Project | null; activeEntity: string | null; view: string | null } = {
+    const state: { project: Project | null; activeEntity: string | null; view: string | null; specProvider: string | null } = {
       project: null,
       activeEntity: null,
       view: null,
+      specProvider: "unset",
     };
     const fn = new Function(
       "setProject",
       "setActiveEntity",
+      "setSpecProvider",
       "setView",
       `${code}\nreturn openExistingProject;`,
     )(
       (p: Project) => (state.project = p),
       (name: string | null) => (state.activeEntity = name),
+      (v: string | null) => (state.specProvider = v),
       (v: string) => (state.view = v),
     ) as (p: Project) => void;
     fn(project);
@@ -251,11 +286,11 @@ test("App's openExistingProject routes a built project to the live preview and a
 
   const builtProject = makeProject([makeEntity("Customer")]);
   builtProject.status = "built";
-  assert.deepEqual(run(builtProject), { project: builtProject, activeEntity: "Customer", view: "preview" });
+  assert.deepEqual(run(builtProject), { project: builtProject, activeEntity: "Customer", view: "preview", specProvider: null });
 
   const draftProject = makeProject([makeEntity("Customer")]);
   draftProject.status = "draft";
-  assert.deepEqual(run(draftProject), { project: draftProject, activeEntity: "Customer", view: "spec" });
+  assert.deepEqual(run(draftProject), { project: draftProject, activeEntity: "Customer", view: "spec", specProvider: null });
 });
 
 /**
@@ -453,9 +488,16 @@ test("App's handleBackToHome resets view/project/selectedAnswers/additionalReque
   assert.ok(handlerMatch, "expected to find handleBackToHome in App.tsx");
   const { code } = transformSync(handlerMatch![0], { loader: "ts" });
 
-  const state: { view: string; project: Project | null; selectedAnswers: Record<string, string>; additionalRequest: string } = {
+  const state: {
+    view: string;
+    project: Project | null;
+    specProvider: string | null;
+    selectedAnswers: Record<string, string>;
+    additionalRequest: string;
+  } = {
     view: "spec",
     project: makeProject([makeEntity("Customer")]),
+    specProvider: "anthropic",
     selectedAnswers: { "Which plan?": "Pro" },
     additionalRequest: "also add a discount field",
   };
@@ -464,6 +506,7 @@ test("App's handleBackToHome resets view/project/selectedAnswers/additionalReque
   const fn = new Function(
     "setView",
     "setProject",
+    "setSpecProvider",
     "setSelectedAnswers",
     "setAdditionalRequest",
     "setDescription",
@@ -471,6 +514,7 @@ test("App's handleBackToHome resets view/project/selectedAnswers/additionalReque
   )(
     (v: string) => (state.view = v),
     (p: Project | null) => (state.project = p),
+    (v: string | null) => (state.specProvider = v),
     (a: Record<string, string>) => (state.selectedAnswers = a),
     (r: string) => (state.additionalRequest = r),
     () => {
@@ -482,6 +526,7 @@ test("App's handleBackToHome resets view/project/selectedAnswers/additionalReque
 
   assert.equal(state.view, "home", "must navigate back to the home view");
   assert.equal(state.project, null, "must clear the abandoned draft project, not leave it lingering in state");
+  assert.equal(state.specProvider, null, "must clear the abandoned draft's own spec-provider info, not leave it lingering for whatever gets created next");
   assert.deepEqual(state.selectedAnswers, {}, "must clear answers tied to the abandoned draft's own open questions");
   assert.equal(state.additionalRequest, "", "must clear the additional-request text tied to the abandoned draft");
   assert.equal(setDescriptionCalls, 0, "must never touch description -- the typed idea text should survive going back");
