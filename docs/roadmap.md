@@ -6912,6 +6912,44 @@ not a single "make it perfect" claim.
       `@forge/spec-engine`/`@forge/db`/`@forge/api` unchanged, purely
       client-side) and both builds clean.
 
+- [x] **Round 141 — Business Twin's stat tiles jump straight to that
+      entity.** Back to Business Twin (last touched round 134) with a
+      fresh gap found by reading its own code: each stat tile ("Customers
+      · 12") was inert display text, not a control. Seeing a count and
+      wanting to actually look at those records meant closing the whole
+      Business Twin panel and hunting for the right tab yourself --
+      despite `GlobalSearchPanel` already having exactly this
+      "click something, jump straight to that entity's tab, close the
+      overlay" pattern (`onJumpToEntity`) for its own search results.
+
+      Made each tile a real `<button>` with its own `aria-label` naming
+      which entity it jumps to, wired through a new `onJumpToEntity` prop
+      that mirrors `GlobalSearchPanel`'s own call site in `App.tsx`
+      exactly: `setActiveEntity(entityName)` then close the panel. CSS
+      needed a few explicit overrides (`color: inherit`, `font-weight:
+      normal`, a custom `:hover` rule) since turning a plain `<div>` into
+      a `<button>` picks up this file's own global button reset
+      (accent-colored background, bold text) that would otherwise clash
+      with the tile's existing custom look.
+
+      Verified with the deliberate-break-and-restore discipline: changed
+      the click handler to pass the tile's display LABEL ("Orders")
+      instead of its real entity NAME ("Order") -- a genuinely plausible
+      mistake, since both are visible on the same tile -- re-ran the new
+      test, which failed with exactly that mismatch, restored the file,
+      confirmed via `diff` against a pre-break copy that it matched
+      byte-for-byte. **And** a full Playwright pass against the real
+      running dev server: built a real 2-entity CRM (Customer + Deal),
+      opened the real Business Twin panel, read the SECOND tile's own
+      label off the real DOM (not hardcoded), clicked it, and confirmed
+      three independent real facts -- the twin overlay actually unmounted
+      (`.twin-panel` gone, not just visually hidden), the "Deal" entity
+      tab (matching the clicked tile, not a coincidence) became the real
+      active tab, and its own record form rendered underneath. Full suite
+      green (535 tests, up from 533 -- `@forge/web` 177 → 179;
+      `@forge/shared`/`@forge/spec-engine`/`@forge/db`/`@forge/api`
+      unchanged, purely client-side) and both builds clean.
+
 ## Phase 3
 
 - Self-healing: production observability, automatic diagnosis and patch
