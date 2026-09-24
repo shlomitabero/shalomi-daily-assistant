@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import type { Checkpoint, Project, ProductSpec } from "@forge/shared";
 import { listCheckpoints, restoreCheckpoint } from "./api.js";
-import { computeCheckpointDiff } from "./checkpointDiff.js";
+import { computeCheckpointDiff, isCheckpointCurrent } from "./checkpointDiff.js";
 import { useTranslation } from "./i18n/LanguageContext.js";
 import { useDialogFocusTrap } from "./useDialogFocusTrap.js";
 
@@ -64,10 +64,12 @@ export function HistoryPanel({
               const diff = computeCheckpointDiff(currentSpec, checkpoint.spec);
               const hasChanges = diff.removedEntities.length > 0 || diff.changedEntities.length > 0;
               const isOpen = expandedId === checkpoint.id;
+              const isCurrent = isCheckpointCurrent(currentSpec, checkpoint.spec);
               return (
                 <li key={checkpoint.id}>
                   <div>
                     <strong>{checkpoint.label}</strong>
+                    {isCurrent && <span className="chip checkpoint-current-chip">{t("history.current")}</span>}
                     <div className="muted small">
                       {new Date(checkpoint.createdAt).toLocaleString(LOCALE[lang])}
                     </div>
@@ -110,7 +112,7 @@ export function HistoryPanel({
                     type="button"
                     className="checkpoint-restore-btn"
                     onClick={() => handleRestore(checkpoint)}
-                    disabled={busyId !== null}
+                    disabled={busyId !== null || isCurrent}
                   >
                     {busyId === checkpoint.id ? t("history.restore.busy") : t("history.restore")}
                   </button>

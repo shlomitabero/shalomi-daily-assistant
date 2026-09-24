@@ -1550,6 +1550,12 @@ button.sort-header:hover:not(:disabled) {
   overflow-wrap: anywhere;
 }
 
+.checkpoint-current-chip {
+  margin-inline-start: 8px;
+  padding: 2px 10px;
+  font-size: 12px;
+}
+
 .checkpoint-list li button {
   flex-shrink: 0;
 }

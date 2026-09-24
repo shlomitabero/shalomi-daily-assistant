@@ -132,7 +132,12 @@ test("HistoryPanel disables every restore button while one restore is in flight,
             null,
             React.createElement(HistoryPanel, {
               projectId: "proj1",
-              currentSpec: cp1.spec,
+              // Deliberately NOT cp1.spec/cp2.spec -- this test's own
+              // concern is the concurrency guard, not the "Current" chip
+              // (covered separately below), and a currentSpec identical to
+              // either checkpoint would disable its own restore button
+              // before the test ever gets to click it.
+              currentSpec: { ...cp1.spec, entities: [] },
               onRestored: (project: Project) => restoredProjects.push(project.id),
               onClose: () => {},
             }),
@@ -237,7 +242,11 @@ test("HistoryPanel's restore button asks for confirmation naming the checkpoint,
             null,
             React.createElement(HistoryPanel, {
               projectId: "proj1",
-              currentSpec: cp.spec,
+              // Deliberately NOT cp.spec -- an identical currentSpec would
+              // disable this checkpoint's own restore button (it'd be
+              // marked Current), and this test's own concern is the
+              // confirm-dialog gate, not that chip.
+              currentSpec: { ...cp.spec, entities: [] },
               onRestored: () => {},
               onClose: () => {},
             }),
@@ -340,6 +349,75 @@ test("HistoryPanel's 'What would change?' toggle shows the real entities/fields 
       fireEvent.click(identicalToggle);
       await waitForCondition(() => /No changes/.test(items[1].textContent ?? ""));
       assert.equal(items[1].querySelector(".detail-list"), null, "an identical checkpoint must show the no-changes message, not an empty list");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
+ * New in this round: after restoring an OLDER checkpoint, the list's own
+ * newest-first order no longer says which entry you're actually looking
+ * at right now. Reuses the same "identical vs older" fixture shape as the
+ * diff test above -- the identical checkpoint must show a real "Current"
+ * chip and have its own restore button disabled (restoring it would be a
+ * no-op), while the genuinely older checkpoint must show neither.
+ */
+test("HistoryPanel marks the checkpoint matching the current spec with a 'Current' chip and disables only that one's restore button", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    const olderCheckpoint = makeCheckpoint("cp-older", "Initial build");
+    const identicalCheckpoint = makeCheckpoint("cp-identical", "Just before now");
+    identicalCheckpoint.spec = {
+      ...identicalCheckpoint.spec,
+      entities: [
+        { name: "Customer", fields: [{ name: "name", type: "text", required: true }] },
+        { name: "Invoice", fields: [{ name: "total", type: "number", required: true }] },
+      ],
+    };
+    const currentSpec = identicalCheckpoint.spec;
+
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/checkpoints") {
+        return new Response(JSON.stringify({ checkpoints: [olderCheckpoint, identicalCheckpoint] }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+
+    try {
+      render(
+        React.createElement(
+          ThemeProvider,
+          null,
+          React.createElement(
+            LanguageProvider,
+            null,
+            React.createElement(HistoryPanel, {
+              projectId: "proj1",
+              currentSpec,
+              onRestored: () => {},
+              onClose: () => {},
+            }),
+          ),
+        ),
+      );
+      await waitForCondition(() => document.querySelectorAll(".checkpoint-list li").length === 2);
+
+      const items = document.querySelectorAll(".checkpoint-list li");
+      const olderItem = items[0];
+      const identicalItem = items[1];
+
+      assert.equal(olderItem.querySelector(".checkpoint-current-chip"), null, "the genuinely older checkpoint must not show a Current chip");
+      assert.ok(identicalItem.querySelector(".checkpoint-current-chip"), "the checkpoint matching the current spec must show a real Current chip");
+
+      const olderRestoreBtn = olderItem.querySelector(".checkpoint-restore-btn") as HTMLButtonElement;
+      const identicalRestoreBtn = identicalItem.querySelector(".checkpoint-restore-btn") as HTMLButtonElement;
+      assert.equal(olderRestoreBtn.disabled, false, "the older checkpoint's own restore button must stay enabled -- restoring it is a real action");
+      assert.equal(identicalRestoreBtn.disabled, true, "restoring the checkpoint you're already on would be a no-op, so its own button must be disabled");
     } finally {
       globalThis.fetch = originalFetch;
     }
