@@ -6770,6 +6770,58 @@ not a single "make it perfect" claim.
       up from 523 -- `@forge/web` 167 → 168; `@forge/db`/`@forge/api`
       unchanged, purely client-side) and both builds clean.
 
+- [x] **Round 138 — a Columns menu to hide/show table columns per entity.**
+      A sixth different screen in a row (home screen, Business Twin, Time
+      Machine, Collaborators, WhatsApp, now the Entity/Records table) --
+      found by reading EntityPanel.tsx itself rather than guessing: a wide
+      entity (a CRM's "Customer" with name/email/phone/status/source/notes,
+      or any of this project's other multi-field domain entities) always
+      renders every single field as a table column with no way to trim it
+      down, unlike the flexibility the view already has elsewhere (search,
+      status filter, sort, board/calendar view).
+
+      Added a "Columns" toggle button in the toolbar that opens a small
+      checkbox panel, one row per field. Unchecking a field drops its
+      column from the table immediately -- both the header and every row's
+      cell for it. Deliberately scoped to the table view only: CSV export
+      and the single-record print sheet (round 131) still always include
+      every field, since those are whole-record actions, not "what's
+      currently on screen" -- documented as such directly in the code so a
+      future reader doesn't assume it's an oversight. The choice persists
+      per project+entity via a new `columnVisibility.ts` module, a direct
+      structural match to the existing `pinnedProjects.ts` (round 132)
+      convention: try/catch-wrapped localStorage reads/writes, a pure
+      toggle function returning the new set so the caller never has to
+      re-read storage. Guarded so the table can never end up with zero
+      columns: hiding the last remaining visible field is a no-op.
+
+      Verified with the deliberate-break-and-restore discipline: commented
+      out the `writeStore(store)` call inside `toggleFieldVisibility` (so
+      the toggle would still work in memory but never actually persist),
+      re-ran both the new `columnVisibility.test.ts` suite and the new
+      EntityPanel persistence test -- exactly the two tests asserting a
+      real storage round-trip failed, with the precise logical mismatch
+      (a fresh mount still showing 4 header columns instead of the
+      expected 3, i.e. the hidden column silently came back), while every
+      other test (including the new no-op-guard test, which doesn't touch
+      persistence) kept passing. Restored the file, confirmed via `diff`
+      against a pre-break copy that it matched byte-for-byte, and confirmed
+      `git diff --stat` showed only the intended six files. **And** a full
+      Playwright pass against the real running dev server in a real
+      Chromium browser: signed up a real account, built a real CRM app
+      (a genuine 6-field "Customer" entity), opened the Columns menu,
+      hid the second field, and confirmed the real table's actual header
+      count dropped from 8 to 7 and the hidden field's own label was
+      truly gone from the header's real text content (not just visually
+      hidden) -- then did a full page reload (`page.reload()`, a real
+      navigation, not a client-side route change) and reopened the same
+      project the way a returning user would, confirming the header count
+      was still 7: the hidden-column choice survived a genuine browser
+      reload via real localStorage, not just in-memory component state.
+      Full suite green (530 tests, up from 524 -- `@forge/web` 168 → 174;
+      `@forge/shared`/`@forge/spec-engine`/`@forge/db`/`@forge/api`
+      unchanged, purely client-side) and both builds clean.
+
 ## Phase 3
 
 - Self-healing: production observability, automatic diagnosis and patch
