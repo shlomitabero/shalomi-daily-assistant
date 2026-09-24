@@ -8,10 +8,12 @@ export function BusinessTwinPanel({
   projectId,
   projectName,
   onClose,
+  onJumpToEntity,
 }: {
   projectId: string;
   projectName: string;
   onClose: () => void;
+  onJumpToEntity: (entityName: string) => void;
 }) {
   const { t, lang } = useTranslation();
   const [twin, setTwin] = useState<BusinessTwin | null>(null);
@@ -62,10 +64,16 @@ export function BusinessTwinPanel({
 
             <div className="twin-stats">
               {twin.entities.map((e) => (
-                <div key={e.name} className="twin-stat-tile">
+                <button
+                  key={e.name}
+                  type="button"
+                  className="twin-stat-tile"
+                  aria-label={t("twin.stat.jumpTo", { entity: e.label })}
+                  onClick={() => onJumpToEntity(e.name)}
+                >
                   <div className="twin-stat-value">{e.count}</div>
                   <div className="twin-stat-label">{e.label}</div>
-                </div>
+                </button>
               ))}
             </div>
 

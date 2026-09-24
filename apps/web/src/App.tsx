@@ -806,7 +806,15 @@ function AppContent() {
           )}
 
           {showTwin && (
-            <BusinessTwinPanel projectId={project.id} projectName={project.name} onClose={() => setShowTwin(false)} />
+            <BusinessTwinPanel
+              projectId={project.id}
+              projectName={project.name}
+              onClose={() => setShowTwin(false)}
+              onJumpToEntity={(entityName) => {
+                setActiveEntity(entityName);
+                setShowTwin(false);
+              }}
+            />
           )}
 
           {showWhatsApp && <WhatsAppPanel projectId={project.id} onClose={() => setShowWhatsApp(false)} />}

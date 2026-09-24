@@ -1611,6 +1611,16 @@ button.sort-header:hover:not(:disabled) {
   border-radius: var(--radius-md);
   padding: 14px 10px;
   text-align: center;
+  width: 100%;
+  color: inherit;
+  font-weight: normal;
+  box-shadow: none;
+}
+
+.twin-stat-tile:hover:not(:disabled) {
+  background: var(--surface);
+  border-color: var(--accent);
+  box-shadow: none;
 }
 
 .twin-stat-value {
