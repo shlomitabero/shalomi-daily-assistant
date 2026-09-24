@@ -7735,6 +7735,41 @@ not a single "make it perfect" claim.
       `@forge/spec-engine`/`@forge/db`/`@forge/api` unchanged) and both
       builds clean.
 
+- [x] **Round 159 — mark required fields on the spec review screen.**
+      Diversified to the spec-review screen, untouched since round
+      152. Read `FieldLabelEditor.tsx` and confirmed it already marks
+      a required field with a trailing " *" once a project is built
+      and its record forms actually render -- but the spec-review
+      screen's own entity summary (`App.tsx`), the one place a person
+      can still see this BEFORE committing to a build, just joined
+      field names with commas, no distinction at all. Someone deciding
+      whether to build from the spec as-is or add an open-question
+      answer first had no way to tell which fields would actually be
+      mandatory in the resulting forms.
+
+      Added `formatEntityFieldSummary` to `App.tsx` alongside its other
+      exported pure functions, matching `FieldLabelEditor.tsx`'s own
+      convention exactly, plus a small legend ("* required field")
+      shown only when at least one field across the spec's entities is
+      actually required -- so a spec with no required fields at all
+      never shows an explanation for a symbol that never appears.
+
+      Verified with the deliberate-break-and-restore discipline:
+      dropped the `" *"` suffix logic entirely (a plausible regression
+      -- reverting to the old plain-join behavior) -- re-ran the unit
+      tests, which failed on exactly the missing markers; restored and
+      confirmed via `diff` against a pre-break copy that the file
+      matched byte-for-byte. **And** a full Playwright pass against
+      real running dev servers: built a real spec from a real
+      heuristic-generated idea and confirmed the real entity summaries
+      showed real required markers on the real fields the spec-engine
+      actually marked required ("name *", "status *", "total *", etc.
+      -- not fabricated data), and that the legend appeared exactly
+      because a real marker was present. Full suite green (574 tests,
+      up from 572 -- `@forge/web` 212 → 214; `@forge/shared`/
+      `@forge/spec-engine`/`@forge/db`/`@forge/api` unchanged) and both
+      builds clean.
+
 ## Phase 3
 
 - Self-healing: production observability, automatic diagnosis and patch
