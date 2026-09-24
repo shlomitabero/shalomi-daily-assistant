@@ -7454,6 +7454,52 @@ not a single "make it perfect" claim.
       `@forge/spec-engine`/`@forge/db`/`@forge/api` unchanged) and
       both builds clean.
 
+- [x] **Round 153 — show each build step's own real success message on
+      the AI Team screen, instead of a generic canned phrase.** Read
+      `BuildProgress.tsx`'s caption logic alongside `pipeline.ts`'s real
+      per-agent messages and found every successful step showed a
+      static translated phrase (`t(`build.agent.${key}.success`)` --
+      "All checks passed.", "Scanned and approved.", "The database is
+      ready and working.", etc.) while the server had, this whole time,
+      been computing a genuinely specific message for that exact
+      build -- real entity/table counts from the Architect and
+      Database agents, a real security score and warning count from
+      Security, a real pass count from QA. The failed case already did
+      this correctly (`event.message` shown verbatim); only the success
+      case was throwing the real information away in favor of a canned
+      phrase that told the person nothing about what their own build
+      actually did.
+
+      Changed the caption computation to use `event.message` for a
+      successful step, matching the failed case's own existing
+      convention. Removed the resulting 7 now-dead
+      `build.agent.*.success` translation keys from both the Hebrew and
+      English blocks in `language.ts` (14 lines total), confirmed via
+      grep to have no other call site.
+
+      Verified with the deliberate-break-and-restore discipline: backed
+      up `BuildProgress.tsx`, then broke the success branch to reuse the
+      `.running` translation key instead of `event.message` (a
+      plausible half-fix a careless edit could produce) -- re-ran the
+      new test, which failed with exactly the expected generic text in
+      place of the real message; restored and confirmed via `diff`
+      against the pre-break copy that the file matched byte-for-byte.
+      **And** a full Playwright pass against real running dev servers:
+      a real heuristic build (this sandbox has no `ANTHROPIC_API_KEY`
+      configured) completes fast enough that the build screen can
+      mount, finish, and unmount to the preview screen between two DOM
+      polls, so instead of racing the transient UI the script captured
+      the real `/build` response stream the server actually sent over
+      the wire and confirmed every agent's latest event carried a
+      genuinely specific message with no trace of the old generic
+      phrases -- e.g. "4 schema change(s) applied (4 new tables, 0 new
+      columns). Nothing was dropped." for Database and "4/4 entity
+      checks passed." for QA, both matching real per-build data,
+      confirmed correct UTF-8 on the wire via a raw byte dump. Full
+      suite green (552 tests, up from 551 -- `@forge/web` 191 → 192;
+      `@forge/shared`/`@forge/spec-engine`/`@forge/db`/`@forge/api`
+      unchanged) and both builds clean.
+
 ## Phase 3
 
 - Self-healing: production observability, automatic diagnosis and patch
