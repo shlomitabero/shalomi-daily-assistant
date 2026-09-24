@@ -28,6 +28,7 @@ import { CollaboratorsPanel } from "./CollaboratorsPanel.js";
 import { ChangePasswordPanel } from "./ChangePasswordPanel.js";
 import { ProjectNameEditor } from "./ProjectNameEditor.js";
 import { getPinnedIds, sortByPinned, togglePinned } from "./pinnedProjects.js";
+import { clearIdeaDraft, getIdeaDraft, saveIdeaDraft } from "./ideaDraft.js";
 import { LanguageProvider, useTranslation } from "./i18n/LanguageContext.js";
 import { LanguageSwitcher } from "./i18n/LanguageSwitcher.js";
 import type { Lang } from "./i18n/language.js";
@@ -148,7 +149,7 @@ function AppContent() {
   const [checkingSession, setCheckingSession] = useState(true);
   const [waking, setWaking] = useState(false);
   const [view, setView] = useState<View>("home");
-  const [description, setDescription] = useState("");
+  const [description, setDescription] = useState(getIdeaDraft);
   const [project, setProject] = useState<Project | null>(null);
   // Which spec provider actually built the CURRENT draft's spec -- null for
   // a re-opened existing project (createProject's own response is the only
@@ -374,6 +375,7 @@ function AppContent() {
     try {
       const { enhanced } = await enhanceIdea(description);
       setDescription(enhanced);
+      saveIdeaDraft(enhanced);
       const { project, providerName } = await createProject(enhanced);
       setProject(project);
       setSpecProvider(providerName);
@@ -496,6 +498,7 @@ function AppContent() {
     // (rendering a blank preview pane until manually re-clicked), the old
     // project's refine-history chat entries, and half-filled form state.
     setDescription("");
+    clearIdeaDraft();
     setError(null);
     setActiveEntity(null);
     setSelectedAnswers({});
@@ -607,7 +610,10 @@ function AppContent() {
               rows={5}
               placeholder={t("home.placeholder")}
               value={description}
-              onChange={(e) => setDescription(e.target.value)}
+              onChange={(e) => {
+                setDescription(e.target.value);
+                saveIdeaDraft(e.target.value);
+              }}
             />
             <button type="submit" disabled={busy || enhanceBusy}>
               {busy ? t("home.submit.busy") : t("home.submit")}
@@ -632,7 +638,10 @@ function AppContent() {
                   key={example.labelKey}
                   className="idea-example-card"
                   disabled={busy || enhanceBusy}
-                  onClick={() => setDescription(t(example.textKey))}
+                  onClick={() => {
+                    setDescription(t(example.textKey));
+                    saveIdeaDraft(t(example.textKey));
+                  }}
                 >
                   <span className="idea-example-icon">{example.icon}</span>
                   <span className="idea-example-label">{t(example.labelKey)}</span>
