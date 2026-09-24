@@ -7560,6 +7560,47 @@ not a single "make it perfect" claim.
       `@forge/web` 192 → 198; `@forge/shared`/`@forge/spec-engine`/
       `@forge/db`/`@forge/api` unchanged) and both builds clean.
 
+- [x] **Round 155 — live record count in the entity table toolbar.**
+      Diversified to the Entity table live-preview screen, untouched
+      since round 148. Read `EntityPanel.tsx` and found
+      `visibleRecords.length` (the search/filter/sort result) and
+      `records.length` (the real total) were both already computed
+      every render, but never shown anywhere -- narrowing the table
+      with a search or a status filter gave no sense of how many
+      records actually matched versus how many exist in total.
+
+      Added `formatEntityRecordCount` to `entityFormatting.ts`
+      alongside this component's other extracted pure formatting
+      logic: `"N records"` when nothing is filtered out, `"N of M
+      records"` once a search/filter genuinely narrows the results --
+      two distinct phrasings specifically so the everyday unfiltered
+      case doesn't read as a redundant "12 of 12 records". Rendered as
+      a small `.entity-record-count` span right next to the search box
+      in the toolbar.
+
+      Verified with the deliberate-break-and-restore discipline,
+      twice: first hardcoded `formatEntityRecordCount`'s own body to
+      always return the unfiltered phrasing (a plausible copy-paste
+      slip) -- re-ran the unit tests, which failed on exactly the
+      filtered case; restored and confirmed via `diff` against a
+      pre-break copy that the file matched byte-for-byte. Then
+      separately passed `records.length` for BOTH arguments at the
+      real call site in `EntityPanel.tsx` (a plausible wiring mistake
+      that would make the count always read "all", ignoring the actual
+      search/filter state) -- re-ran the real-DOM test, which failed on
+      exactly that assertion; restored and confirmed the same
+      byte-for-byte match. **And** a full Playwright pass against real
+      running dev servers: built a real app, confirmed the real seeded
+      row count read as a plain "N records" (not "N of N"), typed an
+      unmatchable search and confirmed the real empty-state showed,
+      then searched a substring of an actual seeded record's own name
+      and confirmed the count switched live to the real "1 of N
+      records" phrasing, matching the real narrowed row count on
+      screen -- not a scripted fixture, a genuine seeded record's own
+      data. Full suite green (562 tests, up from 558 -- `@forge/web`
+      198 → 202; `@forge/shared`/`@forge/spec-engine`/`@forge/db`/
+      `@forge/api` unchanged) and both builds clean.
+
 ## Phase 3
 
 - Self-healing: production observability, automatic diagnosis and patch
