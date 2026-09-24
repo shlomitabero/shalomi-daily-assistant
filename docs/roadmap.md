@@ -7601,6 +7601,49 @@ not a single "make it perfect" claim.
       198 → 202; `@forge/shared`/`@forge/spec-engine`/`@forge/db`/
       `@forge/api` unchanged) and both builds clean.
 
+- [x] **Round 156 — Retry button on Business Twin when the initial load
+      fails.** Diversified to Business Twin, untouched since round 150.
+      Read `BusinessTwinPanel.tsx` and found a failed initial fetch (a
+      transient network blip, a cold-starting backend -- both real,
+      ordinary occurrences this app already handles gracefully
+      elsewhere, e.g. `fetchWithWakeRetry`'s own cold-start retry UI)
+      left the panel permanently showing only the error message, with
+      no way to recover short of closing and reopening it.
+
+      Extracted the fetch into a `loadTwin()` function, called both
+      from the mount effect and from a new Retry button rendered next
+      to the error, so a single failed request no longer strands the
+      panel.
+
+      Verified with the deliberate-break-and-restore discipline: wired
+      the Retry button's `onClick` to `() => setError(null)` instead of
+      `loadTwin` -- a plausible mistake (clears the visible symptom
+      without actually retrying) -- re-ran the new real-DOM test, which
+      failed on exactly that (no second fetch call, never recovers to
+      show real data); restored and confirmed via `diff` against a
+      pre-break copy that the file matched byte-for-byte. Along the
+      way, hit and documented a real gotcha for testing this: mocking
+      the failure as a *thrown* fetch rejection gets silently retried
+      by this app's own `fetchWithWakeRetry` (by design, for real
+      network blips) before the component's own catch ever sees it --
+      the test (and the later Playwright pass) instead mocks/routes a
+      genuine HTTP 500 *response*, which `fetchWithWakeRetry` correctly
+      does NOT retry on its own, so the test's single injected failure
+      stays exactly one failure. **And** a full Playwright pass against
+      real running dev servers: built a real app, used `page.route()`
+      to fail the real `/twin` endpoint with a genuine 500 (not an
+      aborted request), confirmed the real error and Retry button
+      appeared, then let real requests through and clicked the real
+      Retry button, confirming a real new request fired and the panel
+      recovered to show real twin data with the error cleared. (React's
+      `StrictMode`, enabled in `main.tsx`, double-invokes effects in
+      dev mode, so the real request count during the initial failure is
+      2, not 1 -- a dev-only React behavior unrelated to this feature,
+      so the script asserts on recovery behavior rather than an exact
+      count.) Full suite green (563 tests, up from 562 -- `@forge/web`
+      202 → 203; `@forge/shared`/`@forge/spec-engine`/`@forge/db`/
+      `@forge/api` unchanged) and both builds clean.
+
 ## Phase 3
 
 - Self-healing: production observability, automatic diagnosis and patch
