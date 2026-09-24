@@ -543,6 +543,7 @@ function AppContent() {
                       <button type="button" className="my-project-open" onClick={() => openExistingProject(p)}>
                         <strong>{p.name}</strong>
                         {p.ownerId !== user.id && <span className="chip">{t("home.myProjects.shared")}</span>}
+                        {p.status === "draft" && <span className="chip">{t("home.myProjects.draft")}</span>}
                         <span className="my-project-created muted small">
                           {t("home.myProjects.createdOn", { date: formatProjectCreatedDate(p.createdAt, lang) })}
                         </span>
