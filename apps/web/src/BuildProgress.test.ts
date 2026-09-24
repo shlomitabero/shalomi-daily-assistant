@@ -156,6 +156,64 @@ test("BuildProgress does not show the failed-build banner once a failed step is 
   });
 });
 
+/**
+ * New in this round: a successful step's caption used to always show a
+ * generic canned phrase (e.g. "All checks passed.") regardless of what the
+ * build actually did. The server (pipeline.ts) computes a genuinely
+ * specific message per step -- real entity/table counts, a real security
+ * score -- and this now must be what renders, matching the failed case's
+ * own existing convention of showing the real message verbatim. Uses two
+ * agents with distinguishing, realistic messages (not the fixture's usual
+ * "…" placeholder) to prove it's really THAT agent's own real message
+ * landing in THAT row, not just any string appearing anywhere on the page.
+ */
+test("BuildProgress shows each agent's own real success message, not a generic canned phrase", async () => {
+  await withJsdom(async () => {
+    const events: AgentStepEvent[] = [
+      { agent: "Architect", status: "running", message: "…" },
+      { agent: "Architect", status: "success", message: "Designed 4 tables for 2 roles.", detail: { newEntities: [], changedEntities: [] } },
+      { agent: "Database", status: "running", message: "…" },
+      { agent: "Database", status: "success", message: "3 schema change(s) applied (2 new tables, 1 new columns). Nothing was dropped.", detail: [] },
+      { agent: "Seed Data", status: "running", message: "…" },
+      { agent: "Seed Data", status: "success", message: "…", detail: { seededCount: 0, entities: [] } },
+      { agent: "QA", status: "running", message: "…" },
+      { agent: "QA", status: "success", message: "3/3 entity checks passed.", detail: [] },
+      { agent: "Security", status: "running", message: "…" },
+      { agent: "Security", status: "success", message: "Security score 100/100.", detail: [] },
+      { agent: "Forge", status: "success", message: "…", detail: { project: { id: "p1", name: "Test" } } },
+    ];
+    renderBuildProgress(events);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const steps = [...document.querySelectorAll(".agent-step")];
+    const architectStep = steps.find((s) => s.textContent?.includes("Product Planner"));
+    const databaseStep = steps.find((s) => s.textContent?.includes("Database Engineer"));
+    const qaStep = steps.find((s) => s.textContent?.includes("Quality Checker"));
+    const securityStep = steps.find((s) => s.textContent?.includes("Security Expert"));
+
+    assert.equal(
+      architectStep?.querySelector(".agent-step-body > p")?.textContent,
+      "Designed 4 tables for 2 roles.",
+      "the Architect row must show its own real, specific success message",
+    );
+    assert.equal(
+      databaseStep?.querySelector(".agent-step-body > p")?.textContent,
+      "3 schema change(s) applied (2 new tables, 1 new columns). Nothing was dropped.",
+      "the Database row must show its own real, specific success message, not the Architect's",
+    );
+    assert.equal(
+      qaStep?.querySelector(".agent-step-body > p")?.textContent,
+      "3/3 entity checks passed.",
+      "the QA row must show its own real, specific success message, not a generic 'All checks passed.' phrase",
+    );
+    assert.equal(
+      securityStep?.querySelector(".agent-step-body > p")?.textContent,
+      "Security score 100/100.",
+      "the Security row must show its own real, specific success message, not a generic 'Scanned and approved.' phrase",
+    );
+  });
+});
+
 test("formatElapsedTime renders m:ss, zero-padding seconds under 10", () => {
   assert.equal(formatElapsedTime(0), "0:00");
   assert.equal(formatElapsedTime(5000), "0:05");

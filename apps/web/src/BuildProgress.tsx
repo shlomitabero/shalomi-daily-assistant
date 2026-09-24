@@ -272,11 +272,18 @@ export function BuildProgress({
           const key = AGENT_KEY[agent];
           const icon = AGENT_ICONS[agent];
           const status = event?.status ?? "pending";
+          // A completed step's own real message (e.g. "3/3 entity checks
+          // passed" or "Security score 100/100 -- 2 advisory warning(s).")
+          // always carries genuinely specific, per-build information the
+          // server just computed -- showing a generic canned phrase
+          // ("All checks passed.") instead threw that away for every
+          // single successful build. Matches the failed case's own
+          // existing convention of showing the real message verbatim.
           const caption =
             status === "failed"
               ? `${t("build.status.failedPrefix")}${event!.message}`
               : status === "success"
-                ? t(`build.agent.${key}.success`)
+                ? event!.message
                 : status === "running"
                   ? t(`build.agent.${key}.running`)
                   : t("build.status.pending");
