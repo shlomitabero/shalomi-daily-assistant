@@ -6704,6 +6704,37 @@ not a single "make it perfect" claim.
       (521 tests, up from 515 -- `@forge/web` 159 → 165; `@forge/db`/
       `@forge/api` unchanged, purely client-side) and both builds clean.
 
+- [x] **Round 136 — confirmation before removing a project collaborator.**
+      A fourth different screen in a row (home screen rounds 130-133,
+      Business Twin 134, Time Machine 135, now Collaborators) -- and a real,
+      genuine safety gap found by reading the panel's own code: every other
+      truly destructive action in this app (deleting a project, round 123;
+      deleting a record, round 73) is gated behind a confirm dialog, but
+      removing a collaborator was the one place left where a single click
+      instantly revoked someone's access, with no "are you sure?" at all.
+
+      Fixed by mirroring `handleDeleteProject`'s own exact
+      `window.confirm(...)` pattern, naming the actual person being removed
+      in the message (not a generic "remove this collaborator?").
+
+      Verified with the deliberate-break-and-restore discipline: removed
+      the confirm gate entirely, confirmed the new test (declining a
+      confirm must leave the collaborator and the server untouched) failed
+      because there was no confirm message to assert on at all -- restored,
+      confirmed the diff matched only the intended change. **And** a full
+      Playwright pass against the real running dev server using
+      Playwright's own native `page.on("dialog")` handling -- not a
+      `window.confirm` mock, the actual browser-native confirm() dialog:
+      signed up two real accounts, had the owner invite the second as a
+      collaborator, clicked Remove and dismissed the real dialog (confirmed
+      the collaborator stayed listed, and confirmed the dialog's own message
+      named their real email), clicked Remove again and accepted it this
+      time (confirmed they were actually removed), then reloaded and
+      reopened the project to confirm the removal genuinely persisted
+      server-side. Full suite green (523 tests, up from 521 -- `@forge/web`
+      165 → 167; `@forge/db`/`@forge/api` unchanged, purely client-side) and
+      both builds clean.
+
 ## Phase 3
 
 - Self-healing: production observability, automatic diagnosis and patch
