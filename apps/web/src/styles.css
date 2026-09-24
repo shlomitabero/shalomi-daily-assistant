@@ -1789,6 +1789,11 @@ button.sort-header:hover:not(:disabled) {
   flex: 1;
 }
 
+.whatsapp-log-time {
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
 /* Dark mode applies automatically from the OS preference (no explicit
    choice yet), and can be forced either way once ThemeSwitcher sets
    data-theme on <html> -- see theme/ThemeContext.tsx. */

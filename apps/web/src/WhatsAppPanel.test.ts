@@ -347,3 +347,64 @@ test("WhatsAppPanel sends the exact typed recipient/message and refreshes the me
     }
   });
 });
+
+/**
+ * New in this round: each message log row shows the real `createdAt` the
+ * server actually recorded for it -- the type has always carried this
+ * field (see api.ts's WhatsAppMessageLogEntry), but the row markup never
+ * rendered it at all, so a conversation history with no visible time
+ * information was strictly less useful than any real chat log. Confirms
+ * the exact locale-formatted string for that record's own timestamp is
+ * what actually appears, not a placeholder or the wrong record's time.
+ */
+test("WhatsAppPanel's message log shows each message's own real timestamp", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    const createdAt = new Date("2026-03-15T14:32:00Z").toISOString();
+    const message: WhatsAppMessageLogEntry = {
+      id: "m1",
+      direction: "in",
+      fromNumber: "972521112233",
+      toNumber: "972501234567",
+      body: "Hi there",
+      matchedLabel: null,
+      matchedEntityName: null,
+      matchedRecordId: null,
+      status: "received",
+      createdAt,
+    };
+    globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/integrations/whatsapp/status") {
+        return new Response(
+          JSON.stringify({ status: "connected", phoneNumber: "972501234567", qrDataUrl: null, error: null }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      if (method === "GET" && input === "/api/projects/proj1/integrations/whatsapp/messages") {
+        return new Response(JSON.stringify({ messages: [message] }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+    try {
+      render(
+        React.createElement(
+          ThemeProvider,
+          null,
+          React.createElement(LanguageProvider, null, React.createElement(WhatsAppPanel, { projectId: "proj1", onClose: () => {} })),
+        ),
+      );
+      await waitForCondition(() => document.querySelectorAll(".whatsapp-log-list li").length === 1);
+
+      const timeEl = document.querySelector(".whatsapp-log-time");
+      assert.ok(timeEl, "expected a timestamp element in the message log row");
+      const expected = new Date(createdAt).toLocaleString("en-US");
+      assert.equal(timeEl!.textContent, expected, `expected the real record's own timestamp "${expected}", got "${timeEl!.textContent}"`);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});

@@ -12,6 +12,8 @@ import {
   type WhatsAppStatusView,
 } from "./api.js";
 
+const LOCALE: Record<string, string> = { he: "he-IL", en: "en-US" };
+
 const POLL_INTERVAL_MS = 1500;
 // A single dropped request (a momentary network blip, a cold-starting
 // backend) shouldn't permanently strand the panel in "connecting" with no
@@ -31,7 +33,7 @@ const CONNECTED_POLL_INTERVAL_MS = 10000;
 const MAX_CONSECUTIVE_CONNECTED_POLL_FAILURES = 5;
 
 export function WhatsAppPanel({ projectId, onClose }: { projectId: string; onClose: () => void }) {
-  const { t } = useTranslation();
+  const { t, lang } = useTranslation();
   const [status, setStatus] = useState<WhatsAppStatusView | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [connecting, setConnecting] = useState(false);
@@ -361,6 +363,7 @@ export function WhatsAppPanel({ projectId, onClose }: { projectId: string; onClo
                   </span>
                   <span className="whatsapp-log-who">{m.matchedLabel ?? (m.direction === "in" ? m.fromNumber : m.toNumber)}</span>
                   <span className="whatsapp-log-body">{m.body}</span>
+                  <span className="whatsapp-log-time muted small">{new Date(m.createdAt).toLocaleString(LOCALE[lang])}</span>
                   {m.status === "failed" && (
                     <>
                       <span className="badge badge-negative">{t("whatsapp.log.failed")}</span>
