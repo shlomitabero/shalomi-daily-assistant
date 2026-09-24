@@ -7343,6 +7343,66 @@ not a single "make it perfect" claim.
       `@forge/spec-engine`/`@forge/db`/`@forge/api` unchanged) and both
       builds clean.
 
+- [x] **Round 151 — a "Current" chip on Time Machine's own checkpoint
+      list (and a retraction of round 150's flagged bug).** Started
+      by re-verifying the "required enum silently drops a record with
+      no error" finding round 150 flagged for a near-future round: it
+      turned out to be a false positive from round 150's own debug
+      script checking the wrong CSS selector (`.error.banner` instead
+      of EntityPanel's real error class, plain `.error`). Re-tested
+      with the correct selector and confirmed the app already shows a
+      real, correct message ("The submitted data isn't valid. Please
+      check the form and try again.") and creates no record -- exactly
+      the right behavior. No fix needed; that claim is retracted here
+      rather than silently dropped, so this log stays honest.
+
+      With that settled, back to Time Machine (last touched round 142,
+      9 rounds back) for a genuinely new gap: after restoring an OLDER
+      checkpoint, the checkpoint list's own newest-first order no
+      longer lines up with which entry you're actually looking at --
+      the most-recently-created checkpoint at the top can be stale
+      once you've gone back further, with nothing in the list itself
+      saying so.
+
+      Added `isCheckpointCurrent(currentSpec, checkpointSpec)` to
+      `checkpointDiff.ts` -- a structural entity/field-name comparison
+      (not full JSON equality, since array order is never meaningful
+      here), matching `computeCheckpointDiff`'s own existing scope --
+      to drive a real "Current state" chip next to whichever
+      checkpoint's entities/fields exactly match the live app right
+      now, and disabled that checkpoint's own Restore button (restoring
+      it would be a no-op), mirroring round 146's Today-button
+      self-disabling convention exactly.
+
+      Fixing this also required updating 2 pre-existing `HistoryPanel`
+      tests whose own fixtures happened to pass a `currentSpec`
+      identical to the checkpoint under test -- their own restore
+      buttons were now permanently disabled as "Current" before either
+      test ever got to click them, an unrelated concern to what each
+      test actually checks (the concurrency guard and the confirm-
+      dialog gate, respectively).
+
+      Verified with the deliberate-break-and-restore discipline, twice:
+      first dropped the field-level comparison loop from
+      `isCheckpointCurrent` (a plausible oversight mirroring
+      `computeCheckpointDiff`'s own two-level entity-then-field
+      structure) -- re-ran the unit tests, which failed on exactly the
+      missing-field case; restored and confirmed via `diff` against a
+      pre-break copy that the file matched byte-for-byte. Then
+      separately dropped `|| isCurrent` from the restore button's own
+      `disabled` prop -- re-ran the real-DOM test, which failed on the
+      same assertion; restored and confirmed the same byte-for-byte
+      match. **And** a full Playwright pass against the real running dev
+      server: built a real app, ran a real refine (creating a genuine
+      second checkpoint), confirmed the newest checkpoint showed the
+      real Current chip, restored the OLDEST checkpoint through a real
+      confirm dialog, reopened Time Machine, and confirmed the chip had
+      moved to the just-restored checkpoint while the previously-
+      current one lost it and regained an active Restore button. Full
+      suite green (550 tests, up from 547 -- `@forge/web` 187 → 190;
+      `@forge/shared`/`@forge/spec-engine`/`@forge/db`/`@forge/api`
+      unchanged) and both builds clean.
+
 ## Phase 3
 
 - Self-healing: production observability, automatic diagnosis and patch
