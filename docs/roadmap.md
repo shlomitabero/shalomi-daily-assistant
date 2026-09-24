@@ -7081,6 +7081,50 @@ not a single "make it perfect" claim.
       `@forge/spec-engine`/`@forge/db`/`@forge/api` unchanged, purely
       client-side) and both builds clean.
 
+- [x] **Round 145 — a matched WhatsApp sender's name jumps to their
+      record.** Back to WhatsApp (last touched round 137), a fresh gap
+      found by reading the panel's own types: `matchedEntityName`/
+      `matchedRecordId` have always been stamped on every message (see
+      `packages/db/src/whatsapp.ts`) whenever the incoming number matches
+      a real record, and `matchedLabel` already rendered as the row's
+      "who" text -- but that text was always inert. Seeing "Dana Levi"
+      sent a message and wanting to actually look at her record meant
+      closing the whole panel and hunting for the right entity tab
+      yourself, despite `BusinessTwinPanel` already having exactly this
+      "click something, jump to that entity's tab, close the overlay"
+      pattern (`onJumpToEntity`, round 141) for its own stat tiles.
+
+      Made a matched sender's name a real `<button>` (an unmatched
+      sender -- no known record -- stays plain, inert text, since there's
+      nothing to jump to), wired through a new `onJumpToEntity` prop that
+      mirrors `App.tsx`'s existing Business Twin call site exactly. CSS
+      needed the same explicit overrides round 141 already established
+      (`background: none`, `font: inherit`, etc.) to undo this file's
+      global button reset without losing the underlined-link look.
+
+      Verified with the deliberate-break-and-restore discipline: changed
+      the click handler to pass the matched sender's display LABEL
+      ("Dana Levi") instead of the real matched ENTITY NAME ("Customer")
+      -- the same class of plausible mistake round 141's own regression
+      test caught, since both are visible on the same message -- re-ran
+      the new test, which failed with exactly that mismatch, restored the
+      file, confirmed via `diff` against a pre-break copy that it matched
+      byte-for-byte. **And** a full Playwright pass against the real
+      running dev server: built a real 2-entity CRM (Customer + Deal),
+      and -- since a real WhatsApp connection needs an actual phone to
+      scan a QR code, not possible here -- intercepted just the two
+      WhatsApp API calls with `page.route()` (the same honest substitute
+      round 137 already established) so the real component still mounted
+      and rendered in a genuine Chromium layout engine: read the real
+      matched sender's name off the real DOM, clicked it, and confirmed
+      two independent real facts -- the WhatsApp overlay actually
+      unmounted (`.whatsapp-panel` gone, not just visually hidden), and
+      the "Customer" entity tab (matching the clicked message, not a
+      coincidence) became the real active tab. Full suite green (539
+      tests, up from 538 -- `@forge/web` 182 → 183; `@forge/shared`/
+      `@forge/spec-engine`/`@forge/db`/`@forge/api` unchanged, purely
+      client-side) and both builds clean.
+
 ## Phase 3
 
 - Self-healing: production observability, automatic diagnosis and patch
