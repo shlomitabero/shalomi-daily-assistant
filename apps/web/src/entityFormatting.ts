@@ -615,3 +615,19 @@ export function buildImportRecords(fields: Field[], rows: string[][]): ImportRes
 
   return { records, errors };
 }
+
+/**
+ * A search/filter narrowing the table down loses any sense of how many
+ * records actually matched versus how many exist in total -- the count was
+ * always computed (`visibleRecords.length` vs `records.length` in
+ * EntityPanel) but never shown anywhere. Two distinct phrasings rather than
+ * always "shown of total" so the unfiltered, everyday case ("12 records")
+ * doesn't read as a redundant "12 of 12 records".
+ */
+export function formatEntityRecordCount(
+  shown: number,
+  total: number,
+  t: (key: string, params?: Record<string, string | number>) => string,
+): string {
+  return shown === total ? t("entity.recordCount.all", { count: total }) : t("entity.recordCount.filtered", { shown, total });
+}

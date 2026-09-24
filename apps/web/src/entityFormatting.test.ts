@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { Entity, Field } from "@forge/shared";
+import { translate } from "./i18n/language.js";
 import {
   badgeTone,
   buildCalendarMonth,
@@ -9,6 +10,7 @@ import {
   findBoardField,
   findDateField,
   formatDateValue,
+  formatEntityRecordCount,
   formatNumberValue,
   groupByField,
   isSameMonth,
@@ -678,4 +680,28 @@ test("groupByField groups records into one column per declared enum value, in de
   assert.equal(columns[1].label, "Negotiation"); // falls back to the raw value otherwise
   assert.equal(columns.find((c) => c.value === "Won")!.records.length, 2);
   assert.equal(columns.find((c) => c.value === "Negotiation")!.records.length, 0); // empty column, not omitted
+});
+
+/**
+ * New in this round: a search/filter narrowing the table lost all sense of
+ * how many records matched versus the real total -- both counts were
+ * always computed in EntityPanel but never shown. Two distinct phrasings:
+ * the unfiltered everyday case reads as a plain count, not a redundant
+ * "12 of 12 records".
+ */
+test("formatEntityRecordCount shows a plain count when nothing is filtered out (shown equals total)", () => {
+  const t = (key: string, params?: Record<string, string | number>) => translate("en", key, params);
+  assert.equal(formatEntityRecordCount(12, 12, t), "12 records");
+  assert.equal(formatEntityRecordCount(0, 0, t), "0 records");
+});
+
+test("formatEntityRecordCount shows 'shown of total' once a search/filter actually narrows the results", () => {
+  const t = (key: string, params?: Record<string, string | number>) => translate("en", key, params);
+  assert.equal(formatEntityRecordCount(3, 12, t), "3 of 12 records");
+});
+
+test("formatEntityRecordCount renders in Hebrew when given the Hebrew translator", () => {
+  const t = (key: string, params?: Record<string, string | number>) => translate("he", key, params);
+  assert.equal(formatEntityRecordCount(5, 5, t), "5 רשומות");
+  assert.equal(formatEntityRecordCount(2, 5, t), "2 מתוך 5 רשומות");
 });

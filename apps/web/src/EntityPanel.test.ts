@@ -508,6 +508,52 @@ test("EntityPanel's status filter dropdown narrows the table to matching records
 });
 
 /**
+ * New in this round: the toolbar's real record count (visibleRecords.length
+ * vs records.length -- both already computed, neither ever shown) had no
+ * way to tell a user how many records actually matched a search versus how
+ * many exist in total. Confirms the real count renders, updates live once
+ * the search box actually narrows the results, and switches phrasing back
+ * to the plain "N records" form once the search is cleared again -- not
+ * just that formatEntityRecordCount itself is correct in isolation (see
+ * entityFormatting.test.ts), but that it's actually wired into the live
+ * toolbar and reacts to a real user typing.
+ */
+test("EntityPanel's toolbar shows a live 'shown of total' record count that updates as the search narrows the table", async () => {
+  await withJsdom(async () => {
+    const store: EntityRecord[] = [
+      { id: 1, name: "Acme Corp", status: "new" },
+      { id: 2, name: "Globex", status: "won" },
+      { id: 3, name: "Initech", status: "lost" },
+    ];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = mockRecordsFetch(store) as typeof fetch;
+    try {
+      renderEntityPanel();
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 3);
+
+      const countEl = document.querySelector(".entity-record-count");
+      assert.ok(countEl, "expected a record count element in the toolbar");
+      assert.equal(countEl!.textContent, "3 records", "unfiltered must read as a plain count, not '3 of 3 records'");
+
+      const searchBox = document.querySelector(".entity-search") as HTMLInputElement;
+      fireEvent.change(searchBox, { target: { value: "Globex" } });
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 1);
+      assert.equal(
+        document.querySelector(".entity-record-count")!.textContent,
+        "1 of 3 records",
+        "once search narrows the table, the count must show shown-of-total, not just the unfiltered total",
+      );
+
+      fireEvent.change(searchBox, { target: { value: "" } });
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 3);
+      assert.equal(document.querySelector(".entity-record-count")!.textContent, "3 records");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * Confirms the board view's move-between-columns interaction is wired
  * correctly end to end: changing a card's own status <select> calls
  * handleMove -> updateRecord (a real PATCH against the mock store) ->

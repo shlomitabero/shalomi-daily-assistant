@@ -12,6 +12,7 @@ import {
   findBoardField,
   findDateField,
   formatDateValue,
+  formatEntityRecordCount,
   formatNumberValue,
   groupByField,
   isSameMonth,
@@ -822,6 +823,9 @@ export function EntityPanel({
               value={search}
               onChange={(e) => setSearch(e.target.value)}
             />
+            <span className="muted small entity-record-count">
+              {formatEntityRecordCount(visibleRecords.length, records.length, t)}
+            </span>
             {boardField && (
               <select
                 className="entity-status-filter"

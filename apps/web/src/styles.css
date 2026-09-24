@@ -683,6 +683,10 @@ tbody tr:hover {
   flex: 1;
 }
 
+.entity-record-count {
+  white-space: nowrap;
+}
+
 .entity-status-filter {
   max-width: 200px;
   margin-bottom: 0;
