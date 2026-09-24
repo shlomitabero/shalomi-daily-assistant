@@ -11,6 +11,7 @@ import {
   type WhatsAppMessageLogEntry,
   type WhatsAppStatusView,
 } from "./api.js";
+import { downloadWhatsAppLog, formatWhatsAppLog } from "./whatsappLog.js";
 
 const LOCALE: Record<string, string> = { he: "he-IL", en: "en-US" };
 
@@ -34,10 +35,12 @@ const MAX_CONSECUTIVE_CONNECTED_POLL_FAILURES = 5;
 
 export function WhatsAppPanel({
   projectId,
+  projectName,
   onClose,
   onJumpToEntity,
 }: {
   projectId: string;
+  projectName: string;
   onClose: () => void;
   onJumpToEntity: (entityName: string) => void;
 }) {
@@ -257,6 +260,10 @@ export function WhatsAppPanel({
     }
   }
 
+  function handleDownloadLog() {
+    downloadWhatsAppLog(formatWhatsAppLog(messages, projectName, lang, t), projectName);
+  }
+
   async function handleClearHistory() {
     if (!window.confirm(t("whatsapp.log.confirmClear"))) return;
     setClearing(true);
@@ -354,9 +361,14 @@ export function WhatsAppPanel({
           <div className="whatsapp-log-header">
             <h3>{t("whatsapp.log.heading")}</h3>
             {messages.length > 0 && (
-              <button type="button" className="secondary small" onClick={handleClearHistory} disabled={clearing}>
-                {clearing ? t("whatsapp.log.clearing") : t("whatsapp.log.clear")}
-              </button>
+              <div className="whatsapp-log-header-actions">
+                <button type="button" className="secondary small" onClick={handleDownloadLog}>
+                  {t("whatsapp.log.download")}
+                </button>
+                <button type="button" className="secondary small" onClick={handleClearHistory} disabled={clearing}>
+                  {clearing ? t("whatsapp.log.clearing") : t("whatsapp.log.clear")}
+                </button>
+              </div>
             )}
           </div>
           {retryError && <p className="error">{retryError}</p>}

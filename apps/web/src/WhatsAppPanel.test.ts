@@ -319,7 +319,7 @@ test("WhatsAppPanel sends the exact typed recipient/message and refreshes the me
         React.createElement(
           ThemeProvider,
           null,
-          React.createElement(LanguageProvider, null, React.createElement(WhatsAppPanel, { projectId: "proj1", onClose: () => {}, onJumpToEntity: () => {} })),
+          React.createElement(LanguageProvider, null, React.createElement(WhatsAppPanel, { projectId: "proj1", projectName: "Test Project", onClose: () => {}, onJumpToEntity: () => {} })),
         ),
       );
       await waitForCondition(() => document.querySelector(".whatsapp-test-form") !== null);
@@ -394,7 +394,7 @@ test("WhatsAppPanel's message log shows each message's own real timestamp", asyn
         React.createElement(
           ThemeProvider,
           null,
-          React.createElement(LanguageProvider, null, React.createElement(WhatsAppPanel, { projectId: "proj1", onClose: () => {}, onJumpToEntity: () => {} })),
+          React.createElement(LanguageProvider, null, React.createElement(WhatsAppPanel, { projectId: "proj1", projectName: "Test Project", onClose: () => {}, onJumpToEntity: () => {} })),
         ),
       );
       await waitForCondition(() => document.querySelectorAll(".whatsapp-log-list li").length === 1);
@@ -475,6 +475,7 @@ test("WhatsAppPanel's message log makes a matched sender's name a real jump-to-e
             null,
             React.createElement(WhatsAppPanel, {
               projectId: "proj1",
+              projectName: "Test Project",
               onClose: () => {},
               onJumpToEntity: (entityName: string) => jumps.push(entityName),
             }),
@@ -500,6 +501,113 @@ test("WhatsAppPanel's message log makes a matched sender's name a real jump-to-e
       );
     } finally {
       globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
+ * New in this round: the message log had no way to keep a real record of a
+ * WhatsApp conversation before using the panel's own "Clear history"
+ * button, which is irreversible -- exactly the gap Business Twin's report
+ * download (round 129) and Backup All Data (round 75) already closed for
+ * their own screens. Confirms the download button only appears once there
+ * are real messages (mirrors "Clear history"'s own existing condition, so
+ * an empty log never offers to download nothing), and that clicking it
+ * drives the real browser download mechanism -- a real Blob URL handed to
+ * a real anchor's `download` attribute and `click()` -- with the actual
+ * project name in the filename, not a hardcoded placeholder.
+ */
+test("WhatsAppPanel's message log shows a download button only once there are messages, and clicking it downloads the real log as a named file", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    const message: WhatsAppMessageLogEntry = {
+      id: "m1",
+      direction: "in",
+      fromNumber: "972521112233",
+      toNumber: "972501234567",
+      body: "Hi there",
+      matchedLabel: null,
+      matchedEntityName: null,
+      matchedRecordId: null,
+      status: "received",
+      createdAt: new Date().toISOString(),
+    };
+    globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/integrations/whatsapp/status") {
+        return new Response(
+          JSON.stringify({ status: "connected", phoneNumber: "972501234567", qrDataUrl: null, error: null }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      if (method === "GET" && input === "/api/projects/proj1/integrations/whatsapp/messages") {
+        return new Response(JSON.stringify({ messages: [message] }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+
+    // jsdom doesn't implement the real Blob-URL machinery -- stub just
+    // enough of it to observe what the click handler actually does,
+    // the same technique BackupAllData-style download tests elsewhere in
+    // this app use for triggering a real <a download> click.
+    const originalCreateObjectURL = (URL as unknown as { createObjectURL?: (b: Blob) => string }).createObjectURL;
+    const originalRevokeObjectURL = (URL as unknown as { revokeObjectURL?: (u: string) => void }).revokeObjectURL;
+    // withJsdom (above) swaps in window/document/etc. globally but not
+    // HTMLAnchorElement itself -- the real anchor class lives on the
+    // swapped-in `window`, so it must be reached through that, not the
+    // bare (still-original-realm) global identifier.
+    const anchorProto = (globalThis as unknown as { window: { HTMLAnchorElement: { prototype: HTMLAnchorElement } } }).window
+      .HTMLAnchorElement.prototype;
+    const originalAnchorClick = anchorProto.click;
+    let capturedDownloadName: string | null = null;
+    let clickCount = 0;
+    (URL as unknown as { createObjectURL: (b: Blob) => string }).createObjectURL = () => "blob:mock-url";
+    (URL as unknown as { revokeObjectURL: (u: string) => void }).revokeObjectURL = () => {};
+    anchorProto.click = function (this: HTMLAnchorElement) {
+      capturedDownloadName = this.download;
+      clickCount += 1;
+    };
+
+    try {
+      const { container } = render(
+        React.createElement(
+          ThemeProvider,
+          null,
+          React.createElement(LanguageProvider, null, React.createElement(WhatsAppPanel, { projectId: "proj1", projectName: "Flower Shop", onClose: () => {}, onJumpToEntity: () => {} })),
+        ),
+      );
+      // Before any messages load, an empty log must not offer to download
+      // nothing (mirrors "Clear history"'s own existing empty-log guard).
+      assert.equal(
+        container.querySelector(".whatsapp-log-header-actions"),
+        null,
+        "no download/clear actions should render before the log has any messages",
+      );
+
+      await waitForCondition(() => document.querySelectorAll(".whatsapp-log-list li").length === 1);
+
+      const downloadButton = Array.from(document.querySelectorAll("button")).find(
+        (b) => b.textContent?.includes("Download History"),
+      );
+      assert.ok(downloadButton, "expected a Download History button once the log has real messages");
+
+      fireEvent.click(downloadButton!);
+
+      assert.equal(clickCount, 1, "clicking the download button must trigger exactly one real anchor click");
+      const downloadName: string = capturedDownloadName ?? "";
+      assert.ok(
+        downloadName.includes("Flower Shop"),
+        `expected the downloaded filename to be derived from the real project name "Flower Shop", got "${downloadName}"`,
+      );
+      assert.ok(downloadName.endsWith("whatsapp-log.txt"), `expected a whatsapp-log.txt filename, got "${downloadName}"`);
+    } finally {
+      globalThis.fetch = originalFetch;
+      if (originalCreateObjectURL) (URL as unknown as { createObjectURL: (b: Blob) => string }).createObjectURL = originalCreateObjectURL;
+      if (originalRevokeObjectURL) (URL as unknown as { revokeObjectURL: (u: string) => void }).revokeObjectURL = originalRevokeObjectURL;
+      anchorProto.click = originalAnchorClick;
     }
   });
 });

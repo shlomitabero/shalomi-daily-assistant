@@ -880,6 +880,7 @@ function AppContent() {
           {showWhatsApp && (
             <WhatsAppPanel
               projectId={project.id}
+              projectName={project.name}
               onClose={() => setShowWhatsApp(false)}
               onJumpToEntity={(entityName) => {
                 setActiveEntity(entityName);
