@@ -6822,6 +6822,45 @@ not a single "make it perfect" claim.
       `@forge/shared`/`@forge/spec-engine`/`@forge/db`/`@forge/api`
       unchanged, purely client-side) and both builds clean.
 
+- [x] **Round 139 — show each project's creation date on its home screen
+      card.** Back to a different screen again (Entity table was round
+      138) -- "Your projects" had already grown pin/favorite (132) and
+      search (133), but every card still showed only the project's own
+      name. With several projects on screen there was no way to tell at a
+      glance which one was recent (today's work) and which was from
+      months ago, without opening each one -- `Project.createdAt` has
+      always existed on every project since the very first round, just
+      never surfaced on the card itself.
+
+      Added a small "Created on <date>" line under the name, reusing the
+      exact same `LOCALE` map + `toLocaleDateString` convention already
+      used by HistoryPanel/CollaboratorsPanel/WhatsAppPanel (round 137).
+      The formatting call itself was pulled out into a small exported
+      `formatProjectCreatedDate(createdAt, lang)` function rather than
+      left inline in the JSX, matching this same file's own
+      `summarizeRefineImpact`/`filterAndSortProjects` (round 133)
+      convention of keeping anything worth testing directly importable.
+
+      Verified with the deliberate-break-and-restore discipline: made the
+      function silently ignore its own `lang` argument and always format
+      in `en-US`, re-ran the new test -- it failed with the exact expected
+      mismatch (asserting the real `he-IL` string, e.g. "15.3.2026", got
+      back the English "3/15/2026" instead), restored the file, and
+      confirmed via `git diff` that only the intended change remained.
+      **And** a full Playwright pass against the real running dev server:
+      signed up a real account, built a real app, confirmed the home
+      screen's project card showed today's actual date (matching a live
+      `toLocaleDateString("en-US")` computed independently in the test
+      script, not a hardcoded string) -- then switched the real UI to
+      Hebrew via the language switcher and confirmed the SAME card
+      re-rendered with a genuinely different, real Hebrew-locale date
+      format ("נוצר ב-24.9.2026"), not a stale or identical string, proving
+      the `lang` argument actually drives the real rendered output, not
+      just the isolated unit test. Full suite green (531 tests, up from
+      530 -- `@forge/web` 174 → 175; `@forge/shared`/`@forge/spec-engine`/
+      `@forge/db`/`@forge/api` unchanged, purely client-side) and both
+      builds clean.
+
 ## Phase 3
 
 - Self-healing: production observability, automatic diagnosis and patch
