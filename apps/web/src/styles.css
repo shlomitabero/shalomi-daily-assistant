@@ -1832,6 +1832,24 @@ button.sort-header:hover:not(:disabled) {
   flex-shrink: 0;
 }
 
+.whatsapp-log-who-link {
+  background: none;
+  border: none;
+  padding: 0;
+  box-shadow: none;
+  font: inherit;
+  font-weight: 700;
+  color: var(--accent-deep);
+  cursor: pointer;
+  text-decoration: underline;
+}
+
+.whatsapp-log-who-link:hover {
+  transform: none;
+  box-shadow: none;
+  color: var(--accent);
+}
+
 .whatsapp-log-body {
   overflow-wrap: anywhere;
   flex: 1;

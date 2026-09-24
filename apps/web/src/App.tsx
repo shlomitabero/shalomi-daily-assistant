@@ -843,7 +843,16 @@ function AppContent() {
             />
           )}
 
-          {showWhatsApp && <WhatsAppPanel projectId={project.id} onClose={() => setShowWhatsApp(false)} />}
+          {showWhatsApp && (
+            <WhatsAppPanel
+              projectId={project.id}
+              onClose={() => setShowWhatsApp(false)}
+              onJumpToEntity={(entityName) => {
+                setActiveEntity(entityName);
+                setShowWhatsApp(false);
+              }}
+            />
+          )}
 
           {showCollaborators && (
             <CollaboratorsPanel

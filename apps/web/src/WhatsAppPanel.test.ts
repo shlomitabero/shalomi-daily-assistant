@@ -319,7 +319,7 @@ test("WhatsAppPanel sends the exact typed recipient/message and refreshes the me
         React.createElement(
           ThemeProvider,
           null,
-          React.createElement(LanguageProvider, null, React.createElement(WhatsAppPanel, { projectId: "proj1", onClose: () => {} })),
+          React.createElement(LanguageProvider, null, React.createElement(WhatsAppPanel, { projectId: "proj1", onClose: () => {}, onJumpToEntity: () => {} })),
         ),
       );
       await waitForCondition(() => document.querySelector(".whatsapp-test-form") !== null);
@@ -394,7 +394,7 @@ test("WhatsAppPanel's message log shows each message's own real timestamp", asyn
         React.createElement(
           ThemeProvider,
           null,
-          React.createElement(LanguageProvider, null, React.createElement(WhatsAppPanel, { projectId: "proj1", onClose: () => {} })),
+          React.createElement(LanguageProvider, null, React.createElement(WhatsAppPanel, { projectId: "proj1", onClose: () => {}, onJumpToEntity: () => {} })),
         ),
       );
       await waitForCondition(() => document.querySelectorAll(".whatsapp-log-list li").length === 1);
@@ -403,6 +403,101 @@ test("WhatsAppPanel's message log shows each message's own real timestamp", asyn
       assert.ok(timeEl, "expected a timestamp element in the message log row");
       const expected = new Date(createdAt).toLocaleString("en-US");
       assert.equal(timeEl!.textContent, expected, `expected the real record's own timestamp "${expected}", got "${timeEl!.textContent}"`);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
+ * New in this round: matchedEntityName/matchedRecordId have always been
+ * stamped on every message (see packages/db/src/whatsapp.ts), and
+ * matchedLabel already rendered as the row's "who" text -- but that text
+ * was always inert, never a way to actually reach the matched record.
+ * Mirrors BusinessTwinPanel's own onJumpToEntity pattern (round 141)
+ * exactly. Renders one matched message and one unmatched message in the
+ * same log, confirms only the matched one renders as a real clickable
+ * button (the unmatched one must stay plain, inert text -- there's
+ * nothing to jump to), and confirms clicking it calls onJumpToEntity with
+ * the real matched entity name, not the display label or the phone number.
+ */
+test("WhatsAppPanel's message log makes a matched sender's name a real jump-to-entity button, and leaves an unmatched sender as plain text", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    const matchedMessage: WhatsAppMessageLogEntry = {
+      id: "m1",
+      direction: "in",
+      fromNumber: "972521112233",
+      toNumber: "972501234567",
+      body: "Can I reschedule?",
+      matchedLabel: "Dana Levi",
+      matchedEntityName: "Customer",
+      matchedRecordId: 7,
+      status: "received",
+      createdAt: new Date().toISOString(),
+    };
+    const unmatchedMessage: WhatsAppMessageLogEntry = {
+      id: "m2",
+      direction: "in",
+      fromNumber: "972529998888",
+      toNumber: "972501234567",
+      body: "Who is this?",
+      matchedLabel: null,
+      matchedEntityName: null,
+      matchedRecordId: null,
+      status: "received",
+      createdAt: new Date().toISOString(),
+    };
+    globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/integrations/whatsapp/status") {
+        return new Response(
+          JSON.stringify({ status: "connected", phoneNumber: "972501234567", qrDataUrl: null, error: null }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      if (method === "GET" && input === "/api/projects/proj1/integrations/whatsapp/messages") {
+        return new Response(JSON.stringify({ messages: [matchedMessage, unmatchedMessage] }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+    const jumps: string[] = [];
+    try {
+      render(
+        React.createElement(
+          ThemeProvider,
+          null,
+          React.createElement(
+            LanguageProvider,
+            null,
+            React.createElement(WhatsAppPanel, {
+              projectId: "proj1",
+              onClose: () => {},
+              onJumpToEntity: (entityName: string) => jumps.push(entityName),
+            }),
+          ),
+        ),
+      );
+      await waitForCondition(() => document.querySelectorAll(".whatsapp-log-list li").length === 2);
+
+      const whoButtons = document.querySelectorAll(".whatsapp-log-who-link");
+      assert.equal(whoButtons.length, 1, "exactly one matched message must render a real clickable who-button");
+      assert.equal(whoButtons[0].tagName, "BUTTON");
+      assert.equal(whoButtons[0].textContent, "Dana Levi");
+
+      const unmatchedWho = Array.from(document.querySelectorAll(".whatsapp-log-who")).find((el) => el.tagName !== "BUTTON");
+      assert.ok(unmatchedWho, "expected the unmatched message's who to stay a plain, non-button element");
+      assert.equal(unmatchedWho!.textContent, "972529998888", "an unmatched sender must fall back to the phone number, unchanged");
+
+      fireEvent.click(whoButtons[0]);
+      assert.deepEqual(
+        jumps,
+        ["Customer"],
+        "must call onJumpToEntity with the real matched ENTITY NAME (Customer), not the display label (Dana Levi) or the phone number",
+      );
     } finally {
       globalThis.fetch = originalFetch;
     }

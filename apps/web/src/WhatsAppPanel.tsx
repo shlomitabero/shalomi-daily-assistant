@@ -32,7 +32,15 @@ const CONNECTED_POLL_INTERVAL_MS = 10000;
 // with no indication anything is wrong.
 const MAX_CONSECUTIVE_CONNECTED_POLL_FAILURES = 5;
 
-export function WhatsAppPanel({ projectId, onClose }: { projectId: string; onClose: () => void }) {
+export function WhatsAppPanel({
+  projectId,
+  onClose,
+  onJumpToEntity,
+}: {
+  projectId: string;
+  onClose: () => void;
+  onJumpToEntity: (entityName: string) => void;
+}) {
   const { t, lang } = useTranslation();
   const [status, setStatus] = useState<WhatsAppStatusView | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -361,7 +369,18 @@ export function WhatsAppPanel({ projectId, onClose }: { projectId: string; onClo
                   <span className="whatsapp-log-direction" aria-label={m.direction === "in" ? t("whatsapp.log.incoming") : t("whatsapp.log.outgoing")}>
                     {m.direction === "in" ? "⬇️" : "⬆️"}
                   </span>
-                  <span className="whatsapp-log-who">{m.matchedLabel ?? (m.direction === "in" ? m.fromNumber : m.toNumber)}</span>
+                  {m.matchedEntityName ? (
+                    <button
+                      type="button"
+                      className="whatsapp-log-who whatsapp-log-who-link"
+                      aria-label={t("whatsapp.log.jumpTo", { name: m.matchedLabel ?? "" })}
+                      onClick={() => onJumpToEntity(m.matchedEntityName!)}
+                    >
+                      {m.matchedLabel}
+                    </button>
+                  ) : (
+                    <span className="whatsapp-log-who">{m.matchedLabel ?? (m.direction === "in" ? m.fromNumber : m.toNumber)}</span>
+                  )}
                   <span className="whatsapp-log-body">{m.body}</span>
                   <span className="whatsapp-log-time muted small">{new Date(m.createdAt).toLocaleString(LOCALE[lang])}</span>
                   {m.status === "failed" && (
