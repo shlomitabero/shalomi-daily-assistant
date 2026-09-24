@@ -1018,3 +1018,81 @@ test("EntityPanel's Print action fills the print sheet with that record's own fi
     }
   });
 });
+
+/**
+ * New in this round: a "Columns" menu in the toolbar lets a wide entity's
+ * table drop columns you don't need on screen right now. Hides the
+ * "Status" column via its checkbox, confirms the header and every row's
+ * cell for it actually disappear from the real table (not just some
+ * in-memory flag), confirms the guard against hiding the LAST remaining
+ * visible column (unchecking "Name" while "Status" is already hidden must
+ * be a no-op, so the table can never end up with zero columns), then
+ * unmounts and re-renders EntityPanel from scratch -- simulating a page
+ * reload -- to prove the hidden-columns choice actually persisted via
+ * columnVisibility's real localStorage-backed store, not just component
+ * state that a fresh mount would lose.
+ */
+test("EntityPanel's Columns menu hides/shows table columns, guards against hiding the last visible one, and persists the choice across a remount", async () => {
+  await withJsdom(async () => {
+    const store: EntityRecord[] = [
+      { id: 1, name: "Acme Corp", status: "new" },
+      { id: 2, name: "Globex", status: "won" },
+    ];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = mockRecordsFetch(store) as typeof fetch;
+    try {
+      renderEntityPanel();
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 2);
+
+      assert.equal(document.querySelectorAll("thead th").length, 4, "expected select-col + Name + Status + the trailing actions column to start");
+
+      const columnsBtn = document.querySelector(".columns-menu-btn") as HTMLButtonElement;
+      assert.ok(columnsBtn, "expected a Columns menu button in the toolbar");
+      fireEvent.click(columnsBtn);
+
+      const checkboxes = Array.from(document.querySelectorAll(".columns-menu-item input[type=checkbox]")) as HTMLInputElement[];
+      assert.equal(checkboxes.length, 2, "expected one checkbox per field (Name, Status)");
+      assert.ok(
+        checkboxes.every((c) => c.checked),
+        "both columns must start checked (visible), matching the table's actual starting state",
+      );
+
+      const statusCheckbox = Array.from(document.querySelectorAll(".columns-menu-item")).find((el) =>
+        /Status/.test(el.textContent ?? ""),
+      )!.querySelector("input") as HTMLInputElement;
+      fireEvent.click(statusCheckbox);
+
+      await waitForCondition(() => document.querySelectorAll("thead th").length === 3);
+      assert.doesNotMatch(
+        document.querySelector("thead")!.textContent ?? "",
+        /Status/,
+        "the Status header must actually be gone from the real table, not just visually hidden",
+      );
+      for (const row of document.querySelectorAll("table tbody tr")) {
+        assert.equal(row.querySelectorAll("td").length, 3, "each row must have dropped its Status cell too (select-col + Name + actions)");
+      }
+
+      const nameCheckbox = Array.from(document.querySelectorAll(".columns-menu-item")).find((el) =>
+        /Name/.test(el.textContent ?? ""),
+      )!.querySelector("input") as HTMLInputElement;
+      fireEvent.click(nameCheckbox);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      assert.equal(
+        document.querySelectorAll("thead th").length,
+        3,
+        "unchecking the LAST visible column must be a no-op -- the table must never end up with zero data columns",
+      );
+
+      cleanup();
+      renderEntityPanel();
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 2);
+      assert.equal(
+        document.querySelectorAll("thead th").length,
+        3,
+        "a fresh mount (simulating a page reload) must still see Status hidden -- a real persisted choice, not just in-memory state",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { Entity, EntityRecord, Field, Project } from "@forge/shared";
 import { createRecord, deleteRecord, listRecords, updateRecord } from "./api.js";
+import { getHiddenFields, toggleFieldVisibility } from "./columnVisibility.js";
 import { EntityLabelEditor } from "./EntityLabelEditor.js";
 import { FieldLabelEditor } from "./FieldLabelEditor.js";
 import {
@@ -387,6 +388,8 @@ export function EntityPanel({
   const [importErrors, setImportErrors] = useState<string[]>([]);
   const [showImportErrors, setShowImportErrors] = useState(false);
   const [recordToPrint, setRecordToPrint] = useState<EntityRecord | null>(null);
+  const [hiddenFields, setHiddenFields] = useState<Set<string>>(() => new Set());
+  const [columnsMenuOpen, setColumnsMenuOpen] = useState(false);
   // Bumped once per refresh() call, so a stale refresh whose listRecords
   // round trip just happens to take longer than a newer one's (triggered
   // by an overlapping action, e.g. duplicating two rows back to back)
@@ -454,9 +457,17 @@ export function EntityPanel({
     setImportMessage(null);
     setImportErrors([]);
     setShowImportErrors(false);
+    setColumnsMenuOpen(false);
     void refresh();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [entity.name]);
+
+  // Kept separate from the reset effect above (which only depends on
+  // entity.name) since hidden columns are scoped per project+entity, not
+  // just per entity.
+  useEffect(() => {
+    setHiddenFields(getHiddenFields(projectId, entity.name));
+  }, [projectId, entity.name]);
 
   useEffect(() => {
     if (!recordToPrint) return;
@@ -481,6 +492,20 @@ export function EntityPanel({
     } else {
       setSortDir((d) => (d === "asc" ? "desc" : "asc"));
     }
+  }
+
+  // Which columns actually render in the table -- CSV export and the print
+  // sheet intentionally ignore this and always include every field, since
+  // those are whole-record actions, not "what's currently on screen".
+  const visibleFields = useMemo(
+    () => entity.fields.filter((f) => !hiddenFields.has(f.name)),
+    [entity.fields, hiddenFields],
+  );
+
+  function handleToggleColumn(fieldName: string) {
+    const visibleCount = entity.fields.length - hiddenFields.size;
+    if (!hiddenFields.has(fieldName) && visibleCount <= 1) return; // keep at least one column visible
+    setHiddenFields(toggleFieldVisibility(projectId, entity.name, fieldName));
   }
 
   const visibleRecords = useMemo(() => {
@@ -842,6 +867,30 @@ export function EntityPanel({
             >
               {t("entity.exportCsv")}
             </button>
+            <div className="columns-menu-wrapper">
+              <button
+                type="button"
+                className="secondary columns-menu-btn"
+                onClick={() => setColumnsMenuOpen((v) => !v)}
+                aria-expanded={columnsMenuOpen}
+              >
+                {t("entity.columns.button")}
+              </button>
+              {columnsMenuOpen && (
+                <div className="columns-menu-panel">
+                  {entity.fields.map((f) => (
+                    <label key={f.name} className="columns-menu-item">
+                      <input
+                        type="checkbox"
+                        checked={!hiddenFields.has(f.name)}
+                        onChange={() => handleToggleColumn(f.name)}
+                      />
+                      {f.label ?? f.name}
+                    </label>
+                  ))}
+                </div>
+              )}
+            </div>
           </div>
           {visibleRecords.length === 0 ? (
             <div className="empty-state">
@@ -918,7 +967,7 @@ export function EntityPanel({
                         onChange={toggleSelectAllVisible}
                       />
                     </th>
-                    {entity.fields.map((f) => (
+                    {visibleFields.map((f) => (
                       <th
                         key={f.name}
                         aria-sort={sortField === f.name ? (sortDir === "asc" ? "ascending" : "descending") : "none"}
@@ -943,7 +992,7 @@ export function EntityPanel({
                           onChange={() => toggleSelected(record.id as number)}
                         />
                       </td>
-                      {entity.fields.map((f) => (
+                      {visibleFields.map((f) => (
                         <td key={f.name}>
                           <Cell
                             field={f}
