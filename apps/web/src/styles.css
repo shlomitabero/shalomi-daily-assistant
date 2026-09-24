@@ -1326,6 +1326,10 @@ button.sort-header:hover:not(:disabled) {
   font-weight: 600;
 }
 
+.refine-history-list p.refine-history-time {
+  margin: 2px 0 0;
+}
+
 .ai-team {
   max-width: 640px;
 }

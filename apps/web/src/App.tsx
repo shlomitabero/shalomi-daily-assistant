@@ -62,6 +62,12 @@ interface RefineHistoryEntry {
   id: string;
   instruction: string;
   summary: string;
+  completedAt: string;
+}
+
+/** A refine history entry's own completion time, locale-formatted -- separated out (rather than inlined in the JSX) purely so it's directly unit-testable, matching this file's own formatProjectCreatedDate convention. */
+export function formatRefineTimestamp(completedAt: string, lang: Lang): string {
+  return new Date(completedAt).toLocaleString(LOCALE[lang]);
 }
 
 interface ArchitectImpactDetail {
@@ -412,6 +418,7 @@ function AppContent() {
         id: crypto.randomUUID(),
         instruction: pendingRefineInstruction.current,
         summary: summarizeRefineImpact(refineEvents.current, t),
+        completedAt: new Date().toISOString(),
       };
       setRefineHistory((prev) => [...prev, entry]);
     }
@@ -759,6 +766,7 @@ function AppContent() {
                       <li key={entry.id}>
                         <p className="refine-history-instruction">{entry.instruction}</p>
                         <p className="muted small">{entry.summary}</p>
+                        <p className="refine-history-time muted small">{formatRefineTimestamp(entry.completedAt, lang)}</p>
                       </li>
                     ))}
                   </ul>

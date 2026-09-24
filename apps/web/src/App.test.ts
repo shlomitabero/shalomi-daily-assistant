@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import { transformSync } from "esbuild";
 import type { AgentStepEvent, Entity, Project } from "@forge/shared";
-import { filterAndSortProjects, formatProjectCreatedDate, summarizeRefineImpact } from "./App.js";
+import { filterAndSortProjects, formatProjectCreatedDate, formatRefineTimestamp, summarizeRefineImpact } from "./App.js";
 
 const t = (key: string) => key;
 
@@ -136,6 +136,31 @@ test("formatProjectCreatedDate renders a real locale-formatted date, in each lan
   assert.notEqual(
     formatProjectCreatedDate(createdAt, "he"),
     formatProjectCreatedDate(createdAt, "en"),
+    "the two locales must not silently render the exact same string -- that would mean the language argument is being ignored",
+  );
+});
+
+/**
+ * New in this round: each entry in the refine history chat log (the
+ * running record of every "Improve the app" instruction and its real
+ * impact) never showed WHEN it happened -- with several refines in the
+ * same session, there was no way to tell which was the one from five
+ * minutes ago vs. the first one from an hour earlier. Confirms the real
+ * locale/time each language actually renders with, not just that some
+ * string comes back (mirrors formatProjectCreatedDate's own test above,
+ * but toLocaleString -- date AND time -- since multiple refines can land
+ * on the same day, unlike project creation dates).
+ */
+test("formatRefineTimestamp renders a real locale-formatted date+time, in each language's own locale", () => {
+  const completedAt = "2026-03-15T14:32:00.000Z";
+  const expectedHe = new Date(completedAt).toLocaleString("he-IL");
+  const expectedEn = new Date(completedAt).toLocaleString("en-US");
+
+  assert.equal(formatRefineTimestamp(completedAt, "he"), expectedHe);
+  assert.equal(formatRefineTimestamp(completedAt, "en"), expectedEn);
+  assert.notEqual(
+    formatRefineTimestamp(completedAt, "he"),
+    formatRefineTimestamp(completedAt, "en"),
     "the two locales must not silently render the exact same string -- that would mean the language argument is being ignored",
   );
 });
