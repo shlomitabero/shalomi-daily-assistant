@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { AgentStepEvent, Project, User } from "@forge/shared";
+import type { AgentStepEvent, Field, Project, User } from "@forge/shared";
 import {
   answerQuestions,
   backupProject,
@@ -106,6 +106,20 @@ export function filterAndSortProjects(projects: Project[], search: string, pinne
   const query = search.trim().toLowerCase();
   const matched = query ? projects.filter((p) => p.name.toLowerCase().includes(query)) : projects;
   return sortByPinned(matched, pinnedIds);
+}
+
+/**
+ * A required field is marked with a trailing " *" once a project is
+ * actually built and its record forms render (see
+ * FieldLabelEditor.tsx's own `field.required ? " *" : ""`), but the
+ * spec-review screen's entity summary -- the one place a person can still
+ * see this BEFORE committing to a build -- just joined field names with
+ * no distinction at all. Matches that exact same convention, so it reads
+ * as one consistent app rather than two different vocabularies for the
+ * same fact.
+ */
+export function formatEntityFieldSummary(fields: Field[]): string {
+  return fields.map((f) => `${f.label ?? f.name}${f.required ? " *" : ""}`).join(", ");
 }
 
 export function summarizeRefineImpact(events: AgentStepEvent[], t: (key: string) => string): string {
@@ -678,9 +692,12 @@ function AppContent() {
             {project.spec.entities.map((entity) => (
               <div key={entity.name} className="entity-summary">
                 <strong>{entity.label ?? entity.name}</strong>
-                <span className="muted"> — {entity.fields.map((f) => f.label ?? f.name).join(", ")}</span>
+                <span className="muted"> — {formatEntityFieldSummary(entity.fields)}</span>
               </div>
             ))}
+            {project.spec.entities.some((e) => e.fields.some((f) => f.required)) && (
+              <p className="muted small">{t("spec.entities.requiredHint")}</p>
+            )}
           </section>
 
           <section>

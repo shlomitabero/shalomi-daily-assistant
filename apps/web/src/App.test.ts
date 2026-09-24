@@ -2,9 +2,10 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import { transformSync } from "esbuild";
-import type { AgentStepEvent, Entity, Project } from "@forge/shared";
+import type { AgentStepEvent, Entity, Field, Project } from "@forge/shared";
 import {
   filterAndSortProjects,
+  formatEntityFieldSummary,
   formatProjectCreatedDate,
   formatRefineTimestamp,
   specProviderLabel,
@@ -530,4 +531,28 @@ test("App's handleBackToHome resets view/project/selectedAnswers/additionalReque
   assert.deepEqual(state.selectedAnswers, {}, "must clear answers tied to the abandoned draft's own open questions");
   assert.equal(state.additionalRequest, "", "must clear the additional-request text tied to the abandoned draft");
   assert.equal(setDescriptionCalls, 0, "must never touch description -- the typed idea text should survive going back");
+});
+
+/**
+ * New in this round: FieldLabelEditor.tsx's own record-form rendering
+ * already marks a required field with a trailing " *" once a project is
+ * built -- but the spec-review screen's entity summary, the one place a
+ * person can still see this BEFORE committing to a build, just joined
+ * field names with no distinction at all. Matches that exact convention.
+ */
+test("formatEntityFieldSummary marks each required field with a trailing ' *', matching FieldLabelEditor's own convention", () => {
+  const fields: Field[] = [
+    { name: "name", label: "Name", type: "text", required: true },
+    { name: "notes", label: "Notes", type: "text", required: false },
+    { name: "email", type: "text", required: true }, // no label -- falls back to the raw name
+  ];
+  assert.equal(formatEntityFieldSummary(fields), "Name *, Notes, email *");
+});
+
+test("formatEntityFieldSummary adds no markers at all when no field is required", () => {
+  const fields: Field[] = [
+    { name: "notes", label: "Notes", type: "text", required: false },
+    { name: "tags", label: "Tags", type: "text", required: false },
+  ];
+  assert.equal(formatEntityFieldSummary(fields), "Notes, Tags");
 });
