@@ -7216,6 +7216,54 @@ not a single "make it perfect" claim.
       `@forge/api` 183 → 185; `@forge/shared`/`@forge/spec-engine`/
       `@forge/db`/`@forge/web` unchanged) and both builds clean.
 
+- [x] **Round 148 — port the "Columns" menu to the exported codegen
+      app.** A second live-preview-then-codegen follow-up in a row,
+      found by systematically checking round 138's "Columns" menu
+      (hide/show individual table columns, persisted in localStorage)
+      against `codegen.ts`'s own separate `EntityView.jsx` table
+      implementation -- `grep`-ing for "Columns"/"columnVisibility"
+      there came back empty, confirming this feature had been
+      live-preview-only for 10 rounds. Same underlying gap as round 147,
+      different feature and a genuinely different part of the table UI
+      (column management, not the calendar view).
+
+      Added `getHiddenColumns`/`toggleColumnVisibility` (localStorage-
+      backed, right next to `emptyForm` at module scope) and a
+      `visibleFields` memo, wired a Columns button/menu into the
+      toolbar next to Export CSV, and swapped `entity.fields.map` for
+      `visibleFields.map` in the table header and body. Scoped
+      persistence by entity name alone rather than project+entity like
+      the live-preview app's own `columnVisibility.ts` -- this
+      single-tenant exported app has no project id to scope by in the
+      first place. CSV export deliberately kept reading `entity.fields`
+      instead of `visibleFields`, matching the live-preview app's own
+      "CSV export is a whole-record action; hiding a column is just a
+      table-view preference" rule (confirmed by a regression test
+      reading `handleExportCsv`'s own extracted source).
+
+      Verified with the deliberate-break-and-restore discipline, twice:
+      first made `toggleColumnVisibility` write to a shared `store.all`
+      key instead of `store[entityName]` -- a genuinely plausible
+      copy-paste slip that would leak one entity's hidden columns into
+      every other entity's table -- re-ran the new persistence test,
+      which failed on exactly that; restored and confirmed via `diff`
+      against a pre-break copy that the file matched byte-for-byte.
+      Then separately made `handleExportCsv` read `visibleFields`
+      instead of `entity.fields` -- re-ran the static-check test, which
+      failed on the same assertion; restored and confirmed the same
+      byte-for-byte match. **And** the strongest available proof: a
+      real export, a real `vite build`, a real spawned `server.js`,
+      and real Playwright/Chromium against it -- added a real customer
+      record, opened the real Columns menu, unchecked "Email", watched
+      the real DOM table actually drop that column, reloaded the real
+      page and confirmed the hidden state survived (a genuine
+      localStorage round trip, not a mock), then clicked the real
+      Export CSV button and read the downloaded file to confirm the
+      hidden Email column was still there, exactly as the whole-record-
+      action rule promises. Full suite green (546 tests, up from 544 --
+      `@forge/api` 185 → 187; `@forge/shared`/`@forge/spec-engine`/
+      `@forge/db`/`@forge/web` unchanged) and both builds clean.
+
 ## Phase 3
 
 - Self-healing: production observability, automatic diagnosis and patch
