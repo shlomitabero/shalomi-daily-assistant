@@ -6992,6 +6992,47 @@ not a single "make it perfect" claim.
       179 → 180; `@forge/shared`/`@forge/spec-engine`/`@forge/db`/
       `@forge/api` unchanged, purely client-side) and both builds clean.
 
+- [x] **Round 143 — show when each refine happened in the refine history
+      log.** A genuinely different screen from the last five (Entity
+      table, Your projects, AI Team build, Business Twin, Time Machine) --
+      the refine/chat pane, barely touched since its original rounds 34-35.
+      Found by reading `App.tsx`'s own `RefineHistoryEntry` interface: it
+      had `id`/`instruction`/`summary` but no timestamp at all, so a
+      session with several refines ("Add invoice tracking", then later
+      "Add a status field") gave no way to tell which happened five
+      minutes ago and which was the very first one from an hour earlier --
+      the exact same class of gap round 137 (WhatsApp messages) and round
+      139 (project cards) already fixed elsewhere in this app.
+
+      Added a `completedAt` field, stamped with `new Date().toISOString()`
+      at the exact moment `handleBuildComplete` builds the entry (right
+      alongside the existing `summarizeRefineImpact` call), and a small
+      exported `formatRefineTimestamp(completedAt, lang)` helper --
+      `toLocaleString` (date AND time, since multiple refines can land on
+      the same day, unlike `formatProjectCreatedDate`'s date-only need) --
+      matching this file's own established convention of keeping anything
+      JSX-displayed directly testable.
+
+      Verified with the deliberate-break-and-restore discipline: made the
+      new helper ignore its own `lang` argument and always format in
+      `en-US`, re-ran the new test -- it failed with the exact expected
+      mismatch (asserting the real `he-IL` string, got the English one
+      back instead), restored the file, confirmed via `diff` against a
+      pre-break copy that it matched byte-for-byte. **And** a full
+      Playwright pass against the real running dev server: signed up,
+      built a real app, ran a real refine ("add invoice tracking"),
+      confirmed exactly one real history entry appeared with a real
+      timestamp -- parsed the rendered string back into a real `Date` and
+      confirmed it landed within the actual wall-clock window the refine
+      ran in (not a stale or hardcoded value) -- then switched the real UI
+      to Hebrew and confirmed the SAME entry re-rendered with a genuinely
+      different Hebrew-locale format ("24.9.2026, 7:19:59"), proving the
+      `lang` argument really drives the rendered output end to end, not
+      just the isolated unit test. Full suite green (537 tests, up from
+      536 -- `@forge/web` 180 → 181; `@forge/shared`/`@forge/spec-engine`/
+      `@forge/db`/`@forge/api` unchanged, purely client-side) and both
+      builds clean.
+
 ## Phase 3
 
 - Self-healing: production observability, automatic diagnosis and patch
