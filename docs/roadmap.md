@@ -7644,6 +7644,46 @@ not a single "make it perfect" claim.
       202 → 203; `@forge/shared`/`@forge/spec-engine`/`@forge/db`/
       `@forge/api` unchanged) and both builds clean.
 
+- [x] **Round 157 — search box for the Time Machine timeline.**
+      Diversified to Time Machine, untouched since round 151. Read
+      `HistoryPanel.tsx` and found every build/refine adds one more
+      checkpoint forever -- no cap, no delete -- so a project with a
+      long real history (this project's own now well past a dozen
+      rounds of refines) had no way to find one specific checkpoint
+      besides scrolling and reading every label. Confirmed a real
+      refine's own label always carries the actual instruction that
+      produced it (`apps/api/src/routes/projects.ts`'s own
+      `changeLabel`, e.g. "Refine: add invoice tracking"), so a plain
+      substring search is genuinely useful, not cosmetic.
+
+      Added `filterCheckpoints` to `checkpointDiff.ts` alongside this
+      panel's other extracted pure logic, and a search box that mirrors
+      "Your projects" own convention exactly -- same case-insensitive
+      substring match, same "only shown once the list actually needs
+      it" gate (more than 5 entries).
+
+      Verified with the deliberate-break-and-restore discipline, twice:
+      first dropped `filterCheckpoints`'s own `.toLowerCase()` calls (a
+      plausible oversight) -- re-ran the unit tests, which failed on
+      exactly the case-insensitivity case; restored and confirmed via
+      `diff` against a pre-break copy that the file matched
+      byte-for-byte. Then separately changed the search box's own
+      visibility threshold from `> 5` to `> 6` (a plausible off-by-one)
+      -- re-ran the real-DOM test, which failed on exactly that;
+      restored and confirmed the same byte-for-byte match. **And** a
+      full Playwright pass against real running dev servers: built a
+      real app, then ran 5 real refines (each a genuine heuristic
+      pipeline call, not a fixture) to accumulate 1 initial-build +
+      5 = 6 real checkpoints -- crossing the search box's own
+      threshold -- confirmed the real search box appeared, searched
+      "invoice" and confirmed the live list narrowed to exactly the 2
+      real refines whose own real label contained it ("Refine: add
+      invoice tracking" and "Refine: fix invoice totals field"), then
+      cleared the search and confirmed all 6 real rows came back. Full
+      suite green (567 tests, up from 563 -- `@forge/web` 203 → 207;
+      `@forge/shared`/`@forge/spec-engine`/`@forge/db`/`@forge/api`
+      unchanged) and both builds clean.
+
 ## Phase 3
 
 - Self-healing: production observability, automatic diagnosis and patch
