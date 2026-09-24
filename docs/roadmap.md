@@ -7264,6 +7264,47 @@ not a single "make it perfect" claim.
       `@forge/api` 185 → 187; `@forge/shared`/`@forge/spec-engine`/
       `@forge/db`/`@forge/web` unchanged) and both builds clean.
 
+- [x] **Round 149 — a "Draft" chip on unbuilt projects in "Your
+      projects".** Back to the live-preview app after two rounds
+      (147, 148) spent porting features to the exported codegen app.
+      Found by reading `openExistingProject` in `App.tsx`: every
+      project's `status` field (`"draft" | "built"`) has always
+      decided whether clicking a card routes to the spec-review screen
+      or straight into the real running app, but the "Your projects"
+      list itself never surfaced that status -- the only way to learn
+      a project was still an unbuilt draft, versus a real usable app,
+      was to click it and see where you landed. The same
+      "server-stored-but-never-rendered field" pattern this session
+      keeps finding (round 145's `matchedEntityName`, round 146's
+      missing calendar navigation), just on a screen untouched since
+      round 139.
+
+      Added a "Draft" chip next to a project's name whenever
+      `status !== "built"`, reusing the exact same plain `.chip` style
+      the existing "Shared" chip already uses -- no new CSS needed.
+
+      There's no pure function to extract here (the entire change is
+      a one-line JSX conditional), so -- matching round 139's own,
+      identically-shaped home-screen-card feature, which took the
+      same approach for the same reason -- verification leaned on a
+      real Playwright pass rather than a node:test unit. Deliberately
+      inverted the condition to `p.status === "built"` (a plausible
+      copy-paste-style slip) and re-ran a real-browser script against
+      a real signed-up user with two real projects -- one left as an
+      unbuilt draft via the real Back button (round 144), one actually
+      built through to completion -- and confirmed the chip landed on
+      the wrong card. A first, weaker version of the script (just
+      counting "exactly one card has the chip") didn't actually catch
+      this, since exactly one card still had it either way; strengthened
+      it to check *which* card by title before it caught the real
+      mistake. Restored, confirmed via `diff` against a pre-break copy
+      that the file matched byte-for-byte, then re-ran the same
+      strengthened script against the restored code and confirmed the
+      chip now correctly appears only on the unbuilt project's card,
+      never the built one. Full suite green (546 tests, unchanged --
+      this round added no new automated test, matching round 139's own
+      precedent for this exact class of change) and both builds clean.
+
 ## Phase 3
 
 - Self-healing: production observability, automatic diagnosis and patch
