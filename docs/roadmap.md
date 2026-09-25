@@ -8039,6 +8039,50 @@ not a single "make it perfect" claim.
       `@forge/spec-engine`/`@forge/db`/`@forge/api` unchanged) and both
       builds clean.
 
+- [x] **Round 165 — add "Download timeline" to Time Machine.** Diversified
+      to Time Machine, untouched since round 157. A project's checkpoint
+      history only ever grows -- every build/refine adds one more entry,
+      with no cap and no delete -- so this was the only one of the app's
+      three history-bearing panels without a way to keep a permanent
+      record outside the app: Business Twin (round 129) and the WhatsApp
+      log (round 154) both already closed this exact gap for their own
+      data. Added a "Download timeline" button, shown once there's at
+      least one real checkpoint, exporting every checkpoint's own label,
+      timestamp, and screen count as plain text -- with the checkpoint
+      that's genuinely current marked, not just the newest one, since
+      restoring to an older checkpoint means the newest list entry is no
+      longer what's actually showing.
+
+      Added `formatCheckpointHistory`/`downloadCheckpointHistory` to the
+      existing `checkpointDiff.ts` (this domain's own file already existed
+      from round 135's diff logic and round 157's search, so no new file
+      was needed), matching `formatTwinReport`/`downloadTwinReport`'s exact
+      conventions from round 129.
+
+      Verified with the deliberate-break-and-restore discipline, twice.
+      For the formatter: swapped the real `isCheckpointCurrent` check for
+      "is this the newest checkpoint" (a plausible shortcut, since the
+      newest one usually IS current) -- re-ran the unit tests, which failed
+      exactly on the "marks the ACTUALLY current one, not the newest" case;
+      restored and confirmed via `diff` against a pre-break copy that the
+      file matched byte-for-byte. For the wiring: removed the
+      `checkpoints.length > 0` guard on the button -- re-ran the DOM tests,
+      which failed cleanly on the "no button before any checkpoints exist"
+      case (no hang, since the assertion compares a boolean rather than a
+      raw DOM node -- the exact footgun round 161 already documented);
+      restored and confirmed via `diff` that the file matched byte-for-byte.
+      **And** a full Playwright pass against real running dev servers:
+      built a real app, ran a real refine adding a whole new entity
+      (confirming the checkpoint's own screen count genuinely changed, not
+      just its label -- an earlier attempt using a same-count field-only
+      refine accidentally proved nothing, since the heuristic engine
+      apparently already had an equivalent field and produced an identical
+      spec), downloaded the real history, and confirmed it contained every
+      real checkpoint label with exactly one genuinely-current marker
+      landing on the correct entry. Full suite green (596 tests, up from
+      591 -- `@forge/web` 231 → 236; `@forge/shared`/`@forge/spec-engine`/
+      `@forge/db`/`@forge/api` unchanged) and both builds clean.
+
 ## Phase 3
 
 - Self-healing: production observability, automatic diagnosis and patch
