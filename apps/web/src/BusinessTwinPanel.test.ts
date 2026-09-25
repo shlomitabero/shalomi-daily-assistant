@@ -5,7 +5,7 @@ import { JSDOM } from "jsdom";
 import React from "react";
 import { cleanup, fireEvent, render } from "@testing-library/react";
 import type { BusinessTwin, BusinessTwinEntityStat } from "./api.js";
-import { BusinessTwinPanel, sortTwinStatsByCount } from "./BusinessTwinPanel.js";
+import { BusinessTwinPanel, computeTwinStatPercent, sortTwinStatsByCount } from "./BusinessTwinPanel.js";
 import { LanguageProvider } from "./i18n/LanguageContext.js";
 import { ThemeProvider } from "./theme/ThemeContext.js";
 
@@ -250,6 +250,84 @@ test("BusinessTwinPanel renders stat tiles sorted by real record count (busiest 
           "a tile with real records must never carry the empty marker",
         );
       }
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+test("computeTwinStatPercent rounds an entity's real share of the project's total records", () => {
+  assert.equal(computeTwinStatPercent(12, 16), 75);
+  assert.equal(computeTwinStatPercent(4, 16), 25);
+  assert.equal(computeTwinStatPercent(1, 3), 33, "1/3 = 33.33...% must round to 33");
+  assert.equal(computeTwinStatPercent(0, 16), 0);
+});
+
+test("computeTwinStatPercent guards against a zero (or negative) total instead of dividing by zero", () => {
+  assert.equal(computeTwinStatPercent(0, 0), 0);
+  assert.equal(computeTwinStatPercent(5, 0), 0);
+});
+
+/**
+ * New in this round: each tile already showed its own raw count and the
+ * panel showed a separate grand total, but never how the two relate --
+ * confirms the real per-entity share renders on the non-empty tiles (using
+ * the exact fixture's own real numbers, 12/16=75% and 4/16=25%, not
+ * hardcoded placeholders), and that the genuinely empty tile shows no
+ * percent at all (0% of a real total is not a useful fact to state).
+ */
+test("BusinessTwinPanel shows each non-empty tile's real share of total records, and omits it for the empty tile", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = mockTwinFetch() as typeof fetch;
+    try {
+      renderTwinPanel(() => {});
+      await waitForCondition(() => document.querySelectorAll(".twin-stat-tile").length === 2);
+
+      const tiles = Array.from(document.querySelectorAll(".twin-stat-tile"));
+      const customersTile = tiles.find((el) => el.querySelector(".twin-stat-label")!.textContent === "Customers")!;
+      const ordersTile = tiles.find((el) => el.querySelector(".twin-stat-label")!.textContent === "Orders")!;
+
+      assert.match(customersTile.querySelector(".twin-stat-percent")!.textContent ?? "", /75/, "Customers (12 of 16) must show its real 75% share");
+      assert.match(ordersTile.querySelector(".twin-stat-percent")!.textContent ?? "", /25/, "Orders (4 of 16) must show its real 25% share");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+test("BusinessTwinPanel omits the percent line for a genuinely empty (0-record) tile", async () => {
+  await withJsdom(async () => {
+    const outOfOrderTwin: BusinessTwin = {
+      summary: "A CRM",
+      roles: ["Owner"],
+      entities: [
+        { name: "Order", label: "Orders", count: 0 },
+        { name: "Customer", label: "Customers", count: 12 },
+      ],
+      totalRecords: 12,
+      mostActive: { name: "Customer", label: "Customers", count: 12 },
+      unused: [{ name: "Order", label: "Orders", count: 0 }],
+      observations: [],
+    };
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string) => {
+      if (input === "/api/projects/proj1/twin") {
+        return new Response(JSON.stringify({ twin: outOfOrderTwin }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${input}`);
+    }) as typeof fetch;
+    try {
+      renderTwinPanel(() => {});
+      await waitForCondition(() => document.querySelectorAll(".twin-stat-tile").length === 2);
+
+      const tiles = Array.from(document.querySelectorAll(".twin-stat-tile"));
+      const ordersTile = tiles.find((el) => el.querySelector(".twin-stat-label")!.textContent === "Orders")!;
+      assert.equal(
+        ordersTile.querySelector(".twin-stat-percent") === null,
+        true,
+        "a 0-record tile must not show a '0% of records' line -- it's not a useful fact",
+      );
     } finally {
       globalThis.fetch = originalFetch;
     }

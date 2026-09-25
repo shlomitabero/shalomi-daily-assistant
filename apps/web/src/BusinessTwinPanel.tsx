@@ -24,6 +24,21 @@ export function sortTwinStatsByCount(entities: BusinessTwinEntityStat[]): Busine
     .map(({ entity }) => entity);
 }
 
+/**
+ * What share of the project's total records a single entity's own count
+ * represents, as a whole-number percentage -- the grid already shows each
+ * tile's raw count and the panel's own total separately (`twin.totalRecords`
+ * above the grid), but never how the two relate. Guards against a
+ * zero/negative total (an otherwise-real state for a freshly built project
+ * with no data seeded yet) the same defensive way
+ * BuildProgress.tsx's own computeBuildProgressPercent does for its own
+ * div-by-zero case.
+ */
+export function computeTwinStatPercent(count: number, totalRecords: number): number {
+  if (totalRecords <= 0) return 0;
+  return Math.round((count / totalRecords) * 100);
+}
+
 export function BusinessTwinPanel({
   projectId,
   projectName,
@@ -108,6 +123,11 @@ export function BusinessTwinPanel({
                 >
                   <div className="twin-stat-value">{e.count}</div>
                   <div className="twin-stat-label">{e.label}</div>
+                  {e.count > 0 && twin.totalRecords > 0 && (
+                    <div className="twin-stat-percent">
+                      {t("twin.stat.percentOfTotal", { percent: computeTwinStatPercent(e.count, twin.totalRecords) })}
+                    </div>
+                  )}
                 </button>
               ))}
             </div>
