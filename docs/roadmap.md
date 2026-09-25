@@ -8557,6 +8557,69 @@ not a single "make it perfect" claim.
       `@forge/shared`/`@forge/spec-engine`/`@forge/db`/`@forge/api`
       unchanged) and typecheck clean.
 
+- [x] **Round 176 — Business Twin's "most-linked record" insight now
+      jumps to the exact record too.** Round 175's own trigger note asked
+      whether Business Twin had the same "jump to entity, not the record"
+      gap Global Search and WhatsApp did -- checked, and it did, but a
+      layer deeper than expected: the stat tiles (round 141) already jump
+      to an entity, but the "observations" list (relation-hub, duplicate,
+      coverage, activity insights) had NO click behavior at all, even
+      though `computeRelationHubObservation` (twin.ts) already resolves
+      its "most-linked record" insight down to one specific real
+      entityName+id -- it was simply thrown away into plain, inert text.
+
+      Split that one insight out of the generic `observations: string[]`
+      array into its own structured field on `BusinessTwin`:
+      `mostLinkedRecord: { text, entityName, recordId } | null`. The live
+      panel now renders it as a real clickable button (reusing App.tsx's
+      existing `highlightRecordId`/`onHighlightHandled` wiring -- no new
+      scroll/highlight logic needed anywhere, the third screen to plug
+      into that same shared mechanism after Global Search and WhatsApp),
+      while `twinReport.ts`'s downloadable report folds the text back in
+      as one more bullet so the split doesn't silently drop it from the
+      exported file. Every OTHER observation type (duplicate, coverage,
+      activity, stale) stays untouched plain text, since none of them
+      name a single specific record the way this one genuinely does.
+
+      Verified with the deliberate-break-and-restore discipline across
+      three files: (1) `BusinessTwinPanel.tsx`'s click handler swapped to
+      call `onJumpToEntity` instead of `onJumpToRecord` -- caught exactly
+      by the new DOM test's "must call onJumpToRecord" assertion;
+      restored, `diff` clean. (2) `twin.ts`'s `recordId: best.id` changed
+      to `best.id + 1` (a wrong-but-plausible off-by-one) -- caught by TWO
+      existing `twin.test.ts` tests (the main hub test and the
+      dangling-id-fallback test), which were extended this round to also
+      assert on the real `entityName`/`recordId` fields, not just the
+      text; restored, `diff` clean. (3) `twinReport.ts`'s fold-in line
+      reverted to plain `twin.observations` -- caught by the new "folds
+      the structured mostLinkedRecord insight back into the observations
+      section" test; restored, `diff` clean. Also updated the three
+      pre-existing `twin.test.ts` tests that searched `observations` for
+      "most-linked record" text to instead read the new structured
+      `twin.mostLinkedRecord` field directly, and added an explicit
+      assertion that the insight is no longer ALSO duplicated into the
+      plain `observations` array.
+
+      **And** a real Playwright pass against real running dev servers:
+      built a real delivery app (Order/MenuItem/Courier, with a real
+      `courierId` relation field on Order), added one real Courier record
+      with a unique marker name, then added 2 real Order records -- each
+      forced to link to that exact courier via the relation picker's real
+      option (the only courier that existed), producing a genuine
+      cross-entity total of 2 real links, not a fabricated one. Confirmed
+      the insight rendered as a real clickable button naming the real
+      courier, clicked it, and confirmed both that the app switched to the
+      real Courier tab AND that the exact real courier record (matched by
+      its own marker text AND its own `data-record-id`) was the one
+      highlighted. Had to account for the build pipeline's own auto-seeded
+      records along the way (the Order table already had rows before any
+      of this round's own real submissions), reading the real starting row
+      count first rather than assuming zero. Full suite green (625 tests,
+      up from 623 -- `@forge/web` 263 → 265; `@forge/api`/`@forge/shared`/
+      `@forge/spec-engine`/`@forge/db` unchanged in count, though
+      `@forge/api`'s own `twin.test.ts` assertions were substantially
+      rewritten) and typecheck clean.
+
 ## Phase 3
 
 - Self-healing: production observability, automatic diagnosis and patch
