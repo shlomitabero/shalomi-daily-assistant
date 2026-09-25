@@ -7,6 +7,7 @@ import {
   countAnsweredOpenQuestions,
   filterAndSortProjects,
   formatEntityFieldSummary,
+  formatMyProjectsCount,
   formatOpenQuestionsProgress,
   formatProjectCreatedDate,
   formatRefineTimestamp,
@@ -163,6 +164,16 @@ test("filterAndSortProjects applies the pinned-first sort to whatever the search
     ["p3", "p1", "p2"],
     "the pinned match must move to the front of the already-narrowed results",
   );
+});
+
+test("formatMyProjectsCount reports a plain total when nothing is filtered out", () => {
+  const tr = (key: string, params?: Record<string, string | number>) => translate("en", key, params);
+  assert.equal(formatMyProjectsCount(5, 5, tr), "5 projects");
+});
+
+test("formatMyProjectsCount reports 'shown of total' once a search has narrowed the list, in Hebrew", () => {
+  const tr = (key: string, params?: Record<string, string | number>) => translate("he", key, params);
+  assert.equal(formatMyProjectsCount(2, 8, tr), "2 מתוך 8 פרויקטים");
 });
 
 /**

@@ -109,6 +109,28 @@ export function filterAndSortProjects(projects: Project[], search: string, pinne
 }
 
 /**
+ * How many of "Your projects" are currently showing versus how many exist
+ * in total -- the same two-distinct-phrasings convention
+ * formatEntityRecordCount (entityFormatting.ts, round 155) already
+ * established for an entity's own record table, applied here to the home
+ * screen's project list. The search box itself has existed since round
+ * 133, but never showed how many projects it actually narrowed down to,
+ * so a person searching had no sense of "found 2" versus "found all 12"
+ * without counting the cards themselves -- and once a list is long enough
+ * to show the search box at all (more than 5 projects), that's no longer
+ * a glance.
+ */
+export function formatMyProjectsCount(
+  shown: number,
+  total: number,
+  t: (key: string, params?: Record<string, string | number>) => string,
+): string {
+  return shown === total
+    ? t("home.myProjects.count.all", { count: total })
+    : t("home.myProjects.count.filtered", { shown, total });
+}
+
+/**
  * A required field is marked with a trailing " *" once a project is
  * actually built and its record forms render (see
  * FieldLabelEditor.tsx's own `field.required ? " *" : ""`), but the
@@ -594,7 +616,13 @@ function AppContent() {
         <main className="home">
           {myProjects.length > 0 && (
             <div className="my-projects">
-              <h2>{t("home.myProjects.heading")}</h2>
+              <h2>
+                {t("home.myProjects.heading")}
+                <span className="muted small home-projects-count">
+                  {" "}
+                  — {formatMyProjectsCount(visibleMyProjects.length, myProjects.length, t)}
+                </span>
+              </h2>
               {myProjects.length > 5 && (
                 <input
                   type="text"
