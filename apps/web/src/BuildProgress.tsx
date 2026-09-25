@@ -1,6 +1,10 @@
 import { useEffect, useRef, useState } from "react";
 import type { AgentStepEvent, Project } from "@forge/shared";
+import { safeDownloadName } from "./api.js";
 import { useTranslation } from "./i18n/LanguageContext.js";
+import type { Lang } from "./i18n/language.js";
+
+const LOCALE: Record<Lang, string> = { he: "he-IL", en: "en-US" };
 
 const AGENT_ICONS: Record<AgentStepEvent["agent"], string> = {
   Architect: "🏗️",
@@ -31,6 +35,72 @@ export function formatElapsedTime(ms: number): string {
   const minutes = Math.floor(totalSeconds / 60);
   const seconds = totalSeconds % 60;
   return `${minutes}:${String(seconds).padStart(2, "0")}`;
+}
+
+/**
+ * Renders the same latest-status-per-agent data the live step list itself
+ * shows (see the `latestByAgent`/`visibleAgents` computation inside
+ * BuildProgress below, which this mirrors) as a plain, shareable text
+ * snapshot -- same "plain UTF-8 text, not a PDF" reasoning as
+ * twinReport.ts's own doc comment (this app's Hebrew-first audience means a
+ * real PDF would need an embedded Hebrew font, a bigger undertaking than
+ * this feature's value justifies). Only ever actually shown for a FAILED
+ * build (see the button's own placement below, next to the failure
+ * banner) -- a successful build's `finished` state is never reachable on
+ * screen at all, since the same effect that sets it also immediately
+ * navigates away (see App.tsx's handleBuildComplete). For a failure, which
+ * genuinely stays on screen until the person clicks Back, this is a real
+ * record of what each of the seven AI Team agents actually reported --
+ * useful to paste when asking for help with what went wrong.
+ */
+export function formatBuildSummary(
+  events: AgentStepEvent[],
+  elapsedMs: number,
+  projectName: string,
+  lang: Lang,
+  t: (key: string, params?: Record<string, string | number>) => string,
+): string {
+  const lines: string[] = [];
+  lines.push(`${t("build.summary.heading")} — ${projectName}`);
+  lines.push(t("build.summary.generatedAt", { date: new Date().toLocaleString(LOCALE[lang]) }));
+  lines.push(`${t("build.summary.duration")}: ${formatElapsedTime(elapsedMs)}`);
+  lines.push("");
+
+  const latestByAgent = new Map<string, AgentStepEvent>();
+  for (const event of events) {
+    latestByAgent.set(event.agent, event);
+  }
+  const visibleAgents = AGENT_ORDER.filter((a) => a !== "Debug" || latestByAgent.has("Debug"));
+
+  for (const agent of visibleAgents) {
+    const event = latestByAgent.get(agent);
+    const key = AGENT_KEY[agent];
+    const status = event?.status ?? "pending";
+    const label = t(`build.agent.${key}.title`);
+    const statusLabel =
+      status === "success"
+        ? t("build.summary.status.success")
+        : status === "failed"
+          ? t("build.summary.status.failed")
+          : t("build.summary.status.pending");
+    const message = status === "success" || status === "failed" ? ` — ${event!.message}` : "";
+    lines.push(`[${statusLabel}] ${label}${message}`);
+  }
+
+  return lines.join("\n").trimEnd();
+}
+
+/** Saves the already-rendered summary text as a real downloaded .txt file, the same browser-download mechanics twinReport.ts's downloadTwinReport uses. */
+export function downloadBuildSummary(text: string, projectName: string): void {
+  const blob = new Blob([text], { type: "text/plain;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `${safeDownloadName(projectName, "forge-app")}-build-summary.txt`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
 }
 
 function StatusIcon({ status }: { status: AgentStepEvent["status"] }) {
@@ -168,12 +238,16 @@ function AgentDetail({ agent, detail }: { agent: AgentStepEvent["agent"]; detail
 
 export function BuildProgress({
   title,
+  projectName,
   run,
   onComplete,
   onBack,
   compact = false,
 }: {
   title?: string;
+  /** Used only to name the downloaded build-summary file -- see the
+   * "Download build summary" button below. */
+  projectName: string;
   run: (onEvent: (event: AgentStepEvent) => void) => Promise<void>;
   onComplete: (project: Project) => void;
   onBack: () => void;
@@ -182,7 +256,7 @@ export function BuildProgress({
    * taking over the whole screen. */
   compact?: boolean;
 }) {
-  const { t } = useTranslation();
+  const { t, lang } = useTranslation();
   const [events, setEvents] = useState<AgentStepEvent[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [finished, setFinished] = useState(false);
@@ -327,6 +401,25 @@ export function BuildProgress({
       {failedStep && (
         <div>
           <p className="error">{t("build.failed.banner")}</p>
+          {/* A SUCCESSFUL build's `finished` state is never actually
+           * reachable here -- the very effect that sets it also calls
+           * onComplete in the same tick, which immediately swaps the
+           * parent's view away (see App.tsx's handleBuildComplete) before a
+           * person could ever see or click anything in this render. A
+           * failed build is the one case that genuinely stays on screen
+           * indefinitely (onComplete only fires for a Forge success), so
+           * this is the one place a "download what actually happened"
+           * button is real, not decorative -- useful for sharing exactly
+           * what each agent reported when asking for help with a failure. */}
+          <button
+            type="button"
+            className="secondary small"
+            onClick={() =>
+              downloadBuildSummary(formatBuildSummary(events, elapsedMs, projectName, lang, t), projectName)
+            }
+          >
+            {t("build.summary.download")}
+          </button>
           <button type="button" onClick={onBack}>
             {t("build.back")}
           </button>

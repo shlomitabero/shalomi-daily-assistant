@@ -5,9 +5,12 @@ import { JSDOM } from "jsdom";
 import React from "react";
 import { act, cleanup, render } from "@testing-library/react";
 import type { AgentStepEvent } from "@forge/shared";
-import { BuildProgress, formatElapsedTime } from "./BuildProgress.js";
+import { BuildProgress, formatBuildSummary, formatElapsedTime } from "./BuildProgress.js";
 import { LanguageProvider } from "./i18n/LanguageContext.js";
+import { translate } from "./i18n/language.js";
 import { ThemeProvider } from "./theme/ThemeContext.js";
+
+const englishT = (key: string, params?: Record<string, string | number>) => translate("en", key, params);
 
 /** Same jsdom-swap technique as useDialogFocusTrap.test.ts. */
 async function withJsdom<T>(fn: () => Promise<T> | T): Promise<T> {
@@ -81,6 +84,7 @@ function renderBuildProgress(events: AgentStepEvent[], onComplete: (project: unk
         null,
         React.createElement(BuildProgress, {
           title: "Building",
+          projectName: "Test Project",
           run: runWithEvents(events),
           onComplete,
           onBack: () => {},
@@ -254,7 +258,13 @@ test("BuildProgress's elapsed timer ticks once a second while running, and freez
           React.createElement(
             LanguageProvider,
             null,
-            React.createElement(BuildProgress, { title: "Building", run, onComplete: () => {}, onBack: () => {} }),
+            React.createElement(BuildProgress, {
+              title: "Building",
+              projectName: "Test Project",
+              run,
+              onComplete: () => {},
+              onBack: () => {},
+            }),
           ),
         ),
       );
@@ -316,6 +326,161 @@ test("BuildProgress still shows the failed-build banner for a genuine, unrecover
       document.querySelector("p.error:not(.banner)") !== null,
       true,
       "the 'Build failed' banner must still show for a real, never-recovered failure",
+    );
+  });
+});
+
+/**
+ * New in this round: once a build finishes (success or failure) there was no
+ * way to keep a record of what the AI Team actually did -- the live screen
+ * is gone the moment you navigate away. formatBuildSummary renders the same
+ * per-agent LATEST status the step list itself shows (see the
+ * "does not show the failed-build banner" test above for why "latest, not
+ * first-ever" matters), as plain text.
+ */
+test("formatBuildSummary lists each agent's own latest status and real message, skipping Debug when it never ran", () => {
+  const events: AgentStepEvent[] = [
+    { agent: "Architect", status: "success", message: "Designed 4 tables for 2 roles.", detail: { newEntities: [], changedEntities: [] } },
+    { agent: "Database", status: "success", message: "2 schema change(s) applied.", detail: [] },
+    { agent: "Seed Data", status: "success", message: "Seeded 12 records.", detail: { seededCount: 12, entities: [] } },
+    { agent: "QA", status: "success", message: "3/3 entity checks passed.", detail: [] },
+    { agent: "Security", status: "success", message: "Security score 100/100.", detail: [] },
+    { agent: "Forge", status: "success", message: "Published.", detail: { project: { id: "p1", name: "Test" } } },
+  ];
+  const text = formatBuildSummary(events, 65000, "Flower Shop", "en", englishT);
+
+  assert.ok(text.includes("Flower Shop"), "must include the real project name");
+  assert.ok(text.includes("1:05"), "must include the real formatted elapsed duration (65000ms == 1:05)");
+  assert.ok(text.includes("Designed 4 tables for 2 roles."), "must include the Architect's own real message");
+  assert.ok(text.includes("Security score 100/100."), "must include the Security agent's own real message");
+  assert.ok(
+    !text.includes("Debug"),
+    "Debug never ran in this build (no event for it), so it must not appear as a permanent pending placeholder",
+  );
+});
+
+test("formatBuildSummary shows a recovered agent's LATEST (success) status, not its earlier failed attempt, and includes Debug since it DID run", () => {
+  const text = formatBuildSummary(RECOVERED_BUILD_EVENTS, 30000, "Test", "en", englishT);
+  const lines = text.split("\n");
+  const databaseLine = lines.find((l) => l.includes("Database Engineer"));
+  assert.ok(databaseLine, "expected a Database Engineer line in the summary");
+  assert.ok(
+    databaseLine!.startsWith("[✓ Succeeded]"),
+    `Database's LATEST event succeeded (the Debug Agent recovered it), so its summary line must show success -- got "${databaseLine}"`,
+  );
+  assert.ok(
+    lines.some((l) => l.includes("Debug Agent")),
+    "Debug DID actually run in this build, so it must appear (unlike the never-ran case above)",
+  );
+});
+
+test("formatBuildSummary shows a genuinely failed, unrecovered agent as failed with its own real error message", () => {
+  const events: AgentStepEvent[] = [
+    { agent: "Architect", status: "success", message: "…", detail: { newEntities: [], changedEntities: [] } },
+    { agent: "Database", status: "failed", message: "a real migration error" },
+    { agent: "Debug", status: "failed", message: "the automatic fix attempt also failed" },
+  ];
+  const text = formatBuildSummary(events, 12000, "Test", "en", englishT);
+  const lines = text.split("\n");
+  const databaseLine = lines.find((l) => l.includes("Database Engineer"));
+  assert.ok(databaseLine, "expected a Database Engineer line in the summary");
+  assert.equal(
+    databaseLine,
+    "[✕ Failed] Database Engineer — a real migration error",
+    "an unrecovered failure must show as failed with its own real error message",
+  );
+});
+
+/**
+ * A real Playwright run against the live dev server (not just this jsdom
+ * suite) caught something this file's own DOM tests alone would have
+ * missed: for a SUCCESSFUL build, the `finished` state set inside
+ * BuildProgress is never actually visible on screen at all -- the very
+ * effect that sets `finished` also calls `onComplete` in the same tick,
+ * and App.tsx's handleBuildComplete immediately swaps the parent's `view`
+ * to "preview", unmounting BuildProgress before a real browser ever paints
+ * (let alone a person or script could click) anything in the finished
+ * state. A `onComplete: () => {}` no-op in a jsdom test can't see this,
+ * since nothing unmounts the component -- only exercising it through the
+ * real App.tsx wiring exposed it. The button is therefore placed ONLY next
+ * to the failed-build banner (see BuildProgress.tsx), the one state that
+ * genuinely stays on screen indefinitely (onComplete only ever fires on a
+ * Forge success), so it's only tested for that reachable case here.
+ */
+test("BuildProgress shows a real 'Download build summary' button once a build genuinely fails (and stays reachable), and clicking it downloads the actual failure content under the real project name", async () => {
+  await withJsdom(async () => {
+    // jsdom doesn't implement the real Blob-URL machinery -- stub just
+    // enough of it to observe what the click handler actually does, the
+    // same technique WhatsAppPanel.test.ts's own download test uses.
+    const originalCreateObjectURL = (URL as unknown as { createObjectURL?: (b: Blob) => string }).createObjectURL;
+    const originalRevokeObjectURL = (URL as unknown as { revokeObjectURL?: (u: string) => void }).revokeObjectURL;
+    const anchorProto = (globalThis as unknown as { window: { HTMLAnchorElement: { prototype: HTMLAnchorElement } } }).window
+      .HTMLAnchorElement.prototype;
+    const originalAnchorClick = anchorProto.click;
+    let capturedDownloadName: string | null = null;
+    let capturedBlob: Blob | null = null;
+    let clickCount = 0;
+    (URL as unknown as { createObjectURL: (b: Blob) => string }).createObjectURL = (b: Blob) => {
+      capturedBlob = b;
+      return "blob:mock-url";
+    };
+    (URL as unknown as { revokeObjectURL: (u: string) => void }).revokeObjectURL = () => {};
+    anchorProto.click = function (this: HTMLAnchorElement) {
+      capturedDownloadName = this.download;
+      clickCount += 1;
+    };
+
+    try {
+      const events: AgentStepEvent[] = [
+        { agent: "Architect", status: "success", message: "Designed 3 tables.", detail: { newEntities: [], changedEntities: [] } },
+        { agent: "Database", status: "failed", message: "a real migration error" },
+        { agent: "Debug", status: "failed", message: "the automatic fix attempt also failed" },
+      ];
+
+      renderBuildProgress(events);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      const findDownloadButton = () =>
+        Array.from(document.querySelectorAll("button")).find((b) => b.textContent?.includes("Download build summary"));
+
+      const downloadButton = findDownloadButton();
+      assert.ok(downloadButton, "expected a 'Download build summary' button once the build has genuinely failed");
+
+      act(() => {
+        downloadButton!.click();
+      });
+
+      assert.equal(clickCount, 1, "clicking the download button must trigger exactly one real anchor click");
+      const downloadName: string = capturedDownloadName ?? "";
+      assert.ok(
+        downloadName.includes("Test"),
+        `expected the downloaded filename to be derived from the real project name "Test", got "${downloadName}"`,
+      );
+      assert.ok(downloadName.endsWith("build-summary.txt"), `expected a build-summary.txt filename, got "${downloadName}"`);
+
+      const blobText = await (capturedBlob as unknown as Blob).text();
+      assert.ok(blobText.includes("Designed 3 tables."), "the downloaded file must contain the Architect's real message");
+      assert.ok(blobText.includes("a real migration error"), "the downloaded file must contain the real failure that actually happened");
+    } finally {
+      if (originalCreateObjectURL) (URL as unknown as { createObjectURL: (b: Blob) => string }).createObjectURL = originalCreateObjectURL;
+      if (originalRevokeObjectURL) (URL as unknown as { revokeObjectURL: (u: string) => void }).revokeObjectURL = originalRevokeObjectURL;
+      anchorProto.click = originalAnchorClick;
+    }
+  });
+});
+
+test("BuildProgress does not show a 'Download build summary' button for a successful build, since that state is never actually reachable on screen", async () => {
+  await withJsdom(async () => {
+    renderBuildProgress(RECOVERED_BUILD_EVENTS);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const downloadButton = Array.from(document.querySelectorAll("button")).find((b) =>
+      b.textContent?.includes("Download build summary"),
+    );
+    assert.equal(
+      downloadButton === undefined,
+      true,
+      "a successful build must not show the download button -- it would be unreachable/decorative dead code, since onComplete unmounts this component in the same tick `finished` becomes true",
     );
   });
 });

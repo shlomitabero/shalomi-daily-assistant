@@ -770,6 +770,7 @@ function AppContent() {
       {view === "building" && project && (
         <BuildProgress
           title={t("build.title.build")}
+          projectName={project.name}
           run={(onEvent) => streamBuild(project.id, onEvent)}
           onComplete={handleBuildComplete}
           onBack={() => setView("spec")}
@@ -811,6 +812,7 @@ function AppContent() {
               {refineRunning ? (
                 <BuildProgress
                   compact
+                  projectName={project.name}
                   run={(onEvent) => {
                     const wrappedOnEvent = (event: AgentStepEvent) => {
                       refineEvents.current.push(event);
