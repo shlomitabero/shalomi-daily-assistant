@@ -7939,6 +7939,60 @@ not a single "make it perfect" claim.
       `@forge/api` test that passed cleanly on its own re-run) and both
       builds clean.
 
+- [x] **Round 163 — a real user report ("it never loads, always says the
+      server is old") took priority over the usual feature round, and
+      traced to a genuine timing-budget bug in the cold-start retry
+      logic.** שלומי reported the live site consistently failing to load.
+      Investigation (code review, since the live Render URL isn't reachable
+      from this sandbox's network policy) found `fetchWithWakeRetry`'s own
+      backoff summed to only ~49s -- deliberately matching Render's
+      documented "50 seconds or more" cold-start warning, but with zero
+      margin above it. Combined with the still-open round 114 issue (no
+      keep-alive ping can run, since GitHub Actions `schedule` triggers
+      only fire on a repo's default branch, which points at an unrelated
+      project), this app now cold-starts on essentially every single
+      visit rather than occasionally -- so a cold start that legitimately
+      took even a little longer than Render's own stated floor reliably
+      exhausted every retry and surfaced as a failure, matching her exact
+      "always" description.
+
+      Widened `DEFAULT_DELAYS_MS` (wakeRetry.ts) from ~49s to ~101s of
+      retry budget -- roughly double Render's stated worst case -- and
+      raised `fetchApi`'s own `REQUEST_TIMEOUT_MS` (api.ts) from 180s to
+      220s in lockstep, so the outer ceiling still comfortably covers the
+      new retry budget plus a full 60s Anthropic call. This is the exact
+      same class of timing mismatch this codebase already had to fix once
+      (see the existing "does not falsely abort" test from that earlier
+      bug) -- changing one constant without the other reintroduces it with
+      new numbers. Added a dedicated regression test that directly asserts
+      the arithmetic relationship between the two constants (retry budget
+      + Anthropic call + real margin < the outer ceiling), so a future
+      change to either one alone fails a fast, obvious unit test instead
+      of shipping the same bug a third time.
+
+      Verified with the deliberate-break-and-restore discipline, twice:
+      first reverted `REQUEST_TIMEOUT_MS` to its old value, confirmed the
+      new arithmetic test failed exactly as expected; restored and
+      confirmed via `diff` against a pre-break copy that the file matched
+      byte-for-byte. Then separately widened `DEFAULT_DELAYS_MS` further
+      (simulating a future change to the OTHER constant with no
+      corresponding update), confirmed the same test caught that direction
+      of the mismatch too; restored and confirmed via `diff` that the file
+      matched byte-for-byte. **And** a real dev-server + real-browser
+      Playwright smoke test: a real signup, idea submission, and build
+      through to the preview screen, confirming the normal (non-cold-start)
+      request path is entirely unaffected by the timing-constant change.
+      Reported the fix directly to שלומי in Hebrew, including the honest
+      caveat that this is a mitigation (giving cold starts a real chance to
+      actually succeed) rather than a cure -- the site will still cold-start
+      on every visit until the round 114 default-branch/keep-alive question
+      is resolved. Full suite green (588 tests, up from 587 --
+      `@forge/web` 227 → 228; `@forge/shared`/`@forge/spec-engine`/
+      `@forge/db`/`@forge/api` unchanged) and both builds clean. Pushed
+      immediately as its own commit rather than waiting for this round's
+      usual feature-plus-docs batching, given the urgency of a live,
+      reported failure.
+
 ## Phase 3
 
 - Self-healing: production observability, automatic diagnosis and patch
