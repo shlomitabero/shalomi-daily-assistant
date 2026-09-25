@@ -11,7 +11,12 @@ import {
   type WhatsAppMessageLogEntry,
   type WhatsAppStatusView,
 } from "./api.js";
-import { downloadWhatsAppLog, formatWhatsAppLog } from "./whatsappLog.js";
+import { downloadWhatsAppLog, filterWhatsAppMessages, formatWhatsAppLog } from "./whatsappLog.js";
+
+// Mirrors HistoryPanel's own threshold for showing its checkpoint search
+// box -- a handful of messages are trivial to scan by eye; a search box
+// above them would just be clutter with nothing real to filter yet.
+const SEARCH_THRESHOLD = 5;
 
 const LOCALE: Record<string, string> = { he: "he-IL", en: "en-US" };
 
@@ -54,6 +59,7 @@ export function WhatsAppPanel({
   const [sending, setSending] = useState(false);
   const [sendResult, setSendResult] = useState<{ ok: boolean; text: string } | null>(null);
   const [messages, setMessages] = useState<WhatsAppMessageLogEntry[]>([]);
+  const [search, setSearch] = useState("");
   const [retryingId, setRetryingId] = useState<string | null>(null);
   const [retryError, setRetryError] = useState<string | null>(null);
   const [clearing, setClearing] = useState(false);
@@ -279,6 +285,7 @@ export function WhatsAppPanel({
   }
 
   const s = status?.status ?? "disconnected";
+  const visibleMessages = filterWhatsAppMessages(messages, search);
 
   return (
     <div className="history-overlay">
@@ -372,11 +379,23 @@ export function WhatsAppPanel({
             )}
           </div>
           {retryError && <p className="error">{retryError}</p>}
+          {messages.length > SEARCH_THRESHOLD && (
+            <input
+              type="text"
+              className="whatsapp-log-search"
+              placeholder={t("whatsapp.log.search.placeholder")}
+              aria-label={t("whatsapp.log.search.placeholder")}
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+            />
+          )}
           {messages.length === 0 ? (
             <p className="muted small">{t("whatsapp.log.empty")}</p>
+          ) : visibleMessages.length === 0 ? (
+            <p className="muted small">{t("whatsapp.log.search.noResults")}</p>
           ) : (
             <ul className="whatsapp-log-list">
-              {messages.map((m) => (
+              {visibleMessages.map((m) => (
                 <li key={m.id} className={m.direction === "in" ? "whatsapp-log-in" : "whatsapp-log-out"}>
                   <span className="whatsapp-log-direction" aria-label={m.direction === "in" ? t("whatsapp.log.incoming") : t("whatsapp.log.outgoing")}>
                     {m.direction === "in" ? "⬇️" : "⬆️"}

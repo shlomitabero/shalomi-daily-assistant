@@ -611,3 +611,89 @@ test("WhatsAppPanel's message log shows a download button only once there are me
     }
   });
 });
+
+/**
+ * New in this round: a WhatsApp conversation only ever grows (no cap, no
+ * delete besides the panel's own "Clear history", which wipes everything).
+ * Mirrors HistoryPanel's own search-box threshold (round 157) -- both a
+ * small log (search box hidden, nothing worth filtering) and a real filter
+ * once there are enough messages to actually need one.
+ */
+test("WhatsAppPanel shows a search box only once the log passes the threshold, filters the real rendered messages, and shows a real 'no results' state", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    const makeMessage = (id: string, body: string): WhatsAppMessageLogEntry => ({
+      id,
+      direction: "in",
+      fromNumber: "972521112233",
+      toNumber: "972501234567",
+      body,
+      matchedLabel: null,
+      matchedEntityName: null,
+      matchedRecordId: null,
+      status: "received",
+      createdAt: new Date().toISOString(),
+    });
+    const sixMessages = [
+      makeMessage("m1", "מתי אתם פתוחים?"),
+      makeMessage("m2", "אשמח להזמין זר ורדים"),
+      makeMessage("m3", "תודה רבה"),
+      makeMessage("m4", "האם יש משלוחים?"),
+      makeMessage("m5", "מה המחיר של זר יומולדת?"),
+      makeMessage("m6", "בסדר, מגיע עוד מעט"),
+    ];
+    globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/integrations/whatsapp/status") {
+        return new Response(
+          JSON.stringify({ status: "connected", phoneNumber: "972501234567", qrDataUrl: null, error: null }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      if (method === "GET" && input === "/api/projects/proj1/integrations/whatsapp/messages") {
+        return new Response(JSON.stringify({ messages: sixMessages }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+
+    try {
+      render(
+        React.createElement(
+          ThemeProvider,
+          null,
+          React.createElement(LanguageProvider, null, React.createElement(WhatsAppPanel, { projectId: "proj1", projectName: "Flower Shop", onClose: () => {}, onJumpToEntity: () => {} })),
+        ),
+      );
+      await waitForCondition(() => document.querySelectorAll(".whatsapp-log-list li").length === 6);
+
+      const searchBox = document.querySelector(".whatsapp-log-search") as HTMLInputElement | null;
+      assert.ok(searchBox, "expected a real search box once the log has more than the threshold of messages");
+
+      fireEvent.change(searchBox!, { target: { value: "ורדים" } });
+      await waitForCondition(() => document.querySelectorAll(".whatsapp-log-list li").length === 1);
+      assert.match(
+        document.querySelector(".whatsapp-log-body")!.textContent ?? "",
+        /ורדים/,
+        "the one remaining row must be the real matching message, not a stale/wrong one",
+      );
+
+      fireEvent.change(searchBox!, { target: { value: "zzz-no-such-message" } });
+      await waitForCondition(() => document.querySelectorAll(".whatsapp-log-list li").length === 0);
+      assert.equal(
+        document.querySelector(".whatsapp-log-list") === null,
+        true,
+        "the message list itself must not render at all once nothing matches",
+      );
+      const noResultsEl = Array.from(document.querySelectorAll("p")).find((p) => p.textContent?.includes("No messages match your search."));
+      assert.ok(noResultsEl, "expected a real 'no results' message, not a silently empty log");
+
+      fireEvent.change(searchBox!, { target: { value: "" } });
+      await waitForCondition(() => document.querySelectorAll(".whatsapp-log-list li").length === 6);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});

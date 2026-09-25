@@ -1535,7 +1535,8 @@ button.sort-header:hover:not(:disabled) {
   gap: 8px;
 }
 
-.history-search {
+.history-search,
+.whatsapp-log-search {
   max-width: 280px;
   margin: 12px 0 0;
 }

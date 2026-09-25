@@ -43,6 +43,25 @@ export function formatWhatsAppLog(
   return lines.join("\n").trimEnd();
 }
 
+/**
+ * Case-insensitive substring match against a message's own body text AND
+ * the same "who" a person actually sees in the log row (matchedLabel, or
+ * the raw phone number when nothing matched) -- mirrors filterCheckpoints'
+ * own convention in checkpointDiff.ts for a long, ever-growing list with no
+ * cap and no delete (a WhatsApp conversation only ever gets longer).
+ * Matching on the displayed "who", not just the body, lets someone find
+ * every message from a specific customer even when their own words don't
+ * happen to repeat a search term.
+ */
+export function filterWhatsAppMessages(messages: WhatsAppMessageLogEntry[], search: string): WhatsAppMessageLogEntry[] {
+  const query = search.trim().toLowerCase();
+  if (!query) return messages;
+  return messages.filter((m) => {
+    const who = m.matchedLabel ?? (m.direction === "in" ? m.fromNumber : m.toNumber);
+    return m.body.toLowerCase().includes(query) || who.toLowerCase().includes(query);
+  });
+}
+
 /** Saves the already-rendered log text as a real downloaded .txt file, the same browser-download mechanics twinReport.ts's downloadTwinReport uses. */
 export function downloadWhatsAppLog(text: string, projectName: string): void {
   const blob = new Blob([text], { type: "text/plain;charset=utf-8" });
