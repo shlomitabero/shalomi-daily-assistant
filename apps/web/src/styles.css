@@ -914,6 +914,15 @@ tbody tr:hover {
   opacity: 0.4;
 }
 
+.calendar-day-clickable {
+  cursor: pointer;
+}
+
+.calendar-day-clickable:hover {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
 .calendar-day-number {
   font-size: 12px;
   font-weight: 600;

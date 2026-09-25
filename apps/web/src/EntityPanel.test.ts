@@ -735,6 +735,63 @@ test("EntityPanel's calendar view opens the clicked record for editing, with the
 });
 
 /**
+ * New in this round: clicking an EMPTY day cell (not a record chip) now
+ * pre-fills the create form's own date field with that day, so adding an
+ * appointment for a specific date doesn't require scrolling up and typing
+ * the date in by hand. Confirms it fills the date field with the real
+ * clicked day (not today's date, not the record's own date) and leaves the
+ * title field genuinely blank (a real new record, not an edit), and that
+ * clicking a record chip still only edits that record without ALSO
+ * triggering the day cell's own click handler underneath it.
+ */
+test("EntityPanel's calendar view pre-fills the create form's date field when an empty day is clicked, without also firing when a record chip is clicked", async () => {
+  await withJsdom(async () => {
+    const today = isoDateToday();
+    const store: EntityRecord[] = [{ id: 1, title: "Dana's appointment", date: today }];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = mockListRecordsFetch(store) as typeof fetch;
+    try {
+      renderAppointmentPanel();
+      await waitForCondition(() => document.querySelector(".entity-toolbar") !== null);
+
+      const calendarToggle = document.querySelectorAll(".view-toggle-btn")[1] as HTMLButtonElement;
+      fireEvent.click(calendarToggle);
+      await waitForCondition(() => document.querySelectorAll(".calendar-record-chip").length === 1);
+
+      // Clicking the record chip must only open that record for editing --
+      // must NOT also trigger the day cell's own onClick underneath it.
+      const chip = document.querySelector(".calendar-record-chip") as HTMLButtonElement;
+      fireEvent.click(chip);
+      await waitForCondition(() => (document.querySelector('.record-form input[type="text"]') as HTMLInputElement)?.value === "Dana's appointment");
+      const titleAfterChipClick = (document.querySelector('.record-form input[type="text"]') as HTMLInputElement).value;
+      assert.equal(titleAfterChipClick, "Dana's appointment", "clicking the chip must still only edit that record");
+
+      // Now click an empty day (a real day cell with no records on it, in
+      // the current month) and confirm the form switches to a genuinely
+      // blank create form pre-filled with THAT day's own date.
+      const emptyDayCells = Array.from(document.querySelectorAll(".calendar-day-clickable")).filter(
+        (el) => el.querySelectorAll(".calendar-record-chip").length === 0,
+      );
+      assert.ok(emptyDayCells.length > 0, "expected at least one clickable empty day cell in the current month");
+      const emptyDay = emptyDayCells[0] as HTMLElement;
+      const clickedDayNumber = emptyDay.querySelector(".calendar-day-number")!.textContent;
+
+      fireEvent.click(emptyDay);
+      await waitForCondition(() => (document.querySelector('.record-form input[type="text"]') as HTMLInputElement)?.value === "");
+
+      const titleInput = document.querySelector('.record-form input[type="text"]') as HTMLInputElement;
+      const dateInput = document.querySelector('.record-form input[type="date"]') as HTMLInputElement;
+      assert.equal(titleInput.value, "", "clicking an empty day must start a genuinely NEW record, not leave the previous edit's title behind");
+      assert.ok(dateInput.value.length > 0, "the date field must be pre-filled, not left blank");
+      const clickedDayFromDate = String(Number(dateInput.value.split("-")[2]));
+      assert.equal(clickedDayFromDate, clickedDayNumber, "the pre-filled date must match the actual day cell that was clicked");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * Real-DOM coverage for the calendar view's new "Today" button: before this
  * round there was no quick way back to the current month once you'd
  * navigated away with prev/next -- you had to click "prev" or "next"

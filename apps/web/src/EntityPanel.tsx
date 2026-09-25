@@ -11,6 +11,7 @@ import {
   calendarChipLabelField,
   findBoardField,
   findDateField,
+  formatDateForInput,
   formatDateValue,
   formatEntityRecordCount,
   formatNumberValue,
@@ -220,6 +221,7 @@ function CalendarView({
   onNextMonth,
   onToday,
   onEdit,
+  onDayClick,
 }: {
   entity: Entity;
   dateField: Field;
@@ -231,6 +233,7 @@ function CalendarView({
   onNextMonth: () => void;
   onToday: () => void;
   onEdit: (record: EntityRecord) => void;
+  onDayClick: (date: Date) => void;
 }) {
   const year = month.getFullYear();
   const monthIndex = month.getMonth();
@@ -269,7 +272,14 @@ function CalendarView({
       </div>
       <div className="calendar-grid calendar-days">
         {days.map((day, i) => (
-          <div key={i} className={day.inCurrentMonth ? "calendar-day" : "calendar-day calendar-day-outside"}>
+          <div
+            key={i}
+            className={
+              day.inCurrentMonth ? "calendar-day calendar-day-clickable" : "calendar-day calendar-day-outside"
+            }
+            onClick={day.inCurrentMonth ? () => onDayClick(day.date) : undefined}
+            title={day.inCurrentMonth ? t("entity.calendar.addOnDay") : undefined}
+          >
             <span className="calendar-day-number">{day.date.getDate()}</span>
             <div className="calendar-day-records">
               {day.records.slice(0, 3).map((record) => (
@@ -277,7 +287,15 @@ function CalendarView({
                   type="button"
                   key={record.id as number}
                   className="calendar-record-chip"
-                  onClick={() => onEdit(record)}
+                  onClick={(e) => {
+                    // Clicking a record edits it -- without stopping the
+                    // click from bubbling, the day cell's own onDayClick
+                    // above would ALSO fire and silently blow away the
+                    // in-progress edit with a fresh empty-record form for
+                    // this same day.
+                    e.stopPropagation();
+                    onEdit(record);
+                  }}
                 >
                   {String(record[labelField.name] ?? "")}
                 </button>
@@ -404,6 +422,7 @@ export function EntityPanel({
   // can recognize itself as superseded and skip overwriting the newer,
   // still-correct records already on screen.
   const refreshRequestId = useRef(0);
+  const formRef = useRef<HTMLFormElement>(null);
   const boardField = useMemo(() => findBoardField(entity.fields), [entity.fields]);
   const dateField = useMemo(() => findDateField(entity.fields), [entity.fields]);
   const relationTargets = useMemo(() => {
@@ -543,6 +562,19 @@ export function EntityPanel({
   function startEdit(record: EntityRecord) {
     setEditingId(record.id as number);
     setForm({ ...record });
+  }
+
+  /**
+   * Clicking an empty calendar day was previously inert -- the only way to
+   * add a record for a specific date was scrolling up to the general
+   * create form and typing the date in by hand. Pre-fills that same form
+   * with the clicked day, so calendar-heavy entities (appointments,
+   * bookings) get the "click a day to add one" a real calendar app has.
+   */
+  function startCreateForDate(date: Date, dateField: Field) {
+    setEditingId(null);
+    setForm({ ...emptyForm(entity), [dateField.name]: formatDateForInput(date) });
+    formRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
   }
 
   async function handleDelete(id: number) {
@@ -746,7 +778,7 @@ export function EntityPanel({
       <EntityLabelEditor entity={entity} projectId={projectId} onRenamed={onEntityRenamed} />
       {entity.description && <p className="muted">{entity.description}</p>}
 
-      <form className="record-form" onSubmit={handleSubmit}>
+      <form className="record-form" ref={formRef} onSubmit={handleSubmit}>
         {entity.fields.map((field) => (
           <label key={field.name} className="field-row">
             <FieldLabelEditor entityName={entity.name} field={field} projectId={projectId} onRenamed={onEntityRenamed} />
@@ -946,6 +978,7 @@ export function EntityPanel({
               onNextMonth={() => setCalendarMonth((m) => new Date(m.getFullYear(), m.getMonth() + 1, 1))}
               onToday={() => setCalendarMonth(new Date())}
               onEdit={startEdit}
+              onDayClick={(date) => startCreateForDate(date, dateField)}
             />
           ) : (
             <div className="table-scroll">

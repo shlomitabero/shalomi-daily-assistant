@@ -631,3 +631,18 @@ export function formatEntityRecordCount(
 ): string {
   return shown === total ? t("entity.recordCount.all", { count: total }) : t("entity.recordCount.filtered", { shown, total });
 }
+
+/**
+ * Reverses a calendar grid cell's own local-midnight Date back into the
+ * plain "YYYY-MM-DD" a date field actually stores -- using LOCAL getters
+ * (getFullYear/getMonth/getDate), matching parseFieldDate's own local
+ * construction above rather than `toISOString()` (UTC), for the exact same
+ * reason that function's own doc comment gives: a UTC-based conversion
+ * silently shifts the date by a day for any viewer behind UTC.
+ */
+export function formatDateForInput(date: Date): string {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}

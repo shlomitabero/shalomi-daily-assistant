@@ -9,6 +9,7 @@ import {
   calendarChipLabelField,
   findBoardField,
   findDateField,
+  formatDateForInput,
   formatDateValue,
   formatEntityRecordCount,
   formatNumberValue,
@@ -704,4 +705,25 @@ test("formatEntityRecordCount renders in Hebrew when given the Hebrew translator
   const t = (key: string, params?: Record<string, string | number>) => translate("he", key, params);
   assert.equal(formatEntityRecordCount(5, 5, t), "5 רשומות");
   assert.equal(formatEntityRecordCount(2, 5, t), "2 מתוך 5 רשומות");
+});
+
+/**
+ * New in this round: clicking a calendar day now pre-fills the create form
+ * with that day's own date. Must round-trip through LOCAL date parts
+ * (matching parseFieldDate's own construction in buildCalendarMonth above),
+ * not `toISOString()` (UTC) -- a UTC-based conversion would silently shift
+ * to the wrong day for a viewer whose local time is behind UTC.
+ */
+test("formatDateForInput renders a local-midnight Date as plain YYYY-MM-DD, zero-padded", () => {
+  assert.equal(formatDateForInput(new Date(2026, 0, 5)), "2026-01-05"); // January (month 0), single-digit day
+  assert.equal(formatDateForInput(new Date(2026, 11, 25)), "2026-12-25"); // December (month 11)
+});
+
+test("formatDateForInput round-trips with the exact grid-cell Date construction buildCalendarMonth itself uses, not a UTC conversion", () => {
+  // Mirrors buildCalendarMonth's own `new Date(year, month, day)` -- if this
+  // used toISOString() instead, a viewer behind UTC would see the date
+  // shift back by one, exactly the bug parseFieldDate's own doc comment
+  // above describes fixing for the read direction.
+  const cell = new Date(2026, 2, 1); // March 1st, local midnight
+  assert.equal(formatDateForInput(cell), "2026-03-01");
 });
