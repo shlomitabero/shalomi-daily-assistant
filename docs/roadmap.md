@@ -7891,6 +7891,54 @@ not a single "make it perfect" claim.
       `@forge/shared`/`@forge/spec-engine`/`@forge/db`/`@forge/api`
       unchanged) and both builds clean.
 
+- [x] **Round 162 — search the WhatsApp message log.** Diversified to the
+      WhatsApp panel, untouched since round 154. A WhatsApp conversation
+      only ever grows -- there's no cap and no delete besides "Clear
+      history", which wipes the whole thing -- so once a log passes 5
+      messages it now shows a real search box that filters by the
+      message's own body OR the displayed sender/recipient (the matched
+      contact name, or the raw phone number when nothing matched).
+      Mirrors Time Machine's own checkpoint search (round 157) for the
+      exact same "grows forever, scrolling is the only way to find one
+      thing" shape. Shows a real "no results" message instead of a
+      silently empty list when a search matches nothing.
+
+      Added `filterWhatsAppMessages` to the existing `whatsappLog.ts`
+      (this feature's domain already had a home file from round 154's
+      download feature, so no new file was needed) -- case-insensitive
+      substring match, same convention as `filterCheckpoints` in
+      `checkpointDiff.ts`. The download/clear actions and the exported log
+      text stay unaffected by an active search filter, since it's a
+      view-only convenience over the same full underlying `messages`
+      array.
+
+      Verified with the deliberate-break-and-restore discipline, twice.
+      For `filterWhatsAppMessages`: dropped the sender/recipient match,
+      keeping only the body-text check (a plausible partial
+      implementation) -- re-ran the unit tests, which failed exactly on
+      the "match a contact name" case; restored and confirmed via `diff`
+      against a pre-break copy that the file matched byte-for-byte. For
+      the `WhatsAppPanel.tsx` wiring: dropped the "no results" branch
+      entirely (falling through to an empty, silent `<ul>`) -- re-ran the
+      DOM tests, which failed cleanly (not a hang, thanks to comparing a
+      boolean rather than a raw DOM node -- see round 161's own note on
+      that exact footgun); restored and confirmed via `diff` that the file
+      matched byte-for-byte. **And** a full Playwright pass against real
+      running dev servers: real signup, a real build, opened the real
+      WhatsApp panel with its connected status/message-list endpoints
+      intercepted at the network layer (a real phone scanning a live QR
+      code isn't simulable in this sandbox -- the same "real component,
+      controlled network layer" technique round 161 used for an injected
+      build failure) -- confirmed 6 real rows rendered, a real search box
+      appeared, typing a real query filtered down to the one genuinely
+      matching row, a query matching nothing showed the real "no results"
+      text, and clearing the search restored every real row. Full suite
+      green (587 tests, up from 582 -- `@forge/web` 222 → 227;
+      `@forge/shared`/`@forge/spec-engine`/`@forge/db`/`@forge/api`
+      unchanged, aside from one confirmed one-off flake on an unrelated
+      `@forge/api` test that passed cleanly on its own re-run) and both
+      builds clean.
+
 ## Phase 3
 
 - Self-healing: production observability, automatic diagnosis and patch
