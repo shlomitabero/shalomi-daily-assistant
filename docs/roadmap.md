@@ -8303,6 +8303,57 @@ not a single "make it perfect" claim.
       regression, since this round touched no `@forge/api` files at all)
       and typecheck clean.
 
+- [x] **Round 171 — each Business Twin stat tile shows its real share of
+      total records.** Diversified to the Business Twin panel, untouched
+      since round 164. Every tile already showed its own raw count, and the
+      panel separately showed a grand total (`twin.totalRecords`, round
+      150), but never how the two relate -- a person had to do the division
+      themselves to know whether "12 Customers" was most of the app's data
+      or a small slice of it. Added a real "N% of records" line to every
+      non-empty tile, omitted for a genuinely empty (0-record) one, where
+      "0% of records" isn't a useful fact to state (matching round 164's
+      own reasoning for why an empty tile gets a distinct visual treatment
+      rather than pretending it's just another data point).
+
+      Added `computeTwinStatPercent` to `BusinessTwinPanel.tsx` itself
+      (already home to `sortTwinStatsByCount`, round 164's own pure
+      function), guarding the same div-by-zero case
+      `BuildProgress.tsx`'s own `computeBuildProgressPercent` (round 169)
+      guards, for the real edge case of a freshly built project with no
+      data seeded yet.
+
+      Verified with the deliberate-break-and-restore discipline, twice.
+      For the math: first tried swapping `Math.round` for `Math.floor`,
+      which turned out to be a **false negative** against this round's own
+      test fixtures (12/16=75% and 4/16=25% are both exact -- floor and
+      round agree, so the test didn't catch it) -- caught the gap by
+      reasoning about the fixture's own numbers rather than trusting the
+      break blindly, and switched to a real break (inverting the division
+      to `totalRecords / count`), which failed exactly on both the unit
+      test and the DOM test as expected; restored and confirmed via `diff`
+      against a pre-break copy that the file matched byte-for-byte. For the
+      wiring: removed the `e.count > 0` half of the tile's own render guard
+      -- this **also surfaced a real pre-existing footgun** in this round's
+      own new "omit the percent for an empty tile" test: it compared a raw
+      DOM node directly to `null` in `assert.equal` (the exact
+      jsdom-node-as-actual hang this session has documented since round
+      161), which risked hanging instead of failing cleanly; fixed to a
+      boolean comparison (`=== null`) before re-running, which then failed
+      cleanly on the broken guard as expected; restored and confirmed via
+      `diff` that the file matched byte-for-byte. **And** a real Playwright
+      pass against real running dev servers: built a real clinic app,
+      added one extra real record through the real form (discovering along
+      the way that this entity's own required fields included a `date`
+      and possibly a `number` input the round-168-era generic-fill helper
+      didn't yet handle -- extended it to cover both), producing a
+      genuinely uneven real split (3 of 5 records = 60%, not a coincidental
+      round number), opened the real Business Twin panel, and confirmed
+      every non-empty tile's displayed percent matched `count/total` math
+      computed independently in the test script itself, not a hardcoded or
+      guessed value. Full suite green (617 tests, up from 613 --
+      `@forge/web` 253 → 257; `@forge/shared`/`@forge/spec-engine`/
+      `@forge/db`/`@forge/api` unchanged) and typecheck clean.
+
 ## Phase 3
 
 - Self-healing: production observability, automatic diagnosis and patch
