@@ -2,15 +2,18 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import { transformSync } from "esbuild";
-import type { AgentStepEvent, Entity, Field, Project } from "@forge/shared";
+import type { AgentStepEvent, Entity, Field, OpenQuestion, Project } from "@forge/shared";
 import {
+  countAnsweredOpenQuestions,
   filterAndSortProjects,
   formatEntityFieldSummary,
+  formatOpenQuestionsProgress,
   formatProjectCreatedDate,
   formatRefineTimestamp,
   specProviderLabel,
   summarizeRefineImpact,
 } from "./App.js";
+import { translate } from "./i18n/language.js";
 
 const t = (key: string) => key;
 
@@ -36,6 +39,44 @@ test("summarizeRefineImpact reads the newEntities/changedEntities detail off the
 test("summarizeRefineImpact returns the no-summary key when no successful Architect event exists", () => {
   const events: AgentStepEvent[] = [{ agent: "Architect", status: "failed", message: "…" }];
   assert.equal(summarizeRefineImpact(events, t), "preview.refineHistory.noSummary");
+});
+
+function question(text: string): OpenQuestion {
+  return { question: text, options: ["Yes", "No"] };
+}
+
+test("countAnsweredOpenQuestions counts a question answered whether the value came from a chip click or the free-text input, since both write the same selectedAnswers slot", () => {
+  const questions = [question("Q1"), question("Q2"), question("Q3")];
+  const result = countAnsweredOpenQuestions(questions, { Q1: "Yes", Q2: "a custom answer" });
+  assert.deepEqual(result, { answered: 2, total: 3 });
+});
+
+test("countAnsweredOpenQuestions treats a blank or whitespace-only value as unanswered", () => {
+  const questions = [question("Q1"), question("Q2")];
+  const result = countAnsweredOpenQuestions(questions, { Q1: "   ", Q2: "" });
+  assert.deepEqual(result, { answered: 0, total: 2 });
+});
+
+test("countAnsweredOpenQuestions returns zero total for a spec with no open questions", () => {
+  assert.deepEqual(countAnsweredOpenQuestions([], {}), { answered: 0, total: 0 });
+});
+
+test("formatOpenQuestionsProgress picks the 'none answered' phrasing when nothing is answered yet", () => {
+  const questions = [question("Q1"), question("Q2")];
+  const tr = (key: string, params?: Record<string, string | number>) => translate("en", key, params);
+  assert.equal(formatOpenQuestionsProgress(questions, {}, tr), "You haven't answered any of the 2 questions yet — that's fine, they're optional");
+});
+
+test("formatOpenQuestionsProgress picks the 'answered N of M' phrasing partway through", () => {
+  const questions = [question("Q1"), question("Q2"), question("Q3")];
+  const tr = (key: string, params?: Record<string, string | number>) => translate("en", key, params);
+  assert.equal(formatOpenQuestionsProgress(questions, { Q1: "Yes" }, tr), "Answered 1 of 3 questions");
+});
+
+test("formatOpenQuestionsProgress picks the 'all answered' phrasing once every question has a value, in Hebrew", () => {
+  const questions = [question("Q1"), question("Q2")];
+  const tr = (key: string, params?: Record<string, string | number>) => translate("he", key, params);
+  assert.equal(formatOpenQuestionsProgress(questions, { Q1: "כן", Q2: "לא" }, tr), "ענית על כל 2 השאלות ✓");
 });
 
 test("summarizeRefineImpact prefers the LAST successful Architect event, not the first, so a Debug Agent recovery's corrected detail wins", () => {

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { AgentStepEvent, Field, Project, User } from "@forge/shared";
+import type { AgentStepEvent, Field, OpenQuestion, Project, User } from "@forge/shared";
 import {
   answerQuestions,
   backupProject,
@@ -120,6 +120,42 @@ export function filterAndSortProjects(projects: Project[], search: string, pinne
  */
 export function formatEntityFieldSummary(fields: Field[]): string {
   return fields.map((f) => `${f.label ?? f.name}${f.required ? " *" : ""}`).join(", ");
+}
+
+/**
+ * How many of the spec's open questions already have an answer -- the chip
+ * buttons and the free-text input both write into the same
+ * selectedAnswers[q.question] slot (see the spec-review view below), so an
+ * answer is just a non-blank value there, regardless of which control set
+ * it. Backs the "answered N of M" progress line, so a person with a long
+ * list of open questions doesn't have to scroll and count for themselves
+ * whether they've addressed everything before clicking build.
+ */
+export function countAnsweredOpenQuestions(
+  openQuestions: OpenQuestion[],
+  selectedAnswers: Record<string, string>,
+): { answered: number; total: number } {
+  const answered = openQuestions.filter((q) => (selectedAnswers[q.question] ?? "").trim().length > 0).length;
+  return { answered, total: openQuestions.length };
+}
+
+/**
+ * Renders countAnsweredOpenQuestions' own result as the actual progress
+ * line -- three distinct phrasings (none/some/all) rather than one
+ * "answered N of M" for every case, since 0-answered isn't just a number
+ * that happens to be zero (it needs the reassurance that answering is
+ * optional) and all-answered is worth a small confirmation, not a plain
+ * fraction that reads as "there's still 3 more to go".
+ */
+export function formatOpenQuestionsProgress(
+  openQuestions: OpenQuestion[],
+  selectedAnswers: Record<string, string>,
+  t: (key: string, params?: Record<string, string | number>) => string,
+): string {
+  const { answered, total } = countAnsweredOpenQuestions(openQuestions, selectedAnswers);
+  if (answered === 0) return t("spec.openQuestions.answeredCount.none", { total });
+  if (answered === total) return t("spec.openQuestions.answeredCount.all", { total });
+  return t("spec.openQuestions.answeredCount.some", { answered, total });
 }
 
 export function summarizeRefineImpact(events: AgentStepEvent[], t: (key: string) => string): string {
@@ -712,6 +748,7 @@ function AppContent() {
           {project.spec.openQuestions.length > 0 && (
             <section>
               <h2>{t("spec.openQuestions.heading")}</h2>
+              <p className="muted small">{formatOpenQuestionsProgress(project.spec.openQuestions, selectedAnswers, t)}</p>
               {project.spec.openQuestions.map((q, i) => (
                 <div key={i} className="open-question">
                   <p>{q.question}</p>
