@@ -8354,6 +8354,48 @@ not a single "make it perfect" claim.
       `@forge/web` 253 → 257; `@forge/shared`/`@forge/spec-engine`/
       `@forge/db`/`@forge/api` unchanged) and typecheck clean.
 
+- [x] **Round 172 — real "N checkpoints" / "N of M" count on Time
+      Machine.** Diversified to Time Machine, untouched since round 165.
+      Its own search box (round 157) only appears once the checkpoint
+      history passes its 5-entry threshold, exactly the point where a
+      person can no longer tell at a glance how many of a project's
+      ever-growing, never-capped build/refine history a search actually
+      narrowed down to -- flagged as a candidate gap in round 170's own
+      trigger notes (the "N of M" count convention had by then closed this
+      exact gap for "Your projects", an entity's own record table, and the
+      WhatsApp log, but Time Machine's own history panel was checked and
+      confirmed to genuinely still be missing it). Added a count line next
+      to the "🕘 Time Machine" heading, reusing the identical
+      two-distinct-phrasings convention.
+
+      Added `formatCheckpointCount` to `checkpointDiff.ts` (this screen's
+      own established utils file, already home to
+      `filterCheckpoints`/`formatCheckpointHistory`/`isCheckpointCurrent`).
+
+      Verified with the deliberate-break-and-restore discipline: swapped
+      the real `shown === total` check for always returning the
+      "filtered" phrasing (the same plausible-shortcut mistake as rounds
+      167 and 170's own breaks) -- re-ran the unit tests, which failed
+      exactly on the "plain total when nothing is filtered out" case;
+      restored and confirmed via `diff` against a pre-break copy that the
+      file matched byte-for-byte. For the wiring: removed the
+      `history-count` class the DOM test keys off -- extended (per round
+      170's own lesson: add assertions into an existing test with a
+      matching fixture rather than duplicating setup) the existing search
+      test with count assertions at both real states, which then failed
+      cleanly on the missing class; restored and confirmed via `diff` that
+      the file matched byte-for-byte. **And** a real Playwright pass
+      against real running dev servers: built a real restaurant app, then
+      ran five real refines each adding a genuinely new entity (round
+      165's own lesson, so the checkpoint history is real and distinct,
+      not coincidentally identical), producing 6 real checkpoints past the
+      search threshold, confirmed the count read "6 checkpoints", searched
+      for a real Hebrew word matching exactly one checkpoint's own label,
+      and confirmed the count read exactly "1 of 6 checkpoints". Full
+      suite green (619 tests, up from 617 -- `@forge/web` 257 → 259;
+      `@forge/shared`/`@forge/spec-engine`/`@forge/db`/`@forge/api`
+      unchanged) and typecheck clean.
+
 ## Phase 3
 
 - Self-healing: production observability, automatic diagnosis and patch
