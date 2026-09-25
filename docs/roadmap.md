@@ -8695,6 +8695,90 @@ not a single "make it perfect" claim.
       `@forge/shared`/`@forge/spec-engine`/`@forge/db`/`@forge/api`
       unchanged) and typecheck clean.
 
+- [x] **Round 178 — Roles and assumptions on the spec review screen can
+      now be removed.** Round 177's own trigger note asked for a genuinely
+      new direction (not jump-to-record, not another sort). Ruled out
+      column resize and export-only-filtered-records first -- the latter
+      turned out to already be correct behavior (CSV export already reads
+      from `visibleRecords`, which already reflects the active search/
+      status filter). Landed on the spec review screen's "roles" chips and
+      "assumptions" list instead: both are plain `string[]` set once by
+      spec generation (AI or heuristic) with zero interaction -- no way to
+      fix a wrong role ("Manager" invented for a one-person app) or a
+      wrong assumption before committing to a build, a genuine gap flagged
+      back in round 152/159.
+
+      Added two DELETE routes to `apps/api/src/routes/projects.ts`:
+      `DELETE /projects/:id/roles/:index` and `DELETE
+      /projects/:id/assumptions/:index`, both following the exact same
+      direct-`updateProjectSpec`-write pattern as the existing entity/field
+      label PATCH routes just above them (no `project.status` check --
+      available before a project is even built, when catching a wrong
+      assumption is most useful). A new `parseListIndex` helper mirrors
+      `parseRecordId`'s own NaN-leak guard for the `:index` URL param.
+      Index-based removal (not a full-array PUT) so a stale client array
+      can never resurrect an item someone else just removed.
+
+      New `apps/web/src/SpecListItemRemover.tsx` exports `RoleChip` and
+      `AssumptionItem`, sharing a `useRemovableSpecItem` hook for the
+      busy/error/remove logic (same request/busy/error shape as
+      `EntityLabelEditor`'s own pattern), differing only in which endpoint
+      to call and which markup wraps them (a chip `<span>` vs. a `<li>`).
+      Wired into `App.tsx`'s spec-review section in place of the old plain
+      `.map()` renders.
+
+      **A real bug caught by the API-level tests, not assumed away**:
+      `ProductSpecSchema` (packages/shared) declares `roles:
+      z.array(z.string()).min(1)` but `assumptions` has no such minimum.
+      My first version of the roles route had no guard against removing
+      the very last role -- the first test run against it genuinely
+      crashed with a raw 500 (an uncaught Zod validation error inside
+      `updateProjectSpec`) instead of the expected 200/400. Fixed by
+      checking `project.spec.roles.length <= 1` before removing and
+      returning a clear 400 VALIDATION_ERROR instead, plus a dedicated
+      test reproducing the exact crash-then-fix. The client mirrors this
+      with a `canRemove` prop that disables the last role's remove button
+      preemptively, so the guard is normally never even hit by real usage.
+
+      Verified with the deliberate-break-and-restore discipline twice:
+      (1) removed the new `roles.length <= 1` guard entirely -- the crash-
+      reproduction test caught it exactly (500 instead of 400); restored,
+      `diff` clean. (2) changed the roles filter's index comparison from
+      `i !== index` to `i !== index + 1` (an off-by-one) -- caught by the
+      "removing index 0 must drop only the first role" test, which showed
+      the wrong role surviving; restored, `diff` clean. (3) on the web
+      side, changed `RoleChip`'s disabled condition from `busy ||
+      !canRemove` to just `busy` -- caught by the new DOM test asserting
+      the last role's remove button is disabled; restored, `diff` clean.
+
+      New API-level HTTP integration tests in `apps/api/src/app.test.ts`
+      (8 total, mirroring the existing entity/field-label test structure):
+      owner-and-collaborator removal with order preserved, out-of-range
+      index 404s with `ROLE_NOT_FOUND`/`ASSUMPTION_NOT_FOUND`, no-access
+      404s, a non-numeric index 404s instead of coercing to NaN, and the
+      dedicated last-role-guard crash-then-fix test. New
+      `apps/web/src/SpecListItemRemover.test.ts` (4 DOM tests) covers a
+      successful removal calling the right endpoint by index, the
+      disabled-button/no-op case, a real removal error surfacing in the
+      UI, and the assumption-side removal.
+
+      **And** a real Playwright pass against real running dev servers:
+      built a CRM app with a description crafted to match multiple
+      `ROLE_RULES` keywords ("...used by a sales manager and a customer
+      portal for self-service") to get 3 real roles (Manager, Customer,
+      Admin) rather than the usual Admin+Member fallback pair, so the
+      last-role guard could be exercised without immediately hitting it.
+      Removed one role chip and one assumption via real clicks, confirmed
+      the visible list shrank by exactly one each time, then fetched the
+      project fresh from the real API (not just reading the DOM) to
+      confirm the removal genuinely persisted server-side. Then removed
+      roles down to the last one and confirmed its remove button was
+      really disabled in the live DOM.
+
+      Full suite green (641 tests, up from 629 -- `@forge/api` 187 → 195;
+      `@forge/web` 269 → 273; `@forge/shared`/`@forge/spec-engine`/
+      `@forge/db` unchanged) and typecheck clean.
+
 ## Phase 3
 
 - Self-healing: production observability, automatic diagnosis and patch
