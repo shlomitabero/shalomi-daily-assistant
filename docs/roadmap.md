@@ -8166,6 +8166,57 @@ not a single "make it perfect" claim.
       `@forge/shared`/`@forge/spec-engine`/`@forge/db`/`@forge/api`
       unchanged) and typecheck clean.
 
+- [x] **Round 168 — a real, sortable "Created" column in the entity
+      live-preview table.** Diversified to the Entity table itself, last
+      touched from a non-calendar angle back in round 155. Every record has
+      always carried a real, server-assigned `createdAt` (repository.ts's
+      insertRecord always stamps `new Date().toISOString()`), but the table
+      never showed it anywhere -- the only way to tell when a record was
+      actually added was to open it and guess, or check the CSV export's
+      raw data. Added a built-in "Created" column (not one of the entity's
+      own spec fields, so it's deliberately left out of the round-138
+      Columns menu -- it can't be hidden) that renders each record's real
+      timestamp, sortable by clicking its header exactly like every other
+      column.
+
+      Added `formatRecordCreatedAt` to `entityFormatting.ts` (this
+      screen's own established utils file), formatting a genuine
+      date+time via plain `toLocaleString` rather than `formatDateValue`'s
+      own YYYY-MM-DD-specific local-midnight construction, since a full
+      ISO timestamp carries a real time-of-day with no calendar-day
+      ambiguity to correct for. The column's own sort reuses the existing
+      `sortField`/`toggleSort`/`sortRecords` machinery unchanged, just
+      pointed at `"createdAt"` instead of a spec field name.
+
+      Verified with the deliberate-break-and-restore discipline, twice.
+      For the formatter: removed its missing/unparseable-value guard (a
+      plausible shortcut that would let "Invalid Date" leak into the UI
+      for a fixture or edge case missing a real timestamp) -- re-ran the
+      unit tests, which failed exactly on the "returns empty string for a
+      missing or unparseable value" case; restored and confirmed via
+      `diff` against a pre-break copy that the file matched byte-for-byte.
+      For the wiring: removed the `created-at-cell` class the DOM test
+      keys off -- re-ran EntityPanel's test suite, which failed cleanly on
+      the new Created-column test; restored and confirmed via `diff` that
+      the file matched byte-for-byte. Also updated three existing
+      `thead th`/`td` count assertions in the pre-existing Columns-menu
+      test (4→5, 3→4 twice) that the new column's own extra `<th>`/`<td>`
+      would otherwise have broken. **And** a real Playwright pass against
+      real running dev servers: built a real Customer-management app,
+      confirmed every seeded row already showed a real non-blank Created
+      value, added two more records through the real form (with a real
+      1.5s pause between them so their genuine timestamps differ
+      unambiguously -- discovering along the way that the enum/relation
+      `<select>`'s own index-0 option is a disabled placeholder, per
+      `FieldInput`'s own `<option value="" disabled>`, so a naive
+      `selectOption({index: 0})` submits blank and fails required-field
+      validation; fixed to index 1), then clicked the real Created header
+      and confirmed the table re-sorted ascending (oldest first) and, on a
+      second click, descending -- by real creation order, not declaration
+      order. Full suite green (607 tests, up from 604 -- `@forge/web`
+      244 → 247; `@forge/shared`/`@forge/spec-engine`/`@forge/db`/
+      `@forge/api` unchanged) and typecheck clean.
+
 ## Phase 3
 
 - Self-healing: production observability, automatic diagnosis and patch
