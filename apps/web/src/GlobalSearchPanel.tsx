@@ -11,17 +11,27 @@ import { useDialogFocusTrap } from "./useDialogFocusTrap.js";
  * Reuses the exact same `matchesSearch` rule as the per-tab search, via
  * `searchEntityRecords`, so results here and results in a tab never
  * disagree about what counts as a match.
+ *
+ * Each result group's own "Jump to" button (onJumpToEntity) only ever
+ * switched to the right entity tab, leaving a person to re-scan the same
+ * table they just searched to find the one row they were actually after --
+ * the exact record they clicked was known the whole time and simply
+ * thrown away. onJumpToRecord makes each individual matched row itself
+ * clickable, carrying its own id through so `EntityPanel` can scroll to
+ * and highlight that specific row once the tab switch lands.
  */
 export function GlobalSearchPanel({
   projectId,
   entities,
   onClose,
   onJumpToEntity,
+  onJumpToRecord,
 }: {
   projectId: string;
   entities: Entity[];
   onClose: () => void;
   onJumpToEntity: (entityName: string) => void;
+  onJumpToRecord: (entityName: string, recordId: number) => void;
 }) {
   const { t } = useTranslation();
   const [query, setQuery] = useState("");
@@ -168,7 +178,13 @@ export function GlobalSearchPanel({
                 <ul className="global-search-hits">
                   {result.sample.map((record) => (
                     <li key={String(record.id)}>
-                      {recordPreview(entities.find((e) => e.name === result.entityName)!, record)}
+                      <button
+                        type="button"
+                        className="link-button global-search-hit-button"
+                        onClick={() => onJumpToRecord(result.entityName, record.id as number)}
+                      >
+                        {recordPreview(entities.find((e) => e.name === result.entityName)!, record)}
+                      </button>
                     </li>
                   ))}
                 </ul>

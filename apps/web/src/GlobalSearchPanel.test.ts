@@ -292,7 +292,10 @@ function mockGlobalSearchFetch() {
   };
 }
 
-function renderGlobalSearchPanel(onJumpToEntity: (entityName: string) => void) {
+function renderGlobalSearchPanel(
+  onJumpToEntity: (entityName: string) => void,
+  onJumpToRecord: (entityName: string, recordId: number) => void = () => {},
+) {
   return render(
     React.createElement(
       ThemeProvider,
@@ -305,6 +308,7 @@ function renderGlobalSearchPanel(onJumpToEntity: (entityName: string) => void) {
           entities: [SEARCH_CUSTOMER_ENTITY, SEARCH_ORDER_ENTITY],
           onClose: () => {},
           onJumpToEntity,
+          onJumpToRecord,
         }),
       ),
     ),
@@ -360,6 +364,57 @@ test("GlobalSearchPanel's arrow keys move the highlighted result group and Enter
         jumps,
         [SEARCH_CUSTOMER_ENTITY.name],
         "Enter must jump to whichever entity's group is currently highlighted",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
+ * New in this round: each individual matched row is now its own clickable
+ * button (onJumpToRecord), not just the group header's "jump to" button
+ * (onJumpToEntity, which only ever switched tabs and threw away which
+ * specific record the user actually clicked). Confirms clicking a matched
+ * row fires onJumpToRecord with that exact record's own entity name and
+ * id -- and that the group header's own "jump to" button still only fires
+ * onJumpToEntity, unchanged, so the two levels of granularity coexist.
+ */
+test("GlobalSearchPanel's individual result rows call onJumpToRecord with that record's own entity name and id", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = mockGlobalSearchFetch() as typeof fetch;
+    const entityJumps: string[] = [];
+    const recordJumps: [string, number][] = [];
+    try {
+      renderGlobalSearchPanel(
+        (entityName) => entityJumps.push(entityName),
+        (entityName, recordId) => recordJumps.push([entityName, recordId]),
+      );
+
+      const input = document.querySelector(".global-search-input") as HTMLInputElement;
+      fireEvent.change(input, { target: { value: "widget" } });
+      const form = document.querySelector("form.global-search-form")!;
+      fireEvent.submit(form);
+      await waitForCondition(() => document.querySelectorAll(".global-search-group").length === 2);
+
+      const hitButtons = document.querySelectorAll(".global-search-hit-button");
+      assert.equal(hitButtons.length, 2, "expected one clickable row per matched record");
+      fireEvent.click(hitButtons[0]);
+
+      assert.deepEqual(
+        recordJumps,
+        [[SEARCH_CUSTOMER_ENTITY.name, 1]],
+        "clicking the Customer row's own hit button must report that record's real entity name and id",
+      );
+      assert.deepEqual(entityJumps, [], "clicking an individual row must not also fire the group-level onJumpToEntity");
+
+      const jumpToButton = document.querySelectorAll(".global-search-group-header button")[0];
+      fireEvent.click(jumpToButton);
+      assert.deepEqual(
+        entityJumps,
+        [SEARCH_CUSTOMER_ENTITY.name],
+        "the group header's own 'jump to' button must still fire onJumpToEntity, unchanged",
       );
     } finally {
       globalThis.fetch = originalFetch;

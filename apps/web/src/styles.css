@@ -662,6 +662,12 @@ tbody tr:hover {
   background: var(--surface);
 }
 
+.record-row-highlighted,
+.record-row-highlighted:hover {
+  background: var(--accent-soft);
+  transition: background 1.5s ease;
+}
+
 .row-actions {
   display: flex;
   gap: 6px;
@@ -1792,6 +1798,13 @@ button.sort-header:hover:not(:disabled) {
   flex-direction: column;
   gap: 6px;
   font-size: 14.5px;
+}
+
+.global-search-hit-button {
+  display: block;
+  width: 100%;
+  text-align: start;
+  white-space: normal;
 }
 
 .whatsapp-panel {

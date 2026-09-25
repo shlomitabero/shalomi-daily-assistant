@@ -390,11 +390,17 @@ export function EntityPanel({
   entity,
   allEntities,
   onEntityRenamed,
+  highlightRecordId,
+  onHighlightHandled,
 }: {
   projectId: string;
   entity: Entity;
   allEntities: Entity[];
   onEntityRenamed: (project: Project) => void;
+  /** A record id to scroll to and highlight once loaded, e.g. after a global-search "jump to record" click. */
+  highlightRecordId?: number | null;
+  /** Called once the incoming highlightRecordId has actually been applied, so the caller can clear it and not re-trigger on the next render. */
+  onHighlightHandled?: () => void;
 }) {
   const { t, lang } = useTranslation();
   const [records, setRecords] = useState<EntityRecord[]>([]);
@@ -417,6 +423,7 @@ export function EntityPanel({
   const [recordToPrint, setRecordToPrint] = useState<EntityRecord | null>(null);
   const [hiddenFields, setHiddenFields] = useState<Set<string>>(() => new Set());
   const [columnsMenuOpen, setColumnsMenuOpen] = useState(false);
+  const [highlightedRecordId, setHighlightedRecordId] = useState<number | null>(null);
   // Bumped once per refresh() call, so a stale refresh whose listRecords
   // round trip just happens to take longer than a newer one's (triggered
   // by an overlapping action, e.g. duplicating two rows back to back)
@@ -424,6 +431,7 @@ export function EntityPanel({
   // still-correct records already on screen.
   const refreshRequestId = useRef(0);
   const formRef = useRef<HTMLFormElement>(null);
+  const tableScrollRef = useRef<HTMLDivElement>(null);
   const boardField = useMemo(() => findBoardField(entity.fields), [entity.fields]);
   const dateField = useMemo(() => findDateField(entity.fields), [entity.fields]);
   const relationTargets = useMemo(() => {
@@ -513,6 +521,35 @@ export function EntityPanel({
     return () => window.removeEventListener("afterprint", clearPrintedRecord);
   }, []);
 
+  /**
+   * Applies an incoming highlightRecordId (see GlobalSearchPanel's own
+   * per-row "jump to record" click) once this entity's records have
+   * actually loaded -- switching to table view and clearing any leftover
+   * search/status filter from a previous visit to this same tab, since
+   * either could otherwise hide the very row this was supposed to reveal.
+   * Reports back via onHighlightHandled so the parent clears its own copy
+   * and a second click on the same record (after this one auto-fades)
+   * can re-trigger it.
+   */
+  useEffect(() => {
+    if (highlightRecordId == null || loading) return;
+    setSearch("");
+    setStatusFilter("");
+    setViewMode("table");
+    setHighlightedRecordId(highlightRecordId);
+    onHighlightHandled?.();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [highlightRecordId, loading]);
+
+  // Auto-fades the highlight a few seconds after it lands, so an old
+  // "jump to record" doesn't stay visually marked forever if the user just
+  // keeps working in this same tab.
+  useEffect(() => {
+    if (highlightedRecordId == null) return;
+    const timer = setTimeout(() => setHighlightedRecordId(null), 4000);
+    return () => clearTimeout(timer);
+  }, [highlightedRecordId]);
+
   function toggleSort(fieldName: string) {
     if (sortField !== fieldName) {
       setSortField(fieldName);
@@ -542,6 +579,17 @@ export function EntityPanel({
       boardField && statusFilter ? matched.filter((r) => String(r[boardField.name] ?? "") === statusFilter) : matched;
     return sortRecords(filtered, sortField, sortDir);
   }, [records, entity.fields, search, statusFilter, boardField, sortField, sortDir]);
+
+  // Scrolls the just-highlighted row into view once it's actually in the
+  // rendered table -- runs after visibleRecords updates (the same render
+  // that picks up the filter-clearing above), not just after
+  // highlightedRecordId changes, since the row doesn't exist in the DOM
+  // until then.
+  useEffect(() => {
+    if (highlightedRecordId == null) return;
+    const row = tableScrollRef.current?.querySelector(`tr[data-record-id="${highlightedRecordId}"]`);
+    row?.scrollIntoView?.({ behavior: "smooth", block: "center" });
+  }, [highlightedRecordId, visibleRecords]);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -982,7 +1030,7 @@ export function EntityPanel({
               onDayClick={(date) => startCreateForDate(date, dateField)}
             />
           ) : (
-            <div className="table-scroll">
+            <div className="table-scroll" ref={tableScrollRef}>
               {selectedIds.size > 0 && (
                 <div className="bulk-actions-bar">
                   <span>{t("entity.bulk.selectedCount", { count: selectedIds.size })}</span>
@@ -1035,7 +1083,11 @@ export function EntityPanel({
                 </thead>
                 <tbody>
                   {visibleRecords.map((record) => (
-                    <tr key={record.id as number}>
+                    <tr
+                      key={record.id as number}
+                      data-record-id={record.id as number}
+                      className={record.id === highlightedRecordId ? "record-row-highlighted" : undefined}
+                    >
                       <td className="select-col">
                         <input
                           type="checkbox"

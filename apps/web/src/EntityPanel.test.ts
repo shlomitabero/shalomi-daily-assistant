@@ -413,23 +413,26 @@ function mockRecordsFetch(store: EntityRecord[]) {
   };
 }
 
-function renderEntityPanel() {
-  return render(
+function buildEntityPanelElement(extraProps: Record<string, unknown> = {}) {
+  return React.createElement(
+    ThemeProvider,
+    null,
     React.createElement(
-      ThemeProvider,
+      LanguageProvider,
       null,
-      React.createElement(
-        LanguageProvider,
-        null,
-        React.createElement(EntityPanel, {
-          projectId: "proj1",
-          entity: DEAL_ENTITY,
-          allEntities: [DEAL_ENTITY],
-          onEntityRenamed: () => {},
-        }),
-      ),
+      React.createElement(EntityPanel, {
+        projectId: "proj1",
+        entity: DEAL_ENTITY,
+        allEntities: [DEAL_ENTITY],
+        onEntityRenamed: () => {},
+        ...extraProps,
+      }),
     ),
   );
+}
+
+function renderEntityPanel(extraProps: Record<string, unknown> = {}) {
+  return render(buildEntityPanelElement(extraProps));
 }
 
 /**
@@ -1296,6 +1299,64 @@ test("EntityPanel's Columns menu hides/shows table columns, guards against hidin
         4,
         "a fresh mount (simulating a page reload) must still see Status hidden -- a real persisted choice, not just in-memory state",
       );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
+ * New in this round: GlobalSearchPanel's per-row "jump to record" click
+ * (see GlobalSearchPanel.test.ts) carries a specific record id down through
+ * App.tsx into a new highlightRecordId prop, so the person lands on the
+ * exact row they searched for instead of having to re-scan the whole table
+ * they just came from. Simulates the real scenario -- this same entity tab
+ * already open, with a leftover search from an earlier visit still narrowing
+ * the table -- by rendering first, typing a search, THEN rerendering with a
+ * real highlightRecordId (exactly what happens when App.tsx passes a new
+ * prop into an EntityPanel that was already mounted, since jumping to a
+ * record on the tab you're already viewing doesn't remount it). Confirms
+ * the leftover search gets cleared (it would otherwise hide the very row
+ * this was supposed to reveal), the real target row gets highlighted, and
+ * onHighlightHandled fires so the caller can clear its own copy.
+ */
+test("EntityPanel highlights the record named by highlightRecordId once loaded, clearing any leftover search filter that would hide it", async () => {
+  await withJsdom(async () => {
+    const store: EntityRecord[] = [
+      { id: 1, name: "Acme Corp", status: "new" },
+      { id: 2, name: "Globex", status: "won" },
+      { id: 3, name: "Initech", status: "lost" },
+    ];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = mockRecordsFetch(store) as typeof fetch;
+    let handledCount = 0;
+    const onHighlightHandled = () => {
+      handledCount++;
+    };
+    try {
+      const view = render(buildEntityPanelElement({ onHighlightHandled }));
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 3);
+
+      const searchBox = document.querySelector(".entity-search") as HTMLInputElement;
+      fireEvent.change(searchBox, { target: { value: "Initech" } });
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 1);
+
+      // Jumping to Globex's own record (id 2) while this same tab is still
+      // narrowed to "Initech" -- Globex isn't even in the filtered set yet.
+      view.rerender(buildEntityPanelElement({ highlightRecordId: 2, onHighlightHandled }));
+
+      await waitForCondition(() => handledCount === 1);
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 3);
+      assert.equal(searchBox.value, "", "the leftover search must be cleared so the highlighted row is actually visible");
+
+      const highlighted = document.querySelectorAll(".record-row-highlighted");
+      assert.equal(highlighted.length, 1, "exactly one row must be highlighted");
+      assert.equal(
+        (highlighted[0] as HTMLElement).getAttribute("data-record-id"),
+        "2",
+        "the highlighted row must be the real record named by highlightRecordId, not just the first one",
+      );
+      assert.match(highlighted[0].textContent ?? "", /Globex/);
     } finally {
       globalThis.fetch = originalFetch;
     }

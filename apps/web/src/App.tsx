@@ -268,6 +268,7 @@ function AppContent() {
   const [refineHistory, setRefineHistory] = useState<RefineHistoryEntry[]>([]);
   const [refineHistorySearch, setRefineHistorySearch] = useState("");
   const [refineRunning, setRefineRunning] = useState(false);
+  const [highlightRecordId, setHighlightRecordId] = useState<number | null>(null);
   const pendingRefineInstruction = useRef<string | null>(null);
   const refineEvents = useRef<AgentStepEvent[]>([]);
 
@@ -977,6 +978,8 @@ function AppContent() {
                     entity={entity}
                     allEntities={project.spec.entities}
                     onEntityRenamed={setProject}
+                    highlightRecordId={highlightRecordId}
+                    onHighlightHandled={() => setHighlightRecordId(null)}
                   />
                 ))}
             </div>
@@ -1035,6 +1038,11 @@ function AppContent() {
               onClose={() => setShowSearch(false)}
               onJumpToEntity={(entityName) => {
                 setActiveEntity(entityName);
+                setShowSearch(false);
+              }}
+              onJumpToRecord={(entityName, recordId) => {
+                setActiveEntity(entityName);
+                setHighlightRecordId(recordId);
                 setShowSearch(false);
               }}
             />
