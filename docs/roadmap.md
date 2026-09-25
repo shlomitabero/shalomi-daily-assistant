@@ -8261,6 +8261,48 @@ not a single "make it perfect" claim.
       `@forge/web` 247 → 251; `@forge/shared`/`@forge/spec-engine`/
       `@forge/db`/`@forge/api` unchanged) and typecheck clean.
 
+- [x] **Round 170 — real "N messages" / "N of M" count on the WhatsApp
+      log.** Diversified to the WhatsApp panel, untouched since round 162.
+      The message log's own search box (round 162) only appears once the
+      log passes `SEARCH_THRESHOLD`, exactly the point where a person can
+      no longer tell at a glance how many of a long, never-capped
+      conversation history a search actually narrowed down to -- the same
+      gap "Your projects" (round 167) and an entity's own record table
+      (round 155) already had, and closed the same way. Added a count line
+      next to the "Recent Messages" heading, reusing the identical
+      two-distinct-phrasings convention.
+
+      Added `formatWhatsAppMessageCount` to `whatsappLog.ts` (this
+      screen's own established utils file, already home to
+      `formatWhatsAppLog`/`filterWhatsAppMessages`/`downloadWhatsAppLog`).
+
+      Verified with the deliberate-break-and-restore discipline: swapped
+      the real `shown === total` check for always returning the "filtered"
+      phrasing (the same plausible-shortcut mistake as round 167's own
+      break) -- re-ran the unit tests, which failed exactly on the "plain
+      total when nothing is filtered out" case; restored and confirmed via
+      `diff` against a pre-break copy that the file matched byte-for-byte.
+      For the wiring: removed the `whatsapp-log-count` class the DOM test
+      keys off -- re-ran WhatsAppPanel's own search test (extended in this
+      round with count assertions at all three real states: unfiltered,
+      narrowed-to-one, and narrowed-to-zero), which failed cleanly;
+      restored and confirmed via `diff` that the file matched byte-for-
+      byte. **And** a real Playwright pass against real running dev
+      servers: built a real flower-shop app, intercepted the real
+      status/messages endpoints (`page.route`, the same technique used
+      since round 156 -- a real phone/QR scan can't be driven from this
+      sandbox) with a genuinely connected status and 6 real messages,
+      confirmed the count read "6 messages", searched for a real Hebrew
+      word matching exactly one message, and confirmed the count read
+      exactly "1 of 6 messages" -- proving a real narrowed match. Full
+      suite green (613 tests, up from 611 -- `@forge/web` 251 → 253;
+      `@forge/shared`/`@forge/spec-engine`/`@forge/db`/`@forge/api`
+      unchanged; one `@forge/api` test failed on the first run for an
+      unrelated codegen-export reason and passed cleanly on a solo re-run,
+      confirmed as the known one-off-flake pattern rather than a
+      regression, since this round touched no `@forge/api` files at all)
+      and typecheck clean.
+
 ## Phase 3
 
 - Self-healing: production observability, automatic diagnosis and patch
