@@ -1,7 +1,13 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { Checkpoint, ProductSpec } from "@forge/shared";
-import { computeCheckpointDiff, filterCheckpoints, formatCheckpointHistory, isCheckpointCurrent } from "./checkpointDiff.js";
+import {
+  computeCheckpointDiff,
+  filterCheckpoints,
+  formatCheckpointCount,
+  formatCheckpointHistory,
+  isCheckpointCurrent,
+} from "./checkpointDiff.js";
 import { translate } from "./i18n/language.js";
 
 function makeSpec(entities: ProductSpec["entities"]): ProductSpec {
@@ -169,6 +175,16 @@ test("filterCheckpoints returns every checkpoint unchanged when the search is bl
 test("filterCheckpoints returns an empty list when nothing matches, instead of falling back to everything", () => {
   const checkpoints = [makeCheckpoint("Initial build"), makeCheckpoint("Refine: add invoice tracking")];
   assert.deepEqual(filterCheckpoints(checkpoints, "zzz-no-such-checkpoint"), []);
+});
+
+test("formatCheckpointCount reports a plain total when the search hasn't narrowed anything out", () => {
+  const tr = (key: string, params?: Record<string, string | number>) => translate("en", key, params);
+  assert.equal(formatCheckpointCount(7, 7, tr), "7 checkpoints");
+});
+
+test("formatCheckpointCount reports 'shown of total' once a search has narrowed the history, in Hebrew", () => {
+  const tr = (key: string, params?: Record<string, string | number>) => translate("he", key, params);
+  assert.equal(formatCheckpointCount(1, 6, tr), "1 מתוך 6 נקודות שמירה");
 });
 
 /**

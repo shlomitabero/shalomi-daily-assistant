@@ -92,6 +92,29 @@ export function filterCheckpoints(checkpoints: Checkpoint[], search: string): Ch
 }
 
 /**
+ * How many of the checkpoint list's entries are currently showing versus
+ * how many exist in total -- the same two-distinct-phrasings convention
+ * formatEntityRecordCount (entityFormatting.ts, round 155),
+ * formatMyProjectsCount (App.tsx, round 167), and
+ * formatWhatsAppMessageCount (whatsappLog.ts, round 170) already
+ * established elsewhere in this app, applied here to this panel's own
+ * search box (round 157): the search only even appears past
+ * HistoryPanel's own 5-checkpoint threshold, exactly the point where a
+ * person can no longer tell at a glance how many of a project's
+ * ever-growing, never-capped build/refine history a search actually
+ * matched.
+ */
+export function formatCheckpointCount(
+  shown: number,
+  total: number,
+  t: (key: string, params?: Record<string, string | number>) => string,
+): string {
+  return shown === total
+    ? t("history.count.all", { count: total })
+    : t("history.count.filtered", { shown, total });
+}
+
+/**
  * Renders the checkpoint list (already fetched into the panel -- no extra
  * network round-trip) as a plain, shareable text snapshot -- same "plain
  * UTF-8 text, not a PDF" reasoning as twinReport.ts's own doc comment

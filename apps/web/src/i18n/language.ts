@@ -293,6 +293,8 @@ export const translations: Record<Lang, Record<string, string>> = {
     "entity.bulk.duplicatePartialFailure": "{failed} מתוך {total} רשומות לא שוכפלו.",
     "entity.confirmDelete": "למחוק את \"{label}\"? לא ניתן לשחזר את הפעולה.",
     "history.title": "🕘 ציר זמן",
+    "history.count.all": "{count} נקודות שמירה",
+    "history.count.filtered": "{shown} מתוך {total} נקודות שמירה",
     "history.close": "סגירה",
     "history.description": "כל בנייה או שיפור נשמר כאן כנקודת שחזור. חוזרים אחורה בלי לאבד מידע — אף פעולה כאן לא מוחקת נתונים קיימים.",
     "history.empty": "אין עדיין נקודות שמורות.",
@@ -606,6 +608,8 @@ export const translations: Record<Lang, Record<string, string>> = {
     "entity.bulk.duplicatePartialFailure": "{failed} of {total} records could not be duplicated.",
     "entity.confirmDelete": "Delete \"{label}\"? This can't be undone.",
     "history.title": "🕘 Time Machine",
+    "history.count.all": "{count} checkpoints",
+    "history.count.filtered": "{shown} of {total} checkpoints",
     "history.close": "Close",
     "history.description":
       "Every build or improvement is saved here as a restore point. Go back without losing data — nothing here deletes existing data.",

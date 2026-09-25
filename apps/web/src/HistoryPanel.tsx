@@ -1,7 +1,14 @@
 import { useEffect, useState } from "react";
 import type { Checkpoint, Project, ProductSpec } from "@forge/shared";
 import { listCheckpoints, restoreCheckpoint } from "./api.js";
-import { computeCheckpointDiff, downloadCheckpointHistory, filterCheckpoints, formatCheckpointHistory, isCheckpointCurrent } from "./checkpointDiff.js";
+import {
+  computeCheckpointDiff,
+  downloadCheckpointHistory,
+  filterCheckpoints,
+  formatCheckpointCount,
+  formatCheckpointHistory,
+  isCheckpointCurrent,
+} from "./checkpointDiff.js";
 import { useTranslation } from "./i18n/LanguageContext.js";
 import { useDialogFocusTrap } from "./useDialogFocusTrap.js";
 
@@ -57,7 +64,15 @@ export function HistoryPanel({
     <div className="history-overlay">
       <div className="history-panel" ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby="history-panel-title">
         <div className="history-header">
-          <h2 id="history-panel-title">{t("history.title")}</h2>
+          <h2 id="history-panel-title">
+            {t("history.title")}
+            {checkpoints.length > 0 && (
+              <span className="muted small history-count">
+                {" "}
+                — {formatCheckpointCount(visibleCheckpoints.length, checkpoints.length, t)}
+              </span>
+            )}
+          </h2>
           <div className="history-header-actions">
             {checkpoints.length > 0 && (
               <button type="button" className="secondary" onClick={handleDownload}>

@@ -476,6 +476,11 @@ test("HistoryPanel's search box (shown once there are more than 5 checkpoints) n
         ),
       );
       await waitForCondition(() => document.querySelectorAll(".checkpoint-list li").length === 6);
+      assert.equal(
+        document.querySelector(".history-count")!.textContent,
+        " — 6 checkpoints",
+        "unfiltered must read as a plain count, not '6 of 6 checkpoints'",
+      );
 
       const searchBox = document.querySelector(".history-search") as HTMLInputElement;
       assert.ok(searchBox, "expected a search box once there are more than 5 checkpoints");
@@ -487,6 +492,11 @@ test("HistoryPanel's search box (shown once there are more than 5 checkpoints) n
         narrowedLabels.sort(),
         ["Refine: add invoice tracking", "Refine: fix invoice totals"].sort(),
         "must show exactly the checkpoints whose real label contains the search text, and no others",
+      );
+      assert.equal(
+        document.querySelector(".history-count")!.textContent,
+        " — 2 of 6 checkpoints",
+        "once the search narrows the history, the count must show shown-of-total",
       );
 
       fireEvent.change(searchBox, { target: { value: "" } });
