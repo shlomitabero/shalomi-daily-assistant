@@ -7829,6 +7829,68 @@ not a single "make it perfect" claim.
       `@forge/spec-engine`/`@forge/db`/`@forge/api` unchanged) and both
       builds clean.
 
+- [x] **Round 161 — "Download build summary" for a failed AI Team build,
+      and a real reachability bug caught before it shipped.** Diversified
+      to the AI Team build screen, untouched since round 153. Started with
+      a broader plan (a download button whenever a build finishes, success
+      or failure -- matching the existing "download as text" convention
+      from Business Twin and WhatsApp) and implemented it that way first.
+
+      A real Playwright run against the live dev server -- not just this
+      round's own jsdom unit tests, which used a no-op `onComplete` and so
+      couldn't see the problem -- caught something the original plan
+      missed entirely: for a SUCCESSFUL build, BuildProgress's own
+      `finished` state is never actually reachable on screen at all. The
+      same `useEffect` that sets `finished` also calls `onComplete` in the
+      same tick, and `App.tsx`'s `handleBuildComplete` immediately swaps
+      the view to "preview" -- so a real browser never gets the chance to
+      paint (let alone let a person or script click) anything in the
+      finished state before it's gone. Ninety real seconds of polling a
+      live successful build never once saw the button. A FAILED build,
+      by contrast, genuinely stays on screen indefinitely (`onComplete`
+      only ever fires on a Forge success), so that's the one place this
+      feature is real rather than decorative dead code that would never
+      once be seen by a real user.
+
+      Narrowed the scope accordingly: the button now shows only next to
+      the failure banner, giving someone a real, plain-text record of
+      what each of the seven AI Team agents actually reported (status +
+      message per agent, plus total elapsed time) -- genuinely useful to
+      paste when asking for help with a build that broke. Added
+      `formatBuildSummary`/`downloadBuildSummary` as BuildProgress.tsx's
+      own exported pure functions, matching the file's existing
+      `formatElapsedTime` convention (no separate util file needed, same
+      as `App.tsx` keeping its own pure functions).
+
+      Verified with the deliberate-break-and-restore discipline, twice.
+      For `formatBuildSummary`: dropped the never-ran-Debug filter (a
+      plausible regression, since a similarly-named filter already exists
+      in this same file's own render logic) -- re-ran the unit tests,
+      which failed exactly on the "Debug never ran" case; restored and
+      confirmed via `diff` against a pre-break copy that the file matched
+      byte-for-byte. For the wiring: changed the button's guard from
+      `failedStep` to the broader `finished` (recreating the exact
+      unreachability bug the real Playwright run had just caught) --
+      re-ran the DOM tests, which failed on BOTH the new "must not show
+      on success" test AND a pre-existing, unrelated test asserting the
+      failure banner doesn't show for a recovered build (confirming the
+      blast radius of that mistake is real, not just theoretical);
+      restored and confirmed via `diff` that the file matched
+      byte-for-byte. **And** a full Playwright pass against real running
+      dev servers: real signup, a real build request intercepted at the
+      network layer to a realistic injected failure (the same
+      "real component, controlled network layer" technique this codebase
+      already uses for other hard-to-trigger states, e.g. round 156's
+      WhatsApp Retry-button test) -- confirmed the real failure banner
+      appeared and genuinely stayed on screen, found and clicked the real
+      "Download build summary" button, and verified the real downloaded
+      file byte-for-byte: the correct Hebrew project-name-derived
+      filename, the real per-agent statuses and messages (including the
+      injected failure text), and a real formatted duration line. Full
+      suite green (582 tests, up from 577 -- `@forge/web` 217 → 222;
+      `@forge/shared`/`@forge/spec-engine`/`@forge/db`/`@forge/api`
+      unchanged) and both builds clean.
+
 ## Phase 3
 
 - Self-healing: production observability, automatic diagnosis and patch
