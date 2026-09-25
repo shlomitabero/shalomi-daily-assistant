@@ -93,6 +93,25 @@ export function formatDateValue(value: string, lang: Lang): string {
   return date.toLocaleDateString(LOCALE[lang]);
 }
 
+/**
+ * Formats a record's own `createdAt` (a real server-assigned ISO
+ * timestamp -- see repository.ts's insertRecord, which always stamps
+ * `new Date().toISOString()`) for display. Unlike formatDateValue above,
+ * this is a genuine date+time, not a date-only field, so it goes through
+ * plain `new Date(value)`/`toLocaleString` rather than parseFieldDate's
+ * own YYYY-MM-DD-specific local-midnight construction -- there's no
+ * calendar-day ambiguity to correct for here, since a full timestamp
+ * already carries a real time-of-day. Every record the real app ever
+ * fetches has this value, but a hand-built test fixture may omit it, so
+ * a missing or unparseable value returns "" rather than "Invalid Date".
+ */
+export function formatRecordCreatedAt(createdAt: string | undefined, lang: Lang): string {
+  if (!createdAt) return "";
+  const date = new Date(createdAt);
+  if (Number.isNaN(date.getTime())) return "";
+  return date.toLocaleString(LOCALE[lang]);
+}
+
 /** Adds locale-appropriate thousands separators to a numeric value. */
 export function formatNumberValue(value: number, lang: Lang): string {
   return value.toLocaleString(LOCALE[lang]);

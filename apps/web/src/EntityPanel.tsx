@@ -15,6 +15,7 @@ import {
   formatDateValue,
   formatEntityRecordCount,
   formatNumberValue,
+  formatRecordCreatedAt,
   groupByField,
   isSameMonth,
   LOCALE,
@@ -1023,6 +1024,12 @@ export function EntityPanel({
                         </button>
                       </th>
                     ))}
+                    <th aria-sort={sortField === "createdAt" ? (sortDir === "asc" ? "ascending" : "descending") : "none"}>
+                      <button type="button" className="sort-header" onClick={() => toggleSort("createdAt")}>
+                        {t("entity.table.createdAt")}
+                        {sortField === "createdAt" ? (sortDir === "asc" ? " ▲" : " ▼") : ""}
+                      </button>
+                    </th>
                     <th />
                   </tr>
                 </thead>
@@ -1052,6 +1059,9 @@ export function EntityPanel({
                           />
                         </td>
                       ))}
+                      <td className="muted small created-at-cell">
+                        {formatRecordCreatedAt(record.createdAt as string | undefined, lang)}
+                      </td>
                       <td className="row-actions">
                         <button type="button" onClick={() => startEdit(record)}>
                           {t("entity.edit")}

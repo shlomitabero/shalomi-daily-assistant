@@ -13,6 +13,7 @@ import {
   formatDateValue,
   formatEntityRecordCount,
   formatNumberValue,
+  formatRecordCreatedAt,
   groupByField,
   isSameMonth,
   matchesSearch,
@@ -76,6 +77,21 @@ test("formatDateValue shows the correct calendar day even for a viewer in a time
   } finally {
     process.env.TZ = originalTz;
   }
+});
+
+test("formatRecordCreatedAt formats a real ISO timestamp per locale, including the time of day (unlike formatDateValue's date-only formatting)", () => {
+  const result = formatRecordCreatedAt("2026-03-15T14:30:00.000Z", "en");
+  assert.notEqual(result, "", "a real timestamp must never format to an empty string");
+  // Exact hour is locale/timezone-dependent, but a genuine time-of-day
+  // component distinguishes this from formatDateValue's calendar-day-only
+  // output -- confirm it isn't JUST a date.
+  assert.notEqual(result, formatDateValue("2026-03-15", "en"));
+});
+
+test("formatRecordCreatedAt returns an empty string for a missing or unparseable value, instead of 'Invalid Date' or throwing", () => {
+  assert.equal(formatRecordCreatedAt(undefined, "en"), "");
+  assert.equal(formatRecordCreatedAt("not-a-timestamp", "en"), "");
+  assert.equal(formatRecordCreatedAt("", "en"), "");
 });
 
 test("formatNumberValue adds thousands separators", () => {

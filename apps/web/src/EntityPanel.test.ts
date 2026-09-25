@@ -554,6 +554,65 @@ test("EntityPanel's toolbar shows a live 'shown of total' record count that upda
 });
 
 /**
+ * New in this round: every record has always carried a real, server-
+ * assigned `createdAt` (repository.ts's insertRecord always stamps one),
+ * but the table never showed it anywhere. Confirms the built-in "Created"
+ * column renders each record's own real timestamp (not blank, not the
+ * same value for every row), and that clicking its header genuinely
+ * re-sorts the table by that real data -- the same sortRecords/toggleSort
+ * machinery the entity's own field columns already use, just pointed at
+ * "createdAt" instead of a spec field.
+ */
+test("EntityPanel's table view shows each record's own real 'Created' timestamp, and its header sorts the table by it", async () => {
+  await withJsdom(async () => {
+    const store: EntityRecord[] = [
+      { id: 1, name: "Acme Corp", status: "new", createdAt: "2026-01-01T09:00:00.000Z" },
+      { id: 2, name: "Globex", status: "won", createdAt: "2026-03-01T09:00:00.000Z" },
+      { id: 3, name: "Initech", status: "lost", createdAt: "2026-02-01T09:00:00.000Z" },
+    ];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = mockRecordsFetch(store) as typeof fetch;
+    try {
+      renderEntityPanel();
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 3);
+
+      const createdCells = Array.from(document.querySelectorAll("table tbody tr")).map(
+        (row) => row.querySelector(".created-at-cell")!.textContent,
+      );
+      assert.ok(
+        createdCells.every((c) => c && c.length > 0),
+        "every row must show a real, non-blank Created value",
+      );
+      assert.equal(new Set(createdCells).size, 3, "each row's real distinct createdAt must render as a distinct value");
+
+      const createdHeader = Array.from(document.querySelectorAll("thead th button.sort-header")).find((el) =>
+        /Created/.test(el.textContent ?? ""),
+      ) as HTMLButtonElement;
+      assert.ok(createdHeader, "expected a sortable 'Created' column header");
+      fireEvent.click(createdHeader);
+
+      await waitForCondition(() => {
+        const names = Array.from(document.querySelectorAll("table tbody tr")).map((r) => r.textContent ?? "");
+        return /Acme Corp/.test(names[0]) && /Initech/.test(names[1]) && /Globex/.test(names[2]);
+      });
+      const namesAfterAscSort = Array.from(document.querySelectorAll("table tbody tr")).map((r) => r.textContent ?? "");
+      assert.ok(
+        /Acme Corp/.test(namesAfterAscSort[0]) && /Initech/.test(namesAfterAscSort[1]) && /Globex/.test(namesAfterAscSort[2]),
+        "ascending Created sort must order Acme (Jan) before Initech (Feb) before Globex (Mar), by real createdAt, not declaration order",
+      );
+
+      fireEvent.click(createdHeader);
+      await waitForCondition(() => {
+        const names = Array.from(document.querySelectorAll("table tbody tr")).map((r) => r.textContent ?? "");
+        return /Globex/.test(names[0]) && /Initech/.test(names[1]) && /Acme Corp/.test(names[2]);
+      });
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * Confirms the board view's move-between-columns interaction is wired
  * correctly end to end: changing a card's own status <select> calls
  * handleMove -> updateRecord (a real PATCH against the mock store) ->
@@ -1190,7 +1249,7 @@ test("EntityPanel's Columns menu hides/shows table columns, guards against hidin
       renderEntityPanel();
       await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 2);
 
-      assert.equal(document.querySelectorAll("thead th").length, 4, "expected select-col + Name + Status + the trailing actions column to start");
+      assert.equal(document.querySelectorAll("thead th").length, 5, "expected select-col + Name + Status + the built-in Created column + the trailing actions column to start");
 
       const columnsBtn = document.querySelector(".columns-menu-btn") as HTMLButtonElement;
       assert.ok(columnsBtn, "expected a Columns menu button in the toolbar");
@@ -1208,14 +1267,14 @@ test("EntityPanel's Columns menu hides/shows table columns, guards against hidin
       )!.querySelector("input") as HTMLInputElement;
       fireEvent.click(statusCheckbox);
 
-      await waitForCondition(() => document.querySelectorAll("thead th").length === 3);
+      await waitForCondition(() => document.querySelectorAll("thead th").length === 4);
       assert.doesNotMatch(
         document.querySelector("thead")!.textContent ?? "",
         /Status/,
         "the Status header must actually be gone from the real table, not just visually hidden",
       );
       for (const row of document.querySelectorAll("table tbody tr")) {
-        assert.equal(row.querySelectorAll("td").length, 3, "each row must have dropped its Status cell too (select-col + Name + actions)");
+        assert.equal(row.querySelectorAll("td").length, 4, "each row must have dropped its Status cell too (select-col + Name + Created + actions)");
       }
 
       const nameCheckbox = Array.from(document.querySelectorAll(".columns-menu-item")).find((el) =>
@@ -1225,7 +1284,7 @@ test("EntityPanel's Columns menu hides/shows table columns, guards against hidin
       await new Promise((resolve) => setTimeout(resolve, 0));
       assert.equal(
         document.querySelectorAll("thead th").length,
-        3,
+        4,
         "unchecking the LAST visible column must be a no-op -- the table must never end up with zero data columns",
       );
 
@@ -1234,7 +1293,7 @@ test("EntityPanel's Columns menu hides/shows table columns, guards against hidin
       await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 2);
       assert.equal(
         document.querySelectorAll("thead th").length,
-        3,
+        4,
         "a fresh mount (simulating a page reload) must still see Status hidden -- a real persisted choice, not just in-memory state",
       );
     } finally {
