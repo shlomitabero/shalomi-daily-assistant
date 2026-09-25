@@ -23,6 +23,7 @@ import {
   recordsToCsv,
   searchEntityRecords,
   sortRecords,
+  sortRecordsMulti,
 } from "./entityFormatting.js";
 
 test("badgeTone recognizes common positive and negative status words, case-insensitively", () => {
@@ -156,6 +157,58 @@ test("sortRecords places null/undefined values first regardless of direction", (
   const records = [{ v: 5 }, { v: null }, { v: 2 }];
   const asc = sortRecords(records as never, "v", "asc");
   assert.equal(asc[0].v, null);
+});
+
+/**
+ * New in this round: the table's own sort was always single-column --
+ * clicking a second header threw away whatever the first one had already
+ * sorted by. sortRecordsMulti is the pure function behind a real
+ * secondary sort (shift+click a second header adds it as a tiebreaker,
+ * see EntityPanel.tsx's own toggleSort). Uses a fixture with real,
+ * genuine ties on the primary key (two "won" deals, two "lost" deals) so
+ * the secondary key's own effect is unambiguous -- a fixture where every
+ * primary value happened to be unique would prove nothing about the
+ * secondary key at all.
+ */
+test("sortRecordsMulti breaks ties on the primary key using the secondary key, in the secondary key's own direction", () => {
+  const records = [
+    { id: 1, status: "won", amount: 30 },
+    { id: 2, status: "lost", amount: 10 },
+    { id: 3, status: "won", amount: 10 },
+    { id: 4, status: "lost", amount: 20 },
+  ];
+  const sorted = sortRecordsMulti(records, [
+    { field: "status", direction: "asc" },
+    { field: "amount", direction: "desc" },
+  ]);
+  assert.deepEqual(
+    sorted.map((r) => r.id),
+    [4, 2, 1, 3],
+    "primary asc groups lost(10,20) before won(30,10); secondary desc orders each group's own amounts high-to-low",
+  );
+});
+
+test("sortRecordsMulti applies each key's own direction independently -- reversing the whole result would also wrongly flip the tie-break order", () => {
+  const records = [
+    { id: 1, status: "won", amount: 30 },
+    { id: 2, status: "lost", amount: 10 },
+    { id: 3, status: "won", amount: 10 },
+    { id: 4, status: "lost", amount: 20 },
+  ];
+  const sorted = sortRecordsMulti(records, [
+    { field: "status", direction: "desc" },
+    { field: "amount", direction: "asc" },
+  ]);
+  assert.deepEqual(
+    sorted.map((r) => r.id),
+    [3, 1, 2, 4],
+    "primary desc groups won(10,30) before lost(10,20); secondary asc (independent of the primary's own direction) still orders each group low-to-high",
+  );
+});
+
+test("sortRecordsMulti returns records unchanged (same reference) when given no sort keys", () => {
+  const records = [{ id: 1 }, { id: 2 }];
+  assert.equal(sortRecordsMulti(records, []), records);
 });
 
 test("findBoardField prefers a field literally named status/stage over other enum fields", () => {

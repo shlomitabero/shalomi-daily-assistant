@@ -999,6 +999,26 @@ button.sort-header:hover:not(:disabled) {
   box-shadow: none;
 }
 
+.sort-priority {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 15px;
+  height: 15px;
+  margin-inline-start: 3px;
+  padding: 0 3px;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--accent-deep);
+  font-size: 10px;
+  font-weight: 700;
+  vertical-align: middle;
+}
+
+.sort-hint {
+  margin: 0 0 8px;
+}
+
 .badge {
   display: inline-block;
   padding: 3px 11px;

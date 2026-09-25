@@ -180,6 +180,32 @@ export function sortRecords(records: EntityRecord[], sortField: string | null, d
   return direction === "desc" ? sorted.reverse() : sorted;
 }
 
+export interface SortKey {
+  field: string;
+  direction: SortDirection;
+}
+
+/**
+ * Sorts a copy of `records` by several fields in priority order -- each
+ * key after the first only breaks ties the ones before it left standing
+ * (e.g. sort by "status", then by "total" among same-status records).
+ * Unlike `sortRecords`, direction is applied per-key inside the
+ * comparator rather than by reversing the whole result afterward:
+ * reversing at the end would also flip the tie-break order of any earlier
+ * key, which is wrong whenever two keys don't share the same direction.
+ * Returns `records` unchanged (same reference) when `sortKeys` is empty.
+ */
+export function sortRecordsMulti(records: EntityRecord[], sortKeys: SortKey[]): EntityRecord[] {
+  if (sortKeys.length === 0) return records;
+  return [...records].sort((a, b) => {
+    for (const { field, direction } of sortKeys) {
+      const cmp = compareValues(a[field], b[field]);
+      if (cmp !== 0) return direction === "desc" ? -cmp : cmp;
+    }
+    return 0;
+  });
+}
+
 const BOARD_FIELD_NAME_HINTS = ["status", "stage"];
 
 /**

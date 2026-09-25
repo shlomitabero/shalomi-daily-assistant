@@ -24,9 +24,9 @@ import {
   recordDisplayLabel,
   relationDisplayLabel,
   recordsToCsv,
-  sortRecords,
+  sortRecordsMulti,
   type RelatedRecordsByEntity,
-  type SortDirection,
+  type SortKey,
 } from "./entityFormatting.js";
 import { useTranslation } from "./i18n/LanguageContext.js";
 import type { Lang } from "./i18n/language.js";
@@ -410,8 +410,7 @@ export function EntityPanel({
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
-  const [sortField, setSortField] = useState<string | null>(null);
-  const [sortDir, setSortDir] = useState<SortDirection>("asc");
+  const [sortKeys, setSortKeys] = useState<SortKey[]>([]);
   const [viewMode, setViewMode] = useState<ViewMode>("table");
   const [calendarMonth, setCalendarMonth] = useState(() => new Date());
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
@@ -486,7 +485,7 @@ export function EntityPanel({
     setEditingId(null);
     setSearch("");
     setStatusFilter("");
-    setSortField(null);
+    setSortKeys([]);
     setViewMode("table");
     setCalendarMonth(new Date());
     setSelectedIds(new Set());
@@ -550,13 +549,31 @@ export function EntityPanel({
     return () => clearTimeout(timer);
   }, [highlightedRecordId]);
 
-  function toggleSort(fieldName: string) {
-    if (sortField !== fieldName) {
-      setSortField(fieldName);
-      setSortDir("asc");
-    } else {
-      setSortDir((d) => (d === "asc" ? "desc" : "asc"));
-    }
+  /**
+   * A plain click always sorts by just this one column (replacing
+   * whatever came before), toggling direction on a second click -- the
+   * same single-column behavior this table always had. Shift-click adds
+   * this column as a tiebreaker after whatever's already sorting the
+   * table instead of replacing it, so a second sort key can narrow down
+   * ties the first one left standing (e.g. sort by status, then by total
+   * within each status) without losing the first key. Shift-clicking a
+   * column that's already a key toggles that key's own direction in
+   * place, rather than moving it to the end.
+   */
+  function toggleSort(fieldName: string, additive: boolean) {
+    setSortKeys((prev) => {
+      const existingIndex = prev.findIndex((k) => k.field === fieldName);
+      if (!additive) {
+        if (prev.length === 1 && existingIndex === 0) {
+          return [{ field: fieldName, direction: prev[0].direction === "asc" ? "desc" : "asc" }];
+        }
+        return [{ field: fieldName, direction: "asc" }];
+      }
+      if (existingIndex === -1) {
+        return [...prev, { field: fieldName, direction: "asc" }];
+      }
+      return prev.map((k, i) => (i === existingIndex ? { ...k, direction: k.direction === "asc" ? "desc" : "asc" } : k));
+    });
   }
 
   // Which columns actually render in the table -- CSV export and the print
@@ -577,8 +594,8 @@ export function EntityPanel({
     const matched = records.filter((r) => matchesSearch(r, entity.fields, search));
     const filtered =
       boardField && statusFilter ? matched.filter((r) => String(r[boardField.name] ?? "") === statusFilter) : matched;
-    return sortRecords(filtered, sortField, sortDir);
-  }, [records, entity.fields, search, statusFilter, boardField, sortField, sortDir]);
+    return sortRecordsMulti(filtered, sortKeys);
+  }, [records, entity.fields, search, statusFilter, boardField, sortKeys]);
 
   // Scrolls the just-highlighted row into view once it's actually in the
   // rendered table -- runs after visibleRecords updates (the same render
@@ -1031,6 +1048,7 @@ export function EntityPanel({
             />
           ) : (
             <div className="table-scroll" ref={tableScrollRef}>
+              {visibleFields.length > 0 && <p className="muted small sort-hint">{t("entity.sort.multiHint")}</p>}
               {selectedIds.size > 0 && (
                 <div className="bulk-actions-bar">
                   <span>{t("entity.bulk.selectedCount", { count: selectedIds.size })}</span>
@@ -1061,23 +1079,32 @@ export function EntityPanel({
                         onChange={toggleSelectAllVisible}
                       />
                     </th>
-                    {visibleFields.map((f) => (
-                      <th
-                        key={f.name}
-                        aria-sort={sortField === f.name ? (sortDir === "asc" ? "ascending" : "descending") : "none"}
-                      >
-                        <button type="button" className="sort-header" onClick={() => toggleSort(f.name)}>
-                          {f.label ?? f.name}
-                          {sortField === f.name ? (sortDir === "asc" ? " ▲" : " ▼") : ""}
-                        </button>
-                      </th>
-                    ))}
-                    <th aria-sort={sortField === "createdAt" ? (sortDir === "asc" ? "ascending" : "descending") : "none"}>
-                      <button type="button" className="sort-header" onClick={() => toggleSort("createdAt")}>
-                        {t("entity.table.createdAt")}
-                        {sortField === "createdAt" ? (sortDir === "asc" ? " ▲" : " ▼") : ""}
-                      </button>
-                    </th>
+                    {visibleFields.map((f) => {
+                      const keyIndex = sortKeys.findIndex((k) => k.field === f.name);
+                      const key = keyIndex === -1 ? null : sortKeys[keyIndex];
+                      return (
+                        <th key={f.name} aria-sort={keyIndex === 0 ? (key!.direction === "asc" ? "ascending" : "descending") : "none"}>
+                          <button type="button" className="sort-header" onClick={(e) => toggleSort(f.name, e.shiftKey)}>
+                            {f.label ?? f.name}
+                            {key && (key.direction === "asc" ? " ▲" : " ▼")}
+                            {key && sortKeys.length > 1 && <span className="sort-priority">{keyIndex + 1}</span>}
+                          </button>
+                        </th>
+                      );
+                    })}
+                    {(() => {
+                      const keyIndex = sortKeys.findIndex((k) => k.field === "createdAt");
+                      const key = keyIndex === -1 ? null : sortKeys[keyIndex];
+                      return (
+                        <th aria-sort={keyIndex === 0 ? (key!.direction === "asc" ? "ascending" : "descending") : "none"}>
+                          <button type="button" className="sort-header" onClick={(e) => toggleSort("createdAt", e.shiftKey)}>
+                            {t("entity.table.createdAt")}
+                            {key && (key.direction === "asc" ? " ▲" : " ▼")}
+                            {key && sortKeys.length > 1 && <span className="sort-priority">{keyIndex + 1}</span>}
+                          </button>
+                        </th>
+                      );
+                    })()}
                     <th />
                   </tr>
                 </thead>

@@ -1362,3 +1362,82 @@ test("EntityPanel highlights the record named by highlightRecordId once loaded, 
     }
   });
 });
+
+/**
+ * New in this round: the table's own sort was always single-column --
+ * clicking a second header threw away the first one entirely, so there
+ * was no way to sort by, say, status and THEN by name within each status.
+ * Uses a real tie on the primary key (two "new" deals) so the secondary
+ * key's own effect is unambiguous, and deliberately stores them in an
+ * order ("Zeta" before "Acme") that would look identical to a broken
+ * secondary sort AND to no secondary sort at all if the two happened to
+ * already be alphabetical -- only a real working secondary key reorders
+ * them to Acme-before-Zeta.
+ */
+test("EntityPanel's column headers support a real secondary sort key via shift+click, breaking ties left by the primary column", async () => {
+  await withJsdom(async () => {
+    const store: EntityRecord[] = [
+      { id: 1, name: "Globex", status: "won" },
+      { id: 2, name: "Zeta Inc", status: "new" },
+      { id: 3, name: "Acme Corp", status: "new" },
+    ];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = mockRecordsFetch(store) as typeof fetch;
+    try {
+      renderEntityPanel();
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 3);
+
+      const statusHeader = Array.from(document.querySelectorAll("thead th button.sort-header")).find((el) =>
+        /Status/.test(el.textContent ?? ""),
+      ) as HTMLButtonElement;
+      const nameHeader = Array.from(document.querySelectorAll("thead th button.sort-header")).find((el) =>
+        /Name/.test(el.textContent ?? ""),
+      ) as HTMLButtonElement;
+      assert.ok(statusHeader && nameHeader, "expected sortable Status and Name column headers");
+
+      fireEvent.click(statusHeader);
+      await waitForCondition(() => {
+        const names = Array.from(document.querySelectorAll("table tbody tr")).map((r) => r.textContent ?? "");
+        return /Zeta/.test(names[0]) && /Acme/.test(names[1]) && /Globex/.test(names[2]);
+      });
+      assert.equal(
+        document.querySelectorAll(".sort-priority").length,
+        0,
+        "with only one active sort key, no priority badge should show at all",
+      );
+
+      fireEvent.click(nameHeader, { shiftKey: true });
+      await waitForCondition(() => {
+        const names = Array.from(document.querySelectorAll("table tbody tr")).map((r) => r.textContent ?? "");
+        return /Acme/.test(names[0]) && /Zeta/.test(names[1]) && /Globex/.test(names[2]);
+      });
+      const rowsAfterSecondarySort = Array.from(document.querySelectorAll("table tbody tr")).map((r) => r.textContent ?? "");
+      assert.ok(
+        /Acme/.test(rowsAfterSecondarySort[0]) && /Zeta/.test(rowsAfterSecondarySort[1]) && /Globex/.test(rowsAfterSecondarySort[2]),
+        "shift+click on Name must add it as a tiebreaker, reordering the tied 'new' group to Acme-before-Zeta without moving Globex out of last place",
+      );
+
+      // Column order in the table is Name then Status (DEAL_ENTITY's own
+      // declared field order), so the Name header's badge ("2", the
+      // secondary key) appears before the Status header's badge ("1", the
+      // primary key) -- DOM order, not sort priority order.
+      const priorityBadges = Array.from(document.querySelectorAll(".sort-priority")).map((el) => el.textContent);
+      assert.deepEqual(
+        priorityBadges,
+        ["2", "1"],
+        "once there are 2 active sort keys, each active header must show its own real priority number",
+      );
+
+      // A plain (non-shift) click on Name must collapse back to a single key.
+      fireEvent.click(nameHeader);
+      await waitForCondition(() => document.querySelectorAll(".sort-priority").length === 0);
+      const rowsAfterPlainClick = Array.from(document.querySelectorAll("table tbody tr")).map((r) => r.textContent ?? "");
+      assert.ok(
+        /Acme/.test(rowsAfterPlainClick[0]) && /Globex/.test(rowsAfterPlainClick[1]) && /Zeta/.test(rowsAfterPlainClick[2]),
+        "a plain click must replace the whole sort with just this one column (Name asc: Acme, Globex, Zeta), dropping Status entirely",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
