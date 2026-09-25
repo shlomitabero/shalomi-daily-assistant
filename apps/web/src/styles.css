@@ -1552,7 +1552,8 @@ button.sort-header:hover:not(:disabled) {
 }
 
 .history-search,
-.whatsapp-log-search {
+.whatsapp-log-search,
+.refine-history-search {
   max-width: 280px;
   margin: 12px 0 0;
 }

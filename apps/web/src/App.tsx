@@ -90,6 +90,23 @@ export function formatRefineTimestamp(completedAt: string, lang: Lang): string {
   return new Date(completedAt).toLocaleString(LOCALE[lang]);
 }
 
+/**
+ * Case-insensitive substring match on a refine-history entry's own
+ * instruction text -- the same "Your projects" (filterAndSortProjects) and
+ * Time Machine (checkpointDiff.ts's filterCheckpoints) convention, applied
+ * here to this pane's own conversation history. Every refine adds one more
+ * entry to this list forever (no cap, no delete, and unlike Time Machine's
+ * own checkpoint list it never even gets cleared when switching projects
+ * mid-session), so a person who has refined a project a dozen times had no
+ * way to find "that one where I added invoice tracking" besides scrolling
+ * and reading every entry.
+ */
+export function filterRefineHistory(entries: RefineHistoryEntry[], search: string): RefineHistoryEntry[] {
+  const query = search.trim().toLowerCase();
+  if (!query) return entries;
+  return entries.filter((e) => e.instruction.toLowerCase().includes(query));
+}
+
 interface ArchitectImpactDetail {
   newEntities: { name: string; label: string }[];
   changedEntities: { name: string; label: string; newFieldNames: string[] }[];
@@ -249,6 +266,7 @@ function AppContent() {
   const [cloningId, setCloningId] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [refineHistory, setRefineHistory] = useState<RefineHistoryEntry[]>([]);
+  const [refineHistorySearch, setRefineHistorySearch] = useState("");
   const [refineRunning, setRefineRunning] = useState(false);
   const pendingRefineInstruction = useRef<string | null>(null);
   const refineEvents = useRef<AgentStepEvent[]>([]);
@@ -256,6 +274,10 @@ function AppContent() {
   const visibleMyProjects = useMemo(
     () => filterAndSortProjects(myProjects, projectSearch, pinnedIds),
     [myProjects, projectSearch, pinnedIds],
+  );
+  const visibleRefineHistory = useMemo(
+    () => filterRefineHistory(refineHistory, refineHistorySearch),
+    [refineHistory, refineHistorySearch],
   );
 
   useEffect(() => subscribeWakeStatus(setWaking), []);
@@ -577,6 +599,7 @@ function AppContent() {
     setAdditionalRequest("");
     setRefineText("");
     setRefineHistory([]);
+    setRefineHistorySearch("");
   }
 
   return (
@@ -906,15 +929,29 @@ function AppContent() {
               {refineHistory.length > 0 && (
                 <div className="refine-history">
                   <h2>{t("preview.refineHistory.heading")}</h2>
-                  <ul className="refine-history-list">
-                    {refineHistory.map((entry) => (
-                      <li key={entry.id}>
-                        <p className="refine-history-instruction">{entry.instruction}</p>
-                        <p className="muted small">{entry.summary}</p>
-                        <p className="refine-history-time muted small">{formatRefineTimestamp(entry.completedAt, lang)}</p>
-                      </li>
-                    ))}
-                  </ul>
+                  {refineHistory.length > 5 && (
+                    <input
+                      type="text"
+                      className="refine-history-search"
+                      placeholder={t("preview.refineHistory.search.placeholder")}
+                      aria-label={t("preview.refineHistory.search.placeholder")}
+                      value={refineHistorySearch}
+                      onChange={(e) => setRefineHistorySearch(e.target.value)}
+                    />
+                  )}
+                  {visibleRefineHistory.length === 0 ? (
+                    <p className="muted small">{t("preview.refineHistory.search.noResults")}</p>
+                  ) : (
+                    <ul className="refine-history-list">
+                      {visibleRefineHistory.map((entry) => (
+                        <li key={entry.id}>
+                          <p className="refine-history-instruction">{entry.instruction}</p>
+                          <p className="muted small">{entry.summary}</p>
+                          <p className="refine-history-time muted small">{formatRefineTimestamp(entry.completedAt, lang)}</p>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
                 </div>
               )}
             </div>

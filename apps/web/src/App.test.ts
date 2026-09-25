@@ -6,6 +6,7 @@ import type { AgentStepEvent, Entity, Field, OpenQuestion, Project } from "@forg
 import {
   countAnsweredOpenQuestions,
   filterAndSortProjects,
+  filterRefineHistory,
   formatEntityFieldSummary,
   formatMyProjectsCount,
   formatOpenQuestionsProgress,
@@ -248,6 +249,36 @@ test("formatRefineTimestamp renders a real locale-formatted date+time, in each l
     formatRefineTimestamp(completedAt, "en"),
     "the two locales must not silently render the exact same string -- that would mean the language argument is being ignored",
   );
+});
+
+/**
+ * New in this round: once the conversation-history pane's own refine list
+ * (see refineHistory in App.tsx) passes 5 entries, a search box narrows it
+ * by instruction text -- the same "Your projects" (filterAndSortProjects)
+ * and Time Machine (checkpointDiff.ts's filterCheckpoints) convention,
+ * applied to this screen's own unbounded, never-cleared list.
+ */
+test("filterRefineHistory narrows by a case-insensitive substring match on the instruction text", () => {
+  const invoices = { id: "r1", instruction: "Add invoice tracking", summary: "s", completedAt: "2026-01-01" };
+  const coupons = { id: "r2", instruction: "Add a coupons entity", summary: "s", completedAt: "2026-01-02" };
+  const reviews = { id: "r3", instruction: "Track customer reviews", summary: "s", completedAt: "2026-01-03" };
+  const entries = [invoices, coupons, reviews];
+
+  assert.deepEqual(
+    filterRefineHistory(entries, "invoice").map((e) => e.id),
+    ["r1"],
+  );
+  assert.deepEqual(
+    filterRefineHistory(entries, "COUPONS").map((e) => e.id),
+    ["r2"],
+    "must match case-insensitively",
+  );
+  assert.deepEqual(
+    filterRefineHistory(entries, "  ").map((e) => e.id),
+    ["r1", "r2", "r3"],
+    "a blank/whitespace-only query must show everything, not match nothing",
+  );
+  assert.deepEqual(filterRefineHistory(entries, "nonexistent"), []);
 });
 
 /**
