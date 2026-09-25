@@ -8217,6 +8217,50 @@ not a single "make it perfect" claim.
       244 → 247; `@forge/shared`/`@forge/spec-engine`/`@forge/db`/
       `@forge/api` unchanged) and typecheck clean.
 
+- [x] **Round 169 — a real fill progress bar on the AI Team build
+      screen.** Diversified to the build screen, untouched since round 161.
+      The subtitle's own "Step N of M" text (round 140's elapsed timer sits
+      right next to it) already carried the exact fraction a person needs
+      to gauge how far along a build is, but only as text they had to do
+      the division on themselves -- a real filled bar reads at a glance the
+      way the text alone doesn't. Added a real progress bar right under the
+      subtitle, driven by the exact same `doneCount`/`visibleAgents.length`
+      the subtitle text already computes, so it fills in step with each
+      agent's own real completion (including staying correctly proportional
+      once Debug joins the visible list after a real recovery, or when a
+      build fails partway through) rather than a fake animated placeholder.
+
+      Added `computeBuildProgressPercent` to `BuildProgress.tsx` itself
+      (this file's own established convention, already used by
+      `formatElapsedTime`/`formatBuildSummary`), rendered inside a real
+      `role="progressbar"` element with `aria-valuenow`/`aria-valuemin`/
+      `aria-valuemax` for screen readers, not just a decorative div.
+
+      Verified with the deliberate-break-and-restore discipline, twice.
+      For the math: swapped `Math.round` for `Math.floor` (a plausible
+      off-by-one that silently under-reports fractional progress, e.g.
+      showing 42% instead of the correct 43% for 3/7) -- re-ran the unit
+      tests, which failed exactly on the rounding case; restored and
+      confirmed via `diff` against a pre-break copy that the file matched
+      byte-for-byte. For the wiring: removed the `style={{ width:
+      ...}}` binding on the real fill element -- re-ran the new DOM test,
+      which failed cleanly on the missing width; restored and confirmed via
+      `diff` that the file matched byte-for-byte. **And** two real
+      Playwright passes against real running dev servers: (1) intercepted
+      the real build SSE endpoint (`page.route` + `route.fulfill`, the same
+      hard-to-reach-state technique from rounds 156/161/162) with a
+      genuinely partial event stream -- 2 of 6 visible agents done, the
+      rest never arriving -- and confirmed the real bar froze at exactly
+      `aria-valuenow="33"` with a real `33%` fill width, proving the
+      component reads real intermediate state correctly, not just its
+      start (0%) and end (100%); (2) a full real, unmocked build (the
+      heuristic pipeline finishes in well under a second, too fast to
+      observe a mid-build percentage any other way) confirmed the bar
+      doesn't break the normal completion flow -- still reaches the
+      preview screen cleanly. Full suite green (611 tests, up from 607 --
+      `@forge/web` 247 → 251; `@forge/shared`/`@forge/spec-engine`/
+      `@forge/db`/`@forge/api` unchanged) and typecheck clean.
+
 ## Phase 3
 
 - Self-healing: production observability, automatic diagnosis and patch
