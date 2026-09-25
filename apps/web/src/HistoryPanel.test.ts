@@ -176,7 +176,7 @@ test("HistoryPanel disables every restore button while one restore is in flight,
       assert.deepEqual(restoredProjects, ["proj1-restored"]);
     } finally {
       // Guards against leaking the real, un-mocked REQUEST_TIMEOUT_MS
-      // (180s) timer api.ts's request() starts for cp1's restore -- if an
+      // timer api.ts's request() starts for cp1's restore -- if an
       // assertion above throws before the request is otherwise resolved,
       // that live timer would keep this test file's process alive well
       // past any reasonable shell-level timeout (the exact "permanently-

@@ -62,21 +62,26 @@ const notifyWakingRefCounted = createWakeRefCounter(notifyWaking);
  * This same AbortController's signal covers every attempt inside
  * fetchWithWakeRetry, including its own retry backoff sleeps (see
  * wakeRetry.ts's own comment: Render's free tier can take "50+ seconds" to
- * wake, and DEFAULT_DELAYS_MS's five delays sum to ~49s of that budget) --
- * so the very first value here (100s) was NOT actually "comfortably above"
- * 49s of cold-start retrying plus a 60s Anthropic call that only *starts*
- * once the connection finally succeeds: 49 + 60 = 109s, already past the
- * 100s ceiling. That mismatch produced exactly the same false-positive
- * "this is taking too long" error the original 100s value was written to
- * prevent, on a legitimately slow (cold-started + a genuinely thorough
- * Anthropic spec) but otherwise successful request -- confirmed by a real
+ * wake, and DEFAULT_DELAYS_MS's seven delays sum to ~101s of that budget --
+ * widened from an original ~49s after a real, repeated report ("it never
+ * loads, always says the server is old") showed that ceiling had zero
+ * margin above Render's own documented worst case, which this app hits on
+ * every visit while no keep-alive ping is running) -- so this value must
+ * stay comfortably above 101s of cold-start retrying plus a 60s Anthropic
+ * call that only *starts* once the connection finally succeeds: 101 + 60 =
+ * 161s is the real worst-case legitimate total. An earlier version of this
+ * same ceiling (100s) was already less than an even smaller 109s worst
+ * case, producing exactly the false-positive "this is taking too long"
+ * error this comment now warns against repeating -- confirmed by a real
  * report with a screenshot of that exact error on the enhance-and-build
- * flow. 49 + 60 = 109s is the real worst-case legitimate total; this adds
- * a full extra minute of margin on top of that for request/response
- * transfer, JSON parsing, and DB writes, rather than shaving it as close
- * as possible to the theoretical minimum again.
+ * flow. This value adds just under a minute of margin on top of the 161s
+ * worst case for request/response transfer, JSON parsing, and DB writes,
+ * rather than shaving it as close as possible to the theoretical minimum.
+ * Whenever DEFAULT_DELAYS_MS's own total changes, this must be
+ * recalculated too -- that exact mismatch is what caused the bug both
+ * versions of this comment describe.
  */
-const REQUEST_TIMEOUT_MS = 180_000;
+export const REQUEST_TIMEOUT_MS = 220_000;
 
 /**
  * Wraps fetchWithWakeRetry so that if every retry is exhausted (the

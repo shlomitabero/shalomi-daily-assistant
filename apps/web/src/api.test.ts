@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { backupProject, createWakeRefCounter, exportProject, listProjects, safeDownloadName, sendWhatsAppMessage, streamBuild } from "./api.js";
+import { backupProject, createWakeRefCounter, exportProject, listProjects, REQUEST_TIMEOUT_MS, safeDownloadName, sendWhatsAppMessage, streamBuild } from "./api.js";
+import { DEFAULT_DELAYS_MS } from "./wakeRetry.js";
 
 test("safeDownloadName keeps Hebrew (and other Unicode) project names intact, instead of collapsing them to the fallback", () => {
   // This product is Hebrew-first (see docs/roadmap.md), and every real
@@ -252,7 +253,7 @@ test("fetchApi aborts a request that hangs past its timeout, instead of leaving 
     // timer fires, so this is a real "still waiting" -> "now it fails"
     // transition, not a race.
     await Promise.resolve();
-    t.mock.timers.tick(180_000);
+    t.mock.timers.tick(220_000);
     await assert.rejects(pending, (err: Error) => {
       assert.match(err.message, /taking unusually long/);
       return true;
@@ -303,6 +304,44 @@ test("fetchApi does not falsely abort a slow-but-legitimate response that finish
     globalThis.fetch = original;
     t.mock.timers.reset();
   }
+});
+
+/**
+ * A real, repeated report from שלומי ("it never loads, always says the
+ * server is old") traced back to exactly the timing-budget mismatch class
+ * the test above already guards against once: DEFAULT_DELAYS_MS was widened
+ * from ~49s to ~101s of cold-start retry budget (Render's own "50+ second"
+ * cold start warning had zero margin at the old value, and this app
+ * cold-starts on every single visit while its keep-alive ping can't run --
+ * see docs/roadmap.md), but REQUEST_TIMEOUT_MS is a SEPARATE constant that
+ * has to be updated in lockstep, or the exact same false-positive "taking
+ * too long" abort reappears with new numbers. This doesn't re-run the fix
+ * (the test above already does) -- it directly asserts the arithmetic
+ * relationship between the two constants, so a future change to either one
+ * alone (without updating the other) fails a fast, obvious unit test
+ * instead of shipping the same bug a third time.
+ */
+test("REQUEST_TIMEOUT_MS stays comfortably above the real worst-case legitimate request: the full wake-retry backoff plus a 60s Anthropic call", () => {
+  const totalRetryBudgetMs = DEFAULT_DELAYS_MS.reduce((sum, d) => sum + d, 0);
+  // Mirrors packages/spec-engine/src/anthropicFetch.ts's own
+  // ANTHROPIC_REQUEST_TIMEOUT_MS -- not imported directly since apps/web
+  // has no dependency on @forge/spec-engine (that package is server-side
+  // only), so this constant is kept in sync by hand and this comment.
+  const anthropicCallBudgetMs = 60_000;
+  const legitimateWorstCaseMs = totalRetryBudgetMs + anthropicCallBudgetMs;
+
+  assert.ok(
+    REQUEST_TIMEOUT_MS > legitimateWorstCaseMs,
+    `REQUEST_TIMEOUT_MS (${REQUEST_TIMEOUT_MS}ms) must exceed the real worst-case legitimate request ` +
+      `(${totalRetryBudgetMs}ms of retry backoff + ${anthropicCallBudgetMs}ms Anthropic call = ${legitimateWorstCaseMs}ms) -- ` +
+      `otherwise a legitimately slow but successful request gets falsely aborted, the exact bug this test guards against.`,
+  );
+  // Some real margin beyond the bare minimum for request/response transfer,
+  // JSON parsing, and DB writes -- not just barely more than the worst case.
+  assert.ok(
+    REQUEST_TIMEOUT_MS - legitimateWorstCaseMs >= 30_000,
+    `expected at least 30s of margin above the legitimate worst case (${legitimateWorstCaseMs}ms), got only ${REQUEST_TIMEOUT_MS - legitimateWorstCaseMs}ms`,
+  );
 });
 
 test("streamBuild translates a network failure mid-stream, instead of leaking the browser's raw untranslated error", async () => {

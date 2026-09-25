@@ -70,7 +70,7 @@ function renderAuthScreen(onAuthenticated: (user: unknown) => void) {
  * around every request that's only cleared once the request settles, and
  * handleSubmit's own `await signup(...)` only completes once fetch does.
  * A fetch mock that never resolves at all leaves both genuinely dangling
- * past the end of the test -- a real 180-second timer that keeps the
+ * past the end of the test -- a real, minutes-long timer that keeps the
  * whole node:test process alive, and an unresolved promise chain
  * node:test itself flags ("Promise resolution is still pending but the
  * event loop has already resolved"). Resolving it explicitly, inside
