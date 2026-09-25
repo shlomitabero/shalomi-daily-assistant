@@ -8498,6 +8498,65 @@ not a single "make it perfect" claim.
       `@forge/web` 260 → 262; `@forge/shared`/`@forge/spec-engine`/
       `@forge/db`/`@forge/api` unchanged) and typecheck clean.
 
+- [x] **Round 175 — WhatsApp log's "jump to" now lands on the exact
+      matched record too.** Round 174's own trigger note flagged the real
+      pattern to look for next: an action that already "half-works" --
+      navigates to the right entity but not the specific record, or shows
+      a list but doesn't act on the individual item. Found exactly that on
+      the WhatsApp panel (round 145): the API (`whatsappWeb.ts` /
+      `routes/projects.ts`) already resolves each matched message down to
+      a specific `matchedRecordId`, and the client already fetches and
+      types it (`WhatsAppMessageLogEntry.matchedRecordId: number | null`
+      in `api.ts`) -- but the panel's own "jump to" button silently threw
+      it away and only ever called `onJumpToEntity`, landing a person on
+      the right tab with no indication which of possibly dozens of rows
+      was the one WhatsApp actually matched.
+
+      Wired the already-fetched `matchedRecordId` into a real click
+      handler: when it's present, calls the new `onJumpToRecord(entityName,
+      recordId)` (falling back to the old `onJumpToEntity` only for the
+      rare case a message matched an entity whose specific record has
+      since been deleted, leaving `matchedRecordId` null). `App.tsx` wires
+      this into the exact same `highlightRecordId`/`onHighlightHandled`
+      state round 174 already built for Global Search -- no new
+      scroll/highlight logic needed in `EntityPanel` at all, since that
+      machinery is now shared across every "jump to a specific record"
+      entry point in the app.
+
+      Verified with the deliberate-break-and-restore discipline: collapsed
+      the new `matchedRecordId != null ? ... : ...` branch down to always
+      call `onJumpToRecord` (dropping the null check) -- re-ran the new
+      fallback-specific real-DOM test (a message with `matchedEntityName`
+      set but `matchedRecordId: null`), which failed exactly on "must fall
+      back to onJumpToEntity when matchedRecordId is null"; restored and
+      confirmed via `diff` that the file matched byte-for-byte. Also
+      rewrote the round-145 test that used to assert the old
+      entity-only-jump behavior to instead assert the new real behavior
+      (its own fixture already had `matchedRecordId: 7` sitting unused --
+      the exact live proof the gap was real, not hypothetical).
+
+      **And** a real Playwright pass against real running dev servers:
+      built a real restaurant app (2 tabs: Order/MenuItem), added a record
+      with a unique marker in the second tab, read its real id straight off
+      the row's own `data-record-id` attribute (round 174's own addition)
+      rather than guessing it, switched to the first tab, mocked the
+      WhatsApp status+messages endpoints via `page.route` (a real linked
+      device can't be driven headlessly) with a message whose
+      `matchedRecordId` pointed at that real id, clicked the matched
+      sender's name, and confirmed both that the app switched to the
+      correct (second) entity tab AND that the exact real record --
+      identified by its own marker text -- was the one highlighted. Hit
+      and fixed one script bug along the way: the WhatsApp mock initially
+      used the tab's displayed Hebrew LABEL as `matchedEntityName` instead
+      of the entity's real internal `.name` (`MenuItem`, not "פריטי
+      תפריט") -- `App.tsx`'s `activeEntity` state is keyed on the internal
+      name, so the mismatch silently matched no tab at all and both entity
+      panels vanished; fixed by reading the real internal names off the
+      project's own API response instead of the tab buttons' visible text.
+      Full suite green (623 tests, up from 622 -- `@forge/web` 262 → 263;
+      `@forge/shared`/`@forge/spec-engine`/`@forge/db`/`@forge/api`
+      unchanged) and typecheck clean.
+
 ## Phase 3
 
 - Self-healing: production observability, automatic diagnosis and patch
