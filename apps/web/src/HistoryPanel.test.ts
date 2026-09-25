@@ -508,6 +508,91 @@ test("HistoryPanel's search box (shown once there are more than 5 checkpoints) n
 });
 
 /**
+ * New in this round: every checkpoint's own label already says whether it
+ * came from the initial build or a later refine (see
+ * apps/api/src/routes/projects.ts's changeLabel), but with no cap and no
+ * delete on this list, a project with a long real history had no way to
+ * isolate "just the original build" from "everything I've refined since"
+ * besides reading every label -- the same independent-filter gap the
+ * WhatsApp log's own direction/status filter (round 181) already closed
+ * for its own data. Drives the real `<select>` through a real 6-checkpoint
+ * fixture (crossing the same >5 threshold the search box uses), confirms
+ * each filter's real row count, and confirms it composes with the existing
+ * text search (narrowing to exactly the refines whose label matches).
+ */
+test("HistoryPanel's type filter (shown once there are more than 5 checkpoints) narrows the real list to build/refine, and composes with the search box", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    const checkpoints = [
+      makeCheckpoint("cp1", "Initial build"),
+      makeCheckpoint("cp2", "Refine: add invoice tracking"),
+      makeCheckpoint("cp3", "Refine: add customer notes"),
+      makeCheckpoint("cp4", "Refine: fix invoice totals"),
+      makeCheckpoint("cp5", "Refine: add reminders"),
+      makeCheckpoint("cp6", "Refine: add tags"),
+    ];
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/checkpoints") {
+        return new Response(JSON.stringify({ checkpoints }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+
+    try {
+      render(
+        React.createElement(
+          ThemeProvider,
+          null,
+          React.createElement(
+            LanguageProvider,
+            null,
+            React.createElement(HistoryPanel, {
+              projectId: "proj1",
+              projectName: "Test Project",
+              currentSpec: checkpoints[0].spec,
+              onRestored: () => {},
+              onClose: () => {},
+            }),
+          ),
+        ),
+      );
+      await waitForCondition(() => document.querySelectorAll(".checkpoint-list li").length === 6);
+
+      const typeFilter = document.querySelector(".history-type-filter") as HTMLSelectElement;
+      assert.ok(typeFilter, "expected a type filter once there are more than 5 checkpoints");
+
+      fireEvent.change(typeFilter, { target: { value: "build" } });
+      await waitForCondition(() => document.querySelectorAll(".checkpoint-list li").length === 1);
+      assert.deepEqual(
+        Array.from(document.querySelectorAll(".checkpoint-list li strong")).map((el) => el.textContent),
+        ["Initial build"],
+        "'build' must keep only the initial build, dropping every refine",
+      );
+
+      fireEvent.change(typeFilter, { target: { value: "refine" } });
+      await waitForCondition(() => document.querySelectorAll(".checkpoint-list li").length === 5);
+
+      const searchBox = document.querySelector(".history-search") as HTMLInputElement;
+      fireEvent.change(searchBox, { target: { value: "invoice" } });
+      await waitForCondition(() => document.querySelectorAll(".checkpoint-list li").length === 2);
+      assert.deepEqual(
+        Array.from(document.querySelectorAll(".checkpoint-list li strong")).map((el) => el.textContent).sort(),
+        ["Refine: add invoice tracking", "Refine: fix invoice totals"].sort(),
+        "the type filter and text search must compose: only refines whose label matches 'invoice'",
+      );
+
+      fireEvent.change(typeFilter, { target: { value: "all" } });
+      await waitForCondition(() => document.querySelectorAll(".checkpoint-list li").length === 2);
+      fireEvent.change(searchBox, { target: { value: "" } });
+      await waitForCondition(() => document.querySelectorAll(".checkpoint-list li").length === 6);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * New in this round: a project's checkpoint history only ever grows (no
  * cap, no delete), so this closes the same "keep a permanent record
  * outside the app" gap Business Twin (round 129) and the WhatsApp log

@@ -2,9 +2,11 @@ import { useEffect, useState } from "react";
 import type { Checkpoint, Project, ProductSpec } from "@forge/shared";
 import { listCheckpoints, restoreCheckpoint } from "./api.js";
 import {
+  type CheckpointType,
   computeCheckpointDiff,
   downloadCheckpointHistory,
   filterCheckpoints,
+  filterCheckpointsByType,
   formatCheckpointCount,
   formatCheckpointHistory,
   isCheckpointCurrent,
@@ -33,8 +35,9 @@ export function HistoryPanel({
   const [busyId, setBusyId] = useState<string | null>(null);
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [search, setSearch] = useState("");
+  const [typeFilter, setTypeFilter] = useState<"all" | CheckpointType>("all");
   const dialogRef = useDialogFocusTrap<HTMLDivElement>();
-  const visibleCheckpoints = filterCheckpoints(checkpoints, search);
+  const visibleCheckpoints = filterCheckpointsByType(filterCheckpoints(checkpoints, search), typeFilter);
 
   useEffect(() => {
     listCheckpoints(projectId)
@@ -87,14 +90,26 @@ export function HistoryPanel({
         <p className="muted small">{t("history.description")}</p>
         {error && <p className="error">{error}</p>}
         {checkpoints.length > 5 && (
-          <input
-            type="text"
-            className="history-search"
-            placeholder={t("history.search.placeholder")}
-            aria-label={t("history.search.placeholder")}
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-          />
+          <div className="history-filters">
+            <input
+              type="text"
+              className="history-search"
+              placeholder={t("history.search.placeholder")}
+              aria-label={t("history.search.placeholder")}
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+            />
+            <select
+              className="history-type-filter"
+              aria-label={t("history.filter.label")}
+              value={typeFilter}
+              onChange={(e) => setTypeFilter(e.target.value as "all" | CheckpointType)}
+            >
+              <option value="all">{t("history.filter.all")}</option>
+              <option value="build">{t("history.filter.build")}</option>
+              <option value="refine">{t("history.filter.refine")}</option>
+            </select>
+          </div>
         )}
         {checkpoints.length === 0 ? (
           <p className="muted">{t("history.empty")}</p>

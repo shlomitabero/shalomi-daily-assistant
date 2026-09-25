@@ -1631,20 +1631,23 @@ button.sort-header:hover:not(:disabled) {
   margin: 12px 0 0;
 }
 
-.whatsapp-log-filters {
+.whatsapp-log-filters,
+.history-filters {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
   margin: 12px 0 0;
 }
 
-.whatsapp-log-filters .whatsapp-log-search {
+.whatsapp-log-filters .whatsapp-log-search,
+.history-filters .history-search {
   margin: 0;
   flex: 1;
   min-width: 160px;
 }
 
-.whatsapp-log-direction-filter {
+.whatsapp-log-direction-filter,
+.history-type-filter {
   flex-shrink: 0;
 }
 

@@ -91,6 +91,38 @@ export function filterCheckpoints(checkpoints: Checkpoint[], search: string): Ch
   return checkpoints.filter((c) => c.label.toLowerCase().includes(query));
 }
 
+export type CheckpointType = "build" | "refine";
+
+/**
+ * Every checkpoint's own label already encodes which kind of change made
+ * it, exactly like the WhatsApp log's own message.direction field encodes
+ * incoming vs. outgoing -- but here it's baked into the label text itself
+ * rather than a separate column (see apps/api/src/routes/projects.ts's
+ * changeLabel: "Initial build"/"בנייה ראשונית" for a fresh build, or
+ * "Refine: <instruction>"/"שיפור: <instruction>" for every refine after
+ * it). Read from the label with startsWith rather than persisted
+ * separately, since the label is the only place this distinction already
+ * lives and every checkpoint ever created already carries it correctly.
+ */
+export function getCheckpointType(checkpoint: Checkpoint): CheckpointType {
+  return checkpoint.label.startsWith("Refine:") || checkpoint.label.startsWith("שיפור:") ? "refine" : "build";
+}
+
+/**
+ * Composes with (never replaces) filterCheckpoints' own text search --
+ * the same independent-filters combination EntityPanel.tsx's
+ * search+statusFilter and WhatsAppPanel.tsx's search+directionFilter
+ * already use. A project with a long refine history had no way to
+ * isolate "just the original build" from "everything I've refined
+ * since" besides reading every label -- exactly the same never-capped,
+ * never-deleted growth filterCheckpoints' own doc comment already
+ * describes for text search.
+ */
+export function filterCheckpointsByType(checkpoints: Checkpoint[], type: "all" | CheckpointType): Checkpoint[] {
+  if (type === "all") return checkpoints;
+  return checkpoints.filter((c) => getCheckpointType(c) === type);
+}
+
 /**
  * How many of the checkpoint list's entries are currently showing versus
  * how many exist in total -- the same two-distinct-phrasings convention

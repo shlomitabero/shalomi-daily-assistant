@@ -4,8 +4,10 @@ import type { Checkpoint, ProductSpec } from "@forge/shared";
 import {
   computeCheckpointDiff,
   filterCheckpoints,
+  filterCheckpointsByType,
   formatCheckpointCount,
   formatCheckpointHistory,
+  getCheckpointType,
   isCheckpointCurrent,
 } from "./checkpointDiff.js";
 import { translate } from "./i18n/language.js";
@@ -175,6 +177,60 @@ test("filterCheckpoints returns every checkpoint unchanged when the search is bl
 test("filterCheckpoints returns an empty list when nothing matches, instead of falling back to everything", () => {
   const checkpoints = [makeCheckpoint("Initial build"), makeCheckpoint("Refine: add invoice tracking")];
   assert.deepEqual(filterCheckpoints(checkpoints, "zzz-no-such-checkpoint"), []);
+});
+
+test("getCheckpointType reads 'build' vs 'refine' from a checkpoint's own label, in both English and Hebrew", () => {
+  assert.equal(getCheckpointType(makeCheckpoint("Initial build")), "build");
+  assert.equal(getCheckpointType(makeCheckpoint("Refine: add invoice tracking")), "refine");
+  assert.equal(getCheckpointType(makeCheckpoint("בנייה ראשונית")), "build");
+  assert.equal(getCheckpointType(makeCheckpoint("שיפור: הוספת מעקב חשבוניות")), "refine");
+});
+
+test("filterCheckpointsByType('all') returns every checkpoint unchanged", () => {
+  const checkpoints = [makeCheckpoint("Initial build"), makeCheckpoint("Refine: add invoice tracking")];
+  assert.deepEqual(filterCheckpointsByType(checkpoints, "all"), checkpoints);
+});
+
+test("filterCheckpointsByType('build') keeps only the initial build, dropping every refine", () => {
+  const checkpoints = [
+    makeCheckpoint("Initial build"),
+    makeCheckpoint("Refine: add invoice tracking"),
+    makeCheckpoint("Refine: add customer notes"),
+  ];
+  assert.deepEqual(
+    filterCheckpointsByType(checkpoints, "build").map((c) => c.label),
+    ["Initial build"],
+  );
+});
+
+test("filterCheckpointsByType('refine') keeps only refines, dropping the initial build", () => {
+  const checkpoints = [
+    makeCheckpoint("Initial build"),
+    makeCheckpoint("Refine: add invoice tracking"),
+    makeCheckpoint("Refine: add customer notes"),
+  ];
+  assert.deepEqual(
+    filterCheckpointsByType(checkpoints, "refine").map((c) => c.label),
+    ["Refine: add invoice tracking", "Refine: add customer notes"],
+  );
+});
+
+test("filterCheckpointsByType composes with filterCheckpoints' own text search, narrowing to exactly what matches both", () => {
+  const checkpoints = [
+    makeCheckpoint("Initial build"),
+    makeCheckpoint("Refine: add invoice tracking"),
+    makeCheckpoint("Refine: add customer notes"),
+  ];
+  const searched = filterCheckpoints(checkpoints, "add");
+  assert.deepEqual(
+    filterCheckpointsByType(searched, "refine").map((c) => c.label),
+    ["Refine: add invoice tracking", "Refine: add customer notes"],
+  );
+});
+
+test("filterCheckpointsByType returns an empty list, not everything, when no checkpoint matches the type", () => {
+  const checkpoints = [makeCheckpoint("Initial build")];
+  assert.deepEqual(filterCheckpointsByType(checkpoints, "refine"), []);
 });
 
 test("formatCheckpointCount reports a plain total when the search hasn't narrowed anything out", () => {
