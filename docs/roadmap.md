@@ -7770,6 +7770,65 @@ not a single "make it perfect" claim.
       `@forge/spec-engine`/`@forge/db`/`@forge/api` unchanged) and both
       builds clean.
 
+- [x] **Round 160 — click an empty calendar day to pre-fill the create
+      form with that date.** Diversified to the Entity panel's calendar
+      view, untouched since round 50. Clicking a day with no records on
+      it was previously inert -- the only way to add a record for a
+      specific date was scrolling up to the general create form and
+      typing the date in by hand, exactly the friction a real calendar
+      app (Google Calendar-style "click a day to add an event") doesn't
+      have. Considered Kanban drag-and-drop first but rejected it as too
+      large for one round without existing HTML5 drag-and-drop
+      infrastructure; this was the well-scoped alternative.
+
+      Added `formatDateForInput` to `entityFormatting.ts`, converting a
+      grid cell's local-midnight `Date` back to the plain `YYYY-MM-DD` a
+      date field actually stores, using local getters
+      (`getFullYear`/`getMonth`/`getDate`) rather than `toISOString()`
+      (UTC) -- the same class of bug `parseFieldDate`'s own doc comment
+      in the same file already flags for the read direction, applied
+      symmetrically for this new reverse direction. Wired a new
+      `startCreateForDate` into `EntityPanel.tsx`: an empty day cell now
+      clears any in-progress edit, pre-fills the create form with that
+      day's date, and scrolls the form into view. The day cell's new
+      `onClick` wraps the whole cell including its existing record
+      chips, so each chip's own click handler needed an explicit
+      `e.stopPropagation()` to keep the day cell's own handler
+      underneath it from also firing and silently discarding an
+      in-progress edit.
+
+      Verified with the deliberate-break-and-restore discipline, twice.
+      For `formatDateForInput`: the first, most realistic break tried
+      (swapping in `toISOString()`) turned out to be a dead end in this
+      specific sandbox -- a sanity check of the sandbox's own timezone
+      (`date +%Z` and `Intl.DateTimeFormat().resolvedOptions().timeZone`)
+      confirmed it runs in UTC, so local-midnight and UTC-midnight are
+      the same instant here and that break would have produced identical
+      output, silently failing to demonstrate the regression it's meant
+      to catch. Switched to a timezone-independent break instead
+      (dropping the zero-padding on month/day) -- re-ran the unit tests,
+      which failed exactly as expected (`"2026-1-05"` instead of
+      `"2026-01-05"`) regardless of sandbox timezone; restored and
+      confirmed via `diff` against a pre-break copy that the file
+      matched byte-for-byte. For the `EntityPanel.tsx` wiring: removed
+      the record chip's `e.stopPropagation()` -- re-ran the DOM tests,
+      which failed on both the new test AND the pre-existing "calendar
+      view opens the clicked record for editing" test (confirming the
+      bubbling regression is real and would have broken existing
+      behavior too, not just the new one); restored and confirmed via
+      `diff` that the file matched byte-for-byte. **And** a full
+      Playwright pass against real running dev servers: built a real
+      spec from a real heuristic-generated "appointments" idea, switched
+      a real date-heavy entity to its real calendar view, clicked a real
+      empty day cell and confirmed the real create form's date field was
+      pre-filled with that exact clicked date and a genuinely blank
+      title, submitted it to create a real record, then clicked that
+      record's real chip and confirmed it opened for editing without the
+      day-click handler underneath it interfering. Full suite green (577
+      tests, up from 574 -- `@forge/web` 214 → 217; `@forge/shared`/
+      `@forge/spec-engine`/`@forge/db`/`@forge/api` unchanged) and both
+      builds clean.
+
 ## Phase 3
 
 - Self-healing: production observability, automatic diagnosis and patch
