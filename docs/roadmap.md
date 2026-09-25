@@ -8439,6 +8439,65 @@ not a single "make it perfect" claim.
       `@forge/web` 259 → 260; `@forge/shared`/`@forge/spec-engine`/
       `@forge/db`/`@forge/api` unchanged) and typecheck clean.
 
+- [x] **Round 174 — global search's "jump to record" now scrolls to and
+      highlights the exact matched row.** With the "N of M" count/search
+      convention now covering every known unbounded list on the app's main
+      screens (per round 173's own trigger note), diversified to a
+      different kind of gap on the Global Search panel (round 67-70, last
+      touched at round 68-70 for keyboard navigation): each result group's
+      own "Jump to" button (`onJumpToEntity`) only ever switched to the
+      right entity tab, throwing away which specific record was actually
+      clicked -- a person searching for one record among dozens landed on
+      the tab and had to re-scan the whole table they'd just searched to
+      find the one row they were after.
+
+      Made each individual matched row in `GlobalSearchPanel` its own
+      clickable button (`onJumpToRecord`, carrying the record's own entity
+      name and id), separate from the group header's existing "Jump to"
+      button (unchanged). Threaded a new `highlightRecordId` prop from
+      `App.tsx` through to `EntityPanel`, which on receiving one: switches
+      to table view, clears any leftover local search/status filter from an
+      earlier visit to that same tab (since either could otherwise hide the
+      very row this was meant to reveal), scrolls the target row into view,
+      and applies a `record-row-highlighted` CSS class that fades after 4
+      seconds. Reports back via `onHighlightHandled` so `App.tsx` clears its
+      own copy and a second jump to the same record can re-trigger it.
+
+      Verified with the deliberate-break-and-restore discipline: (1) in
+      `EntityPanel.tsx`, removed the `setSearch("")` clear from the
+      highlight-arrival effect -- re-ran the new real-DOM test (which
+      renders, types into the search box, then rerenders with a real
+      `highlightRecordId` to simulate a jump onto a tab that's already open
+      with a leftover filter -- the actual scenario a same-tab jump
+      produces, not just a fresh mount), which failed exactly on the
+      "leftover search must be cleared" assertion; restored and confirmed
+      via `diff` that the file matched byte-for-byte. (2) in
+      `GlobalSearchPanel.tsx`, swapped the per-row button's `onJumpToRecord`
+      call for `onJumpToEntity` (the plausible copy-paste mistake) -- re-ran
+      the new DOM test, which failed exactly on the "must report that
+      record's real entity name and id" assertion; restored and confirmed
+      via `diff` that the file matched byte-for-byte. Also hit and fixed a
+      genuine jsdom gap along the way: jsdom doesn't implement
+      `scrollIntoView` at all (confirmed directly), so the new effect's
+      `row.scrollIntoView(...)` call crashed the real-DOM test with "is not
+      a function" -- changed to `row?.scrollIntoView?.(...)`, which is a
+      no-op in jsdom and unchanged in every real browser.
+
+      **And** a real Playwright pass against real running dev servers:
+      built a real restaurant app (2 real entity tabs), switched to the
+      second tab, added one real record with a globally-unique marker name
+      (extending the generic-fill helper to also cover `input[type=number]`
+      per round 171's own lesson, since this app's MenuItem entity has a
+      required price field), switched back to the FIRST tab (so the jump
+      below is a real cross-tab jump, not confirming whatever tab was
+      already open), opened Global Search with Ctrl+K, searched the unique
+      marker, confirmed exactly 1 real result, clicked that result's own
+      row, and confirmed both that the entity tabs switched to the correct
+      (second) tab AND that the highlighted row's own text was the exact
+      real record searched for. Full suite green (622 tests, up from 620 --
+      `@forge/web` 260 → 262; `@forge/shared`/`@forge/spec-engine`/
+      `@forge/db`/`@forge/api` unchanged) and typecheck clean.
+
 ## Phase 3
 
 - Self-healing: production observability, automatic diagnosis and patch
