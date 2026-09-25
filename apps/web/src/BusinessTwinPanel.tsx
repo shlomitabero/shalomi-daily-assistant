@@ -44,11 +44,20 @@ export function BusinessTwinPanel({
   projectName,
   onClose,
   onJumpToEntity,
+  onJumpToRecord,
 }: {
   projectId: string;
   projectName: string;
   onClose: () => void;
   onJumpToEntity: (entityName: string) => void;
+  /**
+   * computeRelationHubObservation (twin.ts) already resolves the
+   * "most-linked record" insight down to a specific real entityName+id --
+   * the same "jump to entity, not the record" gap round 174/175 already
+   * closed for Global Search and WhatsApp, now closed here too instead of
+   * just stating the fact as inert text.
+   */
+  onJumpToRecord: (entityName: string, recordId: number) => void;
 }) {
   const { t, lang } = useTranslation();
   const [twin, setTwin] = useState<BusinessTwin | null>(null);
@@ -132,10 +141,21 @@ export function BusinessTwinPanel({
               ))}
             </div>
 
-            {twin.observations.length > 0 && (
+            {(twin.observations.length > 0 || twin.mostLinkedRecord) && (
               <div className="twin-observations">
                 <span className="label">{t("twin.observations")}</span>
                 <ul>
+                  {twin.mostLinkedRecord && (
+                    <li>
+                      <button
+                        type="button"
+                        className="link-button twin-observation-link"
+                        onClick={() => onJumpToRecord(twin.mostLinkedRecord!.entityName, twin.mostLinkedRecord!.recordId)}
+                      >
+                        {twin.mostLinkedRecord.text}
+                      </button>
+                    </li>
+                  )}
                   {twin.observations.map((o, i) => (
                     <li key={i}>{o}</li>
                   ))}

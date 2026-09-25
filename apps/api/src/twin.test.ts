@@ -168,13 +168,26 @@ test("computeBusinessTwin identifies the record most referenced across multiple 
   insertRecord(db, hubProject.id, order, { total: 10, customerId: yossi });
 
   const twin = computeBusinessTwin(db, hubProject);
-  const hubObservation = twin.observations.find((o) => o.includes("most-linked record"));
-  assert.ok(hubObservation, `expected a most-linked-record observation, got: ${JSON.stringify(twin.observations)}`);
-  assert.ok(hubObservation!.includes("Dana Levi"), `expected Dana Levi (3 total links) to be the hub, got: "${hubObservation}"`);
-  assert.ok(hubObservation!.includes("3 links total"));
-  assert.ok(hubObservation!.includes('2 in "Orders"'));
-  assert.ok(hubObservation!.includes('1 in "Tickets"'));
-  assert.ok(!hubObservation!.includes("Yossi Cohen"), "Yossi Cohen has only 1 link and must not be reported as the hub");
+  assert.ok(
+    twin.mostLinkedRecord,
+    `expected a most-linked-record insight, got: ${JSON.stringify(twin.mostLinkedRecord)}`,
+  );
+  const hubObservation = twin.mostLinkedRecord!.text;
+  assert.ok(hubObservation.includes("Dana Levi"), `expected Dana Levi (3 total links) to be the hub, got: "${hubObservation}"`);
+  assert.ok(hubObservation.includes("3 links total"));
+  assert.ok(hubObservation.includes('2 in "Orders"'));
+  assert.ok(hubObservation.includes('1 in "Tickets"'));
+  assert.ok(!hubObservation.includes("Yossi Cohen"), "Yossi Cohen has only 1 link and must not be reported as the hub");
+  // New in this round: the insight is also resolved down to a real,
+  // clickable entityName+id -- not just prose -- so a person can jump
+  // straight to the actual record instead of just reading about it.
+  assert.equal(twin.mostLinkedRecord!.entityName, "Customer");
+  assert.equal(twin.mostLinkedRecord!.recordId, dana);
+  assert.equal(
+    twin.observations.some((o) => o.includes("most-linked record")),
+    false,
+    "the structured mostLinkedRecord insight must not ALSO be duplicated into the plain observations array",
+  );
 });
 
 test("computeBusinessTwin falls back to the next real candidate when the top-linked id no longer resolves to a real record, instead of dropping the insight entirely", () => {
@@ -237,14 +250,15 @@ test("computeBusinessTwin falls back to the next real candidate when the top-lin
   db.exec("PRAGMA foreign_keys = ON;");
 
   const twin = computeBusinessTwin(db, hubProject);
-  const hubObservation = twin.observations.find((o) => o.includes("most-linked record"));
   assert.ok(
-    hubObservation,
-    `expected the insight to fall back to Yossi Cohen (2 real links) instead of disappearing, got: ${JSON.stringify(twin.observations)}`,
+    twin.mostLinkedRecord,
+    `expected the insight to fall back to Yossi Cohen (2 real links) instead of disappearing, got: ${JSON.stringify(twin.mostLinkedRecord)}`,
   );
-  assert.ok(hubObservation!.includes("Yossi Cohen"), `expected Yossi Cohen as the fallback hub, got: "${hubObservation}"`);
-  assert.ok(hubObservation!.includes("2 links total"));
-  assert.ok(!hubObservation!.includes("Dana Levi"), "Dana Levi was deleted and must not be reported as the hub");
+  const hubObservation = twin.mostLinkedRecord!.text;
+  assert.ok(hubObservation.includes("Yossi Cohen"), `expected Yossi Cohen as the fallback hub, got: "${hubObservation}"`);
+  assert.ok(hubObservation.includes("2 links total"));
+  assert.ok(!hubObservation.includes("Dana Levi"), "Dana Levi was deleted and must not be reported as the hub");
+  assert.equal(twin.mostLinkedRecord!.recordId, yossi, "the fallback insight's own recordId must point at the real Yossi record, not the stale deleted one");
 });
 
 /**
@@ -299,11 +313,11 @@ test("computeBusinessTwin's most-linked-record insight has a real, if accidental
   insertRecord(db, hubProject.id, order, { total: 10, customerId: yossi });
 
   const twin = computeBusinessTwin(db, hubProject);
-  const hubObservation = twin.observations.find((o) => o.includes("most-linked record"));
-  assert.ok(hubObservation, `expected a most-linked-record observation even on a tie, got: ${JSON.stringify(twin.observations)}`);
-  assert.ok(hubObservation!.includes("Yossi Cohen"), `expected Yossi Cohen (most-recently-inserted tie-break winner) as the hub, got: "${hubObservation}"`);
-  assert.ok(hubObservation!.includes("2 links total"));
-  assert.ok(!hubObservation!.includes("Dana Levi"), "Dana Levi has the same link count but was created first, and must lose the tie under the current rule");
+  assert.ok(twin.mostLinkedRecord, `expected a most-linked-record insight even on a tie, got: ${JSON.stringify(twin.mostLinkedRecord)}`);
+  const hubObservation = twin.mostLinkedRecord!.text;
+  assert.ok(hubObservation.includes("Yossi Cohen"), `expected Yossi Cohen (most-recently-inserted tie-break winner) as the hub, got: "${hubObservation}"`);
+  assert.ok(hubObservation.includes("2 links total"));
+  assert.ok(!hubObservation.includes("Dana Levi"), "Dana Levi has the same link count but was created first, and must lose the tie under the current rule");
 });
 
 test("computeBusinessTwin flags two records that share the exact same display name as a possible duplicate", () => {

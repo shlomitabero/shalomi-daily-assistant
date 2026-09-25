@@ -64,6 +64,7 @@ const TWIN: BusinessTwin = {
   mostActive: { name: "Customer", label: "Customers", count: 12 },
   unused: [],
   observations: [],
+  mostLinkedRecord: null,
 };
 
 function mockTwinFetch() {
@@ -75,7 +76,10 @@ function mockTwinFetch() {
   };
 }
 
-function renderTwinPanel(onJumpToEntity: (entityName: string) => void) {
+function renderTwinPanel(
+  onJumpToEntity: (entityName: string) => void,
+  onJumpToRecord: (entityName: string, recordId: number) => void = () => {},
+) {
   return render(
     React.createElement(
       ThemeProvider,
@@ -88,6 +92,7 @@ function renderTwinPanel(onJumpToEntity: (entityName: string) => void) {
           projectName: "Test CRM",
           onClose: () => {},
           onJumpToEntity,
+          onJumpToRecord,
         }),
       ),
     ),
@@ -171,6 +176,55 @@ test("BusinessTwinPanel's stat tiles are clickable and call onJumpToEntity with 
 });
 
 /**
+ * New in this round: computeRelationHubObservation (twin.ts) already
+ * resolves the "most-linked record" insight down to a real, specific
+ * entityName+id -- but until now that fact was thrown away and the
+ * insight rendered as plain, inert text in the observations list, the
+ * same "jump to entity, not the record" gap round 174/175 already closed
+ * for Global Search and WhatsApp. Confirms the insight now renders as a
+ * real clickable button (not a plain <li>) and calls onJumpToRecord with
+ * the exact real entityName+id the server resolved, not onJumpToEntity.
+ */
+test("BusinessTwinPanel's most-linked-record insight is a real clickable button that calls onJumpToRecord with the real entity+record id", async () => {
+  await withJsdom(async () => {
+    const twinWithHub: BusinessTwin = {
+      ...TWIN,
+      observations: ["No records yet in: Orders."],
+      mostLinkedRecord: { text: '"Dana Levi" (Customers) is the most-linked record: 3 links total.', entityName: "Customer", recordId: 7 },
+    };
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string) => {
+      if (input === "/api/projects/proj1/twin") {
+        return new Response(JSON.stringify({ twin: twinWithHub }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${input}`);
+    }) as typeof fetch;
+    const entityJumps: string[] = [];
+    const recordJumps: [string, number][] = [];
+    try {
+      renderTwinPanel(
+        (entityName) => entityJumps.push(entityName),
+        (entityName, recordId) => recordJumps.push([entityName, recordId]),
+      );
+      await waitForCondition(() => document.querySelector(".twin-observation-link") !== null);
+
+      const hubButton = document.querySelector(".twin-observation-link") as HTMLButtonElement;
+      assert.equal(hubButton.tagName, "BUTTON", "the most-linked-record insight must be a real clickable button, not inert text");
+      assert.match(hubButton.textContent ?? "", /Dana Levi/);
+
+      const plainObservations = document.querySelectorAll(".twin-observations li:not(:has(button))");
+      assert.equal(plainObservations.length, 1, "the OTHER plain-text observation must still render as inert text, unaffected");
+
+      fireEvent.click(hubButton);
+      assert.deepEqual(recordJumps, [["Customer", 7]], "must call onJumpToRecord with the real entityName and recordId the server resolved");
+      assert.deepEqual(entityJumps, [], "clicking the most-linked-record insight must not also fire the entity-only onJumpToEntity");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * New in this round: computeBusinessTwin has always computed a real
  * totalRecords figure -- it was already included in the downloadable text
  * report (round 129's twinReport.ts) -- but the live panel itself never
@@ -217,6 +271,7 @@ test("BusinessTwinPanel renders stat tiles sorted by real record count (busiest 
       mostActive: { name: "Customer", label: "Customers", count: 12 },
       unused: [{ name: "Order", label: "Orders", count: 0 }],
       observations: [],
+      mostLinkedRecord: null,
     };
     const originalFetch = globalThis.fetch;
     globalThis.fetch = (async (input: string) => {
@@ -309,6 +364,7 @@ test("BusinessTwinPanel omits the percent line for a genuinely empty (0-record) 
       mostActive: { name: "Customer", label: "Customers", count: 12 },
       unused: [{ name: "Order", label: "Orders", count: 0 }],
       observations: [],
+      mostLinkedRecord: null,
     };
     const originalFetch = globalThis.fetch;
     globalThis.fetch = (async (input: string) => {

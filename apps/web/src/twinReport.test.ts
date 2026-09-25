@@ -16,6 +16,7 @@ function makeTwin(overrides: Partial<BusinessTwin> = {}): BusinessTwin {
     mostActive: { name: "Customer", label: "לקוחות", count: 3 },
     unused: [],
     observations: ['ב"לקוחות", 2 רשומות חולקות את השם "דנה" — יתכן כפילות.'],
+    mostLinkedRecord: null,
     ...overrides,
   };
 }
@@ -50,6 +51,27 @@ test("formatTwinReport omits the roles line and the observations section when th
 
   assert.doesNotMatch(report, /Roles:/);
   assert.doesNotMatch(report, /What we noticed/);
+});
+
+/**
+ * New in this round: mostLinkedRecord was split out of the plain
+ * `observations` array (so the live panel can make it a real clickable
+ * jump -- see BusinessTwinPanel.test.ts) into its own structured field.
+ * Confirms the downloadable report doesn't silently drop that fact just
+ * because it no longer lives in `observations` -- it must still show up
+ * as a real bullet in the report, even when `observations` itself is
+ * completely empty.
+ */
+test("formatTwinReport folds the structured mostLinkedRecord insight back into the observations section", () => {
+  const t = (key: string, params?: Record<string, string | number>) => translate("en", key, params);
+  const twin = makeTwin({
+    observations: [],
+    mostLinkedRecord: { text: '"Dana Levi" (Customers) is the most-linked record: 3 links total.', entityName: "Customer", recordId: 7 },
+  });
+  const report = formatTwinReport(twin, "Flower Shop", "en", t);
+
+  assert.match(report, /Dana Levi/);
+  assert.match(report, /most-linked record/);
 });
 
 test("formatTwinReport still lists every entity's count even when there are zero total records", () => {

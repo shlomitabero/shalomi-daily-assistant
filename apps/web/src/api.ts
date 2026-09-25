@@ -382,6 +382,7 @@ export interface BusinessTwin {
   mostActive: BusinessTwinEntityStat | null;
   unused: BusinessTwinEntityStat[];
   observations: string[];
+  mostLinkedRecord: { text: string; entityName: string; recordId: number } | null;
 }
 
 export function getBusinessTwin(projectId: string): Promise<{ twin: BusinessTwin }> {

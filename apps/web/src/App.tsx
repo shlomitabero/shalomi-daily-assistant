@@ -1008,6 +1008,11 @@ function AppContent() {
                 setActiveEntity(entityName);
                 setShowTwin(false);
               }}
+              onJumpToRecord={(entityName, recordId) => {
+                setActiveEntity(entityName);
+                setHighlightRecordId(recordId);
+                setShowTwin(false);
+              }}
             />
           )}
 

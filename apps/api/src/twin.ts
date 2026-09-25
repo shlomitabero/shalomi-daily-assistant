@@ -26,6 +26,14 @@ export interface BusinessTwin {
   mostActive: BusinessTwinEntityStat | null;
   unused: BusinessTwinEntityStat[];
   observations: string[];
+  /**
+   * The "most-linked record" insight, kept separate from the plain-text
+   * `observations` array because -- unlike every other observation here --
+   * it names one specific real record (an actual entityName+id, already
+   * resolved by computeRelationHubObservation below), so the client can
+   * jump straight to it instead of just stating the fact in prose.
+   */
+  mostLinkedRecord: { text: string; entityName: string; recordId: number } | null;
 }
 
 /**
@@ -67,7 +75,11 @@ function computeRelationCoverageObservations(db: ForgeDatabase, project: Project
  * that record is popular. Only reported when a record is referenced more
  * than once; a single reference isn't a pattern worth surfacing.
  */
-function computeRelationHubObservation(db: ForgeDatabase, project: Project, hebrew: boolean): string[] {
+function computeRelationHubObservation(
+  db: ForgeDatabase,
+  project: Project,
+  hebrew: boolean,
+): { text: string; entityName: string; recordId: number } | null {
   const entities = project.spec.entities;
   // targetEntityName -> targetRecordId -> [{ sourceLabel, fieldLabel, count }]
   const breakdownByTarget = new Map<string, Map<number, { sourceLabel: string; fieldLabel: string; count: number }[]>>();
@@ -130,7 +142,7 @@ function computeRelationHubObservation(db: ForgeDatabase, project: Project, hebr
       break;
     }
   }
-  if (!best || !targetEntity || !targetRecord) return [];
+  if (!best || !targetEntity || !targetRecord) return null;
 
   const breakdown = breakdownByTarget.get(best.targetName)!.get(best.id)!;
   const breakdownText = breakdown
@@ -139,11 +151,13 @@ function computeRelationHubObservation(db: ForgeDatabase, project: Project, hebr
   const label = recordDisplayLabel(targetEntity, targetRecord);
   const entityLabel = targetEntity.label ?? targetEntity.name;
 
-  return [
-    hebrew
+  return {
+    text: hebrew
       ? `"${label}" (${entityLabel}) הרשומה המקושרת ביותר: ${best.total} קישורים בסה"כ — ${breakdownText}.`
       : `"${label}" (${entityLabel}) is the most-linked record: ${best.total} links total — ${breakdownText}.`,
-  ];
+    entityName: targetEntity.name,
+    recordId: best.id,
+  };
 }
 
 /**
@@ -260,6 +274,7 @@ export function computeBusinessTwin(db: ForgeDatabase, project: Project): Busine
   }, null);
 
   const observations: string[] = [];
+  let mostLinkedRecord: { text: string; entityName: string; recordId: number } | null = null;
   if (totalRecords === 0) {
     observations.push(
       hebrew
@@ -282,7 +297,7 @@ export function computeBusinessTwin(db: ForgeDatabase, project: Project): Busine
           : `No records yet in: ${names} — worth checking whether that's expected.`,
       );
     }
-    observations.push(...computeRelationHubObservation(db, project, hebrew));
+    mostLinkedRecord = computeRelationHubObservation(db, project, hebrew);
     observations.push(...computeRelationCoverageObservations(db, project, hebrew));
     observations.push(...computeDuplicateObservations(db, project, hebrew));
     observations.push(...computeActivityObservations(db, project, hebrew));
@@ -296,5 +311,6 @@ export function computeBusinessTwin(db: ForgeDatabase, project: Project): Busine
     mostActive,
     unused,
     observations,
+    mostLinkedRecord,
   };
 }
