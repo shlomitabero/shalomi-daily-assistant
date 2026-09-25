@@ -790,3 +790,117 @@ test("WhatsAppPanel shows a search box only once the log passes the threshold, f
     }
   });
 });
+
+/**
+ * New in this round: the message log had a text search but no way to
+ * isolate "just what I sent" / "just what came in" / "just what failed
+ * to send" -- exactly the gap a long, never-capped, never-deleted
+ * conversation (filterWhatsAppMessages' own comment) eventually needs.
+ * Combines a real direction/status filter with the existing text search
+ * through a real running component, not the pure function in isolation.
+ */
+test("WhatsAppPanel's direction filter narrows the real rendered log to incoming/outgoing/failed, and composes with the text search", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    const makeMessage = (id: string, overrides: Partial<WhatsAppMessageLogEntry>): WhatsAppMessageLogEntry => ({
+      id,
+      direction: "in",
+      fromNumber: "972521112233",
+      toNumber: "972501234567",
+      body: "הודעה",
+      matchedLabel: null,
+      matchedEntityName: null,
+      matchedRecordId: null,
+      status: "received",
+      createdAt: new Date().toISOString(),
+      ...overrides,
+    });
+    const sevenMessages = [
+      makeMessage("m1", { direction: "in", body: "מתי אתם פתוחים?" }),
+      makeMessage("m2", { direction: "in", body: "אשמח להזמין זר ורדים" }),
+      makeMessage("m3", { direction: "out", status: "sent", body: "בשמחה, איזה זר?" }),
+      makeMessage("m4", { direction: "out", status: "sent", body: "זר ורדים אדומים מוכן" }),
+      makeMessage("m5", { direction: "out", status: "failed", body: "עדכון סטטוס ההזמנה" }),
+      makeMessage("m6", { direction: "in", body: "תודה רבה" }),
+      makeMessage("m7", { direction: "out", status: "sent", body: "בבקשה!" }),
+    ];
+    globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/integrations/whatsapp/status") {
+        return new Response(
+          JSON.stringify({ status: "connected", phoneNumber: "972501234567", qrDataUrl: null, error: null }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      if (method === "GET" && input === "/api/projects/proj1/integrations/whatsapp/messages") {
+        return new Response(JSON.stringify({ messages: sevenMessages }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+
+    try {
+      render(
+        React.createElement(
+          ThemeProvider,
+          null,
+          React.createElement(LanguageProvider, null, React.createElement(WhatsAppPanel, { projectId: "proj1", projectName: "Flower Shop", onClose: () => {}, onJumpToEntity: () => {}, onJumpToRecord: () => {} })),
+        ),
+      );
+      await waitForCondition(() => document.querySelectorAll(".whatsapp-log-list li").length === 7);
+
+      const filterSelect = document.querySelector(".whatsapp-log-direction-filter") as HTMLSelectElement | null;
+      assert.ok(filterSelect, "expected a real direction/status filter select once the log has more than the threshold of messages");
+
+      fireEvent.change(filterSelect!, { target: { value: "in" } });
+      await waitForCondition(() => document.querySelectorAll(".whatsapp-log-list li").length === 3);
+      assert.equal(
+        document.querySelector(".whatsapp-log-count")!.textContent,
+        " — 3 of 7 messages",
+        "the 'incoming only' filter must show the real 3-of-7 count",
+      );
+
+      fireEvent.change(filterSelect!, { target: { value: "out" } });
+      await waitForCondition(() => document.querySelectorAll(".whatsapp-log-list li").length === 4);
+      assert.equal(
+        document.querySelector(".whatsapp-log-count")!.textContent,
+        " — 4 of 7 messages",
+        "the 'outgoing only' filter must include both the sent AND the failed outgoing messages",
+      );
+
+      fireEvent.change(filterSelect!, { target: { value: "failed" } });
+      await waitForCondition(() => document.querySelectorAll(".whatsapp-log-list li").length === 1);
+      assert.match(
+        document.querySelector(".whatsapp-log-body")!.textContent ?? "",
+        /עדכון סטטוס ההזמנה/,
+        "the 'failed only' filter must show exactly the one real failed message, not a stale/wrong one",
+      );
+
+      // Composes with the text search -- both filters apply together, not one replacing the other.
+      // Of the 4 outgoing messages, only m4 ("זר ורדים אדומים מוכן") mentions ורדים.
+      fireEvent.change(filterSelect!, { target: { value: "out" } });
+      await waitForCondition(() => document.querySelectorAll(".whatsapp-log-list li").length === 4);
+      const searchBox = document.querySelector(".whatsapp-log-search") as HTMLInputElement;
+      fireEvent.change(searchBox, { target: { value: "ורדים" } });
+      await waitForCondition(() => document.querySelectorAll(".whatsapp-log-list li").length === 1);
+      assert.equal(
+        document.querySelector(".whatsapp-log-count")!.textContent,
+        " — 1 of 7 messages",
+        "the real search AND the real direction filter must both narrow the log together, down to just m4",
+      );
+      assert.match(
+        document.querySelector(".whatsapp-log-body")!.textContent ?? "",
+        /זר ורדים אדומים מוכן/,
+        "the one remaining message must genuinely be both outgoing AND matching the search text",
+      );
+
+      fireEvent.change(filterSelect!, { target: { value: "all" } });
+      fireEvent.change(searchBox, { target: { value: "" } });
+      await waitForCondition(() => document.querySelectorAll(".whatsapp-log-list li").length === 7);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});

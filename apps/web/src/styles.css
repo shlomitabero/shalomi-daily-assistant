@@ -1626,6 +1626,23 @@ button.sort-header:hover:not(:disabled) {
   margin: 12px 0 0;
 }
 
+.whatsapp-log-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 12px 0 0;
+}
+
+.whatsapp-log-filters .whatsapp-log-search {
+  margin: 0;
+  flex: 1;
+  min-width: 160px;
+}
+
+.whatsapp-log-direction-filter {
+  flex-shrink: 0;
+}
+
 .checkpoint-list {
   list-style: none;
   margin: 12px 0 0;

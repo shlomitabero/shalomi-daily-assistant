@@ -2,7 +2,12 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { WhatsAppMessageLogEntry } from "./api.js";
 import { translate } from "./i18n/language.js";
-import { filterWhatsAppMessages, formatWhatsAppLog, formatWhatsAppMessageCount } from "./whatsappLog.js";
+import {
+  filterWhatsAppMessages,
+  filterWhatsAppMessagesByDirection,
+  formatWhatsAppLog,
+  formatWhatsAppMessageCount,
+} from "./whatsappLog.js";
 
 function makeMessage(overrides: Partial<WhatsAppMessageLogEntry> = {}): WhatsAppMessageLogEntry {
   return {
@@ -103,6 +108,55 @@ test("filterWhatsAppMessages returns every message unchanged when the search is 
 test("filterWhatsAppMessages returns an empty list when nothing matches, instead of falling back to everything", () => {
   const messages = [makeMessage({ id: "m1", body: "שלום" })];
   assert.deepEqual(filterWhatsAppMessages(messages, "zzz-no-such-text"), []);
+});
+
+test("filterWhatsAppMessagesByDirection returns every message unchanged for 'all'", () => {
+  const messages = [
+    makeMessage({ id: "m1", direction: "in", status: "received" }),
+    makeMessage({ id: "m2", direction: "out", status: "sent" }),
+  ];
+  assert.deepEqual(filterWhatsAppMessagesByDirection(messages, "all"), messages);
+});
+
+test("filterWhatsAppMessagesByDirection('in') keeps only incoming messages, regardless of status", () => {
+  const messages = [
+    makeMessage({ id: "m1", direction: "in", status: "received" }),
+    makeMessage({ id: "m2", direction: "out", status: "sent" }),
+    makeMessage({ id: "m3", direction: "out", status: "failed" }),
+  ];
+  assert.deepEqual(
+    filterWhatsAppMessagesByDirection(messages, "in").map((m) => m.id),
+    ["m1"],
+  );
+});
+
+test("filterWhatsAppMessagesByDirection('out') keeps only outgoing messages, including failed sends", () => {
+  const messages = [
+    makeMessage({ id: "m1", direction: "in", status: "received" }),
+    makeMessage({ id: "m2", direction: "out", status: "sent" }),
+    makeMessage({ id: "m3", direction: "out", status: "failed" }),
+  ];
+  assert.deepEqual(
+    filterWhatsAppMessagesByDirection(messages, "out").map((m) => m.id),
+    ["m2", "m3"],
+  );
+});
+
+test("filterWhatsAppMessagesByDirection('failed') keeps only failed sends, dropping successful outgoing and every incoming message", () => {
+  const messages = [
+    makeMessage({ id: "m1", direction: "in", status: "received" }),
+    makeMessage({ id: "m2", direction: "out", status: "sent" }),
+    makeMessage({ id: "m3", direction: "out", status: "failed" }),
+  ];
+  assert.deepEqual(
+    filterWhatsAppMessagesByDirection(messages, "failed").map((m) => m.id),
+    ["m3"],
+  );
+});
+
+test("filterWhatsAppMessagesByDirection returns an empty list, not everything, when no message matches the filter", () => {
+  const messages = [makeMessage({ id: "m1", direction: "in", status: "received" })];
+  assert.deepEqual(filterWhatsAppMessagesByDirection(messages, "failed"), []);
 });
 
 test("formatWhatsAppMessageCount reports a plain total when the search hasn't narrowed anything out", () => {

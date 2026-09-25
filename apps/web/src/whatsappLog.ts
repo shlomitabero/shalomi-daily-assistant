@@ -83,6 +83,27 @@ export function formatWhatsAppMessageCount(
     : t("whatsapp.log.count.filtered", { shown, total });
 }
 
+export type WhatsAppLogFilter = "all" | "in" | "out" | "failed";
+
+/**
+ * Narrows the log to one of: every message, only incoming, only outgoing,
+ * or only failed sends -- applied together with (not instead of)
+ * filterWhatsAppMessages' own text search, the same two-independent-
+ * filters combination EntityPanel.tsx's search+statusFilter already use
+ * on the entity table. A long, ever-growing conversation (this log has no
+ * cap and no delete, per filterWhatsAppMessages' own comment) is exactly
+ * where being able to isolate "just what I sent" or "just what failed"
+ * matters -- scanning by eye stops working once the log gets long.
+ */
+export function filterWhatsAppMessagesByDirection(
+  messages: WhatsAppMessageLogEntry[],
+  filter: WhatsAppLogFilter,
+): WhatsAppMessageLogEntry[] {
+  if (filter === "all") return messages;
+  if (filter === "failed") return messages.filter((m) => m.status === "failed");
+  return messages.filter((m) => m.direction === filter);
+}
+
 /** Saves the already-rendered log text as a real downloaded .txt file, the same browser-download mechanics twinReport.ts's downloadTwinReport uses. */
 export function downloadWhatsAppLog(text: string, projectName: string): void {
   const blob = new Blob([text], { type: "text/plain;charset=utf-8" });

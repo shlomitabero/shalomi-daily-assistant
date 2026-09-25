@@ -11,7 +11,14 @@ import {
   type WhatsAppMessageLogEntry,
   type WhatsAppStatusView,
 } from "./api.js";
-import { downloadWhatsAppLog, filterWhatsAppMessages, formatWhatsAppLog, formatWhatsAppMessageCount } from "./whatsappLog.js";
+import {
+  downloadWhatsAppLog,
+  filterWhatsAppMessages,
+  filterWhatsAppMessagesByDirection,
+  formatWhatsAppLog,
+  formatWhatsAppMessageCount,
+  type WhatsAppLogFilter,
+} from "./whatsappLog.js";
 
 // Mirrors HistoryPanel's own threshold for showing its checkpoint search
 // box -- a handful of messages are trivial to scan by eye; a search box
@@ -72,6 +79,7 @@ export function WhatsAppPanel({
   const [sendResult, setSendResult] = useState<{ ok: boolean; text: string } | null>(null);
   const [messages, setMessages] = useState<WhatsAppMessageLogEntry[]>([]);
   const [search, setSearch] = useState("");
+  const [directionFilter, setDirectionFilter] = useState<WhatsAppLogFilter>("all");
   const [retryingId, setRetryingId] = useState<string | null>(null);
   const [retryError, setRetryError] = useState<string | null>(null);
   const [clearing, setClearing] = useState(false);
@@ -297,7 +305,7 @@ export function WhatsAppPanel({
   }
 
   const s = status?.status ?? "disconnected";
-  const visibleMessages = filterWhatsAppMessages(messages, search);
+  const visibleMessages = filterWhatsAppMessagesByDirection(filterWhatsAppMessages(messages, search), directionFilter);
 
   return (
     <div className="history-overlay">
@@ -400,14 +408,27 @@ export function WhatsAppPanel({
           </div>
           {retryError && <p className="error">{retryError}</p>}
           {messages.length > SEARCH_THRESHOLD && (
-            <input
-              type="text"
-              className="whatsapp-log-search"
-              placeholder={t("whatsapp.log.search.placeholder")}
-              aria-label={t("whatsapp.log.search.placeholder")}
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-            />
+            <div className="whatsapp-log-filters">
+              <input
+                type="text"
+                className="whatsapp-log-search"
+                placeholder={t("whatsapp.log.search.placeholder")}
+                aria-label={t("whatsapp.log.search.placeholder")}
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+              />
+              <select
+                className="whatsapp-log-direction-filter"
+                aria-label={t("whatsapp.log.filter.label")}
+                value={directionFilter}
+                onChange={(e) => setDirectionFilter(e.target.value as WhatsAppLogFilter)}
+              >
+                <option value="all">{t("whatsapp.log.filter.all")}</option>
+                <option value="in">{t("whatsapp.log.filter.incoming")}</option>
+                <option value="out">{t("whatsapp.log.filter.outgoing")}</option>
+                <option value="failed">{t("whatsapp.log.filter.failed")}</option>
+              </select>
+            </div>
           )}
           {messages.length === 0 ? (
             <p className="muted small">{t("whatsapp.log.empty")}</p>
