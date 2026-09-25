@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import type { Checkpoint, Project, ProductSpec } from "@forge/shared";
 import { listCheckpoints, restoreCheckpoint } from "./api.js";
-import { computeCheckpointDiff, filterCheckpoints, isCheckpointCurrent } from "./checkpointDiff.js";
+import { computeCheckpointDiff, downloadCheckpointHistory, filterCheckpoints, formatCheckpointHistory, isCheckpointCurrent } from "./checkpointDiff.js";
 import { useTranslation } from "./i18n/LanguageContext.js";
 import { useDialogFocusTrap } from "./useDialogFocusTrap.js";
 
@@ -9,11 +9,13 @@ const LOCALE: Record<string, string> = { he: "he-IL", en: "en-US" };
 
 export function HistoryPanel({
   projectId,
+  projectName,
   currentSpec,
   onRestored,
   onClose,
 }: {
   projectId: string;
+  projectName: string;
   currentSpec: ProductSpec;
   onRestored: (project: Project) => void;
   onClose: () => void;
@@ -32,6 +34,10 @@ export function HistoryPanel({
       .then(({ checkpoints }) => setCheckpoints(checkpoints))
       .catch((err) => setError((err as Error).message));
   }, [projectId]);
+
+  function handleDownload() {
+    downloadCheckpointHistory(formatCheckpointHistory(checkpoints, currentSpec, projectName, lang, t), projectName);
+  }
 
   async function handleRestore(checkpoint: Checkpoint) {
     if (!window.confirm(t("history.confirmRestore", { label: checkpoint.label }))) return;
@@ -52,9 +58,16 @@ export function HistoryPanel({
       <div className="history-panel" ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby="history-panel-title">
         <div className="history-header">
           <h2 id="history-panel-title">{t("history.title")}</h2>
-          <button type="button" className="secondary" onClick={onClose}>
-            {t("history.close")}
-          </button>
+          <div className="history-header-actions">
+            {checkpoints.length > 0 && (
+              <button type="button" className="secondary" onClick={handleDownload}>
+                {t("history.download")}
+              </button>
+            )}
+            <button type="button" className="secondary" onClick={onClose}>
+              {t("history.close")}
+            </button>
+          </div>
         </div>
         <p className="muted small">{t("history.description")}</p>
         {error && <p className="error">{error}</p>}

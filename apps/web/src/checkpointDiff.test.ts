@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { Checkpoint, ProductSpec } from "@forge/shared";
-import { computeCheckpointDiff, filterCheckpoints, isCheckpointCurrent } from "./checkpointDiff.js";
+import { computeCheckpointDiff, filterCheckpoints, formatCheckpointHistory, isCheckpointCurrent } from "./checkpointDiff.js";
+import { translate } from "./i18n/language.js";
 
 function makeSpec(entities: ProductSpec["entities"]): ProductSpec {
   return { summary: "s", personas: [], roles: ["Admin"], entities, screens: [], assumptions: [], openQuestions: [] };
@@ -168,4 +169,96 @@ test("filterCheckpoints returns every checkpoint unchanged when the search is bl
 test("filterCheckpoints returns an empty list when nothing matches, instead of falling back to everything", () => {
   const checkpoints = [makeCheckpoint("Initial build"), makeCheckpoint("Refine: add invoice tracking")];
   assert.deepEqual(filterCheckpoints(checkpoints, "zzz-no-such-checkpoint"), []);
+});
+
+/**
+ * New in this round: a project's checkpoint history only ever grows (no
+ * cap, no delete), so this is the only way to keep a permanent record of
+ * it outside the app -- the same gap Business Twin (round 129) and the
+ * WhatsApp log (round 154) already closed for their own data. Confirms
+ * the real project name, each real checkpoint's own label and screen
+ * count, and the "current" marker land in the exported text -- not a
+ * placeholder or the wrong checkpoint's data.
+ */
+test("formatCheckpointHistory includes the project name, each checkpoint's own label, timestamp, and screen count", () => {
+  const t = (key: string, params?: Record<string, string | number>) => translate("en", key, params);
+  const currentSpec = makeSpec([{ name: "Customer", label: "Customers", fields: [{ name: "name", type: "text", required: true }] }]);
+  const checkpoints: Checkpoint[] = [
+    {
+      id: "cp2",
+      projectId: "p1",
+      label: "Refine: add invoice tracking",
+      spec: makeSpec([
+        { name: "Customer", label: "Customers", fields: [{ name: "name", type: "text", required: true }] },
+        { name: "Invoice", label: "Invoices", fields: [{ name: "total", type: "number", required: true }] },
+      ]),
+      createdAt: "2026-03-10T12:00:00.000Z",
+    },
+    {
+      id: "cp1",
+      projectId: "p1",
+      label: "Initial build",
+      spec: currentSpec,
+      createdAt: "2026-03-01T09:00:00.000Z",
+    },
+  ];
+
+  const report = formatCheckpointHistory(checkpoints, currentSpec, "Flower Shop", "en", t);
+
+  assert.match(report, /Flower Shop/);
+  assert.match(report, /Refine: add invoice tracking/);
+  assert.match(report, /Initial build/);
+  assert.match(report, /2 screens/, "the invoice-tracking checkpoint has 2 entities, must show '2 screens'");
+  assert.match(report, /1 screens/, "the initial-build checkpoint has 1 entity");
+});
+
+test("formatCheckpointHistory marks exactly the checkpoint matching the current spec, not the newest one", () => {
+  const t = (key: string, params?: Record<string, string | number>) => translate("en", key, params);
+  const currentSpec = makeSpec([{ name: "Customer", label: "Customers", fields: [{ name: "name", type: "text", required: true }] }]);
+  const checkpoints: Checkpoint[] = [
+    {
+      id: "cp2",
+      projectId: "p1",
+      label: "Refine: add invoice tracking",
+      spec: makeSpec([
+        { name: "Customer", label: "Customers", fields: [{ name: "name", type: "text", required: true }] },
+        { name: "Invoice", label: "Invoices", fields: [{ name: "total", type: "number", required: true }] },
+      ]),
+      createdAt: "2026-03-10T12:00:00.000Z",
+    },
+    {
+      id: "cp1",
+      projectId: "p1",
+      label: "Initial build",
+      spec: currentSpec,
+      createdAt: "2026-03-01T09:00:00.000Z",
+    },
+  ];
+
+  const report = formatCheckpointHistory(checkpoints, currentSpec, "Flower Shop", "en", t);
+  const lines = report.split("\n");
+  const initialBuildLine = lines.find((l) => l.includes("Initial build"))!;
+  const refineLine = lines.find((l) => l.includes("Refine: add invoice tracking"))!;
+
+  assert.match(initialBuildLine, /Current state/, "the checkpoint that's ACTUALLY current (an older one, not the newest) must be marked");
+  assert.doesNotMatch(refineLine, /Current state/, "a checkpoint that is NOT current must not be marked, even if it's the newest");
+});
+
+test("formatCheckpointHistory shows the empty-history message instead of an empty body when there are no checkpoints", () => {
+  const t = (key: string, params?: Record<string, string | number>) => translate("en", key, params);
+  const currentSpec = makeSpec([]);
+  const report = formatCheckpointHistory([], currentSpec, "Flower Shop", "en", t);
+  assert.match(report, /No saved points yet\./);
+});
+
+test("formatCheckpointHistory renders in Hebrew when given the Hebrew translator, with Hebrew text surviving intact", () => {
+  const t = (key: string, params?: Record<string, string | number>) => translate("he", key, params);
+  const currentSpec = makeSpec([{ name: "Customer", fields: [] }]);
+  const checkpoints: Checkpoint[] = [
+    { id: "cp1", projectId: "p1", label: "בנייה ראשונית", spec: currentSpec, createdAt: "2026-03-01T09:00:00.000Z" },
+  ];
+  const report = formatCheckpointHistory(checkpoints, currentSpec, "חנות הפרחים", "he", t);
+
+  assert.match(report, /חנות הפרחים/);
+  assert.match(report, /בנייה ראשונית/);
 });

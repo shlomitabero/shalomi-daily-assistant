@@ -132,6 +132,7 @@ test("HistoryPanel disables every restore button while one restore is in flight,
             null,
             React.createElement(HistoryPanel, {
               projectId: "proj1",
+              projectName: "Test Project",
               // Deliberately NOT cp1.spec/cp2.spec -- this test's own
               // concern is the concurrency guard, not the "Current" chip
               // (covered separately below), and a currentSpec identical to
@@ -242,6 +243,7 @@ test("HistoryPanel's restore button asks for confirmation naming the checkpoint,
             null,
             React.createElement(HistoryPanel, {
               projectId: "proj1",
+              projectName: "Test Project",
               // Deliberately NOT cp.spec -- an identical currentSpec would
               // disable this checkpoint's own restore button (it'd be
               // marked Current), and this test's own concern is the
@@ -328,6 +330,7 @@ test("HistoryPanel's 'What would change?' toggle shows the real entities/fields 
             null,
             React.createElement(HistoryPanel, {
               projectId: "proj1",
+              projectName: "Test Project",
               currentSpec,
               onRestored: () => {},
               onClose: () => {},
@@ -398,6 +401,7 @@ test("HistoryPanel marks the checkpoint matching the current spec with a 'Curren
             null,
             React.createElement(HistoryPanel, {
               projectId: "proj1",
+              projectName: "Test Project",
               currentSpec,
               onRestored: () => {},
               onClose: () => {},
@@ -463,6 +467,7 @@ test("HistoryPanel's search box (shown once there are more than 5 checkpoints) n
             null,
             React.createElement(HistoryPanel, {
               projectId: "proj1",
+              projectName: "Test Project",
               currentSpec: checkpoints[0].spec,
               onRestored: () => {},
               onClose: () => {},
@@ -488,6 +493,93 @@ test("HistoryPanel's search box (shown once there are more than 5 checkpoints) n
       await waitForCondition(() => document.querySelectorAll(".checkpoint-list li").length === 6);
     } finally {
       globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
+ * New in this round: a project's checkpoint history only ever grows (no
+ * cap, no delete), so this closes the same "keep a permanent record
+ * outside the app" gap Business Twin (round 129) and the WhatsApp log
+ * (round 154) already have a download button for.
+ */
+test("HistoryPanel shows a download button only once there are checkpoints, and clicking it downloads the real history as a named file", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    const cp1 = makeCheckpoint("cp1", "Initial build");
+    globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/checkpoints") {
+        return new Response(JSON.stringify({ checkpoints: [cp1] }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+
+    // jsdom doesn't implement the real Blob-URL machinery -- stub just
+    // enough of it to observe what the click handler actually does, the
+    // same technique WhatsAppPanel.test.ts's own download test uses.
+    const originalCreateObjectURL = (URL as unknown as { createObjectURL?: (b: Blob) => string }).createObjectURL;
+    const originalRevokeObjectURL = (URL as unknown as { revokeObjectURL?: (u: string) => void }).revokeObjectURL;
+    const anchorProto = (globalThis as unknown as { window: { HTMLAnchorElement: { prototype: HTMLAnchorElement } } }).window
+      .HTMLAnchorElement.prototype;
+    const originalAnchorClick = anchorProto.click;
+    let capturedDownloadName: string | null = null;
+    let clickCount = 0;
+    (URL as unknown as { createObjectURL: (b: Blob) => string }).createObjectURL = () => "blob:mock-url";
+    (URL as unknown as { revokeObjectURL: (u: string) => void }).revokeObjectURL = () => {};
+    anchorProto.click = function (this: HTMLAnchorElement) {
+      capturedDownloadName = this.download;
+      clickCount += 1;
+    };
+
+    try {
+      const { container } = render(
+        React.createElement(
+          ThemeProvider,
+          null,
+          React.createElement(
+            LanguageProvider,
+            null,
+            React.createElement(HistoryPanel, {
+              projectId: "proj1",
+              projectName: "Flower Shop",
+              currentSpec: cp1.spec,
+              onRestored: () => {},
+              onClose: () => {},
+            }),
+          ),
+        ),
+      );
+      // Before any checkpoints load, an empty history must not offer to
+      // download nothing (mirrors the WhatsApp log's own empty-log guard).
+      assert.equal(
+        Array.from(container.querySelectorAll("button")).some((b) => b.textContent?.includes("Download timeline")),
+        false,
+        "no download button should render before the history has any checkpoints",
+      );
+
+      await waitForCondition(() => document.querySelectorAll(".checkpoint-list li").length === 1);
+
+      const downloadButton = Array.from(document.querySelectorAll("button")).find((b) => b.textContent?.includes("Download timeline"));
+      assert.ok(downloadButton, "expected a Download timeline button once the history has real checkpoints");
+
+      fireEvent.click(downloadButton!);
+
+      assert.equal(clickCount, 1, "clicking the download button must trigger exactly one real anchor click");
+      const downloadName: string = capturedDownloadName ?? "";
+      assert.ok(
+        downloadName.includes("Flower Shop"),
+        `expected the downloaded filename to be derived from the real project name "Flower Shop", got "${downloadName}"`,
+      );
+      assert.ok(downloadName.endsWith("history.txt"), `expected a history.txt filename, got "${downloadName}"`);
+    } finally {
+      globalThis.fetch = originalFetch;
+      if (originalCreateObjectURL) (URL as unknown as { createObjectURL: (b: Blob) => string }).createObjectURL = originalCreateObjectURL;
+      if (originalRevokeObjectURL) (URL as unknown as { revokeObjectURL: (u: string) => void }).revokeObjectURL = originalRevokeObjectURL;
+      anchorProto.click = originalAnchorClick;
     }
   });
 });

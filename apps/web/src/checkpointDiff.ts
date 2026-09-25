@@ -1,4 +1,8 @@
 import type { Checkpoint, ProductSpec } from "@forge/shared";
+import { safeDownloadName } from "./api.js";
+import type { Lang } from "./i18n/language.js";
+
+const LOCALE: Record<Lang, string> = { he: "he-IL", en: "en-US" };
 
 export interface CheckpointDiff {
   removedEntities: { name: string; label: string }[];
@@ -85,4 +89,57 @@ export function filterCheckpoints(checkpoints: Checkpoint[], search: string): Ch
   const query = search.trim().toLowerCase();
   if (!query) return checkpoints;
   return checkpoints.filter((c) => c.label.toLowerCase().includes(query));
+}
+
+/**
+ * Renders the checkpoint list (already fetched into the panel -- no extra
+ * network round-trip) as a plain, shareable text snapshot -- same "plain
+ * UTF-8 text, not a PDF" reasoning as twinReport.ts's own doc comment
+ * (this app's Hebrew-first audience means a real PDF would need an
+ * embedded Hebrew font, a bigger undertaking than this feature's value
+ * justifies). Every build/refine adds one more entry to this list forever
+ * with no cap and no delete, so this is the only way to keep a permanent
+ * record of a project's own build history outside the app -- the same gap
+ * this app's other two panels (Business Twin, round 129; WhatsApp log,
+ * round 154) already closed for their own data.
+ */
+export function formatCheckpointHistory(
+  checkpoints: Checkpoint[],
+  currentSpec: ProductSpec,
+  projectName: string,
+  lang: Lang,
+  t: (key: string, params?: Record<string, string | number>) => string,
+): string {
+  const lines: string[] = [];
+  lines.push(`${t("history.title")} — ${projectName}`);
+  lines.push(t("history.report.generatedAt", { date: new Date().toLocaleString(LOCALE[lang]) }));
+  lines.push("");
+
+  if (checkpoints.length === 0) {
+    lines.push(t("history.empty"));
+    return lines.join("\n");
+  }
+
+  for (const checkpoint of checkpoints) {
+    const time = new Date(checkpoint.createdAt).toLocaleString(LOCALE[lang]);
+    const current = isCheckpointCurrent(currentSpec, checkpoint.spec) ? ` [${t("history.current")}]` : "";
+    lines.push(`${checkpoint.label}${current}`);
+    lines.push(`${time} — ${t("history.screenCount", { count: checkpoint.spec.entities.length })}`);
+    lines.push("");
+  }
+
+  return lines.join("\n").trimEnd();
+}
+
+/** Saves the already-rendered history text as a real downloaded .txt file, the same browser-download mechanics twinReport.ts's downloadTwinReport uses. */
+export function downloadCheckpointHistory(text: string, projectName: string): void {
+  const blob = new Blob([text], { type: "text/plain;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `${safeDownloadName(projectName, "forge-app")}-history.txt`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
 }
