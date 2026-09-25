@@ -8860,6 +8860,87 @@ not a single "make it perfect" claim.
       `@forge/shared`/`@forge/spec-engine`/`@forge/db`/`@forge/api`
       unchanged) and typecheck clean.
 
+- [x] **Round 180 — Global Search remembers recent queries per project.**
+      Round 179's own trigger note asked for a genuinely new direction,
+      away from jump-to-record, sort, and removable-spec-item. Surveyed
+      the home screen (already rich: pin/duplicate/delete/search/created-
+      date/Draft chip), the AI Team build screen (Retry just landed last
+      round, nothing else obviously static left), and WhatsApp panel
+      (already very feature-complete) before landing on Global Search: its
+      query vanished the instant the panel closed, unlike pinned projects
+      or the home screen's own idea draft, which already survive a reload
+      via localStorage (see `pinnedProjects.ts`/`ideaDraft.ts`).
+
+      New `apps/web/src/recentSearches.ts` mirrors those two files'
+      established convention exactly: `getRecentSearches`/
+      `addRecentSearch`/`clearRecentSearches`, all real localStorage reads/
+      writes with the same try/catch-for-private-mode guard. Keyed
+      per-project (`forge.recentSearches.<projectId>`), since one
+      project's Customer-table search is meaningless noise on a different
+      project with no such entity at all. `addRecentSearch` moves an
+      already-present query to the front case-insensitively instead of
+      duplicating it, and caps the list at 5. `GlobalSearchPanel.tsx` now
+      shows up to 5 recent queries as clickable chips (above the existing
+      "start typing to search" hint, only before a search has actually
+      run) with a "Clear" link; clicking a chip both fills the input and
+      genuinely re-runs the search, not just a cosmetic autofill.
+
+      New pure-function tests (`recentSearches.test.ts`, 9 tests) cover
+      the dedup-and-reorder behavior, the 5-item cap, per-project
+      isolation, and tolerating corrupted localStorage content -- the same
+      real-localStorage-round-trip discipline `pinnedProjects.test.ts`
+      established (a fresh real `JSDOM` instance per test, not a mock).
+
+      **A real hang caught and root-caused while writing the DOM tests,
+      not just a wrong assertion**: the deliberate-break-and-restore pass
+      on `handleClearRecentSearches` (temporarily dropping its
+      `clearRecentSearches(projectId)` call) didn't fail fast the way
+      every previous round's deliberate break had -- it hung for over 100
+      seconds until forcibly killed. Root cause: the test's final
+      assertion passed a raw DOM node directly as `assert.equal`'s
+      "actual" argument (`assert.equal(document.querySelector(...), null,
+      ...)`) -- exactly the round-171 trap this project's own trigger
+      prompt already documents ("assert.equal(...) זו מלכודת!"), but which
+      I'd missed applying to these three new tests specifically. On a
+      genuine mismatch, node:assert's failure-message formatting calls
+      `util.inspect()` on the actual value, and a jsdom element's huge,
+      circular property graph makes that effectively hang instead of
+      throwing. Fixed by reducing every DOM-node comparison in the new
+      tests to a boolean first (`el === null`), confirmed by re-running
+      the same deliberate break afterward and seeing it now fail cleanly
+      in ~25ms instead of hanging. A second, unrelated bug in my own first
+      draft of the same test (reusing a stale `view.unmount()` handle
+      across three separate renders instead of tracking each render's own
+      result) was fixed alongside it, though it turned out not to be the
+      actual cause of the hang.
+
+      Verified with the deliberate-break-and-restore discipline twice
+      against the corrected tests: (1) removed
+      `clearRecentSearches(projectId)` from `handleClearRecentSearches`,
+      leaving only the in-memory `setRecentSearches([])` -- caught cleanly
+      (a fresh mount after Clear still showed the old chip, proving
+      storage was never actually wiped); restored, `diff` clean. (2)
+      removed the `addRecentSearch` call from `handleSubmit` entirely --
+      caught by all three new `GlobalSearchPanel.test.ts` tests (no chip
+      ever appeared after reopening); restored, `diff` clean.
+
+      **And** a real Playwright pass against real running dev servers:
+      submitted a real search, closed the panel (Escape) and reopened it
+      (Ctrl+K) to confirm the chip appeared, clicked the chip to confirm
+      it both filled the query and re-ran a real search, then did a
+      genuine full browser reload (not just a component remount) and
+      re-navigated into the same project via its own home-screen card
+      (view state isn't URL-driven, so a reload always lands back on
+      home) to confirm the recent search survived a real page reload --
+      proving actual localStorage persistence, not just in-memory React
+      state. Finally clicked Clear and reloaded again to confirm the
+      list was genuinely wiped from storage, not just hidden until the
+      next reopen.
+
+      Full suite green (654 tests, up from 642 -- `@forge/web` 274 → 286;
+      `@forge/shared`/`@forge/spec-engine`/`@forge/db`/`@forge/api`
+      unchanged) and typecheck clean.
+
 ## Phase 3
 
 - Self-healing: production observability, automatic diagnosis and patch
