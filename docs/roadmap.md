@@ -8779,6 +8779,87 @@ not a single "make it perfect" claim.
       `@forge/web` 269 → 273; `@forge/shared`/`@forge/spec-engine`/
       `@forge/db` unchanged) and typecheck clean.
 
+- [x] **Round 179 — A real Retry button on the AI Team build screen's
+      failure state.** Round 178's own trigger note asked for a genuinely
+      new direction, away from jump-to-record and sort. Surveyed the home
+      screen (already rich: pin/duplicate/delete/search/created-date/Draft
+      chip) and the Time Machine history panel (already has search,
+      download, diff preview, restore) before landing on the AI Team build
+      screen's failure state: previously, a failed build or refine had
+      exactly two options -- download a text summary, or click Back and
+      navigate all the way out (back to spec review, or out of the refine
+      box) to try again from scratch. Verified first that this is actually
+      *safe* to retry server-side: `pipeline.ts` only calls
+      `markProjectBuilt` after QA passes, right before the final Forge
+      success event, so a failed build leaves `project.status` as
+      `"draft"` and `POST /build` can simply be called again; a failed
+      refine never touched `project.status` either (it was already
+      `"built"` going in and stays that way), so `POST /refine` is equally
+      safe to resend.
+
+      `BuildProgress.tsx`'s mount effect used to run exactly once, guarded
+      by a plain `started` ref. Replaced that with an `attempt` counter
+      (incremented by a new `handleRetry`) plus a `startedAttempt` ref that
+      now tracks *which* attempt has already started, so the effect fires
+      again on `[attempt]` while still being immune to React.StrictMode's
+      dev-only double-invocation of the same attempt. `handleRetry` resets
+      `events`, `error`, `finished`, `expanded`, and the elapsed-time
+      baseline before bumping `attempt` -- clearing state is what stops a
+      stale first attempt's events from lingering alongside a genuinely
+      fresh second attempt's. A new "🔄 Try again" button sits next to
+      "Download build summary" and "Back" in the failed-build banner, for
+      both the full-page build screen and the compact one embedded in a
+      refine's chat pane (same `run` prop, same closure-captured
+      `refineText`, so retrying a failed refine resends the identical
+      instruction).
+
+      Added a real DOM test (`BuildProgress.test.ts`, 15th test) that
+      caught its own weak-assertion trap while being written: the first
+      draft's second "attempt" fixture re-succeeded at every agent the
+      first attempt had already reached, so `latestByAgent`'s own
+      latest-event-wins behavior made a *broken* Retry (one that never
+      cleared the first attempt's events) look identical to a working one
+      -- the stale events were silently overwritten by fresh ones for
+      every row that mattered, so nothing observable differed. Fixed by
+      making the second attempt fail *earlier* (right at Architect) than
+      the first attempt got (which reached Database and Seed Data before
+      failing): a real failure-to-clear bug now leaves Database and Seed
+      Data showing the first attempt's stale success/failure instead of
+      the pending state a genuinely fresh, not-yet-there second attempt
+      must show. This is the same "verify the fixture actually
+      distinguishes broken from correct behavior" discipline the round-171
+      and round-177 lessons already established, applied to a new failure
+      shape (stale event leakage across a retried run, not a sort or a
+      false-positive insertion order).
+
+      Verified with the deliberate-break-and-restore discipline twice
+      against the corrected test: (1) removed the `setAttempt` call from
+      `handleRetry` entirely -- caught exactly (run was called only once,
+      not twice); restored, `diff` clean. (2) removed just the
+      `setEvents([])` call, leaving the rest of the reset intact -- caught
+      by the strengthened assertions (2 failed steps instead of 1, and
+      Database/Seed Data no longer showing pending); restored, `diff`
+      clean.
+
+      **And** a real Playwright pass against real running dev servers:
+      used `page.route`/`route.fulfill` (the established technique for a
+      hard-to-reach state -- a real build failure isn't reliably
+      reproducible through the heuristic pipeline on demand) to inject a
+      real-shaped SSE stream for the first `POST /build` call that fails
+      partway through (Architect succeeds, Database fails), confirmed the
+      real failed-build banner and a real, single "Try again" button
+      appeared, then let the SAME route handler serve a full successful
+      stream on the second call. Clicking the real Retry button in the
+      browser triggered a second genuine network request (confirmed via
+      the route handler's own call counter reaching exactly 2) and the app
+      genuinely navigated all the way to the preview screen once that
+      second attempt's Forge success event arrived -- not just a local
+      state change, a real recovered end-to-end flow.
+
+      Full suite green (642 tests, up from 641 -- `@forge/web` 273 → 274;
+      `@forge/shared`/`@forge/spec-engine`/`@forge/db`/`@forge/api`
+      unchanged) and typecheck clean.
+
 ## Phase 3
 
 - Self-healing: production observability, automatic diagnosis and patch
