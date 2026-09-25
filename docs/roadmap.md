@@ -7993,6 +7993,52 @@ not a single "make it perfect" claim.
       usual feature-plus-docs batching, given the urgency of a live,
       reported failure.
 
+- [x] **Round 164 — sort Business Twin's stat tiles by real record count,
+      and visually mark genuinely empty entities.** Diversified to the
+      Business Twin panel, untouched since round 156. The server
+      (`twin.ts`) has always returned entities in the spec's own
+      declaration order, never by activity -- so a project whose busiest
+      entity happened to be declared last showed its biggest number at the
+      bottom of the stats grid, behind several all-zero tiles, exactly
+      backwards from how a person actually reads a stats dashboard
+      (biggest numbers first). Sorted tiles by real record count
+      descending, with an explicit stable tie-break on the original
+      declaration order (not left to `Array.prototype.sort`'s own
+      engine-dependent tie behavior), and gave a genuinely empty (0-record)
+      tile a dashed, muted visual treatment so it's visually obvious
+      without needing to cross-reference the observations text below it.
+
+      Added `sortTwinStatsByCount` as `BusinessTwinPanel.tsx`'s own
+      exported pure function -- `twinReport.ts` already exists for this
+      domain but is specifically the downloadable-text formatter, a
+      different concern from this display-only sort, so a new file wasn't
+      warranted (matches `BuildProgress.tsx`'s own precedent of keeping a
+      component's pure functions in its own file when nothing else fits).
+
+      Verified with the deliberate-break-and-restore discipline, twice.
+      For the sort itself: made it a no-op pass-through (returning the
+      array unchanged) -- re-ran the unit tests, which failed on both the
+      descending-order case and the tie-break case, and the DOM ordering
+      test also failed; restored and confirmed via `diff` against a
+      pre-break copy that the file matched byte-for-byte. For the wiring:
+      dropped just the empty-tile CSS class condition (rendering every
+      tile the same regardless of count) -- re-ran the DOM tests, which
+      failed only on the marker assertion (confirming the sort and the
+      marker are genuinely separate, both-tested pieces of logic); restored
+      and confirmed via `diff` that the file matched byte-for-byte. **And**
+      a full Playwright pass against real running dev servers: built a
+      real multi-entity app (a vet clinic idea, three entities that all
+      happened to seed at an equal count), confirmed the real initial
+      render matched the real tied counts with no entities dropped or
+      duplicated, then deliberately added real records through the actual
+      create-record form to the entity declared LAST in the spec and
+      confirmed it genuinely jumped to the FRONT of the rendered order --
+      proving a real re-sort happened, not just a pass-through that
+      coincidentally looked right the first time. Full suite green (591
+      tests, up from 588 -- `@forge/web` 228 → 231; `@forge/shared`/
+      `@forge/spec-engine`/`@forge/db`/`@forge/api` unchanged) and both
+      builds clean.
+
 ## Phase 3
 
 - Self-healing: production observability, automatic diagnosis and patch
