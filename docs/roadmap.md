@@ -8083,6 +8083,49 @@ not a single "make it perfect" claim.
       591 -- `@forge/web` 231 → 236; `@forge/shared`/`@forge/spec-engine`/
       `@forge/db`/`@forge/api` unchanged) and both builds clean.
 
+- [x] **Round 166 — "answered N of M" progress line for spec-review's open
+      questions.** Diversified to the spec-review screen, untouched since
+      round 159. Answering a spec's open questions was all-or-nothing to
+      look at: a person with several open questions (each answerable via
+      either a chip click or the free-text input, both writing into the
+      same `selectedAnswers[q.question]` slot) had no way to tell how many
+      they'd already addressed without scrolling and reading every row by
+      eye. Added a real progress line right under the "Worth deciding"
+      heading, with three distinct phrasings rather than one flat
+      fraction: "You haven't answered any of the N questions yet -- that's
+      fine, they're optional" before touching anything (since these are
+      genuinely optional, not a blocking checklist), "Answered N of M"
+      partway through, and "Answered all N ✓" once every question has a
+      value.
+
+      Added `countAnsweredOpenQuestions`/`formatOpenQuestionsProgress` to
+      `App.tsx` itself, matching this file's own existing
+      `formatEntityFieldSummary`/`filterAndSortProjects` convention of
+      exported pure functions tested by direct import rather than a
+      separate utils file, since this logic is tied to `App.tsx`'s own
+      `selectedAnswers` state and `project.spec.openQuestions`.
+
+      Verified with the deliberate-break-and-restore discipline: swapped
+      the real `.trim().length > 0` check for a plain `.length > 0` (a
+      plausible shortcut that silently counts a whitespace-only answer,
+      e.g. from a user who typed and then deleted a custom answer, as
+      answered) -- re-ran the unit tests, which failed exactly on the
+      "treats a blank or whitespace-only value as unanswered" case;
+      restored and confirmed via `diff` against a pre-break copy that the
+      file matched byte-for-byte. **And** a real Playwright pass against
+      real running dev servers: signed up, described a gym-management app
+      (the heuristic engine's payment-question path, which always yields
+      exactly one open question), confirmed the real progress line read
+      "You haven't answered any of the 1 questions yet" before touching
+      anything, clicked a real chip and confirmed it flipped straight to
+      "Answered all 1 questions ✓" (the heuristic engine only ever emits a
+      single open question, so the real "N of M" partial-count wording
+      itself is covered by the unit tests using the real `translate()`
+      function in both languages, not by this run). Full suite green (602
+      tests, up from 596 -- `@forge/web` 236 → 242; `@forge/shared`/
+      `@forge/spec-engine`/`@forge/db`/`@forge/api` unchanged) and typecheck
+      clean.
+
 ## Phase 3
 
 - Self-healing: production observability, automatic diagnosis and patch
