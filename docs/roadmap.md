@@ -8396,6 +8396,49 @@ not a single "make it perfect" claim.
       `@forge/shared`/`@forge/spec-engine`/`@forge/db`/`@forge/api`
       unchanged) and typecheck clean.
 
+- [x] **Round 173 — search the preview screen's own refine-history
+      list.** Diversified to the preview screen's conversation-history pane
+      (chat/live-preview area), a screen not directly touched since round
+      145. Its refine-history list (every build/refine instruction, with a
+      one-line summary and a timestamp) grows forever with no cap and no
+      delete -- exactly the same shape "Your projects" (round 133) and
+      Time Machine's own checkpoint history (round 157) already had before
+      each got its own search box, and the one remaining unbounded,
+      ever-growing list on the app's main screens that still had no way to
+      find an old entry besides scrolling and reading every one.
+
+      Added `filterRefineHistory` to `App.tsx` (this file's own established
+      home for pure, directly-exported, testable functions --
+      `filterAndSortProjects`, `formatRefineTimestamp`,
+      `formatOpenQuestionsProgress`, etc. -- rather than a new file, since
+      `RefineHistoryEntry` is itself a type local to `App.tsx`), and wired
+      a search input into the refine-history block that appears once the
+      list passes 5 entries (matching Time Machine's own threshold), plus
+      a real "no results" message when a query matches nothing (matching
+      `HistoryPanel`'s own convention) instead of silently showing an empty
+      list with no explanation.
+
+      Verified with the deliberate-break-and-restore discipline: swapped
+      the real `.includes(query)` substring match for `.startsWith(query)`
+      -- chosen specifically because it produces a genuinely different
+      result against this test's own fixtures (round 171's own lesson:
+      "Add invoice tracking".startsWith("invoice") is false, so the break
+      is not a false negative) -- re-ran the unit test, which failed
+      exactly on the substring-in-the-middle case; restored and confirmed
+      via `diff` against a pre-break copy that the file matched
+      byte-for-byte. **And** a real Playwright pass against real running
+      dev servers: built a real clothing-store app, ran six real refines
+      each adding a genuinely new entity (round 165's own lesson, so every
+      instruction is real, distinct text), confirmed the search box
+      appeared only once the list passed 6 entries, searched a real Hebrew
+      word ("קופונים") matching exactly one refine's own instruction,
+      confirmed the list narrowed to that one real entry, confirmed an
+      unmatched query showed the real "no results" message instead of an
+      empty list, and confirmed clearing the search restored the full real
+      6-entry list. Full suite green (620 tests, up from 619 --
+      `@forge/web` 259 → 260; `@forge/shared`/`@forge/spec-engine`/
+      `@forge/db`/`@forge/api` unchanged) and typecheck clean.
+
 ## Phase 3
 
 - Self-healing: production observability, automatic diagnosis and patch
