@@ -1020,6 +1020,11 @@ function AppContent() {
                 setActiveEntity(entityName);
                 setShowWhatsApp(false);
               }}
+              onJumpToRecord={(entityName, recordId) => {
+                setActiveEntity(entityName);
+                setHighlightRecordId(recordId);
+                setShowWhatsApp(false);
+              }}
             />
           )}
 

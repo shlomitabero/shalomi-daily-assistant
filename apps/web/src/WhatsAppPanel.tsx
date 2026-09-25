@@ -43,11 +43,23 @@ export function WhatsAppPanel({
   projectName,
   onClose,
   onJumpToEntity,
+  onJumpToRecord,
 }: {
   projectId: string;
   projectName: string;
   onClose: () => void;
   onJumpToEntity: (entityName: string) => void;
+  /**
+   * The API already resolves each matched message down to a specific
+   * record id (see whatsappWeb.ts / routes/projects.ts's own
+   * matchedRecordId), but this panel's own "jump to" button used to throw
+   * it away and only ever pass the entity name -- the exact same gap
+   * Global Search's own "jump to" had before round 174 gave it a real
+   * per-record jump. Falls back to onJumpToEntity for the rare case a
+   * message matched an entity but its specific record has since been
+   * deleted (matchedRecordId null, matchedEntityName not).
+   */
+  onJumpToRecord: (entityName: string, recordId: number) => void;
 }) {
   const { t, lang } = useTranslation();
   const [status, setStatus] = useState<WhatsAppStatusView | null>(null);
@@ -413,7 +425,11 @@ export function WhatsAppPanel({
                       type="button"
                       className="whatsapp-log-who whatsapp-log-who-link"
                       aria-label={t("whatsapp.log.jumpTo", { name: m.matchedLabel ?? "" })}
-                      onClick={() => onJumpToEntity(m.matchedEntityName!)}
+                      onClick={() =>
+                        m.matchedRecordId != null
+                          ? onJumpToRecord(m.matchedEntityName!, m.matchedRecordId)
+                          : onJumpToEntity(m.matchedEntityName!)
+                      }
                     >
                       {m.matchedLabel}
                     </button>

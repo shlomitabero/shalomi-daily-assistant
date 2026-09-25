@@ -319,7 +319,7 @@ test("WhatsAppPanel sends the exact typed recipient/message and refreshes the me
         React.createElement(
           ThemeProvider,
           null,
-          React.createElement(LanguageProvider, null, React.createElement(WhatsAppPanel, { projectId: "proj1", projectName: "Test Project", onClose: () => {}, onJumpToEntity: () => {} })),
+          React.createElement(LanguageProvider, null, React.createElement(WhatsAppPanel, { projectId: "proj1", projectName: "Test Project", onClose: () => {}, onJumpToEntity: () => {}, onJumpToRecord: () => {} })),
         ),
       );
       await waitForCondition(() => document.querySelector(".whatsapp-test-form") !== null);
@@ -394,7 +394,7 @@ test("WhatsAppPanel's message log shows each message's own real timestamp", asyn
         React.createElement(
           ThemeProvider,
           null,
-          React.createElement(LanguageProvider, null, React.createElement(WhatsAppPanel, { projectId: "proj1", projectName: "Test Project", onClose: () => {}, onJumpToEntity: () => {} })),
+          React.createElement(LanguageProvider, null, React.createElement(WhatsAppPanel, { projectId: "proj1", projectName: "Test Project", onClose: () => {}, onJumpToEntity: () => {}, onJumpToRecord: () => {} })),
         ),
       );
       await waitForCondition(() => document.querySelectorAll(".whatsapp-log-list li").length === 1);
@@ -414,14 +414,20 @@ test("WhatsAppPanel's message log shows each message's own real timestamp", asyn
  * stamped on every message (see packages/db/src/whatsapp.ts), and
  * matchedLabel already rendered as the row's "who" text -- but that text
  * was always inert, never a way to actually reach the matched record.
- * Mirrors BusinessTwinPanel's own onJumpToEntity pattern (round 141)
- * exactly. Renders one matched message and one unmatched message in the
- * same log, confirms only the matched one renders as a real clickable
- * button (the unmatched one must stay plain, inert text -- there's
- * nothing to jump to), and confirms clicking it calls onJumpToEntity with
- * the real matched entity name, not the display label or the phone number.
+ * Mirrors BusinessTwinPanel's own onJumpToEntity pattern (round 141), but
+ * for the real per-record jump added in this round: the API already
+ * resolves each matched message down to a specific record id
+ * (matchedRecordId), but the click handler used to throw it away and only
+ * ever call onJumpToEntity -- the same "navigates to the tab, not the
+ * record" gap Global Search's own "jump to" had before round 174. Renders
+ * one matched message and one unmatched message in the same log, confirms
+ * only the matched one renders as a real clickable button (the unmatched
+ * one must stay plain, inert text -- there's nothing to jump to), and
+ * confirms clicking it calls onJumpToRecord with the real matched entity
+ * name AND record id, not just the entity name, and does NOT also fire
+ * onJumpToEntity.
  */
-test("WhatsAppPanel's message log makes a matched sender's name a real jump-to-entity button, and leaves an unmatched sender as plain text", async () => {
+test("WhatsAppPanel's message log makes a matched sender's name a real jump-to-RECORD button, and leaves an unmatched sender as plain text", async () => {
   await withJsdom(async () => {
     const originalFetch = globalThis.fetch;
     const matchedMessage: WhatsAppMessageLogEntry = {
@@ -464,7 +470,8 @@ test("WhatsAppPanel's message log makes a matched sender's name a real jump-to-e
       }
       throw new Error(`unexpected request ${method} ${input}`);
     }) as typeof fetch;
-    const jumps: string[] = [];
+    const entityJumps: string[] = [];
+    const recordJumps: [string, number][] = [];
     try {
       render(
         React.createElement(
@@ -477,7 +484,8 @@ test("WhatsAppPanel's message log makes a matched sender's name a real jump-to-e
               projectId: "proj1",
               projectName: "Test Project",
               onClose: () => {},
-              onJumpToEntity: (entityName: string) => jumps.push(entityName),
+              onJumpToEntity: (entityName: string) => entityJumps.push(entityName),
+              onJumpToRecord: (entityName: string, recordId: number) => recordJumps.push([entityName, recordId]),
             }),
           ),
         ),
@@ -495,10 +503,80 @@ test("WhatsAppPanel's message log makes a matched sender's name a real jump-to-e
 
       fireEvent.click(whoButtons[0]);
       assert.deepEqual(
-        jumps,
-        ["Customer"],
-        "must call onJumpToEntity with the real matched ENTITY NAME (Customer), not the display label (Dana Levi) or the phone number",
+        recordJumps,
+        [["Customer", 7]],
+        "must call onJumpToRecord with the real matched ENTITY NAME (Customer) and RECORD ID (7), not just the entity name",
       );
+      assert.deepEqual(entityJumps, [], "a message with a real matchedRecordId must not also fire onJumpToEntity");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
+ * Fallback coverage for the rare case a message matched an entity whose
+ * specific record has since been deleted (matchedEntityName set,
+ * matchedRecordId null): the click handler must still fall back to
+ * onJumpToEntity rather than calling onJumpToRecord with a null id or
+ * silently doing nothing.
+ */
+test("WhatsAppPanel falls back to onJumpToEntity when a message matched an entity but has no matchedRecordId", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    const matchedNoRecordId: WhatsAppMessageLogEntry = {
+      id: "m1",
+      direction: "in",
+      fromNumber: "972521112233",
+      toNumber: "972501234567",
+      body: "Hello",
+      matchedLabel: "Dana Levi",
+      matchedEntityName: "Customer",
+      matchedRecordId: null,
+      status: "received",
+      createdAt: new Date().toISOString(),
+    };
+    globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/integrations/whatsapp/status") {
+        return new Response(
+          JSON.stringify({ status: "connected", phoneNumber: "972501234567", qrDataUrl: null, error: null }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      if (method === "GET" && input === "/api/projects/proj1/integrations/whatsapp/messages") {
+        return new Response(JSON.stringify({ messages: [matchedNoRecordId] }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+    const entityJumps: string[] = [];
+    const recordJumps: [string, number][] = [];
+    try {
+      render(
+        React.createElement(
+          ThemeProvider,
+          null,
+          React.createElement(
+            LanguageProvider,
+            null,
+            React.createElement(WhatsAppPanel, {
+              projectId: "proj1",
+              projectName: "Test Project",
+              onClose: () => {},
+              onJumpToEntity: (entityName: string) => entityJumps.push(entityName),
+              onJumpToRecord: (entityName: string, recordId: number) => recordJumps.push([entityName, recordId]),
+            }),
+          ),
+        ),
+      );
+      await waitForCondition(() => document.querySelectorAll(".whatsapp-log-who-link").length === 1);
+
+      fireEvent.click(document.querySelector(".whatsapp-log-who-link")!);
+      assert.deepEqual(entityJumps, ["Customer"], "must fall back to onJumpToEntity when matchedRecordId is null");
+      assert.deepEqual(recordJumps, [], "must not call onJumpToRecord with a null record id");
     } finally {
       globalThis.fetch = originalFetch;
     }
@@ -576,7 +654,7 @@ test("WhatsAppPanel's message log shows a download button only once there are me
         React.createElement(
           ThemeProvider,
           null,
-          React.createElement(LanguageProvider, null, React.createElement(WhatsAppPanel, { projectId: "proj1", projectName: "Flower Shop", onClose: () => {}, onJumpToEntity: () => {} })),
+          React.createElement(LanguageProvider, null, React.createElement(WhatsAppPanel, { projectId: "proj1", projectName: "Flower Shop", onClose: () => {}, onJumpToEntity: () => {}, onJumpToRecord: () => {} })),
         ),
       );
       // Before any messages load, an empty log must not offer to download
@@ -664,7 +742,7 @@ test("WhatsAppPanel shows a search box only once the log passes the threshold, f
         React.createElement(
           ThemeProvider,
           null,
-          React.createElement(LanguageProvider, null, React.createElement(WhatsAppPanel, { projectId: "proj1", projectName: "Flower Shop", onClose: () => {}, onJumpToEntity: () => {} })),
+          React.createElement(LanguageProvider, null, React.createElement(WhatsAppPanel, { projectId: "proj1", projectName: "Flower Shop", onClose: () => {}, onJumpToEntity: () => {}, onJumpToRecord: () => {} })),
         ),
       );
       await waitForCondition(() => document.querySelectorAll(".whatsapp-log-list li").length === 6);
