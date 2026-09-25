@@ -751,6 +751,11 @@ tbody tr:hover {
   flex-shrink: 0;
 }
 
+.my-projects-sort {
+  margin: 8px 0 0;
+  display: inline-flex;
+}
+
 .csv-export-btn {
   flex-shrink: 0;
   padding: 8px 14px;

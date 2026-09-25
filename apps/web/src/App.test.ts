@@ -167,6 +167,41 @@ test("filterAndSortProjects applies the pinned-first sort to whatever the search
   );
 });
 
+/**
+ * New in this round: "Your projects" only ever had one real order
+ * (newest-first, per listProjectsForUser's own createdAt DESC) with no
+ * way to switch to alphabetical. sortMode defaults to "recent" (the
+ * existing behavior, untouched) so every call above this in the file
+ * keeps working unchanged; "alphabetical" sorts by name WITHIN each of
+ * sortByPinned's own pinned/unpinned groups, rather than abandoning
+ * pinning -- a pinned project still floats to the top even in
+ * alphabetical mode, just alphabetized among the other pinned ones.
+ */
+test("filterAndSortProjects's 'alphabetical' sortMode sorts by name within each pinned/unpinned group, keeping pinned projects on top", () => {
+  const zed = { ...makeProject([]), id: "p1", name: "Zed Project" };
+  const amy = { ...makeProject([]), id: "p2", name: "Amy Project" };
+  const mid = { ...makeProject([]), id: "p3", name: "Mid Project" };
+  const projects = [zed, amy, mid];
+
+  assert.deepEqual(
+    filterAndSortProjects(projects, "", new Set(), "alphabetical").map((p) => p.id),
+    ["p2", "p3", "p1"],
+    "with nothing pinned, 'alphabetical' must sort every project by name: Amy, Mid, Zed",
+  );
+
+  assert.deepEqual(
+    filterAndSortProjects(projects, "", new Set(["p1"]), "alphabetical").map((p) => p.id),
+    ["p1", "p2", "p3"],
+    "pinning Zed must still float it to the very top even in alphabetical mode -- pinning always wins over the name sort",
+  );
+
+  assert.deepEqual(
+    filterAndSortProjects(projects, "", new Set(), "recent").map((p) => p.id),
+    ["p1", "p2", "p3"],
+    "'recent' (the default) must leave the original createdAt-DESC order untouched, not silently alphabetize it",
+  );
+});
+
 test("formatMyProjectsCount reports a plain total when nothing is filtered out", () => {
   const tr = (key: string, params?: Record<string, string | number>) => translate("en", key, params);
   assert.equal(formatMyProjectsCount(5, 5, tr), "5 projects");

@@ -29,6 +29,7 @@ import { ChangePasswordPanel } from "./ChangePasswordPanel.js";
 import { ProjectNameEditor } from "./ProjectNameEditor.js";
 import { AssumptionItem, RoleChip } from "./SpecListItemRemover.js";
 import { getPinnedIds, sortByPinned, togglePinned } from "./pinnedProjects.js";
+import { getProjectSortMode, setProjectSortMode, type ProjectSortMode } from "./projectSortMode.js";
 import { clearIdeaDraft, getIdeaDraft, saveIdeaDraft } from "./ideaDraft.js";
 import { LanguageProvider, useTranslation } from "./i18n/LanguageContext.js";
 import { LanguageSwitcher } from "./i18n/LanguageSwitcher.js";
@@ -120,10 +121,26 @@ interface ArchitectImpactDetail {
  * instruction the user already sees above it.
  */
 /** Case-insensitive substring match on project name, then pinned-first sort -- the two independent steps "Your projects" narrows and reorders by. */
-export function filterAndSortProjects(projects: Project[], search: string, pinnedIds: Set<string>): Project[] {
+/**
+ * `sortMode` reorders WITHIN the pinned/unpinned split sortByPinned
+ * already does, rather than replacing it -- "alphabetical" still floats
+ * pinned projects to the top, just sorted by name inside each of the two
+ * groups, instead of abandoning pinning entirely. Sorting alphabetically
+ * before handing off to sortByPinned (rather than after) is what makes
+ * this work: sortByPinned's own contract is "preserve each group's
+ * existing relative order," so whatever order `ordered` is already in
+ * becomes each group's order once split.
+ */
+export function filterAndSortProjects(
+  projects: Project[],
+  search: string,
+  pinnedIds: Set<string>,
+  sortMode: ProjectSortMode = "recent",
+): Project[] {
   const query = search.trim().toLowerCase();
   const matched = query ? projects.filter((p) => p.name.toLowerCase().includes(query)) : projects;
-  return sortByPinned(matched, pinnedIds);
+  const ordered = sortMode === "alphabetical" ? [...matched].sort((a, b) => a.name.localeCompare(b.name)) : matched;
+  return sortByPinned(ordered, pinnedIds);
 }
 
 /**
@@ -263,6 +280,7 @@ function AppContent() {
   const [showChangePassword, setShowChangePassword] = useState(false);
   const [myProjects, setMyProjects] = useState<Project[]>([]);
   const [pinnedIds, setPinnedIds] = useState<Set<string>>(() => getPinnedIds());
+  const [projectSortMode, setProjectSortModeState] = useState<ProjectSortMode>(() => getProjectSortMode());
   const [projectSearch, setProjectSearch] = useState("");
   const [cloningId, setCloningId] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
@@ -274,9 +292,14 @@ function AppContent() {
   const refineEvents = useRef<AgentStepEvent[]>([]);
 
   const visibleMyProjects = useMemo(
-    () => filterAndSortProjects(myProjects, projectSearch, pinnedIds),
-    [myProjects, projectSearch, pinnedIds],
+    () => filterAndSortProjects(myProjects, projectSearch, pinnedIds, projectSortMode),
+    [myProjects, projectSearch, pinnedIds, projectSortMode],
   );
+
+  function handleSetProjectSortMode(mode: ProjectSortMode) {
+    setProjectSortModeState(mode);
+    setProjectSortMode(mode);
+  }
   const visibleRefineHistory = useMemo(
     () => filterRefineHistory(refineHistory, refineHistorySearch),
     [refineHistory, refineHistorySearch],
@@ -657,6 +680,24 @@ function AppContent() {
                   value={projectSearch}
                   onChange={(e) => setProjectSearch(e.target.value)}
                 />
+              )}
+              {myProjects.length > 1 && (
+                <div className="my-projects-sort view-toggle">
+                  <button
+                    type="button"
+                    className={projectSortMode === "recent" ? "view-toggle-btn view-toggle-btn-active" : "view-toggle-btn"}
+                    onClick={() => handleSetProjectSortMode("recent")}
+                  >
+                    {t("home.myProjects.sort.recent")}
+                  </button>
+                  <button
+                    type="button"
+                    className={projectSortMode === "alphabetical" ? "view-toggle-btn view-toggle-btn-active" : "view-toggle-btn"}
+                    onClick={() => handleSetProjectSortMode("alphabetical")}
+                  >
+                    {t("home.myProjects.sort.alphabetical")}
+                  </button>
+                </div>
               )}
               {visibleMyProjects.length === 0 ? (
                 <p className="muted">{t("home.myProjects.search.noResults")}</p>
