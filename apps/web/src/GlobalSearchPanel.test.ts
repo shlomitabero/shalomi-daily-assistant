@@ -421,3 +421,114 @@ test("GlobalSearchPanel's individual result rows call onJumpToRecord with that r
     }
   });
 });
+
+/**
+ * New in this round: a submitted search now survives closing and
+ * reopening the panel, via recentSearches.ts's real localStorage
+ * persistence (the same convention pinnedProjects.ts/ideaDraft.ts already
+ * use elsewhere). Submits a real search (a genuine fetch + a real form
+ * submit, not a direct call into recentSearches.ts), then unmounts and
+ * remounts the whole panel component fresh -- a real persistence round
+ * trip through the actual component, not just a check that the helper
+ * module itself works in isolation.
+ */
+test("GlobalSearchPanel remembers a submitted search and shows it as a recent-search chip after the panel is closed and reopened", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = mockGlobalSearchFetch() as typeof fetch;
+    try {
+      const view = renderGlobalSearchPanel(() => {});
+
+      const input = document.querySelector(".global-search-input") as HTMLInputElement;
+      fireEvent.change(input, { target: { value: "widget" } });
+      fireEvent.submit(document.querySelector("form.global-search-form")!);
+      await waitForCondition(() => document.querySelectorAll(".global-search-group").length === 2);
+
+      view.unmount();
+
+      renderGlobalSearchPanel(() => {});
+      const chip = Array.from(document.querySelectorAll(".global-search-recent .chip")).find(
+        (el) => el.textContent === "widget",
+      );
+      assert.ok(chip, "expected the reopened panel to show 'widget' as a recent-search chip, from real persisted state");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
+ * Clicking a recent-search chip must both fill the input and actually
+ * re-run the search (a real fetch, real results) -- not just cosmetically
+ * populate the query box and leave the person to hit Enter themselves.
+ */
+test("GlobalSearchPanel's recent-search chip fills the query and genuinely re-runs the search", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = mockGlobalSearchFetch() as typeof fetch;
+    try {
+      const view = renderGlobalSearchPanel(() => {});
+      const input = document.querySelector(".global-search-input") as HTMLInputElement;
+      fireEvent.change(input, { target: { value: "widget" } });
+      fireEvent.submit(document.querySelector("form.global-search-form")!);
+      await waitForCondition(() => document.querySelectorAll(".global-search-group").length === 2);
+      view.unmount();
+
+      renderGlobalSearchPanel(() => {});
+      const chip = Array.from(document.querySelectorAll(".global-search-recent .chip")).find(
+        (el) => el.textContent === "widget",
+      ) as HTMLButtonElement;
+      assert.ok(chip, "expected a real 'widget' recent-search chip before clicking it");
+      fireEvent.click(chip);
+
+      await waitForCondition(() => document.querySelectorAll(".global-search-group").length === 2);
+      const reopenedInput = document.querySelector(".global-search-input") as HTMLInputElement;
+      assert.equal(reopenedInput.value, "widget", "clicking the chip must fill the query input with its own text");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/** The "Clear" link must wipe the recent-search list for real, not just hide it until the next reopen. */
+test("GlobalSearchPanel's recent-search 'Clear' link genuinely empties the persisted list, surviving a remount", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = mockGlobalSearchFetch() as typeof fetch;
+    try {
+      const firstView = renderGlobalSearchPanel(() => {});
+      const input = document.querySelector(".global-search-input") as HTMLInputElement;
+      fireEvent.change(input, { target: { value: "widget" } });
+      fireEvent.submit(document.querySelector("form.global-search-form")!);
+      await waitForCondition(() => document.querySelectorAll(".global-search-group").length === 2);
+      firstView.unmount();
+
+      const secondView = renderGlobalSearchPanel(() => {});
+      const clearButton = Array.from(document.querySelectorAll("button")).find((b) => b.textContent === "Clear");
+      assert.ok(clearButton, "expected a real 'Clear' link once a recent search exists");
+      fireEvent.click(clearButton!);
+      // A raw DOM node as assert.equal's "actual" argument is a real trap
+      // (see round 171's own lesson): on failure, node:assert formats it
+      // with util.inspect(), and jsdom's huge, circular element property
+      // graph makes that effectively hang instead of failing fast --
+      // exactly what happened here while writing this test, against a
+      // deliberately-broken handleClearRecentSearches. Reducing to a
+      // boolean first keeps a genuine failure's error message cheap.
+      assert.equal(
+        document.querySelector(".global-search-recent") === null,
+        true,
+        "the recent-searches section must disappear immediately once cleared",
+      );
+      secondView.unmount();
+
+      renderGlobalSearchPanel(() => {});
+      assert.equal(
+        document.querySelector(".global-search-recent") === null,
+        true,
+        "a fresh mount after Clear must still show no recent searches -- proving it was really wiped from storage, not just hidden in memory",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});

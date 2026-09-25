@@ -4,6 +4,7 @@ import { listRecords } from "./api.js";
 import { recordDisplayLabel, searchEntityRecords, type EntitySearchResult } from "./entityFormatting.js";
 import { useTranslation } from "./i18n/LanguageContext.js";
 import { useDialogFocusTrap } from "./useDialogFocusTrap.js";
+import { addRecentSearch, clearRecentSearches, getRecentSearches } from "./recentSearches.js";
 
 /**
  * A single query box that searches every entity in the project at once,
@@ -40,6 +41,7 @@ export function GlobalSearchPanel({
   const [error, setError] = useState<string | null>(null);
   const [searched, setSearched] = useState(false);
   const [selectedIndex, setSelectedIndex] = useState<number | null>(null);
+  const [recentSearches, setRecentSearches] = useState<string[]>(() => getRecentSearches(projectId));
   const dialogRef = useDialogFocusTrap<HTMLDivElement>();
   // Bumped once per runSearch call, so a stale search whose network round
   // trip just happens to take longer than a newer one's can recognize
@@ -95,7 +97,19 @@ export function GlobalSearchPanel({
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
+    setRecentSearches(addRecentSearch(projectId, query));
     await runSearch(query);
+  }
+
+  async function handleRecentSearchClick(q: string) {
+    setQuery(q);
+    setRecentSearches(addRecentSearch(projectId, q));
+    await runSearch(q);
+  }
+
+  function handleClearRecentSearches() {
+    clearRecentSearches(projectId);
+    setRecentSearches([]);
   }
 
   function recordPreview(entity: Entity, record: EntityRecord): string {
@@ -154,7 +168,28 @@ export function GlobalSearchPanel({
         {error && <p className="error">{error}</p>}
         {loading && <p className="muted">{t("entity.loading")}</p>}
 
-        {!loading && !searched && !error && <p className="muted">{t("search.noQuery")}</p>}
+        {!loading && !searched && !error && (
+          <>
+            <p className="muted">{t("search.noQuery")}</p>
+            {recentSearches.length > 0 && (
+              <div className="global-search-recent">
+                <div className="global-search-recent-header">
+                  <span className="muted small">{t("search.recent.heading")}</span>
+                  <button type="button" className="link-button small" onClick={handleClearRecentSearches}>
+                    {t("search.recent.clear")}
+                  </button>
+                </div>
+                <div className="chips">
+                  {recentSearches.map((q) => (
+                    <button type="button" key={q} className="chip chip-button" onClick={() => handleRecentSearchClick(q)}>
+                      {q}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+          </>
+        )}
         {!loading && searched && results.length === 0 && !error && <p className="muted">{t("search.noResults")}</p>}
 
         {!loading && results.length > 0 && <p className="muted small">{t("search.keyboardHint")}</p>}

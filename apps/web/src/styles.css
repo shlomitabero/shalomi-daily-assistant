@@ -1821,6 +1821,17 @@ button.sort-header:hover:not(:disabled) {
   gap: 16px;
 }
 
+.global-search-recent {
+  margin-top: 14px;
+}
+
+.global-search-recent-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
 .global-search-group {
   border-top: 1px solid var(--border-soft);
   padding-top: 12px;
