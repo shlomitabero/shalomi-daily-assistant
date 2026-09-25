@@ -8126,6 +8126,46 @@ not a single "make it perfect" claim.
       `@forge/spec-engine`/`@forge/db`/`@forge/api` unchanged) and typecheck
       clean.
 
+- [x] **Round 167 — real "N projects" / "N of M" count on the home
+      screen.** Diversified to the home screen, untouched since round 158.
+      "Your projects" gave no sense of how many cards a search (round 133)
+      actually narrowed down to, or how many projects exist in total --
+      both had to be counted by eye, and the search box only even appears
+      once there are more than 5 projects, exactly the point where eyeballing
+      stops being practical. Added a count line next to the heading using
+      the same two-distinct-phrasings convention `formatEntityRecordCount`
+      (entityFormatting.ts, round 155) already established for an entity's
+      own record table: "N projects" for the everyday unfiltered case, "N
+      of M projects" once the search has actually narrowed the list.
+
+      Added `formatMyProjectsCount` to `App.tsx` itself, matching this
+      file's own established convention (already used by round 166's
+      `countAnsweredOpenQuestions`/`formatOpenQuestionsProgress`) of
+      exported pure functions tested by direct import.
+
+      Verified with the deliberate-break-and-restore discipline: swapped
+      the real `shown === total` check for always returning the
+      "filtered" phrasing (a plausible shortcut mistake) -- re-ran the unit
+      tests, which failed exactly on the "plain total when nothing is
+      filtered out" case; restored and confirmed via `diff` against a
+      pre-break copy that the file matched byte-for-byte. **And** a real
+      Playwright pass against real running dev servers: built one real
+      project, renamed it to a unique name, confirmed the count read "1
+      project"; duplicated it five times via the real home-screen
+      "Duplicate" button (discovering along the way that a clone always
+      lands on its own new draft's spec-review screen, never straight back
+      to preview, since the clone endpoint always inserts a draft even
+      from a built source -- confirmed via `App.tsx`'s own
+      `handleDuplicateProject` doc comment rather than guessed), confirmed
+      the count read "6 projects" unfiltered, then searched for the real
+      Hebrew "(copy)" suffix every clone carries (`עותק`, chosen by the
+      clone endpoint based on the source project's own Hebrew description)
+      and confirmed the count read exactly "5 of 6 projects" -- proving a
+      real narrowed match, not just the unfiltered total repeated. Full
+      suite green (604 tests, up from 602 -- `@forge/web` 242 → 244;
+      `@forge/shared`/`@forge/spec-engine`/`@forge/db`/`@forge/api`
+      unchanged) and typecheck clean.
+
 ## Phase 3
 
 - Self-healing: production observability, automatic diagnosis and patch
