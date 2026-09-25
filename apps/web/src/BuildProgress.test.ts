@@ -5,7 +5,7 @@ import { JSDOM } from "jsdom";
 import React from "react";
 import { act, cleanup, render } from "@testing-library/react";
 import type { AgentStepEvent } from "@forge/shared";
-import { BuildProgress, formatBuildSummary, formatElapsedTime } from "./BuildProgress.js";
+import { BuildProgress, computeBuildProgressPercent, formatBuildSummary, formatElapsedTime } from "./BuildProgress.js";
 import { LanguageProvider } from "./i18n/LanguageContext.js";
 import { translate } from "./i18n/language.js";
 import { ThemeProvider } from "./theme/ThemeContext.js";
@@ -218,12 +218,63 @@ test("BuildProgress shows each agent's own real success message, not a generic c
   });
 });
 
+/**
+ * New in this round: the subtitle's "step N of M" text already carried
+ * this same fraction, but only as text a reader had to do the division on
+ * themselves. Confirms a real filled progress bar renders in the DOM with
+ * the correct aria attributes and width, tracking real agent completions
+ * as they land -- not just that computeBuildProgressPercent's own math is
+ * right in isolation (already covered above), but that BuildProgress
+ * actually wires it up.
+ */
+test("BuildProgress renders a real progress bar that fills as agents complete, with correct aria attributes", async () => {
+  await withJsdom(async () => {
+    const events: AgentStepEvent[] = [
+      { agent: "Architect", status: "running", message: "…" },
+      { agent: "Architect", status: "success", message: "…", detail: { newEntities: [], changedEntities: [] } },
+      { agent: "Database", status: "running", message: "…" },
+    ];
+    renderBuildProgress(events);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const bar = document.querySelector(".build-progress-bar");
+    assert.ok(bar, "expected a progress bar element");
+    assert.equal(bar!.getAttribute("role"), "progressbar");
+    assert.equal(bar!.getAttribute("aria-valuemin"), "0");
+    assert.equal(bar!.getAttribute("aria-valuemax"), "100");
+    // 1 of 6 VISIBLE agents done (Architect only; Debug never ran in this
+    // fixture, so it's excluded from the visible list the same way the
+    // subtitle's own "step N of M" text excludes it) = 16.67% -> rounds to 17.
+    assert.equal(bar!.getAttribute("aria-valuenow"), "17");
+
+    const fill = bar!.querySelector(".build-progress-bar-fill") as HTMLElement;
+    assert.ok(fill, "expected a fill element inside the progress bar");
+    assert.equal(fill.style.width, "17%");
+  });
+});
+
 test("formatElapsedTime renders m:ss, zero-padding seconds under 10", () => {
   assert.equal(formatElapsedTime(0), "0:00");
   assert.equal(formatElapsedTime(5000), "0:05");
   assert.equal(formatElapsedTime(65000), "1:05");
   assert.equal(formatElapsedTime(600000), "10:00");
   assert.equal(formatElapsedTime(-500), "0:00", "a negative/clock-skew value must clamp to zero, not render a negative time");
+});
+
+test("computeBuildProgressPercent rounds doneCount/totalAgents to a whole-number percentage", () => {
+  assert.equal(computeBuildProgressPercent(0, 7), 0);
+  assert.equal(computeBuildProgressPercent(7, 7), 100);
+  assert.equal(computeBuildProgressPercent(3, 7), 43, "3/7 = 42.857...% must round to 43, not truncate to 42");
+  assert.equal(computeBuildProgressPercent(1, 3), 33);
+});
+
+test("computeBuildProgressPercent guards against a zero (or negative) total instead of dividing by zero", () => {
+  assert.equal(computeBuildProgressPercent(0, 0), 0);
+  assert.equal(computeBuildProgressPercent(2, 0), 0);
+});
+
+test("computeBuildProgressPercent clamps doneCount above totalAgents to 100%, rather than exceeding it", () => {
+  assert.equal(computeBuildProgressPercent(9, 7), 100);
 });
 
 /**

@@ -38,6 +38,21 @@ export function formatElapsedTime(ms: number): string {
 }
 
 /**
+ * How far through the build the visible agent list actually is, as a
+ * whole-number percentage -- the "current of total" text next to it
+ * (`build.subtitle`) already carries this exact information, but only as
+ * a fraction a reader has to do the division on themselves; a real filled
+ * bar reads at a glance the way the text alone doesn't. Guards against a
+ * div-by-zero for the (never-real, but theoretically possible) case of an
+ * empty agent list, same defensive convention as this file's own
+ * formatElapsedTime clamping a negative ms to zero.
+ */
+export function computeBuildProgressPercent(doneCount: number, totalAgents: number): number {
+  if (totalAgents <= 0) return 0;
+  return Math.round((Math.min(doneCount, totalAgents) / totalAgents) * 100);
+}
+
+/**
  * Renders the same latest-status-per-agent data the live step list itself
  * shows (see the `latestByAgent`/`visibleAgents` computation inside
  * BuildProgress below, which this mirrors) as a plain, shareable text
@@ -327,6 +342,7 @@ export function BuildProgress({
   // permanent "pending" placeholder on every successful build.
   const visibleAgents = AGENT_ORDER.filter((a) => a !== "Debug" || latestByAgent.has("Debug"));
   const doneCount = visibleAgents.filter((a) => latestByAgent.get(a)?.status === "success").length;
+  const progressPercent = computeBuildProgressPercent(doneCount, visibleAgents.length);
 
   const Wrapper = compact ? "div" : "main";
 
@@ -340,6 +356,16 @@ export function BuildProgress({
           ⏱️ {formatElapsedTime(elapsedMs)}
         </span>
       </p>
+      <div
+        className="build-progress-bar"
+        role="progressbar"
+        aria-valuenow={progressPercent}
+        aria-valuemin={0}
+        aria-valuemax={100}
+        aria-label={t("build.progress.label")}
+      >
+        <div className="build-progress-bar-fill" style={{ width: `${progressPercent}%` }} />
+      </div>
       <ol className="agent-steps">
         {visibleAgents.map((agent) => {
           const event = latestByAgent.get(agent);
