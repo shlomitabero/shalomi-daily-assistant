@@ -9002,6 +9002,72 @@ not a single "make it perfect" claim.
       `@forge/shared`/`@forge/spec-engine`/`@forge/db`/`@forge/api`
       unchanged) and typecheck clean.
 
+- [x] **Round 182 — An alphabetical sort toggle for "Your projects."**
+      Diversification check: the last 5 rounds (177-181) touched spec-item
+      removal, retry-after-failure, Global Search, and the WhatsApp log --
+      none touched the home screen, untouched for 15 rounds. Read
+      `BusinessTwinPanel.tsx` in full first (sortTwinStatsByCount, roles
+      chips, jump-to-record, retry-on-error already there) and found no new
+      gap, so moved to the home screen instead: "Your projects" only ever
+      had one real order (newest-first, per `listProjectsForUser`'s own
+      `ORDER BY createdAt DESC, rowid DESC`), with no way to switch to
+      alphabetical -- fine with a handful of projects, tedious once someone
+      has built a dozen and is scanning by name rather than by when they
+      made it.
+
+      New `projectSortMode.ts` (`getProjectSortMode`/`setProjectSortMode`,
+      `"recent" | "alphabetical"`) persists the choice the same way
+      `pinnedProjects.ts`/`ideaDraft.ts`/`recentSearches.ts` already persist
+      their own per-viewer preferences -- a `STORAGE_KEY` constant, a getter
+      with try/catch fallback to `"recent"`, a setter with try/catch
+      swallow. `filterAndSortProjects` in `App.tsx` gained a `sortMode`
+      parameter (defaulting to `"recent"`, so every existing call site keeps
+      working unchanged): when `"alphabetical"`, it sorts the matched
+      projects by name *before* handing them to `sortByPinned`, relying on
+      that function's own documented contract ("pinned first, unpinned
+      after, each group keeping its existing relative order") to keep
+      pinning meaningful in alphabetical mode too -- a pinned project still
+      floats to the top, just alphabetized among the other pinned ones,
+      rather than pinning being abandoned entirely. Added a small
+      `view-toggle`-styled "Recent / A-Z" button pair next to the existing
+      project search box (shown once there's more than one project), wired
+      through a `handleSetProjectSortMode` that updates both the React
+      state and the persisted value.
+
+      New tests: `projectSortMode.test.ts` (4 tests -- default, round-trip
+      persistence, switching back, and falling back to "recent" for
+      corrupted/foreign localStorage content instead of throwing) and one
+      new `App.test.ts` test proving `"alphabetical"` sorts by name within
+      each pinned/unpinned group while `"recent"` leaves the original order
+      untouched.
+
+      Verified with the deliberate-break-and-restore discipline twice:
+      (1) broke `getProjectSortMode` to always return `"recent"` regardless
+      of what was stored -- caught immediately by the round-trip
+      persistence test; restored, `diff` clean. (2) in `App.tsx`, deleted
+      the alphabetize-then-`sortByPinned` line and replaced it with a plain
+      `sortByPinned(matched, pinnedIds)` that silently ignores `sortMode` --
+      caught exactly by the new App.test.ts test (both alphabetical-mode
+      assertions failed, since the unsorted array was passed straight
+      through); restored, `diff` byte-identical against a pre-break backup.
+
+      **And** a real Playwright pass against real running dev servers:
+      signed up via the real `/api/auth/signup` endpoint, seeded 3 projects
+      (Zed, Amy, Mid, created in that order 1.1s apart) via the real
+      `POST /api/projects` endpoint, then loaded the real web app. Confirmed
+      the default "Recent" order is genuinely newest-first (Mid, Amy, Zed);
+      clicked the real "A-Z" toggle button and confirmed the real DOM
+      reordered to Amy, Mid, Zed; pinned Zed while still in alphabetical
+      mode and confirmed it floated back to the top; did a real
+      `page.reload()` and confirmed both the sort-mode choice (button still
+      shows active) and the pinned-on-top-plus-alphabetical ordering
+      survived the reload, matching round 180's established
+      real-reload-persistence-proof convention.
+
+      Full suite green (665 tests, up from 660 -- `@forge/web` 292 → 297;
+      `@forge/shared` 11, `@forge/spec-engine` 82, `@forge/db` 80,
+      `@forge/api` 195 unchanged) and typecheck clean.
+
 ## Phase 3
 
 - Self-healing: production observability, automatic diagnosis and patch
