@@ -276,18 +276,39 @@ export function BuildProgress({
   const [error, setError] = useState<string | null>(null);
   const [finished, setFinished] = useState(false);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
-  const started = useRef(false);
-  const [startedAt] = useState(() => Date.now());
+  // Both a failed build (POST /build never calls markProjectBuilt until
+  // QA passes -- see pipeline.ts) and a failed refine (project.status was
+  // already "built" going in, and stays that way) leave the server in a
+  // state where the exact same request can simply be sent again, so
+  // "Retry" here is a real re-run, not a fresh navigation back through
+  // spec review. `attempt` (not the `started` ref alone) drives the
+  // re-run: incrementing it is what tells the effect below there's a new
+  // run to start, while `startedAttempt` (a ref, so changing it never
+  // itself triggers a render) stops React.StrictMode's dev-only double-
+  // invocation of this same effect from starting the SAME attempt twice.
+  const [attempt, setAttempt] = useState(0);
+  const startedAttempt = useRef(-1);
+  const [startedAt, setStartedAt] = useState(() => Date.now());
   const [elapsedMs, setElapsedMs] = useState(0);
 
   useEffect(() => {
-    if (started.current) return;
-    started.current = true;
+    if (startedAttempt.current === attempt) return;
+    startedAttempt.current = attempt;
     run((event) => setEvents((prev) => [...prev, event]))
       .then(() => setFinished(true))
       .catch((err) => setError((err as Error).message));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [attempt]);
+
+  function handleRetry() {
+    setEvents([]);
+    setError(null);
+    setFinished(false);
+    setExpanded(new Set());
+    setStartedAt(Date.now());
+    setElapsedMs(0);
+    setAttempt((a) => a + 1);
+  }
 
   // Ticks once a second while the build is still running, so a person
   // watching a multi-step build knows it's actually progressing rather
@@ -445,6 +466,9 @@ export function BuildProgress({
             }
           >
             {t("build.summary.download")}
+          </button>
+          <button type="button" className="secondary small" onClick={handleRetry}>
+            {t("build.retry")}
           </button>
           <button type="button" onClick={onBack}>
             {t("build.back")}

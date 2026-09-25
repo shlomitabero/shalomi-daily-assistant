@@ -535,3 +535,115 @@ test("BuildProgress does not show a 'Download build summary' button for a succes
     );
   });
 });
+
+/**
+ * New in this round: a failed build/refine previously had no recovery but
+ * navigating all the way back to spec review (or the refine box) and
+ * resubmitting from scratch -- even though the server itself is perfectly
+ * safe to retry (a failed build never calls markProjectBuilt, and a failed
+ * refine never touched project.status either, per pipeline.ts). "Retry"
+ * re-invokes the exact same `run` prop, and must both genuinely call it
+ * again (not just redraw stale state) and fully reset the visible step
+ * list -- a naive reset that cleared state but never re-ran, or that
+ * re-ran but left the FIRST attempt's failed events mixed in with the
+ * second attempt's, would both defeat the point.
+ */
+test("BuildProgress's Retry button re-invokes run for a genuine second attempt, and clears the first attempt's events instead of mixing them with the second's", async () => {
+  await withJsdom(async () => {
+    // The second attempt deliberately fails EARLIER (right at Architect)
+    // than the first attempt got (which reached Database and Seed Data
+    // before failing) -- this is what actually makes stale-event leakage
+    // observable. latestByAgent already renders each row by its own
+    // latest event regardless of array order, so if the second attempt
+    // instead re-failed at the SAME or a LATER agent, its own fresh
+    // events would naturally overwrite the first attempt's for every row
+    // that matters and a broken (non-clearing) Retry would look
+    // identical to a working one. With the second attempt stopping at
+    // Architect, Database/Seed Data get NO new events at all -- a
+    // real bug that fails to clear the first attempt's events would
+    // leave those two rows showing attempt one's stale success/failed
+    // statuses instead of the pending state a genuinely fresh attempt
+    // that hasn't reached them yet must show.
+    const attempts: AgentStepEvent[][] = [
+      [
+        { agent: "Architect", status: "success", message: "…", detail: { newEntities: [], changedEntities: [] } },
+        { agent: "Database", status: "success", message: "…", detail: [] },
+        { agent: "Seed Data", status: "failed", message: "a real seed error from attempt one" },
+      ],
+      [{ agent: "Architect", status: "failed", message: "a real architect error from attempt two" }],
+    ];
+    let runCallCount = 0;
+    const run = async (onEvent: (event: AgentStepEvent) => void) => {
+      const events = attempts[runCallCount];
+      runCallCount += 1;
+      await act(async () => {
+        for (const event of events) onEvent(event);
+      });
+    };
+    const completedProjects: unknown[] = [];
+
+    render(
+      React.createElement(
+        ThemeProvider,
+        null,
+        React.createElement(
+          LanguageProvider,
+          null,
+          React.createElement(BuildProgress, {
+            title: "Building",
+            projectName: "Test Project",
+            run,
+            onComplete: (p: unknown) => completedProjects.push(p),
+            onBack: () => {},
+          }),
+        ),
+      ),
+    );
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    assert.equal(runCallCount, 1, "expected exactly one call to run on mount, before any retry");
+    assert.equal(
+      document.querySelector("p.error:not(.banner)") !== null,
+      true,
+      "expected the failed-build banner after the first attempt's real failure",
+    );
+
+    const retryButton = Array.from(document.querySelectorAll("button")).find((b) => b.textContent?.includes("Try again"));
+    assert.ok(retryButton, "expected a real Retry button once the build has genuinely failed");
+
+    act(() => {
+      retryButton!.click();
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    assert.equal(runCallCount, 2, "clicking Retry must call the real run function a second time, not just redraw stale state");
+    assert.equal(
+      document.querySelector("p.error:not(.banner)") !== null,
+      true,
+      "the second attempt's own real Architect failure must still show its own failed-build banner",
+    );
+    assert.equal(
+      document.querySelectorAll(".step-failed").length,
+      1,
+      "exactly one failed step (the second attempt's own Architect failure) -- attempt one's Seed Data failure must not linger",
+    );
+    // Debug never appears in either attempt, so the visible row order is
+    // exactly AGENT_ORDER minus Debug: Architect, Database, Seed Data
+    // ("Sample Data Filler" in English -- its own translated title, not
+    // its internal agent name), QA, Security, Forge.
+    const agentRows = document.querySelectorAll(".agent-step");
+    const databaseRow = agentRows[1];
+    const seedRow = agentRows[2];
+    assert.equal(
+      databaseRow?.className.includes("agent-step-pending"),
+      true,
+      "Database got no event at all in the second attempt -- it must show pending, not attempt one's stale success",
+    );
+    assert.equal(
+      seedRow?.className.includes("agent-step-pending"),
+      true,
+      "Seed Data (Sample Data Filler) got no event at all in the second attempt -- it must show pending, not attempt one's stale failure",
+    );
+    assert.equal(completedProjects.length, 0, "onComplete must not fire for a second attempt that itself failed");
+  });
+});
