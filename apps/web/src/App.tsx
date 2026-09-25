@@ -27,6 +27,7 @@ import { WhatsAppPanel } from "./WhatsAppPanel.js";
 import { CollaboratorsPanel } from "./CollaboratorsPanel.js";
 import { ChangePasswordPanel } from "./ChangePasswordPanel.js";
 import { ProjectNameEditor } from "./ProjectNameEditor.js";
+import { AssumptionItem, RoleChip } from "./SpecListItemRemover.js";
 import { getPinnedIds, sortByPinned, togglePinned } from "./pinnedProjects.js";
 import { clearIdeaDraft, getIdeaDraft, saveIdeaDraft } from "./ideaDraft.js";
 import { LanguageProvider, useTranslation } from "./i18n/LanguageContext.js";
@@ -767,10 +768,15 @@ function AppContent() {
           <section>
             <h2>{t("spec.roles.heading")}</h2>
             <div className="chips">
-              {project.spec.roles.map((r) => (
-                <span className="chip" key={r}>
-                  {r}
-                </span>
+              {project.spec.roles.map((r, i) => (
+                <RoleChip
+                  key={`${i}-${r}`}
+                  role={r}
+                  projectId={project.id}
+                  index={i}
+                  canRemove={project.spec.roles.length > 1}
+                  onRemoved={setProject}
+                />
               ))}
             </div>
           </section>
@@ -792,7 +798,7 @@ function AppContent() {
             <h2>{t("spec.assumptions.heading")}</h2>
             <ul>
               {project.spec.assumptions.map((a, i) => (
-                <li key={i}>{a}</li>
+                <AssumptionItem key={`${i}-${a}`} assumption={a} projectId={project.id} index={i} onRemoved={setProject} />
               ))}
             </ul>
           </section>

@@ -518,6 +518,48 @@ button.danger:hover:not(:disabled) {
   border-color: var(--accent);
 }
 
+.chip-removable {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.chip-remove,
+.assumption-remove {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  border: none;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.chip-remove:hover,
+.assumption-remove:hover {
+  background: var(--surface-raised);
+  color: var(--text);
+}
+
+.chip-remove:disabled,
+.assumption-remove:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+
+.assumption-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
 .entity-summary {
   padding: 10px 0;
   border-bottom: 1px solid var(--border-soft);

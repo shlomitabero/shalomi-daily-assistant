@@ -113,6 +113,14 @@ function parseRecordId(raw: string): number {
   return Number(raw);
 }
 
+/** Same NaN-leak concern as parseRecordId above, for the roles/assumptions removal routes' :index param. */
+function parseListIndex(raw: string, list: string[], notFoundCode: string): number {
+  if (!/^\d+$/.test(raw) || Number(raw) >= list.length) {
+    throw new HttpError(404, `No item at index ${raw}`, notFoundCode);
+  }
+  return Number(raw);
+}
+
 /**
  * 404s (rather than 403s) on a project this user has no access to -- either
  * it doesn't exist, or it belongs to someone else and this user isn't a
@@ -715,6 +723,51 @@ export function createProjectsRouter(db: ForgeDatabase, provider: SpecProvider |
             : e,
         ),
       };
+      const updated = updateProjectSpec(db, project.id, nextSpec);
+      res.json({ project: updated });
+    }),
+  );
+
+  /**
+   * The spec review screen's "roles" chips and "assumptions" list (both
+   * plain string[] on the spec, set once by spec generation) were
+   * otherwise entirely static -- no way to correct a role or assumption
+   * the AI/heuristic engine got wrong before committing to a build. Same
+   * direct updateProjectSpec write as the label routes above, just
+   * filtering an index out of a string[] instead of editing an object
+   * field. Deliberately DELETE-by-index rather than a full-array PUT: the
+   * UI only ever removes one chip/item at a time, and index-based removal
+   * means a stale client array can't accidentally resurrect an item
+   * someone else just removed. No project.status check (unlike the record
+   * routes below) since this edits the spec itself, the same as the label
+   * routes -- available before a project is even built, when it's most
+   * useful for catching a wrong assumption early. Unlike assumptions,
+   * `roles` carries `.min(1)` on ProductSpecSchema (see that schema's own
+   * comment -- every stored spec is re-validated against it on every read),
+   * so removing the very last role would otherwise pass this route's own
+   * checks and then blow up inside updateProjectSpec's schema validation as
+   * an uncaught 500 -- guarded explicitly below instead, with a clear 400.
+   */
+  router.delete(
+    "/projects/:id/roles/:index",
+    asyncRoute(async (req, res) => {
+      const project = requireProjectAccess(db, req.params.id, req.userId!);
+      const index = parseListIndex(req.params.index, project.spec.roles, "ROLE_NOT_FOUND");
+      if (project.spec.roles.length <= 1) {
+        throw new HttpError(400, "Cannot remove the last remaining role -- at least one role is required", "VALIDATION_ERROR");
+      }
+      const nextSpec = { ...project.spec, roles: project.spec.roles.filter((_, i) => i !== index) };
+      const updated = updateProjectSpec(db, project.id, nextSpec);
+      res.json({ project: updated });
+    }),
+  );
+
+  router.delete(
+    "/projects/:id/assumptions/:index",
+    asyncRoute(async (req, res) => {
+      const project = requireProjectAccess(db, req.params.id, req.userId!);
+      const index = parseListIndex(req.params.index, project.spec.assumptions, "ASSUMPTION_NOT_FOUND");
+      const nextSpec = { ...project.spec, assumptions: project.spec.assumptions.filter((_, i) => i !== index) };
       const updated = updateProjectSpec(db, project.id, nextSpec);
       res.json({ project: updated });
     }),

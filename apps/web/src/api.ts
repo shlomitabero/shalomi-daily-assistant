@@ -231,6 +231,14 @@ export function deleteProject(projectId: string): Promise<void> {
   return request(`/projects/${projectId}`, { method: "DELETE" });
 }
 
+export function removeRole(projectId: string, index: number): Promise<{ project: Project }> {
+  return request(`/projects/${projectId}/roles/${index}`, { method: "DELETE" });
+}
+
+export function removeAssumption(projectId: string, index: number): Promise<{ project: Project }> {
+  return request(`/projects/${projectId}/assumptions/${index}`, { method: "DELETE" });
+}
+
 /**
  * Sends the user's answers to the spec's open questions (quick-pick or
  * freely typed), and/or a free-standing request not tied to any specific

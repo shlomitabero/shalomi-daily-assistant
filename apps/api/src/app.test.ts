@@ -1258,6 +1258,219 @@ test("renaming a field's label on a project you have no access to still 404s, th
   });
 });
 
+test("the owner can remove a role chip by index, and a collaborator can too -- the remaining roles keep their own relative order", async () => {
+  await withServer(async (baseUrl) => {
+    const ownerToken = await signup(baseUrl, "role-remove-owner1@example.com");
+    const collabToken = await signup(baseUrl, "role-remove-collab1@example.com");
+    const createRes = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: authHeaders(ownerToken),
+      body: JSON.stringify({
+        description: "A CRM with customers and deals, used by a sales manager and a customer portal for self-service.",
+      }),
+    });
+    const { project } = (await createRes.json()) as { project: { id: string; spec: { roles: string[] } } };
+    assert.ok(project.spec.roles.length >= 3, "this description matches Manager and Customer, plus Admin is always added");
+    const originalRoles = project.spec.roles;
+    await fetch(`${baseUrl}/api/projects/${project.id}/collaborators`, {
+      method: "POST",
+      headers: authHeaders(ownerToken),
+      body: JSON.stringify({ email: "role-remove-collab1@example.com" }),
+    });
+
+    const ownerRes = await fetch(`${baseUrl}/api/projects/${project.id}/roles/0`, {
+      method: "DELETE",
+      headers: authHeaders(ownerToken),
+    });
+    assert.equal(ownerRes.status, 200);
+    const { project: afterFirstRemoval } = (await ownerRes.json()) as { project: { spec: { roles: string[] } } };
+    assert.deepEqual(
+      afterFirstRemoval.spec.roles,
+      originalRoles.slice(1),
+      "removing index 0 must drop only the first role, keeping the rest in their original order",
+    );
+
+    const collabRes = await fetch(`${baseUrl}/api/projects/${project.id}/roles/0`, {
+      method: "DELETE",
+      headers: authHeaders(collabToken),
+    });
+    assert.equal(collabRes.status, 200);
+    const { project: afterSecondRemoval } = (await collabRes.json()) as { project: { spec: { roles: string[] } } };
+    assert.deepEqual(afterSecondRemoval.spec.roles, originalRoles.slice(2), "a collaborator can remove a role too, same as the owner");
+  });
+});
+
+test("removing a role at an out-of-range index 404s with ROLE_NOT_FOUND, and the role list is left untouched", async () => {
+  await withServer(async (baseUrl) => {
+    const token = await signup(baseUrl, "role-remove-owner2@example.com");
+    const createRes = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ description: "A CRM with customers and deals." }),
+    });
+    const { project } = (await createRes.json()) as { project: { id: string; spec: { roles: string[] } } };
+
+    const res = await fetch(`${baseUrl}/api/projects/${project.id}/roles/${project.spec.roles.length}`, {
+      method: "DELETE",
+      headers: authHeaders(token),
+    });
+    assert.equal(res.status, 404);
+    assert.equal(((await res.json()) as { code?: string }).code, "ROLE_NOT_FOUND");
+
+    const getRes = await fetch(`${baseUrl}/api/projects/${project.id}`, { headers: authHeaders(token) });
+    const { project: unchanged } = (await getRes.json()) as { project: { spec: { roles: string[] } } };
+    assert.deepEqual(unchanged.spec.roles, project.spec.roles);
+  });
+});
+
+test("removing the last remaining role is rejected with 400 instead of crashing -- ProductSpecSchema requires roles.min(1)", async () => {
+  await withServer(async (baseUrl) => {
+    const token = await signup(baseUrl, "role-remove-lastone@example.com");
+    const createRes = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ description: "A CRM with customers and deals." }),
+    });
+    const { project } = (await createRes.json()) as { project: { id: string; spec: { roles: string[] } } };
+    assert.equal(project.spec.roles.length, 2, "this description matches no ROLE_RULES keyword, so it's exactly Admin + the Member fallback");
+
+    const firstRes = await fetch(`${baseUrl}/api/projects/${project.id}/roles/0`, { method: "DELETE", headers: authHeaders(token) });
+    assert.equal(firstRes.status, 200, "removing down to exactly one remaining role must still succeed");
+
+    const secondRes = await fetch(`${baseUrl}/api/projects/${project.id}/roles/0`, { method: "DELETE", headers: authHeaders(token) });
+    assert.equal(secondRes.status, 400, "removing the very last role must be rejected, not crash");
+    assert.equal(((await secondRes.json()) as { code?: string }).code, "VALIDATION_ERROR");
+
+    const getRes = await fetch(`${baseUrl}/api/projects/${project.id}`, { headers: authHeaders(token) });
+    const { project: unchanged } = (await getRes.json()) as { project: { spec: { roles: string[] } } };
+    assert.equal(unchanged.spec.roles.length, 1, "the one remaining role must survive the rejected attempt untouched");
+  });
+});
+
+test("removing a role on a project you have no access to still 404s, the same as any other project route", async () => {
+  await withServer(async (baseUrl) => {
+    const ownerToken = await signup(baseUrl, "role-remove-owner3@example.com");
+    const outsiderToken = await signup(baseUrl, "role-remove-outsider3@example.com");
+    const createRes = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: authHeaders(ownerToken),
+      body: JSON.stringify({ description: "A CRM with customers and deals." }),
+    });
+    const { project } = (await createRes.json()) as { project: { id: string } };
+
+    const res = await fetch(`${baseUrl}/api/projects/${project.id}/roles/0`, {
+      method: "DELETE",
+      headers: authHeaders(outsiderToken),
+    });
+    assert.equal(res.status, 404);
+  });
+});
+
+test("the owner can remove an assumption by index, and a collaborator can too -- the remaining assumptions keep their own relative order", async () => {
+  await withServer(async (baseUrl) => {
+    const ownerToken = await signup(baseUrl, "assumption-remove-owner1@example.com");
+    const collabToken = await signup(baseUrl, "assumption-remove-collab1@example.com");
+    const createRes = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: authHeaders(ownerToken),
+      body: JSON.stringify({ description: "A CRM with customers and deals." }),
+    });
+    const { project } = (await createRes.json()) as { project: { id: string; spec: { assumptions: string[] } } };
+    assert.ok(project.spec.assumptions.length >= 2, "the heuristic engine always generates several assumptions");
+    const originalAssumptions = project.spec.assumptions;
+    await fetch(`${baseUrl}/api/projects/${project.id}/collaborators`, {
+      method: "POST",
+      headers: authHeaders(ownerToken),
+      body: JSON.stringify({ email: "assumption-remove-collab1@example.com" }),
+    });
+
+    const ownerRes = await fetch(`${baseUrl}/api/projects/${project.id}/assumptions/1`, {
+      method: "DELETE",
+      headers: authHeaders(ownerToken),
+    });
+    assert.equal(ownerRes.status, 200);
+    const { project: afterFirstRemoval } = (await ownerRes.json()) as { project: { spec: { assumptions: string[] } } };
+    assert.deepEqual(
+      afterFirstRemoval.spec.assumptions,
+      [originalAssumptions[0], ...originalAssumptions.slice(2)],
+      "removing index 1 must drop only the middle assumption, keeping the others in their original order",
+    );
+
+    const collabRes = await fetch(`${baseUrl}/api/projects/${project.id}/assumptions/0`, {
+      method: "DELETE",
+      headers: authHeaders(collabToken),
+    });
+    assert.equal(collabRes.status, 200);
+    const { project: afterSecondRemoval } = (await collabRes.json()) as { project: { spec: { assumptions: string[] } } };
+    assert.deepEqual(
+      afterSecondRemoval.spec.assumptions,
+      originalAssumptions.slice(2),
+      "a collaborator can remove an assumption too, same as the owner",
+    );
+  });
+});
+
+test("removing an assumption at an out-of-range index 404s with ASSUMPTION_NOT_FOUND, and the assumptions list is left untouched", async () => {
+  await withServer(async (baseUrl) => {
+    const token = await signup(baseUrl, "assumption-remove-owner2@example.com");
+    const createRes = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ description: "A CRM with customers and deals." }),
+    });
+    const { project } = (await createRes.json()) as { project: { id: string; spec: { assumptions: string[] } } };
+
+    const res = await fetch(`${baseUrl}/api/projects/${project.id}/assumptions/${project.spec.assumptions.length}`, {
+      method: "DELETE",
+      headers: authHeaders(token),
+    });
+    assert.equal(res.status, 404);
+    assert.equal(((await res.json()) as { code?: string }).code, "ASSUMPTION_NOT_FOUND");
+
+    const getRes = await fetch(`${baseUrl}/api/projects/${project.id}`, { headers: authHeaders(token) });
+    const { project: unchanged } = (await getRes.json()) as { project: { spec: { assumptions: string[] } } };
+    assert.deepEqual(unchanged.spec.assumptions, project.spec.assumptions);
+  });
+});
+
+test("removing an assumption on a project you have no access to still 404s, the same as any other project route", async () => {
+  await withServer(async (baseUrl) => {
+    const ownerToken = await signup(baseUrl, "assumption-remove-owner3@example.com");
+    const outsiderToken = await signup(baseUrl, "assumption-remove-outsider3@example.com");
+    const createRes = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: authHeaders(ownerToken),
+      body: JSON.stringify({ description: "A CRM with customers and deals." }),
+    });
+    const { project } = (await createRes.json()) as { project: { id: string } };
+
+    const res = await fetch(`${baseUrl}/api/projects/${project.id}/assumptions/0`, {
+      method: "DELETE",
+      headers: authHeaders(outsiderToken),
+    });
+    assert.equal(res.status, 404);
+  });
+});
+
+test("removing a role at a non-numeric index 404s the same as an out-of-range one, instead of coercing to NaN", async () => {
+  await withServer(async (baseUrl) => {
+    const token = await signup(baseUrl, "role-remove-owner4@example.com");
+    const createRes = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ description: "A CRM with customers and deals." }),
+    });
+    const { project } = (await createRes.json()) as { project: { id: string } };
+
+    const res = await fetch(`${baseUrl}/api/projects/${project.id}/roles/not-a-number`, {
+      method: "DELETE",
+      headers: authHeaders(token),
+    });
+    assert.equal(res.status, 404);
+    assert.equal(((await res.json()) as { code?: string }).code, "ROLE_NOT_FOUND");
+  });
+});
+
 test("the owner can delete a built project, and afterward the project, its real data, its checkpoint, and a collaborator's access are all genuinely gone -- not just hidden", async () => {
   await withServer(async (baseUrl) => {
     const ownerToken = await signup(baseUrl, "delete-owner1@example.com");
