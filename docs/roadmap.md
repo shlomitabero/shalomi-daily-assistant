@@ -9068,6 +9068,65 @@ not a single "make it perfect" claim.
       `@forge/shared` 11, `@forge/spec-engine` 82, `@forge/db` 80,
       `@forge/api` 195 unchanged) and typecheck clean.
 
+- [x] **Round 183 — A build/refine type filter for the Time Machine panel.**
+      Diversification check: round 182 already covered the home screen;
+      Business Twin (checked in full during round 182) and Collaborators
+      (checked in round 152) had no new gap. Time Machine had been flagged
+      as a live candidate since round 181's own trigger note: it only ever
+      had text search, with no way to isolate "just the original build"
+      from "everything I've refined since" -- exactly the independent-
+      filter gap `EntityPanel.tsx`'s search+statusFilter and
+      `WhatsAppPanel.tsx`'s search+directionFilter already closed for their
+      own data.
+
+      The key insight: every checkpoint's own label already encodes which
+      kind of change made it (`apps/api/src/routes/projects.ts`'s
+      `changeLabel`: `"Initial build"`/`"בנייה ראשונית"` for a fresh build,
+      `"Refine: <instruction>"`/`"שיפור: <instruction>"` for every refine
+      after it) -- no new persisted column needed, just a read of a string
+      that's already there. Added `getCheckpointType` (a plain `startsWith`
+      check covering both languages) and `filterCheckpointsByType` to
+      `checkpointDiff.ts`, composing with (not replacing) `filterCheckpoints`'
+      own text search. `HistoryPanel.tsx` gained a `typeFilter` state and a
+      real `<select>` (All/Initial build/Refines only) next to the existing
+      search box, shown under the same >5-checkpoint threshold gate.
+
+      New tests: 7 in `checkpointDiff.test.ts` (type detection in both
+      languages, each filter value, composition with search, and the
+      empty-result case) and 1 new DOM test in `HistoryPanel.test.ts`
+      driving the real `<select>` through a real 6-checkpoint fixture,
+      confirming each filter's real row count and that it composes with
+      the search box.
+
+      Verified with the deliberate-break-and-restore discipline twice:
+      (1) dropped the Hebrew `"שיפור:"` check from `getCheckpointType`,
+      leaving only the English one -- caught exactly by the new
+      Hebrew-label test; restored, `diff` clean. (2) reverted
+      `visibleCheckpoints` in `HistoryPanel.tsx` to ignore `typeFilter`
+      entirely (calling only `filterCheckpoints`) -- caught by the new DOM
+      test's `waitForCondition` genuinely timing out (the row count never
+      changed after selecting a filter); restored, `diff` byte-identical
+      against a pre-break backup.
+
+      **And** a real Playwright pass against real running dev servers --
+      genuinely more thorough than most rounds' mocked-endpoint approach:
+      seeded one real project via `POST /api/projects` with a Hebrew
+      description, then drove it through the actual, unmocked
+      `POST /api/projects/:id/build` and five real
+      `POST /api/projects/:id/refine` calls (real pipeline runs, real
+      checkpoints, not stubbed data). Opened the real Time Machine panel,
+      confirmed 6 real checkpoints, selected "Initial build" and confirmed
+      exactly 1 row -- the genuinely Hebrew-labeled `"בנייה ראשונית"`
+      checkpoint, correctly classified by `getCheckpointType`'s Hebrew
+      branch -- selected "Refines only" and confirmed exactly 5 rows with
+      the Hebrew build excluded, then composed the type filter with a real
+      text search ("invoice") and confirmed exactly the 2 matching refines
+      appeared.
+
+      Full suite green (672 tests, up from 665 -- `@forge/web` 297 → 304;
+      `@forge/shared` 11, `@forge/spec-engine` 82, `@forge/db` 80,
+      `@forge/api` 195 unchanged) and typecheck clean.
+
 ## Phase 3
 
 - Self-healing: production observability, automatic diagnosis and patch
