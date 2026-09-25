@@ -11,7 +11,7 @@ import {
   type WhatsAppMessageLogEntry,
   type WhatsAppStatusView,
 } from "./api.js";
-import { downloadWhatsAppLog, filterWhatsAppMessages, formatWhatsAppLog } from "./whatsappLog.js";
+import { downloadWhatsAppLog, filterWhatsAppMessages, formatWhatsAppLog, formatWhatsAppMessageCount } from "./whatsappLog.js";
 
 // Mirrors HistoryPanel's own threshold for showing its checkpoint search
 // box -- a handful of messages are trivial to scan by eye; a search box
@@ -366,7 +366,15 @@ export function WhatsAppPanel({
 
         <div className="whatsapp-message-log">
           <div className="whatsapp-log-header">
-            <h3>{t("whatsapp.log.heading")}</h3>
+            <h3>
+              {t("whatsapp.log.heading")}
+              {messages.length > 0 && (
+                <span className="muted small whatsapp-log-count">
+                  {" "}
+                  — {formatWhatsAppMessageCount(visibleMessages.length, messages.length, t)}
+                </span>
+              )}
+            </h3>
             {messages.length > 0 && (
               <div className="whatsapp-log-header-actions">
                 <button type="button" className="secondary small" onClick={handleDownloadLog}>

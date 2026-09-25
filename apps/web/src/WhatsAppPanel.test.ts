@@ -668,6 +668,11 @@ test("WhatsAppPanel shows a search box only once the log passes the threshold, f
         ),
       );
       await waitForCondition(() => document.querySelectorAll(".whatsapp-log-list li").length === 6);
+      assert.equal(
+        document.querySelector(".whatsapp-log-count")!.textContent,
+        " — 6 messages",
+        "unfiltered must read as a plain count, not '6 of 6 messages'",
+      );
 
       const searchBox = document.querySelector(".whatsapp-log-search") as HTMLInputElement | null;
       assert.ok(searchBox, "expected a real search box once the log has more than the threshold of messages");
@@ -679,6 +684,11 @@ test("WhatsAppPanel shows a search box only once the log passes the threshold, f
         /ורדים/,
         "the one remaining row must be the real matching message, not a stale/wrong one",
       );
+      assert.equal(
+        document.querySelector(".whatsapp-log-count")!.textContent,
+        " — 1 of 6 messages",
+        "once the search narrows the log, the count must show shown-of-total",
+      );
 
       fireEvent.change(searchBox!, { target: { value: "zzz-no-such-message" } });
       await waitForCondition(() => document.querySelectorAll(".whatsapp-log-list li").length === 0);
@@ -689,6 +699,11 @@ test("WhatsAppPanel shows a search box only once the log passes the threshold, f
       );
       const noResultsEl = Array.from(document.querySelectorAll("p")).find((p) => p.textContent?.includes("No messages match your search."));
       assert.ok(noResultsEl, "expected a real 'no results' message, not a silently empty log");
+      assert.equal(
+        document.querySelector(".whatsapp-log-count")!.textContent,
+        " — 0 of 6 messages",
+        "a search matching nothing must still show the real 0-of-6 count, not hide it or show a stale number",
+      );
 
       fireEvent.change(searchBox!, { target: { value: "" } });
       await waitForCondition(() => document.querySelectorAll(".whatsapp-log-list li").length === 6);

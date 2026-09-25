@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { WhatsAppMessageLogEntry } from "./api.js";
 import { translate } from "./i18n/language.js";
-import { filterWhatsAppMessages, formatWhatsAppLog } from "./whatsappLog.js";
+import { filterWhatsAppMessages, formatWhatsAppLog, formatWhatsAppMessageCount } from "./whatsappLog.js";
 
 function makeMessage(overrides: Partial<WhatsAppMessageLogEntry> = {}): WhatsAppMessageLogEntry {
   return {
@@ -103,4 +103,14 @@ test("filterWhatsAppMessages returns every message unchanged when the search is 
 test("filterWhatsAppMessages returns an empty list when nothing matches, instead of falling back to everything", () => {
   const messages = [makeMessage({ id: "m1", body: "שלום" })];
   assert.deepEqual(filterWhatsAppMessages(messages, "zzz-no-such-text"), []);
+});
+
+test("formatWhatsAppMessageCount reports a plain total when the search hasn't narrowed anything out", () => {
+  const tr = (key: string, params?: Record<string, string | number>) => translate("en", key, params);
+  assert.equal(formatWhatsAppMessageCount(6, 6, tr), "6 messages");
+});
+
+test("formatWhatsAppMessageCount reports 'shown of total' once a search has narrowed the log, in Hebrew", () => {
+  const tr = (key: string, params?: Record<string, string | number>) => translate("he", key, params);
+  assert.equal(formatWhatsAppMessageCount(2, 9, tr), "2 מתוך 9 הודעות");
 });

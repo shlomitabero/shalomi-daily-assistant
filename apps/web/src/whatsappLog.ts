@@ -62,6 +62,27 @@ export function filterWhatsAppMessages(messages: WhatsAppMessageLogEntry[], sear
   });
 }
 
+/**
+ * How many of the message log's entries are currently showing versus how
+ * many exist in total -- the same two-distinct-phrasings convention
+ * formatEntityRecordCount (entityFormatting.ts, round 155) and
+ * formatMyProjectsCount (App.tsx, round 167) already established
+ * elsewhere in this app, applied here to the WhatsApp log's own search
+ * box (round 162): the search only even appears once there are more than
+ * SEARCH_THRESHOLD messages, exactly the point where a person can no
+ * longer tell at a glance how many of a long, never-capped conversation
+ * history a search actually matched.
+ */
+export function formatWhatsAppMessageCount(
+  shown: number,
+  total: number,
+  t: (key: string, params?: Record<string, string | number>) => string,
+): string {
+  return shown === total
+    ? t("whatsapp.log.count.all", { count: total })
+    : t("whatsapp.log.count.filtered", { shown, total });
+}
+
 /** Saves the already-rendered log text as a real downloaded .txt file, the same browser-download mechanics twinReport.ts's downloadTwinReport uses. */
 export function downloadWhatsAppLog(text: string, projectName: string): void {
   const blob = new Blob([text], { type: "text/plain;charset=utf-8" });
