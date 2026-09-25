@@ -1666,6 +1666,11 @@ button.sort-header:hover:not(:disabled) {
   box-shadow: none;
 }
 
+.twin-stat-tile-empty {
+  border-style: dashed;
+  opacity: 0.6;
+}
+
 .twin-stat-value {
   font-family: "Heebo", sans-serif;
   font-variant-numeric: tabular-nums;

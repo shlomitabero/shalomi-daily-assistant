@@ -4,8 +4,8 @@ import { test } from "node:test";
 import { JSDOM } from "jsdom";
 import React from "react";
 import { cleanup, fireEvent, render } from "@testing-library/react";
-import type { BusinessTwin } from "./api.js";
-import { BusinessTwinPanel } from "./BusinessTwinPanel.js";
+import type { BusinessTwin, BusinessTwinEntityStat } from "./api.js";
+import { BusinessTwinPanel, sortTwinStatsByCount } from "./BusinessTwinPanel.js";
 import { LanguageProvider } from "./i18n/LanguageContext.js";
 import { ThemeProvider } from "./theme/ThemeContext.js";
 
@@ -95,6 +95,51 @@ function renderTwinPanel(onJumpToEntity: (entityName: string) => void) {
 }
 
 /**
+ * New in this round: the server (twin.ts) returns entities in the spec's
+ * own declaration order, not by activity, so the busiest entity could end
+ * up buried behind several all-zero tiles instead of leading a stats
+ * dashboard the way a person actually expects. Confirms real descending
+ * order, a stable tie-break for equal counts (not left to sort()'s
+ * engine-dependent behavior on a tie), and that the function doesn't
+ * mutate its input array (the caller re-renders from the same twin state
+ * on every render, so mutating it in place would be a real, hard-to-spot bug).
+ */
+test("sortTwinStatsByCount sorts descending by count, without mutating the input array", () => {
+  const entities: BusinessTwinEntityStat[] = [
+    { name: "Ticket", label: "Tickets", count: 3 },
+    { name: "Customer", label: "Customers", count: 12 },
+    { name: "Order", label: "Orders", count: 0 },
+    { name: "Invoice", label: "Invoices", count: 7 },
+  ];
+  const originalOrder = entities.map((e) => e.name);
+
+  const sorted = sortTwinStatsByCount(entities);
+
+  assert.deepEqual(
+    sorted.map((e) => e.name),
+    ["Customer", "Invoice", "Ticket", "Order"],
+    "expected strictly descending order by count",
+  );
+  assert.deepEqual(entities.map((e) => e.name), originalOrder, "must not mutate the caller's own array");
+});
+
+test("sortTwinStatsByCount breaks a tie between equal counts by keeping the original declaration order, not an arbitrary one", () => {
+  const entities: BusinessTwinEntityStat[] = [
+    { name: "Vendor", label: "Vendors", count: 0 },
+    { name: "Expense", label: "Expenses", count: 5 },
+    { name: "Review", label: "Reviews", count: 0 },
+  ];
+
+  const sorted = sortTwinStatsByCount(entities);
+
+  assert.deepEqual(
+    sorted.map((e) => e.name),
+    ["Expense", "Vendor", "Review"],
+    "the two tied (0-count) entities must keep their original relative order (Vendor before Review), not swap unpredictably",
+  );
+});
+
+/**
  * New in this round: each stat tile in Business Twin ("Customers · 12") is
  * now a real clickable button, not inert display text -- clicking it should
  * take you straight to that entity's own records (closing the twin panel in
@@ -144,6 +189,67 @@ test("BusinessTwinPanel shows the real total-records count from the fetched twin
 
       const totalEl = document.querySelector(".twin-total");
       assert.match(totalEl!.textContent ?? "", /16/, "must show the real totalRecords value (16) from the fetched twin, not a placeholder or the entity count (2)");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
+ * New in this round: the fixture below deliberately lists the busiest
+ * entity LAST and a zero-count entity in the middle, mirroring the exact
+ * "declaration order, not activity order" shape the server actually
+ * returns -- if the panel just rendered `twin.entities` as-is, this test
+ * would see the wrong tile first. Also confirms the visual "empty" marker
+ * only ever applies to the genuinely empty tile, never to a real one.
+ */
+test("BusinessTwinPanel renders stat tiles sorted by real record count (busiest first), and visually marks the empty one", async () => {
+  await withJsdom(async () => {
+    const outOfOrderTwin: BusinessTwin = {
+      summary: "A CRM",
+      roles: ["Owner"],
+      entities: [
+        { name: "Ticket", label: "Tickets", count: 3 },
+        { name: "Order", label: "Orders", count: 0 },
+        { name: "Customer", label: "Customers", count: 12 },
+      ],
+      totalRecords: 15,
+      mostActive: { name: "Customer", label: "Customers", count: 12 },
+      unused: [{ name: "Order", label: "Orders", count: 0 }],
+      observations: [],
+    };
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string) => {
+      if (input === "/api/projects/proj1/twin") {
+        return new Response(JSON.stringify({ twin: outOfOrderTwin }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${input}`);
+    }) as typeof fetch;
+    try {
+      renderTwinPanel(() => {});
+      await waitForCondition(() => document.querySelectorAll(".twin-stat-tile").length === 3);
+
+      const tiles = Array.from(document.querySelectorAll(".twin-stat-tile"));
+      const labels = tiles.map((el) => el.querySelector(".twin-stat-label")!.textContent);
+      assert.deepEqual(
+        labels,
+        ["Customers", "Tickets", "Orders"],
+        "expected the real record-count order (12, 3, 0), not the server's own declaration order (Tickets, Orders, Customers)",
+      );
+
+      const ordersTile = tiles.find((el) => el.querySelector(".twin-stat-label")!.textContent === "Orders")!;
+      assert.ok(
+        ordersTile.classList.contains("twin-stat-tile-empty"),
+        "the genuinely empty (0-record) tile must carry the visual empty marker",
+      );
+      const nonEmptyTiles = tiles.filter((el) => el !== ordersTile);
+      for (const tile of nonEmptyTiles) {
+        assert.equal(
+          tile.classList.contains("twin-stat-tile-empty"),
+          false,
+          "a tile with real records must never carry the empty marker",
+        );
+      }
     } finally {
       globalThis.fetch = originalFetch;
     }

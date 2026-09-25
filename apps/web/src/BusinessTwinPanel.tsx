@@ -1,8 +1,28 @@
 import { useEffect, useState } from "react";
-import { getBusinessTwin, type BusinessTwin } from "./api.js";
+import { getBusinessTwin, type BusinessTwin, type BusinessTwinEntityStat } from "./api.js";
 import { useTranslation } from "./i18n/LanguageContext.js";
 import { useDialogFocusTrap } from "./useDialogFocusTrap.js";
 import { downloadTwinReport, formatTwinReport } from "./twinReport.js";
+
+/**
+ * The server (apps/api/src/twin.ts) returns entities in the spec's own
+ * declaration order, not by activity -- so a project whose busiest entity
+ * happened to be declared last showed its biggest number at the bottom of
+ * the grid, behind several all-zero tiles, exactly backwards from how a
+ * stats dashboard is meant to read (biggest numbers first). A plain
+ * `.sort()` on `count` alone isn't enough: Array.prototype.sort is only
+ * guaranteed stable as of ES2019, and even then, sorting descending by a
+ * key that has ties (multiple entities on 0 records, or on the same count)
+ * needs an explicit tie-break to keep those tied entities in their
+ * original, predictable order rather than depending on engine-specific
+ * behavior for the tie itself.
+ */
+export function sortTwinStatsByCount(entities: BusinessTwinEntityStat[]): BusinessTwinEntityStat[] {
+  return entities
+    .map((entity, index) => ({ entity, index }))
+    .sort((a, b) => b.entity.count - a.entity.count || a.index - b.index)
+    .map(({ entity }) => entity);
+}
 
 export function BusinessTwinPanel({
   projectId,
@@ -78,11 +98,11 @@ export function BusinessTwinPanel({
             <p className="muted small twin-total">{t("twin.totalRecords", { count: twin.totalRecords })}</p>
 
             <div className="twin-stats">
-              {twin.entities.map((e) => (
+              {sortTwinStatsByCount(twin.entities).map((e) => (
                 <button
                   key={e.name}
                   type="button"
-                  className="twin-stat-tile"
+                  className={e.count === 0 ? "twin-stat-tile twin-stat-tile-empty" : "twin-stat-tile"}
                   aria-label={t("twin.stat.jumpTo", { entity: e.label })}
                   onClick={() => onJumpToEntity(e.name)}
                 >
