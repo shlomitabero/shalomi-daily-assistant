@@ -8620,6 +8620,81 @@ not a single "make it perfect" claim.
       `@forge/api`'s own `twin.test.ts` assertions were substantially
       rewritten) and typecheck clean.
 
+- [x] **Round 177 — Multi-column sort for entity tables (shift+click a
+      second header adds a real tiebreaker key).** Round 176's own trigger
+      note explicitly flagged that the "jump to record" pattern (rounds
+      174-176: Global Search, WhatsApp panel, Business Twin) had now
+      covered all three known screens with an unused recordId, and asked
+      for a genuinely new direction rather than a fourth implementation of
+      that same pattern. Ruled out three candidates first: CSV export
+      filtering (already correct), spec review's static chips (no real
+      downstream effect), and Time Machine checkpoint diffs (doesn't fit
+      the data model -- checkpoints only store spec/schema, not row data).
+      Settled on sorting, since every entity table already had single-
+      column click-to-sort but no way to break ties -- e.g. sorting by
+      Status left same-status rows in arbitrary order, with no way to also
+      sort by Amount within each status group.
+
+      Added `sortRecordsMulti(records, sortKeys)` to `entityFormatting.ts`:
+      applies each key's own direction inside the comparator itself,
+      rather than reversing the whole sorted array at the end -- reversing
+      the whole result would also flip the tie-break order of any earlier
+      key whenever two keys don't share the same direction, which is a
+      real and easy-to-miss bug class. `EntityPanel.tsx`'s header click
+      handler (`toggleSort`) now takes an `additive` flag: a plain click
+      still replaces the whole sort with just that column (existing
+      behavior, unchanged), while a shift+click either adds a new column
+      as a secondary/tertiary tiebreaker or toggles that column's own
+      direction if it's already an active key. Each active header beyond
+      the first shows a small numbered `.sort-priority` badge so it's
+      visible which key is primary vs. secondary; a one-line Hebrew/English
+      hint below the table header explains the shift+click gesture.
+
+      Verified with the deliberate-break-and-restore discipline twice:
+      (1) `sortRecordsMulti`'s `direction === "desc" ? -cmp : cmp` changed
+      to just `cmp` (ignoring direction entirely) -- caught by both new
+      `entityFormatting.test.ts` unit tests exactly; restored, `diff`
+      clean. (2) `toggleSort` changed to always behave non-additive
+      (dropping the `additive` parameter) -- caught by the new
+      `EntityPanel.test.ts` DOM test (shift+click produced no visible
+      reordering, so the test's `waitForCondition` timed out); restored,
+      `diff` clean. While writing the first unit test I caught my own
+      arithmetic mistake in the test's own expected output (`[2,4,1,3]`
+      vs. the actually-correct `[4,2,1,3]`) by manually re-deriving the
+      comparator's per-pair behavior before running it. The DOM test also
+      needed a fix: the priority badges render in DOM/column order (Name
+      before Status, per the entity's own declared field order), not sort-
+      priority order, so the test's expected `["1","2"]` was wrong and was
+      corrected to `["2","1"]` with an explanatory comment.
+
+      **And** a real Playwright pass against real running dev servers,
+      which caught a genuine false-positive on its first corrected
+      attempt: records load newest-first (real `ORDER BY id DESC`), so
+      when two same-status test records ("Amy Customer", "Zed Customer")
+      were inserted in the wrong order, the primary-only Status sort
+      already happened to show them in the "correct" final order by sheer
+      insertion-order coincidence -- the shift+click secondary Name sort
+      produced literally no visible change, yet the test's assertion still
+      passed. Caught this by comparing the script's own "rows after
+      primary sort" vs. "rows after secondary sort" console output and
+      noticing they were byte-identical. Fixed by swapping the insertion
+      order (Amy before Zed, giving Zed the higher/more-recent id) so the
+      primary-only order and the target secondary-sort order genuinely
+      disagree, then added an explicit assertion that primary-only sort
+      shows Zed before Amy before even attempting the secondary sort --
+      making the eventual pass real proof rather than a coincidence. Re-ran
+      and confirmed a genuine, visible reorder: primary-only sort showed
+      Zed then Amy; after shift+click on Name, Amy then Zed, with exactly 2
+      priority badges. This is a new, reusable lesson (alongside the
+      existing round 165/171/174/175/176 ones): a Playwright test on data
+      that loads in a fixed natural order (like `id DESC`) must deliberately
+      make its fixture's insertion order disagree with the expected final
+      order, or a passing assertion can be proving nothing.
+
+      Full suite green (629 tests, up from 625 -- `@forge/web` 265 → 269;
+      `@forge/shared`/`@forge/spec-engine`/`@forge/db`/`@forge/api`
+      unchanged) and typecheck clean.
+
 ## Phase 3
 
 - Self-healing: production observability, automatic diagnosis and patch
