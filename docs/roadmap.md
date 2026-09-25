@@ -8941,6 +8941,67 @@ not a single "make it perfect" claim.
       `@forge/shared`/`@forge/spec-engine`/`@forge/db`/`@forge/api`
       unchanged) and typecheck clean.
 
+- [x] **Round 181 — A real direction/status filter for the WhatsApp
+      message log.** Round 180's own trigger note asked for a genuinely
+      new direction, or "recent searches" applied a second time somewhere
+      it hadn't already landed. Surveyed the home screen (14 rounds back,
+      but already very saturated), Entity table column resize (real
+      complexity, unclear payoff for one round), and Time Machine (no new
+      concrete idea) before landing on the WhatsApp panel's message log:
+      text search was the only way to narrow it, with no way to isolate
+      "just what I sent," "just what came in," or "just what failed to
+      send" -- exactly the gap a long, never-capped, never-deleted
+      conversation (`filterWhatsAppMessages`' own comment) eventually
+      needs.
+
+      Added `filterWhatsAppMessagesByDirection` to `whatsappLog.ts`,
+      composing with (not replacing) the existing `filterWhatsAppMessages`
+      text search -- the same independent-filters combination
+      `EntityPanel.tsx`'s own search+statusFilter already use on the
+      entity table. `WhatsAppPanel.tsx` gained a `directionFilter` state
+      and a real `<select>` (All/Incoming/Outgoing/Failed) next to the
+      existing search box, shown under the same `SEARCH_THRESHOLD` gate.
+      "Outgoing" deliberately includes failed sends (a failed message is
+      still outgoing), while "Failed" narrows to just the ones that didn't
+      go through -- two independent axes over the same three-way
+      direction+status data.
+
+      New pure-function tests (`whatsappLog.test.ts`, 5 tests) cover
+      "all" returning everything unchanged, "in"/"out" including a failed
+      outgoing message in the "out" bucket, "failed" excluding every
+      incoming message, and the empty-result case. New DOM test
+      (`WhatsAppPanel.test.ts`) drives the real `<select>` through a real
+      running component with a 7-message fixture, confirming each filter's
+      real row count and that the filter and text search compose together
+      (narrowing to exactly one message that is both outgoing and matches
+      the search text).
+
+      Verified with the deliberate-break-and-restore discipline twice:
+      (1) dropped the `filter === "failed"` branch from
+      `filterWhatsAppMessagesByDirection`, letting it fall through to the
+      direction check -- caught exactly (the "failed" filter returned an
+      empty list instead of the one real failed message, since no message
+      has `direction === "failed"`); restored, `diff` clean. (2) reverted
+      `visibleMessages` in `WhatsAppPanel.tsx` to only call
+      `filterWhatsAppMessages` (dropping the direction filter entirely) --
+      caught by the DOM test's `waitForCondition` timing out (the row
+      count never changed after selecting a filter); restored, `diff`
+      clean.
+
+      **And** a real Playwright pass against real running dev servers:
+      real WhatsApp linking requires a real phone scanning a real QR code,
+      unreachable from this sandbox, so mocked the status+messages
+      endpoints via `page.route` -- the same established substitute
+      earlier WhatsApp rounds' own Playwright verification already uses.
+      Drove the real `<select>` in a real browser through all four filter
+      values against a real 6-message fixture, confirming each one's real
+      row count (including that "Outgoing" genuinely includes the failed
+      message) and that resetting to "All" restores every row.
+
+      Full suite green (660 tests, up from 654 -- `@forge/web` 286 → 292;
+      `@forge/shared`/`@forge/spec-engine`/`@forge/db`/`@forge/api`
+      unchanged) and typecheck clean.
+
 ## Phase 3
 
 - Self-healing: production observability, automatic diagnosis and patch
