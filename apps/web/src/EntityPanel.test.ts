@@ -1619,3 +1619,76 @@ test("EntityPanel's column resize handle drags a column to a new width, applies 
     }
   });
 });
+
+/**
+ * New in this round: the board view's card <select> (still there, and
+ * still the accessible/keyboard-reachable way to move a card) was the only
+ * way to move a card between columns -- a real Kanban board is expected to
+ * let you drag a card straight onto the column you want. Drives real
+ * dragstart/dragover/drop events (with a minimal DataTransfer mock, since
+ * jsdom doesn't implement the real one) to prove the whole wire-up: dragging
+ * a card from the "new" column and dropping it on "won" must call the real
+ * PATCH (via the same handleMove the dropdown already used) and land the
+ * card in its new column once the round trip settles -- and dropping onto
+ * the SAME column the card is already in must be a genuine no-op, not an
+ * extra PATCH.
+ */
+test("EntityPanel's board view moves a card via a real drag-and-drop, and dropping it back on its own column is a no-op", async () => {
+  await withJsdom(async () => {
+    const store: EntityRecord[] = [{ id: 1, name: "Acme Corp", status: "new" }];
+    let patchCount = 0;
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      if ((init?.method ?? "GET") === "PATCH") patchCount += 1;
+      return mockRecordsFetch(store)(input, init);
+    }) as typeof fetch;
+    try {
+      renderEntityPanel();
+      await waitForCondition(() => document.querySelector(".entity-toolbar") !== null);
+
+      const boardToggle = document.querySelectorAll(".view-toggle-btn")[1] as HTMLButtonElement;
+      fireEvent.click(boardToggle);
+      await waitForCondition(() => document.querySelectorAll(".board-card").length === 1);
+
+      const columns = document.querySelectorAll(".board-column");
+      const card = columns[0].querySelector(".board-card") as HTMLDivElement;
+
+      function makeDataTransfer() {
+        let payload = "";
+        return { setData: (_type: string, value: string) => (payload = value), getData: () => payload };
+      }
+      const dataTransfer = makeDataTransfer();
+
+      // Dropping on its OWN column ("new", index 0) must be a real no-op.
+      fireEvent.dragStart(card, { dataTransfer });
+      fireEvent.dragOver(columns[0], { dataTransfer });
+      assert.ok(
+        columns[0].classList.contains("board-column-drag-over"),
+        "dragging over a column must show real drag-over feedback",
+      );
+      fireEvent.drop(columns[0], { dataTransfer });
+      await new Promise((resolve) => setImmediate(resolve));
+      assert.equal(patchCount, 0, "dropping a card back on the column it's already in must never call the real PATCH endpoint");
+      assert.equal(
+        columns[0].classList.contains("board-column-drag-over"),
+        false,
+        "drag-over feedback must clear once the drop completes",
+      );
+
+      // Now a real move: drag from "new" (index 0) and drop on "won" (index 1).
+      fireEvent.dragStart(card, { dataTransfer });
+      fireEvent.dragOver(columns[1], { dataTransfer });
+      fireEvent.drop(columns[1], { dataTransfer });
+
+      await waitForCondition(() => store[0].status === "won");
+      await waitForCondition(() => {
+        const columnsNow = document.querySelectorAll(".board-column");
+        return columnsNow[0].querySelectorAll(".board-card").length === 0 && columnsNow[1].querySelectorAll(".board-card").length === 1;
+      });
+
+      assert.equal(patchCount, 1, "the real drag-and-drop move must call the real PATCH exactly once");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});

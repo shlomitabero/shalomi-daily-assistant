@@ -182,7 +182,12 @@ function BoardCard({
 }) {
   const otherFields = entity.fields.filter((f) => f.name !== boardField.name);
   return (
-    <div className="board-card">
+    <div
+      className="board-card"
+      data-record-id={record.id as number}
+      draggable
+      onDragStart={(e) => e.dataTransfer.setData("text/plain", String(record.id))}
+    >
       {otherFields.map((f) => (
         <div key={f.name} className="board-card-field">
           <span className="muted small">{f.label ?? f.name}</span>
@@ -445,6 +450,7 @@ export function EntityPanel({
   const [columnsMenuOpen, setColumnsMenuOpen] = useState(false);
   const [columnWidths, setColumnWidths] = useState<Record<string, number>>({});
   const [resizingField, setResizingField] = useState<{ field: string; startX: number; startWidth: number } | null>(null);
+  const [dragOverColumn, setDragOverColumn] = useState<string | null>(null);
   const [highlightedRecordId, setHighlightedRecordId] = useState<number | null>(null);
   // Bumped once per refresh() call, so a stale refresh whose listRecords
   // round trip just happens to take longer than a newer one's (triggered
@@ -968,6 +974,29 @@ export function EntityPanel({
     }
   }
 
+  /**
+   * The board view's own move-between-columns action already existed (the
+   * card's own status <select>, still kept as the accessible/keyboard-
+   * reachable way to move a card), but a real Kanban board is expected to
+   * let you drag a card straight onto the column you want -- native HTML5
+   * drag-and-drop (draggable + dragstart/dragover/drop), not a mouse-event
+   * simulation like the column-resize handle (round 185) needed, since this
+   * is exactly the browser's own built-in drag contract. Reuses the same
+   * handleMove the dropdown already calls, so a drag and a dropdown change
+   * both end up doing the identical real PATCH + refresh.
+   */
+  function handleCardDrop(e: React.DragEvent<HTMLDivElement>, fieldName: string, value: string) {
+    e.preventDefault();
+    setDragOverColumn(null);
+    const id = Number(e.dataTransfer.getData("text/plain"));
+    if (Number.isNaN(id)) return;
+    const record = records.find((r) => (r.id as number) === id);
+    // Dropping a card back onto the column it's already in is a real no-op
+    // -- nothing actually changed, so there's nothing worth a PATCH request for.
+    if (record && String(record[fieldName] ?? "") === value) return;
+    void handleMove(id, fieldName, value);
+  }
+
   return (
     <div className="entity-panel">
       <EntityLabelEditor entity={entity} projectId={projectId} onRenamed={onEntityRenamed} />
@@ -1146,7 +1175,16 @@ export function EntityPanel({
           ) : viewMode === "board" && boardField ? (
             <div className="board-scroll">
               {groupByField(visibleRecords, boardField).map((column) => (
-                <div className="board-column" key={column.value}>
+                <div
+                  className={dragOverColumn === column.value ? "board-column board-column-drag-over" : "board-column"}
+                  key={column.value}
+                  onDragOver={(e) => {
+                    e.preventDefault();
+                    setDragOverColumn(column.value);
+                  }}
+                  onDragLeave={() => setDragOverColumn((prev) => (prev === column.value ? null : prev))}
+                  onDrop={(e) => handleCardDrop(e, boardField.name, column.value)}
+                >
                   <div className="board-column-header">
                     <span className={`badge badge-${badgeTone(column.value)}`}>{column.label}</span>
                     <span className="muted small">{column.records.length}</span>

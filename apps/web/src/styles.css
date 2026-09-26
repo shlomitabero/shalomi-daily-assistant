@@ -920,6 +920,12 @@ tbody tr:hover {
   display: flex;
   flex-direction: column;
   gap: 10px;
+  transition: background 0.1s ease, border-color 0.1s ease;
+}
+
+.board-column-drag-over {
+  background: var(--accent-soft);
+  border-color: var(--accent);
 }
 
 .board-column-header {
@@ -939,6 +945,11 @@ tbody tr:hover {
   display: flex;
   flex-direction: column;
   gap: 6px;
+  cursor: grab;
+}
+
+.board-card:active {
+  cursor: grabbing;
 }
 
 .board-card-field {
