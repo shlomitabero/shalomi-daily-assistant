@@ -907,6 +907,23 @@ function compareValues(a, b) {
   return String(a).localeCompare(String(b));
 }
 
+// Sorts a copy of records by several fields in priority order -- each key
+// after the first only breaks ties the ones before it left standing.
+// Direction is applied per-key inside the comparator (not by reversing the
+// whole result afterward), so an earlier key's own tie-break order never
+// flips when a later key's direction differs from it. Mirrors the live
+// preview's own entityFormatting.ts sortRecordsMulti (round 177).
+export function sortRecordsMulti(records, sortKeys) {
+  if (sortKeys.length === 0) return records;
+  return [...records].sort((a, b) => {
+    for (const { field, direction } of sortKeys) {
+      const cmp = compareValues(a[field], b[field]);
+      if (cmp !== 0) return direction === "desc" ? -cmp : cmp;
+    }
+    return 0;
+  });
+}
+
 // Wraps a CSV field in quotes (doubling any interior quotes) only when it
 // contains a comma, quote, or newline. A value starting with =, +, -, @, or
 // a tab/CR is prefixed with a leading single quote first -- spreadsheet
@@ -1344,8 +1361,7 @@ export function EntityView({ entity }) {
   const [form, setForm] = useState(() => emptyForm(entity));
   const [editingId, setEditingId] = useState(null);
   const [search, setSearch] = useState("");
-  const [sortField, setSortField] = useState(null);
-  const [sortDir, setSortDir] = useState("asc");
+  const [sortKeys, setSortKeys] = useState([]);
   const [viewMode, setViewMode] = useState("table");
   const [calendarMonth, setCalendarMonth] = useState(() => new Date());
   const [selectedIds, setSelectedIds] = useState(() => new Set());
@@ -1418,7 +1434,7 @@ export function EntityView({ entity }) {
     setForm(emptyForm(entity));
     setEditingId(null);
     setSearch("");
-    setSortField(null);
+    setSortKeys([]);
     setViewMode("table");
     setCalendarMonth(new Date());
     setSelectedIds(new Set());
@@ -1460,13 +1476,25 @@ export function EntityView({ entity }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  function toggleSort(fieldName) {
-    if (sortField !== fieldName) {
-      setSortField(fieldName);
-      setSortDir("asc");
-    } else {
-      setSortDir((d) => (d === "asc" ? "desc" : "asc"));
-    }
+  // Plain click always replaces the whole key list with a single new key
+  // (toggling direction in place when that field was already the sole
+  // key). Shift-click either appends a new tiebreaker key, or toggles an
+  // existing key's own direction without moving its position in the list.
+  // Mirrors the live preview's own EntityPanel.tsx toggleSort (round 177).
+  function toggleSort(fieldName, additive) {
+    setSortKeys((prev) => {
+      const existingIndex = prev.findIndex((k) => k.field === fieldName);
+      if (!additive) {
+        if (prev.length === 1 && existingIndex === 0) {
+          return [{ field: fieldName, direction: prev[0].direction === "asc" ? "desc" : "asc" }];
+        }
+        return [{ field: fieldName, direction: "asc" }];
+      }
+      if (existingIndex === -1) {
+        return [...prev, { field: fieldName, direction: "asc" }];
+      }
+      return prev.map((k, i) => (i === existingIndex ? { ...k, direction: k.direction === "asc" ? "desc" : "asc" } : k));
+    });
   }
 
   // Which columns actually render in the table -- CSV export intentionally
@@ -1482,10 +1510,8 @@ export function EntityView({ entity }) {
 
   const visibleRecords = useMemo(() => {
     const filtered = records.filter((r) => matchesSearch(r, entity.fields, search));
-    if (!sortField) return filtered;
-    const sorted = [...filtered].sort((a, b) => compareValues(a[sortField], b[sortField]));
-    return sortDir === "desc" ? sorted.reverse() : sorted;
-  }, [records, entity.fields, search, sortField, sortDir]);
+    return sortRecordsMulti(filtered, sortKeys);
+  }, [records, entity.fields, search, sortKeys]);
 
   async function handleSubmit(e) {
     e.preventDefault();
@@ -1882,14 +1908,19 @@ export function EntityView({ entity }) {
                         onChange={toggleSelectAllVisible}
                       />
                     </th>
-                    {visibleFields.map((f) => (
-                      <th key={f.name}>
-                        <button type="button" className="sort-header" onClick={() => toggleSort(f.name)}>
-                          {f.label}
-                          {sortField === f.name ? (sortDir === "asc" ? " ▲" : " ▼") : ""}
-                        </button>
-                      </th>
-                    ))}
+                    {visibleFields.map((f) => {
+                      const keyIndex = sortKeys.findIndex((k) => k.field === f.name);
+                      const key = keyIndex === -1 ? null : sortKeys[keyIndex];
+                      return (
+                        <th key={f.name} aria-sort={keyIndex === 0 ? (key.direction === "asc" ? "ascending" : "descending") : "none"}>
+                          <button type="button" className="sort-header" onClick={(e) => toggleSort(f.name, e.shiftKey)}>
+                            {f.label}
+                            {key ? (key.direction === "asc" ? " ▲" : " ▼") : ""}
+                            {key && sortKeys.length > 1 && <span className="sort-priority">{keyIndex + 1}</span>}
+                          </button>
+                        </th>
+                      );
+                    })}
                     <th></th>
                   </tr>
                 </thead>
@@ -2343,6 +2374,7 @@ th, td { text-align: start; padding: 8px 10px; border-bottom: 1px solid var(--bo
 .entity-search { max-width: 280px; margin-bottom: 14px; }
 .sort-header { background: none; border: none; padding: 0; margin: 0; color: inherit; font: inherit; cursor: pointer; }
 .sort-header:hover { color: var(--accent); }
+.sort-priority { display: inline-flex; align-items: center; justify-content: center; min-width: 15px; height: 15px; margin-inline-start: 3px; padding: 0 3px; border-radius: 999px; background: var(--accent-soft); color: var(--accent-deep); font-size: 10px; font-weight: 700; vertical-align: middle; }
 .badge { display: inline-block; padding: 3px 11px; border-radius: 999px; font-size: 12.5px; font-weight: 600; white-space: nowrap; }
 .badge-positive { background: var(--success-soft); color: var(--success); }
 .badge-negative { background: var(--danger-soft); color: var(--danger); }

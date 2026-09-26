@@ -567,7 +567,7 @@ test("the exported EntityView renders a 'Columns' menu to hide/show individual t
   assert.match(entityViewJsx, /columns-menu-panel/);
   assert.match(entityViewJsx, /visibleFields/);
   // The table header/body must use the filtered list...
-  assert.match(entityViewJsx, /\{visibleFields\.map\(\(f\) => \(\s*<th/);
+  assert.match(entityViewJsx, /\{visibleFields\.map\(\(f\) => \{[\s\S]*?<th/);
   assert.match(entityViewJsx, /\{visibleFields\.map\(\(f\) => \(\s*<td/);
   // ...but CSV export must still see every field, hidden or not.
   const handleExportCsvSrc = entityViewJsx.match(/function handleExportCsv\(\) \{[\s\S]*?\n {2}\}\n/)?.[0];
@@ -1026,6 +1026,88 @@ test("the exported EntityView renders a real Undo toast after a single-record de
   const stylesCss = files.find((f) => f.path === "web/src/styles.css")!.content;
   assert.match(stylesCss, /\.entity-undo-toast/);
   assert.match(stylesCss, /\.link-button/);
+});
+
+/**
+ * New in this round: the exported standalone app's table could only ever
+ * sort by one column at a time, unlike the live Forge AI preview (round
+ * 177's own multi-column sort with shift-click tiebreakers). Ports the
+ * identical sortRecordsMulti logic. Executes the real generated function
+ * (extracted from real codegen output, not reimplemented), mirroring
+ * apps/web/src/entityFormatting.test.ts's own sortRecordsMulti coverage.
+ */
+test("the exported EntityView's sortRecordsMulti sorts by several fields in priority order, breaking ties with later keys", () => {
+  const entityViewJsx = generateExportFiles(project).find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+  const compareSrc = entityViewJsx.match(/function compareValues\(a, b\) \{[\s\S]*?\n\}\n/)?.[0];
+  const sortSrc = entityViewJsx.match(/export function sortRecordsMulti\(records, sortKeys\) \{[\s\S]*?\n\}\n/)?.[0]?.replace("export ", "");
+  assert.ok(compareSrc, "expected to find compareValues in generated output");
+  assert.ok(sortSrc, "expected to find sortRecordsMulti in generated output");
+
+  const sortRecordsMulti = new Function(`${compareSrc}\n${sortSrc}\nreturn sortRecordsMulti;`)() as (
+    records: Record<string, unknown>[],
+    sortKeys: { field: string; direction: "asc" | "desc" }[],
+  ) => Record<string, unknown>[];
+
+  const records = [
+    { id: 1, status: "open", total: 30 },
+    { id: 2, status: "closed", total: 10 },
+    { id: 3, status: "open", total: 10 },
+  ];
+
+  assert.equal(sortRecordsMulti(records, []), records, "an empty key list must return the same array reference, unsorted");
+
+  const byStatus = sortRecordsMulti(records, [{ field: "status", direction: "asc" }]);
+  assert.deepEqual(byStatus.map((r) => r.id), [2, 1, 3], "single-key sort must order by that field alone");
+  assert.deepEqual(records.map((r) => r.id), [1, 2, 3], "the original array must not be mutated");
+
+  const byStatusThenTotal = sortRecordsMulti(records, [
+    { field: "status", direction: "asc" },
+    { field: "total", direction: "asc" },
+  ]);
+  assert.deepEqual(
+    byStatusThenTotal.map((r) => r.id),
+    [2, 3, 1],
+    "the second key must only break ties the first key left standing (both open records ordered by total)",
+  );
+
+  const byStatusAscTotalDesc = sortRecordsMulti(records, [
+    { field: "status", direction: "asc" },
+    { field: "total", direction: "desc" },
+  ]);
+  assert.deepEqual(
+    byStatusAscTotalDesc.map((r) => r.id),
+    [2, 1, 3],
+    "reversing only the second key's direction must not flip the first key's own tie-break order",
+  );
+});
+
+test("the exported EntityView's table headers support shift-click multi-column sort with a priority badge", () => {
+  const files = generateExportFiles(project);
+  const entityViewJsx = files.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+
+  assert.match(entityViewJsx, /const \[sortKeys, setSortKeys\] = useState\(\[\]\);/);
+  // Plain click replaces the whole key list (or toggles direction in place
+  // when the clicked field is already the sole key); shift-click appends a
+  // tiebreaker or toggles an existing key's direction without moving it.
+  assert.match(
+    entityViewJsx,
+    /function toggleSort\(fieldName, additive\) \{\s*setSortKeys\(\(prev\) => \{\s*const existingIndex = prev\.findIndex\(\(k\) => k\.field === fieldName\);\s*if \(!additive\) \{\s*if \(prev\.length === 1 && existingIndex === 0\) \{\s*return \[\{ field: fieldName, direction: prev\[0\]\.direction === "asc" \? "desc" : "asc" \}\];\s*\}\s*return \[\{ field: fieldName, direction: "asc" \}\];\s*\}\s*if \(existingIndex === -1\) \{\s*return \[\.\.\.prev, \{ field: fieldName, direction: "asc" \}\];\s*\}\s*return prev\.map\(\(k, i\) => \(i === existingIndex \? \{ \.\.\.k, direction: k\.direction === "asc" \? "desc" : "asc" \} : k\)\);\s*\}\);\s*\}/,
+  );
+  // The header must pass the real shiftKey through, not just always additive/replace.
+  assert.match(entityViewJsx, /onClick=\{\(e\) => toggleSort\(f\.name, e\.shiftKey\)\}/);
+  // A priority badge only appears once there's more than one active sort key.
+  assert.match(entityViewJsx, /\{key && sortKeys\.length > 1 && <span className="sort-priority">\{keyIndex \+ 1\}<\/span>\}/);
+  // aria-sort must only reflect the primary (first) key, never a secondary tiebreaker.
+  assert.match(entityViewJsx, /aria-sort=\{keyIndex === 0 \? \(key\.direction === "asc" \? "ascending" : "descending"\) : "none"\}/);
+  // Switching to a different entity tab must reset the OLD sortKeys state, not
+  // a stale sortField/setSortField reference left over from the single-column
+  // implementation (a real bug this exact port introduced and Playwright
+  // caught: setSortField is not defined, since the state variable no longer exists).
+  assert.doesNotMatch(entityViewJsx, /setSortField/);
+  assert.match(entityViewJsx, /setSortKeys\(\[\]\);/);
+
+  const stylesCss = files.find((f) => f.path === "web/src/styles.css")!.content;
+  assert.match(stylesCss, /\.sort-priority/);
 });
 
 test("the exported EntityView renders a real CSV import (the complement to CSV export), ported from the Forge AI live preview", () => {
