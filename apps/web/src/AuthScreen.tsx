@@ -3,6 +3,7 @@ import type { User } from "@forge/shared";
 import { login, setToken, signup } from "./api.js";
 import { useTranslation } from "./i18n/LanguageContext.js";
 import { LanguageSwitcher } from "./i18n/LanguageSwitcher.js";
+import { PasswordInput } from "./PasswordInput.js";
 import { ThemeSwitcher } from "./theme/ThemeSwitcher.js";
 
 export function AuthScreen({ onAuthenticated }: { onAuthenticated: (user: User) => void }) {
@@ -56,13 +57,7 @@ export function AuthScreen({ onAuthenticated }: { onAuthenticated: (user: User) 
             </label>
             <label className="field-row">
               <span>{t("auth.password.label")}</span>
-              <input
-                type="password"
-                required
-                minLength={8}
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-              />
+              <PasswordInput value={password} onChange={setPassword} required minLength={8} />
             </label>
             <button type="submit" disabled={busy}>
               {busy ? t("auth.submit.busy") : mode === "signup" ? t("auth.submit.signup") : t("auth.submit.login")}

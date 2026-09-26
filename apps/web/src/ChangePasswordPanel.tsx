@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { changePassword } from "./api.js";
 import { useTranslation } from "./i18n/LanguageContext.js";
+import { PasswordInput } from "./PasswordInput.js";
 import { useDialogFocusTrap } from "./useDialogFocusTrap.js";
 
 /**
@@ -53,35 +54,15 @@ export function ChangePasswordPanel({ onClose }: { onClose: () => void }) {
           <form className="auth-form" onSubmit={handleSubmit}>
             <label className="field-row">
               <span>{t("changePassword.current")}</span>
-              <input
-                type="password"
-                required
-                autoComplete="current-password"
-                value={currentPassword}
-                onChange={(e) => setCurrentPassword(e.target.value)}
-              />
+              <PasswordInput value={currentPassword} onChange={setCurrentPassword} required autoComplete="current-password" />
             </label>
             <label className="field-row">
               <span>{t("changePassword.new")}</span>
-              <input
-                type="password"
-                required
-                minLength={8}
-                autoComplete="new-password"
-                value={newPassword}
-                onChange={(e) => setNewPassword(e.target.value)}
-              />
+              <PasswordInput value={newPassword} onChange={setNewPassword} required minLength={8} autoComplete="new-password" />
             </label>
             <label className="field-row">
               <span>{t("changePassword.confirm")}</span>
-              <input
-                type="password"
-                required
-                minLength={8}
-                autoComplete="new-password"
-                value={confirmPassword}
-                onChange={(e) => setConfirmPassword(e.target.value)}
-              />
+              <PasswordInput value={confirmPassword} onChange={setConfirmPassword} required minLength={8} autoComplete="new-password" />
             </label>
             {error && <p className="error small">{error}</p>}
             <button type="submit" disabled={busy}>
