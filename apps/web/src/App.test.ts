@@ -979,3 +979,36 @@ test("App's preview keydown handler opens the shortcuts cheat-sheet on '?' (guar
   assert.ok(escapeBranch, "expected to find the Escape branch");
   assert.match(escapeBranch!, /setShowShortcuts\(false\);/, "Escape must also close the shortcuts panel, not just the original five");
 });
+
+/**
+ * New in this round: a past refine's own instruction text in
+ * "Improvement history" was inert -- reusing a similar request (or one
+ * refined away by mistake) meant retyping it from scratch. Extracts the
+ * real handleReuseRefineInstruction the same way handleGoHome/
+ * handleBackToHome above do, and confirms it loads the instruction back
+ * into the refine box, but does nothing while a refine is already running
+ * (the box itself is hidden behind the live BuildProgress view then, so
+ * setting it would just be invisible state nobody asked for).
+ */
+test("App's handleReuseRefineInstruction loads a past instruction back into the refine box, but is a no-op while a refine is already running", () => {
+  const appSrc = readFileSync(new URL("./App.tsx", import.meta.url), "utf8");
+  const handlerMatch = appSrc.match(/ {2}function handleReuseRefineInstruction\([\s\S]*?\n {2}\}\n/);
+  assert.ok(handlerMatch, "expected to find handleReuseRefineInstruction in App.tsx");
+  const { code } = transformSync(handlerMatch![0], { loader: "ts" });
+
+  let refineText = "";
+  const fn = new Function(
+    "refineRunning",
+    "setRefineText",
+    `${code}\nreturn handleReuseRefineInstruction;`,
+  ) as (refineRunning: boolean, setRefineText: (v: string) => void) => (instruction: string) => void;
+
+  const notRunning = fn(false, (v: string) => (refineText = v));
+  notRunning("add a loyalty field");
+  assert.equal(refineText, "add a loyalty field", "must load the past instruction back into the refine box when idle");
+
+  refineText = "";
+  const whileRunning = fn(true, (v: string) => (refineText = v));
+  whileRunning("add a discount field");
+  assert.equal(refineText, "", "must be a no-op while a refine is already running, not silently set hidden state");
+});

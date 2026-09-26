@@ -1600,8 +1600,24 @@ button.sort-header:hover:not(:disabled) {
 }
 
 .refine-history-instruction {
+  display: block;
+  width: 100%;
   margin: 0 0 4px;
+  padding: 0;
   font-weight: 600;
+  text-align: start;
+  text-decoration: none;
+  color: inherit;
+}
+
+.refine-history-instruction:hover:not(:disabled) {
+  color: var(--accent-deep);
+  text-decoration: underline;
+}
+
+.refine-history-instruction:disabled {
+  cursor: default;
+  opacity: 0.7;
 }
 
 .refine-history-list p.refine-history-time {

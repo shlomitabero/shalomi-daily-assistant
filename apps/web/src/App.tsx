@@ -691,6 +691,22 @@ function AppContent() {
     setRefineRunning(true);
   }
 
+  /**
+   * Clicking a past refine's own instruction text loads it back into the
+   * refine box, instead of only ever showing it as inert history a person
+   * had to retype from scratch to run again (e.g. "add a discount field"
+   * a second time with a small tweak, or after refining it away by
+   * mistake). Only ever prefills the box for editing -- it never
+   * auto-submits, so it's never a surprise second refine firing on a
+   * single click. Ignored while a refine is already running: the box
+   * itself is hidden behind the live BuildProgress view then, so setting
+   * it would just be invisible state a person never asked for.
+   */
+  function handleReuseRefineInstruction(instruction: string) {
+    if (refineRunning) return;
+    setRefineText(instruction);
+  }
+
   function handleBuildComplete(builtProject: Project) {
     if (refineRunning && pendingRefineInstruction.current) {
       const entry: RefineHistoryEntry = {
@@ -1170,7 +1186,15 @@ function AppContent() {
                     <ul className="refine-history-list">
                       {visibleRefineHistory.map((entry) => (
                         <li key={entry.id}>
-                          <p className="refine-history-instruction">{entry.instruction}</p>
+                          <button
+                            type="button"
+                            className="link-button refine-history-instruction"
+                            title={t("preview.refineHistory.reuse.hint")}
+                            disabled={refineRunning}
+                            onClick={() => handleReuseRefineInstruction(entry.instruction)}
+                          >
+                            {entry.instruction}
+                          </button>
                           <p className="muted small">{entry.summary}</p>
                           <p className="refine-history-time muted small">{formatRefineTimestamp(entry.completedAt, lang)}</p>
                         </li>
