@@ -9945,6 +9945,93 @@ not a single "make it perfect" claim.
       `npm run build --workspace=@forge/web` and
       `npm run build --workspace=@forge/api` clean.
 
+- [x] **Round 195 — the Entity table's search box now highlights exactly where a search term matched, in the live preview.**
+      Diversification: the last two rounds (193, 194) both touched the
+      exported codegen output (`apps/api/src/codegen.ts`); this round
+      deliberately came back to the live preview instead, per the
+      trigger's own suggestion. Rather than re-checking already-picked-
+      clean panels (Business Twin, BuildProgress, WhatsAppPanel, auth
+      screens, Collaborators, GlobalSearchPanel -- all ruled out in
+      earlier rounds), looked again at the Entity table's own search
+      box: `matchesSearch` already told the table *that* a record
+      matched, but nothing showed *where* within a matching row's own
+      text the match actually was -- a real everyday annoyance the
+      moment a search term is short or common (searching "co" against a
+      table full of "Cohen", "Corp", "Contact" gives no visual anchor at
+      all for which part of each cell actually matched).
+
+      Added `splitHighlightSegments(text, query)` to
+      `entityFormatting.ts`: splits `text` into matched/unmatched runs
+      around every case-insensitive, non-overlapping occurrence of
+      `query`, regex-escaping the query first (so a search for a
+      literal `.` or `(` doesn't get treated as a regex special
+      character), and preserving the original casing of the matched
+      text (so "DANA" typed into the box still highlights "Dana" as
+      stored, not shouts it back in caps). A blank query or no match at
+      all returns the whole text as a single unmatched segment, so
+      callers never need a separate empty-query branch. `EntityPanel.tsx`
+      gained a small `Highlighted` wrapper component (skips
+      `splitHighlightSegments`'s regex work entirely on the overwhelmingly
+      common blank-query case) that `Cell` now uses for the two field
+      types where this is actually meaningful: plain **text** fields and
+      an **enum**'s own translated label -- both are exactly what
+      `matchesSearch` matches against. Date/number/relation fields are
+      deliberately left alone: their *displayed* text (a locale-
+      formatted date/number, a resolved relation label) isn't the same
+      string `matchesSearch` matched against (the raw stored value), so
+      highlighting there would point at text the search didn't actually
+      match. Both the table view and the Kanban board's own `BoardCard`
+      pass the live `search` query down into `Cell`, so highlighting
+      works in both view modes; the print sheet's own `Cell` call
+      deliberately doesn't (printing has no search context at all). New
+      `.search-match` CSS reuses the existing `--accent-soft`/
+      `--accent-deep` theme tokens (light and dark already covered).
+
+      New tests: three pure-function tests in `entityFormatting.test.ts`
+      for `splitHighlightSegments` itself (splits correctly and
+      case-insensitively while preserving original casing; a blank
+      query or a genuine non-match both return the whole text as one
+      unmatched segment; a regex-special character in the query is
+      escaped rather than interpreted as a pattern, with a second
+      assertion proving the escaping actually matters -- `"3X5 (kg)"`
+      does *not* match a query of `"3.5"` once `.` is properly escaped
+      to mean a literal dot). One new real-DOM test in
+      `EntityPanel.test.ts`: renders a real two-record table, types a
+      partial, case-mismatched search term into the real search box,
+      confirms a real `<mark class="search-match">` appears wrapping
+      exactly the matched substring with its original casing intact,
+      confirms the rest of the cell's own text still renders around it,
+      confirms clearing the search removes the highlight, and confirms
+      an enum field's own translated label gets highlighted too (not
+      just plain text fields).
+
+      Verified with the deliberate-break-and-restore discipline twice:
+      first, hardcoded `splitHighlightSegments` to always return the
+      whole text as unmatched -- caught by both the three new pure-
+      function tests and the new DOM test; restored from a pre-break
+      backup, `diff` byte-identical. Second, removed the `highlightQuery=
+      {search}` prop from the table's own `Cell` call (simulating an
+      incomplete wiring where the pure function exists but the search
+      query never actually reaches the cell) -- caught by the DOM test
+      alone (the pure-function tests can't see wiring gaps); restored,
+      `diff` byte-identical again.
+
+      **And** a real Playwright pass against real running dev servers:
+      signed up, created and built a real CRM project, added a real new
+      record through the real form with a uniquely-identifiable name
+      (so the assertion couldn't be fooled by the heuristic build's own
+      seeded "Dana Levi"/"Yossi Cohen" sample records), typed a partial
+      lowercase search term into the real search box, and confirmed the
+      real rendered `<mark class="search-match">` wrapped exactly the
+      matched substring with the record's own original casing, that the
+      rest of the row's real text still rendered around it, and that
+      clearing the search removed the highlight.
+
+      Full suite green (730 tests, up from 726 -- `@forge/web` 346 →
+      350; `@forge/shared` 11, `@forge/spec-engine` 82, `@forge/db` 80,
+      `@forge/api` 207 unchanged) and `npm run build --workspace=@forge/web`
+      clean.
+
 ## Phase 3
 
 - Self-healing: production observability, automatic diagnosis and patch
