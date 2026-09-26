@@ -11,6 +11,7 @@ import {
   type WhatsAppMessageLogEntry,
   type WhatsAppStatusView,
 } from "./api.js";
+import { splitHighlightSegments } from "./entityFormatting.js";
 import {
   downloadWhatsAppLog,
   filterWhatsAppMessages,
@@ -19,6 +20,31 @@ import {
   formatWhatsAppMessageCount,
   type WhatsAppLogFilter,
 } from "./whatsappLog.js";
+
+/**
+ * Mirrors EntityPanel.tsx's and GlobalSearchPanel.tsx's own Highlighted
+ * wrapper (rounds 195-196) around the same splitHighlightSegments -- the
+ * WhatsApp log's own search box already narrowed the list down to
+ * matching messages, but never showed where within a message's own body
+ * or sender/recipient label the match actually was, the exact same gap
+ * those two search boxes had.
+ */
+function Highlighted({ text, query }: { text: string; query: string }) {
+  if (!query.trim()) return <>{text}</>;
+  return (
+    <>
+      {splitHighlightSegments(text, query).map((seg, i) =>
+        seg.matched ? (
+          <mark key={i} className="search-match">
+            {seg.text}
+          </mark>
+        ) : (
+          <span key={i}>{seg.text}</span>
+        ),
+      )}
+    </>
+  );
+}
 
 // Mirrors HistoryPanel's own threshold for showing its checkpoint search
 // box -- a handful of messages are trivial to scan by eye; a search box
@@ -452,12 +478,16 @@ export function WhatsAppPanel({
                           : onJumpToEntity(m.matchedEntityName!)
                       }
                     >
-                      {m.matchedLabel}
+                      <Highlighted text={m.matchedLabel!} query={search} />
                     </button>
                   ) : (
-                    <span className="whatsapp-log-who">{m.matchedLabel ?? (m.direction === "in" ? m.fromNumber : m.toNumber)}</span>
+                    <span className="whatsapp-log-who">
+                      <Highlighted text={m.matchedLabel ?? (m.direction === "in" ? m.fromNumber : m.toNumber)} query={search} />
+                    </span>
                   )}
-                  <span className="whatsapp-log-body">{m.body}</span>
+                  <span className="whatsapp-log-body">
+                    <Highlighted text={m.body} query={search} />
+                  </span>
                   <span className="whatsapp-log-time muted small">{new Date(m.createdAt).toLocaleString(LOCALE[lang])}</span>
                   {m.status === "failed" && (
                     <>

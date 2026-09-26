@@ -792,6 +792,98 @@ test("WhatsAppPanel shows a search box only once the log passes the threshold, f
 });
 
 /**
+ * New in this round: mirrors rounds 195-196's fix to the Entity table
+ * search box and Global Search -- the WhatsApp log's own search box
+ * already narrowed the list to matching messages, but never showed
+ * where within a message's own body, or its sender/recipient label,
+ * the match actually was. Confirms a real typed search wraps the
+ * matched substring in a real <mark class="search-match"> inside both
+ * the message body and the "who" label (filterWhatsAppMessages already
+ * matches on both, per its own doc comment), and that clearing the
+ * search removes the highlight along with restoring the rest of the log.
+ */
+test("WhatsAppPanel's search box highlights the matched text within both a message's own body and its sender/recipient label", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    const makeMessage = (id: string, body: string, fromNumber: string): WhatsAppMessageLogEntry => ({
+      id,
+      direction: "in",
+      fromNumber,
+      toNumber: "972501234567",
+      body,
+      matchedLabel: null,
+      matchedEntityName: null,
+      matchedRecordId: null,
+      status: "received",
+      createdAt: new Date().toISOString(),
+    });
+    const sixMessages = [
+      makeMessage("m1", "מתי אתם פתוחים?", "972521112233"),
+      makeMessage("m2", "אשמח להזמין זר ורדים", "972521112233"),
+      makeMessage("m3", "תודה רבה", "972521112233"),
+      makeMessage("m4", "האם יש משלוחים?", "972521112233"),
+      makeMessage("m5", "מה המחיר של זר יומולדת?", "972521112233"),
+      makeMessage("m6", "בסדר, מגיע עוד מעט", "555000111"),
+    ];
+    globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/integrations/whatsapp/status") {
+        return new Response(
+          JSON.stringify({ status: "connected", phoneNumber: "972501234567", qrDataUrl: null, error: null }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      if (method === "GET" && input === "/api/projects/proj1/integrations/whatsapp/messages") {
+        return new Response(JSON.stringify({ messages: sixMessages }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+
+    try {
+      render(
+        React.createElement(
+          ThemeProvider,
+          null,
+          React.createElement(LanguageProvider, null, React.createElement(WhatsAppPanel, { projectId: "proj1", projectName: "Flower Shop", onClose: () => {}, onJumpToEntity: () => {}, onJumpToRecord: () => {} })),
+        ),
+      );
+      await waitForCondition(() => document.querySelectorAll(".whatsapp-log-list li").length === 6);
+
+      const searchBox = document.querySelector(".whatsapp-log-search") as HTMLInputElement;
+
+      // Match within the message body.
+      fireEvent.change(searchBox, { target: { value: "ורדים" } });
+      await waitForCondition(() => document.querySelectorAll(".whatsapp-log-list li").length === 1);
+      const bodyMark = document.querySelector(".whatsapp-log-body mark.search-match");
+      assert.ok(bodyMark, "the matched substring within the message body must be wrapped in a real <mark class=\"search-match\">");
+      assert.equal(bodyMark!.textContent, "ורדים");
+      assert.equal(
+        document.querySelector(".whatsapp-log-body")!.textContent,
+        "אשמח להזמין זר ורדים",
+        "the rest of the body's own text must still render around the highlight",
+      );
+
+      // Match within the "who" label (the raw phone number, unmatched to any record).
+      fireEvent.change(searchBox, { target: { value: "555000" } });
+      await waitForCondition(() => document.querySelectorAll(".whatsapp-log-list li").length === 1);
+      const whoMark = document.querySelector(".whatsapp-log-who mark.search-match");
+      assert.ok(whoMark, "the matched substring within the sender label must also be highlighted");
+      assert.equal(whoMark!.textContent, "555000");
+
+      // Clearing the search must remove the highlight.
+      fireEvent.change(searchBox, { target: { value: "" } });
+      await waitForCondition(() => document.querySelectorAll(".whatsapp-log-list li").length === 6);
+      assert.equal(document.querySelector("mark.search-match"), null, "clearing the search must remove the highlight");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * New in this round: the message log had a text search but no way to
  * isolate "just what I sent" / "just what came in" / "just what failed
  * to send" -- exactly the gap a long, never-capped, never-deleted
