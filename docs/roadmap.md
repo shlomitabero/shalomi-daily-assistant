@@ -10032,6 +10032,76 @@ not a single "make it perfect" claim.
       `@forge/api` 207 unchanged) and `npm run build --workspace=@forge/web`
       clean.
 
+- [x] **Round 196 — Global Search (Ctrl+K) gets the same match highlighting round 195 gave the per-tab search box.**
+      Diversification: round 195's own closing note flagged this exact
+      gap while writing it up -- `GlobalSearchPanel.tsx` (last touched
+      directly in round 192, where it was read in full and ruled out
+      for a different reason) had the identical problem the per-tab
+      search just fixed: a result row told you a record matched, but
+      never showed *where* within its own display label. Rather than
+      re-deriving the highlighting logic, reused round 195's own
+      `splitHighlightSegments` (`entityFormatting.ts`) as-is and added a
+      small local `Highlighted` wrapper to `GlobalSearchPanel.tsx`
+      mirroring `EntityPanel.tsx`'s own -- the same "duplicate a tiny
+      presentational wrapper per component file, share the pure logic"
+      pattern this codebase already uses elsewhere.
+
+      The one genuinely new wrinkle here (the per-tab search box didn't
+      have this problem, since its highlight source and its rendered
+      rows update in the same render): Global Search's `query` state is
+      the *live* input, which keeps changing as someone types, while
+      `results` only update once a search is actually submitted and its
+      network round trip resolves. Highlighting directly against `query`
+      would have retroactively highlighted newly-typed, not-yet-searched
+      text against results still on screen from an older, different
+      query -- a real, confusing bug (type a fresh unrelated word after
+      seeing results, and the *old* results would suddenly highlight
+      characters that happen to overlap, or nothing at all, neither of
+      which corresponds to what's actually displayed). Added a separate
+      `highlightQuery` state, set only inside `runSearch` at the exact
+      moment `results`/`searched` are set, so it always tracks the query
+      the currently-shown results were actually matched against, not
+      whatever's currently typed into the box.
+
+      New tests: extended the three existing `runSearch`-extraction
+      tests (which invoke the real `runSearch` via `new Function(...)`
+      with mocked setters) to also supply a `setHighlightQuery` mock,
+      since adding the new state changed `runSearch`'s own real
+      parameter list -- these all failed immediately after the wiring
+      change until fixed, a good sign the extraction tests really do
+      run the exact real function body. One new real-DOM test: submits
+      a real search, confirms both matching rows get a real
+      `<mark class="search-match">` around the exact matched substring,
+      then types a new, unrelated query into the box *without*
+      resubmitting and confirms the still-displayed old results keep
+      highlighting the original query, not the new one.
+
+      Verified with the deliberate-break-and-restore discipline twice:
+      first, removed the `setHighlightQuery(q)` call from `runSearch`
+      (simulating an incomplete port where the state exists but never
+      gets set) -- caught by the new DOM test; restored from a pre-break
+      backup, `diff` byte-identical. Second, pointed the `Highlighted`
+      call at the live `query` state instead of the tracked
+      `highlightQuery` (the exact type-ahead bug this round's design
+      specifically avoids) -- caught by the same test's second half;
+      restored, `diff` byte-identical again.
+
+      **And** a real Playwright pass against real running dev servers:
+      signed up, created and built a real CRM project, added a real
+      record through the real form with a uniquely-identifiable name,
+      opened Global Search via the real Ctrl+K shortcut, submitted a
+      partial lowercase search, and confirmed the real rendered
+      `<mark class="search-match">` wrapped exactly the matched
+      substring with the record's own original casing, that the rest of
+      the row's real text still rendered around it, and that typing an
+      unrelated query afterward *without* resubmitting left the
+      original highlight untouched.
+
+      Full suite green (731 tests, up from 730 -- `@forge/web` 350 →
+      351; `@forge/shared` 11, `@forge/spec-engine` 82, `@forge/db` 80,
+      `@forge/api` 207 unchanged) and `npm run build --workspace=@forge/web`
+      clean.
+
 ## Phase 3
 
 - Self-healing: production observability, automatic diagnosis and patch
