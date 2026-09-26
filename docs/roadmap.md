@@ -9328,6 +9328,69 @@ not a single "make it perfect" claim.
       `@forge/shared` 11, `@forge/spec-engine` 82, `@forge/db` 80,
       `@forge/api` 195 unchanged) and typecheck clean.
 
+- [x] **Round 187 — "Add a role"/"add an assumption" forms on the spec review screen.**
+      Diversification: after round 186's Kanban drag-and-drop closed out
+      both big deferred board-view items, this round's own trigger note
+      pointed at two remaining candidates -- the AI Team build screen
+      (`BuildProgress.tsx`, read in full: elapsed timer, progress bar,
+      per-agent expandable detail, retry logic, failure-only download
+      button -- already comprehensive, no concrete new gap found) and the
+      spec review screen (`App.tsx` around `view === "spec"`). Reading the
+      spec review screen alongside `SpecListItemRemover.tsx` surfaced a
+      real, narrow, one-sided gap: `RoleChip`/`AssumptionItem` (added
+      several rounds back) let you *remove* a wrong role or assumption
+      the heuristic engine invented, but there was no way to *add* one it
+      missed entirely -- e.g. a two-sided marketplace where the engine
+      only spotted "Buyer" and never "Seller". The only fix before this
+      round was to restart the whole spec from scratch.
+
+      Added the missing other half of the same correction workflow.
+      Backend: `POST /projects/:id/roles` and `POST /projects/:id/
+      assumptions` in `apps/api/src/routes/projects.ts`, each validated
+      by a small zod schema (`AddRoleSchema`/`AddAssumptionSchema`,
+      trimmed non-empty string), appending to the existing array and
+      persisting through the same `updateProjectSpec` path the label and
+      remove routes already use -- no new migration, no status check
+      (available pre-build, same as the remove routes). Frontend:
+      `AddRoleForm`/`AddAssumptionForm` in `SpecListItemRemover.tsx`, a
+      small shared `useAddableSpecItem` hook (mirrors the existing
+      `useRemovableSpecItem` hook's busy/error/value pattern) driving a
+      plain text input + submit button, wired into `App.tsx` right under
+      each existing chip/list section. `api.ts` gained `addRole`/
+      `addAssumption`; both languages in `i18n/language.ts` gained the
+      matching placeholder/button strings.
+
+      New tests: 6 in `apps/api/src/app.test.ts` (owner and collaborator
+      can each add a role/assumption, appended in order and trimmed;
+      blank/whitespace-only input 400s with `VALIDATION_ERROR` and leaves
+      the list untouched; a project you have no access to still 404s --
+      mirroring the existing remove-route test shapes exactly) and 3 in
+      `apps/web/src/SpecListItemRemover.test.ts` (submitting each form
+      calls the real POST with the trimmed value, clears the input, and
+      reports the returned project; a real server error surfaces in the
+      form instead of silently no-oping).
+
+      Verified with the deliberate-break-and-restore discipline: broke
+      the add-role route to append the raw untrimmed `req.body.role`
+      instead of the parsed/trimmed value -- caught exactly by the new
+      "value is trimmed" API test (all others still passed, confirming
+      precise fault isolation); restored from a pre-break backup, `diff`
+      byte-identical.
+
+      **And** a real Playwright pass against real running dev servers
+      (signup, real project creation, real spec-review navigation): typed
+      into the add-role input, confirmed the submit button is disabled
+      until real text is entered, submitted, confirmed the new
+      "Warehouse Manager" chip appears and the input clears; same for the
+      add-assumption form; reloaded the page and confirmed both additions
+      persisted server-side; confirmed a blank-role POST still 400s with
+      `VALIDATION_ERROR` directly against the real API. No new debugging
+      detours this round -- both forms worked on the first real pass.
+
+      Full suite green (699 tests, up from 690 -- `@forge/api` 195 → 201,
+      `@forge/web` 322 → 325; `@forge/shared` 11, `@forge/spec-engine` 82,
+      `@forge/db` 80 unchanged) and typecheck/build clean.
+
 ## Phase 3
 
 - Self-healing: production observability, automatic diagnosis and patch
