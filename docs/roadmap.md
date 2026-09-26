@@ -9680,6 +9680,88 @@ not a single "make it perfect" claim.
       `@forge/shared` 11, `@forge/spec-engine` 82, `@forge/db` 80,
       `@forge/api` 201 unchanged) and typecheck/build clean.
 
+- [x] **Round 192 — the Collaborators panel now shows who actually owns the project.**
+      Diversification: this round's own trigger note again ruled out
+      Collaborators as "already checked, no gap found" (round 152), so
+      the search started elsewhere -- `ProjectNameEditor.tsx`,
+      `EntityLabelEditor.tsx`, `FieldLabelEditor.tsx`, and
+      `useDialogFocusTrap.ts` were each read in full and ruled out
+      (each already exhaustively complete, no real gap), then
+      `GlobalSearchPanel.tsx` (236 lines, also complete: recent
+      searches, arrow-key nav, jump-to-record, stale-request guarding).
+      Broadening the search to `packages/db/src/collaborators.ts`
+      turned up a genuine backend fact nobody had actually traced
+      through before: `listCollaborators` only ever queries the
+      `project_collaborators` join table -- the project owner is never
+      a row in it at all, since their own access comes directly from
+      `project.ownerId`. That means a collaborator opening the sharing
+      panel could see every OTHER collaborator, but had no way to see
+      who actually owned the project they'd been invited into -- and
+      even the owner saw no explicit marker distinguishing their own
+      identity from a plain collaborator row, since there was no owner
+      row at all. This supersedes round 152's old "no gap found" note
+      for this panel.
+
+      `findUserById` already existed in `packages/db/src/users.ts`
+      (exported from the package's own index) but wasn't yet imported
+      into `apps/api/src/routes/projects.ts`, which only pulled in
+      `findUserByEmail`. Added it to the import, then a small
+      `getOwnerInfo(db, project)` helper that looks up the owner's own
+      user record and returns `{ userId, email }` -- or `null` in the
+      should-never-happen case of a dangling owner reference, so that
+      never 500s the whole panel. Both the GET and POST
+      `/projects/:id/collaborators` routes now return
+      `{ collaborators, owner }` instead of just `{ collaborators }`.
+
+      `apps/web/src/api.ts` gained a matching `ProjectOwnerInfo` type
+      and both `listCollaborators`/`addCollaborator` now resolve
+      `{ collaborators, owner }`. `CollaboratorsPanel.tsx` renders the
+      owner as the very first `<li>` in the list (marked with its own
+      `.collab-owner-row` class), showing their real email and a chip
+      badge -- "Project owner (You)" when the viewer *is* the owner,
+      plain "Project owner" otherwise -- and, unlike every other row,
+      deliberately renders no remove button at all, since the owner can
+      never be removed from their own project through this UI. New
+      `.collab-owner-row`/`.collab-owner-chip` CSS in `styles.css`
+      reuses the app's existing `--surface-raised`/`--accent-soft`/
+      `--accent-deep` theme tokens (light and dark already covered by
+      those tokens' own existing overrides) rather than inventing new
+      ones, so the row picks up a dashed border and a subtle background
+      tint separating it from the collaborator rows below.
+
+      New tests: two API tests in `app.test.ts` confirm both the GET
+      and POST collaborators routes return the real owner's id/email,
+      for both the owner's own request and a collaborator's request.
+      Two new DOM tests in the existing `CollaboratorsPanel.test.ts`
+      confirm the owner renders as the first row with the "Owner
+      (You)" badge and no remove button for the owner's own view, and
+      that a non-owner viewer still sees the real owner's email with
+      the plain "Owner" badge (never "(You)"), no invite form, and no
+      remove buttons anywhere including on the owner's own row.
+
+      Verified with the deliberate-break-and-restore discipline twice:
+      backend -- made `getOwnerInfo` always return `null`, confirmed
+      both new API tests failed exactly as expected, restored from a
+      pre-break backup, `diff` byte-identical; frontend -- gated the
+      owner `<li>` behind `false &&`, confirmed both new DOM tests
+      failed exactly as expected, restored, `diff` byte-identical.
+
+      **And** a real Playwright pass against real running dev servers:
+      signed up two real users, had one create and actually build a
+      real project via the real `/build` pipeline (not just create a
+      draft), invited the second user as a collaborator via the real
+      API, then opened the real Collaborators panel in the browser as
+      each user in turn. Confirmed the owner's real email appeared as
+      the first row with "Project owner (You)" and zero remove buttons
+      for the owner's own view, and with the plain "Project owner"
+      badge, no invite form, and zero remove buttons anywhere for the
+      collaborator's view.
+
+      Full suite green (722 tests, up from 718 -- `@forge/api` 201 →
+      203, `@forge/web` 344 → 346; `@forge/shared` 11,
+      `@forge/spec-engine` 82, `@forge/db` 80 unchanged) and
+      `npm run build --workspace=@forge/web` clean.
+
 ## Phase 3
 
 - Self-healing: production observability, automatic diagnosis and patch
