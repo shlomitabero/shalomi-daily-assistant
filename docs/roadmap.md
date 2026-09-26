@@ -10772,6 +10772,64 @@ not a single "make it perfect" claim.
       `@forge/db` 80 unchanged) and `npm run build --workspace=@forge/web`
       clean.
 
+- [x] **Round 207 — reuse a past refine instruction from Improvement history.**
+      Diversification: rounds 203 and 206 both touched the Entity table
+      (column reordering, then inline cell editing); this round moves to
+      the live preview screen's own refine/chat pane instead (last real
+      additions there: round 173's search-within-history, round 143's
+      per-entry timestamp). A past refine's own instruction text in
+      "Improvement history" was purely inert -- reusing a similar request,
+      or recovering one that got refined away by mistake, meant retyping
+      it from scratch every time.
+
+      Clicking a past instruction now loads it straight back into the real
+      refine box, ready to edit and resubmit -- it never auto-submits on
+      its own, so a single click is never a surprise second refine firing.
+      New `handleReuseRefineInstruction(instruction)` in `App.tsx`: a
+      one-line `setRefineText(instruction)` guarded by an early return
+      while `refineRunning` is true, since the refine box itself is
+      swapped out for the live `BuildProgress` view then and setting it
+      would just be invisible state nobody asked for. The instruction's
+      own `<p>` became a real `<button className="link-button
+      refine-history-instruction">`, `disabled={refineRunning}`, styled to
+      keep its original bold/block look at rest and only reveal its
+      clickability (underline + accent color) on hover.
+
+      New test in `App.test.ts`, following this file's own established
+      handleGoHome/handleBackToHome convention exactly: regex-extracts the
+      real `handleReuseRefineInstruction` straight from `App.tsx`, runs it
+      in a `new Function()` sandbox with a mock `setRefineText`, and
+      confirms it both loads the instruction when idle AND is a genuine
+      no-op while `refineRunning` is true.
+
+      Verified with the deliberate-break-and-restore discipline: removed
+      the `if (refineRunning) return;` guard -- caught cleanly (the
+      "no-op while running" assertion failed with the instruction text
+      landing in the box when it should have been ignored); restored,
+      `diff` byte-identical. (A full monorepo test run separately hit one
+      unrelated, pre-existing flake in `@forge/api` --
+      "concurrent hashPassword calls run in parallel" -- a timing-sensitive
+      test this round never touched; re-ran `@forge/api` alone and it
+      passed clean, confirmed a flake rather than a real regression.)
+
+      **And** a real Playwright pass against the live dev server: signed
+      up, built a real restaurant-delivery app, ran a real first refine
+      ("add a loyalty points field"), confirmed it landed in Improvement
+      history and the box cleared, clicked the history entry and confirmed
+      the exact same text reloaded into the real refine box, edited it
+      and genuinely resubmitted the edited version (confirming it's a
+      real editable value, not a readonly echo), and this time even
+      caught the disabled-while-running state live -- unlike round 205's
+      honestly-reported miss on a faster-than-observable window, this
+      round's timing happened to land the check while the third real
+      refine was still in flight, confirming `.refine-history-instruction`
+      was genuinely `disabled` at that moment.
+
+      Full suite green (766 tests, up from 765 -- `@forge/web` 380 → 381;
+      `@forge/api` 212, `@forge/shared` 11, `@forge/spec-engine` 82,
+      `@forge/db` 80 unchanged) and `npm run build --workspace=@forge/web`
+      clean.
+
 ## Phase 3
 
 - Self-healing: production observability, automatic diagnosis and patch
