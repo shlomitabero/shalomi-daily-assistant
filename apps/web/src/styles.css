@@ -839,6 +839,13 @@ tbody tr:hover {
   white-space: nowrap;
 }
 
+.search-match {
+  background: var(--accent-soft);
+  color: var(--accent-deep);
+  border-radius: 3px;
+  padding: 0 1px;
+}
+
 .entity-status-filter {
   max-width: 200px;
   margin-bottom: 0;

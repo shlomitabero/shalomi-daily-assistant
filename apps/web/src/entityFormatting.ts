@@ -129,6 +129,43 @@ export function matchesSearch(record: EntityRecord, fields: Field[], query: stri
   });
 }
 
+export interface HighlightSegment {
+  text: string;
+  matched: boolean;
+}
+
+/**
+ * Splits `text` into segments around every case-insensitive occurrence of
+ * `query`, so a table cell can render the parts that actually matched the
+ * search box (matchesSearch above already tells you *that* a record
+ * matched -- this is what lets the table show *where*). Matching is
+ * non-overlapping and left-to-right; a blank query (or no match at all)
+ * returns the whole text as a single unmatched segment, so callers can
+ * always just map over the result without a special empty-query branch.
+ */
+export function splitHighlightSegments(text: string, query: string): HighlightSegment[] {
+  const trimmed = query.trim();
+  if (!trimmed) return [{ text, matched: false }];
+
+  const escaped = trimmed.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const re = new RegExp(escaped, "gi");
+  const segments: HighlightSegment[] = [];
+  let lastIndex = 0;
+  let match: RegExpExecArray | null;
+  while ((match = re.exec(text)) !== null) {
+    if (match.index > lastIndex) {
+      segments.push({ text: text.slice(lastIndex, match.index), matched: false });
+    }
+    segments.push({ text: match[0], matched: true });
+    lastIndex = match.index + match[0].length;
+    if (match[0].length === 0) re.lastIndex++; // guard against a zero-width match looping forever
+  }
+  if (lastIndex < text.length) {
+    segments.push({ text: text.slice(lastIndex), matched: false });
+  }
+  return segments.length > 0 ? segments : [{ text, matched: false }];
+}
+
 export interface EntitySearchResult {
   entityName: string;
   entityLabel: string;

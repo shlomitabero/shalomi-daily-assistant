@@ -563,6 +563,56 @@ test("EntityPanel's toolbar shows a live 'shown of total' record count that upda
 });
 
 /**
+ * New in this round: the search box already narrowed the table down to
+ * matching rows, but gave no clue *where* within a row's own text the
+ * match actually was -- a real everyday annoyance the moment a search
+ * term is short/common. Confirms typing into the real search box wraps
+ * the real matched substring in a real `<mark class="search-match">`
+ * inside the table (both for a plain text field and for an enum's own
+ * translated label), that non-matching rows are simply filtered out as
+ * before, and that clearing the search removes the highlight along with
+ * restoring the rest of the rows.
+ */
+test("EntityPanel's search box highlights the matched text within each visible cell, for both text and enum fields", async () => {
+  await withJsdom(async () => {
+    const store: EntityRecord[] = [
+      { id: 1, name: "Dana Levi", status: "new" },
+      { id: 2, name: "Globex", status: "won" },
+    ];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = mockRecordsFetch(store) as typeof fetch;
+    try {
+      renderEntityPanel();
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 2);
+
+      const searchBox = document.querySelector(".entity-search") as HTMLInputElement;
+      fireEvent.change(searchBox, { target: { value: "dana" } });
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 1);
+
+      const row = document.querySelector("table tbody tr")!;
+      const mark = row.querySelector("mark.search-match");
+      assert.ok(mark, "the matched substring must be wrapped in a real <mark class=\"search-match\">");
+      assert.equal(mark!.textContent, "Dana", "the highlighted text must preserve the record's own original casing");
+      assert.equal(row.textContent?.includes("Dana Levi"), true, "the rest of the cell's own text must still render around the highlight");
+
+      fireEvent.change(searchBox, { target: { value: "" } });
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 2);
+      assert.equal(document.querySelector("mark.search-match"), null, "clearing the search must remove the highlight");
+
+      // An enum field's own translated label gets highlighted too, not
+      // just plain text fields.
+      fireEvent.change(searchBox, { target: { value: "Won" } });
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 1);
+      const enumMark = document.querySelector(".badge mark.search-match");
+      assert.ok(enumMark, "an enum field's own translated label must be highlighted too");
+      assert.equal(enumMark!.textContent, "Won");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * New in this round: every record has always carried a real, server-
  * assigned `createdAt` (repository.ts's insertRecord always stamps one),
  * but the table never showed it anywhere. Confirms the built-in "Created"

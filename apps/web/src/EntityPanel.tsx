@@ -29,6 +29,7 @@ import {
   recordsToCsv,
   restoreRecordAt,
   sortRecordsMulti,
+  splitHighlightSegments,
   type RelatedRecordsByEntity,
   type SortKey,
 } from "./entityFormatting.js";
@@ -62,6 +63,31 @@ function emptyForm(entity: Entity): Record<string, unknown> {
   return form;
 }
 
+/**
+ * Renders a highlighted string via splitHighlightSegments -- the matched
+ * part of a cell's own text wrapped in a real <mark>, so a search doesn't
+ * just tell you a row matched but shows *where* in that row it matched.
+ * A blank/no-match query is the overwhelmingly common case, so it takes
+ * the cheap path (skip splitHighlightSegments's regex work entirely) and
+ * renders the plain string.
+ */
+function Highlighted({ text, query }: { text: string; query: string | undefined }) {
+  if (!query || !query.trim()) return <>{text}</>;
+  return (
+    <>
+      {splitHighlightSegments(text, query).map((seg, i) =>
+        seg.matched ? (
+          <mark key={i} className="search-match">
+            {seg.text}
+          </mark>
+        ) : (
+          <span key={i}>{seg.text}</span>
+        ),
+      )}
+    </>
+  );
+}
+
 /** Renders a table cell for a field's value -- a status badge for enums, a
  * checkmark/dash for booleans, a locale-formatted date or number, and plain
  * text otherwise -- instead of one generic string for every field type. */
@@ -71,12 +97,21 @@ function Cell({
   lang,
   t,
   relationLabel,
+  highlightQuery,
 }: {
   field: Field;
   value: unknown;
   lang: Lang;
   t: (key: string) => string;
   relationLabel?: string;
+  /** The active search box query, if any -- highlights where it matched
+   * within this cell's own text/enum-label content (see Highlighted
+   * above). Only meaningful for the two field types whose displayed text
+   * is exactly what matchesSearch matches against; other types (date,
+   * number, relation) format or resolve their raw stored value into
+   * different displayed text, so highlighting there would point at text
+   * the search didn't actually match. */
+  highlightQuery?: string;
 }) {
   if (value === null || value === undefined || value === "") {
     return <span className="muted">{t("entity.empty")}</span>;
@@ -89,7 +124,11 @@ function Cell({
   }
   if (field.type === "enum") {
     const label = field.enumLabels?.[String(value)] ?? String(value);
-    return <span className={`badge badge-${badgeTone(String(value))}`}>{label}</span>;
+    return (
+      <span className={`badge badge-${badgeTone(String(value))}`}>
+        <Highlighted text={label} query={highlightQuery} />
+      </span>
+    );
   }
   if (field.type === "date") {
     return <>{formatDateValue(String(value), lang)}</>;
@@ -97,7 +136,7 @@ function Cell({
   if (field.type === "number") {
     return <>{formatNumberValue(Number(value), lang)}</>;
   }
-  return <>{String(value)}</>;
+  return <Highlighted text={String(value)} query={highlightQuery} />;
 }
 
 /**
@@ -165,6 +204,7 @@ function BoardCard({
   t,
   allEntities,
   relatedRecords,
+  highlightQuery,
   onMove,
   onEdit,
   onDuplicate,
@@ -177,6 +217,7 @@ function BoardCard({
   t: (key: string) => string;
   allEntities: Entity[];
   relatedRecords: RelatedRecordsByEntity;
+  highlightQuery?: string;
   onMove: (value: string) => void;
   onEdit: () => void;
   onDuplicate: () => void;
@@ -201,6 +242,7 @@ function BoardCard({
             relationLabel={
               f.type === "relation" ? relationDisplayLabel(f, record[f.name], allEntities, relatedRecords) : undefined
             }
+            highlightQuery={highlightQuery}
           />
         </div>
       ))}
@@ -1244,6 +1286,7 @@ export function EntityPanel({
                       t={t}
                       allEntities={allEntities}
                       relatedRecords={relatedRecords}
+                      highlightQuery={search}
                       onMove={(value) => handleMove(record.id as number, boardField.name, value)}
                       onEdit={() => startEdit(record)}
                       onDuplicate={() => handleDuplicate(record.id as number)}
@@ -1373,6 +1416,7 @@ export function EntityPanel({
                                 ? relationDisplayLabel(f, record[f.name], allEntities, relatedRecords)
                                 : undefined
                             }
+                            highlightQuery={search}
                           />
                         </td>
                       ))}

@@ -27,6 +27,7 @@ import {
   searchEntityRecords,
   sortRecords,
   sortRecordsMulti,
+  splitHighlightSegments,
 } from "./entityFormatting.js";
 
 test("badgeTone recognizes common positive and negative status words, case-insensitively", () => {
@@ -112,6 +113,42 @@ test("matchesSearch matches on any field, is case-insensitive, and an empty quer
   assert.ok(matchesSearch(record, fields, "dana"));
   assert.ok(matchesSearch(record, fields, "חדש")); // matches the translated enum label, not the raw stored value
   assert.ok(!matchesSearch(record, fields, "yossi"));
+});
+
+/**
+ * New in this round: matchesSearch already tells the table a record
+ * matched, but nothing showed *where* within a cell's own text -- a real
+ * everyday annoyance the moment a search term is short/common and you
+ * have to squint at every visible field to find the actual hit.
+ * splitHighlightSegments is the pure logic Cell's own Highlighted wrapper
+ * uses to mark the matched part(s).
+ */
+test("splitHighlightSegments splits matched and unmatched runs, case-insensitively, and preserves the original casing of the matched text", () => {
+  assert.deepEqual(splitHighlightSegments("Dana Levi", "dana"), [
+    { text: "Dana", matched: true },
+    { text: " Levi", matched: false },
+  ]);
+  // Matches are non-overlapping: after matching "aa" at the start, only a
+  // single leftover "a" remains -- not a second, overlapping "aa".
+  assert.deepEqual(splitHighlightSegments("aaa", "aa"), [
+    { text: "aa", matched: true },
+    { text: "a", matched: false },
+  ]);
+});
+
+test("splitHighlightSegments returns the whole text as a single unmatched segment for a blank query or no match", () => {
+  assert.deepEqual(splitHighlightSegments("Dana Levi", ""), [{ text: "Dana Levi", matched: false }]);
+  assert.deepEqual(splitHighlightSegments("Dana Levi", "   "), [{ text: "Dana Levi", matched: false }]);
+  assert.deepEqual(splitHighlightSegments("Dana Levi", "yossi"), [{ text: "Dana Levi", matched: false }]);
+});
+
+test("splitHighlightSegments escapes regex-special characters in the query instead of treating them as a pattern", () => {
+  assert.deepEqual(splitHighlightSegments("3.5 (kg)", "3.5"), [
+    { text: "3.5", matched: true },
+    { text: " (kg)", matched: false },
+  ]);
+  // Without escaping, "." would match any character (e.g. "3X5"), not just a literal dot.
+  assert.deepEqual(splitHighlightSegments("3X5 (kg)", "3.5"), [{ text: "3X5 (kg)", matched: false }]);
 });
 
 test("searchEntityRecords finds matches, caps the sample, and reports the real total match count", () => {
