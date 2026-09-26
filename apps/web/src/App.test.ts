@@ -1,0 +1,839 @@
+import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { test } from "node:test";
+import { transformSync } from "esbuild";
+import type { AgentStepEvent, Entity, Field, OpenQuestion, Project } from "@forge/shared";
+import {
+  countAnsweredOpenQuestions,
+  filterAndSortProjects,
+  filterRefineHistory,
+  formatEntityFieldSummary,
+  formatMyProjectsCount,
+  formatOpenQuestionsProgress,
+  formatProjectCreatedDate,
+  formatRefineTimestamp,
+  isEditableEventTarget,
+  specProviderLabel,
+  summarizeRefineImpact,
+} from "./App.js";
+import { translate } from "./i18n/language.js";
+
+const t = (key: string) => key;
+
+test("summarizeRefineImpact reads the newEntities/changedEntities detail off the successful Architect event", () => {
+  const events: AgentStepEvent[] = [
+    { agent: "Architect", status: "running", message: "…" },
+    {
+      agent: "Architect",
+      status: "success",
+      message: "…",
+      detail: {
+        newEntities: [{ name: "Invoice", label: "Invoices" }],
+        changedEntities: [{ name: "Customer", label: "Customers", newFieldNames: ["loyaltyPoints"] }],
+      },
+    },
+  ];
+  const summary = summarizeRefineImpact(events, t);
+  assert.match(summary, /Invoices/);
+  assert.match(summary, /Customers/);
+  assert.match(summary, /loyaltyPoints/);
+});
+
+test("summarizeRefineImpact returns the no-summary key when no successful Architect event exists", () => {
+  const events: AgentStepEvent[] = [{ agent: "Architect", status: "failed", message: "…" }];
+  assert.equal(summarizeRefineImpact(events, t), "preview.refineHistory.noSummary");
+});
+
+function question(text: string): OpenQuestion {
+  return { question: text, options: ["Yes", "No"] };
+}
+
+test("countAnsweredOpenQuestions counts a question answered whether the value came from a chip click or the free-text input, since both write the same selectedAnswers slot", () => {
+  const questions = [question("Q1"), question("Q2"), question("Q3")];
+  const result = countAnsweredOpenQuestions(questions, { Q1: "Yes", Q2: "a custom answer" });
+  assert.deepEqual(result, { answered: 2, total: 3 });
+});
+
+test("countAnsweredOpenQuestions treats a blank or whitespace-only value as unanswered", () => {
+  const questions = [question("Q1"), question("Q2")];
+  const result = countAnsweredOpenQuestions(questions, { Q1: "   ", Q2: "" });
+  assert.deepEqual(result, { answered: 0, total: 2 });
+});
+
+test("countAnsweredOpenQuestions returns zero total for a spec with no open questions", () => {
+  assert.deepEqual(countAnsweredOpenQuestions([], {}), { answered: 0, total: 0 });
+});
+
+test("formatOpenQuestionsProgress picks the 'none answered' phrasing when nothing is answered yet", () => {
+  const questions = [question("Q1"), question("Q2")];
+  const tr = (key: string, params?: Record<string, string | number>) => translate("en", key, params);
+  assert.equal(formatOpenQuestionsProgress(questions, {}, tr), "You haven't answered any of the 2 questions yet — that's fine, they're optional");
+});
+
+test("formatOpenQuestionsProgress picks the 'answered N of M' phrasing partway through", () => {
+  const questions = [question("Q1"), question("Q2"), question("Q3")];
+  const tr = (key: string, params?: Record<string, string | number>) => translate("en", key, params);
+  assert.equal(formatOpenQuestionsProgress(questions, { Q1: "Yes" }, tr), "Answered 1 of 3 questions");
+});
+
+test("formatOpenQuestionsProgress picks the 'all answered' phrasing once every question has a value, in Hebrew", () => {
+  const questions = [question("Q1"), question("Q2")];
+  const tr = (key: string, params?: Record<string, string | number>) => translate("he", key, params);
+  assert.equal(formatOpenQuestionsProgress(questions, { Q1: "כן", Q2: "לא" }, tr), "ענית על כל 2 השאלות ✓");
+});
+
+test("summarizeRefineImpact prefers the LAST successful Architect event, not the first, so a Debug Agent recovery's corrected detail wins", () => {
+  // Mirrors the real pipeline.ts behavior (architectEvent() called a
+  // second time after a Debug Agent recovery, see the "Re-emit the
+  // Architect summary after a Debug Agent recovery" commit): a
+  // Database-step failure the Debug Agent fixes by renaming a field
+  // yields a first, stale Architect success event (still describing the
+  // broken name) followed by a second, corrected one. The refine-history
+  // summary shown in chat must reflect the field that was actually built.
+  const events: AgentStepEvent[] = [
+    {
+      agent: "Architect",
+      status: "success",
+      message: "…",
+      detail: {
+        newEntities: [],
+        changedEntities: [{ name: "Customer", label: "Customers", newFieldNames: ["order; DROP TABLE x"] }],
+      },
+    },
+    { agent: "Database", status: "failed", message: "…" },
+    { agent: "Debug", status: "success", message: "…" },
+    {
+      agent: "Architect",
+      status: "success",
+      message: "…",
+      detail: {
+        newEntities: [],
+        changedEntities: [{ name: "Customer", label: "Customers", newFieldNames: ["orderNote"] }],
+      },
+    },
+  ];
+  const summary = summarizeRefineImpact(events, t);
+  assert.match(summary, /orderNote/);
+  assert.doesNotMatch(summary, /DROP TABLE/);
+});
+
+/**
+ * New in this round: a search box narrows "Your projects" by name once
+ * there are enough of them to matter. filterAndSortProjects is the pure
+ * function driving it -- case-insensitive substring match, then the same
+ * pinned-first ordering pinnedProjects.test.ts already covers in
+ * isolation, applied together in the order the UI actually needs them
+ * (narrow first, THEN reorder what's left -- not the other way around,
+ * which would still work here but is the more fragile order to compose in
+ * general, e.g. if a future match ever depended on position).
+ */
+test("filterAndSortProjects narrows by a case-insensitive substring match on the project name", () => {
+  const alpha = { ...makeProject([]), id: "p1", name: "Alpha CRM" };
+  const beta = { ...makeProject([]), id: "p2", name: "Beta Inventory" };
+  const gamma = { ...makeProject([]), id: "p3", name: "Gamma Scheduling" };
+  const projects = [alpha, beta, gamma];
+
+  assert.deepEqual(
+    filterAndSortProjects(projects, "beta", new Set()).map((p) => p.id),
+    ["p2"],
+  );
+  assert.deepEqual(
+    filterAndSortProjects(projects, "CRM", new Set()).map((p) => p.id),
+    ["p1"],
+    "must match case-insensitively",
+  );
+  assert.deepEqual(
+    filterAndSortProjects(projects, "  ", new Set()).map((p) => p.id),
+    ["p1", "p2", "p3"],
+    "a blank/whitespace-only query must show everything, not match nothing",
+  );
+  assert.deepEqual(filterAndSortProjects(projects, "nonexistent", new Set()), []);
+});
+
+test("filterAndSortProjects applies the pinned-first sort to whatever the search already narrowed down to", () => {
+  const alpha = { ...makeProject([]), id: "p1", name: "Alpha Project" };
+  const beta = { ...makeProject([]), id: "p2", name: "Beta Project" };
+  const gamma = { ...makeProject([]), id: "p3", name: "Gamma Project" };
+  const projects = [alpha, beta, gamma];
+
+  assert.deepEqual(
+    filterAndSortProjects(projects, "project", new Set(["gamma-does-not-exist"])).map((p) => p.id),
+    ["p1", "p2", "p3"],
+    "pinning an id not present in the list must not crash or reorder anything",
+  );
+  assert.deepEqual(
+    filterAndSortProjects(projects, "project", new Set(["p3"])).map((p) => p.id),
+    ["p3", "p1", "p2"],
+    "the pinned match must move to the front of the already-narrowed results",
+  );
+});
+
+/**
+ * New in this round: "Your projects" only ever had one real order
+ * (newest-first, per listProjectsForUser's own createdAt DESC) with no
+ * way to switch to alphabetical. sortMode defaults to "recent" (the
+ * existing behavior, untouched) so every call above this in the file
+ * keeps working unchanged; "alphabetical" sorts by name WITHIN each of
+ * sortByPinned's own pinned/unpinned groups, rather than abandoning
+ * pinning -- a pinned project still floats to the top even in
+ * alphabetical mode, just alphabetized among the other pinned ones.
+ */
+test("filterAndSortProjects's 'alphabetical' sortMode sorts by name within each pinned/unpinned group, keeping pinned projects on top", () => {
+  const zed = { ...makeProject([]), id: "p1", name: "Zed Project" };
+  const amy = { ...makeProject([]), id: "p2", name: "Amy Project" };
+  const mid = { ...makeProject([]), id: "p3", name: "Mid Project" };
+  const projects = [zed, amy, mid];
+
+  assert.deepEqual(
+    filterAndSortProjects(projects, "", new Set(), "alphabetical").map((p) => p.id),
+    ["p2", "p3", "p1"],
+    "with nothing pinned, 'alphabetical' must sort every project by name: Amy, Mid, Zed",
+  );
+
+  assert.deepEqual(
+    filterAndSortProjects(projects, "", new Set(["p1"]), "alphabetical").map((p) => p.id),
+    ["p1", "p2", "p3"],
+    "pinning Zed must still float it to the very top even in alphabetical mode -- pinning always wins over the name sort",
+  );
+
+  assert.deepEqual(
+    filterAndSortProjects(projects, "", new Set(), "recent").map((p) => p.id),
+    ["p1", "p2", "p3"],
+    "'recent' (the default) must leave the original createdAt-DESC order untouched, not silently alphabetize it",
+  );
+});
+
+test("formatMyProjectsCount reports a plain total when nothing is filtered out", () => {
+  const tr = (key: string, params?: Record<string, string | number>) => translate("en", key, params);
+  assert.equal(formatMyProjectsCount(5, 5, tr), "5 projects");
+});
+
+test("formatMyProjectsCount reports 'shown of total' once a search has narrowed the list, in Hebrew", () => {
+  const tr = (key: string, params?: Record<string, string | number>) => translate("he", key, params);
+  assert.equal(formatMyProjectsCount(2, 8, tr), "2 מתוך 8 פרויקטים");
+});
+
+/**
+ * New in this round: each project card on the home screen now shows its own
+ * creation date, so a returning user with several projects can tell at a
+ * glance which is the recent one they were just working on vs. an old one
+ * from months ago -- information the card never surfaced before. Confirms
+ * the real locale each language actually renders with (matching the same
+ * LOCALE-map convention HistoryPanel/CollaboratorsPanel/WhatsAppPanel
+ * already use), not just that SOME string comes back.
+ */
+test("formatProjectCreatedDate renders a real locale-formatted date, in each language's own locale", () => {
+  const createdAt = "2026-03-15T14:32:00.000Z";
+  const expectedHe = new Date(createdAt).toLocaleDateString("he-IL");
+  const expectedEn = new Date(createdAt).toLocaleDateString("en-US");
+
+  assert.equal(formatProjectCreatedDate(createdAt, "he"), expectedHe);
+  assert.equal(formatProjectCreatedDate(createdAt, "en"), expectedEn);
+  assert.notEqual(
+    formatProjectCreatedDate(createdAt, "he"),
+    formatProjectCreatedDate(createdAt, "en"),
+    "the two locales must not silently render the exact same string -- that would mean the language argument is being ignored",
+  );
+});
+
+/**
+ * New in this round: createProject's own response has always carried a
+ * real providerName ("heuristic" / "anthropic" / "anthropic-fallback" --
+ * see generateSpec's own doc comment in spec-engine), but the client only
+ * ever destructured `{ project }` off it, discarding the one honest
+ * signal for whether the spec was actually AI-generated, the deterministic
+ * engine took over as normal, or a real AI failure silently degraded.
+ * specProviderLabel is the pure mapping from that raw value to what the
+ * spec-review screen actually shows.
+ */
+test("specProviderLabel maps each real providerName to its own distinct label, and null (a re-opened project) to no label at all", () => {
+  assert.equal(specProviderLabel("anthropic", t), "spec.provider.ai");
+  assert.equal(specProviderLabel("anthropic-fallback", t), "spec.provider.aiFallback");
+  assert.equal(specProviderLabel("heuristic", t), "spec.provider.heuristic");
+  assert.equal(
+    specProviderLabel(null, t),
+    null,
+    "a re-opened existing project never captured this, so there's nothing honest to show -- must not silently claim any provider",
+  );
+  assert.notEqual(
+    specProviderLabel("anthropic", t),
+    specProviderLabel("anthropic-fallback", t),
+    "a real AI failure that silently fell back must never be shown as an indistinguishable success",
+  );
+});
+
+/**
+ * New in this round: each entry in the refine history chat log (the
+ * running record of every "Improve the app" instruction and its real
+ * impact) never showed WHEN it happened -- with several refines in the
+ * same session, there was no way to tell which was the one from five
+ * minutes ago vs. the first one from an hour earlier. Confirms the real
+ * locale/time each language actually renders with, not just that some
+ * string comes back (mirrors formatProjectCreatedDate's own test above,
+ * but toLocaleString -- date AND time -- since multiple refines can land
+ * on the same day, unlike project creation dates).
+ */
+test("formatRefineTimestamp renders a real locale-formatted date+time, in each language's own locale", () => {
+  const completedAt = "2026-03-15T14:32:00.000Z";
+  const expectedHe = new Date(completedAt).toLocaleString("he-IL");
+  const expectedEn = new Date(completedAt).toLocaleString("en-US");
+
+  assert.equal(formatRefineTimestamp(completedAt, "he"), expectedHe);
+  assert.equal(formatRefineTimestamp(completedAt, "en"), expectedEn);
+  assert.notEqual(
+    formatRefineTimestamp(completedAt, "he"),
+    formatRefineTimestamp(completedAt, "en"),
+    "the two locales must not silently render the exact same string -- that would mean the language argument is being ignored",
+  );
+});
+
+/**
+ * New in this round: once the conversation-history pane's own refine list
+ * (see refineHistory in App.tsx) passes 5 entries, a search box narrows it
+ * by instruction text -- the same "Your projects" (filterAndSortProjects)
+ * and Time Machine (checkpointDiff.ts's filterCheckpoints) convention,
+ * applied to this screen's own unbounded, never-cleared list.
+ */
+test("filterRefineHistory narrows by a case-insensitive substring match on the instruction text", () => {
+  const invoices = { id: "r1", instruction: "Add invoice tracking", summary: "s", completedAt: "2026-01-01" };
+  const coupons = { id: "r2", instruction: "Add a coupons entity", summary: "s", completedAt: "2026-01-02" };
+  const reviews = { id: "r3", instruction: "Track customer reviews", summary: "s", completedAt: "2026-01-03" };
+  const entries = [invoices, coupons, reviews];
+
+  assert.deepEqual(
+    filterRefineHistory(entries, "invoice").map((e) => e.id),
+    ["r1"],
+  );
+  assert.deepEqual(
+    filterRefineHistory(entries, "COUPONS").map((e) => e.id),
+    ["r2"],
+    "must match case-insensitively",
+  );
+  assert.deepEqual(
+    filterRefineHistory(entries, "  ").map((e) => e.id),
+    ["r1", "r2", "r3"],
+    "a blank/whitespace-only query must show everything, not match nothing",
+  );
+  assert.deepEqual(filterRefineHistory(entries, "nonexistent"), []);
+});
+
+/**
+ * Regression test: each of the five overlay panels (History, Business
+ * Twin, WhatsApp, Collaborators, Search) -- each a full-screen backdrop --
+ * used to be opened by setting only its own "show" boolean to true, with no
+ * regard for whether another panel's boolean was already true. Clicking,
+ * say, "Business Twin" while History was already open (from an earlier
+ * click, or Ctrl+K for search) stacked two full-screen overlays instead of
+ * replacing one with the other. Extracts the real openPanel function from
+ * App.tsx, strips its TypeScript with esbuild, and runs it with mock
+ * setShowX functions to confirm every open closes the other four.
+ */
+test("App's openPanel closes every other overlay panel when opening one, instead of letting them stack", () => {
+  const appSrc = readFileSync(new URL("./App.tsx", import.meta.url), "utf8");
+  const handlerMatch = appSrc.match(
+    / {2}function openPanel\(panel: "history" \| "twin" \| "whatsapp" \| "collaborators" \| "search" \| "shortcuts"\) \{[\s\S]*?\n {2}\}\n/,
+  );
+  assert.ok(handlerMatch, "expected to find openPanel in App.tsx");
+  const { code } = transformSync(handlerMatch![0], { loader: "ts" });
+
+  function run(panel: string) {
+    const state = { history: false, twin: false, whatsapp: false, collaborators: false, search: false, shortcuts: false };
+    const fn = new Function(
+      "setShowHistory",
+      "setShowTwin",
+      "setShowWhatsApp",
+      "setShowCollaborators",
+      "setShowSearch",
+      "setShowShortcuts",
+      `${code}\nreturn openPanel;`,
+    )(
+      (v: boolean) => (state.history = v),
+      (v: boolean) => (state.twin = v),
+      (v: boolean) => (state.whatsapp = v),
+      (v: boolean) => (state.collaborators = v),
+      (v: boolean) => (state.search = v),
+      (v: boolean) => (state.shortcuts = v),
+    ) as (panel: string) => void;
+    fn(panel);
+    return state;
+  }
+
+  const closed = { history: false, twin: false, whatsapp: false, collaborators: false, search: false, shortcuts: false };
+  assert.deepEqual(run("history"), { ...closed, history: true });
+  assert.deepEqual(run("twin"), { ...closed, twin: true });
+  assert.deepEqual(run("whatsapp"), { ...closed, whatsapp: true });
+  assert.deepEqual(run("collaborators"), { ...closed, collaborators: true });
+  assert.deepEqual(run("search"), { ...closed, search: true });
+  assert.deepEqual(run("shortcuts"), { ...closed, shortcuts: true });
+});
+
+/**
+ * Regression test for a real behavioral choice in openExistingProject
+ * (the handler the new "Your projects" home-screen list uses to jump back
+ * into a project someone already created or was added to as a
+ * collaborator): a "built" project should open straight to the live
+ * preview, but a project that was only ever created/answered but never
+ * built has no real database behind it yet, so it must open to the spec
+ * review screen instead -- opening a draft straight to "preview" would
+ * show a live-preview screen with no working CRUD behind it. Extracts the
+ * real function from App.tsx (not a reimplementation) the same way the
+ * openPanel test above does.
+ */
+test("App's openExistingProject routes a built project to the live preview and a draft project back to spec review", () => {
+  const appSrc = readFileSync(new URL("./App.tsx", import.meta.url), "utf8");
+  const handlerMatch = appSrc.match(/ {2}function openExistingProject\(p: Project\) \{[\s\S]*?\n {2}\}\n/);
+  assert.ok(handlerMatch, "expected to find openExistingProject in App.tsx");
+  const { code } = transformSync(handlerMatch![0], { loader: "ts" });
+
+  function run(project: Project) {
+    const state: { project: Project | null; activeEntity: string | null; view: string | null; specProvider: string | null } = {
+      project: null,
+      activeEntity: null,
+      view: null,
+      specProvider: "unset",
+    };
+    const fn = new Function(
+      "setProject",
+      "setActiveEntity",
+      "setSpecProvider",
+      "setView",
+      `${code}\nreturn openExistingProject;`,
+    )(
+      (p: Project) => (state.project = p),
+      (name: string | null) => (state.activeEntity = name),
+      (v: string | null) => (state.specProvider = v),
+      (v: string) => (state.view = v),
+    ) as (p: Project) => void;
+    fn(project);
+    return state;
+  }
+
+  const builtProject = makeProject([makeEntity("Customer")]);
+  builtProject.status = "built";
+  assert.deepEqual(run(builtProject), { project: builtProject, activeEntity: "Customer", view: "preview", specProvider: null });
+
+  const draftProject = makeProject([makeEntity("Customer")]);
+  draftProject.status = "draft";
+  assert.deepEqual(run(draftProject), { project: draftProject, activeEntity: "Customer", view: "spec", specProvider: null });
+});
+
+/**
+ * Regression test for handleDeleteProject (the home-screen "Your
+ * projects" list's delete button): a real, irreversible action gated
+ * behind window.confirm -- declining the confirm must leave everything
+ * untouched (no API call, myProjects list unchanged), while confirming
+ * must call the real deleteProject API function and then remove exactly
+ * the deleted project from myProjects, leaving every other project alone.
+ * Extracts the real function from App.tsx the same way the openPanel and
+ * openExistingProject tests above do, rather than reimplementing its logic.
+ */
+test("App's handleDeleteProject only calls the API and updates myProjects after window.confirm returns true, and leaves everything untouched when the user cancels", async () => {
+  const appSrc = readFileSync(new URL("./App.tsx", import.meta.url), "utf8");
+  const handlerMatch = appSrc.match(/ {2}async function handleDeleteProject\(p: Project\) \{[\s\S]*?\n {2}\}\n/);
+  assert.ok(handlerMatch, "expected to find handleDeleteProject in App.tsx");
+  const { code } = transformSync(handlerMatch![0], { loader: "ts" });
+
+  function run(
+    project: Project,
+    initialMyProjects: Project[],
+    opts: { confirmReturns: boolean; deleteProjectFn: (id: string) => Promise<void> },
+  ) {
+    const state: { myProjects: Project[]; deletingId: string | null; error: string | null } = {
+      myProjects: initialMyProjects,
+      deletingId: "not-yet-called",
+      error: "not-yet-called",
+    };
+    const confirmCalls: string[] = [];
+    const fn = new Function(
+      "window",
+      "t",
+      "deleteProject",
+      "setDeletingId",
+      "setError",
+      "setMyProjects",
+      `${code}\nreturn handleDeleteProject;`,
+    )(
+      { confirm: (message: string) => (confirmCalls.push(message), opts.confirmReturns) },
+      (key: string) => key,
+      opts.deleteProjectFn,
+      (v: string | null) => (state.deletingId = v),
+      (v: string | null) => (state.error = v),
+      (updater: (prev: Project[]) => Project[]) => (state.myProjects = updater(state.myProjects)),
+    ) as (p: Project) => Promise<void>;
+    return { fn, state, confirmCalls };
+  }
+
+  const target = makeProject([makeEntity("Customer")]);
+  target.id = "delete-me";
+  const other = makeProject([makeEntity("Customer")]);
+  other.id = "keep-me";
+
+  // Declining the confirm dialog must call neither the API nor any setter.
+  let deleteApiCalls = 0;
+  const declined = run(target, [target, other], {
+    confirmReturns: false,
+    deleteProjectFn: async () => {
+      deleteApiCalls += 1;
+    },
+  });
+  await declined.fn(target);
+  assert.equal(deleteApiCalls, 0, "declining the confirm must never call the delete API");
+  assert.deepEqual(declined.state.myProjects, [target, other], "myProjects must be untouched when cancelled");
+  assert.equal(declined.state.deletingId, "not-yet-called", "setDeletingId must never be called when cancelled");
+
+  // Confirming must call the real API function and remove only the deleted project.
+  deleteApiCalls = 0;
+  let deletedId: string | null = null;
+  const confirmed = run(target, [target, other], {
+    confirmReturns: true,
+    deleteProjectFn: async (id: string) => {
+      deleteApiCalls += 1;
+      deletedId = id;
+    },
+  });
+  await confirmed.fn(target);
+  assert.equal(deleteApiCalls, 1);
+  assert.equal(deletedId, "delete-me");
+  assert.deepEqual(confirmed.state.myProjects, [other], "only the deleted project should be removed from the list");
+  assert.equal(confirmed.state.deletingId, null, "deletingId must be cleared again once the delete finishes");
+  assert.equal(confirmed.state.error, null);
+});
+
+function makeEntity(name: string): Entity {
+  return { name, fields: [{ name: "name", type: "text", required: true }] };
+}
+
+function makeProject(entities: Entity[]): Project {
+  return {
+    id: "proj1",
+    ownerId: "user1",
+    name: "Test Project",
+    description: "d",
+    spec: {
+      summary: "s",
+      personas: [],
+      roles: ["Admin"],
+      entities,
+      screens: [],
+      assumptions: [],
+      openQuestions: [],
+    },
+    status: "built",
+    createdAt: new Date().toISOString(),
+  };
+}
+
+/**
+ * Regression test: after a refine completes, handleBuildComplete kept
+ * whatever entity tab was active before the refine ran unconditionally
+ * (`setActiveEntity((prev) => prev ?? ...)` only falls back to the first
+ * entity when `prev` was null in the first place -- otherwise it always
+ * keeps `prev` as-is). A refine's regenerated spec is free to drop an
+ * entity the previous one had (e.g. an instruction like "remove deals
+ * tracking, focus on invoices"), so if the entity that was active before
+ * the refine isn't in the new spec at all, the preview pane's own
+ * `.filter((e) => e.name === activeEntity)` finds nothing -- the pane goes
+ * blank with no tab visibly selected, exactly the "stale activeEntity"
+ * failure mode handleLogout's own cleanup already guards against
+ * elsewhere in this same file, just not here.
+ */
+test("App's handleBuildComplete falls back to the first entity when the previously-active one was dropped by a refine, but keeps it when it's still present", () => {
+  const appSrc = readFileSync(new URL("./App.tsx", import.meta.url), "utf8");
+  const handlerMatch = appSrc.match(/ {2}function handleBuildComplete\(builtProject: Project\) \{[\s\S]*?\n {2}\}\n/);
+  assert.ok(handlerMatch, "expected to find handleBuildComplete in App.tsx");
+  const { code } = transformSync(handlerMatch![0], { loader: "ts" });
+
+  function runHandleBuildComplete(initialActiveEntity: string | null, builtProject: Project) {
+    let activeEntity: string | null = initialActiveEntity;
+    const fn = new Function(
+      "refineRunning",
+      "pendingRefineInstruction",
+      "refineEvents",
+      "t",
+      "summarizeRefineImpact",
+      "setRefineHistory",
+      "setProject",
+      "setActiveEntity",
+      "setRefineText",
+      "setAdditionalRequest",
+      "setRefineRunning",
+      "setView",
+      `${code}\nreturn handleBuildComplete;`,
+    )(
+      false, // refineRunning: false keeps this focused on the activeEntity logic itself, which runs unconditionally either way
+      { current: null },
+      { current: [] },
+      (key: string) => key,
+      summarizeRefineImpact,
+      () => {},
+      () => {},
+      (updater: string | null | ((prev: string | null) => string | null)) => {
+        activeEntity = typeof updater === "function" ? (updater as (prev: string | null) => string | null)(activeEntity) : updater;
+      },
+      () => {},
+      () => {},
+      () => {},
+      () => {},
+    ) as (builtProject: Project) => void;
+    fn(builtProject);
+    return activeEntity;
+  }
+
+  const rebuiltWithoutDeal = makeProject([makeEntity("Customer"), makeEntity("Invoice")]);
+  assert.equal(
+    runHandleBuildComplete("Deal", rebuiltWithoutDeal),
+    "Customer",
+    "a dropped active entity must fall back to the new spec's first entity, not stay stale",
+  );
+
+  const rebuiltWithCustomer = makeProject([makeEntity("Invoice"), makeEntity("Customer")]);
+  assert.equal(
+    runHandleBuildComplete("Customer", rebuiltWithCustomer),
+    "Customer",
+    "an active entity that's still present in the new spec must be kept, not reset to the first one",
+  );
+});
+
+/**
+ * New in this round: the spec-review screen (the "Here's what we
+ * understood" step between describing an idea and building it) had no way
+ * back to the home screen at all -- only forward, via "Build the app".
+ * Extracts the real handleBackToHome function the same way the other
+ * App.tsx handler tests above do, and confirms it does the full, correct
+ * reset: switches the view, clears the now-abandoned draft project and its
+ * open-question answers/additional-request text (both tied to that
+ * specific draft, not whatever gets created next) -- but does NOT touch
+ * `description`, so the idea text the user already typed is still there
+ * to tweak and resubmit rather than being wiped.
+ */
+test("App's handleBackToHome resets view/project/selectedAnswers/additionalRequest, but leaves description untouched", () => {
+  const appSrc = readFileSync(new URL("./App.tsx", import.meta.url), "utf8");
+  const handlerMatch = appSrc.match(/ {2}function handleBackToHome\(\) \{[\s\S]*?\n {2}\}\n/);
+  assert.ok(handlerMatch, "expected to find handleBackToHome in App.tsx");
+  const { code } = transformSync(handlerMatch![0], { loader: "ts" });
+
+  const state: {
+    view: string;
+    project: Project | null;
+    specProvider: string | null;
+    selectedAnswers: Record<string, string>;
+    additionalRequest: string;
+  } = {
+    view: "spec",
+    project: makeProject([makeEntity("Customer")]),
+    specProvider: "anthropic",
+    selectedAnswers: { "Which plan?": "Pro" },
+    additionalRequest: "also add a discount field",
+  };
+
+  let setDescriptionCalls = 0;
+  const fn = new Function(
+    "setView",
+    "setProject",
+    "setSpecProvider",
+    "setSelectedAnswers",
+    "setAdditionalRequest",
+    "setDescription",
+    `${code}\nreturn handleBackToHome;`,
+  )(
+    (v: string) => (state.view = v),
+    (p: Project | null) => (state.project = p),
+    (v: string | null) => (state.specProvider = v),
+    (a: Record<string, string>) => (state.selectedAnswers = a),
+    (r: string) => (state.additionalRequest = r),
+    () => {
+      setDescriptionCalls += 1;
+    },
+  ) as () => void;
+
+  fn();
+
+  assert.equal(state.view, "home", "must navigate back to the home view");
+  assert.equal(state.project, null, "must clear the abandoned draft project, not leave it lingering in state");
+  assert.equal(state.specProvider, null, "must clear the abandoned draft's own spec-provider info, not leave it lingering for whatever gets created next");
+  assert.deepEqual(state.selectedAnswers, {}, "must clear answers tied to the abandoned draft's own open questions");
+  assert.equal(state.additionalRequest, "", "must clear the additional-request text tied to the abandoned draft");
+  assert.equal(setDescriptionCalls, 0, "must never touch description -- the typed idea text should survive going back");
+});
+
+/**
+ * New in this round: once a project was built, there was no way back to
+ * "Your projects" short of logging all the way out and back in -- the
+ * topbar's own brand logo was purely decorative, and handleBackToHome
+ * above only ever runs from the spec review screen's own Back button.
+ * Extracts the real handleGoHome function the same way the test above
+ * does, and confirms it resets the same fields handleBackToHome does
+ * PLUS the preview-only fields handleLogout's own cleanup already
+ * described (activeEntity, refineText, refineHistory,
+ * refineHistorySearch) -- the exact leftover-state bug that cleanup was
+ * written to prevent, now relevant here too since this can navigate away
+ * from a live preview screen those fields actually got used on.
+ */
+test("App's handleGoHome resets view/project/selectedAnswers/additionalRequest AND the preview-only refine/activeEntity state, but leaves description untouched", () => {
+  const appSrc = readFileSync(new URL("./App.tsx", import.meta.url), "utf8");
+  const handlerMatch = appSrc.match(/ {2}function handleGoHome\(\) \{[\s\S]*?\n {2}\}\n/);
+  assert.ok(handlerMatch, "expected to find handleGoHome in App.tsx");
+  const { code } = transformSync(handlerMatch![0], { loader: "ts" });
+
+  const state: {
+    view: string;
+    project: Project | null;
+    specProvider: string | null;
+    selectedAnswers: Record<string, string>;
+    additionalRequest: string;
+    activeEntity: string | null;
+    refineText: string;
+    refineHistory: unknown[];
+    refineHistorySearch: string;
+  } = {
+    view: "preview",
+    project: makeProject([makeEntity("Customer")]),
+    specProvider: "anthropic",
+    selectedAnswers: { "Which plan?": "Pro" },
+    additionalRequest: "also add a discount field",
+    activeEntity: "Customer",
+    refineText: "add a loyalty field",
+    refineHistory: [{ instruction: "add invoices", createdAt: "2026-01-01" }],
+    refineHistorySearch: "invoices",
+  };
+
+  let setDescriptionCalls = 0;
+  const fn = new Function(
+    "setView",
+    "setProject",
+    "setSpecProvider",
+    "setSelectedAnswers",
+    "setAdditionalRequest",
+    "setActiveEntity",
+    "setRefineText",
+    "setRefineHistory",
+    "setRefineHistorySearch",
+    "setDescription",
+    `${code}\nreturn handleGoHome;`,
+  )(
+    (v: string) => (state.view = v),
+    (p: Project | null) => (state.project = p),
+    (v: string | null) => (state.specProvider = v),
+    (a: Record<string, string>) => (state.selectedAnswers = a),
+    (r: string) => (state.additionalRequest = r),
+    (e: string | null) => (state.activeEntity = e),
+    (r: string) => (state.refineText = r),
+    (h: unknown[]) => (state.refineHistory = h),
+    (s: string) => (state.refineHistorySearch = s),
+    () => {
+      setDescriptionCalls += 1;
+    },
+  ) as () => void;
+
+  fn();
+
+  assert.equal(state.view, "home", "must navigate back to the home view from the live preview screen, not just spec review");
+  assert.equal(state.project, null, "must clear the project being left behind");
+  assert.equal(state.specProvider, null, "must clear the left-behind project's own spec-provider info");
+  assert.deepEqual(state.selectedAnswers, {}, "must clear answers tied to the left-behind project's own open questions");
+  assert.equal(state.additionalRequest, "", "must clear the additional-request text tied to the left-behind project");
+  assert.equal(state.activeEntity, null, "must clear the stale active entity tab, or the next project opened could render a blank preview pane");
+  assert.equal(state.refineText, "", "must clear the half-typed refine instruction");
+  assert.deepEqual(state.refineHistory, [], "must clear the left-behind project's own refine history, not carry it into the next project opened");
+  assert.equal(state.refineHistorySearch, "", "must clear the refine-history search box too");
+  assert.equal(setDescriptionCalls, 0, "must never touch description -- the home screen's own saved idea draft is a separate concern");
+});
+
+/**
+ * New in this round: FieldLabelEditor.tsx's own record-form rendering
+ * already marks a required field with a trailing " *" once a project is
+ * built -- but the spec-review screen's entity summary, the one place a
+ * person can still see this BEFORE committing to a build, just joined
+ * field names with no distinction at all. Matches that exact convention.
+ */
+test("formatEntityFieldSummary marks each required field with a trailing ' *', matching FieldLabelEditor's own convention", () => {
+  const fields: Field[] = [
+    { name: "name", label: "Name", type: "text", required: true },
+    { name: "notes", label: "Notes", type: "text", required: false },
+    { name: "email", type: "text", required: true }, // no label -- falls back to the raw name
+  ];
+  assert.equal(formatEntityFieldSummary(fields), "Name *, Notes, email *");
+});
+
+test("formatEntityFieldSummary adds no markers at all when no field is required", () => {
+  const fields: Field[] = [
+    { name: "notes", label: "Notes", type: "text", required: false },
+    { name: "tags", label: "Tags", type: "text", required: false },
+  ];
+  assert.equal(formatEntityFieldSummary(fields), "Notes, Tags");
+});
+
+/**
+ * New in this round: "/" opens global search (a second, even more familiar
+ * shortcut alongside Ctrl/Cmd+K -- the convention GitHub, Slack, and others
+ * already use). isEditableEventTarget is the guard that keeps it from
+ * hijacking a literal "/" typed into the refine box, a record's own text
+ * field, or an enum <select>.
+ */
+function fakeTarget(props: { tagName?: string; isContentEditable?: boolean }): EventTarget {
+  return props as unknown as EventTarget;
+}
+
+test("isEditableEventTarget recognizes INPUT/TEXTAREA/SELECT and contentEditable targets, but not a plain element or null", () => {
+  assert.equal(isEditableEventTarget(null), false, "no target at all must not count as editable");
+  assert.equal(isEditableEventTarget(fakeTarget({ tagName: "DIV" })), false, "an ordinary element must not count as editable");
+  assert.equal(isEditableEventTarget(fakeTarget({ tagName: "INPUT" })), true);
+  assert.equal(isEditableEventTarget(fakeTarget({ tagName: "TEXTAREA" })), true);
+  assert.equal(isEditableEventTarget(fakeTarget({ tagName: "SELECT" })), true);
+  assert.equal(
+    isEditableEventTarget(fakeTarget({ tagName: "DIV", isContentEditable: true })),
+    true,
+    "a contentEditable div must count as editable even though its tagName isn't a form control",
+  );
+  assert.equal(isEditableEventTarget(fakeTarget({ tagName: "input" })), false, "a lowercase tagName must not match -- real DOM elements always report it uppercase");
+});
+
+/**
+ * Static-wiring test (not DOM-driven, matching this file's own
+ * handleBackToHome/handleGoHome convention for App.tsx's internal
+ * useEffect-scoped logic): confirms the real generated keydown handler
+ * actually checks isEditableEventTarget(e.target) before opening search on
+ * "/", and that Ctrl/Cmd+K remains completely unguarded (a command-palette
+ * shortcut is expected to fire even from inside a text field, unlike a
+ * bare printable key).
+ */
+test("App's preview keydown handler opens global search on '/' only when the event target isn't an editable field", () => {
+  const appSrc = readFileSync(new URL("./App.tsx", import.meta.url), "utf8");
+  assert.match(
+    appSrc,
+    /if \(e\.key === "\/" && !isEditableEventTarget\(e\.target\)\) \{\s*e\.preventDefault\(\);\s*openPanel\("search"\);\s*return;\s*\}/,
+    "expected the '/' branch to guard on isEditableEventTarget before opening search",
+  );
+  // Ctrl/Cmd+K must still have no such guard -- it must work from anywhere.
+  const ctrlKBranch = appSrc.match(/if \(\(e\.ctrlKey \|\| e\.metaKey\) && e\.key\.toLowerCase\(\) === "k"\) \{[\s\S]*?\n {6}\}/)?.[0];
+  assert.ok(ctrlKBranch, "expected to find the Ctrl/Cmd+K branch");
+  assert.doesNotMatch(ctrlKBranch!, /isEditableEventTarget/, "Ctrl/Cmd+K must remain unguarded, unlike the new '/' shortcut");
+});
+
+/**
+ * New in this round: "?" opens a real cheat-sheet of every keyboard
+ * shortcut in the app (round 200), reusing the same isEditableEventTarget
+ * guard "/" already established (round 199) -- a bare "?" is just as
+ * ordinary a character to type into a text field as "/". Also confirms
+ * openPanel's own six-way exclusivity actually includes "shortcuts" (a
+ * seventh panel accidentally left able to stack alongside the other five
+ * would defeat the entire point of routing every open through one place,
+ * per this file's own round-68 doc comment on openPanel), and that Escape
+ * resets it too.
+ */
+test("App's preview keydown handler opens the shortcuts cheat-sheet on '?' (guarded like '/'), and openPanel/Escape both include it", () => {
+  const appSrc = readFileSync(new URL("./App.tsx", import.meta.url), "utf8");
+  assert.match(
+    appSrc,
+    /if \(e\.key === "\?" && !isEditableEventTarget\(e\.target\)\) \{\s*e\.preventDefault\(\);\s*openPanel\("shortcuts"\);\s*return;\s*\}/,
+    "expected the '?' branch to guard on isEditableEventTarget before opening the shortcuts panel",
+  );
+
+  const openPanelMatch = appSrc.match(/function openPanel\(panel: "history" \| "twin" \| "whatsapp" \| "collaborators" \| "search" \| "shortcuts"\) \{[\s\S]*?\n {2}\}\n/);
+  assert.ok(openPanelMatch, "expected openPanel's own type union to include 'shortcuts'");
+  assert.match(openPanelMatch![0], /setShowShortcuts\(panel === "shortcuts"\);/);
+
+  const escapeBranch = appSrc.match(/if \(e\.key === "Escape"\) \{[\s\S]*?\n {6}\}/)?.[0];
+  assert.ok(escapeBranch, "expected to find the Escape branch");
+  assert.match(escapeBranch!, /setShowShortcuts\(false\);/, "Escape must also close the shortcuts panel, not just the original five");
+});
