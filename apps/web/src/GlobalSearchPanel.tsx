@@ -1,10 +1,33 @@
 import { useRef, useState } from "react";
 import type { Entity, EntityRecord } from "@forge/shared";
 import { listRecords } from "./api.js";
-import { recordDisplayLabel, searchEntityRecords, type EntitySearchResult } from "./entityFormatting.js";
+import { recordDisplayLabel, searchEntityRecords, splitHighlightSegments, type EntitySearchResult } from "./entityFormatting.js";
 import { useTranslation } from "./i18n/LanguageContext.js";
 import { useDialogFocusTrap } from "./useDialogFocusTrap.js";
 import { addRecentSearch, clearRecentSearches, getRecentSearches } from "./recentSearches.js";
+
+/**
+ * Mirrors EntityPanel.tsx's own Highlighted wrapper (round 195) around the
+ * same splitHighlightSegments -- a result row here already told you a
+ * record matched, but not where within its own display label the match
+ * actually was, the same gap the per-tab search box had.
+ */
+function Highlighted({ text, query }: { text: string; query: string }) {
+  if (!query.trim()) return <>{text}</>;
+  return (
+    <>
+      {splitHighlightSegments(text, query).map((seg, i) =>
+        seg.matched ? (
+          <mark key={i} className="search-match">
+            {seg.text}
+          </mark>
+        ) : (
+          <span key={i}>{seg.text}</span>
+        ),
+      )}
+    </>
+  );
+}
 
 /**
  * A single query box that searches every entity in the project at once,
@@ -40,6 +63,12 @@ export function GlobalSearchPanel({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [searched, setSearched] = useState(false);
+  // The query text the currently-shown `results` actually matched, kept
+  // separate from the live `query` input state above: without it, typing
+  // ahead into the box after a search already ran (before hitting submit
+  // again) would immediately start highlighting the new, not-yet-searched
+  // text against results that were matched on the old query.
+  const [highlightQuery, setHighlightQuery] = useState("");
   const [selectedIndex, setSelectedIndex] = useState<number | null>(null);
   const [recentSearches, setRecentSearches] = useState<string[]>(() => getRecentSearches(projectId));
   const dialogRef = useDialogFocusTrap<HTMLDivElement>();
@@ -59,6 +88,7 @@ export function GlobalSearchPanel({
     if (!q.trim()) {
       setResults([]);
       setSearched(false);
+      setHighlightQuery("");
       setSelectedIndex(null);
       return;
     }
@@ -83,6 +113,7 @@ export function GlobalSearchPanel({
       .map((r) => r.value);
     setResults(succeeded.filter((r): r is EntitySearchResult => r !== null));
     setSearched(true);
+    setHighlightQuery(q);
     setSelectedIndex(null);
     const failures = settled.filter((r): r is PromiseRejectedResult => r.status === "rejected");
     if (failures.length > 0) {
@@ -218,7 +249,10 @@ export function GlobalSearchPanel({
                         className="link-button global-search-hit-button"
                         onClick={() => onJumpToRecord(result.entityName, record.id as number)}
                       >
-                        {recordPreview(entities.find((e) => e.name === result.entityName)!, record)}
+                        <Highlighted
+                          text={recordPreview(entities.find((e) => e.name === result.entityName)!, record)}
+                          query={highlightQuery}
+                        />
                       </button>
                     </li>
                   ))}

@@ -51,6 +51,7 @@ test("GlobalSearchPanel's runSearch shows results from every entity that succeed
     "setError",
     "setResults",
     "setSearched",
+    "setHighlightQuery",
     "setSelectedIndex",
     "searchRequestId",
     `${code}\nreturn runSearch;`,
@@ -70,6 +71,7 @@ test("GlobalSearchPanel's runSearch shows results from every entity that succeed
     (results: unknown[]) => {
       capturedResults = results;
     },
+    () => {},
     () => {},
     () => {},
     { current: 0 },
@@ -107,6 +109,7 @@ test("GlobalSearchPanel's runSearch still surfaces the raw error message when ev
     "setError",
     "setResults",
     "setSearched",
+    "setHighlightQuery",
     "setSelectedIndex",
     "searchRequestId",
     `${code}\nreturn runSearch;`,
@@ -122,6 +125,7 @@ test("GlobalSearchPanel's runSearch still surfaces the raw error message when ev
     (msg: string) => {
       capturedError = msg;
     },
+    () => {},
     () => {},
     () => {},
     () => {},
@@ -178,6 +182,7 @@ test("GlobalSearchPanel's runSearch ignores a stale, still-in-flight search's re
     "setError",
     "setResults",
     "setSearched",
+    "setHighlightQuery",
     "setSelectedIndex",
     "searchRequestId",
     `${code}\nreturn runSearch;`,
@@ -199,6 +204,7 @@ test("GlobalSearchPanel's runSearch ignores a stale, still-in-flight search's re
     (results: unknown[]) => {
       capturedResultsByCall.push(results);
     },
+    () => {},
     () => {},
     () => {},
     searchRequestId,
@@ -416,6 +422,45 @@ test("GlobalSearchPanel's individual result rows call onJumpToRecord with that r
         [SEARCH_CUSTOMER_ENTITY.name],
         "the group header's own 'jump to' button must still fire onJumpToEntity, unchanged",
       );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
+ * New in this round: mirrors round 195's fix to the per-tab search box --
+ * a result row already told you a record matched, but not where within
+ * its own label the match actually was. Confirms a real submitted search
+ * wraps the matched substring in a real <mark class="search-match">
+ * within the result row's own label, and that typing ahead (without
+ * resubmitting) does NOT retroactively highlight the new, not-yet-
+ * searched text against the still-displayed old results -- the
+ * highlighted query must track what was actually searched, not the live
+ * input.
+ */
+test("GlobalSearchPanel highlights the matched text within each result row's own label, tracking the actually-submitted query", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = mockGlobalSearchFetch() as typeof fetch;
+    try {
+      renderGlobalSearchPanel(() => {});
+
+      const input = document.querySelector(".global-search-input") as HTMLInputElement;
+      fireEvent.change(input, { target: { value: "widget" } });
+      const form = document.querySelector("form.global-search-form")!;
+      fireEvent.submit(form);
+      await waitForCondition(() => document.querySelectorAll(".global-search-hit-button").length === 2);
+
+      let marks = document.querySelectorAll(".global-search-hit-button mark.search-match");
+      assert.equal(marks.length, 2, "both matching rows must have their own real highlighted substring");
+      assert.equal(marks[0].textContent, "widget", "the highlighted text must be exactly the matched substring");
+
+      // Typing ahead without resubmitting must not change what's highlighted.
+      fireEvent.change(input, { target: { value: "something else entirely" } });
+      marks = document.querySelectorAll(".global-search-hit-button mark.search-match");
+      assert.equal(marks.length, 2, "the still-displayed old results must keep highlighting the query they were actually searched with");
+      assert.equal(marks[0].textContent, "widget");
     } finally {
       globalThis.fetch = originalFetch;
     }
