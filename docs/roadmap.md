@@ -10368,6 +10368,68 @@ not a single "make it perfect" claim.
       `@forge/db` 80 unchanged) and `npm run build --workspace=@forge/web`
       clean.
 
+- [x] **Round 201 — the exported standalone app's entity table gets real drag-to-resize columns, matching the live preview.**
+      Diversification: rounds 199-200 both touched App.tsx's own keyboard
+      surface (a "/" shortcut, then a "?" cheat-sheet for it). This round
+      picks up the last remaining open port candidate the trigger's own
+      notes had flagged since round 198: drag-to-resize columns (round 185
+      in the live preview), leaving only drag-and-drop Kanban (round 186)
+      as the one still-unported live feature.
+
+      In `apps/api/src/codegen.ts`'s generated `EntityView`: added a
+      column-widths store (`getColumnWidths`/`setColumnWidth`, backed by a
+      `forge_column_widths` localStorage key) mirroring the exact
+      single-tenant, per-entity scoping the existing hidden-columns store
+      (round 148) already established -- this app has no project id to
+      scope by, unlike the live preview's own `columnWidths.ts`. Added an
+      exported `computeResizedWidth(startWidth, deltaX)` identical to the
+      live app's own clamp logic, minus the RTL direction parameter: the
+      exported app has no lang/dir switching at all (round 200's own
+      note), so there's no "far edge flips sides" case to handle. Wired up
+      the same mousemove/mouseup drag mechanics the live preview uses --
+      real listeners attached only while a drag is actually in progress,
+      width persisted to localStorage on mouseup rather than on every
+      mousemove -- plus a `.column-resize-handle` on each header and a
+      `table-layout: fixed` switch (`.entity-table-resized`) once any
+      column has a real width, so an explicit width is actually respected
+      rather than treated as a mere auto-layout hint.
+
+      New tests in `codegen.test.ts`: a pure-function test executing the
+      real generated `computeResizedWidth` (extracted together with its
+      `MIN_COLUMN_WIDTH`/`MAX_COLUMN_WIDTH` constants) proving the clamp
+      in both directions; and a combined wiring + persistence test
+      asserting the literal drag-effect control-flow block, the resize
+      handle's own `onMouseDown` wiring, the entity-switch reset effect's
+      own reload of the new entity's widths (the exact bug class round 198
+      shipped, called out explicitly in this test's own comment), and a
+      real `getColumnWidths`/`setColumnWidth` round trip against a fake
+      localStorage proving per-entity isolation.
+
+      Verified with the deliberate-break-and-restore discipline twice:
+      first, removed the min/max clamp from `computeResizedWidth` entirely
+      -- caught by the pure-function test; restored, `diff` byte-identical.
+      Second, removed the entity-switch effect's own `setColumnWidths`
+      reload line -- caught by the wiring test; restored, `diff`
+      byte-identical again.
+
+      **And** a real Playwright pass against a genuinely built exported
+      app (the same restaurant-delivery project setup rounds 198/199 used):
+      created a real record so the table actually rendered (round 194's
+      own empty-table lesson), dragged a real column header's resize
+      handle by +100px and confirmed the column widened by almost exactly
+      that amount, confirmed the table gained `table-layout: fixed`,
+      reloaded the page for real and confirmed the resized width survived,
+      then read the real `forge_column_widths` localStorage key directly
+      and confirmed Order's own resized width was present while Courier
+      (a different entity, with 0 seed records so its own table never even
+      renders) had no entry at all -- proving the per-entity scoping holds
+      in the real persisted data, not just in source.
+
+      Full suite green (741 tests, up from 739 -- `@forge/api` 209 → 211;
+      `@forge/web` 357, `@forge/shared` 11, `@forge/spec-engine` 82,
+      `@forge/db` 80 unchanged) and `npm run build --workspace=@forge/web`
+      clean.
+
 ## Phase 3
 
 - Self-healing: production observability, automatic diagnosis and patch
