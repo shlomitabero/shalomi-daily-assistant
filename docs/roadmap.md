@@ -10430,6 +10430,60 @@ not a single "make it perfect" claim.
       `@forge/db` 80 unchanged) and `npm run build --workspace=@forge/web`
       clean.
 
+- [x] **Round 202 — the exported standalone app's Kanban board gets real drag-and-drop, matching the live preview.**
+      Diversification: rounds 198/199-200/201 each closed one of the three
+      exported-codegen "port a live-preview-only feature" candidates the
+      trigger's own notes had been tracking since round 190 (multi-column
+      sort, keyboard shortcuts, drag-to-resize columns). This round closes
+      the last one: drag-and-drop Kanban (round 186 in the live preview).
+      That pool is now fully exhausted -- round 203 needs a genuinely new
+      class of candidate.
+
+      In `apps/api/src/codegen.ts`'s generated `EntityView`: added a
+      `dragOverColumn` state; made `BoardCard` a real native drag source
+      (`draggable` + `onDragStart` writing the record's own id into
+      `dataTransfer`); added a `handleCardDrop(e, fieldName, value)`
+      function that reads the id back out, guards against a real no-op
+      (dropping a card back onto the column it's already in), and
+      otherwise calls the exact same `handleMove` the card's own
+      move-to-column `<select>` already used -- so a drag and a dropdown
+      change both end up issuing the identical real PATCH + refresh; and
+      wired each board column div as a real drop target
+      (`onDragOver`/`onDragLeave`/`onDrop`), highlighted only while
+      actually dragged over via a new `.board-column-drag-over` CSS class.
+      Mirrors the live preview's own `EntityPanel.tsx` implementation
+      exactly.
+
+      New test in `codegen.test.ts` asserting the `dragOverColumn` state,
+      `BoardCard`'s exact draggable JSX, `handleCardDrop`'s extracted
+      function body (no-op guard before ever calling `handleMove`), the
+      column's drag-over/drop wiring, and the CSS.
+
+      Verified with the deliberate-break-and-restore discipline twice:
+      first, removed `handleCardDrop`'s own no-op guard line -- caught by
+      the new test; restored, `diff` byte-identical. Second, removed the
+      board column's own `onDrop` wiring -- caught by the same test;
+      restored, `diff` byte-identical again.
+
+      **And** a real Playwright pass against a genuinely built, installed,
+      and running exported app -- which surfaced a genuinely new finding
+      this round: the export ships with **no seed data at all** (it's a
+      separate standalone app with its own empty data store, unlike the
+      live preview which stays connected to Forge AI's own seeded
+      project). Adjusted the verification accordingly: created a real
+      Order record via the real form first, switched to board view,
+      dragged its card from the Pending column to the Shipped column,
+      confirmed the move both visually (card counts per column) and via
+      the exported app's own real `/api/Order` endpoint (not the original
+      Forge AI API -- the export has no connection back to it), confirmed
+      it survived a real page reload, and confirmed dropping the card back
+      onto its own column was a real no-op.
+
+      Full suite green (742 tests, up from 741 -- `@forge/api` 211 → 212;
+      `@forge/web` 357, `@forge/shared` 11, `@forge/spec-engine` 82,
+      `@forge/db` 80 unchanged) and `npm run build --workspace=@forge/web`
+      clean.
+
 ## Phase 3
 
 - Self-healing: production observability, automatic diagnosis and patch
