@@ -1866,3 +1866,40 @@ test("the exported EntityView's table headers are drag-resizable, persisting per
   assert.deepEqual(getColumnWidths("Order"), { customerName: 220 }, "must round-trip through the real localStorage-backed store");
   assert.deepEqual(getColumnWidths("Courier"), {}, "a different entity's own widths must not leak across entities");
 });
+
+/**
+ * New in this round: the exported standalone app's Kanban board could only
+ * move a card between columns via its own <select>, unlike the live Forge
+ * AI preview (round 186's own native HTML5 drag-and-drop). Ports the
+ * identical drag mechanics -- draggable cards, drop targets that highlight
+ * while dragged over, and a real no-op guard for dropping a card back onto
+ * its own column.
+ */
+test("the exported EntityView's Kanban board cards are drag-and-drop-able onto another column, reusing the same handleMove the dropdown already calls", () => {
+  const files = generateExportFiles(project);
+  const entityViewJsx = files.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+
+  assert.match(entityViewJsx, /const \[dragOverColumn, setDragOverColumn\] = useState\(null\);/);
+  // BoardCard itself must be a real native drag source, not just visually styled.
+  assert.match(
+    entityViewJsx,
+    /<div className="board-card" draggable onDragStart=\{\(e\) => e\.dataTransfer\.setData\("text\/plain", String\(record\.id\)\)\}>/,
+  );
+  // handleCardDrop must guard against a real no-op (dropping a card back onto its own column) before ever calling handleMove.
+  const dropSrc = entityViewJsx.match(/function handleCardDrop\(e, fieldName, value\) \{[\s\S]*?\n {2}\}\n/)?.[0];
+  assert.ok(dropSrc, "expected to find handleCardDrop in generated output");
+  assert.match(dropSrc!, /const record = records\.find\(\(r\) => r\.id === id\);/);
+  assert.match(dropSrc!, /if \(record && String\(record\[fieldName\] \?\? ""\) === value\) return;/);
+  assert.match(dropSrc!, /void handleMove\(id, fieldName, value\);/);
+  // The column itself must be a real drop target, highlighted only while actually dragged over.
+  assert.match(entityViewJsx, /onDragOver=\{\(e\) => \{\s*e\.preventDefault\(\);\s*setDragOverColumn\(column\.value\);\s*\}\}/);
+  assert.match(entityViewJsx, /onDragLeave=\{\(\) => setDragOverColumn\(\(prev\) => \(prev === column\.value \? null : prev\)\)\}/);
+  assert.match(entityViewJsx, /onDrop=\{\(e\) => handleCardDrop\(e, boardField\.name, column\.value\)\}/);
+  assert.match(
+    entityViewJsx,
+    /className=\{dragOverColumn === column\.value \? "board-column board-column-drag-over" : "board-column"\}/,
+  );
+
+  const stylesCss = files.find((f) => f.path === "web/src/styles.css")!.content;
+  assert.match(stylesCss, /\.board-column-drag-over/);
+});

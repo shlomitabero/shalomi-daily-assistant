@@ -1321,7 +1321,7 @@ function CalendarView({ entity, dateField, records, month, onPrevMonth, onNextMo
 function BoardCard({ entity, boardField, record, relatedRecords, onMove, onEdit, onDuplicate, onDelete }) {
   const otherFields = entity.fields.filter((f) => f.name !== boardField.name);
   return (
-    <div className="board-card">
+    <div className="board-card" draggable onDragStart={(e) => e.dataTransfer.setData("text/plain", String(record.id))}>
       {otherFields.map((f) => (
         <div key={f.name} className="board-card-field">
           <span className="muted small">{f.label}</span>
@@ -1424,6 +1424,7 @@ export function EntityView({ entity }) {
   const [columnsMenuOpen, setColumnsMenuOpen] = useState(false);
   const [columnWidths, setColumnWidths] = useState(() => getColumnWidths(entity.name));
   const [resizingField, setResizingField] = useState(null);
+  const [dragOverColumn, setDragOverColumn] = useState(null);
   // Bumped once per refresh() call, so a stale refresh whose listRecords
   // round trip just happens to take longer than a newer one's (triggered
   // by an overlapping action, e.g. duplicating two rows back to back)
@@ -1740,6 +1741,26 @@ export function EntityView({ entity }) {
     }
   }
 
+  // Real native HTML5 drag-and-drop for the board view (draggable +
+  // dragstart/dragover/drop), not a mouse-event simulation like the
+  // column-resize handle needed -- this is exactly the browser's own
+  // built-in drag contract. Reuses the same handleMove the card's own
+  // move-to-column <select> already calls, so a drag and a dropdown
+  // change both end up doing the identical real PATCH + refresh. Mirrors
+  // the live preview's own EntityPanel.tsx (round 186).
+  function handleCardDrop(e, fieldName, value) {
+    e.preventDefault();
+    setDragOverColumn(null);
+    const id = Number(e.dataTransfer.getData("text/plain"));
+    if (Number.isNaN(id)) return;
+    const record = records.find((r) => r.id === id);
+    // Dropping a card back onto the column it's already in is a real
+    // no-op -- nothing actually changed, so there's nothing worth a PATCH
+    // request for.
+    if (record && String(record[fieldName] ?? "") === value) return;
+    void handleMove(id, fieldName, value);
+  }
+
   function handleExportCsv() {
     const csv = recordsToCsv(entity.fields, visibleRecords, relatedRecords);
     const blob = new Blob(["\\uFEFF" + csv], { type: "text/csv;charset=utf-8;" });
@@ -1935,7 +1956,16 @@ export function EntityView({ entity }) {
           ) : viewMode === "board" && boardField ? (
             <div className="board-scroll">
               {groupByField(visibleRecords, boardField).map((column) => (
-                <div className="board-column" key={column.value}>
+                <div
+                  className={dragOverColumn === column.value ? "board-column board-column-drag-over" : "board-column"}
+                  key={column.value}
+                  onDragOver={(e) => {
+                    e.preventDefault();
+                    setDragOverColumn(column.value);
+                  }}
+                  onDragLeave={() => setDragOverColumn((prev) => (prev === column.value ? null : prev))}
+                  onDrop={(e) => handleCardDrop(e, boardField.name, column.value)}
+                >
                   <div className="board-column-header">
                     <span className={\`badge badge-\${badgeTone(column.value)}\`}>{column.label}</span>
                     <span className="muted small">{column.records.length}</span>
@@ -2483,6 +2513,7 @@ th, td { text-align: start; padding: 8px 10px; border-bottom: 1px solid var(--bo
 .view-toggle-btn-active { background: var(--accent); color: var(--accent-contrast); }
 .board-scroll { display: flex; gap: 14px; overflow-x: auto; padding-bottom: 8px; }
 .board-column { flex: 0 0 240px; background: var(--surface-muted); border: 1px solid var(--border-soft); border-radius: 10px; padding: 12px; display: flex; flex-direction: column; gap: 10px; }
+.board-column-drag-over { background: var(--accent-soft); border-color: var(--accent); }
 .board-column-header { display: flex; align-items: center; justify-content: space-between; padding-bottom: 8px; border-bottom: 1px solid var(--border-soft); }
 .board-card { background: var(--surface); border: 1px solid var(--border-soft); border-radius: 8px; padding: 10px 12px; box-shadow: var(--shadow-sm); display: flex; flex-direction: column; gap: 6px; }
 .board-card-field { display: flex; flex-direction: column; gap: 1px; font-size: 13.5px; }
