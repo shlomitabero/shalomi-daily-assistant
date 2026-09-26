@@ -9475,6 +9475,69 @@ not a single "make it perfect" claim.
       `@forge/shared` 11, `@forge/spec-engine` 82, `@forge/db` 80,
       `@forge/api` 201 unchanged) and typecheck/build clean.
 
+- [x] **Round 189 — Time Machine can compare any two checkpoints, not just a checkpoint vs the live current state.**
+      Diversification: this round's own trigger note flagged that
+      WhatsAppPanel.tsx (read in full, round 188) had no new gap, and that
+      keyboard row navigation (188) had just closed out its own suggested
+      direction. Its other suggested candidate -- Time Machine's own diff
+      toggle -- turned out to have a real, narrow, one-sided gap:
+      `HistoryPanel.tsx` always called `computeCheckpointDiff(currentSpec,
+      checkpoint.spec)`, so "What would change?" could only ever answer
+      "what would restoring THIS checkpoint remove from the live app right
+      now" -- there was no way to ask "what changed between refine #1 and
+      refine #3", only ever "... vs current".
+
+      `computeCheckpointDiff` itself was already fully generic (it takes
+      two plain `ProductSpec`s, never anything "current"-specific), so the
+      only real gap was letting the user pick which spec plays the
+      baseline role. Added `resolveCompareSpec(checkpoints, compareTargetId,
+      currentSpec)` (null keeps the exact original behavior; any other id
+      swaps in that checkpoint's own spec, falling back to currentSpec if
+      the id no longer matches anything) and `formatCompareTarget(...)` (the
+      header line naming which baseline the shown diff is actually
+      against) in `checkpointDiff.ts`. `HistoryPanel.tsx` gained a
+      `compareTargetId` state (reset to null whenever a different row's
+      diff toggle is clicked, open or close) and a "Compare with:" `<select>`
+      inside each expanded row, listing every other checkpoint plus
+      "Current app state" as the default option.
+
+      6 new pure-function tests in `checkpointDiff.test.ts`
+      (`resolveCompareSpec`'s null/real-id/stale-id cases, `formatCompareTarget`'s
+      two cases, and a direct test proving `computeCheckpointDiff` handles
+      two arbitrary non-current specs correctly in both directions) and 1
+      new DOM test in `HistoryPanel.test.ts` driving the real dropdown
+      through `fireEvent.change`, confirming the diff content genuinely
+      changes when the compare target changes (an entity only relevant to
+      the old "vs current" baseline disappears; an entity only relevant to
+      the newly-chosen baseline appears).
+
+      Verified with the deliberate-break-and-restore discipline: broke
+      `resolveCompareSpec` to always return `currentSpec` regardless of
+      `compareTargetId` -- caught exactly by both the new unit test and
+      the new DOM test (every other test still passed, confirming precise
+      fault isolation); restored from a pre-break backup, `diff`
+      byte-identical.
+
+      **And** a real Playwright pass against real running dev servers: a
+      real project, a real build, and two real sequential refines ("add
+      invoice tracking", then "add support ticket tracking"). Along the
+      way, discovered a genuine backend behavior worth recording: refines
+      are NOT cumulative -- each one regenerates the spec from `project.description
+      + one instruction` only, not from the previous refine's own spec, so
+      the second refine's checkpoint didn't carry the first refine's new
+      entity forward at all. Read real checkpoint data from the API first
+      to get this right rather than assuming monotonic accumulation, then
+      expanded the initial build's own row in the real UI, confirmed the
+      default (vs current) diff named the right entity and not the wrong
+      one, switched the real "Compare with" dropdown to the first refine's
+      checkpoint, and confirmed the diff content flipped to name the
+      correct entity for that specific pair while the previously-shown one
+      disappeared.
+
+      Full suite green (713 tests, up from 707 -- `@forge/web` 333 → 339;
+      `@forge/shared` 11, `@forge/spec-engine` 82, `@forge/db` 80,
+      `@forge/api` 201 unchanged) and typecheck/build clean.
+
 ## Phase 3
 
 - Self-healing: production observability, automatic diagnosis and patch
