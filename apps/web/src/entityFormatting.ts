@@ -691,3 +691,19 @@ export function formatDateForInput(date: Date): string {
   const day = String(date.getDate()).padStart(2, "0");
   return `${year}-${month}-${day}`;
 }
+
+/**
+ * Reinserts an undone delete's own record at its original position rather
+ * than appending it at the end -- EntityPanel's own delete flow removes a
+ * record from view optimistically the instant Delete is confirmed (real
+ * deletion is delayed behind a short undo window, see EntityPanel.tsx's
+ * handleDelete), so clicking Undo needs to put it back exactly where it
+ * was, not wherever the array happens to end. The index is clamped since
+ * other records may have been created, duplicated, or (for a second,
+ * unrelated delete) removed in the meantime, shrinking or growing the
+ * array since the original index was captured.
+ */
+export function restoreRecordAt(records: EntityRecord[], record: EntityRecord, index: number): EntityRecord[] {
+  const clampedIndex = Math.max(0, Math.min(index, records.length));
+  return [...records.slice(0, clampedIndex), record, ...records.slice(clampedIndex)];
+}

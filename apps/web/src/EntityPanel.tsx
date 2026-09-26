@@ -24,6 +24,7 @@ import {
   recordDisplayLabel,
   relationDisplayLabel,
   recordsToCsv,
+  restoreRecordAt,
   sortRecordsMulti,
   type RelatedRecordsByEntity,
   type SortKey,
@@ -32,6 +33,22 @@ import { useTranslation } from "./i18n/LanguageContext.js";
 import type { Lang } from "./i18n/language.js";
 
 type ViewMode = "table" | "board" | "calendar";
+
+/**
+ * How long a deleted record stays undoable before the delete actually
+ * reaches the server -- long enough to notice and click Undo, short
+ * enough that leaving it pending doesn't feel like the delete silently
+ * didn't happen.
+ */
+const UNDO_WINDOW_MS = 5000;
+
+interface PendingDelete {
+  id: number;
+  record: EntityRecord;
+  index: number;
+  label: string;
+  timeoutId: ReturnType<typeof setTimeout>;
+}
 
 function emptyForm(entity: Entity): Record<string, unknown> {
   const form: Record<string, unknown> = {};
@@ -404,6 +421,8 @@ export function EntityPanel({
 }) {
   const { t, lang } = useTranslation();
   const [records, setRecords] = useState<EntityRecord[]>([]);
+  const [pendingDelete, setPendingDelete] = useState<PendingDelete | null>(null);
+  const pendingDeleteRef = useRef<PendingDelete | null>(null);
   const [form, setForm] = useState<Record<string, unknown>>(() => emptyForm(entity));
   const [editingId, setEditingId] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -643,23 +662,85 @@ export function EntityPanel({
     formRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
   }
 
+  // Fires the real DELETE request for a record the undo window has already
+  // closed on (either the timer ran out, or a newer delete pre-empted it) --
+  // it was already removed from view the moment Delete was confirmed, so
+  // there's nothing left to roll the screen back to if this itself fails.
+  function commitPendingDelete(pending: PendingDelete) {
+    void deleteRecord(projectId, entity.name, pending.id).catch(() => {});
+  }
+
+  // Mirrors pendingDelete into a ref so the unmount-flush effect below (and
+  // a second delete arriving while one is still pending) can read the
+  // latest pending delete without depending on a stale render's closure.
+  useEffect(() => {
+    pendingDeleteRef.current = pendingDelete;
+  }, [pendingDelete]);
+
+  // Switching entity tabs remounts this component fresh (App.tsx keys
+  // EntityPanel by entity.name), so leaving one open mid-undo-window would
+  // otherwise silently never actually delete the record. Committing it for
+  // real on unmount instead makes "navigate away" behave like the undo
+  // window simply ran out early, rather than quietly reverting the delete.
+  useEffect(() => {
+    return () => {
+      const pending = pendingDeleteRef.current;
+      if (pending) {
+        clearTimeout(pending.timeoutId);
+        commitPendingDelete(pending);
+      }
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  /**
+   * Deleting a record used to call the real DELETE endpoint the instant the
+   * confirm dialog closed -- irreversible the moment you clicked, with the
+   * confirm dialog (round 73) as the only safety net. Removes it from view
+   * immediately (so the table still feels instant), but delays the actual
+   * API call behind a real UNDO_WINDOW_MS window, showing a toast with an
+   * Undo button. Only one delete is ever pending at a time: starting a new
+   * one commits any still-pending one for real first, rather than letting
+   * two undo windows overlap.
+   */
   async function handleDelete(id: number) {
-    const record = records.find((r) => (r.id as number) === id);
-    const label = record ? recordDisplayLabel(entity, record) : `#${id}`;
+    const index = records.findIndex((r) => (r.id as number) === id);
+    if (index === -1) return;
+    const record = records[index];
+    const label = recordDisplayLabel(entity, record);
     if (!window.confirm(t("entity.confirmDelete", { label }))) return;
-    setError(null);
-    try {
-      await deleteRecord(projectId, entity.name, id);
-      setSelectedIds((prev) => {
-        if (!prev.has(id)) return prev;
-        const next = new Set(prev);
-        next.delete(id);
-        return next;
-      });
-      await refresh();
-    } catch (err) {
-      setError((err as Error).message);
+
+    if (pendingDeleteRef.current) {
+      clearTimeout(pendingDeleteRef.current.timeoutId);
+      commitPendingDelete(pendingDeleteRef.current);
     }
+
+    setError(null);
+    setRecords((prev) => prev.filter((r) => (r.id as number) !== id));
+    setSelectedIds((prev) => {
+      if (!prev.has(id)) return prev;
+      const next = new Set(prev);
+      next.delete(id);
+      return next;
+    });
+
+    const timeoutId = setTimeout(() => {
+      setPendingDelete((current) => {
+        if (current?.id !== id) return current;
+        commitPendingDelete(current);
+        return null;
+      });
+    }, UNDO_WINDOW_MS);
+
+    setPendingDelete({ id, record, index, label, timeoutId });
+  }
+
+  function handleUndoDelete() {
+    const pending = pendingDeleteRef.current;
+    if (!pending) return;
+    clearTimeout(pending.timeoutId);
+    setRecords((prev) => restoreRecordAt(prev, pending.record, pending.index));
+    setPendingDelete(null);
   }
 
   // Copies a record's own field values into a real new record -- a quick
@@ -877,6 +958,15 @@ export function EntityPanel({
       {error && (
         <p className="error" role="status">
           {error}
+        </p>
+      )}
+
+      {pendingDelete && (
+        <p className="entity-undo-toast" role="status">
+          {t("entity.delete.undoToast", { label: pendingDelete.label })}
+          <button type="button" className="link-button" onClick={handleUndoDelete}>
+            {t("entity.delete.undo")}
+          </button>
         </p>
       )}
 

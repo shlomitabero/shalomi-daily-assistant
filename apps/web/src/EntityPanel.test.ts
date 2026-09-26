@@ -5,7 +5,7 @@ import { test } from "node:test";
 import { transformSync } from "esbuild";
 import { JSDOM } from "jsdom";
 import React from "react";
-import { cleanup, fireEvent, render } from "@testing-library/react";
+import { act, cleanup, fireEvent, render } from "@testing-library/react";
 import type { Entity, EntityRecord } from "@forge/shared";
 import { EntityPanel } from "./EntityPanel.js";
 import { LanguageProvider } from "./i18n/LanguageContext.js";
@@ -395,7 +395,7 @@ const DEAL_ENTITY: Entity = {
  * in-memory record store, so a PATCH genuinely changes what the next GET
  * returns -- the same round trip the real API gives the component.
  */
-function mockRecordsFetch(store: EntityRecord[]) {
+function mockRecordsFetch(store: EntityRecord[], onDelete?: (id: number) => void) {
   return async (input: string, init?: RequestInit): Promise<Response> => {
     const method = init?.method ?? "GET";
     if (method === "GET" && input === "/api/projects/proj1/entities/Deal") {
@@ -408,6 +408,11 @@ function mockRecordsFetch(store: EntityRecord[]) {
       assert.ok(record, `mock PATCH target record ${id} must exist`);
       Object.assign(record!, JSON.parse(init!.body as string));
       return new Response(JSON.stringify({ record }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    const deleteMatch = /^\/api\/projects\/proj1\/entities\/Deal\/(\d+)$/.exec(input);
+    if (method === "DELETE" && deleteMatch) {
+      onDelete?.(Number(deleteMatch[1]));
+      return new Response(null, { status: 204 });
     }
     throw new Error(`mockRecordsFetch: unexpected request ${method} ${input}`);
   };
@@ -1438,6 +1443,131 @@ test("EntityPanel's column headers support a real secondary sort key via shift+c
       );
     } finally {
       globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
+ * New in this round: deleting a record used to call the real DELETE
+ * endpoint the instant the confirm dialog closed, with no way back except
+ * the confirm dialog itself (round 73). Now the row disappears from view
+ * immediately, but the actual API call is delayed behind an undo window --
+ * clicking the new Undo button in that window must restore the row and
+ * genuinely skip the DELETE call entirely, not just visually.
+ */
+test("EntityPanel's delete removes the row immediately and shows an Undo toast, and clicking Undo restores it without ever calling the real delete API", async (t) => {
+  await withJsdom(async () => {
+    const store: EntityRecord[] = [{ id: 1, name: "Acme Corp", status: "new" }];
+    const deletedIds: number[] = [];
+    const originalFetch = globalThis.fetch;
+    const originalConfirm = globalThis.window.confirm;
+    globalThis.fetch = mockRecordsFetch(store, (id) => deletedIds.push(id)) as typeof fetch;
+    globalThis.window.confirm = (() => true) as typeof window.confirm;
+    try {
+      renderEntityPanel();
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 1);
+
+      // Enabled only now, AFTER the initial render/fetch has already
+      // settled -- React's own jsdom-fallback scheduler uses setTimeout
+      // internally, so mocking it any earlier stalls the very first
+      // render before this test gets anywhere near its own delete flow.
+      t.mock.timers.enable({ apis: ["setTimeout"] });
+
+      fireEvent.click(document.querySelector(".danger") as HTMLButtonElement);
+
+      assert.equal(document.querySelectorAll("table tbody tr").length, 0, "the row must disappear from view immediately");
+      assert.equal(deletedIds.length, 0, "the real DELETE request must NOT have fired yet -- it's still inside the undo window");
+
+      const toast = document.querySelector(".entity-undo-toast");
+      assert.ok(toast, "expected an Undo toast to appear once a delete is pending");
+      assert.match(toast!.textContent ?? "", /Acme Corp/, "the toast must name the actual record that was deleted");
+
+      fireEvent.click(toast!.querySelector("button") as HTMLButtonElement);
+
+      assert.equal(document.querySelectorAll("table tbody tr").length, 1, "clicking Undo must restore the row");
+      assert.equal(document.querySelector(".entity-undo-toast"), null, "the toast must disappear once undone");
+
+      act(() => {
+        t.mock.timers.tick(10_000);
+      });
+      assert.equal(deletedIds.length, 0, "even long after the undo window would have elapsed, undoing must have genuinely cancelled the real delete");
+    } finally {
+      t.mock.timers.reset();
+      globalThis.fetch = originalFetch;
+      globalThis.window.confirm = originalConfirm;
+    }
+  });
+});
+
+/**
+ * The other half of the same feature: NOT clicking Undo must commit the
+ * real delete once the undo window actually elapses -- the whole point is
+ * a temporary reprieve, not silently keeping deleted records around
+ * forever if nobody happens to click Undo.
+ */
+test("EntityPanel's pending delete actually calls the real delete API once the undo window elapses without Undo being clicked", async (t) => {
+  await withJsdom(async () => {
+    const store: EntityRecord[] = [{ id: 1, name: "Acme Corp", status: "new" }];
+    const deletedIds: number[] = [];
+    const originalFetch = globalThis.fetch;
+    const originalConfirm = globalThis.window.confirm;
+    globalThis.fetch = mockRecordsFetch(store, (id) => deletedIds.push(id)) as typeof fetch;
+    globalThis.window.confirm = (() => true) as typeof window.confirm;
+    try {
+      renderEntityPanel();
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 1);
+
+      t.mock.timers.enable({ apis: ["setTimeout"] });
+
+      fireEvent.click(document.querySelector(".danger") as HTMLButtonElement);
+      assert.equal(deletedIds.length, 0, "must not have deleted for real yet");
+
+      act(() => {
+        t.mock.timers.tick(5000);
+      });
+      await new Promise((resolve) => setImmediate(resolve));
+
+      assert.deepEqual(deletedIds, [1], "once the undo window elapses with no Undo click, the real delete must actually fire");
+      assert.equal(document.querySelector(".entity-undo-toast"), null, "the toast must clear itself once the delete actually commits");
+    } finally {
+      t.mock.timers.reset();
+      globalThis.fetch = originalFetch;
+      globalThis.window.confirm = originalConfirm;
+    }
+  });
+});
+
+/**
+ * Switching entity tabs remounts EntityPanel fresh (App.tsx keys it by
+ * entity.name), so leaving one open with a delete still inside its undo
+ * window and then navigating away must not silently keep the "deleted"
+ * record alive forever on the server -- the pending delete must commit for
+ * real the moment the component unmounts, exactly as if the undo window
+ * had simply run out early.
+ */
+test("EntityPanel commits a still-pending delete for real when the component unmounts before the undo window elapses", async () => {
+  await withJsdom(async () => {
+    const store: EntityRecord[] = [{ id: 1, name: "Acme Corp", status: "new" }];
+    const deletedIds: number[] = [];
+    const originalFetch = globalThis.fetch;
+    const originalConfirm = globalThis.window.confirm;
+    globalThis.fetch = mockRecordsFetch(store, (id) => deletedIds.push(id)) as typeof fetch;
+    globalThis.window.confirm = (() => true) as typeof window.confirm;
+    try {
+      const view = renderEntityPanel();
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 1);
+
+      fireEvent.click(document.querySelector(".danger") as HTMLButtonElement);
+      await new Promise((resolve) => setImmediate(resolve));
+      assert.equal(deletedIds.length, 0, "must still be inside the undo window, not yet deleted for real");
+
+      view.unmount();
+      await new Promise((resolve) => setImmediate(resolve));
+
+      assert.deepEqual(deletedIds, [1], "unmounting mid-undo-window must commit the pending delete for real, not silently drop it");
+    } finally {
+      globalThis.fetch = originalFetch;
+      globalThis.window.confirm = originalConfirm;
     }
   });
 });

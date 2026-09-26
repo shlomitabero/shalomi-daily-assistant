@@ -21,6 +21,7 @@ import {
   pickDisplayField,
   recordDisplayLabel,
   recordsToCsv,
+  restoreRecordAt,
   searchEntityRecords,
   sortRecords,
   sortRecordsMulti,
@@ -795,4 +796,44 @@ test("formatDateForInput round-trips with the exact grid-cell Date construction 
   // above describes fixing for the read direction.
   const cell = new Date(2026, 2, 1); // March 1st, local midnight
   assert.equal(formatDateForInput(cell), "2026-03-01");
+});
+
+/**
+ * New in this round: deleting a record now removes it from view
+ * optimistically and delays the real API call behind a short undo window
+ * (see EntityPanel.tsx's handleDelete) -- clicking Undo needs to put the
+ * record back exactly where it was, not appended at the end.
+ */
+test("restoreRecordAt reinserts a record at its original index, not at the end", () => {
+  const records = [{ id: 1 }, { id: 2 }, { id: 4 }];
+  const restored = restoreRecordAt(records, { id: 3 }, 2);
+  assert.deepEqual(
+    restored.map((r) => r.id),
+    [1, 2, 3, 4],
+  );
+});
+
+test("restoreRecordAt clamps an out-of-range index to the end of the array, instead of throwing or losing the record", () => {
+  const records = [{ id: 1 }, { id: 2 }];
+  const restored = restoreRecordAt(records, { id: 99 }, 50);
+  assert.deepEqual(
+    restored.map((r) => r.id),
+    [1, 2, 99],
+  );
+});
+
+test("restoreRecordAt reinserts at the front when index is 0", () => {
+  const records = [{ id: 2 }, { id: 3 }];
+  const restored = restoreRecordAt(records, { id: 1 }, 0);
+  assert.deepEqual(
+    restored.map((r) => r.id),
+    [1, 2, 3],
+  );
+});
+
+test("restoreRecordAt does not mutate the original records array", () => {
+  const records = [{ id: 1 }, { id: 2 }];
+  const original = [...records];
+  restoreRecordAt(records, { id: 3 }, 1);
+  assert.deepEqual(records, original);
 });
