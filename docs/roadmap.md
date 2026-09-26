@@ -10102,6 +10102,68 @@ not a single "make it perfect" claim.
       `@forge/api` 207 unchanged) and `npm run build --workspace=@forge/web`
       clean.
 
+- [x] **Round 197 — the WhatsApp message log's own search box gets the same match highlighting too, closing out the pattern.**
+      Diversification: round 196's own closing note named this exact
+      candidate explicitly -- the WhatsApp log's search box (round 162)
+      had the identical gap rounds 195-196 already found and fixed
+      twice: `filterWhatsAppMessages` (`whatsappLog.ts`) already matches
+      on both a message's own body text AND its displayed sender/
+      recipient label ("who"), by its own doc comment, but neither one
+      ever showed *where* within that text the match actually was. This
+      is the third and (per the trigger's own tracking) last known
+      instance of this specific gap in the app.
+
+      Reused `splitHighlightSegments` (`entityFormatting.ts`, unchanged
+      since round 195) via a third small local `Highlighted` wrapper in
+      `WhatsAppPanel.tsx`, mirroring the two already in
+      `EntityPanel.tsx`/`GlobalSearchPanel.tsx`. Wrapped both the
+      `.whatsapp-log-body` span and both variants of the `.whatsapp-log-who`
+      span (the plain `<span>` for an unmatched sender, and the
+      clickable jump-to-record `<button>` for a matched one). Unlike
+      round 196's Global Search fix, there was no stale-query timing
+      concern to solve here: the WhatsApp log's own search filters
+      synchronously on every render straight from the current `search`
+      state (no separate submit step), so the live value is always
+      exactly what's on screen -- a plain `query={search}` was enough.
+
+      New test in `WhatsAppPanel.test.ts`: renders a real six-message
+      log (crossing the round-162 threshold that shows the search box
+      at all), types a search matching text inside a message's own
+      body and confirms a real `<mark class="search-match">` wraps
+      exactly that substring with the rest of the body's own text still
+      rendering around it, then types a search matching only the raw
+      phone number of an unmatched sender and confirms that gets
+      highlighted too, then clears the search and confirms the
+      highlight disappears everywhere.
+
+      Verified with the deliberate-break-and-restore discipline twice:
+      first, hardcoded the new `Highlighted` wrapper to always render
+      plain text regardless of query -- caught by the new test; restored
+      from a pre-break backup, `diff` byte-identical. Second, removed
+      just the `query={search}` prop from the plain (unmatched-sender)
+      "who" span specifically, leaving the body highlighting untouched
+      -- caught independently by the test's second assertion (proving
+      the two highlighted locations are actually tested independently,
+      not just via one shared code path); restored, `diff` byte-identical
+      again.
+
+      **And** a real Playwright pass against real running dev servers:
+      built a real CRM project, then (since a real linked WhatsApp
+      device can't be driven headlessly, the same constraint round 175
+      already documented) mocked the status/messages endpoints via
+      `page.route` with six real, distinguishable messages including
+      one with a uniquely-generated word inside its body. Opened the
+      real WhatsApp panel, typed a partial search, and confirmed the
+      real rendered `<mark class="search-match">` wrapped exactly the
+      matched substring, that the rest of the message's real text still
+      rendered around it, and that clearing the search removed the
+      highlight.
+
+      Full suite green (732 tests, up from 731 -- `@forge/web` 351 →
+      352; `@forge/shared` 11, `@forge/spec-engine` 82, `@forge/db` 80,
+      `@forge/api` 207 unchanged) and `npm run build --workspace=@forge/web`
+      clean.
+
 ## Phase 3
 
 - Self-healing: production observability, automatic diagnosis and patch
