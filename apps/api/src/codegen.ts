@@ -795,6 +795,51 @@ function toggleColumnVisibility(entityName, fieldName) {
   return hidden;
 }
 
+// A column's own drag-resized width, persisted per entity (same
+// single-tenant scoping as the hidden-columns store above) so it survives
+// a reload. Mirrors the live preview's own columnWidths.ts.
+const MIN_COLUMN_WIDTH = 60;
+const MAX_COLUMN_WIDTH = 480;
+const COLUMN_WIDTHS_STORAGE_KEY = "forge_column_widths";
+function readColumnWidthsStore() {
+  try {
+    const raw = localStorage.getItem(COLUMN_WIDTHS_STORAGE_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) return {};
+    return parsed;
+  } catch {
+    return {};
+  }
+}
+function writeColumnWidthsStore(store) {
+  try {
+    localStorage.setItem(COLUMN_WIDTHS_STORAGE_KEY, JSON.stringify(store));
+  } catch {
+    // localStorage can be unavailable (private mode) -- the choice just won't survive a reload.
+  }
+}
+function getColumnWidths(entityName) {
+  const store = readColumnWidthsStore();
+  return { ...(store[entityName] ?? {}) };
+}
+function setColumnWidth(entityName, fieldName, width) {
+  const store = readColumnWidthsStore();
+  const widths = { ...(store[entityName] ?? {}), [fieldName]: width };
+  store[entityName] = widths;
+  writeColumnWidthsStore(store);
+  return widths;
+}
+
+// The actual drag math: how far the mouse has moved since the drag started,
+// added to the column's width at that moment, clamped to a sane range.
+// Unlike the live preview's own computeResizedWidth, there's no RTL case to
+// handle here -- the exported app has no lang/dir switching at all (see
+// round 200's own note that it's English-only).
+export function computeResizedWidth(startWidth, deltaX) {
+  return Math.max(MIN_COLUMN_WIDTH, Math.min(MAX_COLUMN_WIDTH, startWidth + deltaX));
+}
+
 // Mirrors the same check the server's own coerce() runs (see renderServerJs)
 // -- rejecting a bad date here, before the row is ever POSTed, gives the
 // user a row-numbered CSV import error instead of a generic server error
@@ -1377,6 +1422,8 @@ export function EntityView({ entity }) {
   const [showImportErrors, setShowImportErrors] = useState(false);
   const [hiddenFields, setHiddenFields] = useState(() => getHiddenColumns(entity.name));
   const [columnsMenuOpen, setColumnsMenuOpen] = useState(false);
+  const [columnWidths, setColumnWidths] = useState(() => getColumnWidths(entity.name));
+  const [resizingField, setResizingField] = useState(null);
   // Bumped once per refresh() call, so a stale refresh whose listRecords
   // round trip just happens to take longer than a newer one's (triggered
   // by an overlapping action, e.g. duplicating two rows back to back)
@@ -1443,6 +1490,7 @@ export function EntityView({ entity }) {
     setShowImportErrors(false);
     setHiddenFields(getHiddenColumns(entity.name));
     setColumnsMenuOpen(false);
+    setColumnWidths(getColumnWidths(entity.name));
     refresh();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [entity.name]);
@@ -1506,6 +1554,43 @@ export function EntityView({ entity }) {
     const visibleCount = entity.fields.length - hiddenFields.size;
     if (!hiddenFields.has(fieldName) && visibleCount <= 1) return; // keep at least one column visible
     setHiddenFields(toggleColumnVisibility(entity.name, fieldName));
+  }
+
+  // Drag-to-resize a column header. Only attaches real mousemove/mouseup
+  // listeners while a drag is actually in progress (resizingField set),
+  // removing them the instant it ends -- not a permanent global listener
+  // doing nothing most of the time. The width is only persisted to
+  // localStorage on mouseup (via setColumnWidth), not on every mousemove,
+  // so a fast drag doesn't write to storage dozens of times per second.
+  // Mirrors the live preview's own EntityPanel.tsx (round 185).
+  useEffect(() => {
+    if (!resizingField) return;
+    function handleMove(e) {
+      const width = computeResizedWidth(resizingField.startWidth, e.clientX - resizingField.startX);
+      setColumnWidths((prev) => ({ ...prev, [resizingField.field]: width }));
+    }
+    function handleUp() {
+      setColumnWidths((prev) => {
+        const width = prev[resizingField.field];
+        if (width != null) setColumnWidth(entity.name, resizingField.field, width);
+        return prev;
+      });
+      setResizingField(null);
+    }
+    window.addEventListener("mousemove", handleMove);
+    window.addEventListener("mouseup", handleUp);
+    return () => {
+      window.removeEventListener("mousemove", handleMove);
+      window.removeEventListener("mouseup", handleUp);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [resizingField]);
+
+  function startResize(e, fieldName) {
+    e.preventDefault();
+    const th = e.currentTarget.parentElement;
+    const startWidth = columnWidths[fieldName] ?? th?.getBoundingClientRect().width ?? 150;
+    setResizingField({ field: fieldName, startX: e.clientX, startWidth });
   }
 
   const visibleRecords = useMemo(() => {
@@ -1892,7 +1977,7 @@ export function EntityView({ entity }) {
                   </button>
                 </div>
               )}
-              <table>
+              <table className={Object.keys(columnWidths).length > 0 ? "entity-table-resized" : undefined}>
                 <thead>
                   <tr>
                     <th className="select-col">
@@ -1912,12 +1997,18 @@ export function EntityView({ entity }) {
                       const keyIndex = sortKeys.findIndex((k) => k.field === f.name);
                       const key = keyIndex === -1 ? null : sortKeys[keyIndex];
                       return (
-                        <th key={f.name} aria-sort={keyIndex === 0 ? (key.direction === "asc" ? "ascending" : "descending") : "none"}>
+                        <th
+                          key={f.name}
+                          aria-sort={keyIndex === 0 ? (key.direction === "asc" ? "ascending" : "descending") : "none"}
+                          className="resizable-col"
+                          style={columnWidths[f.name] ? { width: columnWidths[f.name] } : undefined}
+                        >
                           <button type="button" className="sort-header" onClick={(e) => toggleSort(f.name, e.shiftKey)}>
                             {f.label}
                             {key ? (key.direction === "asc" ? " ▲" : " ▼") : ""}
                             {key && sortKeys.length > 1 && <span className="sort-priority">{keyIndex + 1}</span>}
                           </button>
+                          <span className="column-resize-handle" onMouseDown={(e) => startResize(e, f.name)} aria-hidden="true" />
                         </th>
                       );
                     })}
@@ -1931,7 +2022,7 @@ export function EntityView({ entity }) {
                         <input type="checkbox" checked={selectedIds.has(r.id)} onChange={() => toggleSelected(r.id)} />
                       </td>
                       {visibleFields.map((f) => (
-                        <td key={f.name}>
+                        <td key={f.name} style={columnWidths[f.name] ? { width: columnWidths[f.name] } : undefined}>
                           <Cell
                             field={f}
                             value={r[f.name]}
@@ -2375,6 +2466,10 @@ th, td { text-align: start; padding: 8px 10px; border-bottom: 1px solid var(--bo
 .sort-header { background: none; border: none; padding: 0; margin: 0; color: inherit; font: inherit; cursor: pointer; }
 .sort-header:hover { color: var(--accent); }
 .sort-priority { display: inline-flex; align-items: center; justify-content: center; min-width: 15px; height: 15px; margin-inline-start: 3px; padding: 0 3px; border-radius: 999px; background: var(--accent-soft); color: var(--accent-deep); font-size: 10px; font-weight: 700; vertical-align: middle; }
+.resizable-col { position: relative; }
+.column-resize-handle { position: absolute; top: 0; bottom: 0; inset-inline-end: 0; width: 6px; cursor: col-resize; user-select: none; touch-action: none; z-index: 1; }
+.entity-table-resized { table-layout: fixed; }
+.entity-table-resized th, .entity-table-resized td { overflow: hidden; text-overflow: ellipsis; }
 .badge { display: inline-block; padding: 3px 11px; border-radius: 999px; font-size: 12.5px; font-weight: 600; white-space: nowrap; }
 .badge-positive { background: var(--success-soft); color: var(--success); }
 .badge-negative { background: var(--danger-soft); color: var(--danger); }

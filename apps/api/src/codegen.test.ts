@@ -1793,3 +1793,76 @@ test("the exported EntityView's badgeTone classifies 'Denied' as negative, match
   assert.equal(badgeTone("Denied"), "negative");
   assert.equal(badgeTone("Approved"), "positive");
 });
+
+/**
+ * New in this round: the exported standalone app's entity table columns
+ * were a fixed auto-layout width, unlike the live Forge AI preview (round
+ * 185's own drag-to-resize columns, persisted per entity via
+ * localStorage). Ports the identical clamped drag-math. Executes the real
+ * generated function (extracted from real codegen output, not
+ * reimplemented), mirroring apps/web/src/columnWidths.test.ts's own
+ * computeResizedWidth coverage -- minus the RTL direction parameter, since
+ * the exported app has no lang/dir switching at all (round 200's own note).
+ */
+test("the exported EntityView's computeResizedWidth clamps a dragged column between MIN_COLUMN_WIDTH and MAX_COLUMN_WIDTH", () => {
+  const entityViewJsx = generateExportFiles(project).find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+  const fnSrc = entityViewJsx
+    .match(/const MIN_COLUMN_WIDTH[\s\S]*?export function computeResizedWidth\(startWidth, deltaX\) \{[\s\S]*?\n\}\n/)?.[0]
+    ?.replace("export ", "");
+  assert.ok(fnSrc, "expected to find computeResizedWidth (with its MIN/MAX constants) in generated output");
+
+  const computeResizedWidth = new Function(`${fnSrc}\nreturn computeResizedWidth;`)() as (startWidth: number, deltaX: number) => number;
+
+  assert.equal(computeResizedWidth(150, 40), 190, "an ordinary drag must widen by exactly the mouse delta");
+  assert.equal(computeResizedWidth(150, -40), 110, "dragging the other way must narrow by exactly the mouse delta");
+  assert.equal(computeResizedWidth(150, -1000), 60, "must clamp to MIN_COLUMN_WIDTH rather than going arbitrarily narrow");
+  assert.equal(computeResizedWidth(150, 1000), 480, "must clamp to MAX_COLUMN_WIDTH rather than going arbitrarily wide");
+});
+
+test("the exported EntityView's table headers are drag-resizable, persisting per entity via a real localStorage round trip", () => {
+  const files = generateExportFiles(project);
+  const entityViewJsx = files.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+
+  assert.match(entityViewJsx, /const \[columnWidths, setColumnWidths\] = useState\(\(\) => getColumnWidths\(entity\.name\)\);/);
+  assert.match(entityViewJsx, /const \[resizingField, setResizingField\] = useState\(null\);/);
+  // The drag must only ever attach real mousemove/mouseup listeners while a
+  // drag is actually in progress, and must persist to localStorage only on
+  // mouseup (via setColumnWidth) -- not on every mousemove.
+  assert.match(
+    entityViewJsx,
+    /useEffect\(\(\) => \{\s*if \(!resizingField\) return;\s*function handleMove\(e\) \{\s*const width = computeResizedWidth\(resizingField\.startWidth, e\.clientX - resizingField\.startX\);\s*setColumnWidths\(\(prev\) => \(\{ \.\.\.prev, \[resizingField\.field\]: width \}\)\);\s*\}\s*function handleUp\(\) \{\s*setColumnWidths\(\(prev\) => \{\s*const width = prev\[resizingField\.field\];\s*if \(width != null\) setColumnWidth\(entity\.name, resizingField\.field, width\);\s*return prev;\s*\}\);\s*setResizingField\(null\);\s*\}/,
+  );
+  assert.match(entityViewJsx, /onMouseDown=\{\(e\) => startResize\(e, f\.name\)\}/);
+  // The reset-on-entity-switch effect must reload the new entity's own
+  // widths -- the exact class of bug round 198 shipped and Playwright
+  // caught (a stale reference to state that had been renamed/removed).
+  assert.match(entityViewJsx, /setColumnWidths\(getColumnWidths\(entity\.name\)\);\s*refresh\(\);/);
+
+  const stylesCss = files.find((f) => f.path === "web/src/styles.css")!.content;
+  assert.match(stylesCss, /\.column-resize-handle/);
+  assert.match(stylesCss, /\.entity-table-resized/);
+
+  // Executes the real generated getColumnWidths/setColumnWidth against a
+  // fake localStorage, the same "run the real generated code" standard this
+  // file's other persistence-backed tests use (see getHiddenColumns/
+  // toggleColumnVisibility below).
+  const storeSrc = entityViewJsx.match(/const MIN_COLUMN_WIDTH[\s\S]*?\nfunction setColumnWidth\(entityName, fieldName, width\) \{[\s\S]*?\n\}\n/)?.[0];
+  assert.ok(storeSrc, "expected to find the column-widths store functions in generated output");
+
+  const fakeStorage: Record<string, string> = {};
+  const { getColumnWidths, setColumnWidth } = new Function(
+    "localStorage",
+    `${storeSrc}\nreturn { getColumnWidths, setColumnWidth };`,
+  )({
+    getItem: (k: string) => fakeStorage[k] ?? null,
+    setItem: (k: string, v: string) => {
+      fakeStorage[k] = v;
+    },
+  }) as { getColumnWidths: (e: string) => Record<string, number>; setColumnWidth: (e: string, f: string, w: number) => Record<string, number> };
+
+  assert.deepEqual(getColumnWidths("Order"), {}, "an entity with no resized column must start with an empty width map");
+  const updated = setColumnWidth("Order", "customerName", 220);
+  assert.deepEqual(updated, { customerName: 220 });
+  assert.deepEqual(getColumnWidths("Order"), { customerName: 220 }, "must round-trip through the real localStorage-backed store");
+  assert.deepEqual(getColumnWidths("Courier"), {}, "a different entity's own widths must not leak across entities");
+});
