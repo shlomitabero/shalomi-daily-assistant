@@ -4,7 +4,7 @@ import { test } from "node:test";
 import { JSDOM } from "jsdom";
 import React from "react";
 import { cleanup, fireEvent, render } from "@testing-library/react";
-import type { Checkpoint, Project } from "@forge/shared";
+import type { Checkpoint, ProductSpec, Project } from "@forge/shared";
 import { HistoryPanel } from "./HistoryPanel.js";
 import { LanguageProvider } from "./i18n/LanguageContext.js";
 import { ThemeProvider } from "./theme/ThemeContext.js";
@@ -702,7 +702,7 @@ test("HistoryPanel's 'Compare with' dropdown lets you diff one checkpoint agains
         { name: "Order", fields: [{ name: "total", type: "number", required: true }] },
       ],
     };
-    const currentSpec = {
+    const currentSpec: ProductSpec = {
       ...middle.spec,
       entities: [...middle.spec.entities, { name: "Invoice", fields: [{ name: "amount", type: "number", required: true }] }],
     };

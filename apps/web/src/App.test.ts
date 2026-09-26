@@ -652,6 +652,89 @@ test("App's handleBackToHome resets view/project/selectedAnswers/additionalReque
 });
 
 /**
+ * New in this round: once a project was built, there was no way back to
+ * "Your projects" short of logging all the way out and back in -- the
+ * topbar's own brand logo was purely decorative, and handleBackToHome
+ * above only ever runs from the spec review screen's own Back button.
+ * Extracts the real handleGoHome function the same way the test above
+ * does, and confirms it resets the same fields handleBackToHome does
+ * PLUS the preview-only fields handleLogout's own cleanup already
+ * described (activeEntity, refineText, refineHistory,
+ * refineHistorySearch) -- the exact leftover-state bug that cleanup was
+ * written to prevent, now relevant here too since this can navigate away
+ * from a live preview screen those fields actually got used on.
+ */
+test("App's handleGoHome resets view/project/selectedAnswers/additionalRequest AND the preview-only refine/activeEntity state, but leaves description untouched", () => {
+  const appSrc = readFileSync(new URL("./App.tsx", import.meta.url), "utf8");
+  const handlerMatch = appSrc.match(/ {2}function handleGoHome\(\) \{[\s\S]*?\n {2}\}\n/);
+  assert.ok(handlerMatch, "expected to find handleGoHome in App.tsx");
+  const { code } = transformSync(handlerMatch![0], { loader: "ts" });
+
+  const state: {
+    view: string;
+    project: Project | null;
+    specProvider: string | null;
+    selectedAnswers: Record<string, string>;
+    additionalRequest: string;
+    activeEntity: string | null;
+    refineText: string;
+    refineHistory: unknown[];
+    refineHistorySearch: string;
+  } = {
+    view: "preview",
+    project: makeProject([makeEntity("Customer")]),
+    specProvider: "anthropic",
+    selectedAnswers: { "Which plan?": "Pro" },
+    additionalRequest: "also add a discount field",
+    activeEntity: "Customer",
+    refineText: "add a loyalty field",
+    refineHistory: [{ instruction: "add invoices", createdAt: "2026-01-01" }],
+    refineHistorySearch: "invoices",
+  };
+
+  let setDescriptionCalls = 0;
+  const fn = new Function(
+    "setView",
+    "setProject",
+    "setSpecProvider",
+    "setSelectedAnswers",
+    "setAdditionalRequest",
+    "setActiveEntity",
+    "setRefineText",
+    "setRefineHistory",
+    "setRefineHistorySearch",
+    "setDescription",
+    `${code}\nreturn handleGoHome;`,
+  )(
+    (v: string) => (state.view = v),
+    (p: Project | null) => (state.project = p),
+    (v: string | null) => (state.specProvider = v),
+    (a: Record<string, string>) => (state.selectedAnswers = a),
+    (r: string) => (state.additionalRequest = r),
+    (e: string | null) => (state.activeEntity = e),
+    (r: string) => (state.refineText = r),
+    (h: unknown[]) => (state.refineHistory = h),
+    (s: string) => (state.refineHistorySearch = s),
+    () => {
+      setDescriptionCalls += 1;
+    },
+  ) as () => void;
+
+  fn();
+
+  assert.equal(state.view, "home", "must navigate back to the home view from the live preview screen, not just spec review");
+  assert.equal(state.project, null, "must clear the project being left behind");
+  assert.equal(state.specProvider, null, "must clear the left-behind project's own spec-provider info");
+  assert.deepEqual(state.selectedAnswers, {}, "must clear answers tied to the left-behind project's own open questions");
+  assert.equal(state.additionalRequest, "", "must clear the additional-request text tied to the left-behind project");
+  assert.equal(state.activeEntity, null, "must clear the stale active entity tab, or the next project opened could render a blank preview pane");
+  assert.equal(state.refineText, "", "must clear the half-typed refine instruction");
+  assert.deepEqual(state.refineHistory, [], "must clear the left-behind project's own refine history, not carry it into the next project opened");
+  assert.equal(state.refineHistorySearch, "", "must clear the refine-history search box too");
+  assert.equal(setDescriptionCalls, 0, "must never touch description -- the home screen's own saved idea draft is a separate concern");
+});
+
+/**
  * New in this round: FieldLabelEditor.tsx's own record-form rendering
  * already marks a required field with a trailing " *" once a project is
  * built -- but the spec-review screen's entity summary, the one place a

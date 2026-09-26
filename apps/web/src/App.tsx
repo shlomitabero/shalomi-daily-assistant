@@ -520,6 +520,28 @@ function AppContent() {
     setAdditionalRequest("");
   }
 
+  /**
+   * Once a project was built, there was no way back to "Your projects"
+   * short of logging all the way out and back in -- the topbar's own
+   * brand logo was purely decorative, and handleBackToHome above only
+   * ever runs from the spec review screen's own Back button. Reuses the
+   * exact same leftover-state cleanup handleLogout's own comment already
+   * describes (a stale activeEntity/refineHistory/etc. bleeding into
+   * whatever project gets opened next), just without touching the
+   * authenticated user or the home screen's own saved idea draft.
+   */
+  function handleGoHome() {
+    setView("home");
+    setProject(null);
+    setSpecProvider(null);
+    setSelectedAnswers({});
+    setAdditionalRequest("");
+    setActiveEntity(null);
+    setRefineText("");
+    setRefineHistory([]);
+    setRefineHistorySearch("");
+  }
+
   async function handleExport() {
     if (!project) return;
     setExportBusy(true);
@@ -631,15 +653,30 @@ function AppContent() {
     <div className="app">
       <header className="topbar">
         <div className="topbar-title">
-          <div className="brand-row">
-            <svg className="brand-mark" viewBox="0 0 32 32" fill="none" aria-hidden="true">
-              <path
-                d="M16 2c1.2 4.4-1.6 6.4-3.4 8.6-2.2 2.7-3.2 5.6-1.8 8.9 1 2.3 3 3.7 5.2 3.7-1.4-2-1.4-3.8-.3-5.6 1-1.6 2.6-2.3 2.9-4.3.9 1.6 1.4 3.2 1.2 5-.2 2.1-1.4 3.7-1.4 3.7 3.6-.6 6.6-3.6 6.6-7.6 0-3.4-2-5.6-3.8-7.6-2.6-2.9-4.4-5.6-5.2-8.8Z"
-                fill="var(--accent)"
-              />
-            </svg>
-            <span className="brand">Forge AI</span>
-          </div>
+          {(() => {
+            const brandContent = (
+              <>
+                <svg className="brand-mark" viewBox="0 0 32 32" fill="none" aria-hidden="true">
+                  <path
+                    d="M16 2c1.2 4.4-1.6 6.4-3.4 8.6-2.2 2.7-3.2 5.6-1.8 8.9 1 2.3 3 3.7 5.2 3.7-1.4-2-1.4-3.8-.3-5.6 1-1.6 2.6-2.3 2.9-4.3.9 1.6 1.4 3.2 1.2 5-.2 2.1-1.4 3.7-1.4 3.7 3.6-.6 6.6-3.6 6.6-7.6 0-3.4-2-5.6-3.8-7.6-2.6-2.9-4.4-5.6-5.2-8.8Z"
+                    fill="var(--accent)"
+                  />
+                </svg>
+                <span className="brand">Forge AI</span>
+              </>
+            );
+            // Deliberately not clickable while a build/refine is actively
+            // streaming (view === "building") -- BuildProgress's own design
+            // only ever offers a way out on failure, and this shouldn't
+            // silently disagree with that by giving a second, unguarded exit.
+            return view !== "home" && view !== "building" ? (
+              <button type="button" className="brand-row brand-row-link" onClick={handleGoHome} title={t("topbar.goHome")}>
+                {brandContent}
+              </button>
+            ) : (
+              <div className="brand-row">{brandContent}</div>
+            );
+          })()}
           <span className="tagline">{t("brand.tagline")}</span>
         </div>
         <div className="topbar-right">
