@@ -9391,6 +9391,90 @@ not a single "make it perfect" claim.
       `@forge/web` 322 → 325; `@forge/shared` 11, `@forge/spec-engine` 82,
       `@forge/db` 80 unchanged) and typecheck/build clean.
 
+- [x] **Round 188 — j/k row navigation + Enter-to-edit in the Entity live-preview table.**
+      Diversification: after round 187 closed out the spec review screen
+      gap, this round's own trigger note pointed at the WhatsApp panel and
+      keyboard shortcuts as the remaining candidates. Read `WhatsAppPanel.tsx`
+      (485 lines) in full first -- already comprehensive (connect/QR flow,
+      status polling with two separate failure-threshold guards, send/retry,
+      search + direction filter, download/clear log, jump-to-record) with
+      no concrete new gap, so this round explicitly avoided repeating any
+      of "another filter/sort/undo/drag/add-remove-form" per its own
+      trigger note's instruction, and instead picked the trigger's other
+      suggested direction: keyboard shortcuts. The Entity table (unlike
+      GlobalSearchPanel's own arrow-key result navigation from round 69,
+      or App.tsx's Ctrl+K/Escape) had no way to move between rows without
+      the mouse at all.
+
+      Extracted two pure functions into `entityFormatting.ts`:
+      `computeNextFocusedRowId(visibleIds, currentFocusedId, direction)`
+      -- deliberately clamps at both ends rather than wrapping (unlike
+      GlobalSearchPanel's own arrow-key navigation), since wrapping from
+      the last row back to the first after a re-sort/filter would silently
+      jump focus somewhere unintended; and restarts from the first row
+      if the previously-focused id has scrolled out of the visible set
+      entirely (a filter changed, or the record was deleted) -- and
+      `isTypingTarget(target)`, guarding against hijacking keystrokes
+      meant for the search box, a filter dropdown, or the add/edit form.
+      `EntityPanel.tsx` wires these into a new `focusedRowId` state, a
+      window-level keydown effect (mirroring App.tsx's own Ctrl+K/Escape
+      pattern) active only in table view, and a new `.record-row-focused`
+      CSS class (a visible outline, distinct from the existing
+      `.record-row-highlighted` jump-to style) plus a scroll-into-view
+      effect mirroring the existing highlighted-row one. Enter reuses the
+      exact same `startEdit` the row's own Edit button already calls, so
+      a keyboard-driven edit and a mouse-driven one are identical from
+      that point on.
+
+      8 new pure-function tests in `entityFormatting.test.ts` (first-press
+      behavior regardless of direction, next/prev movement, clamping at
+      both ends instead of wrapping, restarting when the focused id is no
+      longer visible, empty-list handling, and `isTypingTarget` recognizing
+      inputs/textareas/selects/contenteditable regions) and 1 new DOM test
+      in `EntityPanel.test.ts` driving real window-level keydown events
+      through j/k/ArrowDown/ArrowUp/Enter, confirming the guard against a
+      "j" keydown targeting the search box.
+
+      Verified with the deliberate-break-and-restore discipline: changed
+      `computeNextFocusedRowId` to wrap around at both ends instead of
+      clamping -- caught exactly by the "clamps... instead of wrapping"
+      test (all seven other new tests still passed, confirming precise
+      fault isolation); restored from a pre-break backup, `diff`
+      byte-identical.
+
+      One real debugging detour worth recording: the first DOM test run
+      flaked intermittently under the full suite (passed alone, failed
+      ~1 in 3 under load) -- root cause was a genuine race between the
+      test's first `fireEvent.keyDown(window, ...)` (fired the instant
+      rows became visible) and the keydown listener's own `useEffect`
+      attaching one render tick later; a keydown dispatched into a
+      not-yet-attached listener is simply lost, not queued. Fixed by
+      redispatching the *first* keypress in a small retry loop (checking
+      before each redispatch, so it stops the instant the listener has
+      caught on) rather than firing it exactly once after a fixed number
+      of sleep ticks -- confirmed clean across 5 solo runs and 3 full-suite
+      runs afterward. Every subsequent keypress in the same test uses a
+      single plain `fireEvent.keyDown` (no race remains once the listener
+      has attached at least once).
+
+      **And** a real Playwright pass against real running dev servers (a
+      real CRM project, built via the real heuristic pipeline): pressed
+      "j" against the real seeded table, confirmed it focuses the first
+      row; a second "j" moves to the second row; `ArrowUp` moves back;
+      `Enter` switches the form into edit mode. Hit the same trap round
+      186 already documented once (typing "j" into the search box filters
+      every seeded record out of view, since none happen to contain the
+      letter "j", making "is the row still focused" unobservable) --
+      fixed by deriving the search keystroke from the focused row's own
+      first letter instead of a fixed "j", so the row survives the filter
+      and the guard is directly observable. Confirmed a real browser
+      keydown against the focused search input types the literal letter
+      and leaves the keyboard-focused row unchanged.
+
+      Full suite green (707 tests, up from 699 -- `@forge/web` 325 → 333;
+      `@forge/shared` 11, `@forge/spec-engine` 82, `@forge/db` 80,
+      `@forge/api` 201 unchanged) and typecheck/build clean.
+
 ## Phase 3
 
 - Self-healing: production observability, automatic diagnosis and patch
