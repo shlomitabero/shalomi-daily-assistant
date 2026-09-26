@@ -69,6 +69,7 @@ test("generateExportFiles produces a real multi-file React (Vite) + Express proj
     "web/src/entities/Service.jsx",
     "web/src/main.jsx",
     "web/src/styles.css",
+    "web/src/theme.js",
   ]);
 });
 
@@ -1569,6 +1570,50 @@ test("a real vite build of the exported app actually serves the manifest, icon, 
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+/**
+ * New in this round: the exported standalone app never had a dark mode at
+ * all -- every color in styles.css was a hardcoded hex value, unlike the
+ * live Forge AI preview (round 42's own dark mode toggle). Someone who
+ * exports and self-hosts their app loses that. theme.js mirrors the live
+ * preview's own theme/theme.ts exactly (same storage key fallback order):
+ * an explicit stored choice always wins; otherwise the OS-level
+ * prefers-color-scheme decides; light when there's no signal at all.
+ * Executes the real generated detectInitialTheme, not a reimplementation.
+ */
+test("the exported theme.js's detectInitialTheme prefers an explicit stored choice, then the system preference, then light", () => {
+  const themeJs = generateExportFiles(project).find((f) => f.path === "web/src/theme.js")!.content;
+  assert.match(themeJs, /THEME_STORAGE_KEY/);
+
+  const themeJsBody = themeJs.replace(/^export /gm, "");
+  const detectInitialTheme = new Function(`${themeJsBody}\nreturn detectInitialTheme;`)() as (
+    stored: string | null,
+    prefersDark?: boolean,
+  ) => string;
+
+  assert.equal(detectInitialTheme(null, false), "light", "no stored choice, no system preference -> light");
+  assert.equal(detectInitialTheme(null, true), "dark", "no stored choice, system prefers dark -> dark");
+  assert.equal(detectInitialTheme("light", true), "light", "an explicit stored 'light' wins even if the system prefers dark");
+  assert.equal(detectInitialTheme("dark", false), "dark", "an explicit stored 'dark' wins even if the system prefers light");
+  assert.equal(detectInitialTheme("not-a-real-value", true), "dark", "a corrupted stored value falls back to the system preference");
+});
+
+test("the exported App.jsx renders a real theme toggle button wired to detectInitialTheme and localStorage, matching the live preview's own ThemeSwitcher", () => {
+  const files = generateExportFiles(project);
+  const appJsx = files.find((f) => f.path === "web/src/App.jsx")!.content;
+
+  assert.match(appJsx, /import \{ THEME_STORAGE_KEY, detectInitialTheme \} from "\.\/theme\.js";/);
+  assert.match(appJsx, /className="theme-switch"/);
+  assert.match(appJsx, /setTheme\(\(current\) => \(current === "dark" \? "light" : "dark"\)\)/);
+  assert.match(appJsx, /document\.documentElement\.setAttribute\("data-theme", theme\)/);
+  assert.match(appJsx, /localStorage\.setItem\(THEME_STORAGE_KEY, theme\)/);
+
+  // The exported CSS actually reacts to the attribute the toggle sets, via
+  // real CSS variables -- not just a button that flips unused state.
+  const stylesCss = files.find((f) => f.path === "web/src/styles.css")!.content;
+  assert.match(stylesCss, /:root\[data-theme="dark"\]/);
+  assert.match(stylesCss, /body \{ font-family: [^;]+; margin: 0; background: var\(--bg\); color: var\(--text\); \}/);
 });
 
 test("render.yaml's service name is a safe slug even for a project name with spaces, punctuation, and Hebrew", () => {
