@@ -7,6 +7,7 @@ import { JSDOM } from "jsdom";
 import React from "react";
 import { act, cleanup, fireEvent, render } from "@testing-library/react";
 import type { Entity, EntityRecord } from "@forge/shared";
+import { getColumnWidths, setColumnWidth } from "./columnWidths.js";
 import { EntityPanel } from "./EntityPanel.js";
 import { LanguageProvider } from "./i18n/LanguageContext.js";
 import { ThemeProvider } from "./theme/ThemeContext.js";
@@ -1568,6 +1569,53 @@ test("EntityPanel commits a still-pending delete for real when the component unm
     } finally {
       globalThis.fetch = originalFetch;
       globalThis.window.confirm = originalConfirm;
+    }
+  });
+});
+
+/**
+ * New in this round: a column's width was fixed forever (whatever the
+ * browser's own auto-layout happened to pick), with no way to make a long
+ * field's own column wider or a short one's narrower. Drives a real
+ * mousedown-on-the-handle, mousemove, mouseup sequence -- not calling
+ * computeResizedWidth directly -- to prove the whole wire-up: dragging the
+ * "Name" column's handle 60px must widen it by exactly 60px starting from
+ * its pre-seeded 200px width, apply that width as a real inline style on
+ * both its header and every one of its own cells (not just the header),
+ * and persist it so a fresh getColumnWidths call for this exact
+ * project+entity sees it too.
+ */
+test("EntityPanel's column resize handle drags a column to a new width, applies it to both the header and its own cells, and persists it", async () => {
+  await withJsdom(async () => {
+    const store: EntityRecord[] = [{ id: 1, name: "Acme Corp", status: "new" }];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = mockRecordsFetch(store) as typeof fetch;
+    setColumnWidth("proj1", "Deal", "name", 200);
+    try {
+      renderEntityPanel();
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 1);
+
+      const nameHeader = document.querySelectorAll("th.resizable-col")[0] as HTMLTableCellElement;
+      assert.equal(nameHeader.style.width, "200px", "the pre-seeded width must already apply to the header on first render");
+
+      const handle = nameHeader.querySelector(".column-resize-handle") as HTMLSpanElement;
+      assert.ok(handle, "expected a resize handle inside the Name column's header");
+
+      fireEvent.mouseDown(handle, { clientX: 100 });
+      fireEvent.mouseMove(window, { clientX: 160 });
+      fireEvent.mouseUp(window, { clientX: 160 });
+
+      assert.equal(nameHeader.style.width, "260px", "dragging 60px right must widen the column by exactly 60px (200 + 60)");
+      const nameCell = document.querySelector("table tbody tr td:nth-child(2)") as HTMLTableCellElement;
+      assert.equal(nameCell.style.width, "260px", "the same resized width must apply to the column's own data cells, not just its header");
+
+      assert.deepEqual(
+        getColumnWidths("proj1", "Deal"),
+        { name: 260 },
+        "the new width must be genuinely persisted, not just reflected in the live DOM",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
     }
   });
 });

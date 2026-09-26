@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { Entity, EntityRecord, Field, Project } from "@forge/shared";
 import { createRecord, deleteRecord, listRecords, updateRecord } from "./api.js";
 import { getHiddenFields, toggleFieldVisibility } from "./columnVisibility.js";
+import { computeResizedWidth, getColumnWidths, setColumnWidth } from "./columnWidths.js";
 import { EntityLabelEditor } from "./EntityLabelEditor.js";
 import { FieldLabelEditor } from "./FieldLabelEditor.js";
 import {
@@ -30,6 +31,7 @@ import {
   type SortKey,
 } from "./entityFormatting.js";
 import { useTranslation } from "./i18n/LanguageContext.js";
+import { dirFor } from "./i18n/language.js";
 import type { Lang } from "./i18n/language.js";
 
 type ViewMode = "table" | "board" | "calendar";
@@ -441,6 +443,8 @@ export function EntityPanel({
   const [recordToPrint, setRecordToPrint] = useState<EntityRecord | null>(null);
   const [hiddenFields, setHiddenFields] = useState<Set<string>>(() => new Set());
   const [columnsMenuOpen, setColumnsMenuOpen] = useState(false);
+  const [columnWidths, setColumnWidths] = useState<Record<string, number>>({});
+  const [resizingField, setResizingField] = useState<{ field: string; startX: number; startWidth: number } | null>(null);
   const [highlightedRecordId, setHighlightedRecordId] = useState<number | null>(null);
   // Bumped once per refresh() call, so a stale refresh whose listRecords
   // round trip just happens to take longer than a newer one's (triggered
@@ -522,6 +526,50 @@ export function EntityPanel({
   useEffect(() => {
     setHiddenFields(getHiddenFields(projectId, entity.name));
   }, [projectId, entity.name]);
+
+  // Same reasoning as hiddenFields' own effect just above -- resized column
+  // widths are scoped per project+entity too.
+  useEffect(() => {
+    setColumnWidths(getColumnWidths(projectId, entity.name));
+  }, [projectId, entity.name]);
+
+  /**
+   * Drag-to-resize a column header. Only attaches real mousemove/mouseup
+   * listeners while a drag is actually in progress (resizingField set),
+   * removing them the instant it ends -- not a permanent global listener
+   * doing nothing most of the time. The width is only persisted to
+   * localStorage on mouseup (via setColumnWidth), not on every mousemove,
+   * so a fast drag doesn't write to storage dozens of times per second.
+   */
+  useEffect(() => {
+    if (!resizingField) return;
+    function handleMove(e: MouseEvent) {
+      const width = computeResizedWidth(resizingField!.startWidth, e.clientX - resizingField!.startX, dirFor(lang));
+      setColumnWidths((prev) => ({ ...prev, [resizingField!.field]: width }));
+    }
+    function handleUp() {
+      setColumnWidths((prev) => {
+        const width = prev[resizingField!.field];
+        if (width != null) setColumnWidth(projectId, entity.name, resizingField!.field, width);
+        return prev;
+      });
+      setResizingField(null);
+    }
+    window.addEventListener("mousemove", handleMove);
+    window.addEventListener("mouseup", handleUp);
+    return () => {
+      window.removeEventListener("mousemove", handleMove);
+      window.removeEventListener("mouseup", handleUp);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [resizingField]);
+
+  function startResize(e: React.MouseEvent<HTMLSpanElement>, fieldName: string) {
+    e.preventDefault();
+    const th = e.currentTarget.parentElement as HTMLTableCellElement | null;
+    const startWidth = columnWidths[fieldName] ?? th?.getBoundingClientRect().width ?? 150;
+    setResizingField({ field: fieldName, startX: e.clientX, startWidth });
+  }
 
   useEffect(() => {
     if (!recordToPrint) return;
@@ -1150,7 +1198,7 @@ export function EntityPanel({
                   </button>
                 </div>
               )}
-              <table>
+              <table className={Object.keys(columnWidths).length > 0 ? "entity-table-resized" : undefined}>
                 <thead>
                   <tr>
                     <th className="select-col">
@@ -1173,12 +1221,22 @@ export function EntityPanel({
                       const keyIndex = sortKeys.findIndex((k) => k.field === f.name);
                       const key = keyIndex === -1 ? null : sortKeys[keyIndex];
                       return (
-                        <th key={f.name} aria-sort={keyIndex === 0 ? (key!.direction === "asc" ? "ascending" : "descending") : "none"}>
+                        <th
+                          key={f.name}
+                          aria-sort={keyIndex === 0 ? (key!.direction === "asc" ? "ascending" : "descending") : "none"}
+                          className="resizable-col"
+                          style={columnWidths[f.name] ? { width: columnWidths[f.name] } : undefined}
+                        >
                           <button type="button" className="sort-header" onClick={(e) => toggleSort(f.name, e.shiftKey)}>
                             {f.label ?? f.name}
                             {key && (key.direction === "asc" ? " ▲" : " ▼")}
                             {key && sortKeys.length > 1 && <span className="sort-priority">{keyIndex + 1}</span>}
                           </button>
+                          <span
+                            className="column-resize-handle"
+                            onMouseDown={(e) => startResize(e, f.name)}
+                            aria-hidden="true"
+                          />
                         </th>
                       );
                     })}
@@ -1214,7 +1272,7 @@ export function EntityPanel({
                         />
                       </td>
                       {visibleFields.map((f) => (
-                        <td key={f.name}>
+                        <td key={f.name} style={columnWidths[f.name] ? { width: columnWidths[f.name] } : undefined}>
                           <Cell
                             field={f}
                             value={record[f.name]}

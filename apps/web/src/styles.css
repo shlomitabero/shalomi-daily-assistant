@@ -708,6 +708,36 @@ th {
   font-weight: 600;
 }
 
+.resizable-col {
+  position: relative;
+}
+
+.column-resize-handle {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  inset-inline-end: 0;
+  width: 6px;
+  cursor: col-resize;
+  user-select: none;
+  touch-action: none;
+  z-index: 1;
+}
+
+/* Once any column has been dragged to a real width, the table switches to a
+   fixed layout so every column actually respects its own set width (or an
+   even share of what's left, for the ones nobody has resized yet) instead of
+   auto-layout treating an explicit width as a mere hint. */
+.entity-table-resized {
+  table-layout: fixed;
+}
+
+.entity-table-resized th,
+.entity-table-resized td {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 tbody tr {
   transition: background 0.1s ease;
 }
