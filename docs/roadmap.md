@@ -10237,6 +10237,69 @@ not a single "make it perfect" claim.
       `@forge/db` 80 unchanged) and `npm run build --workspace=@forge/web`
       clean.
 
+- [x] **Round 199 — "/" opens global search, a second, even more familiar shortcut alongside Ctrl/Cmd+K.**
+      Diversification: round 198 ported multi-column sort to the exported
+      codegen app, capping off three straight rounds spent inside that
+      exported app (dark mode round 193, undo toast round 194, sort round
+      198). Genuinely new direction this round: rather than another
+      exported-app port or a fourth instance of search-match highlighting,
+      picked up one of the trigger's own long-standing "candidates to
+      check" -- a "/" keyboard shortcut for Global Search, the exact
+      convention GitHub, Slack, and other tools already use, one keystroke
+      shorter and far more discoverable than Ctrl/Cmd+K for anyone who's
+      never used a command palette before.
+
+      In `App.tsx`: added an exported pure helper `isEditableEventTarget(target)`
+      right next to the file's other top-level pure helpers (mirroring the
+      `handleBackToHome`/`handleGoHome` convention already established
+      there) -- duck-typed on `tagName`/`isContentEditable` rather than
+      `instanceof HTMLElement`, so it stays trivially testable with a
+      plain mock object instead of a real DOM element. Added a `"/"` branch
+      to the existing preview-screen `keydown` listener (already scoped to
+      `view === "preview"` since round 68/190) that calls `openPanel("search")`
+      only when `!isEditableEventTarget(e.target)` -- deliberately NOT
+      applied to the existing Ctrl/Cmd+K branch, since a command-palette
+      shortcut is expected to fire from anywhere including inside a text
+      field, unlike a bare printable key a person is plausibly still
+      typing. Updated the search button's own `.shortcut-hint` from
+      `"Ctrl+K"` to `"Ctrl+K · /"` so the new shortcut is actually
+      discoverable, not just functional.
+
+      New tests in `App.test.ts`: a pure-function test for
+      `isEditableEventTarget` covering INPUT/TEXTAREA/SELECT, a
+      `contentEditable` div, a plain element, `null`, and a
+      lowercase-tagName non-match (real DOM elements always report
+      `tagName` uppercase); and a static-wiring test asserting the literal
+      `if (e.key === "/" && !isEditableEventTarget(e.target))` block
+      structure, plus a second assertion that the Ctrl/Cmd+K branch
+      specifically does NOT reference `isEditableEventTarget` -- proving
+      the two shortcuts' deliberately different guarding, not just that
+      both exist somewhere in the file.
+
+      Verified with the deliberate-break-and-restore discipline twice:
+      first, removed the `isContentEditable` check from
+      `isEditableEventTarget` -- caught by the pure-function test; restored,
+      `diff` byte-identical. Second, removed the
+      `!isEditableEventTarget(e.target)` guard from the `"/"` branch
+      entirely -- caught by the wiring test; restored, `diff`
+      byte-identical again.
+
+      **And** a real Playwright pass against real running `api`/`web` dev
+      servers: signed up, typed an idea containing a literal `"/pickup and
+      /delivery"` on the home screen and confirmed it never opened search
+      (the `view === "preview"` scoping holds in practice, not just in
+      the source), built a real project through to the live preview
+      screen, confirmed Ctrl+K still opens search unguarded, confirmed a
+      bare `"/"` press with no field focused opens search too, then typed
+      `"add a /discount field"` into the real refine box and confirmed the
+      literal `/` stayed in the field with the full text intact and
+      search never opened.
+
+      Full suite green (736 tests, up from 734 -- `@forge/web` 352 → 354;
+      `@forge/api` 209, `@forge/shared` 11, `@forge/spec-engine` 82,
+      `@forge/db` 80 unchanged) and `npm run build --workspace=@forge/web`
+      clean.
+
 ## Phase 3
 
 - Self-healing: production observability, automatic diagnosis and patch
