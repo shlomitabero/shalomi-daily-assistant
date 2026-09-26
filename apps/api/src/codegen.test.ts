@@ -645,11 +645,11 @@ test("the exported EntityView renders a real Duplicate action (table and board v
   assert.match(entityViewJsx, /<button onClick=\{onDuplicate\}>Duplicate<\/button>/);
 });
 
-// Regression test: handleDelete/handleDuplicate/handleBulkDelete/handleMove
-// each awaited a real network call (deleteRecord/createRecord/updateRecord)
-// with no try/catch at all, unlike handleSubmit and handleImportFile right
-// next to them in this same file, and unlike the live-preview app's own
-// EntityPanel.tsx, where all four of these already wrap the same calls in
+// Regression test: handleDuplicate/handleBulkDelete/handleMove each awaited
+// a real network call (createRecord/deleteRecord/updateRecord) with no
+// try/catch at all, unlike handleSubmit and handleImportFile right next to
+// them in this same file, and unlike the live-preview app's own
+// EntityPanel.tsx, where all three of these already wrap the same calls in
 // try/catch + setError. A rejected request here (a dropped connection, an
 // unexpected server error, a record already deleted by someone else)
 // became an unhandled promise rejection with zero visible feedback -- the
@@ -657,19 +657,23 @@ test("the exported EntityView renders a real Duplicate action (table and board v
 // handler functions (extracted from real codegen output, not
 // reimplemented) with a rejecting mock of the underlying API call and
 // asserts setError actually gets called with the rejection's message.
-test("the exported EntityView's handleDelete/handleDuplicate/handleBulkDelete/handleMove surface a failed request instead of silently swallowing it", async () => {
+// (handleDelete itself is deliberately NOT covered here: since round 194
+// it's an optimistic delete behind an undo window -- see the dedicated
+// undo-toast test below -- and the real deleteRecord call it eventually
+// makes, once the window closes, has no UI left to report a failure to,
+// exactly like the live preview's own commitPendingDelete.)
+test("the exported EntityView's handleDuplicate/handleBulkDelete/handleMove surface a failed request instead of silently swallowing it", async () => {
   const entityViewJsx = generateExportFiles(project).find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
 
   const displayFieldHintsSrc = entityViewJsx.match(/const DISPLAY_FIELD_NAME_HINTS = \[[^\]]*\];\n/)?.[0];
   const pickDisplayFieldSrc = entityViewJsx.match(/export function pickDisplayField\(entity\) \{[\s\S]*?\n\}\n/)?.[0]?.replace("export ", "");
   const recordDisplayLabelSrc = entityViewJsx.match(/export function recordDisplayLabel\(entity, record\) \{[\s\S]*?\n\}\n/)?.[0]?.replace("export ", "");
-  const handleDeleteSrc = entityViewJsx.match(/async function handleDelete\(id\) \{[\s\S]*?\n  \}\n/)?.[0];
   const handleDuplicateSrc = entityViewJsx.match(/async function handleDuplicate\(id\) \{[\s\S]*?\n  \}\n/)?.[0];
   const handleBulkDeleteSrc = entityViewJsx.match(/async function handleBulkDelete\(\) \{[\s\S]*?\n  \}\n/)?.[0];
   const handleMoveSrc = entityViewJsx.match(/async function handleMove\(id, fieldName, value\) \{[\s\S]*?\n  \}\n/)?.[0];
   assert.ok(
-    displayFieldHintsSrc && pickDisplayFieldSrc && recordDisplayLabelSrc && handleDeleteSrc && handleDuplicateSrc && handleBulkDeleteSrc && handleMoveSrc,
-    "expected to find DISPLAY_FIELD_NAME_HINTS/pickDisplayField/recordDisplayLabel/handleDelete/handleDuplicate/handleBulkDelete/handleMove in generated output",
+    displayFieldHintsSrc && pickDisplayFieldSrc && recordDisplayLabelSrc && handleDuplicateSrc && handleBulkDeleteSrc && handleMoveSrc,
+    "expected to find DISPLAY_FIELD_NAME_HINTS/pickDisplayField/recordDisplayLabel/handleDuplicate/handleBulkDelete/handleMove in generated output",
   );
 
   const entity = project.spec.entities[0];
@@ -714,7 +718,6 @@ test("the exported EntityView's handleDelete/handleDuplicate/handleBulkDelete/ha
     return capturedError;
   }
 
-  assert.equal(await runHandler(handleDeleteSrc, (fn) => fn(1)), rejection.message, "handleDelete must call setError on failure");
   assert.equal(await runHandler(handleDuplicateSrc, (fn) => fn(1)), rejection.message, "handleDuplicate must call setError on failure");
   assert.equal(await runHandler(handleBulkDeleteSrc, (fn) => fn()), rejection.message, "handleBulkDelete must call setError on failure");
   assert.equal(await runHandler(handleMoveSrc, (fn) => fn(1, "status", "Won")), rejection.message, "handleMove must call setError on failure");
@@ -958,8 +961,71 @@ test("the exported EntityView's own CSV-export formatting renders booleans as TR
 test("the exported EntityView asks for confirmation before deleting a single record, naming it by its own display label, not just count", () => {
   const files = generateExportFiles(project);
   const entityViewJsx = files.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
-  assert.match(entityViewJsx, /async function handleDelete\(id\) \{\s*const record = records\.find/);
+  assert.match(entityViewJsx, /function handleDelete\(id\) \{\s*const index = records\.findIndex/);
   assert.match(entityViewJsx, /window\.confirm\(`Delete "\$\{label\}"\? This can't be undone\.`\)/);
+});
+
+/**
+ * New in this round: the exported standalone app's own Delete button had
+ * no undo at all -- unlike the live Forge AI preview (round 184's own
+ * undo toast), a single click on Delete (past the confirm dialog) was
+ * instantly irreversible in the exported app. Ports the identical fix:
+ * the record disappears from view right away (so the table still feels
+ * instant), but the real DELETE request is delayed behind a real
+ * UNDO_WINDOW_MS window, with a toast offering Undo. Executes the real
+ * generated restoreRecordAt (extracted from real codegen output, not
+ * reimplemented), mirroring apps/web/src/entityFormatting.test.ts's own
+ * restoreRecordAt coverage.
+ */
+test("the exported EntityView's restoreRecordAt reinserts a record at its original index, not at the end or via mutation", () => {
+  const entityViewJsx = generateExportFiles(project).find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+  const restoreSrc = entityViewJsx.match(/export function restoreRecordAt\(records, record, index\) \{[\s\S]*?\n\}\n/)?.[0]?.replace("export ", "");
+  assert.ok(restoreSrc, "expected to find restoreRecordAt in generated output");
+
+  const restoreRecordAt = new Function(`${restoreSrc}\nreturn restoreRecordAt;`)() as (
+    records: { id: number }[],
+    record: { id: number },
+    index: number,
+  ) => { id: number }[];
+
+  const records = [{ id: 1 }, { id: 2 }, { id: 4 }];
+  const restored = restoreRecordAt(records, { id: 3 }, 2);
+  assert.deepEqual(
+    restored.map((r) => r.id),
+    [1, 2, 3, 4],
+    "the record must land back at its original index, not get appended to the end",
+  );
+  assert.deepEqual(records.map((r) => r.id), [1, 2, 4], "the original array must not be mutated");
+
+  const clamped = restoreRecordAt(records, { id: 99 }, 50);
+  assert.deepEqual(clamped.map((r) => r.id), [1, 2, 4, 99], "an out-of-range index must clamp to the end rather than throw");
+});
+
+test("the exported EntityView renders a real Undo toast after a single-record delete, wired to a real UNDO_WINDOW_MS-delayed commit", () => {
+  const files = generateExportFiles(project);
+  const entityViewJsx = files.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+
+  assert.match(entityViewJsx, /const UNDO_WINDOW_MS = 5000;/);
+  assert.match(entityViewJsx, /const \[pendingDelete, setPendingDelete\] = useState\(null\);/);
+  assert.match(entityViewJsx, /function commitPendingDelete\(pending\) \{\s*deleteRecord\(entity\.name, pending\.id\)\.catch/);
+  assert.match(entityViewJsx, /function handleUndoDelete\(\) \{/);
+  assert.match(entityViewJsx, /className="entity-undo-toast"/);
+  assert.match(entityViewJsx, /onClick=\{handleUndoDelete\}/);
+  // handleDelete must remove the record from view immediately (optimistic),
+  // not wait on the real request the way it used to.
+  assert.match(entityViewJsx, /setRecords\(\(prev\) => prev\.filter\(\(r\) => r\.id !== id\)\)/);
+  // A second delete arriving mid-undo-window must commit the first one for
+  // real rather than letting two undo windows overlap.
+  assert.match(entityViewJsx, /if \(pendingDeleteRef\.current\) \{\s*clearTimeout\(pendingDeleteRef\.current\.timeoutId\);\s*commitPendingDelete\(pendingDeleteRef\.current\);/);
+  // The delete must actually go through the delayed-commit setTimeout, not
+  // be committed for real immediately -- otherwise there'd be no undo
+  // window at all despite the toast being shown.
+  assert.match(entityViewJsx, /const timeoutId = setTimeout\(\(\) => \{\s*setPendingDelete\(\(current\) => \{\s*if \(current\?\.id !== id\) return current;\s*commitPendingDelete\(current\);\s*return null;\s*\}\);\s*\}, UNDO_WINDOW_MS\);/);
+  assert.match(entityViewJsx, /setPendingDelete\(\{ id, record, index, label, timeoutId \}\);/);
+
+  const stylesCss = files.find((f) => f.path === "web/src/styles.css")!.content;
+  assert.match(stylesCss, /\.entity-undo-toast/);
+  assert.match(stylesCss, /\.link-button/);
 });
 
 test("the exported EntityView renders a real CSV import (the complement to CSV export), ported from the Forge AI live preview", () => {

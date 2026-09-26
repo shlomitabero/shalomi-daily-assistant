@@ -890,6 +890,15 @@ export function matchesSearch(record, fields, query) {
   });
 }
 
+// Reinserts a record at its original index -- used by the Undo toast
+// below to put a record back exactly where it was, rather than tacking
+// it onto the end of the list. Mirrors the live preview's own
+// entityFormatting.ts (round 184).
+export function restoreRecordAt(records, record, index) {
+  const clampedIndex = Math.max(0, Math.min(index, records.length));
+  return [...records.slice(0, clampedIndex), record, ...records.slice(clampedIndex)];
+}
+
 function compareValues(a, b) {
   if (a === null || a === undefined) return b === null || b === undefined ? 0 : -1;
   if (b === null || b === undefined) return 1;
@@ -1320,6 +1329,13 @@ function FieldInput({ entity, field, value, onChange, relatedEntity, relatedEnti
   return <input id={id} type="text" value={value ?? ""} onChange={(e) => onChange(e.target.value)} />;
 }
 
+// How long a deleted record stays undoable before the delete actually
+// reaches the server -- mirrors the live preview's own EntityPanel.tsx
+// (round 184) exactly, same window, same reasoning: long enough to notice
+// and click Undo, short enough that leaving it pending doesn't feel like
+// the delete silently didn't happen.
+const UNDO_WINDOW_MS = 5000;
+
 /** Shared list + form UI used by every entity's own component file. */
 export function EntityView({ entity }) {
   const [records, setRecords] = useState([]);
@@ -1333,6 +1349,11 @@ export function EntityView({ entity }) {
   const [viewMode, setViewMode] = useState("table");
   const [calendarMonth, setCalendarMonth] = useState(() => new Date());
   const [selectedIds, setSelectedIds] = useState(() => new Set());
+  const [pendingDelete, setPendingDelete] = useState(null);
+  // Mirrors pendingDelete so the unmount-flush effect and a second delete
+  // arriving mid-undo-window can read the latest pending delete without
+  // depending on a stale render's closure.
+  const pendingDeleteRef = useRef(null);
   const [relatedRecords, setRelatedRecords] = useState({});
   const [importBusy, setImportBusy] = useState(false);
   const [importMessage, setImportMessage] = useState(null);
@@ -1410,6 +1431,35 @@ export function EntityView({ entity }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [entity.name]);
 
+  // Fires the real DELETE request for a record the undo window has already
+  // closed on (either the timer ran out, or a newer delete pre-empted it) --
+  // it was already removed from view the moment Delete was confirmed, so
+  // there's nothing left to roll the screen back to if this itself fails.
+  function commitPendingDelete(pending) {
+    deleteRecord(entity.name, pending.id).catch(() => {});
+  }
+
+  useEffect(() => {
+    pendingDeleteRef.current = pendingDelete;
+  }, [pendingDelete]);
+
+  // Switching entity tabs remounts this component fresh (each entity's own
+  // View wrapper is a distinct component, per entities/<Name>.jsx), so
+  // leaving one open mid-undo-window would otherwise silently never
+  // actually delete the record. Committing it for real on unmount instead
+  // makes "navigate away" behave like the undo window simply ran out
+  // early, rather than quietly reverting the delete.
+  useEffect(() => {
+    return () => {
+      const pending = pendingDeleteRef.current;
+      if (pending) {
+        clearTimeout(pending.timeoutId);
+        commitPendingDelete(pending);
+      }
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   function toggleSort(fieldName) {
     if (sortField !== fieldName) {
       setSortField(fieldName);
@@ -1461,23 +1511,53 @@ export function EntityView({ entity }) {
     setEditingId(record.id);
   }
 
-  async function handleDelete(id) {
-    const record = records.find((r) => r.id === id);
-    const label = record ? recordDisplayLabel(entity, record) : \`#\${id}\`;
+  // Deleting a record used to call the real DELETE endpoint the instant the
+  // confirm dialog closed -- irreversible the moment you clicked, with the
+  // confirm dialog as the only safety net. Removes it from view immediately
+  // (so the table still feels instant), but delays the actual API call
+  // behind a real UNDO_WINDOW_MS window, showing a toast with an Undo
+  // button. Mirrors the live preview's own EntityPanel.tsx exactly (round
+  // 184). Only one delete is ever pending at a time: starting a new one
+  // commits any still-pending one for real first, rather than letting two
+  // undo windows overlap.
+  function handleDelete(id) {
+    const index = records.findIndex((r) => r.id === id);
+    if (index === -1) return;
+    const record = records[index];
+    const label = recordDisplayLabel(entity, record);
     if (!window.confirm(\`Delete "\${label}"? This can't be undone.\`)) return;
-    setError(null);
-    try {
-      await deleteRecord(entity.name, id);
-      setSelectedIds((prev) => {
-        if (!prev.has(id)) return prev;
-        const next = new Set(prev);
-        next.delete(id);
-        return next;
-      });
-      await refresh();
-    } catch (err) {
-      setError(err.message);
+
+    if (pendingDeleteRef.current) {
+      clearTimeout(pendingDeleteRef.current.timeoutId);
+      commitPendingDelete(pendingDeleteRef.current);
     }
+
+    setError(null);
+    setRecords((prev) => prev.filter((r) => r.id !== id));
+    setSelectedIds((prev) => {
+      if (!prev.has(id)) return prev;
+      const next = new Set(prev);
+      next.delete(id);
+      return next;
+    });
+
+    const timeoutId = setTimeout(() => {
+      setPendingDelete((current) => {
+        if (current?.id !== id) return current;
+        commitPendingDelete(current);
+        return null;
+      });
+    }, UNDO_WINDOW_MS);
+
+    setPendingDelete({ id, record, index, label, timeoutId });
+  }
+
+  function handleUndoDelete() {
+    const pending = pendingDeleteRef.current;
+    if (!pending) return;
+    clearTimeout(pending.timeoutId);
+    setRecords((prev) => restoreRecordAt(prev, pending.record, pending.index));
+    setPendingDelete(null);
   }
 
   // Copies a record's own field values into a real new record -- no
@@ -1643,6 +1723,15 @@ export function EntityView({ entity }) {
         </div>
       </form>
       {error && <p className="error">{error}</p>}
+
+      {pendingDelete && (
+        <p className="entity-undo-toast" role="status">
+          {\`Deleted "\${pendingDelete.label}". \`}
+          <button type="button" className="link-button" onClick={handleUndoDelete}>
+            Undo
+          </button>
+        </p>
+      )}
 
       <div className="csv-import-row">
         <label className="csv-import-label">
@@ -2248,6 +2337,9 @@ th, td { text-align: start; padding: 8px 10px; border-bottom: 1px solid var(--bo
 .row-actions button { margin-inline-start: 4px; padding: 5px 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface); color: var(--text); cursor: pointer; }
 .muted { color: var(--muted); font-size: 13px; }
 .error { color: var(--danger); }
+.entity-undo-toast { display: flex; align-items: center; gap: 10px; background: var(--accent-soft); border: 1px solid var(--accent); color: var(--text); padding: 8px 14px; border-radius: 8px; margin: 0 0 16px; }
+.link-button { background: none; border: none; color: var(--accent); padding: 0; text-decoration: underline; font: inherit; font-weight: 600; cursor: pointer; }
+.link-button:hover { opacity: 0.85; }
 .entity-search { max-width: 280px; margin-bottom: 14px; }
 .sort-header { background: none; border: none; padding: 0; margin: 0; color: inherit; font: inherit; cursor: pointer; }
 .sort-header:hover { color: var(--accent); }
