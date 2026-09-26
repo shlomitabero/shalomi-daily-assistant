@@ -9538,6 +9538,77 @@ not a single "make it perfect" claim.
       `@forge/shared` 11, `@forge/spec-engine` 82, `@forge/db` 80,
       `@forge/api` 201 unchanged) and typecheck/build clean.
 
+- [x] **Round 190 — the topbar logo is now a real "back to your projects" link.**
+      Diversification: this round's own trigger note suggested keyboard
+      shortcuts ("/" for Global Search, Ctrl+N for a new project), but
+      checking App.tsx's existing keydown handler first (per the round
+      189 lesson about checking for conflicts before adding new ones)
+      showed it only ever runs while `view === "preview"` -- so the home
+      screen has zero shortcuts today, and "Ctrl+N" doesn't map cleanly
+      onto anything either (the home screen already *is* the
+      new-project screen). Looking at actual navigation instead of
+      shortcuts specifically surfaced a real, plain gap: once a project
+      was built, there was **no way back** to the home screen's "Your
+      projects" list at all -- `handleBackToHome` only ever ran from the
+      spec review screen's own Back button, and the topbar's brand
+      logo/title was purely decorative markup with no `onClick`. The only
+      way back from a live preview screen was logging all the way out and
+      back in.
+
+      Added `handleGoHome()` in `App.tsx`, deliberately reusing the exact
+      same leftover-state cleanup `handleLogout`'s own comment already
+      describes (a stale `activeEntity`/`refineHistory`/etc. bleeding into
+      whatever project gets opened next) rather than inventing a new
+      cleanup list -- this is precisely the scenario that comment warned
+      about, just reachable from a new entry point. Wired it to the
+      topbar's brand row, which now renders as a real `<button>` (a
+      `.brand-row-link` CSS reset keeps it looking identical to the
+      previous plain `<div>`) whenever `view !== "home" && view !==
+      "building"` -- deliberately inert while a build/refine is actively
+      streaming, matching `BuildProgress`'s own design of only offering an
+      exit on failure, so this doesn't silently disagree with that
+      existing decision.
+
+      New test in `App.test.ts`, using the same regex-extraction +
+      `new Function` sandboxing technique the existing `handleBackToHome`
+      test already established for testing an inline App.tsx handler in
+      isolation: confirms `handleGoHome` resets every field
+      `handleBackToHome` does, PLUS the preview-only fields
+      (`activeEntity`, `refineText`, `refineHistory`,
+      `refineHistorySearch`) that only matter once there's an actual
+      preview screen to leave, while still never touching `description`
+      (the home screen's own saved idea draft is a separate concern).
+
+      Also fixed a real, pre-existing typecheck error surfaced by running
+      a full `tsc -b` (not just the individual test file via `tsx --test`,
+      which doesn't type-check as strictly): round 189's own new
+      `HistoryPanel.test.ts` fixture had spread two differently-typed
+      entity arrays into an untyped `const`, silently widening an inline
+      `type: "number"` literal to plain `string` with no compile error
+      from the test file alone -- fixed with an explicit `ProductSpec`
+      annotation.
+
+      Verified with the deliberate-break-and-restore discipline: removed
+      the `setRefineHistory([])` line from `handleGoHome` -- caught
+      exactly by the new test's own refine-history assertion (every other
+      test, including the rest of the same test's own assertions on other
+      fields, still passed); restored from a pre-break backup, `diff`
+      byte-identical.
+
+      **And** a real Playwright pass against real running dev servers:
+      confirmed the brand logo renders as a plain, non-clickable element
+      on the home screen itself (nowhere more "home" to go); confirmed it
+      becomes a real `button.brand-row-link` once inside a built project's
+      preview screen; typed real text into the refine box, clicked the
+      logo, confirmed it landed back on the real home screen; reopened the
+      exact same project and confirmed the refine box came back genuinely
+      empty rather than showing the previous session's leftover text --
+      proving the cleanup actually ran, not just the view switch.
+
+      Full suite green (714 tests, up from 713 -- `@forge/web` 339 → 340;
+      `@forge/shared` 11, `@forge/spec-engine` 82, `@forge/db` 80,
+      `@forge/api` 201 unchanged) and typecheck/build clean.
+
 ## Phase 3
 
 - Self-healing: production observability, automatic diagnosis and patch
