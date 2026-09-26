@@ -27,7 +27,7 @@ import { WhatsAppPanel } from "./WhatsAppPanel.js";
 import { CollaboratorsPanel } from "./CollaboratorsPanel.js";
 import { ChangePasswordPanel } from "./ChangePasswordPanel.js";
 import { ProjectNameEditor } from "./ProjectNameEditor.js";
-import { AssumptionItem, RoleChip } from "./SpecListItemRemover.js";
+import { AddAssumptionForm, AddRoleForm, AssumptionItem, RoleChip } from "./SpecListItemRemover.js";
 import { getPinnedIds, sortByPinned, togglePinned } from "./pinnedProjects.js";
 import { getProjectSortMode, setProjectSortMode, type ProjectSortMode } from "./projectSortMode.js";
 import { clearIdeaDraft, getIdeaDraft, saveIdeaDraft } from "./ideaDraft.js";
@@ -820,6 +820,7 @@ function AppContent() {
                 />
               ))}
             </div>
+            <AddRoleForm projectId={project.id} onAdded={setProject} />
           </section>
 
           <section>
@@ -842,6 +843,7 @@ function AppContent() {
                 <AssumptionItem key={`${i}-${a}`} assumption={a} projectId={project.id} index={i} onRemoved={setProject} />
               ))}
             </ul>
+            <AddAssumptionForm projectId={project.id} onAdded={setProject} />
           </section>
 
           {project.spec.openQuestions.length > 0 && (

@@ -239,6 +239,14 @@ export function removeAssumption(projectId: string, index: number): Promise<{ pr
   return request(`/projects/${projectId}/assumptions/${index}`, { method: "DELETE" });
 }
 
+export function addRole(projectId: string, role: string): Promise<{ project: Project }> {
+  return request(`/projects/${projectId}/roles`, { method: "POST", body: JSON.stringify({ role }) });
+}
+
+export function addAssumption(projectId: string, assumption: string): Promise<{ project: Project }> {
+  return request(`/projects/${projectId}/assumptions`, { method: "POST", body: JSON.stringify({ assumption }) });
+}
+
 /**
  * Sends the user's answers to the spec's open questions (quick-pick or
  * freely typed), and/or a free-standing request not tied to any specific

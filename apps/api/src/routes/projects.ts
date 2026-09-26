@@ -77,6 +77,14 @@ const RenameFieldLabelSchema = z.object({
   label: z.string().trim().min(1, "label is required"),
 });
 
+const AddRoleSchema = z.object({
+  role: z.string().trim().min(1, "role is required"),
+});
+
+const AddAssumptionSchema = z.object({
+  assumption: z.string().trim().min(1, "assumption is required"),
+});
+
 /** Exported for direct unit testing of the word-truncation and empty-input fallback below. */
 export function deriveName(description: string): string {
   const words = description.trim().split(/\s+/).slice(0, 6).join(" ");
@@ -747,7 +755,44 @@ export function createProjectsRouter(db: ForgeDatabase, provider: SpecProvider |
    * so removing the very last role would otherwise pass this route's own
    * checks and then blow up inside updateProjectSpec's schema validation as
    * an uncaught 500 -- guarded explicitly below instead, with a clear 400.
+   *
+   * Removal alone was one-directional: once the heuristic engine missed a
+   * role entirely (e.g. a two-sided marketplace where it only spotted
+   * "Buyer"), or missed an assumption worth recording, there was no way to
+   * add one back short of restarting the whole spec. These two POST
+   * routes are the other half of the same correction workflow -- append
+   * one trimmed string to the array and persist through the same
+   * updateProjectSpec path, no schema/status checks needed since any
+   * non-empty string is a valid role or assumption.
    */
+  router.post(
+    "/projects/:id/roles",
+    asyncRoute(async (req, res) => {
+      const project = requireProjectAccess(db, req.params.id, req.userId!);
+      const parsed = AddRoleSchema.safeParse(req.body);
+      if (!parsed.success) {
+        throw new HttpError(400, formatValidationError(parsed.error), "VALIDATION_ERROR");
+      }
+      const nextSpec = { ...project.spec, roles: [...project.spec.roles, parsed.data.role] };
+      const updated = updateProjectSpec(db, project.id, nextSpec);
+      res.json({ project: updated });
+    }),
+  );
+
+  router.post(
+    "/projects/:id/assumptions",
+    asyncRoute(async (req, res) => {
+      const project = requireProjectAccess(db, req.params.id, req.userId!);
+      const parsed = AddAssumptionSchema.safeParse(req.body);
+      if (!parsed.success) {
+        throw new HttpError(400, formatValidationError(parsed.error), "VALIDATION_ERROR");
+      }
+      const nextSpec = { ...project.spec, assumptions: [...project.spec.assumptions, parsed.data.assumption] };
+      const updated = updateProjectSpec(db, project.id, nextSpec);
+      res.json({ project: updated });
+    }),
+  );
+
   router.delete(
     "/projects/:id/roles/:index",
     asyncRoute(async (req, res) => {

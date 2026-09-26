@@ -1471,6 +1471,176 @@ test("removing a role at a non-numeric index 404s the same as an out-of-range on
   });
 });
 
+test("the owner can add a role, and a collaborator can too -- both are appended to the end, keeping existing roles in order", async () => {
+  await withServer(async (baseUrl) => {
+    const ownerToken = await signup(baseUrl, "role-add-owner1@example.com");
+    const collabToken = await signup(baseUrl, "role-add-collab1@example.com");
+    const createRes = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: authHeaders(ownerToken),
+      body: JSON.stringify({ description: "A CRM with customers and deals." }),
+    });
+    const { project } = (await createRes.json()) as { project: { id: string; spec: { roles: string[] } } };
+    const originalRoles = project.spec.roles;
+    await fetch(`${baseUrl}/api/projects/${project.id}/collaborators`, {
+      method: "POST",
+      headers: authHeaders(ownerToken),
+      body: JSON.stringify({ email: "role-add-collab1@example.com" }),
+    });
+
+    const ownerRes = await fetch(`${baseUrl}/api/projects/${project.id}/roles`, {
+      method: "POST",
+      headers: authHeaders(ownerToken),
+      body: JSON.stringify({ role: "Warehouse Manager" }),
+    });
+    assert.equal(ownerRes.status, 200);
+    const { project: afterFirstAdd } = (await ownerRes.json()) as { project: { spec: { roles: string[] } } };
+    assert.deepEqual(afterFirstAdd.spec.roles, [...originalRoles, "Warehouse Manager"]);
+
+    const collabRes = await fetch(`${baseUrl}/api/projects/${project.id}/roles`, {
+      method: "POST",
+      headers: authHeaders(collabToken),
+      body: JSON.stringify({ role: "  Auditor  " }),
+    });
+    assert.equal(collabRes.status, 200);
+    const { project: afterSecondAdd } = (await collabRes.json()) as { project: { spec: { roles: string[] } } };
+    assert.deepEqual(
+      afterSecondAdd.spec.roles,
+      [...originalRoles, "Warehouse Manager", "Auditor"],
+      "a collaborator can add a role too, and the value is trimmed",
+    );
+  });
+});
+
+test("adding a blank/whitespace-only role is rejected with 400 instead of appending an empty string", async () => {
+  await withServer(async (baseUrl) => {
+    const token = await signup(baseUrl, "role-add-blank@example.com");
+    const createRes = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ description: "A CRM with customers and deals." }),
+    });
+    const { project } = (await createRes.json()) as { project: { id: string; spec: { roles: string[] } } };
+
+    const res = await fetch(`${baseUrl}/api/projects/${project.id}/roles`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ role: "   " }),
+    });
+    assert.equal(res.status, 400);
+    assert.equal(((await res.json()) as { code?: string }).code, "VALIDATION_ERROR");
+
+    const getRes = await fetch(`${baseUrl}/api/projects/${project.id}`, { headers: authHeaders(token) });
+    const { project: unchanged } = (await getRes.json()) as { project: { spec: { roles: string[] } } };
+    assert.deepEqual(unchanged.spec.roles, project.spec.roles);
+  });
+});
+
+test("adding a role on a project you have no access to still 404s, the same as any other project route", async () => {
+  await withServer(async (baseUrl) => {
+    const ownerToken = await signup(baseUrl, "role-add-owner2@example.com");
+    const outsiderToken = await signup(baseUrl, "role-add-outsider2@example.com");
+    const createRes = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: authHeaders(ownerToken),
+      body: JSON.stringify({ description: "A CRM with customers and deals." }),
+    });
+    const { project } = (await createRes.json()) as { project: { id: string } };
+
+    const res = await fetch(`${baseUrl}/api/projects/${project.id}/roles`, {
+      method: "POST",
+      headers: authHeaders(outsiderToken),
+      body: JSON.stringify({ role: "Should not be added" }),
+    });
+    assert.equal(res.status, 404);
+  });
+});
+
+test("the owner can add an assumption, and a collaborator can too -- both are appended to the end, keeping existing assumptions in order", async () => {
+  await withServer(async (baseUrl) => {
+    const ownerToken = await signup(baseUrl, "assumption-add-owner1@example.com");
+    const collabToken = await signup(baseUrl, "assumption-add-collab1@example.com");
+    const createRes = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: authHeaders(ownerToken),
+      body: JSON.stringify({ description: "A CRM with customers and deals." }),
+    });
+    const { project } = (await createRes.json()) as { project: { id: string; spec: { assumptions: string[] } } };
+    const originalAssumptions = project.spec.assumptions;
+    await fetch(`${baseUrl}/api/projects/${project.id}/collaborators`, {
+      method: "POST",
+      headers: authHeaders(ownerToken),
+      body: JSON.stringify({ email: "assumption-add-collab1@example.com" }),
+    });
+
+    const ownerRes = await fetch(`${baseUrl}/api/projects/${project.id}/assumptions`, {
+      method: "POST",
+      headers: authHeaders(ownerToken),
+      body: JSON.stringify({ assumption: "Payments are handled outside the app" }),
+    });
+    assert.equal(ownerRes.status, 200);
+    const { project: afterFirstAdd } = (await ownerRes.json()) as { project: { spec: { assumptions: string[] } } };
+    assert.deepEqual(afterFirstAdd.spec.assumptions, [...originalAssumptions, "Payments are handled outside the app"]);
+
+    const collabRes = await fetch(`${baseUrl}/api/projects/${project.id}/assumptions`, {
+      method: "POST",
+      headers: authHeaders(collabToken),
+      body: JSON.stringify({ assumption: "  Only one warehouse location  " }),
+    });
+    assert.equal(collabRes.status, 200);
+    const { project: afterSecondAdd } = (await collabRes.json()) as { project: { spec: { assumptions: string[] } } };
+    assert.deepEqual(
+      afterSecondAdd.spec.assumptions,
+      [...originalAssumptions, "Payments are handled outside the app", "Only one warehouse location"],
+      "a collaborator can add an assumption too, and the value is trimmed",
+    );
+  });
+});
+
+test("adding a blank/whitespace-only assumption is rejected with 400 instead of appending an empty string", async () => {
+  await withServer(async (baseUrl) => {
+    const token = await signup(baseUrl, "assumption-add-blank@example.com");
+    const createRes = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ description: "A CRM with customers and deals." }),
+    });
+    const { project } = (await createRes.json()) as { project: { id: string; spec: { assumptions: string[] } } };
+
+    const res = await fetch(`${baseUrl}/api/projects/${project.id}/assumptions`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ assumption: "" }),
+    });
+    assert.equal(res.status, 400);
+    assert.equal(((await res.json()) as { code?: string }).code, "VALIDATION_ERROR");
+
+    const getRes = await fetch(`${baseUrl}/api/projects/${project.id}`, { headers: authHeaders(token) });
+    const { project: unchanged } = (await getRes.json()) as { project: { spec: { assumptions: string[] } } };
+    assert.deepEqual(unchanged.spec.assumptions, project.spec.assumptions);
+  });
+});
+
+test("adding an assumption on a project you have no access to still 404s, the same as any other project route", async () => {
+  await withServer(async (baseUrl) => {
+    const ownerToken = await signup(baseUrl, "assumption-add-owner2@example.com");
+    const outsiderToken = await signup(baseUrl, "assumption-add-outsider2@example.com");
+    const createRes = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: authHeaders(ownerToken),
+      body: JSON.stringify({ description: "A CRM with customers and deals." }),
+    });
+    const { project } = (await createRes.json()) as { project: { id: string } };
+
+    const res = await fetch(`${baseUrl}/api/projects/${project.id}/assumptions`, {
+      method: "POST",
+      headers: authHeaders(outsiderToken),
+      body: JSON.stringify({ assumption: "Should not be added" }),
+    });
+    assert.equal(res.status, 404);
+  });
+});
+
 test("the owner can delete a built project, and afterward the project, its real data, its checkpoint, and a collaborator's access are all genuinely gone -- not just hidden", async () => {
   await withServer(async (baseUrl) => {
     const ownerToken = await signup(baseUrl, "delete-owner1@example.com");

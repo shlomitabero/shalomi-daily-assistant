@@ -1,6 +1,6 @@
 import { useState } from "react";
 import type { Project } from "@forge/shared";
-import { removeAssumption, removeRole } from "./api.js";
+import { addAssumption, addRole, removeAssumption, removeRole } from "./api.js";
 import { useTranslation } from "./i18n/LanguageContext.js";
 
 /**
@@ -13,7 +13,11 @@ import { useTranslation } from "./i18n/LanguageContext.js";
  * which endpoint to call and which markup wraps them -- a chip <span> vs a
  * <li> -- so the busy/error/remove logic lives here once and each shape is
  * its own tiny component below, mirroring EntityLabelEditor's own
- * request/busy/error pattern.
+ * request/busy/error pattern. Removal alone was one-directional -- there
+ * was no way to add back a role or assumption the engine missed entirely
+ * -- so AddRoleForm/AddAssumptionForm below are the other half of the same
+ * correction workflow, a plain text input + submit calling the matching
+ * POST endpoint.
  */
 function useRemovableSpecItem(remove: () => Promise<{ project: Project }>, onRemoved: (project: Project) => void) {
   const [busy, setBusy] = useState(false);
@@ -104,5 +108,86 @@ export function AssumptionItem({
         </span>
       )}
     </li>
+  );
+}
+
+function useAddableSpecItem(add: (value: string) => Promise<{ project: Project }>, onAdded: (project: Project) => void) {
+  const [value, setValue] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    const trimmed = value.trim();
+    if (!trimmed) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const { project } = await add(trimmed);
+      onAdded(project);
+      setValue("");
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return { value, setValue, busy, error, handleSubmit };
+}
+
+export function AddRoleForm({ projectId, onAdded }: { projectId: string; onAdded: (project: Project) => void }) {
+  const { t } = useTranslation();
+  const { value, setValue, busy, error, handleSubmit } = useAddableSpecItem(
+    (role) => addRole(projectId, role),
+    onAdded,
+  );
+  return (
+    <form className="spec-add-item-form" onSubmit={handleSubmit}>
+      <input
+        type="text"
+        value={value}
+        onChange={(e) => setValue(e.target.value)}
+        placeholder={t("spec.roles.addPlaceholder")}
+        aria-label={t("spec.roles.addPlaceholder")}
+        disabled={busy}
+      />
+      <button type="submit" className="secondary" disabled={busy || !value.trim()}>
+        {t("spec.roles.add")}
+      </button>
+      {error && (
+        <span className="error small" role="alert">
+          {error}
+        </span>
+      )}
+    </form>
+  );
+}
+
+export function AddAssumptionForm({ projectId, onAdded }: { projectId: string; onAdded: (project: Project) => void }) {
+  const { t } = useTranslation();
+  const { value, setValue, busy, error, handleSubmit } = useAddableSpecItem(
+    (assumption) => addAssumption(projectId, assumption),
+    onAdded,
+  );
+  return (
+    <form className="spec-add-item-form" onSubmit={handleSubmit}>
+      <input
+        type="text"
+        value={value}
+        onChange={(e) => setValue(e.target.value)}
+        placeholder={t("spec.assumptions.addPlaceholder")}
+        aria-label={t("spec.assumptions.addPlaceholder")}
+        disabled={busy}
+      />
+      <button type="submit" className="secondary" disabled={busy || !value.trim()}>
+        {t("spec.assumptions.add")}
+      </button>
+      {error && (
+        <span className="error small" role="alert">
+          {error}
+        </span>
+      )}
+    </form>
   );
 }

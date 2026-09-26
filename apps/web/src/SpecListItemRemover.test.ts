@@ -5,7 +5,7 @@ import { JSDOM } from "jsdom";
 import React from "react";
 import { cleanup, fireEvent, render } from "@testing-library/react";
 import type { Project } from "@forge/shared";
-import { AssumptionItem, RoleChip } from "./SpecListItemRemover.js";
+import { AddAssumptionForm, AddRoleForm, AssumptionItem, RoleChip } from "./SpecListItemRemover.js";
 import { LanguageProvider } from "./i18n/LanguageContext.js";
 import { ThemeProvider } from "./theme/ThemeContext.js";
 
@@ -95,6 +95,26 @@ function renderAssumptionItem(onRemoved: (p: Project) => void) {
         null,
         React.createElement(AssumptionItem, { assumption: "Second assumption", projectId: "proj1", index: 1, onRemoved }),
       ),
+    ),
+  );
+}
+
+function renderAddRoleForm(onAdded: (p: Project) => void) {
+  render(
+    React.createElement(
+      ThemeProvider,
+      null,
+      React.createElement(LanguageProvider, null, React.createElement(AddRoleForm, { projectId: "proj1", onAdded })),
+    ),
+  );
+}
+
+function renderAddAssumptionForm(onAdded: (p: Project) => void) {
+  render(
+    React.createElement(
+      ThemeProvider,
+      null,
+      React.createElement(LanguageProvider, null, React.createElement(AddAssumptionForm, { projectId: "proj1", onAdded })),
     ),
   );
 }
@@ -200,6 +220,105 @@ test("clicking an assumption's remove button calls the real DELETE endpoint by i
       await waitForCondition(() => removedProjects.length === 1);
       assert.equal(deleteCalls, 1);
       assert.deepEqual(removedProjects[0].spec.assumptions, ["First assumption"]);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+test("submitting the add-role form calls the real POST endpoint with the trimmed value and reports the returned project", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    let postedRole: string | undefined;
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      if (init?.method === "POST" && input === "/api/projects/proj1/roles") {
+        postedRole = (JSON.parse(init.body as string) as { role: string }).role;
+        const withNewRole = { ...baseProject, spec: { ...baseProject.spec, roles: [...baseProject.spec.roles, postedRole] } };
+        return new Response(JSON.stringify({ project: withNewRole }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${init?.method ?? "GET"} ${input}`);
+    }) as typeof fetch;
+
+    try {
+      const addedProjects: Project[] = [];
+      renderAddRoleForm((p) => addedProjects.push(p));
+
+      const input = document.querySelector(".spec-add-item-form input") as HTMLInputElement;
+      const button = document.querySelector(".spec-add-item-form button") as HTMLButtonElement;
+      assert.ok(input && button, "expected an add-role input and submit button");
+      assert.equal(button.disabled, true, "the submit button must start disabled with an empty input");
+
+      fireEvent.change(input, { target: { value: "  Warehouse Manager  " } });
+      fireEvent.click(button);
+
+      await waitForCondition(() => addedProjects.length === 1);
+      assert.equal(postedRole, "Warehouse Manager", "the posted role must be trimmed before sending");
+      assert.deepEqual(addedProjects[0].spec.roles, ["Admin", "Manager", "Warehouse Manager"]);
+      assert.equal(input.value, "", "the input must clear after a successful add");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+test("the add-role form surfaces a real error instead of silently doing nothing, and never fires onAdded", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async () =>
+      new Response(JSON.stringify({ error: "role is required" }), {
+        status: 400,
+        headers: { "content-type": "application/json" },
+      })) as typeof fetch;
+
+    try {
+      const addedProjects: Project[] = [];
+      renderAddRoleForm((p) => addedProjects.push(p));
+
+      fireEvent.change(document.querySelector(".spec-add-item-form input") as HTMLInputElement, {
+        target: { value: "Auditor" },
+      });
+      fireEvent.click(document.querySelector(".spec-add-item-form button") as HTMLButtonElement);
+
+      await waitForCondition(() => document.querySelector(".spec-add-item-form .error") !== null);
+      assert.equal(addedProjects.length, 0, "onAdded must not fire when the request failed");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+test("submitting the add-assumption form calls the real POST endpoint with the trimmed value and reports the returned project", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    let postedAssumption: string | undefined;
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      if (init?.method === "POST" && input === "/api/projects/proj1/assumptions") {
+        postedAssumption = (JSON.parse(init.body as string) as { assumption: string }).assumption;
+        const withNewAssumption = {
+          ...baseProject,
+          spec: { ...baseProject.spec, assumptions: [...baseProject.spec.assumptions, postedAssumption] },
+        };
+        return new Response(JSON.stringify({ project: withNewAssumption }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      throw new Error(`unexpected request ${init?.method ?? "GET"} ${input}`);
+    }) as typeof fetch;
+
+    try {
+      const addedProjects: Project[] = [];
+      renderAddAssumptionForm((p) => addedProjects.push(p));
+
+      const input = document.querySelector(".spec-add-item-form input") as HTMLInputElement;
+      const button = document.querySelector(".spec-add-item-form button") as HTMLButtonElement;
+      fireEvent.change(input, { target: { value: "  Only one warehouse  " } });
+      fireEvent.click(button);
+
+      await waitForCondition(() => addedProjects.length === 1);
+      assert.equal(postedAssumption, "Only one warehouse");
+      assert.deepEqual(addedProjects[0].spec.assumptions, ["First assumption", "Second assumption", "Only one warehouse"]);
+      assert.equal(input.value, "");
     } finally {
       globalThis.fetch = originalFetch;
     }
