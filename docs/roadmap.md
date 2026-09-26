@@ -10631,6 +10631,64 @@ not a single "make it perfect" claim.
       `@forge/db` 80 unchanged) and `npm run build --workspace=@forge/web`
       clean.
 
+- [x] **Round 205 — estimated time remaining on the AI Team build screen.**
+      Diversification: round 204 touched the home screen. This round moves
+      to the AI Team build screen (last real addition: round 169's live
+      progress bar) -- it already showed elapsed time and a fraction-based
+      progress bar, but gave no sense of how much LONGER a build would
+      actually take.
+
+      Added `computeEtaMs(elapsedMs, doneCount, totalAgents)` to
+      `BuildProgress.tsx`: extrapolates the real average time each
+      already-completed step actually took to however many steps are
+      still pending. Returns `null` until at least one real step has
+      genuinely finished -- with zero real data points yet (the first
+      step, the Architect, can itself take anywhere from a couple seconds
+      to much longer depending on the description's complexity), any
+      number would be pure guesswork, not a real projection from this
+      build's own actual pace -- and returns `0` once every step is
+      already done, rather than a stale positive number. Rendered next to
+      the existing elapsed-time display via a new `.build-eta` span.
+
+      New tests in `BuildProgress.test.ts`: three pure-function tests for
+      `computeEtaMs` (null before any real data, the actual
+      average-extrapolated-to-remaining math, zero once fully done), and
+      a DOM test using the same fake-timer technique (`t.mock.timers`,
+      mocking `setInterval` + `Date`) the existing elapsed-timer test
+      already established -- confirming the ETA is absent before any step
+      finishes, then reflects this build's own real, changing pace as
+      more real steps complete.
+
+      Verified with the deliberate-break-and-restore discipline twice:
+      first, removed the "no data points yet" guard -- `elapsedMs / 0`
+      produced an `Infinity`-based estimate instead of `null`; caught by
+      the DOM test, though notably as a real test *timeout* (the assertion
+      never got a chance to run cleanly) rather than a clean assertion
+      failure -- still a genuine, unambiguous catch, just a less tidy one;
+      restored, `diff` byte-identical. Second, disabled the JSX that
+      renders the `.build-eta` span entirely -- caught cleanly (a real
+      `null`-dereference in the test); restored, `diff` byte-identical
+      again.
+
+      **And** a real Playwright pass against the live dev server: signed
+      up, described a real restaurant-delivery idea, submitted through to
+      a real AI Team build, confirmed the real elapsed-time element
+      appears, and confirmed the build genuinely completes and navigates
+      to the live preview. Polled the real DOM rapidly throughout, but
+      **honestly found**: this sandbox has no `ANTHROPIC_API_KEY`, so the
+      heuristic spec-engine drives the whole multi-step build to
+      completion faster than any step boundary could ever be observed
+      live -- the `.build-eta` span never had a chance to render in this
+      run. Its real appearance/disappearance behavior and its exact
+      numeric calculation from a genuine elapsed/doneCount pace stay
+      covered by the fake-timer unit tests instead, which drive a real
+      multi-step build at a controlled, observable pace.
+
+      Full suite green (761 tests, up from 757 -- `@forge/web` 372 → 376;
+      `@forge/api` 212, `@forge/shared` 11, `@forge/spec-engine` 82,
+      `@forge/db` 80 unchanged) and `npm run build --workspace=@forge/web`
+      clean.
+
 ## Phase 3
 
 - Self-healing: production observability, automatic diagnosis and patch
