@@ -10689,6 +10689,89 @@ not a single "make it perfect" claim.
       `@forge/db` 80 unchanged) and `npm run build --workspace=@forge/web`
       clean.
 
+- [x] **Round 206 — inline cell editing in the entity table.**
+      Diversification: round 205 touched the AI Team build screen. This
+      round moves to the entity table's live-preview toolbar/column
+      domain (last real addition: round 203's drag-and-drop column
+      reordering), but from a genuinely new angle within it -- not another
+      column-management feature (that trio is fully closed: hide/show
+      138, resize 185, reorder 203), but editing a single value without
+      leaving the table at all. Previously, changing even one field on a
+      record required scrolling to the full add/edit form below the
+      table. Double-clicking any table cell now opens a real editor right
+      in that cell: Enter commits a real PATCH + refresh, Escape discards
+      the draft and never touches the server, and clicking away (blur)
+      commits just like Enter does.
+
+      New pure function in `entityFormatting.ts`: `isInlineEditableField`
+      -- true for every field type except `relation`, whose cell already
+      shows a label resolved from a *different* record (via
+      `relationDisplayLabel`), not its own raw stored value, so an inline
+      editor there would need the same related-entity picker the full
+      form already gives, with no real space savings.
+
+      `EntityPanel.tsx` gained `editingCell`/`cellDraft` state (reset on
+      entity switch, following the same per-entity-state discipline as
+      every column-management feature before it) and reuses the existing
+      `FieldInput` component as the in-cell editor itself, extended with
+      three new optional props (`autoFocus`/`onBlur`/`onKeyDown`) that the
+      plain add/edit form below the table never passes, so its own
+      behavior is completely unchanged. A `suppressCellBlurCommitRef`
+      guards against a real race: Escape clears `editingCell` immediately,
+      but removing the input from the DOM can still fire a genuine native
+      `blur` event afterward -- without the suppress flag, that blur would
+      go on to commit the very draft Escape just told it to discard.
+
+      New tests: a pure-function test in `entityFormatting.test.ts`
+      confirming every field type is inline-editable except `relation`,
+      plus three real DOM tests in `EntityPanel.test.ts` against a mock
+      fetch backed by a real mutable record store -- committing on Enter
+      sends exactly one real PATCH and the store itself changes; Escape
+      sends zero PATCH requests and the store stays untouched (this is
+      also the regression test for the blur race above, waiting a full
+      tick after Escape so any real-but-suppressed blur has a chance to
+      land before asserting); and a relation cell never opens an editor
+      on double-click at all.
+
+      Verified with the deliberate-break-and-restore discipline: made
+      `isInlineEditableField` return `true` unconditionally, so a relation
+      cell became inline-editable too. The pure-function test caught it
+      cleanly. But running the DOM test suite against the same break
+      produced a genuine runaway process -- the Node test worker spiked to
+      over 100% CPU and several gigabytes of memory and had to be
+      `kill -9`'d rather than timing out cleanly, an even messier failure
+      mode than round 205's own timed-out-test catch, but still an
+      unambiguous one: opening a real relation-type inline editor (a
+      `<select>` built from a set of related records that the break now
+      allowed) triggered a genuine infinite React re-render loop. Restored
+      `isInlineEditableField`, re-ran both suites clean and fast (34/34,
+      80/80), and confirmed `diff` byte-identical against the pre-break
+      copy.
+
+      **And** a real Playwright pass against the live dev server: signed
+      up, described a real restaurant-delivery idea, built through to the
+      live preview, added a genuine new record via the real add form,
+      double-clicked its name cell in the real table, typed a new value,
+      pressed Enter, confirmed the table showed it immediately -- then
+      reloaded the whole page and confirmed the edit had genuinely reached
+      the server rather than being a client-side illusion. Repeated the
+      same cell with Escape instead: confirmed the discarded draft never
+      appeared, then reloaded again and confirmed the server was never
+      touched. (Two real test-script bugs surfaced and were fixed along
+      the way, not the product code: submitting the add form without every
+      required field populated failed server-side validation exactly as
+      it should; and a `Locator` built with `hasText` on the record's own
+      name stopped resolving the instant editing began, since an
+      `<input>`'s live value is never reflected in `textContent` -- fixed
+      by pinning a real `ElementHandle` to the cell before editing starts,
+      since React keeps that same DOM node in place across the
+      re-render.)
+
+      Full suite green (765 tests, up from 761 -- `@forge/web` 376 → 380;
+      `@forge/api` 212, `@forge/shared` 11, `@forge/spec-engine` 82,
+      `@forge/db` 80 unchanged) and `npm run build --workspace=@forge/web`
+      clean.
+
 ## Phase 3
 
 - Self-healing: production observability, automatic diagnosis and patch
