@@ -9,7 +9,9 @@ import {
   filterCheckpointsByType,
   formatCheckpointCount,
   formatCheckpointHistory,
+  formatCompareTarget,
   isCheckpointCurrent,
+  resolveCompareSpec,
 } from "./checkpointDiff.js";
 import { useTranslation } from "./i18n/LanguageContext.js";
 import { useDialogFocusTrap } from "./useDialogFocusTrap.js";
@@ -34,6 +36,7 @@ export function HistoryPanel({
   const [error, setError] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [compareTargetId, setCompareTargetId] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [typeFilter, setTypeFilter] = useState<"all" | CheckpointType>("all");
   const dialogRef = useDialogFocusTrap<HTMLDivElement>();
@@ -118,9 +121,10 @@ export function HistoryPanel({
         ) : (
           <ul className="checkpoint-list">
             {visibleCheckpoints.map((checkpoint) => {
-              const diff = computeCheckpointDiff(currentSpec, checkpoint.spec);
-              const hasChanges = diff.removedEntities.length > 0 || diff.changedEntities.length > 0;
               const isOpen = expandedId === checkpoint.id;
+              const compareSpec = isOpen ? resolveCompareSpec(checkpoints, compareTargetId, currentSpec) : currentSpec;
+              const diff = computeCheckpointDiff(compareSpec, checkpoint.spec);
+              const hasChanges = diff.removedEntities.length > 0 || diff.changedEntities.length > 0;
               const isCurrent = isCheckpointCurrent(currentSpec, checkpoint.spec);
               return (
                 <li key={checkpoint.id}>
@@ -136,12 +140,36 @@ export function HistoryPanel({
                     <button
                       type="button"
                       className="link-button detail-toggle"
-                      onClick={() => setExpandedId(isOpen ? null : checkpoint.id)}
+                      onClick={() => {
+                        setExpandedId(isOpen ? null : checkpoint.id);
+                        setCompareTargetId(null);
+                      }}
                     >
                       {isOpen ? t("build.detail.hide") : t("history.diff.show")}
                     </button>
                     {isOpen && (
                       <div className="agent-detail">
+                        {checkpoints.length > 1 && (
+                          <label className="field-row checkpoint-compare-row">
+                            <span>{t("history.diff.compareWith")}</span>
+                            <select
+                              value={compareTargetId ?? ""}
+                              onChange={(e) => setCompareTargetId(e.target.value || null)}
+                            >
+                              <option value="">{t("history.diff.currentState")}</option>
+                              {checkpoints
+                                .filter((c) => c.id !== checkpoint.id)
+                                .map((c) => (
+                                  <option key={c.id} value={c.id}>
+                                    {c.label}
+                                  </option>
+                                ))}
+                            </select>
+                          </label>
+                        )}
+                        <p className="muted small">
+                          {t("history.diff.comparingTo", { label: formatCompareTarget(checkpoints, compareTargetId, t) })}
+                        </p>
                         {!hasChanges ? (
                           <p className="muted small">{t("history.diff.noChanges")}</p>
                         ) : (

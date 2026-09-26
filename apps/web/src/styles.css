@@ -667,6 +667,11 @@ button.danger:hover:not(:disabled) {
   min-width: 0;
 }
 
+.checkpoint-compare-row {
+  margin-bottom: 10px;
+  max-width: 260px;
+}
+
 .form-actions {
   display: flex;
   gap: 8px;

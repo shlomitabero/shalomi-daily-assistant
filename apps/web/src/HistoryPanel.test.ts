@@ -678,3 +678,107 @@ test("HistoryPanel shows a download button only once there are checkpoints, and 
     }
   });
 });
+
+/**
+ * New in this round: the diff toggle could only ever answer "what would
+ * change if I restore THIS checkpoint, compared to the live app right
+ * now" -- there was no way to compare two arbitrary past checkpoints
+ * against each other. Uses three genuinely distinct specs (older has only
+ * Customer, middle adds Order, current/newest adds Invoice on top of
+ * that) so the default vs-current diff and the vs-older-checkpoint diff
+ * produce two different, individually verifiable results from the same
+ * expanded row.
+ */
+test("HistoryPanel's 'Compare with' dropdown lets you diff one checkpoint against another checkpoint, not just against the live current state", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    const older = makeCheckpoint("cp-older", "Initial build");
+    older.spec = { ...older.spec, entities: [{ name: "Customer", fields: [{ name: "name", type: "text", required: true }] }] };
+    const middle = makeCheckpoint("cp-middle", "Refine: add orders");
+    middle.spec = {
+      ...middle.spec,
+      entities: [
+        { name: "Customer", fields: [{ name: "name", type: "text", required: true }] },
+        { name: "Order", fields: [{ name: "total", type: "number", required: true }] },
+      ],
+    };
+    const currentSpec = {
+      ...middle.spec,
+      entities: [...middle.spec.entities, { name: "Invoice", fields: [{ name: "amount", type: "number", required: true }] }],
+    };
+
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/checkpoints") {
+        return new Response(JSON.stringify({ checkpoints: [older, middle] }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+
+    try {
+      render(
+        React.createElement(
+          ThemeProvider,
+          null,
+          React.createElement(
+            LanguageProvider,
+            null,
+            React.createElement(HistoryPanel, {
+              projectId: "proj1",
+              projectName: "Test Project",
+              currentSpec,
+              onRestored: () => {},
+              onClose: () => {},
+            }),
+          ),
+        ),
+      );
+      await waitForCondition(() => document.querySelectorAll(".checkpoint-list li").length === 2);
+
+      const items = document.querySelectorAll(".checkpoint-list li");
+      const middleItem = items[1]; // newest-first order: older, then middle
+      assert.match(middleItem.textContent ?? "", /add orders/);
+
+      fireEvent.click(middleItem.querySelector(".detail-toggle") as HTMLButtonElement);
+      await waitForCondition(() => middleItem.querySelector(".checkpoint-compare-row select") !== null);
+
+      // The dropdown defaults to comparing against the live current state.
+      assert.match(middleItem.textContent ?? "", /Current app state/);
+
+      // Now the real test: the OLDER checkpoint's own diff toggle, compared
+      // first against the live current state (default), then against the
+      // "middle" checkpoint instead of current.
+      fireEvent.click(middleItem.querySelector(".detail-toggle") as HTMLButtonElement); // close it
+      const olderItem = items[0];
+      fireEvent.click(olderItem.querySelector(".detail-toggle") as HTMLButtonElement);
+      await waitForCondition(() => olderItem.querySelector(".checkpoint-compare-row select") !== null);
+
+      // Default (vs current): current has both Order and Invoice, older has
+      // neither -- both must be reported as what restoring "older" removes.
+      assert.match(olderItem.textContent ?? "", /Order/);
+      assert.match(olderItem.textContent ?? "", /Invoice/);
+
+      const select = olderItem.querySelector(".checkpoint-compare-row select") as HTMLSelectElement;
+      const middleOption = Array.from(select.options).find((o) => /add orders/.test(o.textContent ?? ""));
+      assert.ok(middleOption, "expected the 'middle' checkpoint to be a selectable compare target");
+      fireEvent.change(select, { target: { value: middleOption!.value } });
+
+      // Now comparing "older" (baseline: middle) instead of vs-current --
+      // middle only adds Order (no Invoice at all), so only Order must be
+      // named as what restoring "older" would remove, and Invoice must NOT
+      // appear anymore (it was only relevant against the live current state).
+      await waitForCondition(() => /add orders/.test(olderItem.textContent ?? ""));
+      assert.match(olderItem.textContent ?? "", /Order/);
+      assert.doesNotMatch(
+        olderItem.textContent ?? "",
+        /Invoice/,
+        "comparing against the 'middle' checkpoint (which has no Invoice) must not still mention Invoice from the old vs-current diff",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});

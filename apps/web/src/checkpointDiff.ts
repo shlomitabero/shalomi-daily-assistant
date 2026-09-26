@@ -186,6 +186,41 @@ export function formatCheckpointHistory(
   return lines.join("\n").trimEnd();
 }
 
+/**
+ * The panel's own diff toggle only ever answered one question: "what would
+ * restoring THIS checkpoint remove from the live app right now?" -- always
+ * diffing against currentSpec, with no way to compare two arbitrary past
+ * checkpoints against each other (e.g. "what did refine #3 add that refine
+ * #1 didn't have yet?"). computeCheckpointDiff itself was always generic
+ * (it takes two plain ProductSpecs, not "current" and "a checkpoint"
+ * specifically), so the only real gap was picking which spec plays the
+ * baseline role -- this resolves that choice: null (the default, "compare
+ * with current") keeps the exact existing behavior, any other id swaps in
+ * that checkpoint's own spec instead. Falls back to currentSpec if the
+ * chosen id doesn't match any known checkpoint (e.g. one just got deleted
+ * mid-session by a concurrent action) rather than throwing.
+ */
+export function resolveCompareSpec(checkpoints: Checkpoint[], compareTargetId: string | null, currentSpec: ProductSpec): ProductSpec {
+  if (compareTargetId == null) return currentSpec;
+  return checkpoints.find((c) => c.id === compareTargetId)?.spec ?? currentSpec;
+}
+
+/**
+ * The header line above the diff list -- names which baseline the shown
+ * diff is actually against, so switching the "compare with" dropdown (see
+ * resolveCompareSpec above) doesn't leave a stale-looking, unlabeled list
+ * that still reads as if it were comparing against the live current state.
+ */
+export function formatCompareTarget(
+  checkpoints: Checkpoint[],
+  compareTargetId: string | null,
+  t: (key: string, params?: Record<string, string | number>) => string,
+): string {
+  if (compareTargetId == null) return t("history.diff.currentState");
+  const target = checkpoints.find((c) => c.id === compareTargetId);
+  return target ? target.label : t("history.diff.currentState");
+}
+
 /** Saves the already-rendered history text as a real downloaded .txt file, the same browser-download mechanics twinReport.ts's downloadTwinReport uses. */
 export function downloadCheckpointHistory(text: string, projectName: string): void {
   const blob = new Blob([text], { type: "text/plain;charset=utf-8" });

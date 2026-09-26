@@ -7,8 +7,10 @@ import {
   filterCheckpointsByType,
   formatCheckpointCount,
   formatCheckpointHistory,
+  formatCompareTarget,
   getCheckpointType,
   isCheckpointCurrent,
+  resolveCompareSpec,
 } from "./checkpointDiff.js";
 import { translate } from "./i18n/language.js";
 
@@ -333,4 +335,59 @@ test("formatCheckpointHistory renders in Hebrew when given the Hebrew translator
 
   assert.match(report, /חנות הפרחים/);
   assert.match(report, /בנייה ראשונית/);
+});
+
+test("resolveCompareSpec returns currentSpec when compareTargetId is null, keeping the original 'vs current' behavior unchanged", () => {
+  const currentSpec = makeSpec([{ name: "Customer", fields: [] }]);
+  const checkpoints: Checkpoint[] = [
+    { id: "cp1", projectId: "p1", label: "Initial build", spec: makeSpec([{ name: "Order", fields: [] }]), createdAt: "2026-01-01T00:00:00.000Z" },
+  ];
+  assert.equal(resolveCompareSpec(checkpoints, null, currentSpec), currentSpec);
+});
+
+test("resolveCompareSpec returns the matching checkpoint's own spec when a real compareTargetId is given", () => {
+  const currentSpec = makeSpec([{ name: "Customer", fields: [] }]);
+  const olderSpec = makeSpec([{ name: "Order", fields: [] }]);
+  const checkpoints: Checkpoint[] = [
+    { id: "cp-older", projectId: "p1", label: "Initial build", spec: olderSpec, createdAt: "2026-01-01T00:00:00.000Z" },
+    { id: "cp-newer", projectId: "p1", label: "Refine: add invoices", spec: currentSpec, createdAt: "2026-01-02T00:00:00.000Z" },
+  ];
+  assert.equal(resolveCompareSpec(checkpoints, "cp-older", currentSpec), olderSpec);
+});
+
+test("resolveCompareSpec falls back to currentSpec instead of throwing when the compareTargetId no longer matches any checkpoint", () => {
+  const currentSpec = makeSpec([{ name: "Customer", fields: [] }]);
+  assert.equal(resolveCompareSpec([], "cp-deleted", currentSpec), currentSpec);
+});
+
+test("formatCompareTarget names the current app state by default, and the real checkpoint label once one is chosen", () => {
+  const t = (key: string, params?: Record<string, string | number>) => translate("en", key, params);
+  const checkpoints: Checkpoint[] = [
+    { id: "cp1", projectId: "p1", label: "Initial build", spec: makeSpec([]), createdAt: "2026-01-01T00:00:00.000Z" },
+  ];
+  assert.equal(formatCompareTarget(checkpoints, null, t), "Current app state");
+  assert.equal(formatCompareTarget(checkpoints, "cp1", t), "Initial build");
+});
+
+test("computeCheckpointDiff correctly compares two arbitrary checkpoints against each other, not just a checkpoint against currentSpec", () => {
+  // The real motivating scenario: comparing an OLDER checkpoint's own spec
+  // (used here as the resolved "baseline", exactly what resolveCompareSpec
+  // would hand computeCheckpointDiff once a "compare with" target is
+  // chosen) against a NEWER checkpoint, entirely independent of whatever
+  // currentSpec happens to be right now.
+  const olderSpec = makeSpec([{ name: "Customer", label: "Customers", fields: [{ name: "name", type: "text", required: true }] }]);
+  const newerSpec = makeSpec([
+    { name: "Customer", label: "Customers", fields: [{ name: "name", type: "text", required: true }] },
+    { name: "Invoice", label: "Invoices", fields: [{ name: "total", type: "number", required: true }] },
+  ]);
+
+  // Diffing "older as baseline" vs "newer checkpoint": nothing in older is
+  // missing from newer (newer only adds Invoice), so no changes reported.
+  assert.deepEqual(computeCheckpointDiff(olderSpec, newerSpec), { removedEntities: [], changedEntities: [] });
+
+  // The reverse direction: newer as the baseline, older as the checkpoint
+  // being compared -- Invoice exists in the baseline but not in older, so
+  // it's correctly reported as what restoring "older" would remove.
+  const reversed = computeCheckpointDiff(newerSpec, olderSpec);
+  assert.deepEqual(reversed.removedEntities, [{ name: "Invoice", label: "Invoices" }]);
 });
