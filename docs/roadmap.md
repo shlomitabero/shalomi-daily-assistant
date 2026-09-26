@@ -10568,6 +10568,69 @@ not a single "make it perfect" claim.
       `@forge/db` 80 unchanged) and `npm run build --workspace=@forge/web`
       clean.
 
+- [x] **Round 204 — bulk-select + bulk-delete for projects on the home screen.**
+      Diversification: round 203 closed the entity table's own
+      column-management trio (hide/resize/reorder) on the live entity
+      table screen. This round moves to a genuinely different screen --
+      the home screen's own "Your projects" list, which could only ever
+      delete one project at a time despite the entity table having had
+      bulk-select/delete since round 53.
+
+      In `App.tsx`: added `selectedProjectIds` state, a checkbox on every
+      project card the signed-in user actually owns (a collaborator's
+      shared project never gets one, mirroring the existing single-delete
+      button's own `p.ownerId === user.id` gate), a "select all" checkbox
+      that only ever selects/deselects owned projects, and a
+      `bulk-actions-bar` (reusing the exact class EntityPanel's own bulk
+      toolbar already uses) with a delete-selected button. `handleBulkDeleteProjects`
+      mirrors EntityPanel's own `handleBulkDelete` exactly: `Promise.allSettled`
+      over the real `deleteProject` calls, so one rejected delete (a
+      dropped connection, a project someone else already removed) never
+      hides the ones that did succeed -- only the ids that actually failed
+      stay selected afterward, with a translated partial-failure message
+      when only some deletes failed.
+
+      New tests in `App.test.ts`: a `handleBulkDeleteProjects` extraction
+      test (declining the confirm calls nothing; confirming with one real
+      failure removes only the succeeded project and keeps the failed one
+      selected) and a `toggleSelectAllOwnedProjects` extraction test
+      (selects only the user's own projects, never a collaborator's shared
+      one; toggles off when everything owned is already selected).
+
+      A real TypeScript lesson surfaced during this round: the new
+      `toggleSelectAllOwnedProjects`, written as a plain `function name() {}`
+      declaration placed textually after the component's own
+      `if (!user) return` early guard, still failed `tsc -b` with `'user'
+      is possibly 'null'` -- because function declarations are hoisted,
+      so TypeScript's control-flow narrowing of `user` from the guard
+      doesn't extend into them, even though every other closure (the JSX's
+      own inline arrow functions, which aren't hoisted) narrowed correctly
+      at the exact same textual position. Converting it to a `const
+      toggleSelectAllOwnedProjects = () => {...}` arrow-function
+      expression fixed it immediately.
+
+      Verified with the deliberate-break-and-restore discipline twice:
+      first, broke `handleBulkDeleteProjects`'s own per-id success
+      tracking (replaced it with an unconditional "everything succeeded")
+      -- caught by its own extraction test; restored, `diff`
+      byte-identical. Second, broke the "select all" ownership filter to
+      include every visible project regardless of owner -- caught by
+      `toggleSelectAllOwnedProjects`'s own test; restored, `diff`
+      byte-identical again.
+
+      **And** a real Playwright pass against the live dev server: signed
+      up, created 3 real projects via the real API, bulk-selected 2 of
+      them on the home screen, clicked delete-selected (with a real
+      `window.confirm` auto-accepted), confirmed exactly the 1 untouched
+      project remained in the DOM, confirmed the deletion via a direct
+      API re-fetch (not just an optimistic UI update), and confirmed it
+      survived a real page reload.
+
+      Full suite green (584 tests, up from 582 -- `@forge/web` 370 → 372;
+      `@forge/api` 212, `@forge/shared` 11, `@forge/spec-engine` 82,
+      `@forge/db` 80 unchanged) and `npm run build --workspace=@forge/web`
+      clean.
+
 ## Phase 3
 
 - Self-healing: production observability, automatic diagnosis and patch
