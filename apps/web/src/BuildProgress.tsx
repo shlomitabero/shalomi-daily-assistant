@@ -53,6 +53,25 @@ export function computeBuildProgressPercent(doneCount: number, totalAgents: numb
 }
 
 /**
+ * A live "time remaining" estimate: the average real time each already-
+ * completed step actually took, extrapolated to however many steps are
+ * still pending. Returns null until at least one step has genuinely
+ * finished -- with zero real data points yet, any number would be pure
+ * guesswork (every build's first step, the Architect, can itself take
+ * anywhere from a couple seconds to much longer depending on the
+ * description's complexity), not a real projection from this build's own
+ * actual pace. Returns 0 once every step is already done, rather than a
+ * stale positive number, since there's nothing left to wait for.
+ */
+export function computeEtaMs(elapsedMs: number, doneCount: number, totalAgents: number): number | null {
+  if (doneCount <= 0 || totalAgents <= 0) return null;
+  const remaining = totalAgents - doneCount;
+  if (remaining <= 0) return 0;
+  const avgMsPerStep = elapsedMs / doneCount;
+  return Math.round(avgMsPerStep * remaining);
+}
+
+/**
  * Renders the same latest-status-per-agent data the live step list itself
  * shows (see the `latestByAgent`/`visibleAgents` computation inside
  * BuildProgress below, which this mirrors) as a plain, shareable text
@@ -364,6 +383,7 @@ export function BuildProgress({
   const visibleAgents = AGENT_ORDER.filter((a) => a !== "Debug" || latestByAgent.has("Debug"));
   const doneCount = visibleAgents.filter((a) => latestByAgent.get(a)?.status === "success").length;
   const progressPercent = computeBuildProgressPercent(doneCount, visibleAgents.length);
+  const etaMs = computeEtaMs(elapsedMs, doneCount, visibleAgents.length);
 
   const Wrapper = compact ? "div" : "main";
 
@@ -376,6 +396,12 @@ export function BuildProgress({
         <span className="build-elapsed" aria-label={t("build.elapsed.label")}>
           ⏱️ {formatElapsedTime(elapsedMs)}
         </span>
+        {etaMs !== null && etaMs > 0 && (
+          <span className="build-eta muted small" aria-label={t("build.eta.label")}>
+            {" · "}
+            {t("build.eta.remaining", { time: formatElapsedTime(etaMs) })}
+          </span>
+        )}
       </p>
       <div
         className="build-progress-bar"

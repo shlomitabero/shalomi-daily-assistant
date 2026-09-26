@@ -5,7 +5,7 @@ import { JSDOM } from "jsdom";
 import React from "react";
 import { act, cleanup, render } from "@testing-library/react";
 import type { AgentStepEvent } from "@forge/shared";
-import { BuildProgress, computeBuildProgressPercent, formatBuildSummary, formatElapsedTime } from "./BuildProgress.js";
+import { BuildProgress, computeBuildProgressPercent, computeEtaMs, formatBuildSummary, formatElapsedTime } from "./BuildProgress.js";
 import { LanguageProvider } from "./i18n/LanguageContext.js";
 import { translate } from "./i18n/language.js";
 import { ThemeProvider } from "./theme/ThemeContext.js";
@@ -645,5 +645,97 @@ test("BuildProgress's Retry button re-invokes run for a genuine second attempt, 
       "Seed Data (Sample Data Filler) got no event at all in the second attempt -- it must show pending, not attempt one's stale failure",
     );
     assert.equal(completedProjects.length, 0, "onComplete must not fire for a second attempt that itself failed");
+  });
+});
+
+test("computeEtaMs returns null before any step has actually finished -- zero real data points is not a real estimate", () => {
+  assert.equal(computeEtaMs(4000, 0, 6), null);
+});
+
+test("computeEtaMs extrapolates the average real time per completed step to however many steps remain", () => {
+  // 1 step done in 4000ms, 5 of 6 total steps still remaining -> 4000 * 5.
+  assert.equal(computeEtaMs(4000, 1, 6), 20000);
+  // 2 steps done in 8000ms (4000ms/step average), 4 remaining -> 4000 * 4.
+  assert.equal(computeEtaMs(8000, 2, 6), 16000);
+});
+
+test("computeEtaMs returns 0, not a stale positive number, once every step is already done", () => {
+  assert.equal(computeEtaMs(12000, 6, 6), 0);
+});
+
+/**
+ * New in this round: the build screen showed elapsed time but gave no
+ * sense of how much LONGER it would take -- someone watching a 7-step
+ * build with no ETA has no way to judge "almost done" from "just
+ * started". Uses the same fake-timer technique as the elapsed-timer test
+ * above (mocking setInterval + Date) to deterministically drive the real
+ * ETA display through a real build's own step-by-step progression:
+ * absent before any step finishes, then recalculated from this build's
+ * own actual pace as real steps complete.
+ */
+test("BuildProgress's ETA is absent until a real step finishes, then reflects this build's own actual average pace as more steps complete", async (t) => {
+  await withJsdom(async () => {
+    t.mock.timers.enable({ apis: ["setInterval", "Date"] });
+    try {
+      let onEventRef!: (event: AgentStepEvent) => void;
+      const runPromise = new Promise<void>(() => {});
+      const run = (onEvent: (event: AgentStepEvent) => void) => {
+        onEventRef = onEvent;
+        onEvent({ agent: "Architect", status: "running", message: "…" });
+        return runPromise;
+      };
+
+      render(
+        React.createElement(
+          ThemeProvider,
+          null,
+          React.createElement(
+            LanguageProvider,
+            null,
+            React.createElement(BuildProgress, {
+              title: "Building",
+              projectName: "Test Project",
+              run,
+              onComplete: () => {},
+              onBack: () => {},
+            }),
+          ),
+        ),
+      );
+
+      const etaEl = () => document.querySelector(".build-eta");
+
+      act(() => {
+        t.mock.timers.tick(4000);
+      });
+      assert.equal(etaEl(), null, "no step has finished yet -- there must be no ETA at all, not a guess");
+
+      // Architect finishes after 4 real (mocked) seconds -- the only real
+      // data point so far.
+      act(() => {
+        onEventRef({ agent: "Architect", status: "success", message: "…" });
+        onEventRef({ agent: "Database", status: "running", message: "…" });
+      });
+      assert.match(
+        etaEl()!.textContent ?? "",
+        /0:20/,
+        "1 step done in 4s, 5 of 6 steps remaining -> 4s average * 5 = 20s estimated remaining",
+      );
+
+      // Database takes another real 4 seconds -- pace stays steady at 4s/step.
+      act(() => {
+        t.mock.timers.tick(4000);
+      });
+      act(() => {
+        onEventRef({ agent: "Database", status: "success", message: "…" });
+      });
+      assert.match(
+        etaEl()!.textContent ?? "",
+        /0:16/,
+        "2 steps done in 8s total (still a real 4s/step average), 4 remaining -> 4s * 4 = 16s",
+      );
+    } finally {
+      t.mock.timers.reset();
+    }
   });
 });
