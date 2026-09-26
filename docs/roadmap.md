@@ -9195,6 +9195,72 @@ not a single "make it perfect" claim.
       `@forge/shared` 11, `@forge/spec-engine` 82, `@forge/db` 80,
       `@forge/api` 195 unchanged) and typecheck clean.
 
+- [x] **Round 185 — Drag-to-resize columns in the Entity live-preview table.**
+      Diversification check: round 184's own trigger note explicitly asked
+      for a direction beyond "another filter" (4 uses) and even beyond the
+      brand-new "undo toast" pattern it had just introduced, rather than
+      reaching for either again immediately. Column resize had been sitting
+      on the candidate list since round 152 as a real, not-yet-implemented
+      gap -- a column's width was fixed forever (whatever the browser's own
+      auto-layout happened to pick), with no way to widen a column with
+      long values or narrow one that barely needed the space.
+
+      Added `columnWidths.ts`, mirroring `columnVisibility.ts`'s own
+      per-project+entity localStorage convention exactly
+      (`getColumnWidths`/`setColumnWidth`), plus a pure
+      `computeResizedWidth(startWidth, deltaX, dir)` that turns a drag
+      delta into a new width clamped to `[MIN_COLUMN_WIDTH,
+      MAX_COLUMN_WIDTH]`. Handles RTL correctly: in Hebrew, a column's
+      "far" edge is visually on the left, so the same rightward mouse
+      movement that widens a column in LTR must narrow it in RTL --
+      `computeResizedWidth` flips `deltaX`'s sign based on
+      `dirFor(lang)`. `EntityPanel.tsx` gained a resize handle on each
+      column header; dragging it attaches real `mousemove`/`mouseup`
+      listeners only while a drag is actually in progress, updates the
+      width live, and persists it only on `mouseup` (not on every
+      `mousemove`, so a fast drag doesn't hammer localStorage). The
+      resized width applies to both the header and every cell in that
+      column, and the table only switches to `table-layout: fixed` once
+      at least one column has actually been resized -- a table nobody has
+      touched keeps its exact current auto-sizing behavior unchanged.
+
+      New tests: 9 in `columnWidths.test.ts` (persistence round-trip,
+      per-project+entity scoping, corrupted-storage fallback, LTR/RTL
+      delta math, and both clamp bounds) and 1 new DOM test in
+      `EntityPanel.test.ts` that drives a real mousedown-on-the-handle,
+      mousemove, mouseup sequence -- not calling `computeResizedWidth`
+      directly -- proving the header, its own matching data cells, and
+      persisted storage all agree on the same resized width.
+
+      Verified with the deliberate-break-and-restore discipline twice:
+      (1) dropped the RTL sign-flip from `computeResizedWidth` -- caught
+      exactly by the RTL-specific test; restored, `diff` clean. (2) made
+      the drag's `mousemove` handler a no-op in `EntityPanel.tsx` --
+      caught by the new drag-simulation test (and no other test);
+      restored, `diff` byte-identical against a pre-break backup.
+
+      **And** a real Playwright pass against real running dev servers,
+      with one genuine hiccup along the way worth recording: the very
+      first attempt used Playwright's default 1280×720 viewport, and the
+      drag silently did nothing -- `document.elementFromPoint` at the
+      handle's own real coordinates returned `null`, because the table
+      row sat below the fold of that short a viewport, so the mousedown
+      never actually reached the handle element at all (a plain
+      window-level `mousemove` listener still fired regardless, which is
+      what made this take a moment to track down). Switching to a taller
+      1280×1600 viewport fixed it outright -- confirmed it was a test
+      harness artifact, not an app bug. With that fixed: built a real
+      project via the actual pipeline, performed a genuine mouse drag
+      (down, move with real intermediate steps, up) on the resize handle,
+      confirmed the header's real rendered width grew by the dragged
+      distance, confirmed the table gained `table-layout: fixed` only
+      after that resize, and confirmed the new width survived a real
+      `page.reload()`.
+
+      Full suite green (689 tests, up from 679 -- `@forge/web` 311 → 321;
+      `@forge/shared` 11, `@forge/spec-engine` 82, `@forge/db` 80,
+      `@forge/api` 195 unchanged) and typecheck clean.
+
 ## Phase 3
 
 - Self-healing: production observability, automatic diagnosis and patch
