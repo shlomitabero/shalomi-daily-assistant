@@ -302,6 +302,7 @@ function AppContent() {
   const [projectSearch, setProjectSearch] = useState("");
   const [cloningId, setCloningId] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [selectedProjectIds, setSelectedProjectIds] = useState<Set<string>>(new Set());
   const [refineHistory, setRefineHistory] = useState<RefineHistoryEntry[]>([]);
   const [refineHistorySearch, setRefineHistorySearch] = useState("");
   const [refineRunning, setRefineRunning] = useState(false);
@@ -479,6 +480,38 @@ function AppContent() {
     }
   }
 
+  function toggleProjectSelected(id: string) {
+    setSelectedProjectIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  // Same Promise.allSettled resilience as EntityPanel's own handleBulkDelete:
+  // a single rejected delete (a dropped connection, a project someone else
+  // already removed) must not hide the ones that *did* succeed.
+  async function handleBulkDeleteProjects() {
+    const ids = [...selectedProjectIds];
+    if (ids.length === 0) return;
+    if (!window.confirm(t("home.myProjects.bulk.confirmDelete", { count: ids.length }))) return;
+    setError(null);
+    const results = await Promise.allSettled(ids.map((id) => deleteProject(id)));
+    const failedIds = ids.filter((_, i) => results[i].status === "rejected");
+    const succeededIds = new Set(ids.filter((_, i) => results[i].status === "fulfilled"));
+    setMyProjects((prev) => prev.filter((p) => !succeededIds.has(p.id)));
+    setSelectedProjectIds(new Set(failedIds));
+    if (failedIds.length > 0) {
+      const firstFailure = results.find((r): r is PromiseRejectedResult => r.status === "rejected")!;
+      setError(
+        failedIds.length === ids.length
+          ? (firstFailure.reason as Error).message
+          : t("home.myProjects.bulk.partialFailure", { failed: failedIds.length, total: ids.length }),
+      );
+    }
+  }
+
   // role="status" (implying aria-live="polite") so a screen-reader user is
   // actually told the server is waking up, instead of sitting through up to
   // a minute of silence with no way to tell a slow cold start from a hang.
@@ -505,6 +538,25 @@ function AppContent() {
       </div>
     );
   }
+
+  // Only the owner's own projects can ever be deleted (mirrors
+  // handleDeleteProject's own ownerId check on the single-delete button), so
+  // "select all" only ever selects/deselects the ones bulk-delete could
+  // actually act on -- a collaborator's shared project never gets a
+  // checkbox at all.
+  const toggleSelectAllOwnedProjects = () => {
+    const ownedIds = visibleMyProjects.filter((p) => p.ownerId === user.id).map((p) => p.id);
+    const allSelected = ownedIds.length > 0 && ownedIds.every((id) => selectedProjectIds.has(id));
+    setSelectedProjectIds((prev) => {
+      const next = new Set(prev);
+      if (allSelected) {
+        for (const id of ownedIds) next.delete(id);
+      } else {
+        for (const id of ownedIds) next.add(id);
+      }
+      return next;
+    });
+  };
 
   async function handleDescribe(e: React.FormEvent) {
     e.preventDefault();
@@ -782,10 +834,48 @@ function AppContent() {
               {visibleMyProjects.length === 0 ? (
                 <p className="muted">{t("home.myProjects.search.noResults")}</p>
               ) : (
+              <>
+              {visibleMyProjects.some((p) => p.ownerId === user.id) && (
+                <label className="my-projects-select-all">
+                  <input
+                    type="checkbox"
+                    aria-label={t("home.myProjects.bulk.selectAll")}
+                    checked={visibleMyProjects
+                      .filter((p) => p.ownerId === user.id)
+                      .every((p) => selectedProjectIds.has(p.id))}
+                    ref={(el) => {
+                      if (!el) return;
+                      const owned = visibleMyProjects.filter((p) => p.ownerId === user.id);
+                      const someSelected = owned.some((p) => selectedProjectIds.has(p.id));
+                      const allSelected = owned.length > 0 && owned.every((p) => selectedProjectIds.has(p.id));
+                      el.indeterminate = someSelected && !allSelected;
+                    }}
+                    onChange={toggleSelectAllOwnedProjects}
+                  />
+                  {t("home.myProjects.bulk.selectAll")}
+                </label>
+              )}
+              {selectedProjectIds.size > 0 && (
+                <div className="bulk-actions-bar">
+                  <span>{t("home.myProjects.bulk.selectedCount", { count: selectedProjectIds.size })}</span>
+                  <button type="button" className="danger" onClick={handleBulkDeleteProjects}>
+                    {t("home.myProjects.bulk.deleteSelected")}
+                  </button>
+                </div>
+              )}
               <ul className="my-projects-list">
                 {visibleMyProjects.map((p) => (
                   <li key={p.id}>
                     <div className="my-project-card">
+                      {p.ownerId === user.id && (
+                        <input
+                          type="checkbox"
+                          className="my-project-select"
+                          aria-label={t("home.myProjects.bulk.selectRow")}
+                          checked={selectedProjectIds.has(p.id)}
+                          onChange={() => toggleProjectSelected(p.id)}
+                        />
+                      )}
                       <button
                         type="button"
                         className={pinnedIds.has(p.id) ? "my-project-pin my-project-pin-active" : "my-project-pin"}
@@ -825,6 +915,7 @@ function AppContent() {
                   </li>
                 ))}
               </ul>
+              </>
               )}
             </div>
           )}

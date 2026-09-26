@@ -499,6 +499,148 @@ test("App's handleDeleteProject only calls the API and updates myProjects after 
   assert.equal(confirmed.state.error, null);
 });
 
+/**
+ * Regression test for handleBulkDeleteProjects (the home-screen "Your
+ * projects" list's new bulk-delete button, this round): same
+ * Promise.allSettled resilience as EntityPanel's own handleBulkDelete --
+ * a single rejected delete (a project someone else already removed, a
+ * dropped connection) must not hide the ones that DID succeed. Extracts
+ * the real function from App.tsx rather than reimplementing its logic.
+ */
+test("App's handleBulkDeleteProjects removes only the projects that actually succeeded, keeping only the ones that failed selected -- one rejection must not hide the successes", async () => {
+  const appSrc = readFileSync(new URL("./App.tsx", import.meta.url), "utf8");
+  const handlerMatch = appSrc.match(/ {2}async function handleBulkDeleteProjects\(\) \{[\s\S]*?\n {2}\}\n/);
+  assert.ok(handlerMatch, "expected to find handleBulkDeleteProjects in App.tsx");
+  const { code } = transformSync(handlerMatch![0], { loader: "ts" });
+
+  function run(
+    initialMyProjects: Project[],
+    selectedIds: string[],
+    opts: { confirmReturns: boolean; deleteProjectFn: (id: string) => Promise<void> },
+  ) {
+    const state: { myProjects: Project[]; selectedProjectIds: Set<string>; error: string | null } = {
+      myProjects: initialMyProjects,
+      selectedProjectIds: new Set(selectedIds),
+      error: "not-yet-called",
+    };
+    const confirmCalls: string[] = [];
+    const fn = new Function(
+      "window",
+      "t",
+      "deleteProject",
+      "selectedProjectIds",
+      "setError",
+      "setMyProjects",
+      "setSelectedProjectIds",
+      `${code}\nreturn handleBulkDeleteProjects;`,
+    )(
+      { confirm: (message: string) => (confirmCalls.push(message), opts.confirmReturns) },
+      (key: string, params?: Record<string, unknown>) => (params ? `${key}:${JSON.stringify(params)}` : key),
+      opts.deleteProjectFn,
+      state.selectedProjectIds,
+      (v: string | null) => (state.error = v),
+      (updater: (prev: Project[]) => Project[]) => (state.myProjects = updater(state.myProjects)),
+      (next: Set<string>) => (state.selectedProjectIds = next),
+    ) as () => Promise<void>;
+    return { fn, state, confirmCalls };
+  }
+
+  const a = makeProject([makeEntity("Customer")]);
+  a.id = "a";
+  const b = makeProject([makeEntity("Customer")]);
+  b.id = "b";
+  const c = makeProject([makeEntity("Customer")]);
+  c.id = "c";
+
+  // Declining the confirm dialog must call neither the API nor any setter.
+  let deleteApiCalls = 0;
+  const declined = run([a, b, c], ["a", "b"], {
+    confirmReturns: false,
+    deleteProjectFn: async () => {
+      deleteApiCalls += 1;
+    },
+  });
+  await declined.fn();
+  assert.equal(deleteApiCalls, 0, "declining the confirm must never call the delete API");
+  assert.deepEqual(declined.state.myProjects, [a, b, c], "myProjects must be untouched when cancelled");
+
+  // Confirming with one real failure (project "b") must still remove "a", and
+  // must keep only "b" (the one that actually failed) selected afterward.
+  deleteApiCalls = 0;
+  const attempted: string[] = [];
+  const confirmed = run([a, b, c], ["a", "b"], {
+    confirmReturns: true,
+    deleteProjectFn: async (id: string) => {
+      deleteApiCalls += 1;
+      attempted.push(id);
+      if (id === "b") throw new Error("project b: network error");
+    },
+  });
+  await confirmed.fn();
+  assert.deepEqual(attempted.sort(), ["a", "b"], "must attempt every selected id, not stop at the first failure");
+  assert.equal(deleteApiCalls, 2);
+  assert.deepEqual(confirmed.state.myProjects, [b, c], "only the project that actually succeeded (a) should be removed -- b (failed) and c (never selected) must remain");
+  assert.deepEqual([...confirmed.state.selectedProjectIds], ["b"], "only the id that actually failed to delete should remain selected");
+  assert.match(
+    confirmed.state.error!,
+    /home\.myProjects\.bulk\.partialFailure/,
+    "a partial failure must surface the translated partial-failure message, not the raw single-project rejection",
+  );
+});
+
+/**
+ * Regression test for toggleSelectAllOwnedProjects (the home-screen
+ * "Your projects" list's new "select all" checkbox, this round): only the
+ * signed-in user's OWN projects can ever be bulk-deleted (mirrors the
+ * single-delete button's own `p.ownerId === user.id` gate), so "select
+ * all" must never select a project someone else owns -- a collaborator's
+ * shared project has no checkbox in the real UI at all, and this proves
+ * the underlying toggle logic honors that same rule even if a caller
+ * somehow invoked it differently. Also confirms it's a real toggle: a
+ * second call with everything already selected deselects instead of
+ * re-selecting.
+ */
+test("App's toggleSelectAllOwnedProjects only ever selects the signed-in user's own projects, and toggles off when everything owned is already selected", () => {
+  const appSrc = readFileSync(new URL("./App.tsx", import.meta.url), "utf8");
+  const handlerMatch = appSrc.match(/ {2}const toggleSelectAllOwnedProjects = \(\) => \{[\s\S]*?\n {2}\};\n/);
+  assert.ok(handlerMatch, "expected to find toggleSelectAllOwnedProjects in App.tsx");
+  const { code } = transformSync(handlerMatch![0], { loader: "ts" });
+
+  function run(visibleMyProjects: Project[], userId: string, initiallySelected: string[]) {
+    let selectedProjectIds = new Set(initiallySelected);
+    const fn = new Function(
+      "visibleMyProjects",
+      "user",
+      "selectedProjectIds",
+      "setSelectedProjectIds",
+      `${code}\nreturn toggleSelectAllOwnedProjects;`,
+    )(visibleMyProjects, { id: userId }, selectedProjectIds, (updater: (prev: Set<string>) => Set<string>) => {
+      selectedProjectIds = updater(selectedProjectIds);
+    }) as () => void;
+    return { fn, getSelected: () => selectedProjectIds };
+  }
+
+  const owned1 = makeProject([makeEntity("Customer")]);
+  owned1.id = "owned1";
+  owned1.ownerId = "me";
+  const owned2 = makeProject([makeEntity("Customer")]);
+  owned2.id = "owned2";
+  owned2.ownerId = "me";
+  const shared = makeProject([makeEntity("Customer")]);
+  shared.id = "shared";
+  shared.ownerId = "someone-else";
+
+  // Nothing selected yet -- must select both owned projects, never the shared one.
+  const first = run([owned1, owned2, shared], "me", []);
+  first.fn();
+  assert.deepEqual([...first.getSelected()].sort(), ["owned1", "owned2"], "must select every owned project, and never a project owned by someone else");
+
+  // Everything owned already selected -- a second toggle must deselect, not re-select.
+  const second = run([owned1, owned2, shared], "me", ["owned1", "owned2"]);
+  second.fn();
+  assert.deepEqual([...second.getSelected()], [], "toggling again with everything owned already selected must deselect all of them");
+});
+
 function makeEntity(name: string): Entity {
   return { name, fields: [{ name: "name", type: "text", required: true }] };
 }
