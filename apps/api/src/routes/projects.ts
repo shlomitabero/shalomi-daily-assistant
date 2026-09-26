@@ -24,6 +24,7 @@ import {
   isCollaborator,
   listCollaborators,
   findUserByEmail,
+  findUserById,
   type ForgeDatabase,
 } from "@forge/db";
 import type { SpecProvider } from "@forge/spec-engine";
@@ -152,6 +153,23 @@ function requireProjectOwner(db: ForgeDatabase, id: string, userId: string): Pro
     throw new HttpError(404, `Project "${id}" not found`, "PROJECT_NOT_FOUND");
   }
   return project;
+}
+
+/**
+ * listCollaborators (collaborators.ts) only ever returns rows from the
+ * project_collaborators join table -- the owner isn't in that table at
+ * all (their access comes from project.ownerId directly), so a
+ * collaborator opening the sharing panel could see every OTHER
+ * collaborator but never the person who actually owns the project. This
+ * is the missing other half: fetches the owner's own email so the two
+ * collaborators routes below can return it alongside the collaborator
+ * list. Falls back to null instead of throwing on the (should-never-
+ * happen) case of an owner account that's since been deleted, so a
+ * dangling reference doesn't 500 the whole panel.
+ */
+function getOwnerInfo(db: ForgeDatabase, project: Project): { userId: string; email: string } | null {
+  const owner = findUserById(db, project.ownerId);
+  return owner ? { userId: owner.id, email: owner.email } : null;
 }
 
 function asyncRoute(fn: (req: Request, res: Response) => Promise<void> | void) {
@@ -339,7 +357,7 @@ export function createProjectsRouter(db: ForgeDatabase, provider: SpecProvider |
     "/projects/:id/collaborators",
     asyncRoute(async (req, res) => {
       const project = requireProjectAccess(db, req.params.id, req.userId!);
-      res.json({ collaborators: listCollaborators(db, project.id) });
+      res.json({ collaborators: listCollaborators(db, project.id), owner: getOwnerInfo(db, project) });
     }),
   );
 
@@ -359,7 +377,7 @@ export function createProjectsRouter(db: ForgeDatabase, provider: SpecProvider |
         throw new HttpError(400, "The project owner already has full access", "CANNOT_ADD_OWNER_AS_COLLABORATOR");
       }
       addCollaborator(db, project.id, invited.id);
-      res.status(201).json({ collaborators: listCollaborators(db, project.id) });
+      res.status(201).json({ collaborators: listCollaborators(db, project.id), owner: getOwnerInfo(db, project) });
     }),
   );
 

@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import type { ProjectCollaborator } from "@forge/shared";
-import { addCollaborator, listCollaborators, removeCollaborator } from "./api.js";
+import { addCollaborator, listCollaborators, removeCollaborator, type ProjectOwnerInfo } from "./api.js";
 import { useTranslation } from "./i18n/LanguageContext.js";
 import { useDialogFocusTrap } from "./useDialogFocusTrap.js";
 
@@ -24,6 +24,7 @@ export function CollaboratorsPanel({
 }) {
   const { t, lang } = useTranslation();
   const [collaborators, setCollaborators] = useState<ProjectCollaborator[] | null>(null);
+  const [owner, setOwner] = useState<ProjectOwnerInfo | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [email, setEmail] = useState("");
   const [inviteBusy, setInviteBusy] = useState(false);
@@ -32,7 +33,10 @@ export function CollaboratorsPanel({
 
   useEffect(() => {
     listCollaborators(projectId)
-      .then(({ collaborators }) => setCollaborators(collaborators))
+      .then(({ collaborators, owner }) => {
+        setCollaborators(collaborators);
+        setOwner(owner);
+      })
       .catch((err) => setError((err as Error).message));
   }, [projectId]);
 
@@ -43,8 +47,9 @@ export function CollaboratorsPanel({
     setInviteBusy(true);
     setError(null);
     try {
-      const { collaborators } = await addCollaborator(projectId, trimmed);
+      const { collaborators, owner } = await addCollaborator(projectId, trimmed);
       setCollaborators(collaborators);
+      setOwner(owner);
       setEmail("");
     } catch (err) {
       setError((err as Error).message);
@@ -97,29 +102,40 @@ export function CollaboratorsPanel({
 
         {collaborators === null && !error ? (
           <p className="muted">{t("collab.loading")}</p>
-        ) : collaborators !== null && collaborators.length === 0 ? (
-          <p className="muted">{t("collab.empty")}</p>
         ) : (
-          <ul className="collab-list">
-            {collaborators?.map((c) => (
-              <li key={c.userId}>
-                <div>
-                  <strong>{c.email}</strong>
-                  <div className="muted small">{new Date(c.addedAt).toLocaleDateString(LOCALE[lang])}</div>
-                </div>
-                {isOwner && (
-                  <button
-                    type="button"
-                    className="secondary"
-                    onClick={() => handleRemove(c.userId, c.email)}
-                    disabled={removingUserId !== null}
-                  >
-                    {removingUserId === c.userId ? t("collab.remove.busy") : t("collab.remove")}
-                  </button>
-                )}
-              </li>
-            ))}
-          </ul>
+          <>
+            <ul className="collab-list">
+              {owner && (
+                <li className="collab-owner-row">
+                  <div>
+                    <strong>{owner.email}</strong>
+                    <div className="muted small">
+                      <span className="chip collab-owner-chip">{isOwner ? t("collab.owner.you") : t("collab.owner")}</span>
+                    </div>
+                  </div>
+                </li>
+              )}
+              {collaborators?.map((c) => (
+                <li key={c.userId}>
+                  <div>
+                    <strong>{c.email}</strong>
+                    <div className="muted small">{new Date(c.addedAt).toLocaleDateString(LOCALE[lang])}</div>
+                  </div>
+                  {isOwner && (
+                    <button
+                      type="button"
+                      className="secondary"
+                      onClick={() => handleRemove(c.userId, c.email)}
+                      disabled={removingUserId !== null}
+                    >
+                      {removingUserId === c.userId ? t("collab.remove.busy") : t("collab.remove")}
+                    </button>
+                  )}
+                </li>
+              ))}
+            </ul>
+            {collaborators !== null && collaborators.length === 0 && <p className="muted small">{t("collab.empty")}</p>}
+          </>
         )}
       </div>
     </div>

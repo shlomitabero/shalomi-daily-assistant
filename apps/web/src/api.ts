@@ -444,11 +444,20 @@ export function deleteRecord(projectId: string, entityName: string, recordId: nu
   return request(`/projects/${projectId}/entities/${entityName}/${recordId}`, { method: "DELETE" });
 }
 
-export function listCollaborators(projectId: string): Promise<{ collaborators: ProjectCollaborator[] }> {
+/** The owner never appears in `collaborators` itself (see collaborators.ts's own module comment -- their access comes from project.ownerId, not the join table), so the panel needs this separately to show who actually owns the project. Null only in the should-never-happen case of a dangling owner reference. */
+export interface ProjectOwnerInfo {
+  userId: string;
+  email: string;
+}
+
+export function listCollaborators(projectId: string): Promise<{ collaborators: ProjectCollaborator[]; owner: ProjectOwnerInfo | null }> {
   return request(`/projects/${projectId}/collaborators`);
 }
 
-export function addCollaborator(projectId: string, email: string): Promise<{ collaborators: ProjectCollaborator[] }> {
+export function addCollaborator(
+  projectId: string,
+  email: string,
+): Promise<{ collaborators: ProjectCollaborator[]; owner: ProjectOwnerInfo | null }> {
   return request(`/projects/${projectId}/collaborators`, { method: "POST", body: JSON.stringify({ email }) });
 }
 

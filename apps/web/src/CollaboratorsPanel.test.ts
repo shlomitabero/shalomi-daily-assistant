@@ -57,7 +57,7 @@ function makeCollaborator(userId: string, email: string): ProjectCollaborator {
   return { userId, email, addedAt: new Date().toISOString() };
 }
 
-function renderPanel() {
+function renderPanel(isOwner = true) {
   return render(
     React.createElement(
       ThemeProvider,
@@ -65,7 +65,7 @@ function renderPanel() {
       React.createElement(
         LanguageProvider,
         null,
-        React.createElement(CollaboratorsPanel, { projectId: "proj1", isOwner: true, onClose: () => {} }),
+        React.createElement(CollaboratorsPanel, { projectId: "proj1", isOwner, onClose: () => {} }),
       ),
     ),
   );
@@ -120,6 +120,84 @@ test("CollaboratorsPanel's remove button asks for confirmation, and declining le
     } finally {
       globalThis.fetch = originalFetch;
       globalThis.window.confirm = originalConfirm;
+    }
+  });
+});
+
+/**
+ * New in this round: listCollaborators (collaborators.ts) only ever
+ * returns rows from the project_collaborators join table -- the owner
+ * isn't in there at all (their access comes from project.ownerId
+ * directly), so a collaborator opening this panel could see every OTHER
+ * collaborator but never who actually owns the project. The API now
+ * returns an `owner` field alongside `collaborators`; this checks the
+ * owner renders as the first row with the right badge and no remove
+ * button, for the owner's own view of the panel.
+ */
+test("CollaboratorsPanel shows the owner as the first row with an 'Owner (You)' badge and no remove button, for the owner's own view", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    const dana = makeCollaborator("u1", "dana@example.com");
+
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/collaborators") {
+        return new Response(
+          JSON.stringify({ collaborators: [dana], owner: { userId: "owner1", email: "amit@example.com" } }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+
+    try {
+      renderPanel(true);
+      await waitForCondition(() => document.querySelectorAll(".collab-list li").length === 2);
+
+      const rows = Array.from(document.querySelectorAll(".collab-list li"));
+      const ownerRow = rows[0];
+      assert.ok(ownerRow.classList.contains("collab-owner-row"), "the owner must be the first row, marked with .collab-owner-row");
+      assert.match(ownerRow.textContent ?? "", /amit@example\.com/, "the owner row must show the real owner's email");
+      assert.match(ownerRow.textContent ?? "", /owner \(you\)/i, "the panel owner must see the 'Owner (You)' badge on their own row");
+      assert.equal(ownerRow.querySelector("button"), null, "the owner row must never have a remove button");
+
+      const collaboratorRow = rows[1];
+      assert.match(collaboratorRow.textContent ?? "", /dana@example\.com/);
+      assert.ok(collaboratorRow.querySelector("button"), "a real collaborator row must still have a remove button");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+test("CollaboratorsPanel shows the real owner's email with a plain 'Owner' badge (no invite form, no remove buttons) for a non-owner collaborator's view", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    const dana = makeCollaborator("u1", "dana@example.com");
+
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/collaborators") {
+        return new Response(
+          JSON.stringify({ collaborators: [dana], owner: { userId: "owner1", email: "amit@example.com" } }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+
+    try {
+      renderPanel(false);
+      await waitForCondition(() => document.querySelectorAll(".collab-list li").length === 2);
+
+      const ownerRow = document.querySelector(".collab-owner-row") as HTMLElement;
+      assert.match(ownerRow.textContent ?? "", /amit@example\.com/, "a collaborator must still see the real owner's email");
+      assert.match(ownerRow.textContent ?? "", /owner/i, "a non-owner viewer sees the plain 'Owner' badge, not 'Owner (You)'");
+      assert.doesNotMatch(ownerRow.textContent ?? "", /owner \(you\)/i, "a non-owner viewer must never see 'Owner (You)' next to someone else");
+      assert.equal(document.querySelector(".collab-invite-form"), null, "a non-owner must never see the invite form");
+      assert.equal(document.querySelectorAll(".collab-list button").length, 0, "a non-owner must never see any remove button, including on the owner row");
+    } finally {
+      globalThis.fetch = originalFetch;
     }
   });
 });

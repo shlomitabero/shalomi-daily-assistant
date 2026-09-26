@@ -801,6 +801,80 @@ test("a collaborator (not the owner) cannot invite or remove other collaborators
   });
 });
 
+/**
+ * New in this round: listCollaborators (collaborators.ts) only ever
+ * queries the project_collaborators join table -- the owner is never a
+ * row in it (their access comes straight from project.ownerId), so a
+ * collaborator opening the sharing panel could see every OTHER
+ * collaborator but had no way to see who actually owned the project.
+ * Both the GET list route and the POST invite route now also return an
+ * `owner` object alongside `collaborators`, for both the owner's own
+ * view and a collaborator's view.
+ */
+test("GET and POST /collaborators both return the real project owner's id and email, for the owner's own view", async () => {
+  await withServer(async (baseUrl) => {
+    const ownerToken = await signup(baseUrl, "owner-collab-info1@example.com");
+    await signup(baseUrl, "collab-info1@example.com");
+
+    const createRes = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: authHeaders(ownerToken),
+      body: JSON.stringify({ description: "A CRM with customers and deals." }),
+    });
+    const { project } = (await createRes.json()) as { project: { id: string; ownerId: string } };
+
+    const listRes = await fetch(`${baseUrl}/api/projects/${project.id}/collaborators`, {
+      headers: authHeaders(ownerToken),
+    });
+    const { owner: ownerFromList } = (await listRes.json()) as {
+      owner: { userId: string; email: string } | null;
+    };
+    assert.ok(ownerFromList, "GET /collaborators must return an owner object");
+    assert.equal(ownerFromList!.userId, project.ownerId);
+    assert.equal(ownerFromList!.email, "owner-collab-info1@example.com");
+
+    const inviteRes = await fetch(`${baseUrl}/api/projects/${project.id}/collaborators`, {
+      method: "POST",
+      headers: authHeaders(ownerToken),
+      body: JSON.stringify({ email: "collab-info1@example.com" }),
+    });
+    const { owner: ownerFromInvite } = (await inviteRes.json()) as {
+      owner: { userId: string; email: string } | null;
+    };
+    assert.ok(ownerFromInvite, "POST /collaborators must also return an owner object");
+    assert.equal(ownerFromInvite!.userId, project.ownerId);
+    assert.equal(ownerFromInvite!.email, "owner-collab-info1@example.com");
+  });
+});
+
+test("a collaborator (not the owner) can also see the real owner's id and email via GET /collaborators", async () => {
+  await withServer(async (baseUrl) => {
+    const ownerToken = await signup(baseUrl, "owner-collab-info2@example.com");
+    const collabToken = await signup(baseUrl, "collab-info2@example.com");
+
+    const createRes = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: authHeaders(ownerToken),
+      body: JSON.stringify({ description: "A CRM with customers and deals." }),
+    });
+    const { project } = (await createRes.json()) as { project: { id: string; ownerId: string } };
+    await fetch(`${baseUrl}/api/projects/${project.id}/collaborators`, {
+      method: "POST",
+      headers: authHeaders(ownerToken),
+      body: JSON.stringify({ email: "collab-info2@example.com" }),
+    });
+
+    const listAsCollab = await fetch(`${baseUrl}/api/projects/${project.id}/collaborators`, {
+      headers: authHeaders(collabToken),
+    });
+    assert.equal(listAsCollab.status, 200);
+    const { owner } = (await listAsCollab.json()) as { owner: { userId: string; email: string } | null };
+    assert.ok(owner, "a collaborator must also be able to see who owns the project");
+    assert.equal(owner!.userId, project.ownerId);
+    assert.equal(owner!.email, "owner-collab-info2@example.com");
+  });
+});
+
 test("inviting an email with no Forge AI account returns a clear error instead of silently doing nothing", async () => {
   await withServer(async (baseUrl) => {
     const ownerToken = await signup(baseUrl, "owner-collab4@example.com");

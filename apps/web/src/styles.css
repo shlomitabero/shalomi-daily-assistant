@@ -1848,6 +1848,17 @@ button.sort-header:hover:not(:disabled) {
   flex-shrink: 0;
 }
 
+.collab-owner-row {
+  background: var(--surface-raised);
+  border-style: dashed;
+}
+
+.collab-owner-chip {
+  background: var(--accent-soft);
+  color: var(--accent-deep);
+  border-color: var(--accent-soft);
+}
+
 .twin-panel {
   max-width: 560px;
 }
