@@ -1427,6 +1427,43 @@ button.sort-header:hover:not(:disabled) {
   }
 }
 
+.shortcuts-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.shortcuts-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.shortcuts-row:last-child {
+  border-bottom: none;
+}
+
+.shortcuts-keys {
+  display: flex;
+  gap: 4px;
+  direction: ltr;
+  unicode-bidi: isolate;
+  flex-shrink: 0;
+}
+
+.shortcuts-keys kbd {
+  padding: 2px 7px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font-size: 0.75rem;
+  font-family: monospace;
+  background: var(--bg);
+  color: var(--text);
+}
+
 /* Base44/Lovable-style split pane: a persistent chat/history column next
    to the live app preview, instead of stacking everything in one column.
    Single column below the breakpoint; the .app container's own max-width

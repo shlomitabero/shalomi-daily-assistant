@@ -27,6 +27,7 @@ import { WhatsAppPanel } from "./WhatsAppPanel.js";
 import { CollaboratorsPanel } from "./CollaboratorsPanel.js";
 import { ChangePasswordPanel } from "./ChangePasswordPanel.js";
 import { ProjectNameEditor } from "./ProjectNameEditor.js";
+import { ShortcutsPanel } from "./ShortcutsPanel.js";
 import { AddAssumptionForm, AddRoleForm, AssumptionItem, RoleChip } from "./SpecListItemRemover.js";
 import { getPinnedIds, sortByPinned, togglePinned } from "./pinnedProjects.js";
 import { getProjectSortMode, setProjectSortMode, type ProjectSortMode } from "./projectSortMode.js";
@@ -294,6 +295,7 @@ function AppContent() {
   const [showWhatsApp, setShowWhatsApp] = useState(false);
   const [showCollaborators, setShowCollaborators] = useState(false);
   const [showChangePassword, setShowChangePassword] = useState(false);
+  const [showShortcuts, setShowShortcuts] = useState(false);
   const [myProjects, setMyProjects] = useState<Project[]>([]);
   const [pinnedIds, setPinnedIds] = useState<Set<string>>(() => getPinnedIds());
   const [projectSortMode, setProjectSortModeState] = useState<ProjectSortMode>(() => getProjectSortMode());
@@ -324,8 +326,8 @@ function AppContent() {
   useEffect(() => subscribeWakeStatus(setWaking), []);
 
   /**
-   * The five overlay panels (History, Business Twin, WhatsApp,
-   * Collaborators, Search) are each a full-screen backdrop (see
+   * The six overlay panels (History, Business Twin, WhatsApp,
+   * Collaborators, Search, Shortcuts) are each a full-screen backdrop (see
    * "history-overlay" in styles.css) -- opening one without closing the
    * others (e.g. Ctrl+K for search while History is already open from a
    * toolbar click) used to stack two of them at once instead of replacing
@@ -333,12 +335,13 @@ function AppContent() {
    * boolean to true and never touched the rest. Routes every open through
    * here so opening any one panel always closes the rest first.
    */
-  function openPanel(panel: "history" | "twin" | "whatsapp" | "collaborators" | "search") {
+  function openPanel(panel: "history" | "twin" | "whatsapp" | "collaborators" | "search" | "shortcuts") {
     setShowHistory(panel === "history");
     setShowTwin(panel === "twin");
     setShowWhatsApp(panel === "whatsapp");
     setShowCollaborators(panel === "collaborators");
     setShowSearch(panel === "search");
+    setShowShortcuts(panel === "shortcuts");
   }
 
   /**
@@ -352,6 +355,14 @@ function AppContent() {
    * convention GitHub, Slack, and others already use), guarded by
    * isEditableEventTarget so it doesn't hijack every literal "/" a person
    * types into the refine box or a record's own text field.
+   *
+   * "?" opens a cheat-sheet of every keyboard shortcut this app actually
+   * has (this one included, plus j/k row navigation from EntityPanel.tsx,
+   * round 188) -- these accumulated one round at a time with no single
+   * place a person could ever see the full list, so nobody who didn't
+   * read a changelog would know most of them existed. Same
+   * isEditableEventTarget guard as "/", since "?" is just as ordinary a
+   * character to type into a text field.
    */
   useEffect(() => {
     if (view !== "preview") return;
@@ -366,12 +377,18 @@ function AppContent() {
         openPanel("search");
         return;
       }
+      if (e.key === "?" && !isEditableEventTarget(e.target)) {
+        e.preventDefault();
+        openPanel("shortcuts");
+        return;
+      }
       if (e.key === "Escape") {
         setShowHistory(false);
         setShowTwin(false);
         setShowSearch(false);
         setShowWhatsApp(false);
         setShowCollaborators(false);
+        setShowShortcuts(false);
       }
     }
     window.addEventListener("keydown", handleKeyDown);
@@ -1005,6 +1022,10 @@ function AppContent() {
               <button type="button" className="secondary" onClick={() => openPanel("history")}>
                 {t("preview.history")}
               </button>
+              <button type="button" className="secondary" onClick={() => openPanel("shortcuts")}>
+                {t("preview.shortcuts")}
+                <span className="shortcut-hint">?</span>
+              </button>
             </div>
           </div>
 
@@ -1169,6 +1190,8 @@ function AppContent() {
               }}
             />
           )}
+
+          {showShortcuts && <ShortcutsPanel onClose={() => setShowShortcuts(false)} />}
         </main>
       )}
     </div>

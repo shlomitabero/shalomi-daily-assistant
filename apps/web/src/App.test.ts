@@ -331,19 +331,20 @@ test("filterRefineHistory narrows by a case-insensitive substring match on the i
 test("App's openPanel closes every other overlay panel when opening one, instead of letting them stack", () => {
   const appSrc = readFileSync(new URL("./App.tsx", import.meta.url), "utf8");
   const handlerMatch = appSrc.match(
-    / {2}function openPanel\(panel: "history" \| "twin" \| "whatsapp" \| "collaborators" \| "search"\) \{[\s\S]*?\n {2}\}\n/,
+    / {2}function openPanel\(panel: "history" \| "twin" \| "whatsapp" \| "collaborators" \| "search" \| "shortcuts"\) \{[\s\S]*?\n {2}\}\n/,
   );
   assert.ok(handlerMatch, "expected to find openPanel in App.tsx");
   const { code } = transformSync(handlerMatch![0], { loader: "ts" });
 
   function run(panel: string) {
-    const state = { history: false, twin: false, whatsapp: false, collaborators: false, search: false };
+    const state = { history: false, twin: false, whatsapp: false, collaborators: false, search: false, shortcuts: false };
     const fn = new Function(
       "setShowHistory",
       "setShowTwin",
       "setShowWhatsApp",
       "setShowCollaborators",
       "setShowSearch",
+      "setShowShortcuts",
       `${code}\nreturn openPanel;`,
     )(
       (v: boolean) => (state.history = v),
@@ -351,16 +352,19 @@ test("App's openPanel closes every other overlay panel when opening one, instead
       (v: boolean) => (state.whatsapp = v),
       (v: boolean) => (state.collaborators = v),
       (v: boolean) => (state.search = v),
+      (v: boolean) => (state.shortcuts = v),
     ) as (panel: string) => void;
     fn(panel);
     return state;
   }
 
-  assert.deepEqual(run("history"), { history: true, twin: false, whatsapp: false, collaborators: false, search: false });
-  assert.deepEqual(run("twin"), { history: false, twin: true, whatsapp: false, collaborators: false, search: false });
-  assert.deepEqual(run("whatsapp"), { history: false, twin: false, whatsapp: true, collaborators: false, search: false });
-  assert.deepEqual(run("collaborators"), { history: false, twin: false, whatsapp: false, collaborators: true, search: false });
-  assert.deepEqual(run("search"), { history: false, twin: false, whatsapp: false, collaborators: false, search: true });
+  const closed = { history: false, twin: false, whatsapp: false, collaborators: false, search: false, shortcuts: false };
+  assert.deepEqual(run("history"), { ...closed, history: true });
+  assert.deepEqual(run("twin"), { ...closed, twin: true });
+  assert.deepEqual(run("whatsapp"), { ...closed, whatsapp: true });
+  assert.deepEqual(run("collaborators"), { ...closed, collaborators: true });
+  assert.deepEqual(run("search"), { ...closed, search: true });
+  assert.deepEqual(run("shortcuts"), { ...closed, shortcuts: true });
 });
 
 /**
@@ -804,4 +808,32 @@ test("App's preview keydown handler opens global search on '/' only when the eve
   const ctrlKBranch = appSrc.match(/if \(\(e\.ctrlKey \|\| e\.metaKey\) && e\.key\.toLowerCase\(\) === "k"\) \{[\s\S]*?\n {6}\}/)?.[0];
   assert.ok(ctrlKBranch, "expected to find the Ctrl/Cmd+K branch");
   assert.doesNotMatch(ctrlKBranch!, /isEditableEventTarget/, "Ctrl/Cmd+K must remain unguarded, unlike the new '/' shortcut");
+});
+
+/**
+ * New in this round: "?" opens a real cheat-sheet of every keyboard
+ * shortcut in the app (round 200), reusing the same isEditableEventTarget
+ * guard "/" already established (round 199) -- a bare "?" is just as
+ * ordinary a character to type into a text field as "/". Also confirms
+ * openPanel's own six-way exclusivity actually includes "shortcuts" (a
+ * seventh panel accidentally left able to stack alongside the other five
+ * would defeat the entire point of routing every open through one place,
+ * per this file's own round-68 doc comment on openPanel), and that Escape
+ * resets it too.
+ */
+test("App's preview keydown handler opens the shortcuts cheat-sheet on '?' (guarded like '/'), and openPanel/Escape both include it", () => {
+  const appSrc = readFileSync(new URL("./App.tsx", import.meta.url), "utf8");
+  assert.match(
+    appSrc,
+    /if \(e\.key === "\?" && !isEditableEventTarget\(e\.target\)\) \{\s*e\.preventDefault\(\);\s*openPanel\("shortcuts"\);\s*return;\s*\}/,
+    "expected the '?' branch to guard on isEditableEventTarget before opening the shortcuts panel",
+  );
+
+  const openPanelMatch = appSrc.match(/function openPanel\(panel: "history" \| "twin" \| "whatsapp" \| "collaborators" \| "search" \| "shortcuts"\) \{[\s\S]*?\n {2}\}\n/);
+  assert.ok(openPanelMatch, "expected openPanel's own type union to include 'shortcuts'");
+  assert.match(openPanelMatch![0], /setShowShortcuts\(panel === "shortcuts"\);/);
+
+  const escapeBranch = appSrc.match(/if \(e\.key === "Escape"\) \{[\s\S]*?\n {6}\}/)?.[0];
+  assert.ok(escapeBranch, "expected to find the Escape branch");
+  assert.match(escapeBranch!, /setShowShortcuts\(false\);/, "Escape must also close the shortcuts panel, not just the original five");
 });
