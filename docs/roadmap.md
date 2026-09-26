@@ -9261,6 +9261,73 @@ not a single "make it perfect" claim.
       `@forge/shared` 11, `@forge/spec-engine` 82, `@forge/db` 80,
       `@forge/api` 195 unchanged) and typecheck clean.
 
+- [x] **Round 186 — Real drag-and-drop for the Kanban board.**
+      Diversification: round 185's own trigger note flagged that Kanban
+      drag-and-drop (considered and deferred in round 160 as too big
+      without existing drag infrastructure) was now more approachable
+      given round 185's own proven drag pattern. Investigation showed the
+      board's move-between-columns logic already existed in full
+      (`handleMove`, wired to each card's own `<select>` dropdown) -- the
+      only real gap was the drag *gesture* itself, not the underlying
+      move mechanics.
+
+      Used native HTML5 drag-and-drop (`draggable` + dragstart/dragover/
+      drop) rather than round 185's mouse-event simulation, since this is
+      exactly the browser's own built-in contract for this interaction.
+      Dragging a card sets its id via `dataTransfer`; dropping on a column
+      calls the same `handleMove` the dropdown already used, so a drag and
+      a dropdown change both do the identical real PATCH + refresh.
+      Dropping a card back onto the column it's already in is a real
+      no-op (compares the dragged record's own current field value against
+      the target column's value before ever calling `handleMove`) -- no
+      PATCH fires for a drop that changes nothing. Added `data-record-id`
+      to each board card, mirroring the table view's own row convention,
+      so a specific card can be targeted by its real identity rather than
+      by DOM position -- both in tests and in this round's own Playwright
+      verification.
+
+      New DOM test in `EntityPanel.test.ts` drives real dragstart/dragover/
+      drop events (with a minimal `DataTransfer` mock, since jsdom doesn't
+      implement the real one) against the existing board-move fixture,
+      proving: dragging over a column shows real visual feedback
+      (`board-column-drag-over`), dropping back on the same column never
+      calls the real PATCH endpoint, and a genuine cross-column drop calls
+      it exactly once and lands the card in its new column once the round
+      trip settles.
+
+      Verified with the deliberate-break-and-restore discipline: removed
+      the same-column no-op guard -- caught exactly by this new test (and
+      no other, confirming precise fault isolation); restored, `diff`
+      byte-identical against a pre-break backup.
+
+      **And** a real Playwright pass against real running dev servers,
+      with two genuine debugging detours worth recording in full since
+      both cost real time to track down: (1) an early attempt assumed "the
+      first `.board-card` in DOM order" would reliably be in a specific
+      column -- broke against real, randomized seed data where that
+      assumption didn't hold (a card believed to start in "Pending" turned
+      out to already be in "Shipped"). Fixed by reading ground truth
+      straight from the real API (`GET .../entities/Order`) instead of
+      guessing DOM position, exactly why `data-record-id` was added.
+      (2) With that fixed, dragging onto a column positioned beyond the
+      visible viewport (`.board-scroll` has `overflow-x: auto`, and a
+      4-column board doesn't fit in a standard viewport width) silently
+      produced *zero* drag events at all -- not even `dragstart` -- even
+      though the computed coordinates looked correct. Widening the
+      viewport didn't fix it either; explicitly calling
+      `scrollIntoViewIfNeeded()` on both the dragged card and the drop
+      target before the drag did. This is the horizontal-scroll analog of
+      round 185's own vertical-viewport lesson, and similarly turned out
+      to be a test-harness artifact, not an app bug. With both resolved:
+      dragged a real seeded record onto a genuinely different column,
+      confirmed it landed there via its own real id (not by position),
+      confirmed it left its original column, and confirmed the move
+      persisted across a real `page.reload()`.
+
+      Full suite green (690 tests, up from 689 -- `@forge/web` 321 → 322;
+      `@forge/shared` 11, `@forge/spec-engine` 82, `@forge/db` 80,
+      `@forge/api` 195 unchanged) and typecheck clean.
+
 ## Phase 3
 
 - Self-healing: production observability, automatic diagnosis and patch
