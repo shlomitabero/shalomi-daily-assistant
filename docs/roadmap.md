@@ -9609,6 +9609,77 @@ not a single "make it perfect" claim.
       `@forge/shared` 11, `@forge/spec-engine` 82, `@forge/db` 80,
       `@forge/api` 201 unchanged) and typecheck/build clean.
 
+- [x] **Round 191 — every password field gets a real show/hide toggle.**
+      Diversification: this round's own trigger note pointed at keyboard
+      shortcuts again, but round 190's own finding (the one global keydown
+      listener only ever runs in `view === "preview"`, so the home screen
+      still has zero shortcuts, yet round 190 already grabbed the most
+      visible gap there -- navigation) made that candidate feel thin.
+      Stepping back to look at the auth-related screens instead (never
+      touched across 190 prior rounds) surfaced a real, plain,
+      long-standing gap: every one of the app's four password fields
+      (signup/login's own single field, plus all three on the
+      change-password form) was a bare `type="password"` input with no
+      way to check what you'd actually typed -- a real everyday
+      annoyance the moment autocorrect, a sticky key, or a typo-prone
+      symbol is involved, and something essentially every other real auth
+      form on the web solves with a show/hide toggle.
+
+      Added a single shared `PasswordInput.tsx` component (an `<input>` +
+      an eye-icon toggle `<button>` in a small wrapper div) rather than
+      reimplementing the same toggle state four separate times, keeping
+      the exact same `value`/`onChange`/`required`/`minLength`/
+      `autoComplete` prop shape each of the four existing plain `<input
+      type="password">` elements already had, so swapping them in was a
+      pure substitution with no other logic changes in `AuthScreen.tsx`
+      or `ChangePasswordPanel.tsx`. Each instance tracks its own
+      `visible` state independently -- toggling one of
+      `ChangePasswordPanel`'s three fields never reveals the other two.
+      The toggle button carries a real `aria-label` ("Show password" /
+      "Hide password") that flips with the state, for screen-reader
+      users, and is `type="button"` so it can never accidentally submit
+      the surrounding form.
+
+      New dedicated DOM test file `PasswordInput.test.ts` (this is a new,
+      standalone component App.tsx doesn't render directly, so it gets
+      its own test file per the established convention rather than
+      folding into AuthScreen's or ChangePasswordPanel's own tests):
+      confirms the toggle flips the real `<input>` element's own `type`
+      attribute (not just a cosmetic icon swap), confirms the aria-label
+      text reflects state, confirms typing while hidden still updates a
+      real controlled value and toggling never clears it (using a real
+      `useState`-backed test harness component, not a plain mutable
+      closure variable, since a non-reactive closure wouldn't actually
+      exercise the controlled-input wiring a real regression could
+      break), and confirms the toggle button is `type="button"`.
+
+      Verified with the deliberate-break-and-restore discipline: changed
+      the input's `type` to a hardcoded `"password"` regardless of the
+      `visible` state -- caught exactly by the toggle test (every other
+      test still passed); restored from a pre-break backup, `diff`
+      byte-identical.
+
+      **And** a real Playwright pass against real running dev servers:
+      typed a real password into the signup form's field, clicked the
+      toggle, confirmed the real typed text became visible in a
+      `type="text"` input, clicked again to re-hide it; completed a real
+      signup and opened the real Change Password panel; typed into its
+      middle (new-password) field, toggled just that one field's own
+      button, and confirmed the other two fields (current-password,
+      confirm-password) stayed hidden throughout -- proving the
+      per-field independence, not just that a toggle exists somewhere on
+      the page.
+
+      Also ran a full `npm run build --workspace=@forge/web` before this
+      round's own tests even existed, catching nothing new (round 190's
+      own real typecheck bug was already fixed) -- following round 190's
+      own hard-won lesson that `tsx --test` alone isn't sufficient
+      verification for a round's final state.
+
+      Full suite green (718 tests, up from 714 -- `@forge/web` 340 → 344;
+      `@forge/shared` 11, `@forge/spec-engine` 82, `@forge/db` 80,
+      `@forge/api` 201 unchanged) and typecheck/build clean.
+
 ## Phase 3
 
 - Self-healing: production observability, automatic diagnosis and patch
