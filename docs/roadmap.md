@@ -9127,6 +9127,74 @@ not a single "make it perfect" claim.
       `@forge/shared` 11, `@forge/spec-engine` 82, `@forge/db` 80,
       `@forge/api` 195 unchanged) and typecheck clean.
 
+- [x] **Round 184 — An Undo toast for entity record deletion.**
+      Diversification check: round 183's own trigger note explicitly
+      flagged that the "independent composable filters" pattern had now
+      been used 4 times (EntityPanel statusFilter, Global Search recent,
+      WhatsApp directionFilter, Time Machine typeFilter) and asked for a
+      genuinely different direction, not another filter. Surveyed
+      Collaborators (no gap, round 152) and Business Twin (no gap, round
+      182) again -- both still ruled out -- before landing on a real,
+      never-before-used pattern: deleting a record has called the real
+      DELETE endpoint the instant the confirm dialog (round 73) closed
+      ever since that round, with that dialog as the only safety net.
+      Real apps (Gmail's trash, most file managers) give a second chance
+      after a destructive action, not just a warning before one.
+
+      Added `restoreRecordAt` to `entityFormatting.ts` -- reinserts an
+      undone delete's record at its original index rather than appending
+      it at the end, since other records may have been created or deleted
+      in the meantime. `EntityPanel.tsx` gained a `pendingDelete` state: on
+      delete-confirm, the row is removed from view immediately (optimistic,
+      the table still feels instant) but the actual `deleteRecord` API call
+      is delayed behind a real `setTimeout` (`UNDO_WINDOW_MS`, 5 seconds),
+      showing a toast with an Undo button naming the record. Clicking Undo
+      clears the timer and restores the record without the DELETE ever
+      firing; letting the window elapse commits the real delete. Only one
+      delete is ever pending at a time -- starting a second one commits the
+      first for real immediately rather than letting two undo windows
+      overlap. Since switching entity tabs remounts `EntityPanel` fresh
+      (`key={entity.name}` in `App.tsx`), an unmount-cleanup effect commits
+      any still-pending delete for real too, so navigating away mid-window
+      can't silently keep a "deleted" record alive forever. Updated
+      `entity.confirmDelete`'s own wording in both languages, since it
+      previously claimed deletion "can't be undone" -- no longer true.
+
+      New tests: 4 in `entityFormatting.test.ts` for `restoreRecordAt`
+      (original-index reinsertion, clamping an out-of-range index, the
+      front-of-array case, and non-mutation) and 3 new DOM tests in
+      `EntityPanel.test.ts` using node:test's fake timers -- mocking only
+      `setTimeout`, and only *after* the initial render/fetch has already
+      settled (mocking it any earlier stalls React's own jsdom-fallback
+      scheduler, which itself falls back to `setTimeout`, hanging the
+      whole render before the test gets anywhere near the delete flow).
+      These prove: the row disappears immediately with zero real DELETE
+      calls; Undo restores the exact record with the delete still never
+      having fired even long after the window would have elapsed; letting
+      the window elapse without Undo fires the real delete exactly once;
+      and unmounting mid-window commits the pending delete for real.
+
+      Verified with the deliberate-break-and-restore discipline twice:
+      (1) reverted `restoreRecordAt` to a plain append -- caught by the
+      original-index and front-of-array tests; restored, `diff` clean.
+      (2) emptied the unmount-cleanup effect's body in `EntityPanel.tsx` --
+      caught exactly by the new "commits on unmount" test (and no other
+      test); restored, `diff` byte-identical against a pre-break backup.
+
+      **And** a real Playwright pass against real running dev servers:
+      built a real project via the actual, unmocked build pipeline (real
+      auto-seeded data, matching round 176's own lesson), deleted a real
+      seeded record and confirmed it vanished immediately with an Undo
+      toast naming it, clicked Undo and confirmed the exact same record's
+      text came back (not a blank placeholder), deleted it again, waited a
+      real 5.5 seconds past the actual undo window (no timer mocking in a
+      live browser), then did a genuine `page.reload()` and confirmed the
+      record was actually gone server-side.
+
+      Full suite green (679 tests, up from 672 -- `@forge/web` 304 → 311;
+      `@forge/shared` 11, `@forge/spec-engine` 82, `@forge/db` 80,
+      `@forge/api` 195 unchanged) and typecheck clean.
+
 ## Phase 3
 
 - Self-healing: production observability, automatic diagnosis and patch
