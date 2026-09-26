@@ -9762,6 +9762,97 @@ not a single "make it perfect" claim.
       `@forge/spec-engine` 82, `@forge/db` 80 unchanged) and
       `npm run build --workspace=@forge/web` clean.
 
+- [x] **Round 193 — the exported standalone app finally gets a real dark mode.**
+      Diversification: the last five rounds (188-192) all touched the
+      live Forge AI preview itself (Entity table, Time Machine, topbar,
+      auth screens, Collaborators panel). This round deliberately
+      looked at the *exported codegen output* instead -- a genuinely
+      different area untouched since round 90 -- following the
+      trigger's own suggestion to check the layer beneath the UI
+      components. `apps/api/src/codegen.ts`'s `renderStylesCss()`
+      turned out to hardcode every single color as a literal hex value
+      (`background: #f6f2ea`, `color: #241f19`, etc.) with zero CSS
+      variables, zero `prefers-color-scheme` media query, and zero
+      `data-theme` handling anywhere -- meaning anyone who exports their
+      built app and self-hosts it permanently loses the dark mode the
+      live preview has had since round 42. A real, concrete, visible
+      gap in a part of the product שלומי has specifically asked to
+      keep polishing (the "download and run it yourself" export path).
+
+      Converted `renderStylesCss()` to define a full palette as CSS
+      custom properties on `:root` (`--bg`, `--surface`,
+      `--surface-muted`, `--surface-subtle`, `--text`, `--muted`,
+      `--accent`, `--accent-contrast`, `--accent-soft`, `--border`,
+      `--border-soft`, `--danger`(-soft), `--success`(-soft),
+      `--steel`(-soft), and four `--shadow-*`/`--overlay` values),
+      every one of the ~90 existing selectors rewritten to reference
+      `var(--...)` instead of its old literal hex, plus a
+      `:root[data-theme="dark"]` override block and an
+      `@media (prefers-color-scheme: dark)` fallback for an unset
+      preference -- values chosen to exactly match the live preview's
+      own dark palette (`apps/web/src/styles.css`), not an
+      independently-invented one. Added a new generated file,
+      `web/src/theme.js`, a plain-JS line-for-line port of the live
+      app's own `theme/theme.ts` (`THEME_STORAGE_KEY` +
+      `detectInitialTheme`: an explicit stored choice always wins,
+      otherwise the OS-level `prefers-color-scheme` decides, light when
+      there's no signal at all). `renderAppJsx()` now renders a real
+      🌙/☀️ `theme-switch` toggle button in the app header (mirroring
+      the live preview's own `ThemeSwitcher.tsx`), backed by a `useState`
+      seeded via `detectInitialTheme`, an effect that sets
+      `document.documentElement`'s `data-theme` attribute and persists
+      the choice to `localStorage` on every change.
+
+      New tests in `codegen.test.ts`: executes the real generated
+      `detectInitialTheme` (extracted from real codegen output, not
+      reimplemented) confirming the exact fallback order across five
+      cases (explicit light/dark each override the system preference;
+      no stored value falls through to the system preference; a
+      corrupted stored value is treated the same as no value); a
+      second test statically confirms the generated `App.jsx` actually
+      imports `theme.js`, renders the `theme-switch` button wired to a
+      real toggle handler, and calls both
+      `document.documentElement.setAttribute("data-theme", theme)` and
+      `localStorage.setItem(THEME_STORAGE_KEY, theme)` -- plus that the
+      generated `styles.css` actually defines `:root[data-theme="dark"]`
+      and that `body` itself reads from `var(--bg)`/`var(--text))`, so
+      the toggle isn't wired to CSS that doesn't react to it. Also
+      updated the existing "produces a real multi-file...project" test's
+      expected file list to include the new `web/src/theme.js` path.
+
+      Verified with the deliberate-break-and-restore discipline twice:
+      first, hardcoded `detectInitialTheme` to always return `"light"`
+      regardless of input -- caught exactly by the new pure-function
+      test (every other test, including the wiring test, still passed);
+      restored from a pre-break backup, `diff` byte-identical. Second,
+      replaced the toggle button's real `onClick` handler with a no-op
+      -- caught exactly by the new static wiring test; restored, `diff`
+      byte-identical again.
+
+      **And** a real end-to-end pass, since `playwright` isn't an
+      installed dependency of any workspace in this repo (confirmed by
+      checking `node_modules` in every workspace) and so couldn't be
+      added as a permanent test in `codegen.test.ts` the way the
+      existing fetch-only "real vite build" test is -- instead ran a
+      genuine one-off verification script (using the scratchpad's own
+      separately-installed `playwright`): generated a real exported
+      project, ran a real `vite build`, spawned the real generated
+      `server.js`, and drove a real headless Chromium against it.
+      Confirmed the initial background color was the real light value
+      (`rgb(246, 242, 234)` = `#f6f2ea`), clicking the toggle changed
+      the actual rendered background to the real dark value
+      (`rgb(23, 20, 15)` = `#17140f`) and set `data-theme="dark"` on
+      `<html>`, a full page **reload** kept the dark background and
+      attribute (proving the real `localStorage` round trip, not just
+      in-memory state), and toggling back to light restored the exact
+      original background color.
+
+      Full suite green (724 tests, up from 722 -- `@forge/api` 203 →
+      205; `@forge/shared` 11, `@forge/spec-engine` 82, `@forge/db` 80,
+      `@forge/web` 346 unchanged) and both
+      `npm run build --workspace=@forge/web` and
+      `npm run build --workspace=@forge/api` clean.
+
 ## Phase 3
 
 - Self-healing: production observability, automatic diagnosis and patch
