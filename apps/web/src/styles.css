@@ -769,6 +769,10 @@ th {
   position: relative;
 }
 
+.resizable-col-drag-over {
+  background: var(--accent-soft);
+}
+
 .column-resize-handle {
   position: absolute;
   top: 0;

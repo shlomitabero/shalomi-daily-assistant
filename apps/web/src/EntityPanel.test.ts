@@ -1825,3 +1825,151 @@ test("EntityPanel's table rows support j/k row navigation and Enter-to-edit, wit
     }
   });
 });
+
+/**
+ * New in this round: table columns could only be resized (round 185) or
+ * hidden (round 138) -- never actually REORDERED. Dragging a column
+ * header's own label to another header now reorders the real columns,
+ * persisted per project+entity via columnOrder.ts, mirroring the exact
+ * draggable/onDragStart/onDragOver/onDragLeave/onDrop contract the Kanban
+ * board's own cards (round 186) and drag-over CSS pattern already use.
+ */
+test("EntityPanel's table columns are drag-and-drop reorderable, persisting per project+entity via a real localStorage round trip", async () => {
+  await withJsdom(async () => {
+    const store: EntityRecord[] = [{ id: 1, createdAt: "x", name: "Acme Corp", status: "new" }];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = mockRecordsFetch(store) as typeof fetch;
+    try {
+      renderEntityPanel();
+      await waitForCondition(() => document.querySelector("table") !== null);
+
+      const headerText = () => [...document.querySelectorAll("thead th.resizable-col")].map((th) => th.querySelector(".sort-header")!.textContent);
+      assert.deepEqual(headerText(), ["Name", "Status"], "columns must start in the entity's own natural field order");
+
+      function makeDataTransfer() {
+        let payload = "";
+        return { setData: (_type: string, value: string) => (payload = value), getData: () => payload };
+      }
+
+      const headersBefore = document.querySelectorAll("thead th.resizable-col");
+      const nameHeader = headersBefore[0] as HTMLElement;
+      const statusHeader = headersBefore[1] as HTMLElement;
+
+      // Drag "Status" onto "Name" -- must reorder to [Status, Name] and show
+      // real drag-over feedback on the drop target while dragging over it.
+      const dataTransfer = makeDataTransfer();
+      fireEvent.dragStart(statusHeader, { dataTransfer });
+      fireEvent.dragOver(nameHeader, { dataTransfer });
+      assert.ok(nameHeader.classList.contains("resizable-col-drag-over"), "dragging a column over another must show real drag-over feedback");
+      fireEvent.drop(nameHeader, { dataTransfer });
+      await waitForCondition(() => headerText()[0] === "Status");
+      assert.deepEqual(headerText(), ["Status", "Name"], "dropping Status onto Name must move Status to just before Name");
+      assert.equal(
+        (document.querySelectorAll("thead th.resizable-col")[0] as HTMLElement).classList.contains("resizable-col-drag-over"),
+        false,
+        "drag-over feedback must clear once the drop completes",
+      );
+
+      const store2 = JSON.parse(localStorage.getItem("forge.columnOrder") ?? "{}");
+      assert.deepEqual(store2["proj1:Deal"], ["status", "name"], "the real reordered field-name order must be persisted to real localStorage");
+
+      // Dropping a column back onto itself must be a real no-op.
+      const headersAfter = document.querySelectorAll("thead th.resizable-col");
+      const dataTransfer2 = makeDataTransfer();
+      fireEvent.dragStart(headersAfter[0], { dataTransfer: dataTransfer2 });
+      fireEvent.dragOver(headersAfter[0], { dataTransfer: dataTransfer2 });
+      fireEvent.drop(headersAfter[0], { dataTransfer: dataTransfer2 });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      assert.deepEqual(headerText(), ["Status", "Name"], "dropping a column back onto itself must not change the order");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+// Deliberately shares a field NAME ("name") with DEAL_ENTITY, in a different
+// position -- if Deal's leftover in-memory column order ["status", "name"]
+// ever leaked into Courier's own render (the reset effect not reloading
+// per-entity), applyColumnOrder would still recognize "name" and reorder
+// Courier to [Name, Vehicle], which is silently indistinguishable from a
+// correct fresh load if Courier's own natural order happened to be the
+// same. Ordering the fields [Vehicle, Name] here means a leak and a correct
+// fresh load produce two different, distinguishable results.
+const COURIER_ENTITY: Entity = {
+  name: "Courier",
+  label: "Courier",
+  fields: [
+    { name: "vehicle", label: "Vehicle", type: "text", required: false },
+    { name: "name", label: "Courier Name", type: "text", required: true },
+  ],
+};
+
+/**
+ * The exact reset-on-entity-switch bug class rounds 198/201/202 each
+ * shipped and deliberately re-caught in their own round: a piece of
+ * per-entity state whose reload gets forgotten in the big
+ * `useEffect(() => {...}, [entity.name])` reset effect when a new state
+ * variable is added, is invisible to any test that never actually switches
+ * entities. This one does: reorders Deal's own columns, switches (via a
+ * real rerender with a new `entity` prop, not a remount) to a second,
+ * unrelated Courier entity that has never been reordered, confirms Courier
+ * starts in its own natural order (not Deal's persisted one leaking across),
+ * then switches back to Deal and confirms Deal's own persisted order is
+ * actually reloaded rather than staying stuck on whatever Courier last had.
+ */
+test("EntityPanel reloads each entity's own persisted column order when switching between entities, instead of leaking one entity's order into another's", async () => {
+  await withJsdom(async () => {
+    const dealStore: EntityRecord[] = [{ id: 1, createdAt: "x", name: "Acme Corp", status: "new" }];
+    const courierStore: EntityRecord[] = [{ id: 2, createdAt: "x", name: "Dana", vehicle: "Van" }];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      if (input === "/api/projects/proj1/entities/Deal") return mockRecordsFetch(dealStore)(input, init);
+      if (input === "/api/projects/proj1/entities/Courier") {
+        return new Response(JSON.stringify({ records: courierStore }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${init?.method ?? "GET"} ${input}`);
+    }) as typeof fetch;
+    try {
+      const view = renderEntityPanel({ allEntities: [DEAL_ENTITY, COURIER_ENTITY] });
+      await waitForCondition(() => document.querySelector("table") !== null);
+
+      const headerText = () => [...document.querySelectorAll("thead th.resizable-col")].map((th) => th.querySelector(".sort-header")!.textContent);
+      function makeDataTransfer() {
+        let payload = "";
+        return { setData: (_type: string, value: string) => (payload = value), getData: () => payload };
+      }
+
+      // Reorder Deal to [Status, Name].
+      let headers = document.querySelectorAll("thead th.resizable-col");
+      const dt1 = makeDataTransfer();
+      fireEvent.dragStart(headers[1], { dataTransfer: dt1 });
+      fireEvent.dragOver(headers[0], { dataTransfer: dt1 });
+      fireEvent.drop(headers[0], { dataTransfer: dt1 });
+      await waitForCondition(() => headerText()[0] === "Status");
+
+      // Switch to Courier -- a real prop change, not a remount. Courier's
+      // own natural field order is [Vehicle, Courier Name]; if Deal's
+      // leftover order ["status", "name"] ever leaked across, Courier's
+      // shared "name" field would get pulled to the front instead --
+      // [Courier Name, Vehicle], a different and clearly wrong result.
+      view.rerender(buildEntityPanelElement({ entity: COURIER_ENTITY, allEntities: [DEAL_ENTITY, COURIER_ENTITY] }));
+      await waitForCondition(() => headerText().length === 2 && headerText()[0] === "Vehicle");
+      assert.deepEqual(
+        headerText(),
+        ["Vehicle", "Courier Name"],
+        "Courier must start in its own natural field order -- Deal's persisted [Status, Name] order leaking across would instead pull Courier's shared 'name' field to the front",
+      );
+
+      // Switch back to Deal -- must reload Deal's own persisted order.
+      view.rerender(buildEntityPanelElement({ entity: DEAL_ENTITY, allEntities: [DEAL_ENTITY, COURIER_ENTITY] }));
+      await waitForCondition(() => headerText().length === 2 && headerText()[0] === "Status");
+      assert.deepEqual(
+        headerText(),
+        ["Status", "Name"],
+        "switching back to Deal must reload its own persisted [Status, Name] order, not stay stuck on Courier's natural order",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});

@@ -3,6 +3,7 @@ import type { Entity, EntityRecord, Field, Project } from "@forge/shared";
 import { createRecord, deleteRecord, listRecords, updateRecord } from "./api.js";
 import { getHiddenFields, toggleFieldVisibility } from "./columnVisibility.js";
 import { computeResizedWidth, getColumnWidths, setColumnWidth } from "./columnWidths.js";
+import { applyColumnOrder, getColumnOrder, reorderColumns, setColumnOrder } from "./columnOrder.js";
 import { EntityLabelEditor } from "./EntityLabelEditor.js";
 import { FieldLabelEditor } from "./FieldLabelEditor.js";
 import {
@@ -495,6 +496,9 @@ export function EntityPanel({
   const [columnWidths, setColumnWidths] = useState<Record<string, number>>({});
   const [resizingField, setResizingField] = useState<{ field: string; startX: number; startWidth: number } | null>(null);
   const [dragOverColumn, setDragOverColumn] = useState<string | null>(null);
+  const [columnOrder, setColumnOrderState] = useState<string[]>([]);
+  const [draggedField, setDraggedField] = useState<string | null>(null);
+  const [dragOverField, setDragOverField] = useState<string | null>(null);
   const [highlightedRecordId, setHighlightedRecordId] = useState<number | null>(null);
   const [focusedRowId, setFocusedRowId] = useState<number | null>(null);
   // Bumped once per refresh() call, so a stale refresh whose listRecords
@@ -576,6 +580,12 @@ export function EntityPanel({
   // just per entity.
   useEffect(() => {
     setHiddenFields(getHiddenFields(projectId, entity.name));
+  }, [projectId, entity.name]);
+
+  // Same reasoning as hiddenFields' own effect just above -- a reordered
+  // column layout is scoped per project+entity too.
+  useEffect(() => {
+    setColumnOrderState(getColumnOrder(projectId, entity.name));
   }, [projectId, entity.name]);
 
   // Same reasoning as hiddenFields' own effect just above -- resized column
@@ -694,18 +704,35 @@ export function EntityPanel({
     });
   }
 
+  // The entity's own fields, reordered to match whatever column order the
+  // user has actually dragged into place (falling back to the entity's
+  // natural order for a field the persisted order doesn't mention).
+  const orderedFields = useMemo(() => applyColumnOrder(entity.fields, columnOrder), [entity.fields, columnOrder]);
+
   // Which columns actually render in the table -- CSV export and the print
   // sheet intentionally ignore this and always include every field, since
   // those are whole-record actions, not "what's currently on screen".
   const visibleFields = useMemo(
-    () => entity.fields.filter((f) => !hiddenFields.has(f.name)),
-    [entity.fields, hiddenFields],
+    () => orderedFields.filter((f) => !hiddenFields.has(f.name)),
+    [orderedFields, hiddenFields],
   );
 
   function handleToggleColumn(fieldName: string) {
     const visibleCount = entity.fields.length - hiddenFields.size;
     if (!hiddenFields.has(fieldName) && visibleCount <= 1) return; // keep at least one column visible
     setHiddenFields(toggleFieldVisibility(projectId, entity.name, fieldName));
+  }
+
+  // Dragging a column header to just before another one's -- reorders the
+  // FULL field list (including any currently-hidden fields), not just the
+  // visible subset, so a hidden field keeps its relative place once shown
+  // again later.
+  function handleReorderColumn(targetName: string) {
+    setDragOverField(null);
+    if (!draggedField || draggedField === targetName) return;
+    const fullOrder = orderedFields.map((f) => f.name);
+    setColumnOrderState(setColumnOrder(projectId, entity.name, reorderColumns(fullOrder, draggedField, targetName)));
+    setDraggedField(null);
   }
 
   const visibleRecords = useMemo(() => {
@@ -1350,8 +1377,19 @@ export function EntityPanel({
                         <th
                           key={f.name}
                           aria-sort={keyIndex === 0 ? (key!.direction === "asc" ? "ascending" : "descending") : "none"}
-                          className="resizable-col"
+                          className={dragOverField === f.name ? "resizable-col resizable-col-drag-over" : "resizable-col"}
                           style={columnWidths[f.name] ? { width: columnWidths[f.name] } : undefined}
+                          draggable
+                          onDragStart={() => setDraggedField(f.name)}
+                          onDragOver={(e) => {
+                            e.preventDefault();
+                            setDragOverField(f.name);
+                          }}
+                          onDragLeave={() => setDragOverField((prev) => (prev === f.name ? null : prev))}
+                          onDrop={(e) => {
+                            e.preventDefault();
+                            handleReorderColumn(f.name);
+                          }}
                         >
                           <button type="button" className="sort-header" onClick={(e) => toggleSort(f.name, e.shiftKey)}>
                             {f.label ?? f.name}
@@ -1361,6 +1399,8 @@ export function EntityPanel({
                           <span
                             className="column-resize-handle"
                             onMouseDown={(e) => startResize(e, f.name)}
+                            draggable
+                            onDragStart={(e) => e.preventDefault()}
                             aria-hidden="true"
                           />
                         </th>
