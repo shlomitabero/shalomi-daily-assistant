@@ -1973,3 +1973,144 @@ test("EntityPanel reloads each entity's own persisted column order when switchin
     }
   });
 });
+
+/**
+ * New in this round: double-clicking a table cell opens a real inline
+ * editor right in that cell (isInlineEditableField, entityFormatting.ts),
+ * instead of always requiring the full add/edit form below the table for a
+ * single-value change. Pressing Enter must send exactly one real PATCH
+ * request and leave the mock server's own record store genuinely updated
+ * -- not just a client-side illusion that a later refresh() would reveal
+ * was never actually saved.
+ */
+test("EntityPanel's inline cell editor commits a real PATCH on Enter and updates the visible cell", async () => {
+  await withJsdom(async () => {
+    const store: EntityRecord[] = [{ id: 1, createdAt: "x", name: "Acme Corp", status: "new" }];
+    const originalFetch = globalThis.fetch;
+    let patchCount = 0;
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      if (init?.method === "PATCH") patchCount += 1;
+      return mockRecordsFetch(store)(input, init);
+    }) as typeof fetch;
+    try {
+      renderEntityPanel();
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 1);
+
+      const nameCell = document.querySelectorAll("table tbody td")[1] as HTMLTableCellElement; // [0] is the select-col checkbox
+      assert.equal(nameCell.textContent, "Acme Corp");
+
+      fireEvent.doubleClick(nameCell);
+      const input = nameCell.querySelector('input[type="text"]') as HTMLInputElement;
+      assert.ok(input, "expected a real text input to open in place inside the cell");
+      assert.equal(input.value, "Acme Corp");
+
+      fireEvent.change(input, { target: { value: "Acme Corporation" } });
+      fireEvent.keyDown(input, { key: "Enter" });
+
+      await waitForCondition(() => document.querySelectorAll("table tbody td")[1]?.textContent === "Acme Corporation");
+      assert.equal(patchCount, 1, "committing the inline edit must send exactly one real PATCH request");
+      assert.equal(store[0].name, "Acme Corporation", "the mock server's own record store must have actually been updated");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
+ * The complement to the commit test above: Escape must discard the
+ * in-progress draft and never touch the server at all. This is also the
+ * regression test for the suppressCellBlurCommitRef race described in
+ * EntityPanel.tsx's own cancelInlineEdit -- removing the input from the DOM
+ * (React's re-render after setEditingCell(null)) can still fire a real
+ * native blur event, and without the suppress flag that blur would read a
+ * stale closure's still-non-null editingCell/cellDraft and silently save
+ * the very value Escape just told it to discard.
+ */
+test("EntityPanel's inline cell editor discards the draft on Escape without sending any PATCH request", async () => {
+  await withJsdom(async () => {
+    const store: EntityRecord[] = [{ id: 1, createdAt: "x", name: "Acme Corp", status: "new" }];
+    const originalFetch = globalThis.fetch;
+    let patchCount = 0;
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      if (init?.method === "PATCH") patchCount += 1;
+      return mockRecordsFetch(store)(input, init);
+    }) as typeof fetch;
+    try {
+      renderEntityPanel();
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 1);
+
+      const nameCell = document.querySelectorAll("table tbody td")[1] as HTMLTableCellElement;
+      fireEvent.doubleClick(nameCell);
+      const input = nameCell.querySelector('input[type="text"]') as HTMLInputElement;
+      fireEvent.change(input, { target: { value: "Should Not Save" } });
+      fireEvent.keyDown(input, { key: "Escape" });
+
+      await waitForCondition(() => nameCell.querySelector("input") === null);
+      // Give any real (but suppressed) native blur event a full tick to land,
+      // so this test would actually catch the stale-closure race described
+      // above rather than asserting before it could ever fire.
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      assert.equal(nameCell.textContent, "Acme Corp", "Escape must discard the in-progress draft, leaving the original value visible");
+      assert.equal(patchCount, 0, "Escape must never send a PATCH request");
+      assert.equal(store[0].name, "Acme Corp", "the mock server's own record must be untouched after a cancelled edit");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
+ * A relation field's cell shows a label resolved from a *different*
+ * record (relationDisplayLabel), not the field's own raw stored value --
+ * isInlineEditableField excludes it for exactly that reason (see
+ * entityFormatting.test.ts for the pure-function coverage). This confirms
+ * the exclusion actually reaches the live table: double-clicking a relation
+ * cell must never open an inline editor.
+ */
+test("EntityPanel never opens an inline editor for a relation field's cell", async () => {
+  await withJsdom(async () => {
+    const orderEntity: Entity = {
+      name: "Order",
+      label: "Order",
+      fields: [
+        { name: "item", label: "Item", type: "text", required: true },
+        { name: "courierId", label: "Courier", type: "relation", relationTo: "Courier", required: false },
+      ],
+    };
+    // loadRelated's own relationTargets only fetches a relation field's
+    // target entity if it's actually present in allEntities -- omitting it
+    // here (as an earlier draft of this test did) left relatedRecords empty
+    // and the cell showing the raw "#9" fallback instead of "Dana", which
+    // wasn't what this test meant to exercise.
+    const courierEntity: Entity = { name: "Courier", label: "Courier", fields: [{ name: "name", label: "Name", type: "text", required: true }] };
+    const courierRelated: EntityRecord[] = [{ id: 9, createdAt: "x", name: "Dana" }];
+    const store: EntityRecord[] = [{ id: 1, createdAt: "x", item: "Pizza", courierId: 9 }];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      if (input === "/api/projects/proj1/entities/Order") {
+        const method = init?.method ?? "GET";
+        if (method === "GET") {
+          return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
+        }
+      }
+      if (input === "/api/projects/proj1/entities/Courier") {
+        return new Response(JSON.stringify({ records: courierRelated }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${init?.method ?? "GET"} ${input}`);
+    }) as typeof fetch;
+    try {
+      renderEntityPanel({ entity: orderEntity, allEntities: [orderEntity, courierEntity] });
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 1);
+      await waitForCondition(() => document.querySelectorAll("table tbody td")[2]?.textContent === "Dana");
+
+      const relationCell = document.querySelectorAll("table tbody td")[2] as HTMLTableCellElement;
+      fireEvent.doubleClick(relationCell);
+
+      assert.equal(relationCell.querySelector("select, input"), null, "a relation cell must never open an inline editor on double-click");
+      assert.equal(relationCell.textContent, "Dana", "the relation cell must keep showing its resolved label");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});

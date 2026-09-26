@@ -16,6 +16,7 @@ import {
   formatNumberValue,
   formatRecordCreatedAt,
   groupByField,
+  isInlineEditableField,
   isSameMonth,
   isTypingTarget,
   matchesSearch,
@@ -918,4 +919,16 @@ test("isTypingTarget returns false for ordinary elements and no target at all", 
   assert.equal(isTypingTarget({ tagName: "BUTTON" }), false);
   assert.equal(isTypingTarget(null), false);
   assert.equal(isTypingTarget(undefined), false);
+});
+
+test("isInlineEditableField allows every field type except relation", () => {
+  const types: Field["type"][] = ["text", "longtext", "number", "boolean", "enum", "date"];
+  for (const type of types) {
+    assert.equal(isInlineEditableField({ name: "f", type } as Field), true, `expected ${type} to be inline-editable`);
+  }
+  assert.equal(
+    isInlineEditableField({ name: "courierId", type: "relation", relationTo: "Courier" } as Field),
+    false,
+    "a relation field's cell shows a label resolved from a different record, so it must stay excluded from inline editing",
+  );
 });

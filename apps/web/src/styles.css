@@ -833,6 +833,20 @@ tbody tr:hover {
   outline-offset: -2px;
 }
 
+.cell-inline-editable {
+  cursor: text;
+}
+
+.cell-inline-editable:hover {
+  background: var(--accent-soft);
+}
+
+.cell-editing input,
+.cell-editing select,
+.cell-editing textarea {
+  width: 100%;
+}
+
 .row-actions {
   display: flex;
   gap: 6px;

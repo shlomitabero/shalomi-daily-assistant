@@ -778,3 +778,16 @@ export function isTypingTarget(target: { tagName?: string; isContentEditable?: b
   const tag = target.tagName?.toUpperCase();
   return tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT";
 }
+
+/**
+ * Whether a table cell for this field can be edited directly in place with
+ * a double-click, instead of always having to open the full add/edit form
+ * below the table just to change one value. Relation fields are excluded --
+ * their cell already shows a label resolved from a *different* record (see
+ * relationDisplayLabel), not the raw stored value the cell would need to
+ * edit, so an inline editor there would need the same related-entity
+ * picker the full form already gives, with no real space savings.
+ */
+export function isInlineEditableField(field: Field): boolean {
+  return field.type !== "relation";
+}
