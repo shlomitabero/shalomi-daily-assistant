@@ -10,6 +10,7 @@ import {
   buildCalendarMonth,
   buildImportRecords,
   calendarChipLabelField,
+  computeNextFocusedRowId,
   findBoardField,
   findDateField,
   formatDateForInput,
@@ -19,6 +20,7 @@ import {
   formatRecordCreatedAt,
   groupByField,
   isSameMonth,
+  isTypingTarget,
   LOCALE,
   matchesSearch,
   parseCsv,
@@ -452,6 +454,7 @@ export function EntityPanel({
   const [resizingField, setResizingField] = useState<{ field: string; startX: number; startWidth: number } | null>(null);
   const [dragOverColumn, setDragOverColumn] = useState<string | null>(null);
   const [highlightedRecordId, setHighlightedRecordId] = useState<number | null>(null);
+  const [focusedRowId, setFocusedRowId] = useState<number | null>(null);
   // Bumped once per refresh() call, so a stale refresh whose listRecords
   // round trip just happens to take longer than a newer one's (triggered
   // by an overlapping action, e.g. duplicating two rows back to back)
@@ -680,6 +683,48 @@ export function EntityPanel({
     const row = tableScrollRef.current?.querySelector(`tr[data-record-id="${highlightedRecordId}"]`);
     row?.scrollIntoView?.({ behavior: "smooth", block: "center" });
   }, [highlightedRecordId, visibleRecords]);
+
+  // Mirrors the highlighted-row scroll effect above, for the keyboard-
+  // focused row instead of a jump-to target.
+  useEffect(() => {
+    if (focusedRowId == null) return;
+    const row = tableScrollRef.current?.querySelector(`tr[data-record-id="${focusedRowId}"]`);
+    row?.scrollIntoView?.({ behavior: "smooth", block: "nearest" });
+  }, [focusedRowId, visibleRecords]);
+
+  /**
+   * j/k (and ArrowDown/ArrowUp) move a keyboard focus between table rows,
+   * and Enter opens the focused row for editing -- the table view
+   * previously had no way to move between records without reaching for
+   * the mouse. Only active in table view (board/calendar have their own
+   * navigation shapes), and isTypingTarget guards against hijacking
+   * keystrokes meant for the search box, a filter dropdown, or the add/
+   * edit form -- the same guard App.tsx's own Ctrl+K/Escape handler gets
+   * for free by only running in the "preview" view, which doesn't apply
+   * here since this panel *is* full of its own text inputs.
+   */
+  useEffect(() => {
+    if (viewMode !== "table") return;
+    function handleKeyDown(e: KeyboardEvent) {
+      if (isTypingTarget(e.target as HTMLElement | null)) return;
+      const visibleIds = visibleRecords.map((r) => r.id as number);
+      if (e.key === "j" || e.key === "ArrowDown") {
+        e.preventDefault();
+        setFocusedRowId((current) => computeNextFocusedRowId(visibleIds, current, "next"));
+      } else if (e.key === "k" || e.key === "ArrowUp") {
+        e.preventDefault();
+        setFocusedRowId((current) => computeNextFocusedRowId(visibleIds, current, "prev"));
+      } else if (e.key === "Enter" && focusedRowId != null) {
+        const record = visibleRecords.find((r) => (r.id as number) === focusedRowId);
+        if (record) {
+          e.preventDefault();
+          startEdit(record);
+        }
+      }
+    }
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [viewMode, visibleRecords, focusedRowId]);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -1299,7 +1344,14 @@ export function EntityPanel({
                     <tr
                       key={record.id as number}
                       data-record-id={record.id as number}
-                      className={record.id === highlightedRecordId ? "record-row-highlighted" : undefined}
+                      className={
+                        [
+                          record.id === highlightedRecordId ? "record-row-highlighted" : null,
+                          record.id === focusedRowId ? "record-row-focused" : null,
+                        ]
+                          .filter(Boolean)
+                          .join(" ") || undefined
+                      }
                     >
                       <td className="select-col">
                         <input

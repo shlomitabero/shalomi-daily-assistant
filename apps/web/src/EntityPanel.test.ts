@@ -1692,3 +1692,86 @@ test("EntityPanel's board view moves a card via a real drag-and-drop, and droppi
     }
   });
 });
+
+/**
+ * New in this round: the table view had no way to move between rows
+ * without reaching for the mouse. j/k (and ArrowDown/ArrowUp) move a
+ * keyboard focus between visible rows, and Enter opens the focused row for
+ * editing -- reusing the exact same startEdit the row's own Edit button
+ * already calls. Also confirms the isTypingTarget guard: pressing "j"
+ * while the search box itself has focus must type a literal "j" into the
+ * search box, not hijack the keystroke to move the table's row focus.
+ */
+test("EntityPanel's table rows support j/k row navigation and Enter-to-edit, without hijacking keystrokes typed into the search box", async () => {
+  await withJsdom(async () => {
+    const store: EntityRecord[] = [
+      { id: 1, name: "Acme Corp", status: "new" },
+      { id: 2, name: "Globex", status: "won" },
+      { id: 3, name: "Initech", status: "lost" },
+    ];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = mockRecordsFetch(store) as typeof fetch;
+    try {
+      renderEntityPanel();
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 3);
+
+      const submitButton = document.querySelector(".record-form button[type=submit]") as HTMLButtonElement;
+      const addLabel = submitButton.textContent;
+
+      // The keydown listener attaches from a useEffect, one tick after the
+      // rows themselves first render -- redispatching "j" until it lands
+      // (rather than firing it exactly once right after the row-count wait)
+      // avoids a real race against that one-tick gap, instead of guessing
+      // a fixed number of extra ticks to sleep first.
+      for (let attempt = 0; document.querySelectorAll(".record-row-focused").length === 0 && attempt < 40; attempt++) {
+        fireEvent.keyDown(window, { key: "j" });
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      }
+      const focused = document.querySelector(".record-row-focused") as HTMLElement;
+      assert.ok(focused, "the first 'j' must eventually focus a row once the keydown listener attaches");
+      assert.equal(focused.getAttribute("data-record-id"), "1", "the first 'j' must focus the first visible row");
+
+      // A second "j" (and an ArrowDown) each move one row further.
+      fireEvent.keyDown(window, { key: "j" });
+      await waitForCondition(() => (document.querySelector(".record-row-focused") as HTMLElement)?.getAttribute("data-record-id") === "2");
+      fireEvent.keyDown(window, { key: "ArrowDown" });
+      await waitForCondition(() => (document.querySelector(".record-row-focused") as HTMLElement)?.getAttribute("data-record-id") === "3");
+
+      // Already on the last row -- one more "j" must NOT wrap back to the first.
+      fireEvent.keyDown(window, { key: "j" });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      assert.equal(
+        (document.querySelector(".record-row-focused") as HTMLElement)?.getAttribute("data-record-id"),
+        "3",
+        "j must clamp at the last row instead of wrapping around to the first",
+      );
+
+      // "k" (and ArrowUp) move focus back up.
+      fireEvent.keyDown(window, { key: "k" });
+      await waitForCondition(() => (document.querySelector(".record-row-focused") as HTMLElement)?.getAttribute("data-record-id") === "2");
+
+      // Enter on the focused row (Globex, id 2) opens it for editing --
+      // the exact same effect as clicking that row's own Edit button.
+      fireEvent.keyDown(window, { key: "Enter" });
+      await waitForCondition(() => submitButton.textContent !== addLabel);
+      const nameInput = document.querySelector(".record-form input[type=text]") as HTMLInputElement;
+      assert.equal(nameInput.value, "Globex", "Enter must open the focused row (Globex), not some other record");
+
+      // Pressing "j" while the search box itself has focus (as it does the
+      // instant the user starts typing a real search) must never hijack
+      // the keystroke to move the table's row focus -- isTypingTarget's job.
+      // If the guard were broken, this "j" would move focus from row 2 to
+      // row 3, so checking it's *unchanged* is a real, precise assertion.
+      const searchBox = document.querySelector(".entity-search") as HTMLInputElement;
+      fireEvent.keyDown(searchBox, { key: "j" });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      assert.equal(
+        (document.querySelector(".record-row-focused") as HTMLElement)?.getAttribute("data-record-id"),
+        "2",
+        "a 'j' keydown targeting the search box must not move the keyboard-focused row",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});

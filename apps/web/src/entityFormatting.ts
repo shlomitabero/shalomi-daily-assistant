@@ -707,3 +707,37 @@ export function restoreRecordAt(records: EntityRecord[], record: EntityRecord, i
   const clampedIndex = Math.max(0, Math.min(index, records.length));
   return [...records.slice(0, clampedIndex), record, ...records.slice(clampedIndex)];
 }
+
+/**
+ * Drives EntityPanel's own j/k (and ArrowDown/ArrowUp) row navigation --
+ * table view previously had no way to move between rows without reaching
+ * for the mouse. Deliberately doesn't wrap at either end (unlike
+ * GlobalSearchPanel's own arrow-key navigation, round 69): a long table is
+ * the common case here, and wrapping from the last row back to the first
+ * (or vice versa) after a table refresh/re-sort would silently jump the
+ * focus somewhere the user never intended. If the currently-focused id has
+ * since scrolled out of the visible set entirely (a search/filter changed,
+ * or the record was deleted), treat it the same as "nothing focused yet"
+ * and (re)start from the first row, regardless of which direction was
+ * pressed -- there's no previous position left to move relative to.
+ */
+export function computeNextFocusedRowId(
+  visibleIds: number[],
+  currentFocusedId: number | null,
+  direction: "next" | "prev",
+): number | null {
+  if (visibleIds.length === 0) return null;
+  const currentIndex = currentFocusedId == null ? -1 : visibleIds.indexOf(currentFocusedId);
+  if (currentIndex === -1) return visibleIds[0];
+  const nextIndex = direction === "next" ? currentIndex + 1 : currentIndex - 1;
+  const clampedIndex = Math.max(0, Math.min(nextIndex, visibleIds.length - 1));
+  return visibleIds[clampedIndex];
+}
+
+/** True while the user is actively typing somewhere else on the page (a text field, a select, a contenteditable region) -- j/k must never hijack keystrokes meant for the search box, a filter dropdown, or the add/edit form. */
+export function isTypingTarget(target: { tagName?: string; isContentEditable?: boolean } | null | undefined): boolean {
+  if (!target) return false;
+  if (target.isContentEditable) return true;
+  const tag = target.tagName?.toUpperCase();
+  return tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT";
+}

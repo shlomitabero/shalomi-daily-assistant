@@ -7,6 +7,7 @@ import {
   buildCalendarMonth,
   buildImportRecords,
   calendarChipLabelField,
+  computeNextFocusedRowId,
   findBoardField,
   findDateField,
   formatDateForInput,
@@ -16,6 +17,7 @@ import {
   formatRecordCreatedAt,
   groupByField,
   isSameMonth,
+  isTypingTarget,
   matchesSearch,
   parseCsv,
   pickDisplayField,
@@ -836,4 +838,47 @@ test("restoreRecordAt does not mutate the original records array", () => {
   const original = [...records];
   restoreRecordAt(records, { id: 3 }, 1);
   assert.deepEqual(records, original);
+});
+
+test("computeNextFocusedRowId focuses the first row when nothing is focused yet, regardless of direction", () => {
+  assert.equal(computeNextFocusedRowId([10, 20, 30], null, "next"), 10);
+  assert.equal(computeNextFocusedRowId([10, 20, 30], null, "prev"), 10);
+});
+
+test("computeNextFocusedRowId moves to the next/previous row while one is already focused", () => {
+  assert.equal(computeNextFocusedRowId([10, 20, 30], 10, "next"), 20);
+  assert.equal(computeNextFocusedRowId([10, 20, 30], 20, "next"), 30);
+  assert.equal(computeNextFocusedRowId([10, 20, 30], 30, "prev"), 20);
+  assert.equal(computeNextFocusedRowId([10, 20, 30], 20, "prev"), 10);
+});
+
+test("computeNextFocusedRowId clamps at both ends instead of wrapping around", () => {
+  assert.equal(computeNextFocusedRowId([10, 20, 30], 30, "next"), 30, "must stay on the last row, not wrap to the first");
+  assert.equal(computeNextFocusedRowId([10, 20, 30], 10, "prev"), 10, "must stay on the first row, not wrap to the last");
+});
+
+test("computeNextFocusedRowId restarts from the first row when the focused id is no longer in the visible set", () => {
+  assert.equal(
+    computeNextFocusedRowId([10, 20, 30], 999, "next"),
+    10,
+    "a focused id filtered out by a new search/filter must not silently keep tracking it",
+  );
+});
+
+test("computeNextFocusedRowId returns null when there are no visible rows at all", () => {
+  assert.equal(computeNextFocusedRowId([], 10, "next"), null);
+});
+
+test("isTypingTarget recognizes text inputs, textareas, selects, and contenteditable regions", () => {
+  assert.equal(isTypingTarget({ tagName: "input" }), true);
+  assert.equal(isTypingTarget({ tagName: "TEXTAREA" }), true);
+  assert.equal(isTypingTarget({ tagName: "select" }), true);
+  assert.equal(isTypingTarget({ tagName: "DIV", isContentEditable: true }), true);
+});
+
+test("isTypingTarget returns false for ordinary elements and no target at all", () => {
+  assert.equal(isTypingTarget({ tagName: "DIV" }), false);
+  assert.equal(isTypingTarget({ tagName: "BUTTON" }), false);
+  assert.equal(isTypingTarget(null), false);
+  assert.equal(isTypingTarget(undefined), false);
 });

@@ -763,6 +763,11 @@ tbody tr:hover {
   transition: background 1.5s ease;
 }
 
+.record-row-focused {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
 .row-actions {
   display: flex;
   gap: 6px;
