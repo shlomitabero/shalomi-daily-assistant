@@ -10484,6 +10484,90 @@ not a single "make it perfect" claim.
       `@forge/db` 80 unchanged) and `npm run build --workspace=@forge/web`
       clean.
 
+- [x] **Round 203 — entity table columns get real drag-and-drop reordering (live preview).**
+      Diversification: rounds 198/201/202 each closed one of the three
+      exported-codegen "port a live-preview-only feature" candidates the
+      trigger's own notes had tracked since round 190 -- that pool is now
+      fully exhausted. This round needed a genuinely new class of feature:
+      the entity table's own columns could already be resized (round 185)
+      and hidden/shown (round 138), but never actually REORDERED -- a real,
+      visible gap in the same family of column-management features.
+
+      Added `apps/web/src/columnOrder.ts`, mirroring `columnWidths.ts`'s and
+      `columnVisibility.ts`'s own per-project+entity localStorage keying
+      (`forge.columnOrder`): `getColumnOrder`/`setColumnOrder` for the real
+      round trip, an exported `applyColumnOrder(fields, order)` that
+      reorders an entity's current fields to match a persisted (possibly
+      stale) order -- appending any field the order doesn't mention at the
+      end in the entity's own natural order, so a newly added or removed
+      field never gets dropped or duplicated -- and an exported
+      `reorderColumns(order, sourceName, targetName)` computing the new
+      order after a drag, with a real no-op guard for both a self-drop and
+      an unknown field name.
+
+      In `EntityPanel.tsx`: added `columnOrder` state (reloaded on every
+      entity switch, in its own effect alongside the existing
+      hiddenFields/columnWidths ones) and `orderedFields` (the entity's own
+      fields run through `applyColumnOrder`, feeding into the existing
+      `visibleFields`). Made each `<th className="resizable-col">` a real
+      native HTML5 drag source/target (`draggable` +
+      `onDragStart`/`onDragOver`/`onDragLeave`/`onDrop`), highlighted via a
+      new `.resizable-col-drag-over` CSS class while dragged over --
+      mirroring the exact contract the Kanban board's own cards (round 186)
+      already use. The existing column-resize handle (a `<span>` inside the
+      same `<th>`) needed its own explicit `draggable` + a
+      `onDragStart={(e) => e.preventDefault()}` to keep it from being
+      swallowed into the header's own new drag region -- without it,
+      starting a resize-drag from the handle would instead kick off a
+      column-reorder drag.
+
+      New tests in `columnOrder.test.ts` (11 tests: the real localStorage
+      round trip, per-project+entity scoping, corrupted-storage fallback,
+      `applyColumnOrder`'s reorder/append-new/drop-removed/empty-order
+      cases, and `reorderColumns`'s move/self-drop-no-op/unknown-name-no-op
+      cases) and two new tests in `EntityPanel.test.ts`: a real drag-and-
+      drop wiring test (drag a header onto another, confirm the swap,
+      confirm the drag-over highlight appears and clears, confirm the real
+      `localStorage` round trip, confirm a self-drop no-op) and a dedicated
+      reset-on-entity-switch regression test -- the exact bug class rounds
+      198/201/202 each shipped and re-caught in their own round. This one
+      uses two entities that deliberately SHARE a field name in one
+      differing position, so a leaked stale order and a correct fresh load
+      produce two different, distinguishable header orders instead of
+      silently producing the same result by coincidence (the first version
+      of this test used two unrelated entities and failed to catch the
+      exact regression it was meant to catch -- caught and fixed during this
+      round's own verification, before the deliberate-break confirmed it).
+
+      Verified with the deliberate-break-and-restore discipline twice:
+      first, removed `reorderColumns`'s own self-drop guard -- caught by its
+      own pure-function test; restored, `diff` byte-identical. Second,
+      removed the entity-switch reset effect's own reload of
+      `columnOrder` -- not caught by the first version of the reset-switch
+      test (silently masked by `applyColumnOrder`'s own append-unknown-
+      fields fallback), fixed by choosing two entities with a shared field
+      name in a differing position so the leak becomes visible, confirmed
+      the fixed test now fails against the broken code, restored, `diff`
+      byte-identical again.
+
+      **And** a real Playwright pass against the live dev server: signed up,
+      built a real restaurant-delivery project, switched to the real Order
+      entity table (real seeded records, so the table actually renders per
+      round 194's own lesson), dragged the real second column onto the
+      first and confirmed the swap, reloaded the page for real and
+      confirmed the reordered layout survived, and read the real
+      `forge.columnOrder` localStorage key directly to confirm the actual
+      persisted order. (The same-column no-op wasn't re-verified live --
+      Playwright's `dragTo()` on an identical source and target collapses
+      into a plain click with zero real mouse movement, which correctly
+      triggers the sort-header button underneath instead of a drag; that
+      exact no-op is already proven at the unit level.)
+
+      Full suite green (582 tests, up from 569 -- `@forge/web` 357 → 370;
+      `@forge/api` 212, `@forge/shared` 11, `@forge/spec-engine` 82,
+      `@forge/db` 80 unchanged) and `npm run build --workspace=@forge/web`
+      clean.
+
 ## Phase 3
 
 - Self-healing: production observability, automatic diagnosis and patch
