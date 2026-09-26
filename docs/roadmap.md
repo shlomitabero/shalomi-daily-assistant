@@ -10300,6 +10300,74 @@ not a single "make it perfect" claim.
       `@forge/db` 80 unchanged) and `npm run build --workspace=@forge/web`
       clean.
 
+- [x] **Round 200 — a real "?" keyboard-shortcuts cheat-sheet, so every shortcut this app has accumulated is finally visible in one place.**
+      Diversification: round 199 added a second search shortcut; this round
+      steps back to look at the shortcut surface as a whole rather than
+      adding a third. Four real keyboard shortcuts had accumulated one
+      round at a time with no single place a person could ever discover
+      the full list: Ctrl/Cmd+K and Escape (round 68), j/k row navigation
+      (round 188), and "/" (round 199). Someone who hadn't read every
+      round's own commit message would only ever stumble onto these by
+      accident. A visible "Keyboard shortcuts" help panel is exactly the
+      kind of feature שלומי's own standing question ("will she actually
+      see/feel this?") points at directly -- it makes four already-shipped
+      features actually discoverable, which is its own real value distinct
+      from shipping a fifth shortcut nobody would find either.
+
+      New `ShortcutsPanel.tsx`, following the exact same minimal-dialog
+      shape `ChangePasswordPanel.tsx` already established (`.history-overlay`
+      / `.history-panel` / `.history-header`, `useDialogFocusTrap`, real
+      `role="dialog"`/`aria-modal`): a static `SHORTCUTS` array of `{ keys,
+      descriptionKey }` rows rendered as `<kbd>` chips next to a real,
+      translated description -- no state, no network request, the simplest
+      overlay panel in the app. In `App.tsx`: added `showShortcuts` state,
+      extended `openPanel`'s own type union and body with a `"shortcuts"`
+      case (so opening it correctly closes the other five overlays and
+      vice versa, per the exclusivity `openPanel` itself was written for in
+      round 68), added a `"?"` branch to the existing keydown listener
+      guarded by the same `isEditableEventTarget` round 199 introduced (a
+      bare "?" is just as ordinary a character to type into a text field as
+      "/"), extended the `Escape` branch to close it too, and added a
+      visible "⌨️ Keyboard shortcuts" topbar button next to the existing
+      panel buttons -- the feature is reachable without ever knowing the
+      shortcut exists, which is the entire point.
+
+      New tests: `ShortcutsPanel.test.ts` renders the real panel and
+      asserts all 7 rows and their exact key chips are present, then
+      specifically asserts the rendered description text is real,
+      translated prose (not a raw, untranslated key like "shortcuts.search"
+      leaking onto the screen) -- a real risk here since each row's
+      description is requested via `t(row.descriptionKey)`, a *dynamic* key,
+      not a string literal. In `App.test.ts`: a static-wiring test for the
+      new "?" branch (guarded exactly like "/"), and updated the existing
+      round-68 `openPanel` exclusivity test to include the new sixth
+      `"shortcuts"` state (it broke immediately on the old five-argument
+      `new Function(...)` signature until updated, the same "regex-extracted
+      test must track a real signature change" lesson round 196 already
+      hit once for `GlobalSearchPanel`'s `runSearch`).
+
+      Verified with the deliberate-break-and-restore discipline twice:
+      first, removed the `isEditableEventTarget` guard from the "?" branch
+      -- caught by the new wiring test; restored, `diff` byte-identical.
+      Second, deleted two rows (`/` and `?` themselves) from the
+      `SHORTCUTS` array -- caught by the panel's own row-count assertion;
+      restored, `diff` byte-identical again.
+
+      **And** a real Playwright pass against real running `api`/`web` dev
+      servers: built a real project through to the live preview screen,
+      clicked the topbar "⌨️ Keyboard shortcuts" button and confirmed the
+      real panel opened with all 7 rows, closed it, then pressed "?" from
+      the screen body and confirmed the identical panel opened that way
+      too, confirmed the rendered text contained a real "search" description
+      and no raw `shortcuts.` key text, then typed `"what about pricing
+      tiers?"` into the real refine box and confirmed the literal `?`
+      stayed in the field with the panel never opening.
+
+      Full suite green (739 tests, up from 736 -- `@forge/web` 354 → 357;
+      `@forge/api` 209, `@forge/shared` 11, `@forge/spec-engine` 82,
+      `@forge/db` 80 unchanged) and `npm run build --workspace=@forge/web`
+      clean.
+
 ## Phase 3
 
 - Self-healing: production observability, automatic diagnosis and patch
