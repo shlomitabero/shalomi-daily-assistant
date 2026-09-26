@@ -10164,6 +10164,79 @@ not a single "make it perfect" claim.
       `@forge/api` 207 unchanged) and `npm run build --workspace=@forge/web`
       clean.
 
+- [x] **Round 198 — the exported standalone app's entity table gets real multi-column sort, matching the live preview's own shift-click tiebreakers.**
+      Diversification: round 196's own closing note flagged three known
+      "live preview only" gaps still open for porting into the exported
+      codegen app -- multi-column sort (round 177), drag-to-resize columns
+      (round 185), and drag-and-drop Kanban (round 186). Picked
+      multi-column sort as the cleanest of the three: pure comparison-
+      function logic to port, not mouse-drag-event physics.
+
+      In `apps/api/src/codegen.ts`'s generated `EntityView`: replaced the
+      single-key `sortField`/`setSortField`/`sortDir`/`setSortDir` state
+      with a `sortKeys` array (mirroring the live preview's own `SortKey`
+      shape), added an exported `sortRecordsMulti(records, sortKeys)`
+      helper right next to the existing `compareValues` (identical logic
+      to `entityFormatting.ts`'s own function of the same name: each key
+      after the first only breaks ties the earlier ones left standing,
+      with direction applied per-key inside the comparator rather than by
+      reversing the whole result afterward). Rewrote `toggleSort(fieldName,
+      additive)` to replicate the live app's exact semantics: a plain
+      click always replaces the whole key list with a single new key
+      (toggling direction in place when that field was already the sole
+      key), a shift-click either appends a new ascending tiebreaker key or
+      toggles an existing key's own direction without moving its position.
+      Updated the table header to pass `e.shiftKey` through, render a
+      numbered `.sort-priority` badge once more than one key is active,
+      and only reflect `aria-sort` on the primary (first) key -- a
+      secondary tiebreaker key now correctly reports `"none"`.
+
+      New tests in `codegen.test.ts`: a pure-function test executing the
+      real generated `sortRecordsMulti` (extracted from real codegen
+      output together with its `compareValues` dependency, not
+      reimplemented) proving multi-key tie-breaking and that reversing
+      only a later key's direction never flips an earlier key's own
+      order; and a static-wiring test asserting the literal `toggleSort`
+      replace/append/toggle-in-place control-flow block, the real
+      shift-key wiring, the priority-badge condition, and the primary-
+      only `aria-sort` logic -- informed by round 194's own hard lesson
+      that such tests must capture actual control flow, not just presence.
+
+      Verified with the deliberate-break-and-restore discipline twice:
+      first, stripped the per-key direction reversal out of
+      `sortRecordsMulti` (`return cmp` instead of `direction === "desc" ?
+      -cmp : cmp`) -- caught by the pure-function test; restored, `diff`
+      byte-identical. Second, made the shift-click "add tiebreaker" branch
+      replace the whole key list instead of appending -- caught by the
+      wiring test; restored, `diff` byte-identical again.
+
+      **And** a real Playwright pass against a genuinely built exported
+      app caught a real bug the unit tests alone missed: signed up,
+      created and built a real restaurant-delivery project via the live
+      API, exported it, unzipped it, ran its own `npm install` and
+      `npm start` for real, then drove a real browser against it. Opening
+      the Order tab and sorting immediately threw `setSortField is not
+      defined` in the browser console -- a stale reference in the
+      per-entity-switch reset `useEffect` (`setSortField(null)`, left over
+      from the old single-key state) that the static regex tests never
+      touched because they only ever asserted the *new* code was present,
+      not that every last reference to the *old* state was gone. Fixed to
+      `setSortKeys([])` and added a regression assertion
+      (`assert.doesNotMatch(entityViewJsx, /setSortField/)`) so this
+      specific class of "renamed state, missed a caller" bug can't
+      silently reappear. Re-exported and re-ran the full Playwright
+      script clean: plain-click sorts by one column, shift-click adds a
+      numbered-badge tiebreaker without disturbing the primary grouping,
+      shift-click again toggles that primary key's own direction in place
+      (badges and grouping intact), and a further plain click replaces
+      the whole key list back down to one, clearing every badge and
+      resetting `aria-sort` to `"none"` on the no-longer-active columns.
+
+      Full suite green (734 tests, up from 732 -- `@forge/api` 207 → 209;
+      `@forge/web` 352, `@forge/shared` 11, `@forge/spec-engine` 82,
+      `@forge/db` 80 unchanged) and `npm run build --workspace=@forge/web`
+      clean.
+
 ## Phase 3
 
 - Self-healing: production observability, automatic diagnosis and patch
