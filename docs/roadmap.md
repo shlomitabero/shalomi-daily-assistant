@@ -9853,6 +9853,98 @@ not a single "make it perfect" claim.
       `npm run build --workspace=@forge/web` and
       `npm run build --workspace=@forge/api` clean.
 
+- [x] **Round 194 — the exported app's Delete button finally gets the same Undo toast the live preview has had since round 184.**
+      Diversification: round 193's own note pointed straight at this --
+      checking `apps/api/src/codegen.ts` (untouched since round 90)
+      surfaced dark mode as a gap, and the same look revealed that
+      several live-preview-only features from rounds 184-186 (Undo
+      toast, multi-column sort, drag-to-resize columns, real
+      drag-and-drop) were never ported to the exported standalone app,
+      unlike Kanban/calendar/CSV export+import/bulk-select/columns/
+      global-search/duplicate/backup, which all were. Of those four,
+      Undo toast was the cleanest, most self-contained port: a single
+      handler (`handleDelete`) and a single new toast element, no new
+      drag-and-drop library or column-resize math to bring along.
+
+      Ported the live preview's `EntityPanel.tsx` pattern (round 184)
+      line-for-line into the generated `EntityView.jsx`: a new
+      `restoreRecordAt(records, record, index)` pure helper (reinserts a
+      record at its original index, not the end); `handleDelete` now
+      removes the record from `records` optimistically the instant the
+      confirm dialog closes (so the table still feels instant), and
+      delays the real `deleteRecord` call behind a real
+      `UNDO_WINDOW_MS = 5000` window via `setTimeout`, showing a new
+      `.entity-undo-toast` with an "Undo" button. A `pendingDeleteRef`
+      mirrors the pending delete so two things can read the latest
+      value without a stale closure: a second delete arriving
+      mid-window commits the first one for real immediately (so undo
+      windows never overlap), and an unmount effect flushes any still-
+      pending delete for real too -- switching entity tabs remounts
+      `EntityView` fresh (each entity's own `View` wrapper is a
+      distinct component), so without this a mid-undo-window tab switch
+      would have silently reverted the delete instead of committing it.
+      New `.entity-undo-toast`/`.link-button` CSS added to the exported
+      stylesheet, reusing the same `--accent`/`--accent-soft`/`--text`
+      tokens round 193 introduced.
+
+      New tests in `codegen.test.ts`: executes the real generated
+      `restoreRecordAt` (extracted from real codegen output) confirming
+      it reinserts at the original index, clamps an out-of-range index
+      to the end, and never mutates its input array -- mirroring
+      `apps/web/src/entityFormatting.test.ts`'s own coverage for the
+      live preview's identical helper. A second test statically
+      confirms the generated `EntityView.jsx` actually declares
+      `UNDO_WINDOW_MS`/`pendingDelete`/`commitPendingDelete`/
+      `handleUndoDelete`, that `handleDelete` removes the record
+      optimistically via `setRecords(...filter...)` and only *then*
+      schedules the real delete behind a real `setTimeout(..., UNDO_WINDOW_MS)`
+      that calls `setPendingDelete({ id, record, index, label, timeoutId })`,
+      that a second in-flight delete commits the first one immediately,
+      and that the generated CSS defines both new classes. Also updated
+      two pre-existing tests that assumed the old instant-delete
+      `async function handleDelete`: the confirmation-dialog test now
+      matches the new non-async signature, and the shared
+      "surfaces a failed request" test dropped `handleDelete` from its
+      coverage (by design, matching the live preview's own test suite,
+      the delayed real delete has no UI left to report a failure to
+      once its window has already closed).
+
+      Verified with the deliberate-break-and-restore discipline twice:
+      first, hardcoded `restoreRecordAt` to just return its input
+      `records` unchanged -- caught exactly by the new pure-function
+      test; restored, `diff` byte-identical. Second, replaced the whole
+      delayed-`setTimeout`-then-`setPendingDelete` block with an
+      immediate `commitPendingDelete({ id })` (simulating a regression
+      back to the old instant-delete behavior) -- the first version of
+      the new static-wiring test missed this (it only checked that the
+      toast/state/handlers existed, not that the delete was actually
+      *delayed*), so the test itself was strengthened first (asserting
+      the literal `setTimeout(..., UNDO_WINDOW_MS)` body) and confirmed
+      it still passed against the real code before re-running the break
+      -- which then correctly failed; restored, `diff` byte-identical
+      again.
+
+      **And** a real end-to-end Playwright pass (one-off script from the
+      scratchpad, per round 193's own lesson that `playwright` isn't an
+      installed dependency here) against a genuinely built exported
+      app: created a real record ("Dana Cohen") through the real form,
+      clicked Delete (confirm auto-accepted) and confirmed the row
+      vanished from the table immediately; confirmed the undo toast
+      named the real record ("Deleted \"Dana Cohen\"."); clicked Undo
+      and confirmed the row came back at the same position; reloaded
+      the page and confirmed the record was still there server-side
+      (the real DELETE request was never actually sent); then deleted
+      it again, this time letting the real 5-second undo window elapse
+      without clicking Undo, reloaded, and confirmed the record was
+      genuinely gone -- proving both halves of the round trip against
+      the real generated server, not a mock.
+
+      Full suite green (726 tests, up from 724 -- `@forge/api` 205 →
+      207; `@forge/shared` 11, `@forge/spec-engine` 82, `@forge/db` 80,
+      `@forge/web` 346 unchanged) and both
+      `npm run build --workspace=@forge/web` and
+      `npm run build --workspace=@forge/api` clean.
+
 ## Phase 3
 
 - Self-healing: production observability, automatic diagnosis and patch
