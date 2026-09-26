@@ -240,6 +240,22 @@ export function summarizeRefineImpact(events: AgentStepEvent[], t: (key: string)
   return parts.length > 0 ? parts.join(" · ") : t("preview.refineHistory.noChange");
 }
 
+/**
+ * Guards the "/" global-search shortcut (added alongside Ctrl/Cmd+K) so it
+ * only fires when the user isn't already typing somewhere -- an idea
+ * textarea, a record's text field, the refine box all use "/" as an
+ * ordinary character, and would otherwise get hijacked into opening search
+ * on every slash keystroke. Duck-typed on tagName/isContentEditable (not
+ * `instanceof HTMLElement`) so this stays a plain pure function, testable
+ * with a plain mock object instead of a real DOM element.
+ */
+export function isEditableEventTarget(target: EventTarget | null): boolean {
+  const el = target as { tagName?: string; isContentEditable?: boolean } | null;
+  if (!el) return false;
+  if (el.isContentEditable) return true;
+  return el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.tagName === "SELECT";
+}
+
 export default function App() {
   return (
     <ThemeProvider>
@@ -331,11 +347,21 @@ function AppContent() {
    * Escape closes whichever overlay panel is currently open. Only active
    * in the preview view so it can't fire while filling in the home-screen
    * idea textarea or the spec-review form.
+   *
+   * "/" is a second, even more familiar way to open the same search (the
+   * convention GitHub, Slack, and others already use), guarded by
+   * isEditableEventTarget so it doesn't hijack every literal "/" a person
+   * types into the refine box or a record's own text field.
    */
   useEffect(() => {
     if (view !== "preview") return;
     function handleKeyDown(e: KeyboardEvent) {
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        openPanel("search");
+        return;
+      }
+      if (e.key === "/" && !isEditableEventTarget(e.target)) {
         e.preventDefault();
         openPanel("search");
         return;
@@ -959,7 +985,7 @@ function AppContent() {
             <div className="preview-header-actions">
               <button type="button" className="secondary" onClick={() => openPanel("search")}>
                 {t("preview.search")}
-                <span className="shortcut-hint">Ctrl+K</span>
+                <span className="shortcut-hint">Ctrl+K · /</span>
               </button>
               <button type="button" className="secondary" onClick={() => openPanel("twin")}>
                 {t("preview.twin")}

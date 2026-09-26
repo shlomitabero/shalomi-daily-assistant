@@ -12,6 +12,7 @@ import {
   formatOpenQuestionsProgress,
   formatProjectCreatedDate,
   formatRefineTimestamp,
+  isEditableEventTarget,
   specProviderLabel,
   summarizeRefineImpact,
 } from "./App.js";
@@ -756,4 +757,51 @@ test("formatEntityFieldSummary adds no markers at all when no field is required"
     { name: "tags", label: "Tags", type: "text", required: false },
   ];
   assert.equal(formatEntityFieldSummary(fields), "Notes, Tags");
+});
+
+/**
+ * New in this round: "/" opens global search (a second, even more familiar
+ * shortcut alongside Ctrl/Cmd+K -- the convention GitHub, Slack, and others
+ * already use). isEditableEventTarget is the guard that keeps it from
+ * hijacking a literal "/" typed into the refine box, a record's own text
+ * field, or an enum <select>.
+ */
+function fakeTarget(props: { tagName?: string; isContentEditable?: boolean }): EventTarget {
+  return props as unknown as EventTarget;
+}
+
+test("isEditableEventTarget recognizes INPUT/TEXTAREA/SELECT and contentEditable targets, but not a plain element or null", () => {
+  assert.equal(isEditableEventTarget(null), false, "no target at all must not count as editable");
+  assert.equal(isEditableEventTarget(fakeTarget({ tagName: "DIV" })), false, "an ordinary element must not count as editable");
+  assert.equal(isEditableEventTarget(fakeTarget({ tagName: "INPUT" })), true);
+  assert.equal(isEditableEventTarget(fakeTarget({ tagName: "TEXTAREA" })), true);
+  assert.equal(isEditableEventTarget(fakeTarget({ tagName: "SELECT" })), true);
+  assert.equal(
+    isEditableEventTarget(fakeTarget({ tagName: "DIV", isContentEditable: true })),
+    true,
+    "a contentEditable div must count as editable even though its tagName isn't a form control",
+  );
+  assert.equal(isEditableEventTarget(fakeTarget({ tagName: "input" })), false, "a lowercase tagName must not match -- real DOM elements always report it uppercase");
+});
+
+/**
+ * Static-wiring test (not DOM-driven, matching this file's own
+ * handleBackToHome/handleGoHome convention for App.tsx's internal
+ * useEffect-scoped logic): confirms the real generated keydown handler
+ * actually checks isEditableEventTarget(e.target) before opening search on
+ * "/", and that Ctrl/Cmd+K remains completely unguarded (a command-palette
+ * shortcut is expected to fire even from inside a text field, unlike a
+ * bare printable key).
+ */
+test("App's preview keydown handler opens global search on '/' only when the event target isn't an editable field", () => {
+  const appSrc = readFileSync(new URL("./App.tsx", import.meta.url), "utf8");
+  assert.match(
+    appSrc,
+    /if \(e\.key === "\/" && !isEditableEventTarget\(e\.target\)\) \{\s*e\.preventDefault\(\);\s*openPanel\("search"\);\s*return;\s*\}/,
+    "expected the '/' branch to guard on isEditableEventTarget before opening search",
+  );
+  // Ctrl/Cmd+K must still have no such guard -- it must work from anywhere.
+  const ctrlKBranch = appSrc.match(/if \(\(e\.ctrlKey \|\| e\.metaKey\) && e\.key\.toLowerCase\(\) === "k"\) \{[\s\S]*?\n {6}\}/)?.[0];
+  assert.ok(ctrlKBranch, "expected to find the Ctrl/Cmd+K branch");
+  assert.doesNotMatch(ctrlKBranch!, /isEditableEventTarget/, "Ctrl/Cmd+K must remain unguarded, unlike the new '/' shortcut");
 });
