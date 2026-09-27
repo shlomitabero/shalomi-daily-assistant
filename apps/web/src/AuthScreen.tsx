@@ -67,7 +67,14 @@ export function AuthScreen({ onAuthenticated }: { onAuthenticated: (user: User) 
             </label>
             <label className="field-row">
               <span>{t("auth.password.label")}</span>
-              <PasswordInput value={password} onChange={setPassword} required minLength={8} autoComplete={mode === "signup" ? "new-password" : "current-password"} />
+              <PasswordInput
+                value={password}
+                onChange={setPassword}
+                required
+                minLength={8}
+                autoComplete={mode === "signup" ? "new-password" : "current-password"}
+                showStrength={mode === "signup"}
+              />
             </label>
             {mode === "signup" && (
               <label className="field-row">

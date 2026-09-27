@@ -445,6 +445,61 @@ input[type="checkbox"] {
   color: var(--text);
 }
 
+.password-input-wrap-outer {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.password-strength {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.password-strength-bars {
+  display: flex;
+  gap: 3px;
+  flex: 1;
+  max-width: 120px;
+}
+
+.password-strength-bar {
+  height: 4px;
+  flex: 1;
+  border-radius: 2px;
+  background: var(--border);
+}
+
+.password-strength[data-strength="weak"] .password-strength-bar:nth-child(1) {
+  background: var(--danger);
+}
+
+.password-strength[data-strength="fair"] .password-strength-bar:nth-child(1),
+.password-strength[data-strength="fair"] .password-strength-bar:nth-child(2) {
+  background: var(--accent);
+}
+
+.password-strength[data-strength="strong"] .password-strength-bar {
+  background: var(--success);
+}
+
+.password-strength-label {
+  font-size: 12px;
+}
+
+.password-strength[data-strength="weak"] .password-strength-label {
+  color: var(--danger);
+}
+
+.password-strength[data-strength="fair"] .password-strength-label {
+  color: var(--accent);
+}
+
+.password-strength[data-strength="strong"] .password-strength-label {
+  color: var(--success);
+}
+
 button {
   font: inherit;
   font-size: 15px;

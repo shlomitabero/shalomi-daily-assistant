@@ -58,7 +58,7 @@ export function ChangePasswordPanel({ onClose }: { onClose: () => void }) {
             </label>
             <label className="field-row">
               <span>{t("changePassword.new")}</span>
-              <PasswordInput value={newPassword} onChange={setNewPassword} required minLength={8} autoComplete="new-password" />
+              <PasswordInput value={newPassword} onChange={setNewPassword} required minLength={8} autoComplete="new-password" showStrength />
             </label>
             <label className="field-row">
               <span>{t("changePassword.confirm")}</span>

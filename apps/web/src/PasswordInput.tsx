@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { useTranslation } from "./i18n/LanguageContext.js";
+import { getPasswordStrength } from "./passwordStrength.js";
 
 /**
  * Every password field in the app (signup/login, and all three fields on
@@ -10,6 +11,11 @@ import { useTranslation } from "./i18n/LanguageContext.js";
  * toggle. A single shared component keeps all four fields' behavior (and
  * the toggle's own icon/label) identical rather than reimplementing this
  * once per form.
+ *
+ * `showStrength` opts a field into a live strength meter (passwordStrength.ts) --
+ * only worth showing where a *new* password is being chosen (signup,
+ * change-password's "new" field), never for a current/login password where
+ * there's nothing left to choose.
  */
 export function PasswordInput({
   value,
@@ -17,35 +23,50 @@ export function PasswordInput({
   required,
   minLength,
   autoComplete,
+  showStrength,
 }: {
   value: string;
   onChange: (value: string) => void;
   required?: boolean;
   minLength?: number;
   autoComplete?: string;
+  showStrength?: boolean;
 }) {
   const { t } = useTranslation();
   const [visible, setVisible] = useState(false);
+  const strength = showStrength ? getPasswordStrength(value) : null;
 
   return (
-    <div className="password-input-wrap">
-      <input
-        type={visible ? "text" : "password"}
-        required={required}
-        minLength={minLength}
-        autoComplete={autoComplete}
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-      />
-      <button
-        type="button"
-        className="password-toggle"
-        onClick={() => setVisible((prev) => !prev)}
-        aria-label={visible ? t("password.hide") : t("password.show")}
-        aria-pressed={visible}
-      >
-        {visible ? "🙈" : "👁️"}
-      </button>
+    <div className="password-input-wrap-outer">
+      <div className="password-input-wrap">
+        <input
+          type={visible ? "text" : "password"}
+          required={required}
+          minLength={minLength}
+          autoComplete={autoComplete}
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+        />
+        <button
+          type="button"
+          className="password-toggle"
+          onClick={() => setVisible((prev) => !prev)}
+          aria-label={visible ? t("password.hide") : t("password.show")}
+          aria-pressed={visible}
+        >
+          {visible ? "🙈" : "👁️"}
+        </button>
+      </div>
+      {strength && (
+        <div className="password-strength" data-strength={strength}>
+          <div className="password-strength-bars">
+            <span className="password-strength-bar" />
+            <span className="password-strength-bar" />
+            <span className="password-strength-bar" />
+          </div>
+          <span className="password-strength-label">{t(`password.strength.${strength}`)}</span>
+        </div>
+      )}
     </div>
   );
 }

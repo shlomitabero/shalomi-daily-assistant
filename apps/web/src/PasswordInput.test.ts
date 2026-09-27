@@ -125,3 +125,41 @@ test("PasswordInput's toggle button is type=button, so pressing it inside a form
     assert.equal(toggle.type, "button", "the toggle must never act as a submit button");
   });
 });
+
+/**
+ * New in this round: a live strength meter (passwordStrength.ts), opt-in
+ * via `showStrength` so a current/login password field never shows one --
+ * there's nothing left to "choose" there. Confirms it stays hidden with
+ * the prop off or the field empty, and tracks a real typed value once on.
+ */
+test("PasswordInput's strength meter is opt-in and only shows once a value is actually typed", async () => {
+  await withJsdom(async () => {
+    function Harness() {
+      const [value, setValue] = useState("");
+      return React.createElement(PasswordInput, { value, onChange: setValue, showStrength: true });
+    }
+    render(React.createElement(ThemeProvider, null, React.createElement(LanguageProvider, null, React.createElement(Harness))));
+
+    assert.equal(document.querySelector(".password-strength"), null, "must stay hidden before anything is typed");
+
+    const input = document.querySelector("input") as HTMLInputElement;
+    fireEvent.change(input, { target: { value: "aaaaaaaa" } });
+    const weakMeter = document.querySelector(".password-strength");
+    assert.ok(weakMeter, "must appear once a value is typed");
+    assert.equal(weakMeter!.getAttribute("data-strength"), "weak");
+
+    fireEvent.change(input, { target: { value: "K7$mq!zX9pL" } });
+    assert.equal(
+      document.querySelector(".password-strength")!.getAttribute("data-strength"),
+      "strong",
+      "must re-rate live as the typed value changes",
+    );
+  });
+});
+
+test("PasswordInput never renders a strength meter when showStrength is left off, even with a value present", async () => {
+  await withJsdom(async () => {
+    renderPasswordInput("hunter2", () => {});
+    assert.equal(document.querySelector(".password-strength"), null, "a login/current-password field must never show a strength meter");
+  });
+});
