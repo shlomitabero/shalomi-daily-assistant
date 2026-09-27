@@ -113,6 +113,18 @@ export function filterRefineHistory(entries: RefineHistoryEntry[], search: strin
   return entries.filter((e) => e.instruction.toLowerCase().includes(query));
 }
 
+/**
+ * Removes a single entry from the refine-history list -- the "no delete"
+ * half of the comment above this list's own state declaration. Purely
+ * local: refine history is never persisted server-side (it resets on every
+ * reload/project-switch, see handleGoHome/handleLogout), so unlike Time
+ * Machine's own per-checkpoint delete (round 216) this needs no API call
+ * at all, just a filter over the in-memory list.
+ */
+export function removeRefineHistoryEntry(entries: RefineHistoryEntry[], id: string): RefineHistoryEntry[] {
+  return entries.filter((e) => e.id !== id);
+}
+
 interface ArchitectImpactDetail {
   newEntities: { name: string; label: string }[];
   changedEntities: { name: string; label: string; newFieldNames: string[] }[];
@@ -762,6 +774,10 @@ function AppContent() {
     setRefineText(instruction);
   }
 
+  function handleRemoveRefineHistoryEntry(id: string) {
+    setRefineHistory((prev) => removeRefineHistoryEntry(prev, id));
+  }
+
   function handleBuildComplete(builtProject: Project) {
     if (refineRunning && pendingRefineInstruction.current) {
       const entry: RefineHistoryEntry = {
@@ -1296,15 +1312,26 @@ function AppContent() {
                     <ul className="refine-history-list">
                       {visibleRefineHistory.map((entry) => (
                         <li key={entry.id}>
-                          <button
-                            type="button"
-                            className="link-button refine-history-instruction"
-                            title={t("preview.refineHistory.reuse.hint")}
-                            disabled={refineRunning}
-                            onClick={() => handleReuseRefineInstruction(entry.instruction)}
-                          >
-                            {entry.instruction}
-                          </button>
+                          <div className="refine-history-row">
+                            <button
+                              type="button"
+                              className="link-button refine-history-instruction"
+                              title={t("preview.refineHistory.reuse.hint")}
+                              disabled={refineRunning}
+                              onClick={() => handleReuseRefineInstruction(entry.instruction)}
+                            >
+                              {entry.instruction}
+                            </button>
+                            <button
+                              type="button"
+                              className="refine-history-delete"
+                              title={t("preview.refineHistory.remove.hint")}
+                              aria-label={t("preview.refineHistory.remove.hint")}
+                              onClick={() => handleRemoveRefineHistoryEntry(entry.id)}
+                            >
+                              🗑️
+                            </button>
+                          </div>
                           <p className="muted small">{entry.summary}</p>
                           <p className="refine-history-time muted small">{formatRefineTimestamp(entry.completedAt, lang)}</p>
                         </li>

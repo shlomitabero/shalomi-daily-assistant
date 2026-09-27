@@ -14,6 +14,7 @@ import {
   formatProjectCreatedDate,
   formatRefineTimestamp,
   isEditableEventTarget,
+  removeRefineHistoryEntry,
   specProviderLabel,
   summarizeRefineImpact,
 } from "./App.js";
@@ -354,6 +355,24 @@ test("filterRefineHistory narrows by a case-insensitive substring match on the i
     "a blank/whitespace-only query must show everything, not match nothing",
   );
   assert.deepEqual(filterRefineHistory(entries, "nonexistent"), []);
+});
+
+test("removeRefineHistoryEntry drops only the matching entry, leaving the rest (and their order) untouched", () => {
+  const entries = [
+    { id: "r1", instruction: "Add invoice tracking", summary: "s", completedAt: "2026-01-01" },
+    { id: "r2", instruction: "Add a coupons entity", summary: "s", completedAt: "2026-01-02" },
+    { id: "r3", instruction: "Track customer reviews", summary: "s", completedAt: "2026-01-03" },
+  ];
+
+  assert.deepEqual(
+    removeRefineHistoryEntry(entries, "r2").map((e) => e.id),
+    ["r1", "r3"],
+  );
+  assert.deepEqual(
+    removeRefineHistoryEntry(entries, "nonexistent").map((e) => e.id),
+    ["r1", "r2", "r3"],
+    "removing an id that isn't in the list must be a no-op, not throw or drop something else",
+  );
 });
 
 /**
@@ -1050,6 +1069,34 @@ test("App's handleReuseRefineInstruction loads a past instruction back into the 
   const whileRunning = fn(true, (v: string) => (refineText = v));
   whileRunning("add a discount field");
   assert.equal(refineText, "", "must be a no-op while a refine is already running, not silently set hidden state");
+});
+
+test("App's handleRemoveRefineHistoryEntry removes only the targeted entry via the real removeRefineHistoryEntry, with no guard against running while a refine is in flight (it's a local list edit, not a network call)", () => {
+  const appSrc = readFileSync(new URL("./App.tsx", import.meta.url), "utf8");
+  const handlerMatch = appSrc.match(/ {2}function handleRemoveRefineHistoryEntry\([\s\S]*?\n {2}\}\n/);
+  assert.ok(handlerMatch, "expected to find handleRemoveRefineHistoryEntry in App.tsx");
+  const { code } = transformSync(handlerMatch![0], { loader: "ts" });
+
+  type Entry = { id: string; instruction: string; summary: string; completedAt: string };
+  const entries: Entry[] = [
+    { id: "r1", instruction: "Add invoice tracking", summary: "s", completedAt: "2026-01-01" },
+    { id: "r2", instruction: "Add a coupons entity", summary: "s", completedAt: "2026-01-02" },
+  ];
+  let updated: Entry[] | null = null;
+  const fn = new Function(
+    "removeRefineHistoryEntry",
+    "setRefineHistory",
+    `${code}\nreturn handleRemoveRefineHistoryEntry;`,
+  ) as (
+    removeRefineHistoryEntry: (list: Entry[], id: string) => Entry[],
+    setRefineHistory: (updater: (prev: Entry[]) => Entry[]) => void,
+  ) => (id: string) => void;
+
+  const handler = fn(removeRefineHistoryEntry, (updater) => {
+    updated = updater(entries);
+  });
+  handler("r1");
+  assert.deepEqual(updated!.map((e) => e.id), ["r2"], "must drop only the targeted entry via the real reducer");
 });
 
 /**

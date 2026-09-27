@@ -2432,7 +2432,8 @@ button.sort-header:hover:not(:disabled) {
 }
 
 .whatsapp-log-delete,
-.checkpoint-delete-btn {
+.checkpoint-delete-btn,
+.refine-history-delete {
   flex-shrink: 0;
   background: none;
   border: none;
@@ -2444,12 +2445,14 @@ button.sort-header:hover:not(:disabled) {
   opacity: 0.6;
 }
 
-.checkpoint-delete-btn {
+.checkpoint-delete-btn,
+.refine-history-delete {
   margin-inline-start: 6px;
 }
 
 .whatsapp-log-delete:hover:not(:disabled),
-.checkpoint-delete-btn:hover:not(:disabled) {
+.checkpoint-delete-btn:hover:not(:disabled),
+.refine-history-delete:hover:not(:disabled) {
   opacity: 1;
   transform: none;
   box-shadow: none;
@@ -2457,9 +2460,17 @@ button.sort-header:hover:not(:disabled) {
 }
 
 .whatsapp-log-delete:disabled,
-.checkpoint-delete-btn:disabled {
+.checkpoint-delete-btn:disabled,
+.refine-history-delete:disabled {
   cursor: default;
   opacity: 0.4;
+}
+
+.refine-history-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 4px;
 }
 
 /* Dark mode applies automatically from the OS preference (no explicit
