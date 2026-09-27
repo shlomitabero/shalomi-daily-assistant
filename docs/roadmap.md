@@ -11196,6 +11196,107 @@ not a single "make it perfect" claim.
       `@forge/api` 218 unchanged) and `npm run build --workspace=@forge/web`
       clean.
 
+- [x] **Round 213 — a collaborator can leave a shared project themselves.**
+      Diversification: rounds 210-212 covered account/topbar, calendar
+      view, and Business Twin -- this round moves to `CollaboratorsPanel`,
+      flagged by round 212's own trigger note as not yet examined deeply.
+      Reading `CollaboratorsPanel.tsx` side by side with the collaborators
+      routes surfaced a real, precise gap: removing a collaborator's own
+      access was owner-only, full stop -- a collaborator invited to
+      someone else's project had no way to actually leave it, only asking
+      the owner to remove them. The collaborator-scoped sibling of round
+      210's own "delete my account".
+
+      New in `apps/api/src/routes/projects.ts`: the existing `DELETE
+      /projects/:id/collaborators/:userId` route now uses
+      `requireProjectAccess` (not `requireProjectOwner`), then explicitly
+      allows the request only when the caller is the project's own owner
+      OR is removing their own id (`req.params.userId === req.userId`) --
+      anything else (a collaborator trying to remove a *different*
+      collaborator) is a real 403 `COLLABORATOR_CANNOT_REMOVE_OTHERS`, a
+      genuinely new HttpError code that needed its own Hebrew/English
+      translation entries (caught immediately by this project's own
+      `language.test.ts` scan of every thrown HttpError code). Web side:
+      `CollaboratorsPanel.tsx` gets two new required props --
+      `currentUserId` (so the panel can tell "my own row" apart from every
+      other collaborator's) and `onLeft` (called once a real self-removal
+      succeeds, since the caller has no access to this project at all any
+      more and the whole view needs to navigate away, not just close the
+      panel) -- and a real "Leave project" button that only ever renders
+      on the signed-in user's own row, gated behind the same
+      `window.confirm` pattern the owner's own "Remove" button already
+      uses. `App.tsx` wires `onLeft` to the same `handleGoHome` cleanup
+      the account-deletion flow (round 210) and the topbar logo (round
+      190) already use.
+
+      New tests: `app.test.ts` (API layer) gets a full end-to-end test
+      confirming a collaborator can remove their own id and genuinely
+      loses access afterward, while the owner and any OTHER collaborator
+      are completely unaffected -- plus, per this project's own
+      established rule (rounds 208-212) for any delete/update endpoint
+      accepting a client-supplied id, a dedicated cross-collaborator test
+      using a real second collaborator's own id (not a placeholder
+      string) confirming one collaborator can never remove a different
+      real collaborator. The file's own pre-existing "cannot invite or
+      remove other collaborators" test needed a small, honest update: it
+      now expects a real 403 (not the previous blanket 404) for that same
+      "remove someone else" case. `CollaboratorsPanel.test.ts` (web layer)
+      gets a new test confirming the Leave button renders only on the
+      current user's own row (never on a different collaborator's row,
+      even when rendered side by side), plus a commit-and-decline pair
+      mirroring the file's own established `window.confirm` convention:
+      declining calls neither the real DELETE endpoint nor `onLeft`;
+      accepting calls both, with the real DELETE addressed to the current
+      user's own id.
+
+      Verified with the deliberate-break-and-restore discipline, twice,
+      across both layers: first, removed the owner-or-self authorization
+      check entirely from the API route (reverting to "anyone with
+      project access can remove anyone") -- caught cleanly by BOTH the
+      pre-existing "cannot invite or remove other collaborators" test and
+      the new dedicated cross-collaborator test (204 where 403 was
+      expected); restored, `diff` byte-identical. Second, removed the
+      "only render on my own row" guard from the web layer's Leave button
+      (rendered unconditionally on every non-owner row) -- caught cleanly
+      by a *different*, pre-existing test's own assertion ("a non-owner
+      must never see any remove button" on someone else's row, `1 !== 0`)
+      before the intended new test even got a chance to run; the test
+      process itself then hung after that first catch and had to be
+      killed by the enclosing `timeout` wrapper -- the same messy-but-
+      valid catch shape rounds 205/206/209/210/211 already established as
+      acceptable for a plain component with no timers, now confirmed on
+      yet another one; restored, `diff` byte-identical; confirmed no
+      leftover process via `ps aux` after the kill.
+
+      A genuine, real bug surfaced along the way, not a deliberate break:
+      the full `npm test` run failed on an entirely different, pre-
+      existing test (`language.test.ts`'s own scan for HttpError codes
+      missing a translation) the moment the new
+      `COLLABORATOR_CANNOT_REMOVE_OTHERS` code was introduced -- exactly
+      the failure mode that test exists to catch, per its own comment.
+      Fixed by adding the missing Hebrew/English translation pair, per
+      round 207's own established lesson to re-run the specific workspace
+      before assuming a full-suite failure is a real regression in the
+      change just made (it was real here, just not where a regression
+      would usually be expected).
+
+      **And** a real Playwright pass against the live dev server: signed
+      up a real owner and a real collaborator account, built a real CRM,
+      invited the collaborator, logged in as the collaborator, opened the
+      real shared project, opened the real Collaborators panel, found the
+      real "Leave project" button on their own row, accepted the real
+      confirm dialog, and confirmed the app navigated back to the real
+      home screen. Reloaded the whole page from scratch and confirmed the
+      former collaborator's own project list was now genuinely empty (not
+      a client-side illusion) -- then, as the owner, confirmed their own
+      project and its collaborator list correctly reflected the
+      departure, with nothing else disturbed.
+
+      Full suite green (800 tests, up from 796 -- `@forge/api` 218 → 220;
+      `@forge/web` 394 → 396; `@forge/shared` 11, `@forge/spec-engine` 82,
+      `@forge/db` 91 unchanged) and `npm run build --workspace=@forge/web`
+      clean.
+
 ## Phase 3
 
 - Self-healing: production observability, automatic diagnosis and patch
