@@ -200,6 +200,73 @@ function RecordPrintSheet({
   );
 }
 
+/**
+ * The list-view sibling of RecordPrintSheet: prints every currently
+ * VISIBLE record as one table (respecting the same search filter and
+ * column visibility/order the on-screen table already applies), instead
+ * of one record at a time. Same "always rendered, empty when not
+ * requested" convention as RecordPrintSheet, for the same reason -- its
+ * own `display: none` never has to fight window.print()'s mount/unmount
+ * timing.
+ */
+function RecordListPrintSheet({
+  entity,
+  fields,
+  records,
+  show,
+  lang,
+  t,
+  allEntities,
+  relatedRecords,
+}: {
+  entity: Entity;
+  fields: Field[];
+  records: EntityRecord[];
+  show: boolean;
+  lang: Lang;
+  t: (key: string, params?: Record<string, string | number>) => string;
+  allEntities: Entity[];
+  relatedRecords: RelatedRecordsByEntity;
+}) {
+  if (!show) return <div className="print-list-sheet" />;
+  return (
+    <div className="print-list-sheet">
+      <h1>{entity.label ?? entity.name}</h1>
+      <table>
+        <thead>
+          <tr>
+            {fields.map((f) => (
+              <th key={f.name}>{f.label ?? f.name}</th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {records.map((record) => (
+            <tr key={record.id as number}>
+              {fields.map((f) => (
+                <td key={f.name}>
+                  <Cell
+                    field={f}
+                    value={record[f.name]}
+                    lang={lang}
+                    t={t}
+                    relationLabel={
+                      f.type === "relation" ? relationDisplayLabel(f, record[f.name], allEntities, relatedRecords) : undefined
+                    }
+                  />
+                </td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <p className="print-record-footer">
+        {t("entity.printList.footer", { count: records.length, date: new Date().toLocaleString(LOCALE[lang]) })}
+      </p>
+    </div>
+  );
+}
+
 function BoardCard({
   entity,
   boardField,
@@ -591,6 +658,7 @@ export function EntityPanel({
   const [importErrors, setImportErrors] = useState<string[]>([]);
   const [showImportErrors, setShowImportErrors] = useState(false);
   const [recordToPrint, setRecordToPrint] = useState<EntityRecord | null>(null);
+  const [showPrintList, setShowPrintList] = useState(false);
   const [hiddenFields, setHiddenFields] = useState<Set<string>>(() => new Set());
   const [columnsMenuOpen, setColumnsMenuOpen] = useState(false);
   const [columnWidths, setColumnWidths] = useState<Record<string, number>>({});
@@ -750,11 +818,20 @@ export function EntityPanel({
   }, [recordToPrint]);
 
   useEffect(() => {
-    function clearPrintedRecord() {
+    if (!showPrintList) return;
+    // Same deferred-tick reasoning as the single-record effect above, for
+    // .print-list-sheet instead.
+    const timer = setTimeout(() => window.print(), 0);
+    return () => clearTimeout(timer);
+  }, [showPrintList]);
+
+  useEffect(() => {
+    function clearPrinted() {
       setRecordToPrint(null);
+      setShowPrintList(false);
     }
-    window.addEventListener("afterprint", clearPrintedRecord);
-    return () => window.removeEventListener("afterprint", clearPrintedRecord);
+    window.addEventListener("afterprint", clearPrinted);
+    return () => window.removeEventListener("afterprint", clearPrinted);
   }, []);
 
   /**
@@ -1544,6 +1621,14 @@ export function EntityPanel({
             >
               {t("entity.exportCsv")}
             </button>
+            <button
+              type="button"
+              className="secondary"
+              onClick={() => setShowPrintList(true)}
+              disabled={visibleRecords.length === 0}
+            >
+              {t("entity.printList")}
+            </button>
             <div className="columns-menu-wrapper">
               <button
                 type="button"
@@ -1732,6 +1817,16 @@ export function EntityPanel({
       <RecordPrintSheet
         entity={entity}
         record={recordToPrint}
+        lang={lang}
+        t={t}
+        allEntities={allEntities}
+        relatedRecords={relatedRecords}
+      />
+      <RecordListPrintSheet
+        entity={entity}
+        fields={visibleFields}
+        records={visibleRecords}
+        show={showPrintList}
         lang={lang}
         t={t}
         allEntities={allEntities}

@@ -1384,6 +1384,58 @@ test("EntityPanel's Print action fills the print sheet with that record's own fi
 });
 
 /**
+ * The list-view sibling of the per-row Print action above: a "Print list"
+ * toolbar button fills the always-mounted `.print-list-sheet` with every
+ * currently VISIBLE record as one table, and genuinely calls
+ * window.print() -- same convention as the per-record sheet (CSS-driven
+ * visibility can't be exercised in jsdom, but the DOM/data wiring can).
+ * Narrows the table to one record via the search box first, to prove the
+ * printed list respects the same search filter the on-screen table and
+ * CSV export already do, not just "every record ever fetched".
+ */
+test("EntityPanel's Print list action fills the print sheet with only the currently-VISIBLE (search-filtered) records and calls window.print", async () => {
+  await withJsdom(async () => {
+    const store: EntityRecord[] = [
+      { id: 1, name: "Acme Corp", status: "new" },
+      { id: 2, name: "Globex", status: "won" },
+    ];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = mockRecordsFetch(store) as typeof fetch;
+    const originalPrint = window.print;
+    let printCalls = 0;
+    window.print = () => {
+      printCalls += 1;
+    };
+    try {
+      renderEntityPanel();
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 2);
+
+      assert.equal(
+        document.querySelector(".print-list-sheet")!.textContent,
+        "",
+        "the print-list sheet must be empty until Print list is actually clicked",
+      );
+
+      fireEvent.change(document.querySelector(".entity-search")!, { target: { value: "Globex" } });
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 1);
+
+      const printListBtn = Array.from(document.querySelectorAll("button")).find((b) => b.textContent?.includes("Print list"))!;
+      fireEvent.click(printListBtn);
+
+      await waitForCondition(() => printCalls === 1);
+
+      const sheetText = document.querySelector(".print-list-sheet")!.textContent ?? "";
+      assert.match(sheetText, /Globex/, "the printed list must include the search-matched record");
+      assert.doesNotMatch(sheetText, /Acme Corp/, "the printed list must NOT include a record the search filtered out");
+      assert.match(sheetText, /1 records/, "the footer must report the count of records actually printed (1), not the full store (2)");
+    } finally {
+      globalThis.fetch = originalFetch;
+      window.print = originalPrint;
+    }
+  });
+});
+
+/**
  * New in this round: a "Columns" menu in the toolbar lets a wide entity's
  * table drop columns you don't need on screen right now. Hides the
  * "Status" column via its checkbox, confirms the header and every row's

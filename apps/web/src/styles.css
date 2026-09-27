@@ -2563,15 +2563,45 @@ button.sort-header:hover:not(:disabled) {
   color: #666;
 }
 
+.print-list-sheet {
+  display: none;
+}
+
+.print-list-sheet h1 {
+  font-size: 20px;
+  margin: 0 0 16px;
+}
+
+.print-list-sheet table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.print-list-sheet th,
+.print-list-sheet td {
+  text-align: start;
+  padding: 6px 10px;
+  border-bottom: 1px solid #ccc;
+  font-size: 13px;
+}
+
+.print-list-sheet th {
+  font-weight: 600;
+  color: #444;
+}
+
 @media print {
   body * {
     visibility: hidden;
   }
   .print-record-sheet,
-  .print-record-sheet * {
+  .print-record-sheet *,
+  .print-list-sheet,
+  .print-list-sheet * {
     visibility: visible !important;
   }
-  .print-record-sheet {
+  .print-record-sheet,
+  .print-list-sheet {
     display: block !important;
     position: absolute;
     inset: 0;
