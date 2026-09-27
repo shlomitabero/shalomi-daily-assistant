@@ -11588,6 +11588,82 @@ not a single "make it perfect" claim.
       `@forge/api` 229 unchanged) and `npm run build --workspace=@forge/web`
       clean.
 
+- [x] **Round 218 — double-click inline cell editing (round 206) is now
+      also ported to the exported, standalone codegen app.**
+      Diversification: with the home screen closed again in round 217,
+      this round returned to the long-open "bring an existing live-preview
+      pattern to the exported codegen app" direction -- the last of the
+      three still-open candidates (drag-to-resize columns and Kanban
+      drag-and-drop were already ported in rounds 201/202; multi-column
+      sort in 198). Double-click-to-edit was the one real live-preview
+      table convenience never brought over: someone using their own
+      downloaded/deployed app still had to open the full add/edit form
+      below the table for a single-field change.
+
+      Ported into `codegen.ts`'s generated `EntityView` verbatim, mirroring
+      the live preview's own `EntityPanel.tsx` (round 206) piece by piece:
+      new exported `isInlineEditableField(field)` (`field.type !==
+      "relation"` -- a relation cell already shows a label resolved from a
+      *different* record, not the raw value an inline editor would need),
+      new `editingCell`/`cellDraft` state plus a
+      `suppressCellBlurCommitRef`, and the same four handlers
+      (`startInlineEdit`/`commitInlineEdit`/`cancelInlineEdit`/
+      `handleCellBlur`) with the identical commit-on-blur-or-Enter,
+      discard-on-Escape contract -- Escape sets the suppress flag *before*
+      clearing `editingCell`, so the input's own blur (still fired when
+      it's removed from the DOM) finds the flag already set and skips a
+      second, stale commit. `FieldInput` (the exported app's own copy)
+      gained the same `autoFocus`/`onBlur`/`onKeyDown` props threaded
+      through every branch (relation select, boolean checkbox, enum
+      select, longtext textarea, date input, number input, default text
+      input) -- previously only the live preview's version had these,
+      since only the live preview's table needed them. The table body's
+      per-cell render now branches on `isEditingThisCell`, showing
+      `FieldInput` in place of the read-only `Cell` while editing, with the
+      same `cell-editing`/`cell-inline-editable` CSS classes (added to
+      `renderStylesCss()`) and hover/hint styling as the live preview.
+
+      New tests in `codegen.test.ts`: one executes the real generated
+      `isInlineEditableField` (extracted via regex + `new Function`
+      sandbox, the same "run the real generated code" standard this file's
+      other pure-function tests use) confirming every field type except
+      relation returns true; a second is a source-inspection test (the
+      same style the Kanban drag-and-drop test above it already uses)
+      confirming the state, the three handlers' key lines, the
+      double-click wiring, and both CSS rules are actually present in the
+      generated output. Updating the tbody's `visibleFields.map` from an
+      expression-bodied arrow to a block-bodied one (needed to compute
+      `isEditingThisCell`/`editable` per field, matching the live preview's
+      own shape exactly) required updating one existing regex in the
+      "Columns menu" test that specifically asserted the old
+      expression-bodied shape.
+
+      Verified with the deliberate-break-and-restore discipline, twice:
+      removed the `!== "relation"` exclusion from `isInlineEditableField`
+      (always returning true) -- caught cleanly by the new pure-function
+      test; restored, `diff` byte-identical. Removed the
+      `suppressCellBlurCommitRef.current = true` line from
+      `cancelInlineEdit` -- caught cleanly by the new wiring test's regex
+      assertion; restored, `diff` byte-identical.
+
+      **And** a real end-to-end Playwright pass against a genuinely
+      generated, `vite build`-built, and `spawn`-started export (not just
+      the dev server): created a real record via the ordinary add form,
+      double-clicked its name cell to confirm a real `<input>` actually
+      appears in place, typed a new value and pressed Enter to confirm a
+      real PATCH commits and the cell shows the new text once the async
+      refresh lands, reloaded the whole page to confirm the edit
+      genuinely persisted server-side (not just local React state), then
+      double-clicked again, typed a different draft value, and pressed
+      Escape to confirm the draft is discarded and the previously
+      committed value is left untouched.
+
+      Full suite green (821 tests, up from 819 -- `@forge/api` 229 → 231;
+      `@forge/shared` 11, `@forge/spec-engine` 82, `@forge/db` 91,
+      `@forge/web` 406 unchanged) and both
+      `npm run build --workspace=@forge/web` and
+      `npm run build --workspace=@forge/api` clean.
+
 ## Phase 3
 
 - Self-healing: production observability, automatic diagnosis and patch
