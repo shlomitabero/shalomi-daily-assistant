@@ -11987,6 +11987,56 @@ not a single "make it perfect" claim.
       `@forge/api` 231 unchanged) and `npm run build --workspace=@forge/web`
       clean.
 
+- [x] **Round 224 — a Copy timeline button on Time Machine, alongside
+      Download, closing out the copy-to-clipboard arc.**
+      Diversification: the trigger's own notes named this the third and
+      final known candidate for the copy-to-clipboard pattern (Business
+      Twin round 222, WhatsApp log round 223) -- `HistoryPanel.tsx` has
+      the identical Download-button shape (`handleDownload` calling
+      `downloadCheckpointHistory(formatCheckpointHistory(...), projectName)`)
+      as both prior rounds, so this closes the arc rather than opening a
+      fresh direction. All three genuinely-downloadable-text-report
+      screens in the app now have a Copy companion; no further candidate
+      is known for this specific pattern.
+
+      `HistoryPanel.tsx` gained the identical `handleCopy` + `copyStatus`
+      (`"idle" | "copied" | "failed"`) + `useEffect`+`setTimeout`+
+      `clearTimeout` auto-fade shape rounds 222/223 established, calling
+      `navigator.clipboard.writeText` with the exact same
+      `formatCheckpointHistory(checkpoints, currentSpec, projectName, lang, t)`
+      string the Download button already uses. New "Copy timeline" button
+      sits right before "Download timeline" in `.history-header-actions`.
+
+      New tests in `HistoryPanel.test.ts`, reusing the exact checkpoints
+      fetch mock the existing Download-button test already established: a
+      real `Object.defineProperty(navigator, "clipboard", ...)` mock
+      confirms the copied text matches the real formatted timeline
+      (including the real checkpoint label), the button shows "✅
+      Copied!", and (via `t.mock.timers.enable({ apis: ["setTimeout"] })`
+      + a real `tick(2000)`) reverts after the delay; a second test mocks
+      a rejecting `writeText` and confirms "Copy failed" appears and
+      still reverts.
+
+      Verified with the deliberate-break-and-restore discipline: removed
+      the `try`/`catch` around the real clipboard call, exactly as rounds
+      222/223 did -- the failure-path test caught it immediately as a
+      genuine unhandled rejection (process exited on its own, no hang);
+      restored, `diff` byte-identical, both tests green again on the
+      first re-run.
+
+      **And** a real Playwright pass against the live dev server: signed
+      up, built a real project, opened the real Time Machine panel,
+      clicked the real Copy timeline button, confirmed the visible
+      "Copied!" label, then read back the actual OS clipboard via
+      `navigator.clipboard.readText()` in-page and confirmed it held the
+      real formatted timeline text (starting with the panel's own title
+      and the project name), not a placeholder.
+
+      Full suite green (840 tests, up from 838 -- `@forge/web` 423 → 425;
+      `@forge/shared` 11, `@forge/spec-engine` 82, `@forge/db` 91,
+      `@forge/api` 231 unchanged) and `npm run build --workspace=@forge/web`
+      clean.
+
 ## Phase 3
 
 - Self-healing: production observability, automatic diagnosis and patch
