@@ -10830,6 +10830,73 @@ not a single "make it perfect" claim.
       `@forge/db` 80 unchanged) and `npm run build --workspace=@forge/web`
       clean.
 
+- [x] **Round 208 — delete a single message from the WhatsApp log.**
+      Diversification: rounds 205-207 touched the AI Team build screen,
+      the entity table, and the preview/chat pane, each web-only. This
+      round moves to the WhatsApp integration, and this time the change
+      isn't web-only: `clearWhatsAppMessages` (its own neighbor,
+      `handleClearHistory`) was previously the only way to remove
+      anything from the log at all -- one junk or test message meant
+      wiping the whole history to get rid of it.
+
+      New in `packages/db/src/whatsapp.ts`: `deleteWhatsAppMessage(db,
+      projectId, messageId)`, scoped to `projectId` in the same `WHERE`
+      clause as the message id itself (mirroring `deleteRecord`'s own
+      convention in `repository.ts`), so a message id that happens to
+      belong to a *different* project can never be deleted through this
+      call -- it throws `NotFoundError` (also mirroring `deleteRecord`,
+      and mapped to a real 404 by `app.ts`'s existing error handler) for
+      an id that doesn't exist in this project's own log. New route:
+      `DELETE /projects/:id/integrations/whatsapp/messages/:messageId` in
+      `routes/projects.ts`. Web side: a new `deleteWhatsAppMessage` client
+      call in `api.ts`, and each row in `WhatsAppPanel.tsx`'s own message
+      log gets a real 🗑️ delete button, confirmed via `window.confirm`
+      exactly like `EntityPanel.tsx`'s own single-record delete, removing
+      just that one message from both the server and this panel's local
+      state on success.
+
+      New tests: `whatsapp.test.ts` (db layer) confirms a single delete
+      leaves the rest of this project's log and a different project's log
+      completely untouched, and that both a real id belonging to a
+      different project and a nonexistent id throw `NotFoundError`.
+      `app.test.ts` (API layer) confirms the real route removes only the
+      targeted message via a real HTTP round trip and 404s for an id that
+      doesn't exist. `WhatsAppPanel.test.ts` (web layer) confirms the real
+      delete button sends exactly one real DELETE scoped to that
+      message's own id and removes only that row, and that declining the
+      confirm dialog sends no request at all and leaves the row exactly
+      as it was.
+
+      Verified with the deliberate-break-and-restore discipline, twice,
+      across two different layers of the same feature: first, removed the
+      `projectId` scoping from the db layer's own `WHERE` clause -- this
+      is the kind of change that could otherwise let one project's caller
+      delete a *different* project's message by guessing its id, a real
+      security-relevant regression, not just a cosmetic one; caught
+      cleanly by the "belongs to a different project" test; restored,
+      `diff` byte-identical. Second, removed the `window.confirm` guard
+      from the web layer's own `handleDeleteMessage` -- caught cleanly by
+      a new decline-test added specifically to close a gap noticed while
+      preparing this break (the original delete test always mocked
+      `confirm` to return `true`, so it could never have caught a missing
+      guard on its own); restored, `diff` byte-identical.
+
+      **And** a real Playwright pass against the live dev server: signed
+      up, built a real restaurant-delivery app, opened the real WhatsApp
+      panel. A real device can't be driven headlessly (round 183/192's
+      own established lesson), so the status/messages/delete endpoints
+      were intercepted with `page.route` against a real, mutable
+      in-memory store rather than skipping browser verification entirely
+      -- confirmed two seeded messages rendered, clicked the real delete
+      button on one of them, confirmed the real DELETE request fired
+      exactly once with the correct message id, and confirmed only that
+      one row disappeared from the real DOM while the other stayed.
+
+      Full suite green (773 tests, up from 766 -- `@forge/db` 80 → 83;
+      `@forge/api` 212 → 214; `@forge/web` 381 → 383; `@forge/shared` 11,
+      `@forge/spec-engine` 82 unchanged) and `npm run build
+      --workspace=@forge/web` clean.
+
 ## Phase 3
 
 - Self-healing: production observability, automatic diagnosis and patch
