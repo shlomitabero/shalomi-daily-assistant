@@ -840,6 +840,74 @@ export function computeResizedWidth(startWidth, deltaX) {
   return Math.max(MIN_COLUMN_WIDTH, Math.min(MAX_COLUMN_WIDTH, startWidth + deltaX));
 }
 
+// A column's own drag-reordered position, persisted per entity (same
+// single-tenant scoping as the hidden-columns/column-widths stores above)
+// so it survives a reload. Mirrors the live preview's own columnOrder.ts.
+const COLUMN_ORDER_STORAGE_KEY = "forge_column_order";
+function readColumnOrderStore() {
+  try {
+    const raw = localStorage.getItem(COLUMN_ORDER_STORAGE_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) return {};
+    return parsed;
+  } catch {
+    return {};
+  }
+}
+function writeColumnOrderStore(store) {
+  try {
+    localStorage.setItem(COLUMN_ORDER_STORAGE_KEY, JSON.stringify(store));
+  } catch {
+    // localStorage can be unavailable (private mode) -- the choice just won't survive a reload.
+  }
+}
+function getColumnOrder(entityName) {
+  const store = readColumnOrderStore();
+  return Array.isArray(store[entityName]) ? store[entityName] : [];
+}
+function setColumnOrder(entityName, order) {
+  const store = readColumnOrderStore();
+  store[entityName] = order;
+  writeColumnOrderStore(store);
+  return order;
+}
+
+// Applies a persisted (possibly stale) column order to the entity's current
+// real field list: a field the order mentions keeps its persisted relative
+// position, and any field the order doesn't mention (a newly added field,
+// or an order saved before it existed) is appended at the end in the
+// entity's own original order. Mirrors the live preview's own
+// applyColumnOrder (columnOrder.ts) verbatim.
+function applyColumnOrder(fields, order) {
+  const byName = new Map(fields.map((f) => [f.name, f]));
+  const ordered = [];
+  for (const name of order) {
+    const field = byName.get(name);
+    if (field) {
+      ordered.push(field);
+      byName.delete(name);
+    }
+  }
+  for (const field of fields) {
+    if (byName.has(field.name)) ordered.push(field);
+  }
+  return ordered;
+}
+
+// Computes the new full field-name order after dragging sourceName's column
+// header to just before targetName's. Mirrors the live preview's own
+// reorderColumns (columnOrder.ts) verbatim.
+function reorderColumns(order, sourceName, targetName) {
+  if (sourceName === targetName) return order;
+  if (!order.includes(sourceName) || !order.includes(targetName)) return order;
+  const withoutSource = order.filter((name) => name !== sourceName);
+  const targetIndex = withoutSource.indexOf(targetName);
+  const result = [...withoutSource];
+  result.splice(targetIndex, 0, sourceName);
+  return result;
+}
+
 // Mirrors the same check the server's own coerce() runs (see renderServerJs)
 // -- rejecting a bad date here, before the row is ever POSTed, gives the
 // user a row-numbered CSV import error instead of a generic server error
@@ -1454,6 +1522,9 @@ export function EntityView({ entity }) {
   const [columnsMenuOpen, setColumnsMenuOpen] = useState(false);
   const [columnWidths, setColumnWidths] = useState(() => getColumnWidths(entity.name));
   const [resizingField, setResizingField] = useState(null);
+  const [columnOrder, setColumnOrderState] = useState(() => getColumnOrder(entity.name));
+  const [draggedField, setDraggedField] = useState(null);
+  const [dragOverField, setDragOverField] = useState(null);
   const [dragOverColumn, setDragOverColumn] = useState(null);
   const [editingCell, setEditingCell] = useState(null);
   const [cellDraft, setCellDraft] = useState(undefined);
@@ -1530,6 +1601,7 @@ export function EntityView({ entity }) {
     setHiddenFields(getHiddenColumns(entity.name));
     setColumnsMenuOpen(false);
     setColumnWidths(getColumnWidths(entity.name));
+    setColumnOrderState(getColumnOrder(entity.name));
     refresh();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [entity.name]);
@@ -1584,15 +1656,34 @@ export function EntityView({ entity }) {
     });
   }
 
+  // The entity's own fields, reordered to match whatever column order the
+  // user has actually dragged into place (falling back to the entity's
+  // natural order for a field the persisted order doesn't mention). Mirrors
+  // the live preview's own EntityPanel.tsx (round 203).
+  const orderedFields = useMemo(() => applyColumnOrder(entity.fields, columnOrder), [entity.fields, columnOrder]);
+
   // Which columns actually render in the table -- CSV export intentionally
   // ignores this and always includes every field, the same "whole-record
   // action" distinction the live-preview app's own EntityPanel makes.
-  const visibleFields = useMemo(() => entity.fields.filter((f) => !hiddenFields.has(f.name)), [entity.fields, hiddenFields]);
+  const visibleFields = useMemo(() => orderedFields.filter((f) => !hiddenFields.has(f.name)), [orderedFields, hiddenFields]);
 
   function handleToggleColumn(fieldName) {
     const visibleCount = entity.fields.length - hiddenFields.size;
     if (!hiddenFields.has(fieldName) && visibleCount <= 1) return; // keep at least one column visible
     setHiddenFields(toggleColumnVisibility(entity.name, fieldName));
+  }
+
+  // Dragging a column header to just before another one's -- reorders the
+  // FULL field list (including any currently-hidden fields), not just the
+  // visible subset, so a hidden field keeps its relative place once shown
+  // again later. Mirrors the live preview's own handleReorderColumn
+  // (EntityPanel.tsx, round 203).
+  function handleReorderColumn(targetName) {
+    setDragOverField(null);
+    if (!draggedField || draggedField === targetName) return;
+    const fullOrder = orderedFields.map((f) => f.name);
+    setColumnOrderState(setColumnOrder(entity.name, reorderColumns(fullOrder, draggedField, targetName)));
+    setDraggedField(null);
   }
 
   // Drag-to-resize a column header. Only attaches real mousemove/mouseup
@@ -2106,8 +2197,19 @@ export function EntityView({ entity }) {
                         <th
                           key={f.name}
                           aria-sort={keyIndex === 0 ? (key.direction === "asc" ? "ascending" : "descending") : "none"}
-                          className="resizable-col"
+                          className={dragOverField === f.name ? "resizable-col resizable-col-drag-over" : "resizable-col"}
                           style={columnWidths[f.name] ? { width: columnWidths[f.name] } : undefined}
+                          draggable
+                          onDragStart={() => setDraggedField(f.name)}
+                          onDragOver={(e) => {
+                            e.preventDefault();
+                            setDragOverField(f.name);
+                          }}
+                          onDragLeave={() => setDragOverField((prev) => (prev === f.name ? null : prev))}
+                          onDrop={(e) => {
+                            e.preventDefault();
+                            handleReorderColumn(f.name);
+                          }}
                         >
                           <button type="button" className="sort-header" onClick={(e) => toggleSort(f.name, e.shiftKey)}>
                             {f.label}
@@ -2605,6 +2707,7 @@ th, td { text-align: start; padding: 8px 10px; border-bottom: 1px solid var(--bo
 .sort-header:hover { color: var(--accent); }
 .sort-priority { display: inline-flex; align-items: center; justify-content: center; min-width: 15px; height: 15px; margin-inline-start: 3px; padding: 0 3px; border-radius: 999px; background: var(--accent-soft); color: var(--accent-deep); font-size: 10px; font-weight: 700; vertical-align: middle; }
 .resizable-col { position: relative; }
+.resizable-col-drag-over { background: var(--accent-soft); }
 .column-resize-handle { position: absolute; top: 0; bottom: 0; inset-inline-end: 0; width: 6px; cursor: col-resize; user-select: none; touch-action: none; z-index: 1; }
 .entity-table-resized { table-layout: fixed; }
 .entity-table-resized th, .entity-table-resized td { overflow: hidden; text-overflow: ellipsis; }

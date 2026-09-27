@@ -1836,7 +1836,7 @@ test("the exported EntityView's table headers are drag-resizable, persisting per
   // The reset-on-entity-switch effect must reload the new entity's own
   // widths -- the exact class of bug round 198 shipped and Playwright
   // caught (a stale reference to state that had been renamed/removed).
-  assert.match(entityViewJsx, /setColumnWidths\(getColumnWidths\(entity\.name\)\);\s*refresh\(\);/);
+  assert.match(entityViewJsx, /setColumnWidths\(getColumnWidths\(entity\.name\)\);\s*setColumnOrderState\(getColumnOrder\(entity\.name\)\);\s*refresh\(\);/);
 
   const stylesCss = files.find((f) => f.path === "web/src/styles.css")!.content;
   assert.match(stylesCss, /\.column-resize-handle/);
@@ -1865,6 +1865,82 @@ test("the exported EntityView's table headers are drag-resizable, persisting per
   assert.deepEqual(updated, { customerName: 220 });
   assert.deepEqual(getColumnWidths("Order"), { customerName: 220 }, "must round-trip through the real localStorage-backed store");
   assert.deepEqual(getColumnWidths("Courier"), {}, "a different entity's own widths must not leak across entities");
+});
+
+/**
+ * New in this round: table columns in the exported standalone app could
+ * only be resized (round 201) or hidden (round 198's own "Columns" menu
+ * port) -- never actually REORDERED, unlike the live Forge AI preview
+ * (round 203). Ports the identical draggable/onDragStart/onDragOver/
+ * onDragLeave/onDrop contract EntityPanel.tsx's own column-header drag
+ * already uses, reusing applyColumnOrder/reorderColumns verbatim rather
+ * than reimplementing the reorder math (they're already generic over any
+ * `{name}[]`, and a field object here has the same shape a live-preview
+ * field does).
+ */
+test("the exported EntityView's table columns are drag-and-drop reorderable, persisting per entity via a real localStorage round trip", () => {
+  const files = generateExportFiles(project);
+  const entityViewJsx = files.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+
+  assert.match(entityViewJsx, /const \[columnOrder, setColumnOrderState\] = useState\(\(\) => getColumnOrder\(entity\.name\)\);/);
+  assert.match(entityViewJsx, /const \[draggedField, setDraggedField\] = useState\(null\);/);
+  assert.match(
+    entityViewJsx,
+    /const orderedFields = useMemo\(\(\) => applyColumnOrder\(entity\.fields, columnOrder\), \[entity\.fields, columnOrder\]\);/,
+  );
+  assert.match(
+    entityViewJsx,
+    /function handleReorderColumn\(targetName\) \{\s*setDragOverField\(null\);\s*if \(!draggedField \|\| draggedField === targetName\) return;\s*const fullOrder = orderedFields\.map\(\(f\) => f\.name\);\s*setColumnOrderState\(setColumnOrder\(entity\.name, reorderColumns\(fullOrder, draggedField, targetName\)\)\);\s*setDraggedField\(null\);\s*\}/,
+  );
+  assert.match(entityViewJsx, /onDragStart=\{\(\) => setDraggedField\(f\.name\)\}/);
+  assert.match(entityViewJsx, /onDrop=\{\(e\) => \{\s*e\.preventDefault\(\);\s*handleReorderColumn\(f\.name\);\s*\}\}/);
+  // The reset-on-entity-switch effect must reload the new entity's own
+  // persisted order -- the exact class of bug round 198 shipped and
+  // Playwright caught (a stale reference to state that had been
+  // renamed/removed), re-verified for every new piece of per-entity state.
+  assert.match(entityViewJsx, /setColumnOrderState\(getColumnOrder\(entity\.name\)\);\s*refresh\(\);/);
+
+  const stylesCss = files.find((f) => f.path === "web/src/styles.css")!.content;
+  assert.match(stylesCss, /\.resizable-col-drag-over/);
+
+  // Executes the real generated applyColumnOrder/reorderColumns and the
+  // real generated getColumnOrder/setColumnOrder against a fake
+  // localStorage -- the same "run the real generated code" standard this
+  // file's other persistence-backed tests use.
+  const pureFnSrc = entityViewJsx.match(
+    /function applyColumnOrder\(fields, order\) \{[\s\S]*?\nfunction reorderColumns\(order, sourceName, targetName\) \{[\s\S]*?\n\}\n/,
+  )?.[0];
+  assert.ok(pureFnSrc, "expected to find applyColumnOrder/reorderColumns in generated output");
+  const { applyColumnOrder, reorderColumns } = new Function(`${pureFnSrc}\nreturn { applyColumnOrder, reorderColumns };`)() as {
+    applyColumnOrder: (fields: { name: string }[], order: string[]) => { name: string }[];
+    reorderColumns: (order: string[], source: string, target: string) => string[];
+  };
+  assert.deepEqual(
+    applyColumnOrder([{ name: "name" }, { name: "status" }], ["status", "name"]).map((f) => f.name),
+    ["status", "name"],
+  );
+  assert.deepEqual(reorderColumns(["name", "status"], "status", "name"), ["status", "name"]);
+  const unchanged = ["name", "status"];
+  assert.equal(reorderColumns(unchanged, "status", "status"), unchanged, "dropping a column back onto itself must be a real no-op");
+
+  const storeSrc = entityViewJsx.match(/const COLUMN_ORDER_STORAGE_KEY[\s\S]*?\nfunction setColumnOrder\(entityName, order\) \{[\s\S]*?\n\}\n/)?.[0];
+  assert.ok(storeSrc, "expected to find the column-order store functions in generated output");
+  const fakeStorage: Record<string, string> = {};
+  const { getColumnOrder, setColumnOrder } = new Function(
+    "localStorage",
+    `${storeSrc}\nreturn { getColumnOrder, setColumnOrder };`,
+  )({
+    getItem: (k: string) => fakeStorage[k] ?? null,
+    setItem: (k: string, v: string) => {
+      fakeStorage[k] = v;
+    },
+  }) as { getColumnOrder: (e: string) => string[]; setColumnOrder: (e: string, order: string[]) => string[] };
+
+  assert.deepEqual(getColumnOrder("Order"), [], "an entity with no reordered columns must start with an empty order");
+  const updated = setColumnOrder("Order", ["status", "customerName"]);
+  assert.deepEqual(updated, ["status", "customerName"]);
+  assert.deepEqual(getColumnOrder("Order"), ["status", "customerName"], "must round-trip through the real localStorage-backed store");
+  assert.deepEqual(getColumnOrder("Courier"), [], "a different entity's own order must not leak across entities");
 });
 
 /**
