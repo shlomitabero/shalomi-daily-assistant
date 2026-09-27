@@ -11297,6 +11297,60 @@ not a single "make it perfect" claim.
       `@forge/db` 91 unchanged) and `npm run build --workspace=@forge/web`
       clean.
 
+- [x] **Round 214 — Global Search's "Show all" reveals every match, not
+      just the first 5.**
+      Diversification: rounds 210-213 covered account/topbar, calendar
+      view, Business Twin, and CollaboratorsPanel -- this round moves to
+      Global Search, whose own trigger note flagged it as the suggested
+      next direction. Reading `GlobalSearchPanel.tsx` alongside
+      `entityFormatting.ts`'s `searchEntityRecords` surfaced a precise,
+      real gap: each result group caps its rows at 5 (that function's own
+      default sample limit) and shows a plain "+N more" line for
+      whatever's left over -- a real count the panel already knew, but
+      with no way on screen to actually reach those extra matches short of
+      switching to that entity's own tab and re-typing the same search
+      from scratch.
+
+      New in `GlobalSearchPanel.tsx`: a real "Show all" button replaces
+      that dead text on any group with more matches than its sample shows.
+      Clicking it re-fetches that one entity's records (the same
+      idempotent GET `runSearch` already made) and re-filters them with no
+      cap via the existing `searchEntityRecords`, storing the full list in
+      a new `expandedSamples` state keyed by entity name so expanding one
+      group never touches another's. The button shows a real "Loading…"
+      state while the fetch is in flight (a new `showAllLoading` state)
+      and disappears entirely once every match for that group is already
+      on screen. `expandedSamples` is explicitly cleared at the start of
+      every new search (`handleSubmit` and the recent-search chip's own
+      handler) so a stale expansion from a previous query's entity group
+      can never leak into a different query's results for that same
+      entity. `searchEntityRecords` and its 5-row default cap are
+      untouched -- the fix is purely additive at the panel layer, so the
+      collapsed default view for a small, common search is unchanged.
+
+      New test in `GlobalSearchPanel.test.ts`: seeds one entity with 7 real
+      matching records, confirms the sample still caps at 5 and a real
+      "Show all" button appears, clicks it, and confirms all 7 rows are
+      genuinely shown and the button itself is gone afterward. Verified
+      with the deliberate-break-and-restore discipline: reintroduced a
+      hard 5-row cap inside the "Show all" handler itself (so clicking it
+      would silently do nothing) -- caught cleanly by the new test's own
+      wait-for-7-rows assertion timing out, no hang, clean process exit;
+      restored, `diff` byte-identical.
+
+      **And** a real Playwright pass against the live dev server: signed
+      up, built a real CRM project, created 7 real Customer records via
+      the real API (all matching "acme"), reloaded and reopened the
+      project fresh, opened Global Search with the real "/" shortcut,
+      searched "acme", confirmed exactly 5 rows and a real "Show 2 more"
+      button, clicked it, and confirmed all 7 real records appeared with
+      the button gone.
+
+      Full suite green (801 tests, up from 800 -- `@forge/web` 396 → 397;
+      `@forge/shared` 11, `@forge/spec-engine` 82, `@forge/db` 91,
+      `@forge/api` 220 unchanged) and `npm run build --workspace=@forge/web`
+      clean.
+
 ## Phase 3
 
 - Self-healing: production observability, automatic diagnosis and patch
