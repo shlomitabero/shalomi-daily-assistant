@@ -910,6 +910,106 @@ test("EntityPanel's calendar view pre-fills the create form's date field when an
 });
 
 /**
+ * New in this round: the calendar view's own record chips were previously
+ * only editable by opening the full form -- moving an appointment to a
+ * different day meant clicking the chip, changing the date field by hand,
+ * and saving. A real calendar is expected to let you drag a card straight
+ * onto the day you want, the same real HTML5 drag-and-drop the board
+ * view's own card-to-column move already uses (handleCardDrop), just
+ * addressed by a day's own formatted date instead of a board enum value.
+ * Drives real dragstart/dragover/drop events (the same minimal DataTransfer
+ * mock the board-view drag test above uses) to prove: dragging a chip onto
+ * a genuinely different day calls the real PATCH exactly once with that
+ * day's own "YYYY-MM-DD" value and moves the chip in the live DOM, while
+ * dropping it back onto the SAME day it's already on is a real no-op --
+ * never an extra PATCH.
+ */
+test("EntityPanel's calendar view reschedules a record via a real drag-and-drop onto a different day, and dropping it back on its own day is a no-op", async () => {
+  await withJsdom(async () => {
+    const today = isoDateToday();
+    const store: EntityRecord[] = [{ id: 1, title: "Dana's appointment", date: today }];
+    let patchCount = 0;
+    let lastPatchBody: Record<string, unknown> | null = null;
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/entities/Appointment") {
+        return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      const patchMatch = /^\/api\/projects\/proj1\/entities\/Appointment\/(\d+)$/.exec(input);
+      if (method === "PATCH" && patchMatch) {
+        patchCount += 1;
+        const id = Number(patchMatch[1]);
+        const record = store.find((r) => r.id === id)!;
+        lastPatchBody = JSON.parse(init!.body as string);
+        Object.assign(record, lastPatchBody);
+        return new Response(JSON.stringify({ record }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+    try {
+      renderAppointmentPanel();
+      await waitForCondition(() => document.querySelector(".entity-toolbar") !== null);
+
+      const calendarToggle = document.querySelectorAll(".view-toggle-btn")[1] as HTMLButtonElement;
+      fireEvent.click(calendarToggle);
+      await waitForCondition(() => document.querySelectorAll(".calendar-record-chip").length === 1);
+
+      function makeDataTransfer() {
+        let payload = "";
+        return { setData: (_type: string, value: string) => (payload = value), getData: () => payload };
+      }
+
+      const todaysDayCell = document.querySelector(".calendar-record-chip")!.closest(".calendar-day") as HTMLElement;
+      const chip = document.querySelector(".calendar-record-chip") as HTMLButtonElement;
+
+      // Dropping the chip back onto the day it's already on must be a real no-op.
+      const sameDayDataTransfer = makeDataTransfer();
+      fireEvent.dragStart(chip, { dataTransfer: sameDayDataTransfer });
+      fireEvent.dragOver(todaysDayCell, { dataTransfer: sameDayDataTransfer });
+      fireEvent.drop(todaysDayCell, { dataTransfer: sameDayDataTransfer });
+      await new Promise((resolve) => setImmediate(resolve));
+      assert.equal(patchCount, 0, "dropping a chip back on the day it's already on must never call the real PATCH endpoint");
+
+      // Now a real move: drag onto a genuinely different, empty day in the current month.
+      const emptyDayCells = Array.from(document.querySelectorAll(".calendar-day-clickable")).filter(
+        (el) => el.querySelectorAll(".calendar-record-chip").length === 0,
+      );
+      assert.ok(emptyDayCells.length > 0, "expected at least one empty day cell to drop onto");
+      const targetDay = emptyDayCells[0] as HTMLElement;
+
+      const moveDataTransfer = makeDataTransfer();
+      fireEvent.dragStart(chip, { dataTransfer: moveDataTransfer });
+      fireEvent.dragOver(targetDay, { dataTransfer: moveDataTransfer });
+      assert.ok(
+        targetDay.classList.contains("calendar-day-drag-over"),
+        "dragging over a day must show real drag-over feedback",
+      );
+      fireEvent.drop(targetDay, { dataTransfer: moveDataTransfer });
+
+      await waitForCondition(() => patchCount === 1);
+      assert.equal(
+        targetDay.classList.contains("calendar-day-drag-over"),
+        false,
+        "drag-over feedback must clear once the drop completes",
+      );
+      const targetDayNumber = targetDay.querySelector(".calendar-day-number")!.textContent;
+      const patchedDay = String(Number((lastPatchBody as unknown as { date: string }).date.split("-")[2]));
+      assert.equal(patchedDay, targetDayNumber, "the real PATCH must carry the actual dropped-on day's own date");
+
+      await waitForCondition(() => targetDay.querySelectorAll(".calendar-record-chip").length === 1);
+      assert.equal(
+        todaysDayCell.querySelectorAll(".calendar-record-chip").length,
+        0,
+        "the chip must be gone from its original day once it's been rescheduled",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * Real-DOM coverage for the calendar view's new "Today" button: before this
  * round there was no quick way back to the current month once you'd
  * navigated away with prev/next -- you had to click "prev" or "next"

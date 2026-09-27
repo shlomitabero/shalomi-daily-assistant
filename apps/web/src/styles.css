@@ -1141,6 +1141,11 @@ tbody tr:hover {
   background: var(--accent-soft);
 }
 
+.calendar-day-drag-over {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
 .calendar-day-number {
   font-size: 12px;
   font-weight: 600;
@@ -1165,12 +1170,17 @@ tbody tr:hover {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  cursor: grab;
 }
 
 .calendar-record-chip:hover {
   background: var(--surface-raised);
   transform: none;
   box-shadow: none;
+}
+
+.calendar-record-chip:active {
+  cursor: grabbing;
 }
 
 .calendar-record-more {

@@ -293,6 +293,7 @@ function CalendarView({
   onToday,
   onEdit,
   onDayClick,
+  onReschedule,
 }: {
   entity: Entity;
   dateField: Field;
@@ -305,6 +306,7 @@ function CalendarView({
   onToday: () => void;
   onEdit: (record: EntityRecord) => void;
   onDayClick: (date: Date) => void;
+  onReschedule: (record: EntityRecord, date: Date) => void;
 }) {
   const year = month.getFullYear();
   const monthIndex = month.getMonth();
@@ -312,6 +314,7 @@ function CalendarView({
     () => buildCalendarMonth(records, dateField, year, monthIndex),
     [records, dateField, year, monthIndex],
   );
+  const [dragOverDay, setDragOverDay] = useState<string | null>(null);
   const monthLabel = month.toLocaleDateString(LOCALE[lang], { month: "long", year: "numeric" });
   const weekdayLabels = useMemo(() => {
     const formatter = new Intl.DateTimeFormat(LOCALE[lang], { weekday: "short" });
@@ -342,14 +345,44 @@ function CalendarView({
         ))}
       </div>
       <div className="calendar-grid calendar-days">
-        {days.map((day, i) => (
+        {days.map((day, i) => {
+          const dayKey = formatDateForInput(day.date);
+          const isDragOver = day.inCurrentMonth && dragOverDay === dayKey;
+          return (
           <div
             key={i}
             className={
-              day.inCurrentMonth ? "calendar-day calendar-day-clickable" : "calendar-day calendar-day-outside"
+              day.inCurrentMonth
+                ? isDragOver
+                  ? "calendar-day calendar-day-clickable calendar-day-drag-over"
+                  : "calendar-day calendar-day-clickable"
+                : "calendar-day calendar-day-outside"
             }
             onClick={day.inCurrentMonth ? () => onDayClick(day.date) : undefined}
             title={day.inCurrentMonth ? t("entity.calendar.addOnDay") : undefined}
+            onDragOver={
+              day.inCurrentMonth
+                ? (e) => {
+                    e.preventDefault();
+                    setDragOverDay(dayKey);
+                  }
+                : undefined
+            }
+            onDragLeave={
+              day.inCurrentMonth ? () => setDragOverDay((prev) => (prev === dayKey ? null : prev)) : undefined
+            }
+            onDrop={
+              day.inCurrentMonth
+                ? (e) => {
+                    e.preventDefault();
+                    setDragOverDay(null);
+                    const id = Number(e.dataTransfer.getData("text/plain"));
+                    if (Number.isNaN(id)) return;
+                    const record = records.find((r) => (r.id as number) === id);
+                    if (record) onReschedule(record, day.date);
+                  }
+                : undefined
+            }
           >
             <span className="calendar-day-number">{day.date.getDate()}</span>
             <div className="calendar-day-records">
@@ -358,6 +391,17 @@ function CalendarView({
                   type="button"
                   key={record.id as number}
                   className="calendar-record-chip"
+                  draggable
+                  onDragStart={(e) => {
+                    // A drag that starts on the record chip must never also
+                    // bubble into the day cell's own onClick (Escape/no-drop
+                    // still fires a click on release in some browsers) --
+                    // stopping propagation here keeps the two interactions
+                    // (drag-to-reschedule vs. click-to-edit) from fighting.
+                    e.stopPropagation();
+                    e.dataTransfer.setData("text/plain", String(record.id));
+                    e.dataTransfer.effectAllowed = "move";
+                  }}
                   onClick={(e) => {
                     // Clicking a record edits it -- without stopping the
                     // click from bubbling, the day cell's own onDayClick
@@ -378,7 +422,8 @@ function CalendarView({
               )}
             </div>
           </div>
-        ))}
+          );
+        })}
       </div>
     </div>
   );
@@ -1172,6 +1217,21 @@ export function EntityPanel({
   }
 
   /**
+   * The calendar view's own drag-and-drop, the direct sibling of the board
+   * view's handleCardDrop above -- dragging a record's chip onto a
+   * different day reschedules it there (e.g. moving an appointment from
+   * Tuesday to Thursday) without opening the edit form. Reuses the exact
+   * same handleMove PATCH+refresh, just addressed by the date field's own
+   * name and a freshly-formatted "YYYY-MM-DD" value instead of a board
+   * enum value.
+   */
+  function handleCalendarDrop(record: EntityRecord, dateFieldName: string, date: Date) {
+    const value = formatDateForInput(date);
+    if (String(record[dateFieldName] ?? "") === value) return;
+    void handleMove(record.id as number, dateFieldName, value);
+  }
+
+  /**
    * Double-clicking a table cell (any field except relation, see
    * isInlineEditableField) opens that one cell for editing right in place,
    * instead of requiring the full add/edit form below the table for a
@@ -1442,6 +1502,7 @@ export function EntityPanel({
               onToday={() => setCalendarMonth(new Date())}
               onEdit={startEdit}
               onDayClick={(date) => startCreateForDate(date, dateField)}
+              onReschedule={(record, date) => handleCalendarDrop(record, dateField.name, date)}
             />
           ) : (
             <div className="table-scroll" ref={tableScrollRef}>
