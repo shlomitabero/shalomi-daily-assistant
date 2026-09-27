@@ -12417,6 +12417,87 @@ not a single "make it perfect" claim.
       `npm run build --workspace=@forge/api` and
       `npm run build --workspace=@forge/web` clean.
 
+- [x] **Round 230 — remove a single entry from Global Search's own
+      recent-searches list**. The "no way to trim a history list except
+      wiping the whole thing" gap has now recurred in three prior places
+      (WhatsApp log messages round 208, Time Machine checkpoints round
+      216, refine-history entries round 228) -- Global Search's own
+      recent-searches list (`recentSearches.ts`) turned out to be a
+      fourth, previously-unnoticed instance: only `getRecentSearches`,
+      `addRecentSearch`, and `clearRecentSearches` (wipe-all) existed, no
+      single-item removal.
+
+      Added `removeRecentSearch(projectId, query)` (`recentSearches.ts`,
+      exported) -- a plain case-insensitive `.filter` over the persisted
+      localStorage list, mirroring `addRecentSearch`'s own dedup
+      comparison, then re-persists and returns the new list (same
+      convention as every other function in this file). Wired up via a
+      new `handleRemoveRecentSearch` in `GlobalSearchPanel.tsx` and a
+      remove button per chip -- **reused the existing
+      `.chip-removable`/`.chip-text`/`.chip-remove` pattern spec review's
+      roles/assumptions chips already established (round 225), rather
+      than inventing new styling**: each recent-search chip is now a
+      `<span className="chip chip-removable">` holding a `.chip-text`
+      button (click → fills the query and re-runs the search, unchanged
+      behavior) alongside a `.chip-remove` "×" button (click → removes
+      only that one entry). New translation key
+      `search.recent.remove` in both `he`/`en`.
+
+      **Real regression caught while writing this round's own edit (not
+      a deliberate break):** restructuring each chip from a single
+      `<button className="chip chip-button">` into a wrapper `<span>`
+      holding two nested buttons broke two *pre-existing* tests whose own
+      `.textContent === "widget"` exact-equality check now saw the
+      chip's combined text (`"widget×"`, the label plus the remove
+      button's own "×") -- the same `<strong>{label}</strong>` →
+      pencil-icon-span lesson round 225 already documented, recurring in
+      a new component. Fixed both by matching on the inner
+      `.chip .chip-text` element's own text instead of the whole `.chip`
+      wrapper's.
+
+      Two new tests in `recentSearches.test.ts` (removes only the
+      case-insensitively-matching entry and persists it; a no-op on an
+      unknown query, and never touches another project's own list) plus
+      one new DOM test in `GlobalSearchPanel.test.ts` (submits two real
+      searches, removes one via its own remove button, confirms the
+      other survives a remount, confirms the removed one is really gone
+      from a *fresh* mount too -- not just hidden in memory -- and
+      confirms clicking remove never itself filled the query box or
+      triggered a search). Deliberately broke `removeRecentSearch`'s own
+      filter (`!==` → `===`, an inverted-match bug that would keep only
+      the targeted entry instead of dropping it) and confirmed both
+      layers caught it: the two new pure-function tests failed cleanly
+      (a plain assertion mismatch, no hang), while the new DOM test
+      *hung* until the timeout wrapper killed it -- the same pattern
+      already confirmed 9+ times this session for a broken guard inside
+      a plain React component with no timers of its own. Isolated that
+      the pure-function test file alone failed cleanly while the DOM
+      test file alone hung, confirming the hang was specific to the
+      component-level assertions, not the whole run; `ps aux` after the
+      timeout showed no stray process left behind either way. Restored
+      from a backup and confirmed a byte-identical `diff` before
+      re-confirming all tests green again.
+
+      Full pipeline verification via the real dev server + Playwright:
+      signed up, built a real "מסעדה עם תפריט והזמנות" project, opened
+      Global Search (Ctrl+K), ran two real searches ("יוסי"/"דנה" --
+      the project's own real seeded customer names), closed and reopened
+      the panel to confirm both persisted as real chips, clicked the
+      remove button on "יוסי" specifically, confirmed via the real DOM
+      that only it disappeared (the other survived untouched), confirmed
+      the query input stayed empty and zero result groups appeared
+      (proving the remove click never itself triggered a search), then
+      did a full page **reload** (not just a panel close/reopen) and
+      confirmed the removal was still gone and the untouched entry still
+      present -- a genuinely persisted removal, not an in-memory
+      illusion.
+
+      Full suite green (864 tests, up from 861 -- `@forge/web` 438 → 441;
+      `@forge/shared` 11, `@forge/spec-engine` 82, `@forge/db` 91,
+      `@forge/api` 239 unchanged) and both
+      `npm run build --workspace=@forge/api` and
+      `npm run build --workspace=@forge/web` clean.
+
 ## Phase 3
 
 - Self-healing: production observability, automatic diagnosis and patch
