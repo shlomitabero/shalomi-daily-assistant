@@ -11735,6 +11735,70 @@ not a single "make it perfect" claim.
       `@forge/api` 231 unchanged) and `npm run build --workspace=@forge/web`
       clean.
 
+- [x] **Round 220 — signup now has a confirm-password field, catching a
+      typo before it permanently locks someone out.**
+      Diversification: the trigger's own suggested candidate ("copy invite
+      link" in Business Twin) turned out, on investigation, to not really
+      exist as described -- Business Twin is a pure insights/stats panel
+      with no invite mechanism at all; the actual invite flow lives in
+      `CollaboratorsPanel.tsx`, and it's email-only (typing the invitee's
+      exact registered address). A real shareable invite-link feature
+      would need a new pending-invite table, a token, and a public
+      accept-invite route -- the same scope and security sensitivity as
+      the already-deferred "read-only public link sharing" candidate, so
+      this round pivoted to the trigger's own listed fallback instead:
+      investigating an under-explored area for a specific, well-scoped
+      idea. `AuthScreen.tsx` (signup/login) turned up a real, concrete gap:
+      `ChangePasswordPanel.tsx` already has a client-side confirm-new-
+      password mismatch check (so a typo there is always recoverable), but
+      the signup form itself -- the one place a typo is genuinely
+      unrecoverable, since there's still no "forgot password" flow (the
+      recurring roadmap notes have flagged this "not yet applicable" for
+      many rounds) -- never got the same protection.
+
+      Ported the identical pattern from `ChangePasswordPanel.tsx`: a new
+      `confirmPassword` field, rendered only when `mode === "signup"`
+      (login has a real existing password to authenticate against, not a
+      draft to typo-check), checked against `password` in `handleSubmit`
+      before any network request -- a mismatch shows the real error
+      message and returns immediately, the same "caught client-side,
+      before it ever reaches the server" contract. The mode-toggle
+      handler now also clears `confirmPassword` alongside the existing
+      error-clearing, so switching from signup to login and back doesn't
+      leave a stale confirm value sitting behind the hidden field.
+
+      New/updated tests in `AuthScreen.test.ts`: the two existing tests
+      that submit the signup form now also fill the new required confirm
+      field (matching the password), since they'd otherwise trip the new
+      mismatch guard and never reach the network at all -- exactly the
+      "search existing tests that need to receive a new required field"
+      discipline the routine's own notes call for. Two new tests: a
+      mismatch sends zero requests and shows the real error message, and
+      the confirm field renders only in signup mode (exactly one
+      password-type input in login mode, exactly two in signup mode).
+
+      Verified with the deliberate-break-and-restore discipline: removed
+      the mismatch-check block from `handleSubmit` entirely -- the "blocks
+      signup entirely" test's own mock `fetch` (which throws "must never
+      be called") then actually got invoked, and the test process hung
+      past the `timeout 60` wrapper exactly as the routine's own
+      "hang after catch" pattern predicts for a plain component with no
+      timers (confirmed via `ps aux` that nothing leaked once `timeout`
+      killed it); restored, `diff` byte-identical.
+
+      **And** a real Playwright pass against the live dev server: loaded
+      the auth screen (2 real password-type inputs visible in signup
+      mode, matching the test), typed a mismatched confirm value, clicked
+      submit, and confirmed the real mismatch error appeared with zero
+      navigation (still on the auth screen -- no request went through),
+      then corrected the confirm field to match and confirmed signup
+      actually succeeded, landing on the real home screen.
+
+      Full suite green (827 tests, up from 825 -- `@forge/web` 410 → 412;
+      `@forge/shared` 11, `@forge/spec-engine` 82, `@forge/db` 91,
+      `@forge/api` 231 unchanged) and `npm run build --workspace=@forge/web`
+      clean.
+
 ## Phase 3
 
 - Self-healing: production observability, automatic diagnosis and patch
