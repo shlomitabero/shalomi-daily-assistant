@@ -51,7 +51,12 @@ test("computeBusinessTwin identifies the most active entity and unused ones from
     twin.unused.map((e) => e.label),
     ["תורים"],
   );
-  assert.ok(twin.observations.some((o) => o.includes("לקוחות")));
+  assert.equal(twin.mostActiveObservation?.entityName, "Customer");
+  assert.ok(twin.mostActiveObservation?.text.includes("לקוחות"));
+  assert.ok(
+    !twin.observations.some((o) => o.includes("לקוחות")),
+    "the most-active fact must live only in mostActiveObservation now, not also duplicated into the plain observations array",
+  );
   assert.ok(twin.observations.some((o) => o.includes("תורים")));
 });
 

@@ -17,6 +17,7 @@ function makeTwin(overrides: Partial<BusinessTwin> = {}): BusinessTwin {
     unused: [],
     observations: ['ב"לקוחות", 2 רשומות חולקות את השם "דנה" — יתכן כפילות.'],
     mostLinkedRecord: null,
+    mostActiveObservation: null,
     ...overrides,
   };
 }
@@ -72,6 +73,24 @@ test("formatTwinReport folds the structured mostLinkedRecord insight back into t
 
   assert.match(report, /Dana Levi/);
   assert.match(report, /most-linked record/);
+});
+
+/**
+ * New in this round: mostActiveObservation was split out of the plain
+ * `observations` array too (the direct sibling of mostLinkedRecord's own
+ * split above -- see BusinessTwinPanel.test.ts) into its own structured
+ * field, so the live panel can make it a real clickable jump. Confirms the
+ * downloadable report doesn't silently drop that fact either.
+ */
+test("formatTwinReport folds the structured mostActiveObservation insight back into the observations section", () => {
+  const t = (key: string, params?: Record<string, string | number>) => translate("en", key, params);
+  const twin = makeTwin({
+    observations: [],
+    mostActiveObservation: { text: 'Most activity is in "Customers" — 3 records.', entityName: "Customer" },
+  });
+  const report = formatTwinReport(twin, "Flower Shop", "en", t);
+
+  assert.match(report, /Most activity is in "Customers"/);
 });
 
 test("formatTwinReport still lists every entity's count even when there are zero total records", () => {

@@ -38,11 +38,16 @@ export function formatTwinReport(
   }
   lines.push(`${t("twin.report.total")}: ${twin.totalRecords}`);
 
-  // mostLinkedRecord is kept as its own structured field (not inside
-  // `observations`) so the live panel can make it a real clickable jump --
-  // but the plain-text report has no such distinction, so it's folded back
-  // in here as one more bullet, in the same position it held before that split.
-  const allObservations = twin.mostLinkedRecord ? [twin.mostLinkedRecord.text, ...twin.observations] : twin.observations;
+  // mostLinkedRecord and mostActiveObservation are both kept as their own
+  // structured fields (not inside `observations`) so the live panel can
+  // make each a real clickable jump -- but the plain-text report has no
+  // such distinction, so both are folded back in here as plain bullets, in
+  // the same relative order they held before either was split out.
+  const allObservations = [
+    ...(twin.mostLinkedRecord ? [twin.mostLinkedRecord.text] : []),
+    ...(twin.mostActiveObservation ? [twin.mostActiveObservation.text] : []),
+    ...twin.observations,
+  ];
   if (allObservations.length > 0) {
     lines.push("");
     lines.push(`${t("twin.observations")}:`);

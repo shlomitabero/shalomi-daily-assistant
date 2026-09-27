@@ -141,10 +141,21 @@ export function BusinessTwinPanel({
               ))}
             </div>
 
-            {(twin.observations.length > 0 || twin.mostLinkedRecord) && (
+            {(twin.observations.length > 0 || twin.mostLinkedRecord || twin.mostActiveObservation) && (
               <div className="twin-observations">
                 <span className="label">{t("twin.observations")}</span>
                 <ul>
+                  {twin.mostActiveObservation && (
+                    <li>
+                      <button
+                        type="button"
+                        className="link-button twin-observation-link"
+                        onClick={() => onJumpToEntity(twin.mostActiveObservation!.entityName)}
+                      >
+                        {twin.mostActiveObservation.text}
+                      </button>
+                    </li>
+                  )}
                   {twin.mostLinkedRecord && (
                     <li>
                       <button

@@ -65,6 +65,7 @@ const TWIN: BusinessTwin = {
   unused: [],
   observations: [],
   mostLinkedRecord: null,
+  mostActiveObservation: null,
 };
 
 function mockTwinFetch() {
@@ -225,6 +226,54 @@ test("BusinessTwinPanel's most-linked-record insight is a real clickable button 
 });
 
 /**
+ * New in this round: the "most active entity" fact was previously only
+ * ever pushed into the plain-text `observations` array as inert prose --
+ * the exact same "can't jump to it" gap the test above already closed for
+ * mostLinkedRecord. Confirms it now renders as a real clickable button
+ * (not a plain <li>) and calls onJumpToEntity with the real entity name
+ * the server resolved, not onJumpToRecord (there's no specific record here,
+ * just an entity-level stat).
+ */
+test("BusinessTwinPanel's most-active-entity insight is a real clickable button that calls onJumpToEntity with the real entity name", async () => {
+  await withJsdom(async () => {
+    const twinWithMostActive: BusinessTwin = {
+      ...TWIN,
+      observations: ["No records yet in: Orders."],
+      mostActiveObservation: { text: 'Most activity is in "Customers" — 12 records.', entityName: "Customer" },
+    };
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string) => {
+      if (input === "/api/projects/proj1/twin") {
+        return new Response(JSON.stringify({ twin: twinWithMostActive }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${input}`);
+    }) as typeof fetch;
+    const entityJumps: string[] = [];
+    const recordJumps: [string, number][] = [];
+    try {
+      renderTwinPanel(
+        (entityName) => entityJumps.push(entityName),
+        (entityName, recordId) => recordJumps.push([entityName, recordId]),
+      );
+      await waitForCondition(() => document.querySelector(".twin-observation-link") !== null);
+
+      const mostActiveButton = document.querySelector(".twin-observation-link") as HTMLButtonElement;
+      assert.equal(mostActiveButton.tagName, "BUTTON", "the most-active-entity insight must be a real clickable button, not inert text");
+      assert.match(mostActiveButton.textContent ?? "", /Customers/);
+
+      const plainObservations = document.querySelectorAll(".twin-observations li:not(:has(button))");
+      assert.equal(plainObservations.length, 1, "the OTHER plain-text observation must still render as inert text, unaffected");
+
+      fireEvent.click(mostActiveButton);
+      assert.deepEqual(entityJumps, ["Customer"], "must call onJumpToEntity with the real entity name the server resolved");
+      assert.deepEqual(recordJumps, [], "clicking the most-active-entity insight must not also fire the record-specific onJumpToRecord");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * New in this round: computeBusinessTwin has always computed a real
  * totalRecords figure -- it was already included in the downloadable text
  * report (round 129's twinReport.ts) -- but the live panel itself never
@@ -272,6 +321,7 @@ test("BusinessTwinPanel renders stat tiles sorted by real record count (busiest 
       unused: [{ name: "Order", label: "Orders", count: 0 }],
       observations: [],
       mostLinkedRecord: null,
+      mostActiveObservation: null,
     };
     const originalFetch = globalThis.fetch;
     globalThis.fetch = (async (input: string) => {
@@ -365,6 +415,7 @@ test("BusinessTwinPanel omits the percent line for a genuinely empty (0-record) 
       unused: [{ name: "Order", label: "Orders", count: 0 }],
       observations: [],
       mostLinkedRecord: null,
+      mostActiveObservation: null,
     };
     const originalFetch = globalThis.fetch;
     globalThis.fetch = (async (input: string) => {

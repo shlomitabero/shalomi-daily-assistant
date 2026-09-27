@@ -34,6 +34,16 @@ export interface BusinessTwin {
    * jump straight to it instead of just stating the fact in prose.
    */
   mostLinkedRecord: { text: string; entityName: string; recordId: number } | null;
+  /**
+   * The "most active entity" insight, the direct sibling of
+   * mostLinkedRecord above -- this fact was previously only ever pushed
+   * into the plain-text `observations` array as inert prose, the exact
+   * same "can't jump to it" gap round 174/175/176 already closed for
+   * Global Search, WhatsApp, and mostLinkedRecord itself. Kept separate
+   * from `observations` (never duplicated into it) for the same reason:
+   * it names a real, jumpable entity (mostActive.name), not just a fact.
+   */
+  mostActiveObservation: { text: string; entityName: string } | null;
 }
 
 /**
@@ -275,6 +285,7 @@ export function computeBusinessTwin(db: ForgeDatabase, project: Project): Busine
 
   const observations: string[] = [];
   let mostLinkedRecord: { text: string; entityName: string; recordId: number } | null = null;
+  let mostActiveObservation: { text: string; entityName: string } | null = null;
   if (totalRecords === 0) {
     observations.push(
       hebrew
@@ -283,11 +294,12 @@ export function computeBusinessTwin(db: ForgeDatabase, project: Project): Busine
     );
   } else {
     if (mostActive) {
-      observations.push(
-        hebrew
+      mostActiveObservation = {
+        text: hebrew
           ? `הכי הרבה פעילות יש ב"${mostActive.label}" — ${mostActive.count} רשומות.`
           : `Most activity is in "${mostActive.label}" — ${mostActive.count} records.`,
-      );
+        entityName: mostActive.name,
+      };
     }
     if (unused.length > 0) {
       const names = unused.map((e) => e.label).join(hebrew ? ", " : ", ");
@@ -312,5 +324,6 @@ export function computeBusinessTwin(db: ForgeDatabase, project: Project): Busine
     unused,
     observations,
     mostLinkedRecord,
+    mostActiveObservation,
   };
 }
