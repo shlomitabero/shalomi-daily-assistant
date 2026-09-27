@@ -11124,6 +11124,78 @@ not a single "make it perfect" claim.
       `@forge/api` 218 unchanged) and `npm run build --workspace=@forge/web`
       clean.
 
+- [x] **Round 212 — Business Twin's "most active entity" insight is now clickable.**
+      Diversification: rounds 204-211 covered the home screen, AI Team
+      build, Time Machine, WhatsApp, account/topbar, and the calendar view
+      -- this round moves to Business Twin (last real addition: round 176's
+      "most-linked record" jump-to-record), per round 211's own trigger
+      note pointing at it as an untouched candidate.
+
+      Reading `BusinessTwinPanel.tsx` and `apps/api/src/twin.ts` side by
+      side surfaced a precise, narrow gap: `computeBusinessTwin` already
+      computes a real `mostActive` entity stat and returns it at the
+      top level of the `BusinessTwin` object -- but its own human-readable
+      sentence ("Most activity is in 'Customer' — 3 records.") was only
+      ever pushed into the plain-text `observations` array as inert prose,
+      exactly the same "can't jump to it" gap round 174/175/176 already
+      closed for Global Search, WhatsApp, and the Twin's own
+      `mostLinkedRecord` insight -- just never applied to this one.
+
+      New in `apps/api/src/twin.ts`: a `mostActiveObservation: { text:
+      string; entityName: string } | null` field, the direct sibling of
+      the existing `mostLinkedRecord` field, computed in the same spot
+      `mostActive` already was and kept out of the plain `observations`
+      array (never duplicated into it) for the same reason mostLinkedRecord
+      is. `BusinessTwinPanel.tsx` renders it as a real clickable button
+      (mirroring `mostLinkedRecord`'s own `<li>`) that calls the panel's
+      existing `onJumpToEntity` -- already wired to every stat tile -- with
+      the real entity name the server resolved. `twinReport.ts` (the
+      downloadable text report) folds it back in as a plain bullet, in the
+      same relative position it held before the split, so the report never
+      silently drops the fact just because the live panel now treats it
+      structurally.
+
+      New tests: `twin.test.ts` (API layer) updated its own "identifies the
+      most active entity" test to assert the fact now lives in
+      `mostActiveObservation` (with the real entityName) and explicitly
+      confirms it's no longer duplicated into the plain `observations`
+      array. `BusinessTwinPanel.test.ts` (web layer) gets a new test
+      mirroring the existing `mostLinkedRecord` click test: confirms the
+      insight renders as a real button (not a plain `<li>`), calls
+      `onJumpToEntity` with the real entity name, and never also fires the
+      record-specific `onJumpToRecord`. `twinReport.test.ts` gets a new
+      test confirming the downloadable report still shows the fact as a
+      bullet even when `observations` itself is empty.
+
+      Verified with the deliberate-break-and-restore discipline, twice,
+      across both layers: first, removed the `entityName` assignment in
+      `computeBusinessTwin`'s new code (left `mostActiveObservation` unset
+      even when a real `mostActive` entity existed) -- caught cleanly by
+      the updated API test's own `entityName` assertion (`undefined` vs.
+      the expected `'Customer'`); restored, `diff` byte-identical. Second,
+      swapped the panel's new button to call `onJumpToRecord` instead of
+      `onJumpToEntity` -- caught cleanly by the new web test's own
+      assertion (an empty `entityJumps` array where `['Customer']` was
+      expected); restored, `diff` byte-identical; confirmed no leftover
+      process via `ps aux` (this one also exited cleanly on its own,
+      matching round 211's own experience rather than the earlier
+      hang-after-catch pattern).
+
+      **And** a real Playwright pass against the live dev server: signed
+      up, built a real CRM (Customer + Deal entities, 2 seeded records
+      each), added one more real Customer record via the entity form so
+      Customer (3) strictly outnumbered Deal (2) -- an unambiguous "most
+      active entity", not a tie the reduce's own tie-break rule would have
+      to settle. Switched to the Deal tab, opened the real Business Twin
+      panel, found the real clickable insight reading exactly `Most
+      activity is in "Customer" — 3 records.`, clicked it, and confirmed
+      the app genuinely switched back to the real Customer tab.
+
+      Full suite green (796 tests, up from 794 -- `@forge/web` 392 → 394;
+      `@forge/shared` 11, `@forge/spec-engine` 82, `@forge/db` 91,
+      `@forge/api` 218 unchanged) and `npm run build --workspace=@forge/web`
+      clean.
+
 ## Phase 3
 
 - Self-healing: production observability, automatic diagnosis and patch
