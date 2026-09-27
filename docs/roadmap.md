@@ -12110,6 +12110,73 @@ not a single "make it perfect" claim.
       `npm run build --workspace=@forge/web` and
       `npm run build --workspace=@forge/api` clean.
 
+- [x] **Round 226 — drag-and-drop reorder the live preview's own entity
+      tab bar.**
+      Diversification: both standing arcs (copy-to-clipboard, click-to-
+      rename on spec review) were fully closed as of round 225, so this
+      round investigated the trigger's own suggested "reorder entities in
+      spec review via drag" idea and found a better home for it: the tab
+      bar itself, in the live preview (`App.tsx`'s `.entity-tabs` nav),
+      which always mirrored `spec.entities`' fixed generation order with
+      no way to put the screen actually used most often first.
+
+      Rather than a real spec mutation (which would need a new PATCH
+      route and touch the entity array's own canonical order everywhere
+      it's read), this mirrors `columnOrder.ts`'s own established
+      convention: a purely client-side display preference in
+      localStorage, scoped per project this time (`entityTabOrder.ts`,
+      new file) rather than per project+entity. The actual reorder math
+      isn't reimplemented at all -- `applyColumnOrder`/`reorderColumns`
+      (`columnOrder.ts`) are already generic over any `{ name: string }[]`,
+      and `Entity` has a `name` field just like a table's own fields do,
+      so `entityTabOrder.ts` only owns the storage half. Each tab button
+      gained the same `draggable`/`onDragStart`/`onDragOver`/`onDragLeave`/
+      `onDrop` contract `EntityPanel.tsx`'s own column-header drag (round
+      203) already established, down to a matching `.tab-drag-over` CSS
+      class (styled identically to `.resizable-col-drag-over`).
+
+      New tests: `entityTabOrder.test.ts` (4 tests, mirroring
+      `columnOrder.test.ts`'s own get/set/scoping/corrupted-storage
+      coverage) and one in `App.test.ts` extracting the real
+      `handleReorderEntityTab` (the same regex-extraction + `new Function`
+      sandbox technique this file's own handler tests already use),
+      passing in the REAL `reorderColumns` rather than a mock to prove the
+      actual reorder math wires up correctly end-to-end, not just that
+      some function got called.
+
+      Verified with the deliberate-break-and-restore discipline: removed
+      the `!draggedEntityTab` no-op guard -- caught cleanly and immediately
+      by the extracted-function test (a real assertion failure, not a
+      hang, since this is a pure function test rather than a rendered DOM
+      component); restored, `diff` byte-identical, all 40 web tests green
+      again.
+
+      **And** a real Playwright pass against the live dev servers, with
+      one genuine debugging detour worth recording: dispatching all three
+      `dragstart`/`dragover`/`drop` `DragEvent`s in a single
+      `page.evaluate` call (the technique rounds 186/211 both used
+      successfully) silently did nothing here -- the reorder never fired.
+      Root cause: React 18 batches the `setDraggedEntityTab` state update
+      from `dragstart`'s own handler and only commits it on a later
+      microtask; three raw `dispatchEvent` calls back-to-back with zero
+      yield read a still-stale closure (`draggedEntityTab` still `null`)
+      for `dragover`/`drop`, so `handleReorderEntityTab`'s own no-op guard
+      silently fired every time. Splitting the same three dispatches into
+      **three separate `page.evaluate` calls** (each one a real Playwright
+      round trip, giving React's commit a chance to flush in between)
+      fixed it immediately. With that fixed: built a real delivery app
+      (Order+MenuItem+Courier, 3 tabs), dragged the third tab onto the
+      first, confirmed it moved there, confirmed the real
+      `forge.entityTabOrder` localStorage entry held the reordered entity
+      names keyed by the real project id -- then **reloaded the whole
+      page and reopened the project from scratch**, confirming the new
+      tab order survived, not just an in-memory illusion.
+
+      Full suite green (857 tests, up from 852 -- `@forge/web` 430 → 435;
+      `@forge/shared` 11, `@forge/spec-engine` 82, `@forge/db` 91,
+      `@forge/api` 238 unchanged) and `npm run build --workspace=@forge/web`
+      clean.
+
 ## Phase 3
 
 - Self-healing: production observability, automatic diagnosis and patch
