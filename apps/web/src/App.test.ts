@@ -17,6 +17,7 @@ import {
   specProviderLabel,
   summarizeRefineImpact,
 } from "./App.js";
+import { reorderColumns } from "./columnOrder.js";
 import { translate } from "./i18n/language.js";
 
 const t = (key: string) => key;
@@ -1049,4 +1050,82 @@ test("App's handleReuseRefineInstruction loads a past instruction back into the 
   const whileRunning = fn(true, (v: string) => (refineText = v));
   whileRunning("add a discount field");
   assert.equal(refineText, "", "must be a no-op while a refine is already running, not silently set hidden state");
+});
+
+/**
+ * New in this round: the live preview's entity-tab bar always mirrored
+ * spec.entities' fixed generation order, with no way to put the screen
+ * used most often first. Extracts the real handleReorderEntityTab the same
+ * way handleGoHome/handleReuseRefineInstruction above do, passing in the
+ * REAL reorderColumns (columnOrder.ts) rather than a mock -- it's already
+ * generic over any `{ name: string }[]`, and Entity has a `name` field just
+ * like a table's own fields do, so this proves the actual reorder math
+ * wires up correctly, not just that some function got called.
+ */
+test("App's handleReorderEntityTab reorders entity tabs on drop and persists via entityTabOrder.ts, but is a no-op with nothing dragged, dropping onto itself, or no project open", () => {
+  const appSrc = readFileSync(new URL("./App.tsx", import.meta.url), "utf8");
+  const handlerMatch = appSrc.match(/ {2}function handleReorderEntityTab\([\s\S]*?\n {2}\}\n/);
+  assert.ok(handlerMatch, "expected to find handleReorderEntityTab in App.tsx");
+  const { code } = transformSync(handlerMatch![0], { loader: "ts" });
+
+  const orderedEntities = [{ name: "Deal" }, { name: "Contact" }, { name: "Task" }];
+
+  function run(project: { id: string } | null, draggedEntityTab: string | null) {
+    let dragOverCleared = false;
+    let draggedCleared = false;
+    let persistedProjectId: string | null = null;
+    let persistedOrder: string[] | null = null;
+    const fn = new Function(
+      "project",
+      "draggedEntityTab",
+      "orderedEntities",
+      "setDragOverEntityTab",
+      "setEntityTabOrderState",
+      "setEntityTabOrder",
+      "reorderColumns",
+      "setDraggedEntityTab",
+      `${code}\nreturn handleReorderEntityTab;`,
+    ) as (
+      project: { id: string } | null,
+      draggedEntityTab: string | null,
+      orderedEntities: { name: string }[],
+      setDragOverEntityTab: (v: string | null) => void,
+      setEntityTabOrderState: (v: string[]) => void,
+      setEntityTabOrder: (projectId: string, order: string[]) => string[],
+      reorderColumns: (order: string[], source: string, target: string) => string[],
+      setDraggedEntityTab: (v: string | null) => void,
+    ) => (targetName: string) => void;
+
+    const handler = fn(
+      project,
+      draggedEntityTab,
+      orderedEntities,
+      () => (dragOverCleared = true),
+      (v: string[]) => (persistedOrder = v),
+      (projectId: string, order: string[]) => {
+        persistedProjectId = projectId;
+        return order;
+      },
+      reorderColumns,
+      () => (draggedCleared = true),
+    );
+    handler("Deal");
+    return { dragOverCleared, draggedCleared, persistedProjectId, persistedOrder };
+  }
+
+  const moved = run({ id: "proj1" }, "Task");
+  assert.equal(moved.dragOverCleared, true, "must always clear the drag-over highlight, even on a real move");
+  assert.equal(moved.persistedProjectId, "proj1", "must persist under the currently-open project's own id");
+  assert.deepEqual(moved.persistedOrder, ["Task", "Deal", "Contact"], "dropping Task onto Deal must move Task to just before Deal");
+  assert.equal(moved.draggedCleared, true);
+
+  const droppedOnSelf = run({ id: "proj1" }, "Deal");
+  assert.equal(droppedOnSelf.persistedOrder, null, "dropping a tab back onto itself must be a real no-op, not a wasted write");
+
+  const nothingDragged = run({ id: "proj1" }, null);
+  assert.equal(nothingDragged.persistedOrder, null, "must be a no-op when nothing was actually being dragged");
+
+  const noProject = run(null, "Task");
+  assert.equal(noProject.persistedOrder, null, "must be a no-op with no project open at all, not throw on project.id");
+  assert.equal(noProject.dragOverCleared, true, "the drag-over highlight must still clear even when there's no project");
 });

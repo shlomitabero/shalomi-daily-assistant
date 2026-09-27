@@ -30,6 +30,8 @@ import { DeleteAccountPanel } from "./DeleteAccountPanel.js";
 import { ProjectNameEditor } from "./ProjectNameEditor.js";
 import { ShortcutsPanel } from "./ShortcutsPanel.js";
 import { AddAssumptionForm, AddRoleForm, AssumptionItem, EntitySummaryItem, RoleChip } from "./SpecListItemRemover.js";
+import { applyColumnOrder, reorderColumns } from "./columnOrder.js";
+import { getEntityTabOrder, setEntityTabOrder } from "./entityTabOrder.js";
 import { getPinnedIds, sortByPinned, togglePinned } from "./pinnedProjects.js";
 import { getProjectSortMode, setProjectSortMode, type ProjectSortMode } from "./projectSortMode.js";
 import { clearIdeaDraft, getIdeaDraft, saveIdeaDraft } from "./ideaDraft.js";
@@ -325,8 +327,43 @@ function AppContent() {
   const [refineHistorySearch, setRefineHistorySearch] = useState("");
   const [refineRunning, setRefineRunning] = useState(false);
   const [highlightRecordId, setHighlightRecordId] = useState<number | null>(null);
+  const [entityTabOrder, setEntityTabOrderState] = useState<string[]>([]);
+  const [draggedEntityTab, setDraggedEntityTab] = useState<string | null>(null);
+  const [dragOverEntityTab, setDragOverEntityTab] = useState<string | null>(null);
   const pendingRefineInstruction = useRef<string | null>(null);
   const refineEvents = useRef<AgentStepEvent[]>([]);
+
+  // The tab bar's own persisted order is scoped per project (entityTabOrder.ts),
+  // so it has to be reloaded every time a different project is opened --
+  // otherwise a project with entities in an unrelated order would briefly
+  // render with the *previous* project's own dragged-into-place order.
+  useEffect(() => {
+    setEntityTabOrderState(project ? getEntityTabOrder(project.id) : []);
+  }, [project?.id]);
+
+  const orderedEntities = useMemo(
+    () => (project ? applyColumnOrder(project.spec.entities, entityTabOrder) : []),
+    [project, entityTabOrder],
+  );
+
+  /**
+   * Dragging an entity tab to just before another one's -- the live
+   * preview's own tab bar otherwise always mirrored spec.entities' fixed
+   * generation order (whichever order the heuristic/AI engine happened to
+   * produce entities in), with no way to put the screen you actually use
+   * most first. Mirrors EntityPanel.tsx's own handleReorderColumn exactly,
+   * down to reusing the same reorderColumns helper -- Entity has a `name`
+   * field just like a table's own fields do, so the column-reorder math
+   * needed no changes at all, only a separate (per-project, not
+   * per-project+entity) storage key.
+   */
+  function handleReorderEntityTab(targetName: string) {
+    setDragOverEntityTab(null);
+    if (!project || !draggedEntityTab || draggedEntityTab === targetName) return;
+    const fullOrder = orderedEntities.map((e) => e.name);
+    setEntityTabOrderState(setEntityTabOrder(project.id, reorderColumns(fullOrder, draggedEntityTab, targetName)));
+    setDraggedEntityTab(null);
+  }
 
   const visibleMyProjects = useMemo(
     () => filterAndSortProjects(filterProjectsByStatus(myProjects, projectStatusFilter), projectSearch, pinnedIds, projectSortMode),
@@ -1280,10 +1317,27 @@ function AppContent() {
 
             <div className="preview-live-pane">
               <nav className="entity-tabs">
-                {project.spec.entities.map((entity) => (
+                {orderedEntities.map((entity) => (
                   <button
                     key={entity.name}
-                    className={activeEntity === entity.name ? "tab tab-active" : "tab"}
+                    className={
+                      activeEntity === entity.name
+                        ? "tab tab-active"
+                        : dragOverEntityTab === entity.name
+                          ? "tab tab-drag-over"
+                          : "tab"
+                    }
+                    draggable
+                    onDragStart={() => setDraggedEntityTab(entity.name)}
+                    onDragOver={(e) => {
+                      e.preventDefault();
+                      setDragOverEntityTab(entity.name);
+                    }}
+                    onDragLeave={() => setDragOverEntityTab((prev) => (prev === entity.name ? null : prev))}
+                    onDrop={(e) => {
+                      e.preventDefault();
+                      handleReorderEntityTab(entity.name);
+                    }}
                     onClick={() => setActiveEntity(entity.name)}
                   >
                     {entity.label ?? entity.name}

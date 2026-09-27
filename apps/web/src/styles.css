@@ -800,6 +800,10 @@ button.danger:hover:not(:disabled) {
   background: var(--accent-deep);
 }
 
+.tab-drag-over {
+  background: var(--accent-soft);
+}
+
 .entity-panel {
   background: var(--surface-raised);
   border: 1px solid var(--border);
