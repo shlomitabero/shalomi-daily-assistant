@@ -509,6 +509,16 @@ button.danger:hover:not(:disabled) {
   box-shadow: none;
 }
 
+.delete-account-warning {
+  background: var(--danger-soft);
+  color: var(--danger);
+  border: 1px solid var(--danger);
+  border-radius: 8px;
+  padding: 10px 12px;
+  font-size: 0.9em;
+  line-height: 1.4;
+}
+
 .muted {
   color: var(--muted);
 }

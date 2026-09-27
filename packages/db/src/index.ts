@@ -31,6 +31,7 @@ export {
   addCollaborator,
   removeCollaborator,
   removeAllCollaborators,
+  removeAllCollaborationsForUser,
   isCollaborator,
   listCollaborators,
 } from "./collaborators.js";
@@ -43,6 +44,8 @@ export {
   getSessionUser,
   deleteSession,
   deleteExpiredSessions,
+  deleteAllSessionsForUser,
+  deleteUser,
   getPasswordHash,
   updatePasswordHash,
   DuplicateEmailError,

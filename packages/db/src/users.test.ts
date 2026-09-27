@@ -4,8 +4,11 @@ import { openDatabase } from "./connection.js";
 import {
   createSession,
   createUser,
+  deleteAllSessionsForUser,
   deleteExpiredSessions,
+  deleteUser,
   ensureUsersTable,
+  findUserById,
   getPasswordHash,
   getSessionUser,
   updatePasswordHash,
@@ -134,4 +137,52 @@ test("getPasswordHash returns undefined for a user id that doesn't exist", () =>
   const db = openDatabase(":memory:");
   ensureUsersTable(db);
   assert.equal(getPasswordHash(db, "no-such-user"), undefined);
+});
+
+/**
+ * New in this round: part of the real "delete my account" flow
+ * (routes/auth.ts) -- signs the user out of every device at once by
+ * revoking every one of their sessions, not just the token making the
+ * delete request itself. Scoped by userId, so a different user's own
+ * session must never be touched.
+ */
+test("deleteAllSessionsForUser revokes every one of this user's own sessions, leaving a different user's session untouched", () => {
+  const db = openDatabase(":memory:");
+  ensureUsersTable(db);
+  const leaving = createUser(db, { id: "leaving", email: "leaving@example.com", passwordHash: "x" });
+  const staying = createUser(db, { id: "staying", email: "staying@example.com", passwordHash: "x" });
+  const future = new Date(Date.now() + HOUR_MS).toISOString();
+  createSession(db, { token: "leaving-token-1", userId: leaving.id, expiresAt: future });
+  createSession(db, { token: "leaving-token-2", userId: leaving.id, expiresAt: future });
+  createSession(db, { token: "staying-token", userId: staying.id, expiresAt: future });
+
+  deleteAllSessionsForUser(db, leaving.id);
+
+  assert.equal(getSessionUser(db, "leaving-token-1"), undefined);
+  assert.equal(getSessionUser(db, "leaving-token-2"), undefined);
+  assert.ok(getSessionUser(db, "staying-token"), "a different user's own session must be completely untouched");
+});
+
+test("deleteAllSessionsForUser is a harmless no-op for a user with no sessions at all", () => {
+  const db = openDatabase(":memory:");
+  ensureUsersTable(db);
+  assert.doesNotThrow(() => deleteAllSessionsForUser(db, "never-logged-in"));
+});
+
+/**
+ * New in this round: the final step of "delete my account" -- removes the
+ * user row itself. Confirms it's genuinely gone (findUserById returns
+ * undefined afterward), and that a different user's own row is completely
+ * untouched.
+ */
+test("deleteUser removes the real user row, leaving a different user's own row untouched", () => {
+  const db = openDatabase(":memory:");
+  ensureUsersTable(db);
+  const leaving = createUser(db, { id: "leaving", email: "leaving@example.com", passwordHash: "x" });
+  const staying = createUser(db, { id: "staying", email: "staying@example.com", passwordHash: "x" });
+
+  deleteUser(db, leaving.id);
+
+  assert.equal(findUserById(db, leaving.id), undefined);
+  assert.ok(findUserById(db, staying.id), "a different user's own row must be completely untouched");
 });

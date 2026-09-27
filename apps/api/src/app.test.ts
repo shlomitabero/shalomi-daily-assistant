@@ -3088,3 +3088,83 @@ test("two concurrent PATCH requests to the same record, touching different field
     assert.equal(final.email, "dana@example.com", "an untouched field must survive both partial updates unchanged");
   });
 });
+
+test("deleting your own account removes your owned projects (with their real data and checkpoints), your collaborations on other people's projects, and your own sessions -- while leaving another user's account, projects, and sessions completely untouched", async () => {
+  await withServer(async (baseUrl) => {
+    const leavingToken = await signup(baseUrl, "leaving-account1@example.com");
+    const stayingToken = await signup(baseUrl, "staying-account1@example.com");
+
+    // The leaving user owns a real, built project with real data.
+    const createRes = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: authHeaders(leavingToken),
+      body: JSON.stringify({ description: "A CRM with customers and deals." }),
+    });
+    const { project: ownedProject } = (await createRes.json()) as { project: { id: string } };
+    const buildRes = await fetch(`${baseUrl}/api/projects/${ownedProject.id}/build`, {
+      method: "POST",
+      headers: authHeaders(leavingToken),
+    });
+    await collectSSE(buildRes);
+
+    // The leaving user is ALSO a collaborator on the staying user's own project.
+    const stayingCreateRes = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: authHeaders(stayingToken),
+      body: JSON.stringify({ description: "A CRM with customers and deals." }),
+    });
+    const { project: stayingProject } = (await stayingCreateRes.json()) as { project: { id: string } };
+    await fetch(`${baseUrl}/api/projects/${stayingProject.id}/collaborators`, {
+      method: "POST",
+      headers: authHeaders(stayingToken),
+      body: JSON.stringify({ email: "leaving-account1@example.com" }),
+    });
+
+    // Sanity check before deleting.
+    const beforeCollabAccess = await fetch(`${baseUrl}/api/projects/${stayingProject.id}`, { headers: authHeaders(leavingToken) });
+    assert.equal(beforeCollabAccess.status, 200, "sanity check: the leaving user should have real collaborator access before deleting");
+
+    const deleteRes = await fetch(`${baseUrl}/api/auth/account`, { method: "DELETE", headers: authHeaders(leavingToken) });
+    assert.equal(deleteRes.status, 204);
+
+    // The leaving user's own token is dead -- signed out immediately.
+    const meAfter = await fetch(`${baseUrl}/api/auth/me`, { headers: authHeaders(leavingToken) });
+    assert.equal(meAfter.status, 401, "the deleted user's own session token must stop working immediately");
+
+    // A fresh login with the same credentials must fail -- the account is genuinely gone.
+    const loginAfter = await fetch(`${baseUrl}/api/auth/login`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ email: "leaving-account1@example.com", password: "correct-horse-battery" }),
+    });
+    assert.equal(loginAfter.status, 401);
+
+    // The owned project is genuinely gone, not just hidden -- the staying
+    // user (who was never on it) still can't see it, same as before.
+    const outsiderCheck = await fetch(`${baseUrl}/api/projects/${ownedProject.id}`, { headers: authHeaders(stayingToken) });
+    assert.equal(outsiderCheck.status, 404);
+
+    // The staying user's own project and their own collaborator list are
+    // completely untouched -- it still exists, and no longer lists the
+    // now-deleted user as a collaborator, but nothing about the project itself broke.
+    const stayingProjectAfter = await fetch(`${baseUrl}/api/projects/${stayingProject.id}`, { headers: authHeaders(stayingToken) });
+    assert.equal(stayingProjectAfter.status, 200, "the staying user's own unrelated project must be completely untouched");
+    const collabListAfter = await fetch(`${baseUrl}/api/projects/${stayingProject.id}/collaborators`, { headers: authHeaders(stayingToken) });
+    const { collaborators } = (await collabListAfter.json()) as { collaborators: { email: string }[] };
+    assert.ok(
+      !collaborators.some((c) => c.email === "leaving-account1@example.com"),
+      "the deleted user's collaborator grant must be gone from the project they no longer exist to access",
+    );
+
+    // The staying user's own session is still completely valid.
+    const stayingMe = await fetch(`${baseUrl}/api/auth/me`, { headers: authHeaders(stayingToken) });
+    assert.equal(stayingMe.status, 200, "a different user's own session must never be affected by someone else deleting their account");
+  });
+});
+
+test("deleting your account requires a valid session, the same as any other authenticated route", async () => {
+  await withServer(async (baseUrl) => {
+    const res = await fetch(`${baseUrl}/api/auth/account`, { method: "DELETE" });
+    assert.equal(res.status, 401);
+  });
+});

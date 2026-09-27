@@ -6,6 +6,7 @@ import {
   ensureProjectCollaboratorsTable,
   addCollaborator,
   removeCollaborator,
+  removeAllCollaborationsForUser,
   isCollaborator,
   listCollaborators,
 } from "./collaborators.js";
@@ -67,4 +68,34 @@ test("listCollaborators only returns collaborators for the requested project, no
 test("removeCollaborator on a user who was never added is a harmless no-op, not an error", () => {
   const db = setup();
   assert.doesNotThrow(() => removeCollaborator(db, "proj1", "never-added"));
+});
+
+/**
+ * New in this round: part of the real "delete my account" flow
+ * (routes/auth.ts) -- once every project a user actually OWNS has been
+ * deleted, this cleans up their grants on every OTHER project they were
+ * merely invited to, so those projects don't keep a dangling collaborator
+ * row for a user id that no longer exists. Scoped by userId, the mirror of
+ * removeAllCollaborators' own projectId scoping: must remove this one
+ * user's own grants across every project, and must never touch a different
+ * user's grant on the same project.
+ */
+test("removeAllCollaborationsForUser removes this user's own grants across every project, leaving a different user's grant on the same project untouched", () => {
+  const db = setup();
+  createUser(db, { id: "leaving", email: "leaving@example.com", passwordHash: "x" });
+  createUser(db, { id: "staying", email: "staying@example.com", passwordHash: "x" });
+  addCollaborator(db, "proj1", "leaving");
+  addCollaborator(db, "proj2", "leaving");
+  addCollaborator(db, "proj1", "staying");
+
+  removeAllCollaborationsForUser(db, "leaving");
+
+  assert.equal(isCollaborator(db, "proj1", "leaving"), false);
+  assert.equal(isCollaborator(db, "proj2", "leaving"), false);
+  assert.equal(isCollaborator(db, "proj1", "staying"), true, "a different user's own grant on the same project must be completely untouched");
+});
+
+test("removeAllCollaborationsForUser is a harmless no-op for a user with no collaborations at all", () => {
+  const db = setup();
+  assert.doesNotThrow(() => removeAllCollaborationsForUser(db, "never-collaborated"));
 });

@@ -4,9 +4,14 @@ import { z } from "zod";
 import {
   createSession,
   createUser,
+  deleteAllSessionsForUser,
   deleteSession,
+  deleteUser,
+  deleteProject,
   findUserByEmail,
   getPasswordHash,
+  listProjectsForUser,
+  removeAllCollaborationsForUser,
   updatePasswordHash,
   DuplicateEmailError,
   type ForgeDatabase,
@@ -14,6 +19,7 @@ import {
 import { hashPassword, verifyPassword } from "../auth/password.js";
 import { extractBearerToken, requireAuth } from "../auth/middleware.js";
 import { formatValidationError, HttpError } from "../httpError.js";
+import type { WhatsAppWebManager } from "../whatsappWeb.js";
 
 const CredentialsSchema = z.object({
   // Emails are case-insensitive in practice (RFC 5321 makes the local part
@@ -56,7 +62,7 @@ function issueSession(db: ForgeDatabase, userId: string): string {
   return token;
 }
 
-export function createAuthRouter(db: ForgeDatabase): Router {
+export function createAuthRouter(db: ForgeDatabase, whatsapp: WhatsAppWebManager): Router {
   const router = Router();
 
   router.post("/auth/signup", async (req, res, next) => {
@@ -105,10 +111,12 @@ export function createAuthRouter(db: ForgeDatabase): Router {
 
   router.get("/auth/me", requireAuth(db), (req, res) => {
     // requireAuth's own lookup (an INNER JOIN against users) already proved
-    // this user row exists on this exact request -- no route in this app
-    // ever deletes a user, so re-querying it here would only ever find the
-    // same row requireAuth already fetched. Reusing that row instead of a
-    // second, always-redundant DB round-trip.
+    // this user row exists on this exact request -- reusing that row
+    // instead of a second, always-redundant DB round-trip. (The only route
+    // that ever deletes a user, DELETE /auth/account below, always ends
+    // that user's own session first, so requireAuth would already reject
+    // any request from them before this route could ever run against a
+    // now-deleted row.)
     res.json({ user: req.user! });
   });
 
@@ -146,6 +154,36 @@ export function createAuthRouter(db: ForgeDatabase): Router {
       }
       const newHash = await hashPassword(newPassword);
       updatePasswordHash(db, req.userId!, newHash);
+      res.status(204).end();
+    } catch (err) {
+      next(err);
+    }
+  });
+
+  /**
+   * Real, permanent self-service account deletion -- until now there was no
+   * way for someone to actually leave: their data just sat here forever.
+   * Follows the exact same cascade deleteProject already uses for a single
+   * project, just for every project this user owns, then cleans up the two
+   * other places a user id can still appear afterward: collaborator grants
+   * on OTHER people's projects, and their own sessions (so this exact
+   * request's token, and every other device they're logged in on, stops
+   * working immediately). Only ever acts on req.userId! -- the id
+   * requireAuth itself proved this session belongs to -- never a
+   * client-supplied id, so there's no cross-user deletion surface here at all.
+   */
+  router.delete("/auth/account", requireAuth(db), async (req, res, next) => {
+    try {
+      const ownedProjects = listProjectsForUser(db, req.userId!).filter(
+        (project) => project.ownerId === req.userId,
+      );
+      for (const project of ownedProjects) {
+        await whatsapp.disconnect(project.id).catch(() => {});
+        deleteProject(db, project);
+      }
+      removeAllCollaborationsForUser(db, req.userId!);
+      deleteAllSessionsForUser(db, req.userId!);
+      deleteUser(db, req.userId!);
       res.status(204).end();
     } catch (err) {
       next(err);

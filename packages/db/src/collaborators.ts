@@ -45,6 +45,20 @@ export function removeAllCollaborators(db: ForgeDatabase, projectId: string): vo
   db.prepare("DELETE FROM project_collaborators WHERE projectId = ?").run(projectId);
 }
 
+/**
+ * The complement to removeAllCollaborators above, scoped by userId instead
+ * of projectId -- part of a real self-service "delete my account" flow
+ * (routes/auth.ts): once every project this user actually OWNS has already
+ * been deleted (each with its own full cascade via deleteProject), this
+ * removes them from every OTHER project's collaborator list too, so a
+ * project they were merely invited to keeps working correctly for its real
+ * owner and any other collaborators, rather than leaking a grant for a
+ * user id that no longer exists.
+ */
+export function removeAllCollaborationsForUser(db: ForgeDatabase, userId: string): void {
+  db.prepare("DELETE FROM project_collaborators WHERE userId = ?").run(userId);
+}
+
 export function listCollaborators(db: ForgeDatabase, projectId: string): ProjectCollaborator[] {
   const rows = db
     .prepare(

@@ -26,6 +26,7 @@ import { HistoryPanel } from "./HistoryPanel.js";
 import { WhatsAppPanel } from "./WhatsAppPanel.js";
 import { CollaboratorsPanel } from "./CollaboratorsPanel.js";
 import { ChangePasswordPanel } from "./ChangePasswordPanel.js";
+import { DeleteAccountPanel } from "./DeleteAccountPanel.js";
 import { ProjectNameEditor } from "./ProjectNameEditor.js";
 import { ShortcutsPanel } from "./ShortcutsPanel.js";
 import { AddAssumptionForm, AddRoleForm, AssumptionItem, RoleChip } from "./SpecListItemRemover.js";
@@ -295,6 +296,7 @@ function AppContent() {
   const [showWhatsApp, setShowWhatsApp] = useState(false);
   const [showCollaborators, setShowCollaborators] = useState(false);
   const [showChangePassword, setShowChangePassword] = useState(false);
+  const [showDeleteAccount, setShowDeleteAccount] = useState(false);
   const [showShortcuts, setShowShortcuts] = useState(false);
   const [myProjects, setMyProjects] = useState<Project[]>([]);
   const [pinnedIds, setPinnedIds] = useState<Set<string>>(() => getPinnedIds());
@@ -760,6 +762,31 @@ function AppContent() {
     setRefineHistorySearch("");
   }
 
+  /**
+   * Runs once DeleteAccountPanel's own DELETE /auth/account call has
+   * already succeeded server-side -- the account, its projects, and every
+   * one of its sessions (including this one) are already gone by this
+   * point, so unlike handleLogout above this never calls the API's own
+   * logout() (there's no session left to revoke, and the token is already
+   * dead) -- just the same local-state cleanup, straight back to the auth screen.
+   */
+  function handleAccountDeleted() {
+    clearToken();
+    setShowDeleteAccount(false);
+    setUser(null);
+    setProject(null);
+    setView("home");
+    setDescription("");
+    clearIdeaDraft();
+    setError(null);
+    setActiveEntity(null);
+    setSelectedAnswers({});
+    setAdditionalRequest("");
+    setRefineText("");
+    setRefineHistory([]);
+    setRefineHistorySearch("");
+  }
+
   return (
     <div className="app">
       <header className="topbar">
@@ -797,6 +824,9 @@ function AppContent() {
           <button type="button" className="secondary" onClick={() => setShowChangePassword(true)}>
             {t("topbar.changePassword")}
           </button>
+          <button type="button" className="secondary" onClick={() => setShowDeleteAccount(true)}>
+            {t("topbar.deleteAccount")}
+          </button>
           <button type="button" className="secondary" onClick={handleLogout}>
             {t("topbar.logout")}
           </button>
@@ -804,6 +834,9 @@ function AppContent() {
       </header>
 
       {showChangePassword && <ChangePasswordPanel onClose={() => setShowChangePassword(false)} />}
+      {showDeleteAccount && (
+        <DeleteAccountPanel email={user.email} onClose={() => setShowDeleteAccount(false)} onDeleted={handleAccountDeleted} />
+      )}
 
       {wakingBanner}
       {error && <p className="error banner">{error}</p>}

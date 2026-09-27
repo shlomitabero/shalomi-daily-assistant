@@ -36,7 +36,7 @@ export function createApp(db: ForgeDatabase, provider?: SpecProvider, staticDir?
     whatsapp ?? new WhatsAppWebManager({ db, sessionsRootDir: path.join(os.tmpdir(), "forge-whatsapp-sessions") });
 
   app.get("/api/health", (_req, res) => res.json({ status: "ok" }));
-  app.use("/api", createAuthRouter(db));
+  app.use("/api", createAuthRouter(db, whatsappManager));
   app.use("/api", createProjectsRouter(db, provider, whatsappManager));
 
   if (staticDir && existsSync(staticDir)) {

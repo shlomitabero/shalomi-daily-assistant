@@ -112,3 +112,21 @@ export function getPasswordHash(db: ForgeDatabase, userId: string): string | und
 export function updatePasswordHash(db: ForgeDatabase, userId: string, passwordHash: string): void {
   db.prepare("UPDATE users SET passwordHash = ? WHERE id = ?").run(passwordHash, userId);
 }
+
+/** Part of the "delete my account" flow (routes/auth.ts) -- signs the user out of every device at once, not just the one session making this request. */
+export function deleteAllSessionsForUser(db: ForgeDatabase, userId: string): void {
+  db.prepare("DELETE FROM sessions WHERE userId = ?").run(userId);
+}
+
+/**
+ * Deletes the user row itself -- the last step of "delete my account"
+ * (routes/auth.ts), called only after every project this user owns has
+ * already been deleted, every OTHER project's collaborator grant for them
+ * has been removed (removeAllCollaborationsForUser), and every one of
+ * their own sessions has been revoked (deleteAllSessionsForUser). Nothing
+ * in this table itself needs cleanup once those are done -- the users row
+ * has no foreign-key children of its own left pointing at it by that point.
+ */
+export function deleteUser(db: ForgeDatabase, userId: string): void {
+  db.prepare("DELETE FROM users WHERE id = ?").run(userId);
+}

@@ -186,6 +186,18 @@ export function changePassword(currentPassword: string, newPassword: string): Pr
   return request("/auth/password", { method: "PATCH", body: JSON.stringify({ currentPassword, newPassword }) });
 }
 
+/**
+ * Real, permanent self-service account deletion (DeleteAccountPanel.tsx).
+ * The server's own session is already gone by the time this resolves (the
+ * DELETE route revokes every session, this one included), so this doesn't
+ * separately call clearToken -- the caller does that itself once this
+ * succeeds, the same way logout() above pairs a server call with its own
+ * local cleanup.
+ */
+export function deleteAccount(): Promise<void> {
+  return request("/auth/account", { method: "DELETE" });
+}
+
 export function createProject(description: string): Promise<{ project: Project; providerName: string }> {
   return request("/projects", { method: "POST", body: JSON.stringify({ description }) });
 }
