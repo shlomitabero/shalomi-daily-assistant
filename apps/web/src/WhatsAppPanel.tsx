@@ -4,6 +4,7 @@ import { useDialogFocusTrap } from "./useDialogFocusTrap.js";
 import {
   clearWhatsAppMessages,
   connectWhatsApp,
+  deleteWhatsAppMessage,
   disconnectWhatsApp,
   getWhatsAppStatus,
   listWhatsAppMessages,
@@ -109,6 +110,8 @@ export function WhatsAppPanel({
   const [retryingId, setRetryingId] = useState<string | null>(null);
   const [retryError, setRetryError] = useState<string | null>(null);
   const [clearing, setClearing] = useState(false);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
   const dialogRef = useDialogFocusTrap<HTMLDivElement>();
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const pollFailuresRef = useRef(0);
@@ -316,6 +319,29 @@ export function WhatsAppPanel({
     downloadWhatsAppLog(formatWhatsAppLog(messages, projectName, lang, t), projectName);
   }
 
+  /**
+   * clearWhatsAppMessages above was previously the only way to remove
+   * anything from the log at all -- one junk or test message meant wiping
+   * the whole history to get rid of it. Removes exactly the clicked
+   * message, both from the server and from this panel's own local state,
+   * matching handleClearHistory's own confirm-then-request-then-update
+   * shape rather than an optimistic remove that could drift from the
+   * server if the request actually failed.
+   */
+  async function handleDeleteMessage(m: WhatsAppMessageLogEntry) {
+    if (!window.confirm(t("whatsapp.log.confirmDeleteOne"))) return;
+    setDeletingId(m.id);
+    setDeleteError(null);
+    try {
+      await deleteWhatsAppMessage(projectId, m.id);
+      setMessages((prev) => prev.filter((msg) => msg.id !== m.id));
+    } catch (err) {
+      setDeleteError((err as Error).message);
+    } finally {
+      setDeletingId(null);
+    }
+  }
+
   async function handleClearHistory() {
     if (!window.confirm(t("whatsapp.log.confirmClear"))) return;
     setClearing(true);
@@ -433,6 +459,7 @@ export function WhatsAppPanel({
             )}
           </div>
           {retryError && <p className="error">{retryError}</p>}
+          {deleteError && <p className="error">{deleteError}</p>}
           {messages.length > SEARCH_THRESHOLD && (
             <div className="whatsapp-log-filters">
               <input
@@ -504,6 +531,15 @@ export function WhatsAppPanel({
                       )}
                     </>
                   )}
+                  <button
+                    type="button"
+                    className="whatsapp-log-delete"
+                    aria-label={t("whatsapp.log.deleteOne")}
+                    onClick={() => handleDeleteMessage(m)}
+                    disabled={deletingId === m.id}
+                  >
+                    {deletingId === m.id ? "…" : "🗑️"}
+                  </button>
                 </li>
               ))}
             </ul>

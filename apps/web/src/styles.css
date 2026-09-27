@@ -2263,6 +2263,30 @@ button.sort-header:hover:not(:disabled) {
   white-space: nowrap;
 }
 
+.whatsapp-log-delete {
+  flex-shrink: 0;
+  background: none;
+  border: none;
+  box-shadow: none;
+  padding: 2px 4px;
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+  opacity: 0.6;
+}
+
+.whatsapp-log-delete:hover:not(:disabled) {
+  opacity: 1;
+  transform: none;
+  box-shadow: none;
+  background: var(--danger-soft);
+}
+
+.whatsapp-log-delete:disabled {
+  cursor: default;
+  opacity: 0.4;
+}
+
 /* Dark mode applies automatically from the OS preference (no explicit
    choice yet), and can be forced either way once ThemeSwitcher sets
    data-theme on <html> -- see theme/ThemeContext.tsx. */

@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { ForgeDatabase } from "./connection.js";
+import { NotFoundError } from "./repository.js";
 
 /**
  * WhatsApp integration storage. Per direct user request, this does NOT use
@@ -179,6 +180,23 @@ export function listWhatsAppMessages(db: ForgeDatabase, projectId: string, limit
 /** Wipes a project's whole WhatsApp message log (both directions) -- the user's own explicit "clear history" action, not something triggered automatically. */
 export function clearWhatsAppMessages(db: ForgeDatabase, projectId: string): void {
   db.prepare("DELETE FROM whatsapp_messages WHERE projectId = ?").run(projectId);
+}
+
+/**
+ * Deletes a single message from a project's own log, rather than only ever
+ * offering an all-or-nothing clearWhatsAppMessages -- one junk/test message
+ * previously meant wiping the whole log to get rid of it. Scoped to
+ * projectId in the same WHERE clause as the id itself (matching
+ * deleteRecord's own convention in repository.ts), so a message id that
+ * happens to belong to a different project can never be deleted through
+ * this call. Throws NotFoundError (mirroring deleteRecord) for an id that
+ * doesn't exist in this project's own log, rather than silently no-op'ing.
+ */
+export function deleteWhatsAppMessage(db: ForgeDatabase, projectId: string, messageId: string): void {
+  const result = db.prepare("DELETE FROM whatsapp_messages WHERE projectId = ? AND id = ?").run(projectId, messageId);
+  if (result.changes === 0) {
+    throw new NotFoundError(`WhatsApp message ${messageId} not found in project ${projectId}`);
+  }
 }
 
 /**

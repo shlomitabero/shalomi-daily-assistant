@@ -543,3 +543,8 @@ export function listWhatsAppMessages(projectId: string): Promise<{ messages: Wha
 export function clearWhatsAppMessages(projectId: string): Promise<void> {
   return request(`/projects/${projectId}/integrations/whatsapp/messages`, { method: "DELETE" });
 }
+
+/** The complement to clearWhatsAppMessages above -- removes exactly one message from the log, not the whole history. */
+export function deleteWhatsAppMessage(projectId: string, messageId: string): Promise<void> {
+  return request(`/projects/${projectId}/integrations/whatsapp/messages/${messageId}`, { method: "DELETE" });
+}

@@ -65,6 +65,7 @@ export {
   insertWhatsAppMessage,
   listWhatsAppMessages,
   clearWhatsAppMessages,
+  deleteWhatsAppMessage,
   deleteWhatsAppData,
   type WhatsAppConnection,
   type WhatsAppMessage,

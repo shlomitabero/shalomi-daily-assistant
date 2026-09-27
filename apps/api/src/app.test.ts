@@ -2477,6 +2477,104 @@ test("WhatsApp: clearing the message history wipes this project's log but never 
   );
 });
 
+/**
+ * New in this round: clearWhatsAppMessages above was previously the only
+ * way to remove anything from the log at all -- one junk or test message
+ * meant wiping the whole history. The new per-message DELETE route removes
+ * exactly the one message the panel's own delete button targets, leaving
+ * every other message (in this project, and in a different project) alone.
+ */
+test("WhatsApp: deleting a single message via DELETE .../messages/:messageId removes only that one, leaving the rest of the log and another project's log untouched", async () => {
+  let createdSockets: ReturnType<typeof createFakeWhatsAppSocket>[] = [];
+  await withServer(
+    async (baseUrl) => {
+      const token = await signup(baseUrl);
+
+      const createRes = await fetch(`${baseUrl}/api/projects`, {
+        method: "POST",
+        headers: authHeaders(token),
+        body: JSON.stringify({ description: "A CRM with customers and deals." }),
+      });
+      const { project } = (await createRes.json()) as { project: { id: string } };
+      const otherRes = await fetch(`${baseUrl}/api/projects`, {
+        method: "POST",
+        headers: authHeaders(token),
+        body: JSON.stringify({ description: "A separate vet clinic app." }),
+      });
+      const { project: otherProject } = (await otherRes.json()) as { project: { id: string } };
+
+      await fetch(`${baseUrl}/api/projects/${project.id}/integrations/whatsapp/connect`, { method: "POST", headers: authHeaders(token) });
+      createdSockets[0].sock.user = { id: "15550001111:1@s.whatsapp.net" };
+      createdSockets[0].emitConnectionUpdate({ connection: "open" });
+      await fetch(`${baseUrl}/api/projects/${project.id}/integrations/whatsapp/send`, {
+        method: "POST",
+        headers: authHeaders(token),
+        body: JSON.stringify({ to: "972501234567", message: "delete this one" }),
+      });
+      await fetch(`${baseUrl}/api/projects/${project.id}/integrations/whatsapp/send`, {
+        method: "POST",
+        headers: authHeaders(token),
+        body: JSON.stringify({ to: "972501234567", message: "keep this one" }),
+      });
+
+      await fetch(`${baseUrl}/api/projects/${otherProject.id}/integrations/whatsapp/connect`, { method: "POST", headers: authHeaders(token) });
+      createdSockets[1].sock.user = { id: "15550002222:1@s.whatsapp.net" };
+      createdSockets[1].emitConnectionUpdate({ connection: "open" });
+      await fetch(`${baseUrl}/api/projects/${otherProject.id}/integrations/whatsapp/send`, {
+        method: "POST",
+        headers: authHeaders(token),
+        body: JSON.stringify({ to: "972509999999", message: "a different project's own message" }),
+      });
+
+      const beforeRes = await fetch(`${baseUrl}/api/projects/${project.id}/integrations/whatsapp/messages`, { headers: authHeaders(token) });
+      const { messages: before } = (await beforeRes.json()) as { messages: { id: string; body: string }[] };
+      const target = before.find((m) => m.body === "delete this one")!;
+      assert.ok(target, "expected to find the message to delete");
+
+      const deleteRes = await fetch(`${baseUrl}/api/projects/${project.id}/integrations/whatsapp/messages/${target.id}`, {
+        method: "DELETE",
+        headers: authHeaders(token),
+      });
+      assert.equal(deleteRes.status, 204);
+
+      const afterRes = await fetch(`${baseUrl}/api/projects/${project.id}/integrations/whatsapp/messages`, { headers: authHeaders(token) });
+      const { messages: after } = (await afterRes.json()) as { messages: { body: string }[] };
+      assert.equal(after.length, 1);
+      assert.equal(after[0].body, "keep this one");
+
+      const otherRes2 = await fetch(`${baseUrl}/api/projects/${otherProject.id}/integrations/whatsapp/messages`, { headers: authHeaders(token) });
+      const { messages: otherMessages } = (await otherRes2.json()) as { messages: { body: string }[] };
+      assert.equal(otherMessages.length, 1, "a different project's own message must be completely untouched");
+      assert.equal(otherMessages[0].body, "a different project's own message");
+    },
+    {
+      whatsapp: (db) => {
+        const created = createTestWhatsAppManager(db);
+        createdSockets = created.createdSockets;
+        return created.manager;
+      },
+    },
+  );
+});
+
+test("WhatsApp: deleting a message id that doesn't exist in this project returns a real 404, not a silent success", async () => {
+  await withServer(async (baseUrl) => {
+    const token = await signup(baseUrl);
+    const createRes = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ description: "A CRM with customers and deals." }),
+    });
+    const { project } = (await createRes.json()) as { project: { id: string } };
+
+    const deleteRes = await fetch(`${baseUrl}/api/projects/${project.id}/integrations/whatsapp/messages/no-such-message-id`, {
+      method: "DELETE",
+      headers: authHeaders(token),
+    });
+    assert.equal(deleteRes.status, 404);
+  });
+});
+
 test("WhatsApp: a real incoming message from the linked socket is logged and matched to the right customer record", async () => {
   let createdSockets: ReturnType<typeof createFakeWhatsAppSocket>[] = [];
   await withServer(

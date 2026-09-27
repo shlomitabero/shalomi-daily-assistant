@@ -1,8 +1,10 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { openDatabase } from "./connection.js";
+import { NotFoundError } from "./repository.js";
 import {
   clearWhatsAppMessages,
+  deleteWhatsAppMessage,
   ensureWhatsAppConnectionsTable,
   ensureWhatsAppMessagesTable,
   getWhatsAppConnection,
@@ -181,4 +183,76 @@ test("clearWhatsAppMessages is a harmless no-op for a project with no messages",
   ensureWhatsAppMessagesTable(db);
   clearWhatsAppMessages(db, "proj-empty");
   assert.equal(listWhatsAppMessages(db, "proj-empty").length, 0);
+});
+
+/**
+ * New in this round: clearWhatsAppMessages above was previously the only
+ * way to remove anything from the log at all -- one junk or test message
+ * meant wiping the whole history to get rid of it. deleteWhatsAppMessage
+ * removes exactly the one given message, leaving every other message (in
+ * this project and any other) untouched.
+ */
+test("deleteWhatsAppMessage removes exactly the one message, leaving the rest of this project's log and every other project's log untouched", () => {
+  const db = openDatabase(":memory:");
+  ensureWhatsAppMessagesTable(db);
+  const target = insertWhatsAppMessage(db, {
+    projectId: "proj1",
+    direction: "in",
+    fromNumber: "972500000000",
+    toNumber: "15550001111",
+    body: "delete me",
+    status: "received",
+  });
+  insertWhatsAppMessage(db, {
+    projectId: "proj1",
+    direction: "in",
+    fromNumber: "972500000000",
+    toNumber: "15550001111",
+    body: "keep me",
+    status: "received",
+  });
+  insertWhatsAppMessage(db, {
+    projectId: "proj2",
+    direction: "in",
+    fromNumber: "972500000001",
+    toNumber: "15550001111",
+    body: "someone else's message",
+    status: "received",
+  });
+
+  deleteWhatsAppMessage(db, "proj1", target.id);
+
+  const remaining = listWhatsAppMessages(db, "proj1");
+  assert.equal(remaining.length, 1);
+  assert.equal(remaining[0].body, "keep me");
+  assert.equal(listWhatsAppMessages(db, "proj2").length, 1, "a different project's log must be completely untouched");
+});
+
+/**
+ * The projectId scope in deleteWhatsAppMessage's own WHERE clause (matching
+ * deleteRecord's convention in repository.ts) means a real message id that
+ * happens to belong to a DIFFERENT project can never be deleted by passing
+ * the wrong projectId -- it must be treated as not-found for that project,
+ * not silently succeed against someone else's message.
+ */
+test("deleteWhatsAppMessage throws NotFoundError for a real message id that belongs to a different project", () => {
+  const db = openDatabase(":memory:");
+  ensureWhatsAppMessagesTable(db);
+  const message = insertWhatsAppMessage(db, {
+    projectId: "proj2",
+    direction: "in",
+    fromNumber: "972500000001",
+    toNumber: "15550001111",
+    body: "belongs to proj2",
+    status: "received",
+  });
+
+  assert.throws(() => deleteWhatsAppMessage(db, "proj1", message.id), NotFoundError);
+  assert.equal(listWhatsAppMessages(db, "proj2").length, 1, "the message must still exist under its real project");
+});
+
+test("deleteWhatsAppMessage throws NotFoundError for an id that doesn't exist at all", () => {
+  const db = openDatabase(":memory:");
+  ensureWhatsAppMessagesTable(db);
+  assert.throws(() => deleteWhatsAppMessage(db, "proj1", "no-such-id"), NotFoundError);
 });

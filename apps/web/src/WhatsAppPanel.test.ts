@@ -996,3 +996,168 @@ test("WhatsAppPanel's direction filter narrows the real rendered log to incoming
     }
   });
 });
+
+/**
+ * New in this round: clearWhatsAppMessages (round 154's own download button
+ * is its neighbor, and handleClearHistory further up this file wipes the
+ * WHOLE log) was previously the only way to remove anything from the log
+ * at all -- one junk or test message meant clearing everything. Each row
+ * now gets its own real delete button (🗑️), sending a real DELETE request
+ * scoped to that one message's id and removing only that row from the
+ * rendered log, confirmed via window.confirm exactly like handleDelete's
+ * own single-record confirm in EntityPanel.tsx.
+ */
+test("WhatsAppPanel's per-message delete button sends a real DELETE for that one message's id and removes only that row from the log", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    const originalConfirm = globalThis.window.confirm;
+    globalThis.window.confirm = (() => true) as typeof window.confirm;
+    let capturedDeletePath: string | undefined;
+    const store: WhatsAppMessageLogEntry[] = [
+      {
+        id: "m1",
+        direction: "in",
+        fromNumber: "972521112233",
+        toNumber: "972501234567",
+        body: "keep this one",
+        matchedLabel: null,
+        matchedEntityName: null,
+        matchedRecordId: null,
+        status: "received",
+        createdAt: new Date("2026-03-15T14:32:00Z").toISOString(),
+      },
+      {
+        id: "m2",
+        direction: "out",
+        fromNumber: "972501234567",
+        toNumber: "972521112233",
+        body: "delete this one",
+        matchedLabel: null,
+        matchedEntityName: null,
+        matchedRecordId: null,
+        status: "sent",
+        createdAt: new Date("2026-03-15T14:33:00Z").toISOString(),
+      },
+    ];
+    globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/integrations/whatsapp/status") {
+        return new Response(
+          JSON.stringify({ status: "connected", phoneNumber: "972501234567", qrDataUrl: null, error: null }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      if (method === "GET" && input === "/api/projects/proj1/integrations/whatsapp/messages") {
+        return new Response(JSON.stringify({ messages: store }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      const deleteMatch = /^\/api\/projects\/proj1\/integrations\/whatsapp\/messages\/([^/]+)$/.exec(input);
+      if (method === "DELETE" && deleteMatch) {
+        capturedDeletePath = input;
+        const index = store.findIndex((m) => m.id === deleteMatch[1]);
+        assert.ok(index !== -1, "the mock server's own message id lookup must actually find the real message");
+        store.splice(index, 1);
+        return new Response(null, { status: 204 });
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+    try {
+      render(
+        React.createElement(
+          ThemeProvider,
+          null,
+          React.createElement(LanguageProvider, null, React.createElement(WhatsAppPanel, { projectId: "proj1", projectName: "Test Project", onClose: () => {}, onJumpToEntity: () => {}, onJumpToRecord: () => {} })),
+        ),
+      );
+      await waitForCondition(() => document.querySelectorAll(".whatsapp-log-list li").length === 2);
+
+      const rows = [...document.querySelectorAll(".whatsapp-log-list li")];
+      const targetRow = rows.find((li) => (li.textContent ?? "").includes("delete this one"))!;
+      assert.ok(targetRow, "expected to find the row to delete");
+      const deleteButton = targetRow.querySelector(".whatsapp-log-delete") as HTMLButtonElement;
+      assert.ok(deleteButton, "expected a real delete button on the row");
+
+      fireEvent.click(deleteButton);
+      await waitForCondition(() => document.querySelectorAll(".whatsapp-log-list li").length === 1);
+
+      assert.equal(
+        capturedDeletePath,
+        "/api/projects/proj1/integrations/whatsapp/messages/m2",
+        "must send a real DELETE scoped to exactly this message's own id",
+      );
+      assert.match(
+        document.querySelector(".whatsapp-log-list li")!.textContent ?? "",
+        /keep this one/,
+        "the other message must still be shown -- only the deleted one should disappear",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+      globalThis.window.confirm = originalConfirm;
+    }
+  });
+});
+
+/**
+ * The complement to the delete test above: declining the confirm dialog
+ * must genuinely abort the delete -- no DELETE request sent at all, and
+ * the row stays exactly as it was, matching handleClearHistory's own
+ * confirm-gated shape (and the same "no request on decline" contract
+ * EntityPanel.tsx's own handleDelete has).
+ */
+test("WhatsAppPanel's per-message delete button sends no request at all when the confirm dialog is declined", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    const originalConfirm = globalThis.window.confirm;
+    globalThis.window.confirm = (() => false) as typeof window.confirm;
+    let deleteRequestSent = false;
+    const message: WhatsAppMessageLogEntry = {
+      id: "m1",
+      direction: "out",
+      fromNumber: "972501234567",
+      toNumber: "972521112233",
+      body: "should not be deleted",
+      matchedLabel: null,
+      matchedEntityName: null,
+      matchedRecordId: null,
+      status: "sent",
+      createdAt: new Date("2026-03-15T14:33:00Z").toISOString(),
+    };
+    globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/integrations/whatsapp/status") {
+        return new Response(
+          JSON.stringify({ status: "connected", phoneNumber: "972501234567", qrDataUrl: null, error: null }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      if (method === "GET" && input === "/api/projects/proj1/integrations/whatsapp/messages") {
+        return new Response(JSON.stringify({ messages: [message] }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      if (method === "DELETE" && input === "/api/projects/proj1/integrations/whatsapp/messages/m1") {
+        deleteRequestSent = true;
+        return new Response(null, { status: 204 });
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+    try {
+      render(
+        React.createElement(
+          ThemeProvider,
+          null,
+          React.createElement(LanguageProvider, null, React.createElement(WhatsAppPanel, { projectId: "proj1", projectName: "Test Project", onClose: () => {}, onJumpToEntity: () => {}, onJumpToRecord: () => {} })),
+        ),
+      );
+      await waitForCondition(() => document.querySelectorAll(".whatsapp-log-list li").length === 1);
+
+      const deleteButton = document.querySelector(".whatsapp-log-delete") as HTMLButtonElement;
+      fireEvent.click(deleteButton);
+      // Give any (wrongly) fired request a real tick to land before asserting.
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      assert.equal(deleteRequestSent, false, "declining the confirm dialog must never send the DELETE request");
+      assert.equal(document.querySelectorAll(".whatsapp-log-list li").length, 1, "the message must still be shown after declining");
+    } finally {
+      globalThis.fetch = originalFetch;
+      globalThis.window.confirm = originalConfirm;
+    }
+  });
+});

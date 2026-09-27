@@ -19,6 +19,7 @@ import {
   insertWhatsAppMessage,
   listWhatsAppMessages,
   clearWhatsAppMessages,
+  deleteWhatsAppMessage,
   addCollaborator,
   removeCollaborator,
   isCollaborator,
@@ -649,6 +650,15 @@ export function createProjectsRouter(db: ForgeDatabase, provider: SpecProvider |
     asyncRoute(async (req, res) => {
       const project = requireProjectAccess(db, req.params.id, req.userId!);
       clearWhatsAppMessages(db, project.id);
+      res.status(204).end();
+    }),
+  );
+
+  router.delete(
+    "/projects/:id/integrations/whatsapp/messages/:messageId",
+    asyncRoute(async (req, res) => {
+      const project = requireProjectAccess(db, req.params.id, req.userId!);
+      deleteWhatsAppMessage(db, project.id, req.params.messageId);
       res.status(204).end();
     }),
   );
