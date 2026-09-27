@@ -11664,6 +11664,77 @@ not a single "make it perfect" claim.
       `npm run build --workspace=@forge/web` and
       `npm run build --workspace=@forge/api` clean.
 
+- [x] **Round 219 — the Entity live-preview table can now be grouped by any
+      enum/boolean field, not just the Kanban board's own single
+      auto-picked field.**
+      Diversification: with all three "port to exported codegen" candidates
+      closed (198/201/202/206→218), this round picked up a long-standing
+      "considered, not yet built" candidate from the roadmap's own notes --
+      grouping the plain table itself, distinct from the board view's own
+      grouping (which has existed since round 47 but only ever groups by
+      one auto-picked field and only in its own separate view).
+
+      New pure functions in `entityFormatting.ts`: `isGroupableField(field)`
+      (`field.type === "enum" || field.type === "boolean"` -- the same
+      finite-value-space restriction `findBoardField` already only ever
+      considers, since an unbounded field would produce one group per
+      distinct value, which isn't grouping) and
+      `groupRecordsByField(records, field, t)`, a sibling to the existing
+      `groupByField` (used by the board view) with two real differences:
+      it also handles boolean fields (true then false), and it omits any
+      group with zero matching records entirely rather than always
+      rendering every declared value -- the board view's own "always show
+      an empty column" contract makes sense for a fixed pipeline of
+      columns, but an empty section header in an ordinary table is just
+      clutter. An enum field's groups still follow its own declared
+      `enumValues` order (not first-seen), with one trailing "other"
+      bucket for any legacy value no longer in that list.
+
+      Web: a new "Group by" `<select>` in `EntityPanel.tsx`'s toolbar
+      (table view only, shown whenever the entity has at least one
+      groupable field), listing "No grouping" plus each such field. The
+      table body renders one real header row per non-empty group (label +
+      real count) followed by that group's own rows, computed from
+      whatever `visibleRecords` already is (so search/sort/columns all
+      still apply underneath); reverting to "No grouping" restores the
+      exact flat list. The per-record `<tr>` markup itself was extracted
+      into a new `renderRecordRow` function so the flat and grouped code
+      paths render byte-identical rows -- grouping only changes what wraps
+      them, never the rows themselves. New session-only `groupFieldName`
+      state resets on entity switch, alongside the other per-entity view
+      state that effect already resets.
+
+      New tests: `entityFormatting.test.ts` gets three -- `isGroupableField`
+      covering every field type, and two for `groupRecordsByField` (the
+      enum-order-plus-other-bucket case, and the boolean true/false case
+      with an empty side correctly omitted). `EntityPanel.test.ts` gets one
+      real-DOM test: renders 3 records across 2 status values, selects
+      "status" in the real dropdown, confirms the real header rows show
+      the correct label and count for each (skipping the status with zero
+      records entirely), and confirms reverting to "No grouping" restores
+      the flat 3-row list.
+
+      Verified with the deliberate-break-and-restore discipline, twice:
+      removed the "other" bucket from `groupRecordsByField` -- caught
+      cleanly by the new pure-function test; restored, `diff`
+      byte-identical. Forced `recordGroups` to always be `null` in
+      `EntityPanel.tsx` (simulating the wiring silently doing nothing) --
+      caught cleanly by the new DOM test; restored, `diff` byte-identical.
+
+      **And** a real Playwright pass against the live dev server: signed
+      up, built a real "CRM with customers and deals" project (heuristic
+      gives a Deal entity with a "stage" enum field), added deal records
+      with different stage values via the ordinary add form, selected
+      "stage" in the real Group by dropdown, and confirmed the real header
+      rows' counts summed exactly to the real total row count (the seeded
+      sample records included), then confirmed reverting to "No grouping"
+      restored the exact same flat row count.
+
+      Full suite green (825 tests, up from 821 -- `@forge/web` 406 → 410;
+      `@forge/shared` 11, `@forge/spec-engine` 82, `@forge/db` 91,
+      `@forge/api` 231 unchanged) and `npm run build --workspace=@forge/web`
+      clean.
+
 ## Phase 3
 
 - Self-healing: production observability, automatic diagnosis and patch
