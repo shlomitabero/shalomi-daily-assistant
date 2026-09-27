@@ -11065,6 +11065,65 @@ not a single "make it perfect" claim.
       `@forge/spec-engine` 82 unchanged) and `npm run build
       --workspace=@forge/web` clean.
 
+- [x] **Round 211 — drag-and-drop reschedule in the calendar view.**
+      Diversification: rounds 204-210 all touched account/project-level
+      screens (home screen, AI Team build, Time Machine, WhatsApp, account
+      management). This round moves back into the entity live-preview, but
+      specifically the calendar view mode (last real addition: round 160's
+      "click an empty day to add"), not the raw table grid round 206
+      already closed -- the calendar view had no way to move a record to a
+      different day short of opening the edit form and retyping the date
+      field by hand.
+
+      Follows the exact same real HTML5 drag-and-drop contract the Kanban
+      board view's own card-to-column move already established (round
+      186): each `.calendar-record-chip` is now `draggable`, and each day
+      cell is a real drop target (`onDragOver`/`onDragLeave`/`onDrop`),
+      with the same visual drag-over feedback class the board columns use
+      (a new `.calendar-day-drag-over`, styled identically to
+      `.board-column-drag-over`). `EntityPanel.tsx` gets a new
+      `handleCalendarDrop(record, dateFieldName, date)`, the direct sibling
+      of the board view's own `handleCardDrop`/`handleMove`: formats the
+      dropped-on day with the already-exported `formatDateForInput` and
+      reuses the identical `handleMove` PATCH+refresh, with the same
+      no-op guard the board view has (dropping a chip back onto the day
+      it's already on sends no request at all).
+
+      New test in `EntityPanel.test.ts`: drives real `dragstart`/
+      `dragover`/`drop` events (the same minimal `DataTransfer` mock the
+      existing board-view drag test already uses) confirming a drag onto a
+      genuinely different, empty day calls the real PATCH exactly once
+      with that day's own formatted date and moves the chip in the live
+      DOM, while dropping back onto the SAME day is a real no-op -- never
+      an extra PATCH.
+
+      Verified with the deliberate-break-and-restore discipline: removed
+      the "already on this day" no-op guard from the new
+      `handleCalendarDrop` -- caught cleanly by the no-op assertion
+      (`1 !== 0`, an unexpected PATCH call the same-day drop must never
+      trigger); restored, `diff` byte-identical; confirmed no leftover
+      process via `ps aux` (this one, unlike rounds 205/206/209/210's own
+      timer/no-op-guard breaks, exited cleanly on its own).
+
+      **And** a real Playwright pass against the live dev server: signed
+      up, built a real beauty-clinic appointment app (Appointment entity
+      with a required date field), created a real appointment dated the
+      5th of the current month, switched to calendar view, and confirmed
+      Playwright's own built-in `dragTo()` did NOT reliably trigger this
+      native HTML5 drag-and-drop in a real browser -- worked around by
+      dispatching real `DragEvent`s with a shared `DataTransfer` directly
+      via `page.evaluate` (the same technique the jsdom component test
+      uses, just against the real browser DOM). Dragged the chip from day
+      5 onto day 15, confirmed it now renders on day 15 and is gone from
+      day 5 -- then reloaded the whole page and reopened the calendar view
+      from scratch, confirming the reschedule had genuinely reached and
+      persisted on the server, not just a client-side illusion.
+
+      Full suite green (794 tests, up from 793 -- `@forge/web` 391 → 392;
+      `@forge/shared` 11, `@forge/spec-engine` 82, `@forge/db` 91,
+      `@forge/api` 218 unchanged) and `npm run build --workspace=@forge/web`
+      clean.
+
 ## Phase 3
 
 - Self-healing: production observability, automatic diagnosis and patch
