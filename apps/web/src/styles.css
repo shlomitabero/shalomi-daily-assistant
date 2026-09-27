@@ -1412,6 +1412,32 @@ button.sort-header:hover:not(:disabled) {
   padding: 3px 6px;
 }
 
+.checkpoint-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+  padding: 1px 4px;
+  margin: -1px -4px;
+  transition: background 0.12s ease;
+}
+
+.checkpoint-label:hover {
+  background: var(--surface-raised);
+}
+
+.checkpoint-label-edit-icon {
+  font-size: 12px;
+  opacity: 0.5;
+}
+
+.checkpoint-label-edit input {
+  font: inherit;
+  font-weight: 700;
+  padding: 2px 5px;
+}
+
 .field-label {
   display: inline-flex;
   align-items: center;

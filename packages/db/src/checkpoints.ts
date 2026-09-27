@@ -1,6 +1,7 @@
 import type { Checkpoint, ProductSpec } from "@forge/shared";
 import { ProductSpecSchema } from "@forge/shared";
 import type { ForgeDatabase } from "./connection.js";
+import { NotFoundError } from "./repository.js";
 
 /**
  * Time Machine storage: every successful build or refine snapshots the
@@ -81,6 +82,25 @@ export function getCheckpoint(db: ForgeDatabase, id: string): Checkpoint | undef
     | Record<string, unknown>
     | undefined;
   return row ? rowToCheckpoint(row) : undefined;
+}
+
+/**
+ * Renames a checkpoint's own label -- Time Machine only ever gave a
+ * checkpoint an automatic label ("Initial build", "Refine: <instruction>"),
+ * with no way to give an important one a name that's actually memorable
+ * months later (e.g. "before the pricing overhaul"). Scoped to projectId in
+ * the same WHERE clause as the checkpoint id itself (mirroring
+ * deleteWhatsAppMessage's own convention in whatsapp.ts), so a checkpoint
+ * id belonging to a different project can never be renamed through this
+ * call. Throws NotFoundError for an id that doesn't exist in this
+ * project's own history.
+ */
+export function renameCheckpoint(db: ForgeDatabase, projectId: string, checkpointId: string, label: string): Checkpoint {
+  const result = db.prepare("UPDATE checkpoints SET label = ? WHERE id = ? AND projectId = ?").run(label, checkpointId, projectId);
+  if (result.changes === 0) {
+    throw new NotFoundError(`Checkpoint ${checkpointId} not found in project ${projectId}`);
+  }
+  return getCheckpoint(db, checkpointId)!;
 }
 
 /** Part of deleteProject's cleanup (projects.ts) -- a deleted project's history has nothing left to restore. */

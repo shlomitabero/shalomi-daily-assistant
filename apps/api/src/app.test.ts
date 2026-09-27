@@ -1903,6 +1903,106 @@ test("a user cannot restore another user's checkpoint into their own project by 
   });
 });
 
+/**
+ * New in this round: a checkpoint's label was previously only ever the
+ * automatic one build/refine gave it -- no way to give an important one a
+ * name that's actually memorable months later. Confirms the real PATCH
+ * route updates exactly the one checkpoint's own label via a real round
+ * trip, and that it's genuinely persisted (a fresh GET reflects it, not
+ * just the PATCH response echoing back what was sent).
+ */
+test("renaming a checkpoint's label persists via a real PATCH round trip", async () => {
+  await withServer(async (baseUrl) => {
+    const token = await signup(baseUrl);
+    const createRes = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ description: "A CRM with customers and deals." }),
+    });
+    const { project } = (await createRes.json()) as { project: { id: string } };
+    const buildRes = await fetch(`${baseUrl}/api/projects/${project.id}/build`, { method: "POST", headers: authHeaders(token) });
+    await collectSSE(buildRes);
+
+    const checkpointsRes = await fetch(`${baseUrl}/api/projects/${project.id}/checkpoints`, { headers: authHeaders(token) });
+    const { checkpoints } = (await checkpointsRes.json()) as { checkpoints: { id: string; label: string }[] };
+    const checkpointId = checkpoints[0].id;
+
+    const renameRes = await fetch(`${baseUrl}/api/projects/${project.id}/checkpoints/${checkpointId}`, {
+      method: "PATCH",
+      headers: authHeaders(token),
+      body: JSON.stringify({ label: "before the pricing overhaul" }),
+    });
+    assert.equal(renameRes.status, 200);
+    const { checkpoint } = (await renameRes.json()) as { checkpoint: { label: string } };
+    assert.equal(checkpoint.label, "before the pricing overhaul");
+
+    const afterRes = await fetch(`${baseUrl}/api/projects/${project.id}/checkpoints`, { headers: authHeaders(token) });
+    const { checkpoints: after } = (await afterRes.json()) as { checkpoints: { id: string; label: string }[] };
+    const renamed = after.find((c) => c.id === checkpointId)!;
+    assert.equal(renamed.label, "before the pricing overhaul", "the new label must be genuinely persisted, not just echoed in the PATCH response");
+  });
+});
+
+/**
+ * The cross-project security counterpart to the test above, mirroring "a
+ * user cannot restore another user's checkpoint" just above it: a user who
+ * genuinely owns their own project must not be able to rename a DIFFERENT
+ * user's checkpoint just by guessing/reusing its id.
+ */
+test("a user cannot rename another user's checkpoint by guessing/reusing its id", async () => {
+  await withServer(async (baseUrl) => {
+    const ownerToken = await signup(baseUrl, "owner3@example.com");
+    const intruderToken = await signup(baseUrl, "intruder3@example.com");
+
+    const ownerCreateRes = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: authHeaders(ownerToken),
+      body: JSON.stringify({ description: "A CRM with customers and deals." }),
+    });
+    const { project: ownerProject } = (await ownerCreateRes.json()) as { project: { id: string } };
+    const ownerBuildRes = await fetch(`${baseUrl}/api/projects/${ownerProject.id}/build`, {
+      method: "POST",
+      headers: authHeaders(ownerToken),
+    });
+    await collectSSE(ownerBuildRes);
+    const ownerCheckpointsRes = await fetch(`${baseUrl}/api/projects/${ownerProject.id}/checkpoints`, {
+      headers: authHeaders(ownerToken),
+    });
+    const { checkpoints: ownerCheckpoints } = (await ownerCheckpointsRes.json()) as { checkpoints: { id: string; label: string }[] };
+    const ownerCheckpointId = ownerCheckpoints[0].id;
+    const ownerOriginalLabel = ownerCheckpoints[0].label;
+
+    const intruderCreateRes = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: authHeaders(intruderToken),
+      body: JSON.stringify({ description: "A small courier delivery business." }),
+    });
+    const { project: intruderProject } = (await intruderCreateRes.json()) as { project: { id: string } };
+    const intruderBuildRes = await fetch(`${baseUrl}/api/projects/${intruderProject.id}/build`, {
+      method: "POST",
+      headers: authHeaders(intruderToken),
+    });
+    await collectSSE(intruderBuildRes);
+
+    const crossRenameRes = await fetch(
+      `${baseUrl}/api/projects/${intruderProject.id}/checkpoints/${ownerCheckpointId}`,
+      { method: "PATCH", headers: authHeaders(intruderToken), body: JSON.stringify({ label: "hijacked label" }) },
+    );
+    assert.equal(crossRenameRes.status, 404);
+
+    const ownerCheckpointsAfter = await fetch(`${baseUrl}/api/projects/${ownerProject.id}/checkpoints`, {
+      headers: authHeaders(ownerToken),
+    });
+    const { checkpoints: ownerCheckpointsAfterList } = (await ownerCheckpointsAfter.json()) as { checkpoints: { id: string; label: string }[] };
+    const ownerCheckpointAfter = ownerCheckpointsAfterList.find((c) => c.id === ownerCheckpointId)!;
+    assert.equal(
+      ownerCheckpointAfter.label,
+      ownerOriginalLabel,
+      "the real owner's own checkpoint label must be completely untouched by the intruder's attempt",
+    );
+  });
+});
+
 test("returns 400 for an empty description", async () => {
   await withServer(async (baseUrl) => {
     const token = await signup(baseUrl);

@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import type { Checkpoint, Project, ProductSpec } from "@forge/shared";
 import { listCheckpoints, restoreCheckpoint } from "./api.js";
+import { CheckpointLabelEditor } from "./CheckpointLabelEditor.js";
 import {
   type CheckpointType,
   computeCheckpointDiff,
@@ -47,6 +48,11 @@ export function HistoryPanel({
       .then(({ checkpoints }) => setCheckpoints(checkpoints))
       .catch((err) => setError((err as Error).message));
   }, [projectId]);
+
+  /** Splices the freshly-renamed checkpoint back into the loaded list, matching handleRestore's own "update from the real server response" shape rather than an optimistic local edit. */
+  function handleCheckpointRenamed(renamed: Checkpoint) {
+    setCheckpoints((prev) => prev.map((c) => (c.id === renamed.id ? renamed : c)));
+  }
 
   function handleDownload() {
     downloadCheckpointHistory(formatCheckpointHistory(checkpoints, currentSpec, projectName, lang, t), projectName);
@@ -129,7 +135,7 @@ export function HistoryPanel({
               return (
                 <li key={checkpoint.id}>
                   <div>
-                    <strong>{checkpoint.label}</strong>
+                    <CheckpointLabelEditor checkpoint={checkpoint} projectId={projectId} onRenamed={handleCheckpointRenamed} />
                     {isCurrent && <span className="chip checkpoint-current-chip">{t("history.current")}</span>}
                     <div className="muted small">
                       {new Date(checkpoint.createdAt).toLocaleString(LOCALE[lang])}

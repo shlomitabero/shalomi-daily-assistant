@@ -487,7 +487,10 @@ test("HistoryPanel's search box (shown once there are more than 5 checkpoints) n
 
       fireEvent.change(searchBox, { target: { value: "invoice" } });
       await waitForCondition(() => document.querySelectorAll(".checkpoint-list li").length === 2);
-      const narrowedLabels = Array.from(document.querySelectorAll(".checkpoint-list li strong")).map((el) => el.textContent);
+      // .childNodes[0] is the label's own text node -- CheckpointLabelEditor's
+      // non-editing view is <strong>{label}<span>✏️</span></strong>, and a
+      // plain .textContent read would include that trailing pencil icon too.
+      const narrowedLabels = Array.from(document.querySelectorAll(".checkpoint-list li strong")).map((el) => el.childNodes[0].textContent);
       assert.deepEqual(
         narrowedLabels.sort(),
         ["Refine: add invoice tracking", "Refine: fix invoice totals"].sort(),
@@ -564,8 +567,11 @@ test("HistoryPanel's type filter (shown once there are more than 5 checkpoints) 
 
       fireEvent.change(typeFilter, { target: { value: "build" } });
       await waitForCondition(() => document.querySelectorAll(".checkpoint-list li").length === 1);
+      // .childNodes[0] is the label's own text node, not the trailing pencil
+      // icon CheckpointLabelEditor's non-editing view also renders -- see
+      // the identical comment on the search-box test just above this one.
       assert.deepEqual(
-        Array.from(document.querySelectorAll(".checkpoint-list li strong")).map((el) => el.textContent),
+        Array.from(document.querySelectorAll(".checkpoint-list li strong")).map((el) => el.childNodes[0].textContent),
         ["Initial build"],
         "'build' must keep only the initial build, dropping every refine",
       );
@@ -577,7 +583,7 @@ test("HistoryPanel's type filter (shown once there are more than 5 checkpoints) 
       fireEvent.change(searchBox, { target: { value: "invoice" } });
       await waitForCondition(() => document.querySelectorAll(".checkpoint-list li").length === 2);
       assert.deepEqual(
-        Array.from(document.querySelectorAll(".checkpoint-list li strong")).map((el) => el.textContent).sort(),
+        Array.from(document.querySelectorAll(".checkpoint-list li strong")).map((el) => el.childNodes[0].textContent).sort(),
         ["Refine: add invoice tracking", "Refine: fix invoice totals"].sort(),
         "the type filter and text search must compose: only refines whose label matches 'invoice'",
       );
@@ -777,6 +783,68 @@ test("HistoryPanel's 'Compare with' dropdown lets you diff one checkpoint agains
         /Invoice/,
         "comparing against the 'middle' checkpoint (which has no Invoice) must not still mention Invoice from the old vs-current diff",
       );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
+ * New in this round: CheckpointLabelEditor gets its own dedicated DOM test
+ * (CheckpointLabelEditor.test.ts), but that test never renders it inside
+ * the real HistoryPanel list -- this confirms the wiring itself: clicking
+ * a real checkpoint's own label inside the real panel, renaming it, and
+ * seeing the real updated label render back in the same list (not just
+ * reported via a callback in isolation), via a real PATCH round trip.
+ */
+test("HistoryPanel's checkpoint label is a real click-to-rename control wired into the live list, not just tested in isolation", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    const cp1 = makeCheckpoint("cp1", "Initial build");
+    let renameCalls = 0;
+
+    globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/checkpoints") {
+        return new Response(JSON.stringify({ checkpoints: [cp1] }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      if (method === "PATCH" && input === "/api/projects/proj1/checkpoints/cp1") {
+        renameCalls += 1;
+        const body = JSON.parse(init!.body as string) as { label: string };
+        return new Response(JSON.stringify({ checkpoint: { ...cp1, label: body.label } }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+
+    try {
+      render(
+        React.createElement(
+          ThemeProvider,
+          null,
+          React.createElement(
+            LanguageProvider,
+            null,
+            React.createElement(HistoryPanel, {
+              projectId: "proj1",
+              projectName: "Test Project",
+              currentSpec: cp1.spec,
+              onRestored: () => {},
+              onClose: () => {},
+            }),
+          ),
+        ),
+      );
+      await waitForCondition(() => document.querySelectorAll(".checkpoint-list li").length === 1);
+
+      fireEvent.click(document.querySelector(".checkpoint-label") as HTMLElement);
+      await waitForCondition(() => document.querySelector(".checkpoint-label-edit input") !== null);
+      const input = document.querySelector(".checkpoint-label-edit input") as HTMLInputElement;
+      fireEvent.change(input, { target: { value: "before the pricing overhaul" } });
+      fireEvent.blur(input);
+
+      await waitForCondition(() => /before the pricing overhaul/.test((document.querySelector(".checkpoint-label") as HTMLElement)?.textContent ?? ""));
+      assert.equal(renameCalls, 1, "expected exactly one real PATCH request");
+      assert.equal(document.querySelectorAll(".checkpoint-list li").length, 1, "renaming must not add or remove any checkpoint from the real list");
     } finally {
       globalThis.fetch = originalFetch;
     }

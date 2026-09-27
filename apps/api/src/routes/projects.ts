@@ -7,6 +7,7 @@ import {
   getProject,
   insertProject,
   listCheckpoints,
+  renameCheckpoint,
   listProjectsForUser,
   diffAndMigrate,
   updateProjectSpec,
@@ -72,6 +73,10 @@ const RenameProjectSchema = z.object({
 });
 
 const RenameEntityLabelSchema = z.object({
+  label: z.string().trim().min(1, "label is required"),
+});
+
+const RenameCheckpointSchema = z.object({
   label: z.string().trim().min(1, "label is required"),
 });
 
@@ -535,6 +540,29 @@ export function createProjectsRouter(db: ForgeDatabase, provider: SpecProvider |
       diffAndMigrate(db, project.id, project.spec, checkpoint.spec);
       const updated = updateProjectSpec(db, project.id, checkpoint.spec);
       res.json({ project: updated });
+    }),
+  );
+
+  /**
+   * A checkpoint's label was previously only ever the automatic one build/
+   * refine gave it ("Initial build", "Refine: <instruction>") -- no way to
+   * give an important one a name that's actually memorable months later
+   * (e.g. "before the pricing overhaul"). Checks project ownership through
+   * requireProjectAccess just like the restore route above, and
+   * renameCheckpoint itself re-scopes by projectId in its own WHERE clause
+   * (see checkpoints.ts), so a checkpoint id belonging to a different
+   * project can never be renamed even if guessed.
+   */
+  router.patch(
+    "/projects/:id/checkpoints/:checkpointId",
+    asyncRoute(async (req, res) => {
+      const project = requireProjectAccess(db, req.params.id, req.userId!);
+      const parsed = RenameCheckpointSchema.safeParse(req.body);
+      if (!parsed.success) {
+        throw new HttpError(400, formatValidationError(parsed.error), "VALIDATION_ERROR");
+      }
+      const checkpoint = renameCheckpoint(db, project.id, req.params.checkpointId, parsed.data.label);
+      res.json({ checkpoint });
     }),
   );
 

@@ -413,6 +413,10 @@ export function restoreCheckpoint(projectId: string, checkpointId: string): Prom
   return request(`/projects/${projectId}/checkpoints/${checkpointId}/restore`, { method: "POST" });
 }
 
+export function renameCheckpoint(projectId: string, checkpointId: string, label: string): Promise<{ checkpoint: Checkpoint }> {
+  return request(`/projects/${projectId}/checkpoints/${checkpointId}`, { method: "PATCH", body: JSON.stringify({ label }) });
+}
+
 export function listRecords(projectId: string, entityName: string): Promise<{ records: EntityRecord[] }> {
   return request(`/projects/${projectId}/entities/${entityName}`);
 }
