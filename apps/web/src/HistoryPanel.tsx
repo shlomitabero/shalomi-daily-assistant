@@ -42,6 +42,7 @@ export function HistoryPanel({
   const [typeFilter, setTypeFilter] = useState<"all" | CheckpointType>("all");
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [copyStatus, setCopyStatus] = useState<"idle" | "copied" | "failed">("idle");
   const dialogRef = useDialogFocusTrap<HTMLDivElement>();
   const visibleCheckpoints = filterCheckpointsByType(filterCheckpoints(checkpoints, search), typeFilter);
 
@@ -59,6 +60,29 @@ export function HistoryPanel({
   function handleDownload() {
     downloadCheckpointHistory(formatCheckpointHistory(checkpoints, currentSpec, projectName, lang, t), projectName);
   }
+
+  /**
+   * Same "Copy report" companion action rounds 222/223 added to Business
+   * Twin's and the WhatsApp log's own Download buttons, closing out the
+   * pattern's third and final known candidate here -- Time Machine's own
+   * timeline is already formatted as the same plain, shareable text
+   * (formatCheckpointHistory), but the only way to get it anywhere was a
+   * real file download.
+   */
+  async function handleCopy() {
+    try {
+      await navigator.clipboard.writeText(formatCheckpointHistory(checkpoints, currentSpec, projectName, lang, t));
+      setCopyStatus("copied");
+    } catch {
+      setCopyStatus("failed");
+    }
+  }
+
+  useEffect(() => {
+    if (copyStatus === "idle") return;
+    const timer = setTimeout(() => setCopyStatus("idle"), 2000);
+    return () => clearTimeout(timer);
+  }, [copyStatus]);
 
   async function handleRestore(checkpoint: Checkpoint) {
     if (!window.confirm(t("history.confirmRestore", { label: checkpoint.label }))) return;
@@ -114,6 +138,15 @@ export function HistoryPanel({
             )}
           </h2>
           <div className="history-header-actions">
+            {checkpoints.length > 0 && (
+              <button type="button" className="secondary" onClick={handleCopy}>
+                {copyStatus === "copied"
+                  ? t("history.copy.copied")
+                  : copyStatus === "failed"
+                    ? t("history.copy.failed")
+                    : t("history.copy")}
+              </button>
+            )}
             {checkpoints.length > 0 && (
               <button type="button" className="secondary" onClick={handleDownload}>
                 {t("history.download")}

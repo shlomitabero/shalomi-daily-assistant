@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { JSDOM } from "jsdom";
 import React from "react";
-import { cleanup, fireEvent, render } from "@testing-library/react";
+import { act, cleanup, fireEvent, render } from "@testing-library/react";
 import type { Checkpoint, ProductSpec, Project } from "@forge/shared";
 import { HistoryPanel } from "./HistoryPanel.js";
 import { LanguageProvider } from "./i18n/LanguageContext.js";
@@ -1059,6 +1059,154 @@ test("HistoryPanel's checkpoint label is a real click-to-rename control wired in
       assert.equal(document.querySelectorAll(".checkpoint-list li").length, 1, "renaming must not add or remove any checkpoint from the real list");
     } finally {
       globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
+ * New in this round: the same "Copy report" companion action rounds
+ * 222/223 added to Business Twin's and the WhatsApp log's own Download
+ * buttons, closing out that pattern's third and final candidate here --
+ * the timeline is already formatted as the same plain, shareable text
+ * (formatCheckpointHistory), but the only way to get it anywhere was a
+ * real file download. Confirms the real navigator.clipboard.writeText
+ * receives the exact formatted timeline text, the button shows a real
+ * "Copied!" confirmation, and (via a real mocked setTimeout tick, not a
+ * hardcoded wait) fades back to normal 2 seconds later.
+ */
+test("HistoryPanel's copy button writes the real formatted timeline to the clipboard, shows Copied, then reverts", async (t) => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    const cp1 = makeCheckpoint("cp1", "Initial build");
+    globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/checkpoints") {
+        return new Response(JSON.stringify({ checkpoints: [cp1] }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+
+    let writtenText: string | undefined;
+    Object.defineProperty(navigator, "clipboard", {
+      value: { writeText: async (text: string) => void (writtenText = text) },
+      configurable: true,
+    });
+
+    try {
+      render(
+        React.createElement(
+          ThemeProvider,
+          null,
+          React.createElement(
+            LanguageProvider,
+            null,
+            React.createElement(HistoryPanel, {
+              projectId: "proj1",
+              projectName: "Flower Shop",
+              currentSpec: cp1.spec,
+              onRestored: () => {},
+              onClose: () => {},
+            }),
+          ),
+        ),
+      );
+      await waitForCondition(() => document.querySelectorAll(".checkpoint-list li").length === 1);
+
+      t.mock.timers.enable({ apis: ["setTimeout"] });
+
+      const copyButton = Array.from(document.querySelectorAll("button")).find((b) => b.textContent === "📋 Copy timeline");
+      assert.ok(copyButton, "expected a Copy timeline button once the history has real checkpoints");
+
+      await act(async () => {
+        fireEvent.click(copyButton!);
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+
+      assert.equal(typeof writtenText, "string", "clicking Copy must actually call navigator.clipboard.writeText");
+      assert.match(writtenText!, /Flower Shop/, "the copied text must be the real formatted timeline, not a placeholder");
+      assert.match(writtenText!, /Initial build/, "the copied text must include the real checkpoint label");
+      assert.equal(copyButton!.textContent, "✅ Copied!", "must show the real Copied confirmation, not silently do nothing");
+
+      act(() => {
+        t.mock.timers.tick(2000);
+      });
+      assert.equal(copyButton!.textContent, "📋 Copy timeline", "must revert to the normal label once the delay elapses");
+    } finally {
+      t.mock.timers.reset();
+      globalThis.fetch = originalFetch;
+      delete (navigator as { clipboard?: unknown }).clipboard;
+    }
+  });
+});
+
+/** The other half: a real rejection (denied permission, insecure context) must show a real failure label, not fail silently or crash. */
+test("HistoryPanel's copy button shows a failure label when navigator.clipboard.writeText rejects", async (t) => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    const cp1 = makeCheckpoint("cp1", "Initial build");
+    globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/checkpoints") {
+        return new Response(JSON.stringify({ checkpoints: [cp1] }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+
+    Object.defineProperty(navigator, "clipboard", {
+      value: {
+        writeText: async () => {
+          throw new Error("denied");
+        },
+      },
+      configurable: true,
+    });
+
+    try {
+      render(
+        React.createElement(
+          ThemeProvider,
+          null,
+          React.createElement(
+            LanguageProvider,
+            null,
+            React.createElement(HistoryPanel, {
+              projectId: "proj1",
+              projectName: "Flower Shop",
+              currentSpec: cp1.spec,
+              onRestored: () => {},
+              onClose: () => {},
+            }),
+          ),
+        ),
+      );
+      await waitForCondition(() => document.querySelectorAll(".checkpoint-list li").length === 1);
+
+      t.mock.timers.enable({ apis: ["setTimeout"] });
+
+      const copyButton = Array.from(document.querySelectorAll("button")).find((b) => b.textContent === "📋 Copy timeline");
+      await act(async () => {
+        fireEvent.click(copyButton!);
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+
+      assert.equal(copyButton!.textContent, "Copy failed", "a real clipboard rejection must show a real failure label");
+
+      act(() => {
+        t.mock.timers.tick(2000);
+      });
+      assert.equal(copyButton!.textContent, "📋 Copy timeline", "must revert to the normal label even after a failure");
+    } finally {
+      t.mock.timers.reset();
+      globalThis.fetch = originalFetch;
+      delete (navigator as { clipboard?: unknown }).clipboard;
     }
   });
 });
