@@ -11351,6 +11351,89 @@ not a single "make it perfect" claim.
       `@forge/api` 220 unchanged) and `npm run build --workspace=@forge/web`
       clean.
 
+- [x] **Round 215 — an unwanted screen can now be removed from the spec
+      review page.**
+      Diversification: rounds 210-214 covered account/topbar, calendar
+      view, Business Twin, CollaboratorsPanel, and Global Search -- this
+      round moves to the spec review screen, per round 214's own trigger
+      note suggesting either it or the AI Team build screen next. Reading
+      the spec review page's three parallel sections side by side (roles,
+      entities, assumptions) surfaced a precise, real gap: roles and
+      assumptions each already had a real remove button (round 178), but
+      the "entities" section -- the actual screens the AI Team is about to
+      build -- was still entirely static. A wrong entity the heuristic or
+      AI invented (an unwanted "Courier" screen on a business with no
+      delivery, say) could only be talked out of existence via the
+      free-text "additional request" box and hoping the next build
+      dropped it, never a guaranteed, immediate removal.
+
+      New in `apps/api/src/routes/projects.ts`: `DELETE
+      /projects/:id/entities/:entityName`, mirroring the pre-existing
+      roles/assumptions delete routes but keyed by name (entities' own
+      real, stable identifier) instead of array index. Same `entities:
+      z.array(EntitySchema).min(1)` floor as roles' own `.min(1)` on
+      `ProductSpecSchema` -- guarded with a clear 400 instead of an
+      uncaught schema-validation 500. Two guards specific to entities (not
+      needed by roles/assumptions, which are purely descriptive and never
+      touch the database): blocked with 409
+      `ENTITY_REMOVAL_AFTER_BUILD` once the project has actually been
+      built, since the real database table, generated code, and routes
+      for that entity already exist by then -- removing it from the spec
+      alone would silently desync the spec from the running app instead
+      of undoing anything (the spec review screen is never shown again
+      after a build anyway, so this only guards a direct API call); and
+      blocked with 400 `ENTITY_HAS_DEPENDENT_RELATIONS` when another
+      entity's own relation field still points to the one being removed
+      (e.g. trying to remove "Courier" while "Order.courierId" still
+      relates to it), reusing the existing `ENTITY_NOT_FOUND` code (from
+      the record routes) for an unknown entity name rather than adding a
+      redundant duplicate.
+
+      Web: `EntitySummaryItem` (new, in `SpecListItemRemover.tsx`) mirrors
+      `RoleChip`/`AssumptionItem`'s own busy/error/remove pattern exactly,
+      reusing the same `useRemovableSpecItem` hook -- `summary` (the
+      already-formatted field list) is passed in as a prop rather than
+      computed inside this file, specifically to avoid a circular import
+      between `App.tsx` and `SpecListItemRemover.tsx`. `canRemove` mirrors
+      `RoleChip`'s own convention: false once this is the only remaining
+      entity, disabling the button instead of letting the person hit the
+      API's 400.
+
+      New tests: `app.test.ts` gets six new tests mirroring the existing
+      roles/assumptions coverage -- owner-and-collaborator removal keeping
+      order, an unknown entity name 404ing with `ENTITY_NOT_FOUND`, the
+      last-remaining-entity 400 guard, the dependent-relation 400 guard
+      (using the real "small courier delivery business" description,
+      which reliably produces `Order.courierId → Courier`), cross-project
+      access (still 404s for an outsider), and the already-built 409
+      guard. `SpecListItemRemover.test.ts` gets the same three-test
+      pattern already established for `RoleChip` (a real removal, the
+      disabled-last-one guard, and a surfaced real error) applied to
+      `EntitySummaryItem`.
+
+      Verified with the deliberate-break-and-restore discipline, twice,
+      across both layers: removed the dependent-relation guard entirely
+      from the API route -- caught cleanly by the new dedicated test
+      (400 expected, got 200); restored, `diff` byte-identical. Removed
+      the `!canRemove` half of the web button's `disabled` condition --
+      caught cleanly by the new disabled-button test; restored, `diff`
+      byte-identical.
+
+      **And** a real Playwright pass against the live dev server: signed
+      up, built a real beauty-clinic project (4 real entities: Customer,
+      Appointment, Employee, Service), removed one from the spec review
+      page, confirmed its own summary block genuinely disappeared,
+      reloaded the whole page and reopened the same still-draft project
+      fresh to confirm the removal actually persisted server-side (not
+      just local React state), then removed the rest down to exactly one
+      and confirmed that last entity's remove button was genuinely
+      disabled.
+
+      Full suite green (810 tests, up from 801 -- `@forge/api` 220 → 226;
+      `@forge/web` 397 → 400; `@forge/shared` 11, `@forge/spec-engine` 82,
+      `@forge/db` 91 unchanged) and `npm run build --workspace=@forge/web`
+      clean.
+
 ## Phase 3
 
 - Self-healing: production observability, automatic diagnosis and patch
