@@ -12498,6 +12498,89 @@ not a single "make it perfect" claim.
       `npm run build --workspace=@forge/api` and
       `npm run build --workspace=@forge/web` clean.
 
+- [x] **Round 231 — persist the Entity table's "Group by" field choice**
+      (live preview). Grouping the table by an enum/boolean field (round
+      219) has always been a plain `useState` that reset to "no grouping"
+      on every entity switch and was never written to storage at all --
+      unlike hidden columns, a reordered column layout, and resized column
+      widths, which all already persist per project+entity via
+      `columnVisibility.ts`/`columnOrder.ts`/`columnWidths.ts`. That made
+      the grouping the one entity-table view preference that silently
+      forgot itself, even across the shortest possible round trip (leaving
+      the entity tab and coming straight back). Added
+      `groupByPreference.ts` (`getGroupByField`/`setGroupByField`), a
+      single-string-value sibling of `columnOrder.ts`'s own
+      per-`{projectId}:{entityName}` localStorage keying (`""` means "no
+      grouping ever chosen", matching the "no grouping" `<option>`'s own
+      empty value). `EntityPanel.tsx` now loads the persisted value in a
+      dedicated `useEffect` keyed on `[projectId, entity.name]` --
+      mirroring the existing `hiddenFields`/`columnOrder`/`columnWidths`
+      effects right next to it -- instead of unconditionally resetting to
+      `""` inside the combined per-entity reset effect, and the dropdown's
+      own `onChange` now calls `setGroupByField` before updating state, so
+      every choice (including reverting to "no grouping") is written
+      through immediately.
+
+      Pure-function tests (`groupByPreference.test.ts`, 6 new): default
+      `""`, a real persisted round trip (not just the return value), that
+      `""` genuinely clears a previous choice back out of storage, scoping
+      per project+entity (a different project or a different entity in
+      the same project never sees another's choice), tolerance for
+      corrupted JSON, and tolerance for a foreign non-string value under
+      the same key. One new DOM test in `EntityPanel.test.ts` renders the
+      real component, picks "status" as the group-by field, confirms
+      `getGroupByField` sees it written through storage (not just held in
+      the component's own state), unmounts and remounts the *same*
+      project+entity and confirms the dropdown comes back already showing
+      "status" with the table already rendering grouped on first paint
+      (not a flash of "no grouping" first), then mounts a *different*
+      entity in the same project and confirms its own dropdown shows ""
+      rather than inheriting "status" -- and that nothing was ever written
+      to that other entity's own storage slot either.
+
+      Deliberately broke `getGroupByField` to always return `""`
+      regardless of what was actually stored (simulating the persistence
+      silently doing nothing). Both layers caught it cleanly, no hang: the
+      new pure-function test failed with a plain `'' !== 'status'`
+      assertion mismatch, and the new DOM test failed the same way at its
+      first `getGroupByField` assertion, both exiting normally rather than
+      needing the `timeout` wrapper to kill anything. Restored from a
+      backup and confirmed a byte-identical `diff` before re-confirming
+      all tests green again.
+
+      Real bug caught mid-build (not a deliberate break): the first draft
+      of the new DOM test rendered a second entity with zero seeded
+      records to check the "different entity" scoping case, and the
+      dropdown never appeared at all -- confirming round 227's own lesson
+      applies here too (an empty `visibleRecords` shows only the
+      empty-state, not the toolbar, so `.entity-group-by` doesn't exist
+      until at least one record exists). Fixed by seeding one record in
+      that entity's own mock response, same as the export-codegen
+      Playwright pipeline already has to do for its own drag-and-drop
+      tests.
+
+      Full pipeline verification via the real dev server + Playwright:
+      signed up, built a real "מסעדה עם תפריט והזמנות" project, seeded 2
+      real Order records, selected "status" as Group by (grouped view
+      rendered immediately), did a full page **reload** (not just a panel
+      close/reopen), reopened the project, and confirmed the Group by
+      dropdown came back already showing "status" with 2 real group-header
+      rows rendered on first paint -- a genuinely persisted choice, not an
+      in-memory illusion. The script's own attempt to also check the
+      *other* entity tab's dropdown via its English name found no match
+      (the tab's own label renders in Hebrew from the spec, not the
+      literal entity name, consistent with the standing convention that
+      entity/field labels display in Hebrew even when the rest of the UI
+      is hard-coded English verbs) -- reported honestly rather than
+      claimed as verified; the DOM test's own cross-entity scoping
+      assertion already covers this case rigorously.
+
+      Full suite green (871 tests, up from 864 -- `@forge/web` 441 → 448;
+      `@forge/shared` 11, `@forge/spec-engine` 82, `@forge/db` 91,
+      `@forge/api` 239 unchanged) and both
+      `npm run build --workspace=@forge/api` and
+      `npm run build --workspace=@forge/web` clean.
+
 ## Phase 3
 
 - Self-healing: production observability, automatic diagnosis and patch
