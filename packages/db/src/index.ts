@@ -56,6 +56,7 @@ export {
   listCheckpoints,
   getCheckpoint,
   renameCheckpoint,
+  deleteCheckpoint,
   deleteCheckpointsForProject,
 } from "./checkpoints.js";
 export { generateSeedRecords } from "./seed.js";

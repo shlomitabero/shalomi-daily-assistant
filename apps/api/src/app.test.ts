@@ -2297,6 +2297,135 @@ test("a user cannot rename another user's checkpoint by guessing/reusing its id"
   });
 });
 
+/**
+ * New in this round: Time Machine's history otherwise only ever grows --
+ * every build and every refine adds a checkpoint, with no way to prune a
+ * single unwanted one (an experimental refine that went nowhere, say), the
+ * same real gap round 208 closed for the WhatsApp message log. Confirms a
+ * real DELETE removes exactly the one checkpoint via a real round trip,
+ * and that it's genuinely gone (a fresh GET no longer lists it, not just
+ * the DELETE response reporting success).
+ */
+test("deleting a checkpoint by id removes exactly that one, leaving the rest of the project's history untouched", async () => {
+  await withServer(async (baseUrl) => {
+    const token = await signup(baseUrl, "checkpoint-delete-owner1@example.com");
+    const createRes = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ description: "A CRM with customers and deals." }),
+    });
+    const { project } = (await createRes.json()) as { project: { id: string } };
+    const buildRes = await fetch(`${baseUrl}/api/projects/${project.id}/build`, { method: "POST", headers: authHeaders(token) });
+    await collectSSE(buildRes);
+    const refineRes = await fetch(`${baseUrl}/api/projects/${project.id}/refine`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ instruction: "Add a notes field to Customer" }),
+    });
+    await collectSSE(refineRes);
+
+    const beforeRes = await fetch(`${baseUrl}/api/projects/${project.id}/checkpoints`, { headers: authHeaders(token) });
+    const { checkpoints: before } = (await beforeRes.json()) as { checkpoints: { id: string }[] };
+    assert.ok(before.length >= 2, "a build followed by a refine must produce at least two checkpoints");
+    const toDelete = before[0].id;
+
+    const deleteRes = await fetch(`${baseUrl}/api/projects/${project.id}/checkpoints/${toDelete}`, {
+      method: "DELETE",
+      headers: authHeaders(token),
+    });
+    assert.equal(deleteRes.status, 204);
+
+    const afterRes = await fetch(`${baseUrl}/api/projects/${project.id}/checkpoints`, { headers: authHeaders(token) });
+    const { checkpoints: after } = (await afterRes.json()) as { checkpoints: { id: string }[] };
+    assert.deepEqual(
+      after.map((c) => c.id),
+      before.filter((c) => c.id !== toDelete).map((c) => c.id),
+      "deleting one checkpoint must drop only that one, keeping the rest in their original order",
+    );
+  });
+});
+
+test("deleting a checkpoint id that doesn't exist in this project 404s, and the project's own history is left untouched", async () => {
+  await withServer(async (baseUrl) => {
+    const token = await signup(baseUrl, "checkpoint-delete-owner2@example.com");
+    const createRes = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ description: "A CRM with customers and deals." }),
+    });
+    const { project } = (await createRes.json()) as { project: { id: string } };
+    const buildRes = await fetch(`${baseUrl}/api/projects/${project.id}/build`, { method: "POST", headers: authHeaders(token) });
+    await collectSSE(buildRes);
+
+    const res = await fetch(`${baseUrl}/api/projects/${project.id}/checkpoints/no-such-checkpoint`, {
+      method: "DELETE",
+      headers: authHeaders(token),
+    });
+    assert.equal(res.status, 404);
+
+    const getRes = await fetch(`${baseUrl}/api/projects/${project.id}/checkpoints`, { headers: authHeaders(token) });
+    const { checkpoints: unchanged } = (await getRes.json()) as { checkpoints: unknown[] };
+    assert.equal(unchanged.length, 1, "the project's own history must be untouched by the failed delete attempt");
+  });
+});
+
+/**
+ * The cross-project security counterpart to the two tests above, mirroring
+ * "a user cannot rename another user's checkpoint" just above them: a user
+ * who genuinely owns their own project must not be able to delete a
+ * DIFFERENT user's checkpoint just by guessing/reusing its id.
+ */
+test("a user cannot delete another user's checkpoint by guessing/reusing its id", async () => {
+  await withServer(async (baseUrl) => {
+    const ownerToken = await signup(baseUrl, "checkpoint-delete-owner3@example.com");
+    const intruderToken = await signup(baseUrl, "checkpoint-delete-intruder3@example.com");
+
+    const ownerCreateRes = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: authHeaders(ownerToken),
+      body: JSON.stringify({ description: "A CRM with customers and deals." }),
+    });
+    const { project: ownerProject } = (await ownerCreateRes.json()) as { project: { id: string } };
+    const ownerBuildRes = await fetch(`${baseUrl}/api/projects/${ownerProject.id}/build`, {
+      method: "POST",
+      headers: authHeaders(ownerToken),
+    });
+    await collectSSE(ownerBuildRes);
+    const ownerCheckpointsRes = await fetch(`${baseUrl}/api/projects/${ownerProject.id}/checkpoints`, {
+      headers: authHeaders(ownerToken),
+    });
+    const { checkpoints: ownerCheckpoints } = (await ownerCheckpointsRes.json()) as { checkpoints: { id: string }[] };
+    const ownerCheckpointId = ownerCheckpoints[0].id;
+
+    const intruderCreateRes = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: authHeaders(intruderToken),
+      body: JSON.stringify({ description: "A small courier delivery business." }),
+    });
+    const { project: intruderProject } = (await intruderCreateRes.json()) as { project: { id: string } };
+    const intruderBuildRes = await fetch(`${baseUrl}/api/projects/${intruderProject.id}/build`, {
+      method: "POST",
+      headers: authHeaders(intruderToken),
+    });
+    await collectSSE(intruderBuildRes);
+
+    const crossDeleteRes = await fetch(
+      `${baseUrl}/api/projects/${intruderProject.id}/checkpoints/${ownerCheckpointId}`,
+      { method: "DELETE", headers: authHeaders(intruderToken) },
+    );
+    assert.equal(crossDeleteRes.status, 404);
+
+    const ownerCheckpointsAfter = await fetch(`${baseUrl}/api/projects/${ownerProject.id}/checkpoints`, {
+      headers: authHeaders(ownerToken),
+    });
+    const { checkpoints: ownerCheckpointsAfterList } = (await ownerCheckpointsAfter.json()) as { checkpoints: { id: string }[] };
+    assert.ok(
+      ownerCheckpointsAfterList.some((c) => c.id === ownerCheckpointId),
+      "the real owner's own checkpoint must still exist, completely untouched by the intruder's attempt",
+    );
+  });
+});
+
 test("returns 400 for an empty description", async () => {
   await withServer(async (baseUrl) => {
     const token = await signup(baseUrl);

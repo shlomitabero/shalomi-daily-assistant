@@ -2320,7 +2320,8 @@ button.sort-header:hover:not(:disabled) {
   white-space: nowrap;
 }
 
-.whatsapp-log-delete {
+.whatsapp-log-delete,
+.checkpoint-delete-btn {
   flex-shrink: 0;
   background: none;
   border: none;
@@ -2332,14 +2333,20 @@ button.sort-header:hover:not(:disabled) {
   opacity: 0.6;
 }
 
-.whatsapp-log-delete:hover:not(:disabled) {
+.checkpoint-delete-btn {
+  margin-inline-start: 6px;
+}
+
+.whatsapp-log-delete:hover:not(:disabled),
+.checkpoint-delete-btn:hover:not(:disabled) {
   opacity: 1;
   transform: none;
   box-shadow: none;
   background: var(--danger-soft);
 }
 
-.whatsapp-log-delete:disabled {
+.whatsapp-log-delete:disabled,
+.checkpoint-delete-btn:disabled {
   cursor: default;
   opacity: 0.4;
 }

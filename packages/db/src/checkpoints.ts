@@ -107,3 +107,26 @@ export function renameCheckpoint(db: ForgeDatabase, projectId: string, checkpoin
 export function deleteCheckpointsForProject(db: ForgeDatabase, projectId: string): void {
   db.prepare("DELETE FROM checkpoints WHERE projectId = ?").run(projectId);
 }
+
+/**
+ * Removes a single checkpoint -- Time Machine's history otherwise only ever
+ * grows (every build and every refine adds one, with no way to prune a
+ * single unwanted entry, e.g. an experimental refine that went nowhere),
+ * the same real gap round 208 closed for the WhatsApp message log.
+ * Scoped to projectId in the same WHERE clause as the checkpoint id itself,
+ * the same convention renameCheckpoint above and deleteWhatsAppMessage
+ * (whatsapp.ts) already use, so a checkpoint id belonging to a different
+ * project can never be deleted through this call. Deleting a checkpoint
+ * never touches the project's own current spec -- that lives on the
+ * project row itself, independent of this table -- so even deleting the
+ * checkpoint that happens to match the current state (the "Current" chip
+ * in HistoryPanel.tsx) is harmless; it just removes that historical entry.
+ * Throws NotFoundError for an id that doesn't exist in this project's own
+ * history.
+ */
+export function deleteCheckpoint(db: ForgeDatabase, projectId: string, checkpointId: string): void {
+  const result = db.prepare("DELETE FROM checkpoints WHERE id = ? AND projectId = ?").run(checkpointId, projectId);
+  if (result.changes === 0) {
+    throw new NotFoundError(`Checkpoint ${checkpointId} not found in project ${projectId}`);
+  }
+}

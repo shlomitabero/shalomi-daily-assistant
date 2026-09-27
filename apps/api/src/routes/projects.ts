@@ -8,6 +8,7 @@ import {
   insertProject,
   listCheckpoints,
   renameCheckpoint,
+  deleteCheckpoint,
   listProjectsForUser,
   diffAndMigrate,
   updateProjectSpec,
@@ -580,6 +581,26 @@ export function createProjectsRouter(db: ForgeDatabase, provider: SpecProvider |
       }
       const checkpoint = renameCheckpoint(db, project.id, req.params.checkpointId, parsed.data.label);
       res.json({ checkpoint });
+    }),
+  );
+
+  /**
+   * Time Machine's history otherwise only ever grows -- every build and
+   * every refine adds a checkpoint, with no way to prune a single unwanted
+   * one (an experimental refine that went nowhere, say), the same real gap
+   * round 208 closed for the WhatsApp message log. deleteCheckpoint itself
+   * re-scopes by projectId in its own WHERE clause (see checkpoints.ts), so
+   * a checkpoint id belonging to a different project can never be deleted
+   * even if guessed. Never touches the project's own current spec (that
+   * lives on the project row, independent of this table), so deleting even
+   * the checkpoint that happens to match the current state is harmless.
+   */
+  router.delete(
+    "/projects/:id/checkpoints/:checkpointId",
+    asyncRoute(async (req, res) => {
+      const project = requireProjectAccess(db, req.params.id, req.userId!);
+      deleteCheckpoint(db, project.id, req.params.checkpointId);
+      res.status(204).end();
     }),
   );
 

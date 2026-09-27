@@ -790,6 +790,218 @@ test("HistoryPanel's 'Compare with' dropdown lets you diff one checkpoint agains
 });
 
 /**
+ * New in this round: every build/refine adds a checkpoint forever with no
+ * way to prune a single unwanted one (an experimental refine that went
+ * nowhere, say) -- the same real gap round 208 closed for the WhatsApp
+ * message log. Confirms a real click asks for confirmation naming the
+ * checkpoint, then calls the real DELETE endpoint and removes exactly that
+ * one from the live list (not the other checkpoint sharing the same
+ * render).
+ */
+test("HistoryPanel's delete button asks for confirmation naming the checkpoint, then removes exactly that one via a real DELETE round trip", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    const originalConfirm = globalThis.window.confirm;
+    const cp1 = makeCheckpoint("cp1", "Initial build");
+    const cp2 = makeCheckpoint("cp2", "Refine: add invoices");
+    let deleteCalls = 0;
+    let confirmMessage: string | undefined;
+
+    globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/checkpoints") {
+        return new Response(JSON.stringify({ checkpoints: [cp1, cp2] }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      if (method === "DELETE" && input === "/api/projects/proj1/checkpoints/cp2") {
+        deleteCalls += 1;
+        return new Response(null, { status: 204 });
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+    globalThis.window.confirm = ((message: string) => {
+      confirmMessage = message;
+      return true;
+    }) as typeof window.confirm;
+
+    try {
+      render(
+        React.createElement(
+          ThemeProvider,
+          null,
+          React.createElement(
+            LanguageProvider,
+            null,
+            React.createElement(HistoryPanel, {
+              projectId: "proj1",
+              projectName: "Test Project",
+              currentSpec: { ...cp1.spec, entities: [] },
+              onRestored: () => {},
+              onClose: () => {},
+            }),
+          ),
+        ),
+      );
+      await waitForCondition(() => document.querySelectorAll(".checkpoint-list li").length === 2);
+
+      const deleteButtons = Array.from(document.querySelectorAll(".checkpoint-delete-btn")) as HTMLButtonElement[];
+      assert.equal(deleteButtons.length, 2, "expected one delete button per checkpoint");
+      fireEvent.click(deleteButtons[1]); // cp2's own button
+
+      await waitForCondition(() => document.querySelectorAll(".checkpoint-list li").length === 1);
+      assert.equal(deleteCalls, 1);
+      assert.match(confirmMessage ?? "", /Refine: add invoices/, "the confirm message must name the actual checkpoint being deleted");
+      assert.match(
+        document.querySelector(".checkpoint-list li")!.textContent ?? "",
+        /Initial build/,
+        "the OTHER checkpoint must still be listed, untouched",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+      globalThis.window.confirm = originalConfirm;
+    }
+  });
+});
+
+/** Mirrors the identical decline test already established for restore above -- declining must leave both the list and the server untouched. */
+test("HistoryPanel's delete button does nothing when the confirm is declined", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    const originalConfirm = globalThis.window.confirm;
+    const cp1 = makeCheckpoint("cp1", "Initial build");
+    let deleteCalls = 0;
+
+    globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/checkpoints") {
+        return new Response(JSON.stringify({ checkpoints: [cp1] }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      if (method === "DELETE" && input === "/api/projects/proj1/checkpoints/cp1") {
+        deleteCalls += 1;
+        return new Response(null, { status: 204 });
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+    globalThis.window.confirm = (() => false) as typeof window.confirm;
+
+    try {
+      render(
+        React.createElement(
+          ThemeProvider,
+          null,
+          React.createElement(
+            LanguageProvider,
+            null,
+            React.createElement(HistoryPanel, {
+              projectId: "proj1",
+              projectName: "Test Project",
+              currentSpec: { ...cp1.spec, entities: [] },
+              onRestored: () => {},
+              onClose: () => {},
+            }),
+          ),
+        ),
+      );
+      await waitForCondition(() => document.querySelectorAll(".checkpoint-list li").length === 1);
+
+      fireEvent.click(document.querySelector(".checkpoint-delete-btn") as HTMLButtonElement);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      assert.equal(deleteCalls, 0, "declining the confirm must never call the DELETE endpoint");
+      assert.equal(document.querySelectorAll(".checkpoint-list li").length, 1, "the checkpoint must still be listed after declining");
+    } finally {
+      globalThis.fetch = originalFetch;
+      globalThis.window.confirm = originalConfirm;
+    }
+  });
+});
+
+/**
+ * Mirrors the identical restore-vs-restore concurrency guard already
+ * established above, extended to the new delete action: restore and
+ * delete now share the risk of a second action firing while the first is
+ * still in flight (e.g. clicking Delete on one row while a Restore on
+ * another is still pending would, without this guard, let both requests
+ * race). Confirms a delete in flight disables every restore button too,
+ * not just every other delete button.
+ */
+test("HistoryPanel disables every restore button while a delete is in flight, and vice versa", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    const originalConfirm = globalThis.window.confirm;
+    const cp1 = makeCheckpoint("cp1", "Initial build");
+    const cp2 = makeCheckpoint("cp2", "Refine: add invoices");
+    let resolveDelete!: (value: Response) => void;
+    let restoreCalls = 0;
+
+    globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/checkpoints") {
+        return new Response(JSON.stringify({ checkpoints: [cp1, cp2] }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      if (method === "DELETE" && input === "/api/projects/proj1/checkpoints/cp1") {
+        return new Promise<Response>((resolve) => {
+          resolveDelete = resolve;
+        });
+      }
+      if (method === "POST" && input === "/api/projects/proj1/checkpoints/cp2/restore") {
+        restoreCalls += 1;
+        return new Response(JSON.stringify({ project: { id: "proj1" } }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+    globalThis.window.confirm = (() => true) as typeof window.confirm;
+
+    try {
+      render(
+        React.createElement(
+          ThemeProvider,
+          null,
+          React.createElement(
+            LanguageProvider,
+            null,
+            React.createElement(HistoryPanel, {
+              projectId: "proj1",
+              projectName: "Test Project",
+              currentSpec: { ...cp1.spec, entities: [] },
+              onRestored: () => {},
+              onClose: () => {},
+            }),
+          ),
+        ),
+      );
+      await waitForCondition(() => document.querySelectorAll(".checkpoint-list li").length === 2);
+
+      const deleteButtons = Array.from(document.querySelectorAll(".checkpoint-delete-btn")) as HTMLButtonElement[];
+      const restoreButtons = Array.from(document.querySelectorAll(".checkpoint-restore-btn")) as HTMLButtonElement[];
+      fireEvent.click(deleteButtons[0]); // cp1's own delete, held open
+      await waitForCondition(() => restoreButtons[1].disabled && deleteButtons[1].disabled);
+
+      fireEvent.click(restoreButtons[1]);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      assert.equal(restoreCalls, 0, "a disabled restore button must never fire while an unrelated delete is still in flight");
+
+      resolveDelete(new Response(null, { status: 204 }));
+      await waitForCondition(() => document.querySelectorAll(".checkpoint-list li").length === 1);
+    } finally {
+      globalThis.fetch = originalFetch;
+      globalThis.window.confirm = originalConfirm;
+    }
+  });
+});
+
+/**
  * New in this round: CheckpointLabelEditor gets its own dedicated DOM test
  * (CheckpointLabelEditor.test.ts), but that test never renders it inside
  * the real HistoryPanel list -- this confirms the wiring itself: clicking

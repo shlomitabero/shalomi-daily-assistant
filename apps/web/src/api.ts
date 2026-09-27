@@ -434,6 +434,10 @@ export function renameCheckpoint(projectId: string, checkpointId: string, label:
   return request(`/projects/${projectId}/checkpoints/${checkpointId}`, { method: "PATCH", body: JSON.stringify({ label }) });
 }
 
+export function deleteCheckpoint(projectId: string, checkpointId: string): Promise<void> {
+  return request(`/projects/${projectId}/checkpoints/${checkpointId}`, { method: "DELETE" });
+}
+
 export function listRecords(projectId: string, entityName: string): Promise<{ records: EntityRecord[] }> {
   return request(`/projects/${projectId}/entities/${entityName}`);
 }

@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import type { Checkpoint, Project, ProductSpec } from "@forge/shared";
-import { listCheckpoints, restoreCheckpoint } from "./api.js";
+import { deleteCheckpoint, listCheckpoints, restoreCheckpoint } from "./api.js";
 import { CheckpointLabelEditor } from "./CheckpointLabelEditor.js";
 import {
   type CheckpointType,
@@ -40,6 +40,8 @@ export function HistoryPanel({
   const [compareTargetId, setCompareTargetId] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [typeFilter, setTypeFilter] = useState<"all" | CheckpointType>("all");
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
   const dialogRef = useDialogFocusTrap<HTMLDivElement>();
   const visibleCheckpoints = filterCheckpointsByType(filterCheckpoints(checkpoints, search), typeFilter);
 
@@ -72,6 +74,32 @@ export function HistoryPanel({
     }
   }
 
+  /**
+   * Time Machine's history otherwise only ever grows -- every build and
+   * every refine adds a checkpoint, with no way to prune a single unwanted
+   * one (an experimental refine that went nowhere, say). Mirrors
+   * WhatsAppPanel.tsx's own handleDeleteMessage: a real confirm, then a
+   * real DELETE, then remove exactly that one from local state on success
+   * -- never an optimistic remove that could drift from the server if the
+   * request actually failed. Deleting a checkpoint never touches the
+   * project's own current spec (that lives on the project row itself), so
+   * this is safe regardless of whether the deleted checkpoint happens to
+   * be the one currently shown with the "Current" chip.
+   */
+  async function handleDelete(checkpoint: Checkpoint) {
+    if (!window.confirm(t("history.confirmDelete", { label: checkpoint.label }))) return;
+    setDeletingId(checkpoint.id);
+    setDeleteError(null);
+    try {
+      await deleteCheckpoint(projectId, checkpoint.id);
+      setCheckpoints((prev) => prev.filter((c) => c.id !== checkpoint.id));
+    } catch (err) {
+      setDeleteError((err as Error).message);
+    } finally {
+      setDeletingId(null);
+    }
+  }
+
   return (
     <div className="history-overlay">
       <div className="history-panel" ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby="history-panel-title">
@@ -98,6 +126,7 @@ export function HistoryPanel({
         </div>
         <p className="muted small">{t("history.description")}</p>
         {error && <p className="error">{error}</p>}
+        {deleteError && <p className="error">{deleteError}</p>}
         {checkpoints.length > 5 && (
           <div className="history-filters">
             <input
@@ -203,9 +232,18 @@ export function HistoryPanel({
                     type="button"
                     className="checkpoint-restore-btn"
                     onClick={() => handleRestore(checkpoint)}
-                    disabled={busyId !== null || isCurrent}
+                    disabled={busyId !== null || deletingId !== null || isCurrent}
                   >
                     {busyId === checkpoint.id ? t("history.restore.busy") : t("history.restore")}
+                  </button>
+                  <button
+                    type="button"
+                    className="checkpoint-delete-btn"
+                    aria-label={t("history.deleteOne")}
+                    onClick={() => handleDelete(checkpoint)}
+                    disabled={busyId !== null || deletingId !== null}
+                  >
+                    {deletingId === checkpoint.id ? "…" : "🗑️"}
                   </button>
                 </li>
               );
