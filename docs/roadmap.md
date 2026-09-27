@@ -11434,6 +11434,96 @@ not a single "make it perfect" claim.
       `@forge/db` 91 unchanged) and `npm run build --workspace=@forge/web`
       clean.
 
+- [x] **Round 216 — a single checkpoint can now be deleted from Time
+      Machine.**
+      Diversification: rounds 210-215 covered account/topbar, calendar
+      view, Business Twin, CollaboratorsPanel, Global Search, and spec
+      review -- this round's own trigger note pointed at the AI Team build
+      screen, the WhatsApp log, or Time Machine, since the other five had
+      all just closed. `BuildProgress.tsx` (AI Team build) and
+      `WhatsAppPanel.tsx` turned out to already be quite feature-complete
+      (progress bar, ETA, retry, per-step detail, connect/disconnect,
+      search, filters, single-message delete, download); reading
+      `HistoryPanel.tsx` and `packages/db/src/checkpoints.ts` side by side
+      surfaced a precise, real gap instead: every build and every refine
+      adds a checkpoint forever, with restore and rename (round 209) but
+      no way to prune a single unwanted one -- an experimental refine that
+      went nowhere, say. The exact same gap round 208 already closed for
+      the WhatsApp message log's own single-message delete, just never
+      brought to Time Machine.
+
+      New in `packages/db/src/checkpoints.ts`: `deleteCheckpoint(db,
+      projectId, checkpointId)`, a plain `DELETE FROM checkpoints WHERE id
+      = ? AND projectId = ?` -- the same projectId-scoped-in-one-WHERE-
+      clause convention `renameCheckpoint` already established, so a
+      checkpoint id belonging to a different project can never be deleted
+      even if guessed, throwing the same `NotFoundError` (→ generic 404)
+      for an unknown id. New route: `DELETE
+      /projects/:id/checkpoints/:checkpointId`, mirroring
+      `deleteWhatsAppMessage`'s own route shape (`res.status(204).end()`
+      on success). No `min(1)`-style floor is needed here (unlike round
+      215's entities or round 178's roles) -- checkpoints are a pure
+      history log, not part of `ProductSpec` itself, so deleting every
+      last one is harmless and mirrors the WhatsApp log's own "clear all"
+      already allowing zero messages. Deleting a checkpoint never touches
+      the project's own current spec (that lives on the project row
+      itself, independent of this table), so it's explicitly safe
+      regardless of whether the deleted checkpoint happens to be the one
+      currently matching the "Current" chip.
+
+      Web: a real 🗑️ delete button per checkpoint row in `HistoryPanel.tsx`
+      (mirroring the WhatsApp log's own icon and styling, reused via a
+      shared CSS rule), gated behind a real `window.confirm` naming the
+      checkpoint, removing exactly that row from local state on success --
+      never an optimistic remove that could drift from the server if the
+      request actually failed. Restore and delete now share the same
+      in-flight-disables-everything guard round 205's own restore-vs-
+      restore concurrency fix already established: a delete in flight now
+      disables every restore button too (not just every other delete
+      button), and vice versa, so a delete on one row and a restore on
+      another can never race each other.
+
+      New tests: `app.test.ts` gets four new tests mirroring the existing
+      rename coverage -- delete-by-id leaving the rest of the project's
+      history untouched, an unknown checkpoint id 404ing with the history
+      unchanged, and the cross-project security counterpart (a user
+      cannot delete another user's checkpoint by guessing/reusing its
+      id). `HistoryPanel.test.ts` gets three new tests: a real commit
+      (confirm → real DELETE → exactly that row gone, the other
+      untouched), a real decline (confirm=false → no DELETE call, nothing
+      removed), and the extended mutual concurrency guard (a delete in
+      flight disables every restore button, confirmed by attempting one
+      and asserting zero requests fired).
+
+      Verified with the deliberate-break-and-restore discipline, twice,
+      across both layers: removed the `AND projectId = ?` scoping from
+      `deleteCheckpoint`'s own SQL -- caught cleanly by the new dedicated
+      cross-project test; restored, `diff` byte-identical. Removed the
+      `deletingId !== null` half of the restore button's `disabled`
+      condition -- caught by the new mutual-guard test, but this time the
+      test *process itself* hung after the catch and had to be killed by
+      the enclosing `timeout` wrapper (confirmed no leftover process via
+      `ps aux` afterward) -- the same messy-but-valid catch shape rounds
+      205/206/209/210/211/213 already established as expected for a plain
+      component with no timers, now confirmed on yet another one;
+      restored, `diff` byte-identical.
+
+      **And** a real Playwright pass against the live dev server: signed
+      up, built a real CRM project, ran a real refine (so the project's
+      history had 2 genuine checkpoints: the initial build and the
+      refine), opened the real Time Machine panel, deleted the older
+      checkpoint via its own real 🗑️ button and a real confirm dialog,
+      confirmed the list narrowed to exactly 1 and the deleted checkpoint's
+      own label was genuinely gone, then reloaded the whole page and
+      reopened the project fresh to confirm the deletion actually
+      persisted server-side (not just local React state) -- the reloaded
+      panel still showed exactly 1 checkpoint.
+
+      Full suite green (816 tests, up from 810 -- `@forge/api` 226 → 229;
+      `@forge/web` 400 → 403; `@forge/shared` 11, `@forge/spec-engine` 82,
+      `@forge/db` 91 unchanged) and `npm run build --workspace=@forge/web`
+      clean.
+
 ## Phase 3
 
 - Self-healing: production observability, automatic diagnosis and patch
