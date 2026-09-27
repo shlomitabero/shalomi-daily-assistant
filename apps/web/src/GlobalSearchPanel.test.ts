@@ -535,6 +535,57 @@ test("GlobalSearchPanel's recent-search chip fills the query and genuinely re-ru
   });
 });
 
+function mockManyMatchesFetch() {
+  const customerRecords: EntityRecord[] = Array.from({ length: 7 }, (_, i) => ({ id: i + 1, name: `Widget item ${i + 1}` }));
+  return async (input: string): Promise<Response> => {
+    if (input === "/api/projects/proj1/entities/Customer") {
+      return new Response(JSON.stringify({ records: customerRecords }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    if (input === "/api/projects/proj1/entities/Order") {
+      return new Response(JSON.stringify({ records: [] }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    throw new Error(`mockManyMatchesFetch: unexpected request ${input}`);
+  };
+}
+
+/**
+ * New in this round: a group used to cap its rows at 5 (searchEntityRecords'
+ * own default sample limit) and show dead "+N more" text for the rest --
+ * real matches the panel already knew the count of but gave no way to
+ * reach. Confirms a real "Show all" button appears exactly when more
+ * matches exist, that clicking it genuinely reveals every one of them (not
+ * just relabels the same 5), and that the button itself disappears once
+ * nothing is left to expand.
+ */
+test("GlobalSearchPanel's 'Show all' button reveals every match beyond the default 5-row sample, and disappears once everything is shown", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = mockManyMatchesFetch() as typeof fetch;
+    try {
+      renderGlobalSearchPanel(() => {});
+
+      const input = document.querySelector(".global-search-input") as HTMLInputElement;
+      fireEvent.change(input, { target: { value: "widget" } });
+      fireEvent.submit(document.querySelector("form.global-search-form")!);
+      await waitForCondition(() => document.querySelectorAll(".global-search-hit-button").length === 5);
+
+      const showAllButton = document.querySelector(".global-search-show-all") as HTMLButtonElement | null;
+      assert.ok(showAllButton, "expected a real 'Show all' button when more matches exist than the sample shows");
+
+      fireEvent.click(showAllButton!);
+      await waitForCondition(() => document.querySelectorAll(".global-search-hit-button").length === 7);
+
+      assert.equal(
+        document.querySelector(".global-search-show-all"),
+        null,
+        "the 'Show all' button must disappear once every match is already shown",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
 /** The "Clear" link must wipe the recent-search list for real, not just hide it until the next reopen. */
 test("GlobalSearchPanel's recent-search 'Clear' link genuinely empties the persisted list, surviving a remount", async () => {
   await withJsdom(async () => {

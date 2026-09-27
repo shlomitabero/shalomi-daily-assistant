@@ -71,6 +71,12 @@ export function GlobalSearchPanel({
   const [highlightQuery, setHighlightQuery] = useState("");
   const [selectedIndex, setSelectedIndex] = useState<number | null>(null);
   const [recentSearches, setRecentSearches] = useState<string[]>(() => getRecentSearches(projectId));
+  // A group's "and N more" text used to be a dead end -- the extra matches
+  // were real (totalMatches said so) but nothing on screen could reach
+  // them short of switching tabs and re-typing the same search. Keyed by
+  // entityName so expanding one group's "Show all" never affects another's.
+  const [expandedSamples, setExpandedSamples] = useState<Record<string, EntityRecord[]>>({});
+  const [showAllLoading, setShowAllLoading] = useState<Set<string>>(new Set());
   const dialogRef = useDialogFocusTrap<HTMLDivElement>();
   // Bumped once per runSearch call, so a stale search whose network round
   // trip just happens to take longer than a newer one's can recognize
@@ -128,14 +134,40 @@ export function GlobalSearchPanel({
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
+    setExpandedSamples({});
     setRecentSearches(addRecentSearch(projectId, query));
     await runSearch(query);
   }
 
   async function handleRecentSearchClick(q: string) {
     setQuery(q);
+    setExpandedSamples({});
     setRecentSearches(addRecentSearch(projectId, q));
     await runSearch(q);
+  }
+
+  /**
+   * Fetches this one entity's records again (a cheap, idempotent GET --
+   * the same request runSearch already made) and re-filters them with no
+   * sample cap, so "Show all" reveals every real match instead of just the
+   * first 5. Keyed per entity in expandedSamples rather than reusing
+   * `results` in place, so a still-collapsed group elsewhere is untouched.
+   */
+  async function handleShowAll(entityName: string) {
+    const entity = entities.find((e) => e.name === entityName);
+    if (!entity) return;
+    setShowAllLoading((prev) => new Set(prev).add(entityName));
+    try {
+      const { records } = await listRecords(projectId, entityName);
+      const full = searchEntityRecords(entity, records, highlightQuery, records.length);
+      setExpandedSamples((prev) => ({ ...prev, [entityName]: full?.sample ?? [] }));
+    } finally {
+      setShowAllLoading((prev) => {
+        const next = new Set(prev);
+        next.delete(entityName);
+        return next;
+      });
+    }
   }
 
   function handleClearRecentSearches() {
@@ -227,41 +259,54 @@ export function GlobalSearchPanel({
 
         {!loading && results.length > 0 && (
           <div className="global-search-results">
-            {results.map((result, i) => (
-              <div
-                key={result.entityName}
-                className={
-                  i === selectedIndex ? "global-search-group global-search-group-selected" : "global-search-group"
-                }
-              >
-                <div className="global-search-group-header">
-                  <span className="global-search-entity-label">{result.entityLabel}</span>
-                  <span className="muted small">{t("search.resultCount", { count: result.totalMatches })}</span>
-                  <button type="button" className="secondary small" onClick={() => onJumpToEntity(result.entityName)}>
-                    {t("search.jumpTo")}
-                  </button>
+            {results.map((result, i) => {
+              const displayed = expandedSamples[result.entityName] ?? result.sample;
+              const remaining = result.totalMatches - displayed.length;
+              return (
+                <div
+                  key={result.entityName}
+                  className={
+                    i === selectedIndex ? "global-search-group global-search-group-selected" : "global-search-group"
+                  }
+                >
+                  <div className="global-search-group-header">
+                    <span className="global-search-entity-label">{result.entityLabel}</span>
+                    <span className="muted small">{t("search.resultCount", { count: result.totalMatches })}</span>
+                    <button type="button" className="secondary small" onClick={() => onJumpToEntity(result.entityName)}>
+                      {t("search.jumpTo")}
+                    </button>
+                  </div>
+                  <ul className="global-search-hits">
+                    {displayed.map((record) => (
+                      <li key={String(record.id)}>
+                        <button
+                          type="button"
+                          className="link-button global-search-hit-button"
+                          onClick={() => onJumpToRecord(result.entityName, record.id as number)}
+                        >
+                          <Highlighted
+                            text={recordPreview(entities.find((e) => e.name === result.entityName)!, record)}
+                            query={highlightQuery}
+                          />
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                  {remaining > 0 && (
+                    <button
+                      type="button"
+                      className="link-button small global-search-show-all"
+                      disabled={showAllLoading.has(result.entityName)}
+                      onClick={() => handleShowAll(result.entityName)}
+                    >
+                      {showAllLoading.has(result.entityName)
+                        ? t("search.showAll.busy")
+                        : t("search.showAll", { count: remaining })}
+                    </button>
+                  )}
                 </div>
-                <ul className="global-search-hits">
-                  {result.sample.map((record) => (
-                    <li key={String(record.id)}>
-                      <button
-                        type="button"
-                        className="link-button global-search-hit-button"
-                        onClick={() => onJumpToRecord(result.entityName, record.id as number)}
-                      >
-                        <Highlighted
-                          text={recordPreview(entities.find((e) => e.name === result.entityName)!, record)}
-                          query={highlightQuery}
-                        />
-                      </button>
-                    </li>
-                  ))}
-                </ul>
-                {result.totalMatches > result.sample.length && (
-                  <p className="muted small">{t("search.andMore", { count: result.totalMatches - result.sample.length })}</p>
-                )}
-              </div>
-            ))}
+              );
+            })}
           </div>
         )}
       </div>

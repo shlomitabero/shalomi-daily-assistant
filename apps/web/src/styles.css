@@ -2163,6 +2163,11 @@ button.sort-header:hover:not(:disabled) {
   font-size: 14.5px;
 }
 
+.global-search-show-all {
+  margin-top: 6px;
+  font-size: 13px;
+}
+
 .global-search-hit-button {
   display: block;
   width: 100%;
