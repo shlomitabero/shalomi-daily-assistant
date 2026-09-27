@@ -12037,6 +12037,79 @@ not a single "make it perfect" claim.
       `@forge/api` 231 unchanged) and `npm run build --workspace=@forge/web`
       clean.
 
+- [x] **Round 225 — click-to-rename for an existing role or assumption on
+      the spec review screen, instead of remove-then-re-add.**
+      Diversification: the copy-to-clipboard arc was fully closed as of
+      round 224 (all three known download-to-text candidates covered), so
+      this round investigated `SpecListItemRemover.tsx` fresh and found a
+      real, concrete gap: roles and assumptions had `add`+`remove`
+      (rounds 178/215/221-confirmed), but no way to *fix* an existing
+      one's wording -- the only path was deleting it and adding a
+      corrected one back, which silently moved the item to the end of its
+      own list (a new POST always appends) and briefly violated roles'
+      own `.min(1)` floor if it was the last remaining role. Entities
+      already had this exact correction via `EntityLabelEditor.tsx`
+      (round 126) and fields via `FieldLabelEditor.tsx` (round 127); roles
+      and assumptions were the only two spec-review lists still missing
+      it.
+
+      New `PATCH /projects/:id/roles/:index` and
+      `/projects/:id/assumptions/:index` routes (`apps/api/src/routes/
+      projects.ts`), reusing `AddRoleSchema`/`AddAssumptionSchema`
+      verbatim (identical `{role: string}`/`{assumption: string}` shape a
+      rename body needs, avoiding a near-duplicate schema) and the
+      existing `parseListIndex` helper for the same NaN-leak/out-of-range
+      guard the DELETE routes already have. In-place `.map()` replacement
+      by index, never touching the array's length or order -- unlike
+      remove-then-re-add.
+
+      Web: `SpecListItemRemover.tsx` gained a shared
+      `useRenamableSpecItem` hook mirroring `EntityLabelEditor`/
+      `CheckpointLabelEditor`'s own click-to-edit/Enter-or-blur-saves/
+      Escape-cancels pattern exactly, including the same spurious-save-
+      on-unmount guard. `RoleChip` and `AssumptionItem` each gained a new
+      required `onRenamed` prop (wired to the same `setProject` callback
+      `onRemoved` already uses in `App.tsx`) and a clickable text span
+      (`.chip-text` / `.assumption-text`) that swaps to an inline `<input>`
+      on click, saving via the new `renameRole`/`renameAssumption` API
+      client functions.
+
+      New tests: 5 in `SpecListItemRemover.test.ts` (rename-success +
+      Escape-cancel for both roles and assumptions, plus a rename-error
+      case for roles) and 7 in `apps/api/src/app.test.ts` (owner-and-
+      collaborator rename-in-place preserving length/order, out-of-range
+      index 404, empty-string rejection leaving the list untouched, and
+      no-access 404 -- for both roles and assumptions).
+
+      Verified with the deliberate-break-and-restore discipline: the
+      first attempted break (removing the `cancelling.current` guard
+      inside `save()`) turned out to be the same known-untestable-in-
+      jsdom race `EntityLabelEditor.tsx`'s own comment already documents
+      (the real blur-after-unmount race jsdom can't reproduce) -- all 15
+      tests still passed, so this break was discarded rather than treated
+      as a false pass. Switched to a second, real break instead: removing
+      `setEditing(false)` after a successful rename. This one hung the
+      whole test run (`timeout 60` killed it, exit 143) rather than
+      failing cleanly -- confirmed via `ps aux` that no process was left
+      stuck afterward (the `timeout` wrapper's own kill was sufficient).
+      Restored from a backup copy, `diff` byte-identical, all 15 tests
+      green again on the re-run.
+
+      **And** a real Playwright pass against the live dev server: signed
+      up, built a real restaurant project, clicked a real role chip's
+      text, typed a new value, pressed Enter, confirmed the chip showed
+      the new text -- then **reloaded the page and reopened the project**
+      to confirm the rename was real, persisted server state and not just
+      local component state (it survived). Also renamed an assumption the
+      same way, and confirmed Escape on a second role chip left its
+      original text completely unchanged.
+
+      Full suite green (852 tests, up from 840 -- `@forge/api` 231 → 238,
+      `@forge/web` 425 → 430; `@forge/shared` 11, `@forge/spec-engine` 82,
+      `@forge/db` 91 unchanged) and both
+      `npm run build --workspace=@forge/web` and
+      `npm run build --workspace=@forge/api` clean.
+
 ## Phase 3
 
 - Self-healing: production observability, automatic diagnosis and patch
