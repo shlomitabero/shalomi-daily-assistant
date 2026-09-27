@@ -492,7 +492,11 @@ test("GlobalSearchPanel remembers a submitted search and shows it as a recent-se
       view.unmount();
 
       renderGlobalSearchPanel(() => {});
-      const chip = Array.from(document.querySelectorAll(".global-search-recent .chip")).find(
+      // The chip's own textContent now also includes its trailing remove
+      // button's "×" (round 230's own click-to-rename-style .chip-remove
+      // wiring, same lesson round 225 already hit for a pencil icon) --
+      // match the inner .chip-text span's own text, not the whole chip's.
+      const chip = Array.from(document.querySelectorAll(".global-search-recent .chip .chip-text")).find(
         (el) => el.textContent === "widget",
       );
       assert.ok(chip, "expected the reopened panel to show 'widget' as a recent-search chip, from real persisted state");
@@ -520,7 +524,7 @@ test("GlobalSearchPanel's recent-search chip fills the query and genuinely re-ru
       view.unmount();
 
       renderGlobalSearchPanel(() => {});
-      const chip = Array.from(document.querySelectorAll(".global-search-recent .chip")).find(
+      const chip = Array.from(document.querySelectorAll(".global-search-recent .chip .chip-text")).find(
         (el) => el.textContent === "widget",
       ) as HTMLButtonElement;
       assert.ok(chip, "expected a real 'widget' recent-search chip before clicking it");
@@ -623,6 +627,70 @@ test("GlobalSearchPanel's recent-search 'Clear' link genuinely empties the persi
         true,
         "a fresh mount after Clear must still show no recent searches -- proving it was really wiped from storage, not just hidden in memory",
       );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
+ * New in this round: previously the only way to trim the recent-searches
+ * list was "Clear" (wiping all of it) -- the same gap the WhatsApp log
+ * (round 208), Time Machine (round 216) and refine-history (round 228)
+ * lists each had before their own single-item delete. Each chip now has
+ * its own 🗑️-style remove button (reusing the existing .chip-removable/
+ * .chip-remove pattern from spec review's roles/assumptions, round 225)
+ * alongside the existing click-to-search button. Submits two real
+ * searches to build a real two-item recent list, removes only one, and
+ * confirms: the other survives a remount (a real persisted removal, not
+ * just hidden in memory), and clicking the remove button never itself
+ * ran a search (the input stays empty, no new result group appears).
+ */
+test("GlobalSearchPanel's per-chip remove button deletes only that one recent search, persists across a remount, and never triggers a search of its own", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = mockGlobalSearchFetch() as typeof fetch;
+    try {
+      const firstView = renderGlobalSearchPanel(() => {});
+      const input = document.querySelector(".global-search-input") as HTMLInputElement;
+
+      fireEvent.change(input, { target: { value: "widget" } });
+      fireEvent.submit(document.querySelector("form.global-search-form")!);
+      await waitForCondition(() => document.querySelectorAll(".global-search-group").length === 2);
+
+      fireEvent.change(input, { target: { value: "gadget" } });
+      fireEvent.submit(document.querySelector("form.global-search-form")!);
+      await waitForCondition(() => {
+        const groups = document.querySelectorAll(".global-search-group");
+        return groups.length === 0 || Array.from(groups).every((g) => !/widget/i.test(g.textContent ?? ""));
+      });
+      firstView.unmount();
+
+      renderGlobalSearchPanel(() => {});
+      const chipTextOf = (q: string) =>
+        Array.from(document.querySelectorAll(".global-search-recent .chip .chip-text")).find((el) => el.textContent === q);
+      assert.ok(chipTextOf("widget"), "expected both 'widget' and 'gadget' as real persisted recent-search chips");
+      assert.ok(chipTextOf("gadget"));
+
+      const widgetChip = chipTextOf("widget")!.closest(".chip")!;
+      const removeButton = widgetChip.querySelector(".chip-remove") as HTMLButtonElement;
+      assert.ok(removeButton, "expected a real remove button on the 'widget' chip");
+
+      const reopenedInput = document.querySelector(".global-search-input") as HTMLInputElement;
+      fireEvent.click(removeButton);
+
+      assert.equal(reopenedInput.value, "", "clicking the remove button must never fill the query input or run a search");
+      assert.equal(document.querySelectorAll(".global-search-group").length, 0, "clicking remove must not trigger any search of its own");
+      assert.equal(chipTextOf("widget"), undefined, "the removed chip must disappear from the DOM immediately");
+      assert.ok(chipTextOf("gadget"), "the OTHER recent search must survive untouched");
+
+      renderGlobalSearchPanel(() => {});
+      assert.equal(
+        chipTextOf("widget"),
+        undefined,
+        "a fresh mount must still not show 'widget' -- proving the removal was really persisted, not just hidden in memory",
+      );
+      assert.ok(chipTextOf("gadget"), "a fresh mount must still show the untouched 'gadget' entry");
     } finally {
       globalThis.fetch = originalFetch;
     }

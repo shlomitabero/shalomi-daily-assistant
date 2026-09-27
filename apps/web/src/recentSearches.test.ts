@@ -2,7 +2,7 @@ import "./jsdomWarmup.js";
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { JSDOM } from "jsdom";
-import { addRecentSearch, clearRecentSearches, getRecentSearches } from "./recentSearches.js";
+import { addRecentSearch, clearRecentSearches, getRecentSearches, removeRecentSearch } from "./recentSearches.js";
 
 /** Same full-jsdom-swap technique pinnedProjects.test.ts uses: real localStorage, not a mock. */
 async function withJsdom(fn: () => void | Promise<void>): Promise<void> {
@@ -91,6 +91,27 @@ test("clearRecentSearches wipes this project's list but never touches another pr
     clearRecentSearches("proj1");
     assert.deepEqual(getRecentSearches("proj1"), []);
     assert.deepEqual(getRecentSearches("proj2"), ["zed"]);
+  });
+});
+
+test("removeRecentSearch drops only the matching query (case-insensitively), leaving the rest -- and a fresh getRecentSearches call sees it gone, not just the return value", async () => {
+  await withJsdom(() => {
+    addRecentSearch("proj1", "amy");
+    addRecentSearch("proj1", "zed");
+    addRecentSearch("proj1", "mid");
+    const after = removeRecentSearch("proj1", "ZED");
+    assert.deepEqual(after, ["mid", "amy"], "must remove case-insensitively and leave the other two, in order");
+    assert.deepEqual(getRecentSearches("proj1"), ["mid", "amy"], "must actually be persisted, not just returned");
+  });
+});
+
+test("removeRecentSearch is a no-op when the query isn't in the list, and never touches another project's list", async () => {
+  await withJsdom(() => {
+    addRecentSearch("proj1", "amy");
+    addRecentSearch("proj2", "zed");
+    const after = removeRecentSearch("proj1", "nonexistent");
+    assert.deepEqual(after, ["amy"]);
+    assert.deepEqual(getRecentSearches("proj2"), ["zed"], "removing from proj1 must never affect proj2's own list");
   });
 });
 

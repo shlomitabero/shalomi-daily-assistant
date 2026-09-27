@@ -51,6 +51,24 @@ export function addRecentSearch(projectId: string, query: string): string[] {
   return next;
 }
 
+/**
+ * Removes a single query from this project's recent-search list -- the
+ * only way to trim it down was previously "Clear" (wiping the whole
+ * list), the same gap the WhatsApp log (round 208), Time Machine (round
+ * 216) and refine-history (round 228) lists each had before their own
+ * single-item delete. Case-insensitive match, mirroring addRecentSearch's
+ * own dedup comparison.
+ */
+export function removeRecentSearch(projectId: string, query: string): string[] {
+  const next = getRecentSearches(projectId).filter((q) => q.toLowerCase() !== query.toLowerCase());
+  try {
+    localStorage.setItem(storageKey(projectId), JSON.stringify(next));
+  } catch {
+    // localStorage can be unavailable (private mode) -- nothing to persist.
+  }
+  return next;
+}
+
 export function clearRecentSearches(projectId: string): void {
   try {
     localStorage.removeItem(storageKey(projectId));

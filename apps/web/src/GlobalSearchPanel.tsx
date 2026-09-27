@@ -4,7 +4,7 @@ import { listRecords } from "./api.js";
 import { recordDisplayLabel, searchEntityRecords, splitHighlightSegments, type EntitySearchResult } from "./entityFormatting.js";
 import { useTranslation } from "./i18n/LanguageContext.js";
 import { useDialogFocusTrap } from "./useDialogFocusTrap.js";
-import { addRecentSearch, clearRecentSearches, getRecentSearches } from "./recentSearches.js";
+import { addRecentSearch, clearRecentSearches, getRecentSearches, removeRecentSearch } from "./recentSearches.js";
 
 /**
  * Mirrors EntityPanel.tsx's own Highlighted wrapper (round 195) around the
@@ -175,6 +175,10 @@ export function GlobalSearchPanel({
     setRecentSearches([]);
   }
 
+  function handleRemoveRecentSearch(q: string) {
+    setRecentSearches(removeRecentSearch(projectId, q));
+  }
+
   function recordPreview(entity: Entity, record: EntityRecord): string {
     return recordDisplayLabel(entity, record);
   }
@@ -244,9 +248,20 @@ export function GlobalSearchPanel({
                 </div>
                 <div className="chips">
                   {recentSearches.map((q) => (
-                    <button type="button" key={q} className="chip chip-button" onClick={() => handleRecentSearchClick(q)}>
-                      {q}
-                    </button>
+                    <span className="chip chip-removable" key={q}>
+                      <button type="button" className="chip-text" onClick={() => handleRecentSearchClick(q)}>
+                        {q}
+                      </button>
+                      <button
+                        type="button"
+                        className="chip-remove"
+                        title={t("search.recent.remove")}
+                        aria-label={t("search.recent.remove", { query: q })}
+                        onClick={() => handleRemoveRecentSearch(q)}
+                      >
+                        ×
+                      </button>
+                    </span>
                   ))}
                 </div>
               </div>
