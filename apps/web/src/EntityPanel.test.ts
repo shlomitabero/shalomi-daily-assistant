@@ -8,6 +8,7 @@ import React from "react";
 import { act, cleanup, fireEvent, render } from "@testing-library/react";
 import type { Entity, EntityRecord } from "@forge/shared";
 import { getColumnWidths, setColumnWidth } from "./columnWidths.js";
+import { getGroupByField } from "./groupByPreference.js";
 import { EntityPanel } from "./EntityPanel.js";
 import { LanguageProvider } from "./i18n/LanguageContext.js";
 import { ThemeProvider } from "./theme/ThemeContext.js";
@@ -2306,6 +2307,80 @@ test("EntityPanel's 'Group by' dropdown clusters the table into real group-heade
       fireEvent.change(groupBySelect, { target: { value: "" } });
       await waitForCondition(() => document.querySelectorAll(".entity-group-header-row").length === 0);
       assert.equal(document.querySelectorAll("table tbody tr").length, 3, "reverting to 'no grouping' must restore the flat row list");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
+ * New in this round: the "Group by" choice itself is now persisted
+ * (groupByPreference.ts, scoped per project+entity like columnOrder.ts) --
+ * previously it was plain useState that reset to "no grouping" on every
+ * entity switch and was never written to storage at all, so picking a
+ * grouping didn't even survive navigating to another entity tab and back,
+ * let alone a real page reload. Confirms the live component actually reads
+ * and writes through groupByPreference.ts, not just that the pure functions
+ * work in isolation (see groupByPreference.test.ts for that).
+ */
+test("EntityPanel's 'Group by' choice survives an unmount+remount of the same entity, and is scoped per entity", async () => {
+  await withJsdom(async () => {
+    const store: EntityRecord[] = [
+      { id: 1, createdAt: "x", name: "Acme Corp", status: "new" },
+      { id: 2, createdAt: "x", name: "Beta Inc", status: "won" },
+    ];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = mockRecordsFetch(store) as typeof fetch;
+    try {
+      const firstView = renderEntityPanel();
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 2);
+
+      const groupBySelect = document.querySelector(".entity-group-by") as HTMLSelectElement;
+      fireEvent.change(groupBySelect, { target: { value: "status" } });
+      await waitForCondition(() => document.querySelectorAll(".entity-group-header-row").length === 2);
+      assert.equal(getGroupByField("proj1", "Deal"), "status", "must actually be persisted, not just held in memory");
+
+      firstView.unmount();
+      renderEntityPanel();
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length > 0);
+
+      assert.equal(
+        (document.querySelector(".entity-group-by") as HTMLSelectElement).value,
+        "status",
+        "a fresh mount of the same project+entity must restore the persisted 'Group by' choice, not reset to 'no grouping'",
+      );
+      assert.equal(document.querySelectorAll(".entity-group-header-row").length, 2, "the table must actually render grouped on first paint, not just show the dropdown as if it were");
+
+      const otherEntity: Entity = {
+        name: "Customer",
+        fields: [
+          { name: "name", type: "text", required: true },
+          { name: "tier", label: "Tier", type: "enum", required: true, enumValues: ["free", "paid"], enumLabels: { free: "Free", paid: "Paid" } },
+        ],
+      };
+      cleanup();
+      globalThis.fetch = (async (input: string) => {
+        if (input === "/api/projects/proj1/entities/Customer") {
+          // A groupable field alone doesn't render the "Group by" toolbar at
+          // all when the table has zero visible records (see round 227's
+          // lesson: an empty visibleRecords shows only the empty-state, not
+          // the toolbar) -- so this needs at least one seeded record.
+          return new Response(JSON.stringify({ records: [{ id: 1, createdAt: "x", name: "Dana", tier: "free" }] }), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          });
+        }
+        throw new Error(`unexpected request ${input}`);
+      }) as typeof fetch;
+      renderEntityPanel({ entity: otherEntity, allEntities: [otherEntity] });
+      await waitForCondition(() => document.querySelector(".entity-group-by") !== null);
+
+      assert.equal(
+        (document.querySelector(".entity-group-by") as HTMLSelectElement).value,
+        "",
+        "a different entity in the same project must never inherit Deal's persisted 'status' group-by choice",
+      );
+      assert.equal(getGroupByField("proj1", "Customer"), "", "and must never have written anything to Customer's own storage slot either");
     } finally {
       globalThis.fetch = originalFetch;
     }

@@ -4,6 +4,7 @@ import { createRecord, deleteRecord, listRecords, updateRecord } from "./api.js"
 import { getHiddenFields, toggleFieldVisibility } from "./columnVisibility.js";
 import { computeResizedWidth, getColumnWidths, setColumnWidth } from "./columnWidths.js";
 import { applyColumnOrder, getColumnOrder, reorderColumns, setColumnOrder } from "./columnOrder.js";
+import { getGroupByField, setGroupByField } from "./groupByPreference.js";
 import { EntityLabelEditor } from "./EntityLabelEditor.js";
 import { FieldLabelEditor } from "./FieldLabelEditor.js";
 import {
@@ -738,7 +739,6 @@ export function EntityPanel({
     setEditingId(null);
     setSearch("");
     setStatusFilter("");
-    setGroupFieldName("");
     setSortKeys([]);
     setViewMode("table");
     setCalendarMonth(new Date());
@@ -769,6 +769,15 @@ export function EntityPanel({
   // widths are scoped per project+entity too.
   useEffect(() => {
     setColumnWidths(getColumnWidths(projectId, entity.name));
+  }, [projectId, entity.name]);
+
+  // Same reasoning as hiddenFields' own effect just above -- a chosen "Group
+  // by" field is scoped per project+entity too. Previously groupFieldName
+  // was reset to "" on every entity switch (see the combined reset effect
+  // above) and never persisted at all, so picking a grouping didn't survive
+  // even a reload of the same entity.
+  useEffect(() => {
+    setGroupFieldName(getGroupByField(projectId, entity.name));
   }, [projectId, entity.name]);
 
   /**
@@ -1574,7 +1583,7 @@ export function EntityPanel({
                 className="entity-group-by"
                 aria-label={t("entity.groupBy.label")}
                 value={groupFieldName}
-                onChange={(e) => setGroupFieldName(e.target.value)}
+                onChange={(e) => setGroupFieldName(setGroupByField(projectId, entity.name, e.target.value))}
               >
                 <option value="">{t("entity.groupBy.none")}</option>
                 {groupableFields.map((f) => (
