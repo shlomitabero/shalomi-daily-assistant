@@ -891,6 +891,58 @@ export function createProjectsRouter(db: ForgeDatabase, provider: SpecProvider |
     }),
   );
 
+  /**
+   * The spec review screen's "entities" section (the list of screens the
+   * AI Team is about to build) was the one part of the spec review page
+   * with no correction path at all -- roles and assumptions each got a
+   * real remove button, but an entity the heuristic/AI invented that
+   * doesn't belong (an unwanted "Courier" screen on a business with no
+   * delivery, say) could only be talked out of existence via the free-text
+   * "additional request" box and hoping the next build actually drops it --
+   * never a guaranteed, immediate removal. Removes by entityName (not
+   * index, unlike roles/assumptions above) since EntitySchema names are
+   * already the real unique identifier every other route in this file
+   * addresses an entity by. Same `entities: z.array(EntitySchema).min(1)`
+   * floor on ProductSpecSchema as roles' own `.min(1)` -- guarded the same
+   * way, with a clear 400 instead of an uncaught schema-validation 500.
+   * Gated to a project that hasn't been built yet: once built, this
+   * spec-review screen is never shown again and the real database table,
+   * generated code, and routes for that entity already exist -- removing
+   * it from the spec alone would silently desync the spec from the actual
+   * running app instead of actually undoing anything.
+   */
+  router.delete(
+    "/projects/:id/entities/:entityName",
+    asyncRoute(async (req, res) => {
+      const project = requireProjectAccess(db, req.params.id, req.userId!);
+      if (project.status === "built") {
+        throw new HttpError(409, "Cannot remove a screen after the project has already been built", "ENTITY_REMOVAL_AFTER_BUILD");
+      }
+      if (!project.spec.entities.some((e) => e.name === req.params.entityName)) {
+        throw new HttpError(404, "No such screen in this project's spec", "ENTITY_NOT_FOUND");
+      }
+      if (project.spec.entities.length <= 1) {
+        throw new HttpError(400, "Cannot remove the last remaining screen -- at least one is required", "VALIDATION_ERROR");
+      }
+      const dependent = project.spec.entities.find(
+        (e) => e.name !== req.params.entityName && e.fields.some((f) => f.type === "relation" && f.relationTo === req.params.entityName),
+      );
+      if (dependent) {
+        throw new HttpError(
+          400,
+          `Cannot remove this screen -- "${dependent.label ?? dependent.name}" still links to it`,
+          "ENTITY_HAS_DEPENDENT_RELATIONS",
+        );
+      }
+      const nextSpec = {
+        ...project.spec,
+        entities: project.spec.entities.filter((e) => e.name !== req.params.entityName),
+      };
+      const updated = updateProjectSpec(db, project.id, nextSpec);
+      res.json({ project: updated });
+    }),
+  );
+
   router.patch(
     "/projects/:id/entities/:entityName/:recordId",
     asyncRoute(async (req, res) => {

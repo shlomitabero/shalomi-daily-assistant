@@ -5,7 +5,7 @@ import { JSDOM } from "jsdom";
 import React from "react";
 import { cleanup, fireEvent, render } from "@testing-library/react";
 import type { Project } from "@forge/shared";
-import { AddAssumptionForm, AddRoleForm, AssumptionItem, RoleChip } from "./SpecListItemRemover.js";
+import { AddAssumptionForm, AddRoleForm, AssumptionItem, EntitySummaryItem, RoleChip } from "./SpecListItemRemover.js";
 import { LanguageProvider } from "./i18n/LanguageContext.js";
 import { ThemeProvider } from "./theme/ThemeContext.js";
 
@@ -94,6 +94,26 @@ function renderAssumptionItem(onRemoved: (p: Project) => void) {
         LanguageProvider,
         null,
         React.createElement(AssumptionItem, { assumption: "Second assumption", projectId: "proj1", index: 1, onRemoved }),
+      ),
+    ),
+  );
+}
+
+function renderEntitySummaryItem(onRemoved: (p: Project) => void, canRemove = true) {
+  render(
+    React.createElement(
+      ThemeProvider,
+      null,
+      React.createElement(
+        LanguageProvider,
+        null,
+        React.createElement(EntitySummaryItem, {
+          entity: baseProject.spec.entities[0],
+          summary: "name *",
+          projectId: "proj1",
+          canRemove,
+          onRemoved,
+        }),
       ),
     ),
   );
@@ -220,6 +240,86 @@ test("clicking an assumption's remove button calls the real DELETE endpoint by i
       await waitForCondition(() => removedProjects.length === 1);
       assert.equal(deleteCalls, 1);
       assert.deepEqual(removedProjects[0].spec.assumptions, ["First assumption"]);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+test("clicking an entity summary's remove button calls the real DELETE endpoint by entity name and reports the returned project", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    let deleteCalls = 0;
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      if (init?.method === "DELETE" && input === "/api/projects/proj1/entities/Customer") {
+        deleteCalls += 1;
+        const remaining = {
+          ...baseProject,
+          spec: { ...baseProject.spec, entities: [{ name: "Deal", fields: [{ name: "amount", type: "number", required: false }] }] },
+        };
+        return new Response(JSON.stringify({ project: remaining }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${init?.method ?? "GET"} ${input}`);
+    }) as typeof fetch;
+
+    try {
+      const removedProjects: Project[] = [];
+      renderEntitySummaryItem((p) => removedProjects.push(p));
+
+      const button = document.querySelector(".entity-summary-remove") as HTMLButtonElement;
+      assert.ok(button, "expected a remove button on the entity summary");
+      fireEvent.click(button);
+
+      await waitForCondition(() => removedProjects.length === 1);
+      assert.equal(deleteCalls, 1);
+      assert.deepEqual(removedProjects[0].spec.entities.map((e) => e.name), ["Deal"]);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+test("an entity summary's remove button is disabled when canRemove is false (the last remaining entity), and clicking it does nothing", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async () => {
+      throw new Error("removeEntity must never be called when canRemove is false");
+    }) as typeof fetch;
+
+    try {
+      const removedProjects: Project[] = [];
+      renderEntitySummaryItem((p) => removedProjects.push(p), false);
+
+      const button = document.querySelector(".entity-summary-remove") as HTMLButtonElement;
+      assert.equal(button.disabled, true, "the remove button must be disabled when this is the last remaining entity");
+      fireEvent.click(button);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      assert.equal(removedProjects.length, 0, "a disabled button's click must not trigger a removal");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+test("an entity summary surfaces a real removal error (e.g. a dependent-relation guard) instead of silently doing nothing", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async () =>
+      new Response(JSON.stringify({ error: 'Cannot remove this screen -- "Order" still links to it' }), {
+        status: 400,
+        headers: { "content-type": "application/json" },
+      })) as typeof fetch;
+
+    try {
+      const removedProjects: Project[] = [];
+      renderEntitySummaryItem((p) => removedProjects.push(p));
+
+      fireEvent.click(document.querySelector(".entity-summary-remove") as HTMLButtonElement);
+
+      await waitForCondition(() => document.querySelector(".entity-summary .error") !== null);
+      assert.equal(removedProjects.length, 0, "onRemoved must not fire when the request failed");
+      assert.match((document.querySelector(".entity-summary .error") as HTMLElement).textContent ?? "", /still links to it/);
     } finally {
       globalThis.fetch = originalFetch;
     }

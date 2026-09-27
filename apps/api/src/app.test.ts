@@ -1657,6 +1657,188 @@ test("removing a role at a non-numeric index 404s the same as an out-of-range on
   });
 });
 
+/**
+ * New in this round: the spec review screen's "entities" list (the
+ * screens about to be built) had no correction path at all, unlike roles
+ * and assumptions above -- an unwanted screen the heuristic invented could
+ * only be removed by hoping a free-text build request talked it out of
+ * existence. Removes by entityName (not index) since that's the real,
+ * stable identifier every other route addresses an entity by.
+ */
+test("the owner can remove an entity from the spec by name, and a collaborator can too, leaving the other entities untouched", async () => {
+  await withServer(async (baseUrl) => {
+    const ownerToken = await signup(baseUrl, "entity-remove-owner1@example.com");
+    const collabToken = await signup(baseUrl, "entity-remove-collab1@example.com");
+    const createRes = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: authHeaders(ownerToken),
+      body: JSON.stringify({
+        description:
+          "Build an appointment-management application for a beauty clinic. I need customers, appointments, employees, services, an admin dashboard and automatic appointment status tracking.",
+      }),
+    });
+    const { project } = (await createRes.json()) as { project: { id: string; spec: { entities: { name: string }[] } } };
+    assert.ok(project.spec.entities.length >= 3, "this description should match several unrelated domain entities");
+    const originalNames = project.spec.entities.map((e) => e.name);
+    await fetch(`${baseUrl}/api/projects/${project.id}/collaborators`, {
+      method: "POST",
+      headers: authHeaders(ownerToken),
+      body: JSON.stringify({ email: "entity-remove-collab1@example.com" }),
+    });
+
+    const toRemove = originalNames[0];
+    const ownerRes = await fetch(`${baseUrl}/api/projects/${project.id}/entities/${toRemove}`, {
+      method: "DELETE",
+      headers: authHeaders(ownerToken),
+    });
+    assert.equal(ownerRes.status, 200);
+    const { project: afterFirstRemoval } = (await ownerRes.json()) as { project: { spec: { entities: { name: string }[] } } };
+    assert.deepEqual(
+      afterFirstRemoval.spec.entities.map((e) => e.name),
+      originalNames.filter((n) => n !== toRemove),
+      "removing one entity must drop only that entity, keeping the rest in their original order",
+    );
+
+    const secondToRemove = originalNames[1];
+    const collabRes = await fetch(`${baseUrl}/api/projects/${project.id}/entities/${secondToRemove}`, {
+      method: "DELETE",
+      headers: authHeaders(collabToken),
+    });
+    assert.equal(collabRes.status, 200);
+    const { project: afterSecondRemoval } = (await collabRes.json()) as { project: { spec: { entities: { name: string }[] } } };
+    assert.deepEqual(
+      afterSecondRemoval.spec.entities.map((e) => e.name),
+      originalNames.filter((n) => n !== toRemove && n !== secondToRemove),
+      "a collaborator can remove an entity too, same as the owner",
+    );
+  });
+});
+
+test("removing an entity name that doesn't exist in the spec 404s with ENTITY_NOT_FOUND, and the entities list is left untouched", async () => {
+  await withServer(async (baseUrl) => {
+    const token = await signup(baseUrl, "entity-remove-owner2@example.com");
+    const createRes = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ description: "A CRM with customers and deals." }),
+    });
+    const { project } = (await createRes.json()) as { project: { id: string; spec: { entities: { name: string }[] } } };
+
+    const res = await fetch(`${baseUrl}/api/projects/${project.id}/entities/NoSuchEntity`, {
+      method: "DELETE",
+      headers: authHeaders(token),
+    });
+    assert.equal(res.status, 404);
+    assert.equal(((await res.json()) as { code?: string }).code, "ENTITY_NOT_FOUND");
+
+    const getRes = await fetch(`${baseUrl}/api/projects/${project.id}`, { headers: authHeaders(token) });
+    const { project: unchanged } = (await getRes.json()) as { project: { spec: { entities: { name: string }[] } } };
+    assert.deepEqual(unchanged.spec.entities, project.spec.entities);
+  });
+});
+
+test("removing entities down to the last remaining one is rejected with 400 instead of crashing -- ProductSpecSchema requires entities.min(1)", async () => {
+  await withServer(async (baseUrl) => {
+    const token = await signup(baseUrl, "entity-remove-lastone@example.com");
+    const createRes = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ description: "A CRM with customers and deals." }),
+    });
+    const { project } = (await createRes.json()) as { project: { id: string; spec: { entities: { name: string }[] } } };
+    assert.equal(project.spec.entities.length, 2, "a plain CRM description matches exactly Customer and Deal");
+
+    const firstRes = await fetch(`${baseUrl}/api/projects/${project.id}/entities/${project.spec.entities[0].name}`, {
+      method: "DELETE",
+      headers: authHeaders(token),
+    });
+    assert.equal(firstRes.status, 200, "removing down to exactly one remaining entity must still succeed");
+
+    const secondRes = await fetch(`${baseUrl}/api/projects/${project.id}/entities/${project.spec.entities[1].name}`, {
+      method: "DELETE",
+      headers: authHeaders(token),
+    });
+    assert.equal(secondRes.status, 400, "removing the very last entity must be rejected, not crash");
+    assert.equal(((await secondRes.json()) as { code?: string }).code, "VALIDATION_ERROR");
+
+    const getRes = await fetch(`${baseUrl}/api/projects/${project.id}`, { headers: authHeaders(token) });
+    const { project: unchanged } = (await getRes.json()) as { project: { spec: { entities: { name: string }[] } } };
+    assert.equal(unchanged.spec.entities.length, 1, "the one remaining entity must survive the rejected attempt untouched");
+  });
+});
+
+test("removing an entity that another entity's relation field still points to is rejected with ENTITY_HAS_DEPENDENT_RELATIONS, and neither entity changes", async () => {
+  await withServer(async (baseUrl) => {
+    const token = await signup(baseUrl, "entity-remove-dependent@example.com");
+    const createRes = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ description: "A small courier delivery business." }),
+    });
+    const { project } = (await createRes.json()) as { project: { id: string; spec: { entities: { name: string }[] } } };
+    assert.deepEqual(
+      project.spec.entities.map((e) => e.name).sort(),
+      ["Courier", "Order"],
+      "this description should match exactly Order (with a courierId relation) and Courier",
+    );
+
+    const res = await fetch(`${baseUrl}/api/projects/${project.id}/entities/Courier`, {
+      method: "DELETE",
+      headers: authHeaders(token),
+    });
+    assert.equal(res.status, 400);
+    assert.equal(((await res.json()) as { code?: string }).code, "ENTITY_HAS_DEPENDENT_RELATIONS");
+
+    const getRes = await fetch(`${baseUrl}/api/projects/${project.id}`, { headers: authHeaders(token) });
+    const { project: unchanged } = (await getRes.json()) as { project: { spec: { entities: { name: string }[] } } };
+    assert.deepEqual(unchanged.spec.entities.map((e) => e.name).sort(), ["Courier", "Order"]);
+  });
+});
+
+test("removing an entity on a project you have no access to still 404s, the same as any other project route", async () => {
+  await withServer(async (baseUrl) => {
+    const ownerToken = await signup(baseUrl, "entity-remove-owner3@example.com");
+    const outsiderToken = await signup(baseUrl, "entity-remove-outsider3@example.com");
+    const createRes = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: authHeaders(ownerToken),
+      body: JSON.stringify({ description: "A CRM with customers and deals." }),
+    });
+    const { project } = (await createRes.json()) as { project: { id: string; spec: { entities: { name: string }[] } } };
+
+    const res = await fetch(`${baseUrl}/api/projects/${project.id}/entities/${project.spec.entities[0].name}`, {
+      method: "DELETE",
+      headers: authHeaders(outsiderToken),
+    });
+    assert.equal(res.status, 404);
+  });
+});
+
+test("removing an entity from a project that's already been built is rejected with ENTITY_REMOVAL_AFTER_BUILD, since the real database table and generated code for it already exist", async () => {
+  await withServer(async (baseUrl) => {
+    const token = await signup(baseUrl, "entity-remove-afterbuild@example.com");
+    const createRes = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ description: "A CRM with customers and deals." }),
+    });
+    const { project } = (await createRes.json()) as { project: { id: string; spec: { entities: { name: string }[] } } };
+
+    const buildRes = await fetch(`${baseUrl}/api/projects/${project.id}/build`, {
+      method: "POST",
+      headers: authHeaders(token),
+    });
+    await collectSSE(buildRes);
+
+    const res = await fetch(`${baseUrl}/api/projects/${project.id}/entities/${project.spec.entities[0].name}`, {
+      method: "DELETE",
+      headers: authHeaders(token),
+    });
+    assert.equal(res.status, 409);
+    assert.equal(((await res.json()) as { code?: string }).code, "ENTITY_REMOVAL_AFTER_BUILD");
+  });
+});
+
 test("the owner can add a role, and a collaborator can too -- both are appended to the end, keeping existing roles in order", async () => {
   await withServer(async (baseUrl) => {
     const ownerToken = await signup(baseUrl, "role-add-owner1@example.com");

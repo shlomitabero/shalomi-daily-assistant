@@ -29,7 +29,7 @@ import { ChangePasswordPanel } from "./ChangePasswordPanel.js";
 import { DeleteAccountPanel } from "./DeleteAccountPanel.js";
 import { ProjectNameEditor } from "./ProjectNameEditor.js";
 import { ShortcutsPanel } from "./ShortcutsPanel.js";
-import { AddAssumptionForm, AddRoleForm, AssumptionItem, RoleChip } from "./SpecListItemRemover.js";
+import { AddAssumptionForm, AddRoleForm, AssumptionItem, EntitySummaryItem, RoleChip } from "./SpecListItemRemover.js";
 import { getPinnedIds, sortByPinned, togglePinned } from "./pinnedProjects.js";
 import { getProjectSortMode, setProjectSortMode, type ProjectSortMode } from "./projectSortMode.js";
 import { clearIdeaDraft, getIdeaDraft, saveIdeaDraft } from "./ideaDraft.js";
@@ -1046,10 +1046,14 @@ function AppContent() {
           <section>
             <h2>{t("spec.entities.heading")}</h2>
             {project.spec.entities.map((entity) => (
-              <div key={entity.name} className="entity-summary">
-                <strong>{entity.label ?? entity.name}</strong>
-                <span className="muted"> — {formatEntityFieldSummary(entity.fields)}</span>
-              </div>
+              <EntitySummaryItem
+                key={entity.name}
+                entity={entity}
+                summary={formatEntityFieldSummary(entity.fields)}
+                projectId={project.id}
+                canRemove={project.spec.entities.length > 1}
+                onRemoved={setProject}
+              />
             ))}
             {project.spec.entities.some((e) => e.fields.some((f) => f.required)) && (
               <p className="muted small">{t("spec.entities.requiredHint")}</p>

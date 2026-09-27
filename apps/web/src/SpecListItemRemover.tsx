@@ -1,6 +1,6 @@
 import { useState } from "react";
-import type { Project } from "@forge/shared";
-import { addAssumption, addRole, removeAssumption, removeRole } from "./api.js";
+import type { Entity, Project } from "@forge/shared";
+import { addAssumption, addRole, removeAssumption, removeEntity, removeRole } from "./api.js";
 import { useTranslation } from "./i18n/LanguageContext.js";
 
 /**
@@ -108,6 +108,58 @@ export function AssumptionItem({
         </span>
       )}
     </li>
+  );
+}
+
+/**
+ * The spec review screen's "entities" section (the list of screens about
+ * to be built) was the one part of this page with no correction path at
+ * all -- unlike roles/assumptions above, an unwanted entity the heuristic
+ * or AI invented (an "Courier" screen on a business with no delivery, say)
+ * could only be talked out of existence via the free-text "additional
+ * request" box and hoping the next build actually drops it, never a
+ * guaranteed removal. `summary` is passed in already-formatted (App.tsx's
+ * own formatEntityFieldSummary) rather than computed here, to avoid a
+ * circular import between App.tsx and this file. `canRemove` mirrors
+ * RoleChip's own convention: false once this is the only remaining entity
+ * (ProductSpecSchema requires entities.min(1), same floor as roles), so
+ * the button is disabled instead of letting the user hit the API's 400.
+ */
+export function EntitySummaryItem({
+  entity,
+  summary,
+  projectId,
+  canRemove,
+  onRemoved,
+}: {
+  entity: Entity;
+  summary: string;
+  projectId: string;
+  canRemove: boolean;
+  onRemoved: (project: Project) => void;
+}) {
+  const { t } = useTranslation();
+  const { busy, error, handleRemove } = useRemovableSpecItem(() => removeEntity(projectId, entity.name), onRemoved);
+  return (
+    <div className="entity-summary">
+      <strong>{entity.label ?? entity.name}</strong>
+      <span className="muted"> — {summary}</span>
+      <button
+        type="button"
+        className="entity-summary-remove"
+        onClick={handleRemove}
+        disabled={busy || !canRemove}
+        aria-label={t("spec.entities.remove")}
+        title={canRemove ? t("spec.entities.remove") : t("spec.entities.lastOneHint")}
+      >
+        ×
+      </button>
+      {error && (
+        <p className="error small" role="alert">
+          {error}
+        </p>
+      )}
+    </div>
   );
 }
 

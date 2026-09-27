@@ -603,7 +603,8 @@ button.danger:hover:not(:disabled) {
 }
 
 .chip-remove,
-.assumption-remove {
+.assumption-remove,
+.entity-summary-remove {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -620,13 +621,15 @@ button.danger:hover:not(:disabled) {
 }
 
 .chip-remove:hover,
-.assumption-remove:hover {
+.assumption-remove:hover,
+.entity-summary-remove:hover {
   background: var(--surface-raised);
   color: var(--text);
 }
 
 .chip-remove:disabled,
-.assumption-remove:disabled {
+.assumption-remove:disabled,
+.entity-summary-remove:disabled {
   cursor: default;
   opacity: 0.5;
 }
@@ -650,6 +653,9 @@ button.danger:hover:not(:disabled) {
 }
 
 .entity-summary {
+  display: flex;
+  align-items: center;
+  gap: 6px;
   padding: 10px 0;
   border-bottom: 1px solid var(--border-soft);
 }

@@ -259,6 +259,10 @@ export function addAssumption(projectId: string, assumption: string): Promise<{ 
   return request(`/projects/${projectId}/assumptions`, { method: "POST", body: JSON.stringify({ assumption }) });
 }
 
+export function removeEntity(projectId: string, entityName: string): Promise<{ project: Project }> {
+  return request(`/projects/${projectId}/entities/${entityName}`, { method: "DELETE" });
+}
+
 /**
  * Sends the user's answers to the spec's open questions (quick-pick or
  * freely typed), and/or a free-standing request not tied to any specific
