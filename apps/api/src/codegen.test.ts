@@ -568,7 +568,7 @@ test("the exported EntityView renders a 'Columns' menu to hide/show individual t
   assert.match(entityViewJsx, /visibleFields/);
   // The table header/body must use the filtered list...
   assert.match(entityViewJsx, /\{visibleFields\.map\(\(f\) => \{[\s\S]*?<th/);
-  assert.match(entityViewJsx, /\{visibleFields\.map\(\(f\) => \(\s*<td/);
+  assert.match(entityViewJsx, /\{visibleFields\.map\(\(f\) => \{[\s\S]*?<td/);
   // ...but CSV export must still see every field, hidden or not.
   const handleExportCsvSrc = entityViewJsx.match(/function handleExportCsv\(\) \{[\s\S]*?\n {2}\}\n/)?.[0];
   assert.ok(handleExportCsvSrc, "expected to find handleExportCsv in generated output");
@@ -1902,4 +1902,58 @@ test("the exported EntityView's Kanban board cards are drag-and-drop-able onto a
 
   const stylesCss = files.find((f) => f.path === "web/src/styles.css")!.content;
   assert.match(stylesCss, /\.board-column-drag-over/);
+});
+
+// Executes the real generated isInlineEditableField (extracted from real
+// codegen output, not reimplemented), the same "run the real generated
+// code" standard this file's other pure-function tests use. Mirrors the
+// live preview's own entityFormatting.test.ts coverage for
+// isInlineEditableField (round 206).
+test("the exported EntityView's isInlineEditableField allows every field type except relation", () => {
+  const entityViewJsx = generateExportFiles(project).find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+  const fnSrc = entityViewJsx.match(/export function isInlineEditableField\(field\) \{[\s\S]*?\n\}\n/)?.[0]?.replace("export ", "");
+  assert.ok(fnSrc, "expected to find isInlineEditableField in generated output");
+  const isInlineEditableField = new Function(`${fnSrc}\nreturn isInlineEditableField;`)() as (field: { type: string }) => boolean;
+
+  for (const type of ["text", "longtext", "number", "boolean", "enum", "date"]) {
+    assert.equal(isInlineEditableField({ type }), true, `expected ${type} to be inline-editable`);
+  }
+  assert.equal(isInlineEditableField({ type: "relation" }), false, "a relation field's cell shows a label resolved from a different record, so it must stay excluded");
+});
+
+// Ported from the Forge AI live preview's EntityPanel.tsx (round 206):
+// double-clicking a table cell (any field except relation) opens it for
+// editing right in place, instead of requiring the full add/edit form
+// below the table for a single-value change. Confirms the wiring is
+// actually present in the generated output, the same source-inspection
+// standard the Kanban drag-and-drop test above uses.
+test("the exported EntityView supports double-click inline cell editing, ported from the Forge AI live preview", () => {
+  const files = generateExportFiles(project);
+  const entityViewJsx = files.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+
+  assert.match(entityViewJsx, /const \[editingCell, setEditingCell\] = useState\(null\);/);
+  assert.match(entityViewJsx, /const \[cellDraft, setCellDraft\] = useState\(undefined\);/);
+  assert.match(entityViewJsx, /const suppressCellBlurCommitRef = useRef\(false\);/);
+
+  const startSrc = entityViewJsx.match(/function startInlineEdit\(record, field\) \{[\s\S]*?\n {2}\}\n/)?.[0];
+  assert.ok(startSrc, "expected to find startInlineEdit in generated output");
+  assert.match(startSrc!, /if \(!isInlineEditableField\(field\)\) return;/);
+
+  const commitSrc = entityViewJsx.match(/async function commitInlineEdit\(\) \{[\s\S]*?\n {2}\}\n/)?.[0];
+  assert.ok(commitSrc, "expected to find commitInlineEdit in generated output");
+  assert.match(commitSrc!, /await updateRecord\(entity\.name, recordId, \{ \[field\]: value \}\);/);
+  assert.match(commitSrc!, /await refresh\(\);/);
+
+  const cancelSrc = entityViewJsx.match(/function cancelInlineEdit\(\) \{[\s\S]*?\n {2}\}\n/)?.[0];
+  assert.ok(cancelSrc, "expected to find cancelInlineEdit in generated output");
+  assert.match(cancelSrc!, /suppressCellBlurCommitRef\.current = true;/);
+
+  // The table cell itself must be a real double-click target when editable, rendering FieldInput (not just Cell) while editing.
+  assert.match(entityViewJsx, /onDoubleClick=\{editable && !isEditingThisCell \? \(\) => startInlineEdit\(r, f\) : undefined\}/);
+  assert.match(entityViewJsx, /isEditingThisCell \? \(\s*<FieldInput/);
+  assert.match(entityViewJsx, /onKeyDown=\{\(e\) => \{\s*if \(e\.key === "Enter"\) \{\s*e\.preventDefault\(\);\s*void commitInlineEdit\(\);\s*\} else if \(e\.key === "Escape"\) \{\s*e\.preventDefault\(\);\s*cancelInlineEdit\(\);/);
+
+  const stylesCss = files.find((f) => f.path === "web/src/styles.css")!.content;
+  assert.match(stylesCss, /\.cell-inline-editable/);
+  assert.match(stylesCss, /\.cell-editing input, \.cell-editing select, \.cell-editing textarea/);
 });

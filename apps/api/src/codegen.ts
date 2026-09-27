@@ -901,6 +901,14 @@ function badgeTone(rawValue) {
   return "neutral";
 }
 
+// A relation cell already shows a label resolved from a *different*
+// record (see relationDisplayLabel), not the raw stored value an inline
+// editor would need to edit -- mirrors the live preview's own
+// entityFormatting.ts isInlineEditableField (round 206).
+export function isInlineEditableField(field) {
+  return field.type !== "relation";
+}
+
 function Cell({ field, value, relationLabel }) {
   if (value === null || value === undefined || value === "") return <span className="muted">—</span>;
   if (field.type === "relation") return <>{relationLabel || \`#\${value}\`}</>;
@@ -1348,11 +1356,23 @@ function BoardCard({ entity, boardField, record, relatedRecords, onMove, onEdit,
   );
 }
 
-function FieldInput({ entity, field, value, onChange, relatedEntity, relatedEntityRecords }) {
+// autoFocus/onBlur/onKeyDown are only ever set by the entity table's own
+// inline cell editor (see EntityView's editingCell state) -- the plain
+// add/edit form below the table never passes these, so a field there
+// behaves exactly as before. Mirrors the live preview's own FieldInput
+// (EntityPanel.tsx, round 206).
+function FieldInput({ entity, field, value, onChange, relatedEntity, relatedEntityRecords, autoFocus, onBlur, onKeyDown }) {
   const id = \`f_\${entity.name}_\${field.name}\`;
   if (field.type === "relation" && relatedEntity && relatedEntityRecords) {
     return (
-      <select id={id} value={value === "" || value === null || value === undefined ? "" : String(value)} onChange={(e) => onChange(e.target.value === "" ? "" : Number(e.target.value))}>
+      <select
+        id={id}
+        value={value === "" || value === null || value === undefined ? "" : String(value)}
+        onChange={(e) => onChange(e.target.value === "" ? "" : Number(e.target.value))}
+        autoFocus={autoFocus}
+        onBlur={onBlur}
+        onKeyDown={onKeyDown}
+      >
         <option value="">…</option>
         {relatedEntityRecords.map((r) => (
           <option key={r.id} value={r.id}>
@@ -1363,11 +1383,21 @@ function FieldInput({ entity, field, value, onChange, relatedEntity, relatedEnti
     );
   }
   if (field.type === "boolean") {
-    return <input id={id} type="checkbox" checked={!!value} onChange={(e) => onChange(e.target.checked)} />;
+    return (
+      <input
+        id={id}
+        type="checkbox"
+        checked={!!value}
+        onChange={(e) => onChange(e.target.checked)}
+        autoFocus={autoFocus}
+        onBlur={onBlur}
+        onKeyDown={onKeyDown}
+      />
+    );
   }
   if (field.type === "enum") {
     return (
-      <select id={id} value={value ?? ""} onChange={(e) => onChange(e.target.value)}>
+      <select id={id} value={value ?? ""} onChange={(e) => onChange(e.target.value)} autoFocus={autoFocus} onBlur={onBlur} onKeyDown={onKeyDown}>
         <option value="" disabled>
           …
         </option>
@@ -1380,15 +1410,15 @@ function FieldInput({ entity, field, value, onChange, relatedEntity, relatedEnti
     );
   }
   if (field.type === "longtext") {
-    return <textarea id={id} rows={2} value={value ?? ""} onChange={(e) => onChange(e.target.value)} />;
+    return <textarea id={id} rows={2} value={value ?? ""} onChange={(e) => onChange(e.target.value)} autoFocus={autoFocus} onBlur={onBlur} onKeyDown={onKeyDown} />;
   }
   if (field.type === "date") {
-    return <input id={id} type="date" value={value ?? ""} onChange={(e) => onChange(e.target.value)} />;
+    return <input id={id} type="date" value={value ?? ""} onChange={(e) => onChange(e.target.value)} autoFocus={autoFocus} onBlur={onBlur} onKeyDown={onKeyDown} />;
   }
   if (field.type === "number" || field.type === "relation") {
-    return <input id={id} type="number" value={value ?? ""} onChange={(e) => onChange(e.target.value)} />;
+    return <input id={id} type="number" value={value ?? ""} onChange={(e) => onChange(e.target.value)} autoFocus={autoFocus} onBlur={onBlur} onKeyDown={onKeyDown} />;
   }
-  return <input id={id} type="text" value={value ?? ""} onChange={(e) => onChange(e.target.value)} />;
+  return <input id={id} type="text" value={value ?? ""} onChange={(e) => onChange(e.target.value)} autoFocus={autoFocus} onBlur={onBlur} onKeyDown={onKeyDown} />;
 }
 
 // How long a deleted record stays undoable before the delete actually
@@ -1425,6 +1455,14 @@ export function EntityView({ entity }) {
   const [columnWidths, setColumnWidths] = useState(() => getColumnWidths(entity.name));
   const [resizingField, setResizingField] = useState(null);
   const [dragOverColumn, setDragOverColumn] = useState(null);
+  const [editingCell, setEditingCell] = useState(null);
+  const [cellDraft, setCellDraft] = useState(undefined);
+  // Set right before an Escape-cancel clears editingCell so the input's own
+  // blur (which removing it from the DOM can still trigger) finds the flag
+  // already set and skips committing, rather than racing a stale closure's
+  // still-non-null editingCell into saving the very value Escape just
+  // discarded. Mirrors the live preview's own EntityPanel.tsx (round 206).
+  const suppressCellBlurCommitRef = useRef(false);
   // Bumped once per refresh() call, so a stale refresh whose listRecords
   // round trip just happens to take longer than a newer one's (triggered
   // by an overlapping action, e.g. duplicating two rows back to back)
@@ -1741,6 +1779,44 @@ export function EntityView({ entity }) {
     }
   }
 
+  // Double-clicking a table cell (any field except relation, see
+  // isInlineEditableField) opens that one cell for editing right in place,
+  // instead of requiring the full add/edit form below the table for a
+  // single-value change. Mirrors the live preview's own EntityPanel.tsx
+  // (round 206).
+  function startInlineEdit(record, field) {
+    if (!isInlineEditableField(field)) return;
+    setEditingCell({ recordId: record.id, field: field.name });
+    setCellDraft(record[field.name]);
+  }
+
+  async function commitInlineEdit() {
+    if (!editingCell) return;
+    const { recordId, field } = editingCell;
+    const value = cellDraft;
+    setEditingCell(null);
+    try {
+      await updateRecord(entity.name, recordId, { [field]: value });
+      await refresh();
+    } catch (err) {
+      setError(err.message);
+    }
+  }
+
+  // Escape discards the in-progress edit instead of saving it.
+  function cancelInlineEdit() {
+    suppressCellBlurCommitRef.current = true;
+    setEditingCell(null);
+  }
+
+  function handleCellBlur() {
+    if (suppressCellBlurCommitRef.current) {
+      suppressCellBlurCommitRef.current = false;
+      return;
+    }
+    void commitInlineEdit();
+  }
+
   // Real native HTML5 drag-and-drop for the board view (draggable +
   // dragstart/dragover/drop), not a mouse-event simulation like the
   // column-resize handle needed -- this is exactly the browser's own
@@ -2051,15 +2127,47 @@ export function EntityView({ entity }) {
                       <td className="select-col">
                         <input type="checkbox" checked={selectedIds.has(r.id)} onChange={() => toggleSelected(r.id)} />
                       </td>
-                      {visibleFields.map((f) => (
-                        <td key={f.name} style={columnWidths[f.name] ? { width: columnWidths[f.name] } : undefined}>
-                          <Cell
-                            field={f}
-                            value={r[f.name]}
-                            relationLabel={f.type === "relation" ? relationDisplayLabel(f, r[f.name], relatedRecords) : undefined}
-                          />
-                        </td>
-                      ))}
+                      {visibleFields.map((f) => {
+                        const isEditingThisCell = editingCell != null && editingCell.recordId === r.id && editingCell.field === f.name;
+                        const editable = isInlineEditableField(f);
+                        return (
+                          <td
+                            key={f.name}
+                            style={columnWidths[f.name] ? { width: columnWidths[f.name] } : undefined}
+                            className={isEditingThisCell ? "cell-editing" : editable ? "cell-inline-editable" : undefined}
+                            onDoubleClick={editable && !isEditingThisCell ? () => startInlineEdit(r, f) : undefined}
+                            title={editable && !isEditingThisCell ? "Double-click to edit quickly" : undefined}
+                          >
+                            {isEditingThisCell ? (
+                              <FieldInput
+                                entity={entity}
+                                field={f}
+                                value={cellDraft}
+                                onChange={setCellDraft}
+                                relatedEntity={f.relationTo ? ALL_ENTITIES.find((e) => e.name === f.relationTo) : undefined}
+                                relatedEntityRecords={f.relationTo ? relatedRecords[f.relationTo] : undefined}
+                                autoFocus
+                                onBlur={handleCellBlur}
+                                onKeyDown={(e) => {
+                                  if (e.key === "Enter") {
+                                    e.preventDefault();
+                                    void commitInlineEdit();
+                                  } else if (e.key === "Escape") {
+                                    e.preventDefault();
+                                    cancelInlineEdit();
+                                  }
+                                }}
+                              />
+                            ) : (
+                              <Cell
+                                field={f}
+                                value={r[f.name]}
+                                relationLabel={f.type === "relation" ? relationDisplayLabel(f, r[f.name], relatedRecords) : undefined}
+                              />
+                            )}
+                          </td>
+                        );
+                      })}
                       <td className="row-actions">
                         <button onClick={() => startEdit(r)}>Edit</button>
                         <button onClick={() => handleDuplicate(r.id)}>Duplicate</button>
@@ -2500,6 +2608,9 @@ th, td { text-align: start; padding: 8px 10px; border-bottom: 1px solid var(--bo
 .column-resize-handle { position: absolute; top: 0; bottom: 0; inset-inline-end: 0; width: 6px; cursor: col-resize; user-select: none; touch-action: none; z-index: 1; }
 .entity-table-resized { table-layout: fixed; }
 .entity-table-resized th, .entity-table-resized td { overflow: hidden; text-overflow: ellipsis; }
+.cell-inline-editable { cursor: text; }
+.cell-inline-editable:hover { background: var(--accent-soft); }
+.cell-editing input, .cell-editing select, .cell-editing textarea { width: 100%; }
 .badge { display: inline-block; padding: 3px 11px; border-radius: 999px; font-size: 12.5px; font-weight: 600; white-space: nowrap; }
 .badge-positive { background: var(--success-soft); color: var(--success); }
 .badge-negative { background: var(--danger-soft); color: var(--danger); }
