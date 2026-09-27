@@ -145,6 +145,21 @@ export function filterAndSortProjects(
   return sortByPinned(ordered, pinnedIds);
 }
 
+export type ProjectStatusFilter = "all" | Project["status"];
+
+/**
+ * Narrows "Your projects" down to just the built ones or just the drafts --
+ * the same "Draft" chip (round 149) already tells you which is which one
+ * card at a time, but with enough projects there was no way to see only
+ * the drafts still waiting to be built, or hide them while looking for a
+ * finished app. Mirrors filterCheckpointsByType's own "all" passthrough
+ * convention (checkpointDiff.ts) rather than introducing a new one.
+ */
+export function filterProjectsByStatus(projects: Project[], statusFilter: ProjectStatusFilter): Project[] {
+  if (statusFilter === "all") return projects;
+  return projects.filter((p) => p.status === statusFilter);
+}
+
 /**
  * How many of "Your projects" are currently showing versus how many exist
  * in total -- the same two-distinct-phrasings convention
@@ -302,6 +317,7 @@ function AppContent() {
   const [pinnedIds, setPinnedIds] = useState<Set<string>>(() => getPinnedIds());
   const [projectSortMode, setProjectSortModeState] = useState<ProjectSortMode>(() => getProjectSortMode());
   const [projectSearch, setProjectSearch] = useState("");
+  const [projectStatusFilter, setProjectStatusFilter] = useState<ProjectStatusFilter>("all");
   const [cloningId, setCloningId] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [selectedProjectIds, setSelectedProjectIds] = useState<Set<string>>(new Set());
@@ -313,8 +329,8 @@ function AppContent() {
   const refineEvents = useRef<AgentStepEvent[]>([]);
 
   const visibleMyProjects = useMemo(
-    () => filterAndSortProjects(myProjects, projectSearch, pinnedIds, projectSortMode),
-    [myProjects, projectSearch, pinnedIds, projectSortMode],
+    () => filterAndSortProjects(filterProjectsByStatus(myProjects, projectStatusFilter), projectSearch, pinnedIds, projectSortMode),
+    [myProjects, projectStatusFilter, projectSearch, pinnedIds, projectSortMode],
   );
 
   function handleSetProjectSortMode(mode: ProjectSortMode) {
@@ -880,8 +896,20 @@ function AppContent() {
                   </button>
                 </div>
               )}
+              {myProjects.length > 1 && (
+                <select
+                  className="my-projects-status-filter"
+                  aria-label={t("home.myProjects.filter.label")}
+                  value={projectStatusFilter}
+                  onChange={(e) => setProjectStatusFilter(e.target.value as ProjectStatusFilter)}
+                >
+                  <option value="all">{t("home.myProjects.filter.all")}</option>
+                  <option value="built">{t("home.myProjects.filter.built")}</option>
+                  <option value="draft">{t("home.myProjects.filter.draft")}</option>
+                </select>
+              )}
               {visibleMyProjects.length === 0 ? (
-                <p className="muted">{t("home.myProjects.search.noResults")}</p>
+                <p className="muted">{t("home.myProjects.noResults")}</p>
               ) : (
               <>
               {visibleMyProjects.some((p) => p.ownerId === user.id) && (

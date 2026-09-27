@@ -916,6 +916,11 @@ tbody tr:hover {
   display: inline-flex;
 }
 
+.my-projects-status-filter {
+  margin: 8px 0 0;
+  max-width: 160px;
+}
+
 .csv-export-btn {
   flex-shrink: 0;
   padding: 8px 14px;

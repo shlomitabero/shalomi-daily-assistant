@@ -6,6 +6,7 @@ import type { AgentStepEvent, Entity, Field, OpenQuestion, Project } from "@forg
 import {
   countAnsweredOpenQuestions,
   filterAndSortProjects,
+  filterProjectsByStatus,
   filterRefineHistory,
   formatEntityFieldSummary,
   formatMyProjectsCount,
@@ -211,6 +212,43 @@ test("formatMyProjectsCount reports a plain total when nothing is filtered out",
 test("formatMyProjectsCount reports 'shown of total' once a search has narrowed the list, in Hebrew", () => {
   const tr = (key: string, params?: Record<string, string | number>) => translate("he", key, params);
   assert.equal(formatMyProjectsCount(2, 8, tr), "2 מתוך 8 פרויקטים");
+});
+
+/**
+ * New in this round: the "Draft" chip (round 149) marks a not-yet-built
+ * project one card at a time, but with enough projects there was no way to
+ * see only the drafts, or hide them entirely -- filterProjectsByStatus is
+ * the pure function driving the new status-filter dropdown on the home
+ * screen, mirroring filterCheckpointsByType's own "all" passthrough
+ * convention (checkpointDiff.ts) rather than inventing a new one.
+ */
+test("filterProjectsByStatus passes every project through untouched for 'all'", () => {
+  const built = { ...makeProject([]), id: "p1", status: "built" as const };
+  const draft = { ...makeProject([]), id: "p2", status: "draft" as const };
+  assert.deepEqual(filterProjectsByStatus([built, draft], "all").map((p) => p.id), ["p1", "p2"]);
+});
+
+test("filterProjectsByStatus narrows to only the built projects, or only the drafts", () => {
+  const built = { ...makeProject([]), id: "p1", status: "built" as const };
+  const draft = { ...makeProject([]), id: "p2", status: "draft" as const };
+  const projects = [built, draft];
+
+  assert.deepEqual(filterProjectsByStatus(projects, "built").map((p) => p.id), ["p1"]);
+  assert.deepEqual(filterProjectsByStatus(projects, "draft").map((p) => p.id), ["p2"]);
+});
+
+test("filterProjectsByStatus composes with filterAndSortProjects the same way the home screen actually calls them -- status filter first, then search+sort", () => {
+  const builtAlpha = { ...makeProject([]), id: "p1", name: "Alpha", status: "built" as const };
+  const draftAlpha = { ...makeProject([]), id: "p2", name: "Alpha Draft", status: "draft" as const };
+  const draftBeta = { ...makeProject([]), id: "p3", name: "Beta Draft", status: "draft" as const };
+  const projects = [builtAlpha, draftAlpha, draftBeta];
+
+  const drafts = filterAndSortProjects(filterProjectsByStatus(projects, "draft"), "alpha", new Set());
+  assert.deepEqual(
+    drafts.map((p) => p.id),
+    ["p2"],
+    "must apply the status filter AND the search narrowing together, not just one of the two",
+  );
 });
 
 /**
