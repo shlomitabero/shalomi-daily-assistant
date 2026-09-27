@@ -11868,6 +11868,64 @@ not a single "make it perfect" claim.
       `@forge/api` 231 unchanged) and `npm run build --workspace=@forge/web`
       clean.
 
+- [x] **Round 222 — a Copy report button in Business Twin, next to the
+      existing Download button.**
+      Diversification: checked several under-explored areas the trigger
+      flagged -- `ProjectNameEditor.tsx`, `EntityLabelEditor.tsx`,
+      `DeleteAccountPanel.tsx`, `CollaboratorsPanel.tsx` -- and each was
+      already fully built out from earlier rounds, with no real gap left.
+      Noticed instead that `navigator.clipboard` is used precisely
+      **nowhere** in this entire codebase: `formatTwinReport.ts`'s own
+      comment already explains the report is deliberately plain text
+      *because* it's meant to be trivially shareable (WhatsApp, email,
+      paste anywhere) -- but the only way to actually get it anywhere was
+      a real file download, then manually opening that file to copy from
+      it. A genuinely new capability, not a port of an existing pattern.
+
+      `BusinessTwinPanel.tsx` gained a `handleCopy` calling
+      `navigator.clipboard.writeText` with the exact same
+      `formatTwinReport(twin, projectName, lang, t)` string the Download
+      button already uses -- same data, second delivery method. New
+      `copyStatus` state (`"idle" | "copied" | "failed"`) drives the
+      button's own label (normal / "✅ Copied!" / "Copy failed"), fading
+      back to normal 2 seconds later via a `useEffect`+`setTimeout` with
+      `clearTimeout` cleanup -- the exact same auto-fade pattern
+      `EntityPanel.tsx`'s "jump to record" highlight already established
+      (round 174), reused rather than reinvented. A real rejection
+      (denied permission, insecure context) gets its own failure label
+      instead of silently doing nothing.
+
+      New tests in `BusinessTwinPanel.test.ts`: a real
+      `Object.defineProperty(navigator, "clipboard", ...)` mock confirms
+      the exact copied text matches the real formatted report, the button
+      shows the real "Copied!" confirmation, and (via
+      `t.mock.timers.enable({ apis: ["setTimeout"] })` + a real
+      `tick(2000)`, not a hardcoded wait) reverts to normal after the
+      delay; a second test mocks a rejecting `writeText` and confirms the
+      real "Copy failed" label appears and still reverts afterward.
+
+      Verified with the deliberate-break-and-restore discipline: removed
+      the `try`/`catch` around the real clipboard call entirely, so a
+      rejection would propagate unhandled instead of setting `"failed"`
+      -- the failure-path test caught it immediately as a genuine
+      unhandled rejection (not a hang this time; the process exited on
+      its own); restored, `diff` byte-identical, both tests green again.
+
+      **And** a real Playwright pass against the live dev server, with
+      real OS clipboard permissions granted via
+      `context.grantPermissions(["clipboard-read", "clipboard-write"])`:
+      signed up, built a real project, opened the real Business Twin
+      panel, clicked the real Copy button, confirmed the visible
+      "Copied!" label, then read back the actual OS clipboard via
+      `navigator.clipboard.readText()` in-page and confirmed it held the
+      real formatted report text (starting with the project's own title
+      line), not a placeholder.
+
+      Full suite green (836 tests, up from 834 -- `@forge/web` 419 → 421;
+      `@forge/shared` 11, `@forge/spec-engine` 82, `@forge/db` 91,
+      `@forge/api` 231 unchanged) and `npm run build --workspace=@forge/web`
+      clean.
+
 ## Phase 3
 
 - Self-healing: production observability, automatic diagnosis and patch
