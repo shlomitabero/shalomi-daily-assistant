@@ -259,6 +259,17 @@ export function addAssumption(projectId: string, assumption: string): Promise<{ 
   return request(`/projects/${projectId}/assumptions`, { method: "POST", body: JSON.stringify({ assumption }) });
 }
 
+export function renameRole(projectId: string, index: number, role: string): Promise<{ project: Project }> {
+  return request(`/projects/${projectId}/roles/${index}`, { method: "PATCH", body: JSON.stringify({ role }) });
+}
+
+export function renameAssumption(projectId: string, index: number, assumption: string): Promise<{ project: Project }> {
+  return request(`/projects/${projectId}/assumptions/${index}`, {
+    method: "PATCH",
+    body: JSON.stringify({ assumption }),
+  });
+}
+
 export function removeEntity(projectId: string, entityName: string): Promise<{ project: Project }> {
   return request(`/projects/${projectId}/entities/${entityName}`, { method: "DELETE" });
 }

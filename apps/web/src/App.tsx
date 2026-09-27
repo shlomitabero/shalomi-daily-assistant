@@ -1064,6 +1064,7 @@ function AppContent() {
                   projectId={project.id}
                   index={i}
                   canRemove={project.spec.roles.length > 1}
+                  onRenamed={setProject}
                   onRemoved={setProject}
                 />
               ))}
@@ -1092,7 +1093,14 @@ function AppContent() {
             <h2>{t("spec.assumptions.heading")}</h2>
             <ul>
               {project.spec.assumptions.map((a, i) => (
-                <AssumptionItem key={`${i}-${a}`} assumption={a} projectId={project.id} index={i} onRemoved={setProject} />
+                <AssumptionItem
+                  key={`${i}-${a}`}
+                  assumption={a}
+                  projectId={project.id}
+                  index={i}
+                  onRenamed={setProject}
+                  onRemoved={setProject}
+                />
               ))}
             </ul>
             <AddAssumptionForm projectId={project.id} onAdded={setProject} />

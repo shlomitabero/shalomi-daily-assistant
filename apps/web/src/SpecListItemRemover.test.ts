@@ -71,7 +71,11 @@ const baseProject: Project = {
   },
 };
 
-function renderRoleChip(onRemoved: (p: Project) => void, canRemove = true) {
+function renderRoleChip(
+  onRemoved: (p: Project) => void,
+  canRemove = true,
+  onRenamed: (p: Project) => void = () => {},
+) {
   render(
     React.createElement(
       ThemeProvider,
@@ -79,13 +83,13 @@ function renderRoleChip(onRemoved: (p: Project) => void, canRemove = true) {
       React.createElement(
         LanguageProvider,
         null,
-        React.createElement(RoleChip, { role: "Manager", projectId: "proj1", index: 1, canRemove, onRemoved }),
+        React.createElement(RoleChip, { role: "Manager", projectId: "proj1", index: 1, canRemove, onRenamed, onRemoved }),
       ),
     ),
   );
 }
 
-function renderAssumptionItem(onRemoved: (p: Project) => void) {
+function renderAssumptionItem(onRemoved: (p: Project) => void, onRenamed: (p: Project) => void = () => {}) {
   render(
     React.createElement(
       ThemeProvider,
@@ -93,7 +97,13 @@ function renderAssumptionItem(onRemoved: (p: Project) => void) {
       React.createElement(
         LanguageProvider,
         null,
-        React.createElement(AssumptionItem, { assumption: "Second assumption", projectId: "proj1", index: 1, onRemoved }),
+        React.createElement(AssumptionItem, {
+          assumption: "Second assumption",
+          projectId: "proj1",
+          index: 1,
+          onRenamed,
+          onRemoved,
+        }),
       ),
     ),
   );
@@ -216,6 +226,93 @@ test("a role chip surfaces a real removal error (e.g. the last-role guard) inste
   });
 });
 
+test("clicking a role chip's text opens an inline edit, and saving it calls the real PATCH endpoint by index", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    let patchBody: { role: string } | undefined;
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      if (init?.method === "PATCH" && input === "/api/projects/proj1/roles/1") {
+        patchBody = JSON.parse(init.body as string) as { role: string };
+        const renamed = { ...baseProject, spec: { ...baseProject.spec, roles: ["Admin", patchBody.role] } };
+        return new Response(JSON.stringify({ project: renamed }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${init?.method ?? "GET"} ${input}`);
+    }) as typeof fetch;
+
+    try {
+      const renamedProjects: Project[] = [];
+      renderRoleChip(() => {}, true, (p) => renamedProjects.push(p));
+
+      fireEvent.click(document.querySelector(".chip-text") as HTMLElement);
+      const input = document.querySelector(".chip-rename-edit input") as HTMLInputElement;
+      assert.ok(input, "expected an inline edit input after clicking the role text");
+      assert.equal(input.value, "Manager", "the draft must start pre-filled with the current role text");
+
+      fireEvent.change(input, { target: { value: "Warehouse Manager" } });
+      fireEvent.blur(input);
+
+      await waitForCondition(() => renamedProjects.length === 1);
+      assert.deepEqual(patchBody, { role: "Warehouse Manager" });
+      assert.deepEqual(renamedProjects[0].spec.roles, ["Admin", "Warehouse Manager"]);
+      assert.equal(document.querySelector(".chip-rename-edit"), null, "must return to display mode after a successful save");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+test("pressing Escape while editing a role chip cancels without saving", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async () => {
+      throw new Error("renameRole must never be called after Escape cancels the edit");
+    }) as typeof fetch;
+
+    try {
+      const renamedProjects: Project[] = [];
+      renderRoleChip(() => {}, true, (p) => renamedProjects.push(p));
+
+      fireEvent.click(document.querySelector(".chip-text") as HTMLElement);
+      const input = document.querySelector(".chip-rename-edit input") as HTMLInputElement;
+      fireEvent.change(input, { target: { value: "Something else entirely" } });
+      fireEvent.keyDown(input, { key: "Escape" });
+      fireEvent.blur(input);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      assert.equal(renamedProjects.length, 0, "Escape must cancel without ever calling renameRole");
+      assert.equal(document.querySelector(".chip-text")?.textContent, "Manager", "the original role text must be shown, unchanged");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+test("a role chip's rename surfaces a real error instead of silently doing nothing", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async () =>
+      new Response(JSON.stringify({ error: "role is required" }), {
+        status: 400,
+        headers: { "content-type": "application/json" },
+      })) as typeof fetch;
+
+    try {
+      const renamedProjects: Project[] = [];
+      renderRoleChip(() => {}, true, (p) => renamedProjects.push(p));
+
+      fireEvent.click(document.querySelector(".chip-text") as HTMLElement);
+      const input = document.querySelector(".chip-rename-edit input") as HTMLInputElement;
+      fireEvent.change(input, { target: { value: "Something else" } });
+      fireEvent.blur(input);
+
+      await waitForCondition(() => document.querySelector(".chip-rename-edit .error") !== null);
+      assert.equal(renamedProjects.length, 0, "onRenamed must not fire when the request failed");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
 test("clicking an assumption's remove button calls the real DELETE endpoint by index and reports the returned project", async () => {
   await withJsdom(async () => {
     const originalFetch = globalThis.fetch;
@@ -240,6 +337,74 @@ test("clicking an assumption's remove button calls the real DELETE endpoint by i
       await waitForCondition(() => removedProjects.length === 1);
       assert.equal(deleteCalls, 1);
       assert.deepEqual(removedProjects[0].spec.assumptions, ["First assumption"]);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+test("clicking an assumption's text opens an inline edit, and saving it calls the real PATCH endpoint by index", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    let patchBody: { assumption: string } | undefined;
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      if (init?.method === "PATCH" && input === "/api/projects/proj1/assumptions/1") {
+        patchBody = JSON.parse(init.body as string) as { assumption: string };
+        const renamed = {
+          ...baseProject,
+          spec: { ...baseProject.spec, assumptions: ["First assumption", patchBody.assumption] },
+        };
+        return new Response(JSON.stringify({ project: renamed }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${init?.method ?? "GET"} ${input}`);
+    }) as typeof fetch;
+
+    try {
+      const renamedProjects: Project[] = [];
+      renderAssumptionItem(() => {}, (p) => renamedProjects.push(p));
+
+      fireEvent.click(document.querySelector(".assumption-text") as HTMLElement);
+      const input = document.querySelector(".assumption-rename-edit input") as HTMLInputElement;
+      assert.ok(input, "expected an inline edit input after clicking the assumption text");
+      assert.equal(input.value, "Second assumption");
+
+      fireEvent.change(input, { target: { value: "Only one warehouse" } });
+      fireEvent.blur(input);
+
+      await waitForCondition(() => renamedProjects.length === 1);
+      assert.deepEqual(patchBody, { assumption: "Only one warehouse" });
+      assert.deepEqual(renamedProjects[0].spec.assumptions, ["First assumption", "Only one warehouse"]);
+      assert.equal(document.querySelector(".assumption-rename-edit"), null, "must return to display mode after a successful save");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+test("pressing Escape while editing an assumption cancels without saving", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async () => {
+      throw new Error("renameAssumption must never be called after Escape cancels the edit");
+    }) as typeof fetch;
+
+    try {
+      const renamedProjects: Project[] = [];
+      renderAssumptionItem(() => {}, (p) => renamedProjects.push(p));
+
+      fireEvent.click(document.querySelector(".assumption-text") as HTMLElement);
+      const input = document.querySelector(".assumption-rename-edit input") as HTMLInputElement;
+      fireEvent.change(input, { target: { value: "Something else entirely" } });
+      fireEvent.keyDown(input, { key: "Escape" });
+      fireEvent.blur(input);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      assert.equal(renamedProjects.length, 0, "Escape must cancel without ever calling renameAssumption");
+      assert.equal(
+        document.querySelector(".assumption-text")?.textContent,
+        "Second assumption",
+        "the original assumption text must be shown, unchanged",
+      );
     } finally {
       globalThis.fetch = originalFetch;
     }

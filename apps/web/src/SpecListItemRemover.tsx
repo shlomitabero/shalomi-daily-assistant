@@ -1,6 +1,6 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import type { Entity, Project } from "@forge/shared";
-import { addAssumption, addRole, removeAssumption, removeEntity, removeRole } from "./api.js";
+import { addAssumption, addRole, removeAssumption, removeEntity, removeRole, renameAssumption, renameRole } from "./api.js";
 import { useTranslation } from "./i18n/LanguageContext.js";
 
 /**
@@ -38,11 +38,70 @@ function useRemovableSpecItem(remove: () => Promise<{ project: Project }>, onRem
   return { busy, error, handleRemove };
 }
 
+/**
+ * Click-to-rename for a role/assumption's own text, mirroring
+ * EntityLabelEditor/CheckpointLabelEditor's own click-to-edit/Enter-or-
+ * blur-saves/Escape-cancels pattern exactly, including the same spurious-
+ * save-on-unmount guard. Remove-then-re-add was previously the only way to
+ * fix a typo or wording in an existing role/assumption -- correct in the
+ * end, but it silently moved the item to the end of its own list (a new
+ * POST always appends) and briefly violated roles' own .min(1) floor if it
+ * was the last one. This edits it in place instead.
+ */
+function useRenamableSpecItem(
+  currentValue: string,
+  rename: (value: string) => Promise<{ project: Project }>,
+  onRenamed: (project: Project) => void,
+) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const cancelling = useRef(false);
+
+  function startEditing() {
+    setDraft(currentValue);
+    setError(null);
+    setEditing(true);
+  }
+
+  function cancelEditing() {
+    cancelling.current = true;
+    setEditing(false);
+  }
+
+  async function save() {
+    if (cancelling.current) {
+      cancelling.current = false;
+      return;
+    }
+    const trimmed = draft.trim();
+    if (!trimmed || trimmed === currentValue) {
+      setEditing(false);
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    try {
+      const { project } = await rename(trimmed);
+      onRenamed(project);
+      setEditing(false);
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return { editing, draft, setDraft, busy, error, startEditing, cancelEditing, save };
+}
+
 export function RoleChip({
   role,
   projectId,
   index,
   canRemove,
+  onRenamed,
   onRemoved,
 }: {
   role: string;
@@ -50,13 +109,45 @@ export function RoleChip({
   index: number;
   /** False once this is the only remaining role -- the API rejects removing it (ProductSpecSchema requires roles.min(1)), so the button is disabled instead of letting the user hit that error. */
   canRemove: boolean;
+  onRenamed: (project: Project) => void;
   onRemoved: (project: Project) => void;
 }) {
   const { t } = useTranslation();
   const { busy, error, handleRemove } = useRemovableSpecItem(() => removeRole(projectId, index), onRemoved);
+  const rename = useRenamableSpecItem(role, (value) => renameRole(projectId, index, value), onRenamed);
+
+  if (rename.editing) {
+    return (
+      <span className="chip chip-removable chip-rename-edit">
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            rename.save();
+          }}
+        >
+          <input
+            type="text"
+            aria-label={t("spec.roles.rename")}
+            value={rename.draft}
+            autoFocus
+            disabled={rename.busy}
+            onChange={(e) => rename.setDraft(e.target.value)}
+            onBlur={rename.save}
+            onKeyDown={(e) => {
+              if (e.key === "Escape") rename.cancelEditing();
+            }}
+          />
+        </form>
+        {rename.error && <span className="error small">{rename.error}</span>}
+      </span>
+    );
+  }
+
   return (
     <span className="chip chip-removable">
-      {role}
+      <span className="chip-text" onClick={rename.startEditing} title={t("spec.roles.rename")}>
+        {role}
+      </span>
       <button
         type="button"
         className="chip-remove"
@@ -80,18 +171,51 @@ export function AssumptionItem({
   assumption,
   projectId,
   index,
+  onRenamed,
   onRemoved,
 }: {
   assumption: string;
   projectId: string;
   index: number;
+  onRenamed: (project: Project) => void;
   onRemoved: (project: Project) => void;
 }) {
   const { t } = useTranslation();
   const { busy, error, handleRemove } = useRemovableSpecItem(() => removeAssumption(projectId, index), onRemoved);
+  const rename = useRenamableSpecItem(assumption, (value) => renameAssumption(projectId, index, value), onRenamed);
+
+  if (rename.editing) {
+    return (
+      <li className="assumption-item assumption-rename-edit">
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            rename.save();
+          }}
+        >
+          <input
+            type="text"
+            aria-label={t("spec.assumptions.rename")}
+            value={rename.draft}
+            autoFocus
+            disabled={rename.busy}
+            onChange={(e) => rename.setDraft(e.target.value)}
+            onBlur={rename.save}
+            onKeyDown={(e) => {
+              if (e.key === "Escape") rename.cancelEditing();
+            }}
+          />
+        </form>
+        {rename.error && <span className="error small">{rename.error}</span>}
+      </li>
+    );
+  }
+
   return (
     <li className="assumption-item">
-      <span>{assumption}</span>
+      <span className="assumption-text" onClick={rename.startEditing} title={t("spec.assumptions.rename")}>
+        {assumption}
+      </span>
       <button
         type="button"
         className="assumption-remove"

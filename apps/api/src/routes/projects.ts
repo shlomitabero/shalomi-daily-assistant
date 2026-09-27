@@ -913,6 +913,49 @@ export function createProjectsRouter(db: ForgeDatabase, provider: SpecProvider |
   );
 
   /**
+   * Remove-then-re-add was the only way to fix a typo or wording in an
+   * existing role/assumption -- correct in the end, but it also silently
+   * moved the item to the end of its own list (a new POST always appends)
+   * and briefly violated roles' own .min(1) floor if it was the last one.
+   * Reuses AddRoleSchema/AddAssumptionSchema verbatim (same {role: string}/
+   * {assumption: string} shape a rename body needs) rather than declaring
+   * a near-duplicate schema. In-place index replacement via .map, mirroring
+   * renameFieldLabel's own PATCH-by-identity approach above.
+   */
+  router.patch(
+    "/projects/:id/roles/:index",
+    asyncRoute(async (req, res) => {
+      const project = requireProjectAccess(db, req.params.id, req.userId!);
+      const index = parseListIndex(req.params.index, project.spec.roles, "ROLE_NOT_FOUND");
+      const parsed = AddRoleSchema.safeParse(req.body);
+      if (!parsed.success) {
+        throw new HttpError(400, formatValidationError(parsed.error), "VALIDATION_ERROR");
+      }
+      const nextSpec = { ...project.spec, roles: project.spec.roles.map((r, i) => (i === index ? parsed.data.role : r)) };
+      const updated = updateProjectSpec(db, project.id, nextSpec);
+      res.json({ project: updated });
+    }),
+  );
+
+  router.patch(
+    "/projects/:id/assumptions/:index",
+    asyncRoute(async (req, res) => {
+      const project = requireProjectAccess(db, req.params.id, req.userId!);
+      const index = parseListIndex(req.params.index, project.spec.assumptions, "ASSUMPTION_NOT_FOUND");
+      const parsed = AddAssumptionSchema.safeParse(req.body);
+      if (!parsed.success) {
+        throw new HttpError(400, formatValidationError(parsed.error), "VALIDATION_ERROR");
+      }
+      const nextSpec = {
+        ...project.spec,
+        assumptions: project.spec.assumptions.map((a, i) => (i === index ? parsed.data.assumption : a)),
+      };
+      const updated = updateProjectSpec(db, project.id, nextSpec);
+      res.json({ project: updated });
+    }),
+  );
+
+  /**
    * The spec review screen's "entities" section (the list of screens the
    * AI Team is about to build) was the one part of the spec review page
    * with no correction path at all -- roles and assumptions each got a

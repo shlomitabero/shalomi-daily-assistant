@@ -1657,6 +1657,214 @@ test("removing a role at a non-numeric index 404s the same as an out-of-range on
   });
 });
 
+test("the owner can rename a role chip by index in place, and a collaborator can too -- renaming never changes the array's own length or order", async () => {
+  await withServer(async (baseUrl) => {
+    const ownerToken = await signup(baseUrl, "role-rename-owner1@example.com");
+    const collabToken = await signup(baseUrl, "role-rename-collab1@example.com");
+    const createRes = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: authHeaders(ownerToken),
+      body: JSON.stringify({
+        description: "A CRM with customers and deals, used by a sales manager and a customer portal for self-service.",
+      }),
+    });
+    const { project } = (await createRes.json()) as { project: { id: string; spec: { roles: string[] } } };
+    assert.ok(project.spec.roles.length >= 3, "this description matches Manager and Customer, plus Admin is always added");
+    const originalRoles = project.spec.roles;
+    await fetch(`${baseUrl}/api/projects/${project.id}/collaborators`, {
+      method: "POST",
+      headers: authHeaders(ownerToken),
+      body: JSON.stringify({ email: "role-rename-collab1@example.com" }),
+    });
+
+    const ownerRes = await fetch(`${baseUrl}/api/projects/${project.id}/roles/0`, {
+      method: "PATCH",
+      headers: authHeaders(ownerToken),
+      body: JSON.stringify({ role: "Warehouse Manager" }),
+    });
+    assert.equal(ownerRes.status, 200);
+    const { project: afterFirstRename } = (await ownerRes.json()) as { project: { spec: { roles: string[] } } };
+    assert.deepEqual(
+      afterFirstRename.spec.roles,
+      ["Warehouse Manager", ...originalRoles.slice(1)],
+      "renaming index 0 must replace only that role in place, at the same position",
+    );
+
+    const collabRes = await fetch(`${baseUrl}/api/projects/${project.id}/roles/1`, {
+      method: "PATCH",
+      headers: authHeaders(collabToken),
+      body: JSON.stringify({ role: "Renamed By Collaborator" }),
+    });
+    assert.equal(collabRes.status, 200);
+    const { project: afterSecondRename } = (await collabRes.json()) as { project: { spec: { roles: string[] } } };
+    assert.equal(afterSecondRename.spec.roles.length, originalRoles.length, "renaming must never change the list's length");
+    assert.equal(afterSecondRename.spec.roles[1], "Renamed By Collaborator", "a collaborator can rename a role too, same as the owner");
+  });
+});
+
+test("renaming a role at an out-of-range index 404s with ROLE_NOT_FOUND, and the role list is left untouched", async () => {
+  await withServer(async (baseUrl) => {
+    const token = await signup(baseUrl, "role-rename-owner2@example.com");
+    const createRes = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ description: "A CRM with customers and deals." }),
+    });
+    const { project } = (await createRes.json()) as { project: { id: string; spec: { roles: string[] } } };
+
+    const res = await fetch(`${baseUrl}/api/projects/${project.id}/roles/${project.spec.roles.length}`, {
+      method: "PATCH",
+      headers: authHeaders(token),
+      body: JSON.stringify({ role: "Anything" }),
+    });
+    assert.equal(res.status, 404);
+    assert.equal(((await res.json()) as { code?: string }).code, "ROLE_NOT_FOUND");
+
+    const getRes = await fetch(`${baseUrl}/api/projects/${project.id}`, { headers: authHeaders(token) });
+    const { project: unchanged } = (await getRes.json()) as { project: { spec: { roles: string[] } } };
+    assert.deepEqual(unchanged.spec.roles, project.spec.roles);
+  });
+});
+
+test("renaming a role to an empty string is rejected with 400 instead of silently blanking it", async () => {
+  await withServer(async (baseUrl) => {
+    const token = await signup(baseUrl, "role-rename-empty@example.com");
+    const createRes = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ description: "A CRM with customers and deals." }),
+    });
+    const { project } = (await createRes.json()) as { project: { id: string; spec: { roles: string[] } } };
+
+    const res = await fetch(`${baseUrl}/api/projects/${project.id}/roles/0`, {
+      method: "PATCH",
+      headers: authHeaders(token),
+      body: JSON.stringify({ role: "   " }),
+    });
+    assert.equal(res.status, 400);
+    assert.equal(((await res.json()) as { code?: string }).code, "VALIDATION_ERROR");
+
+    const getRes = await fetch(`${baseUrl}/api/projects/${project.id}`, { headers: authHeaders(token) });
+    const { project: unchanged } = (await getRes.json()) as { project: { spec: { roles: string[] } } };
+    assert.deepEqual(unchanged.spec.roles, project.spec.roles, "a rejected rename must leave the role list completely untouched");
+  });
+});
+
+test("renaming a role on a project you have no access to still 404s, the same as any other project route", async () => {
+  await withServer(async (baseUrl) => {
+    const ownerToken = await signup(baseUrl, "role-rename-owner3@example.com");
+    const outsiderToken = await signup(baseUrl, "role-rename-outsider3@example.com");
+    const createRes = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: authHeaders(ownerToken),
+      body: JSON.stringify({ description: "A CRM with customers and deals." }),
+    });
+    const { project } = (await createRes.json()) as { project: { id: string } };
+
+    const res = await fetch(`${baseUrl}/api/projects/${project.id}/roles/0`, {
+      method: "PATCH",
+      headers: authHeaders(outsiderToken),
+      body: JSON.stringify({ role: "Hijacked Role" }),
+    });
+    assert.equal(res.status, 404);
+  });
+});
+
+test("the owner can rename an assumption by index in place, and a collaborator can too -- renaming never changes the array's own length or order", async () => {
+  await withServer(async (baseUrl) => {
+    const ownerToken = await signup(baseUrl, "assumption-rename-owner1@example.com");
+    const collabToken = await signup(baseUrl, "assumption-rename-collab1@example.com");
+    const createRes = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: authHeaders(ownerToken),
+      body: JSON.stringify({ description: "A CRM with customers and deals." }),
+    });
+    const { project } = (await createRes.json()) as { project: { id: string; spec: { assumptions: string[] } } };
+    assert.ok(project.spec.assumptions.length >= 2, "the heuristic engine always generates several assumptions");
+    const originalAssumptions = project.spec.assumptions;
+    await fetch(`${baseUrl}/api/projects/${project.id}/collaborators`, {
+      method: "POST",
+      headers: authHeaders(ownerToken),
+      body: JSON.stringify({ email: "assumption-rename-collab1@example.com" }),
+    });
+
+    const ownerRes = await fetch(`${baseUrl}/api/projects/${project.id}/assumptions/0`, {
+      method: "PATCH",
+      headers: authHeaders(ownerToken),
+      body: JSON.stringify({ assumption: "Only one warehouse" }),
+    });
+    assert.equal(ownerRes.status, 200);
+    const { project: afterFirstRename } = (await ownerRes.json()) as { project: { spec: { assumptions: string[] } } };
+    assert.deepEqual(
+      afterFirstRename.spec.assumptions,
+      ["Only one warehouse", ...originalAssumptions.slice(1)],
+      "renaming index 0 must replace only that assumption in place, at the same position",
+    );
+
+    const collabRes = await fetch(`${baseUrl}/api/projects/${project.id}/assumptions/1`, {
+      method: "PATCH",
+      headers: authHeaders(collabToken),
+      body: JSON.stringify({ assumption: "Renamed by collaborator" }),
+    });
+    assert.equal(collabRes.status, 200);
+    const { project: afterSecondRename } = (await collabRes.json()) as { project: { spec: { assumptions: string[] } } };
+    assert.equal(
+      afterSecondRename.spec.assumptions.length,
+      originalAssumptions.length,
+      "renaming must never change the list's length",
+    );
+    assert.equal(
+      afterSecondRename.spec.assumptions[1],
+      "Renamed by collaborator",
+      "a collaborator can rename an assumption too, same as the owner",
+    );
+  });
+});
+
+test("renaming an assumption at an out-of-range index 404s with ASSUMPTION_NOT_FOUND, and the assumptions list is left untouched", async () => {
+  await withServer(async (baseUrl) => {
+    const token = await signup(baseUrl, "assumption-rename-owner2@example.com");
+    const createRes = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ description: "A CRM with customers and deals." }),
+    });
+    const { project } = (await createRes.json()) as { project: { id: string; spec: { assumptions: string[] } } };
+
+    const res = await fetch(`${baseUrl}/api/projects/${project.id}/assumptions/${project.spec.assumptions.length}`, {
+      method: "PATCH",
+      headers: authHeaders(token),
+      body: JSON.stringify({ assumption: "Anything" }),
+    });
+    assert.equal(res.status, 404);
+    assert.equal(((await res.json()) as { code?: string }).code, "ASSUMPTION_NOT_FOUND");
+
+    const getRes = await fetch(`${baseUrl}/api/projects/${project.id}`, { headers: authHeaders(token) });
+    const { project: unchanged } = (await getRes.json()) as { project: { spec: { assumptions: string[] } } };
+    assert.deepEqual(unchanged.spec.assumptions, project.spec.assumptions);
+  });
+});
+
+test("renaming an assumption on a project you have no access to still 404s, the same as any other project route", async () => {
+  await withServer(async (baseUrl) => {
+    const ownerToken = await signup(baseUrl, "assumption-rename-owner3@example.com");
+    const outsiderToken = await signup(baseUrl, "assumption-rename-outsider3@example.com");
+    const createRes = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: authHeaders(ownerToken),
+      body: JSON.stringify({ description: "A CRM with customers and deals." }),
+    });
+    const { project } = (await createRes.json()) as { project: { id: string } };
+
+    const res = await fetch(`${baseUrl}/api/projects/${project.id}/assumptions/0`, {
+      method: "PATCH",
+      headers: authHeaders(outsiderToken),
+      body: JSON.stringify({ assumption: "Hijacked assumption" }),
+    });
+    assert.equal(res.status, 404);
+  });
+});
+
 /**
  * New in this round: the spec review screen's "entities" list (the
  * screens about to be built) had no correction path at all, unlike roles
