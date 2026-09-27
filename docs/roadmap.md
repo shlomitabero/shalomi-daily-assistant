@@ -11926,6 +11926,67 @@ not a single "make it perfect" claim.
       `@forge/api` 231 unchanged) and `npm run build --workspace=@forge/web`
       clean.
 
+- [x] **Round 223 — a Copy History button on the WhatsApp log, alongside
+      Download.**
+      Diversification: the trigger's own notes explicitly flagged that
+      round 222's new "copy to clipboard" pattern (Business Twin) was
+      genuinely new and asked whether another already-downloadable text
+      export deserved the same treatment -- WhatsApp log, Time Machine
+      timeline, or refine history were the three candidates listed.
+      `formatWhatsAppLog` (`whatsappLog.ts`) already mirrors
+      `formatTwinReport`'s own "plain, shareable text" approach almost
+      line for line, and `WhatsAppPanel.tsx` already has the identical
+      Download-button shape (`handleDownloadLog` calling
+      `downloadWhatsAppLog(formatWhatsAppLog(...), projectName)`) -- the
+      closest, most direct match of the three, so this round ported the
+      pattern there verbatim rather than reinventing it a third way.
+
+      `WhatsAppPanel.tsx` gained the identical `handleCopyLog` +
+      `copyStatus` (`"idle" | "copied" | "failed"`) + `useEffect`+
+      `setTimeout`+`clearTimeout` auto-fade shape round 222 established,
+      calling `navigator.clipboard.writeText` with the exact same
+      `formatWhatsAppLog(messages, projectName, lang, t)` string the
+      Download button already uses. New "Copy History" button sits right
+      before the existing "Download History" button in
+      `.whatsapp-log-header-actions`.
+
+      New tests in `WhatsAppPanel.test.ts`, reusing the exact
+      connected-status + one-message fetch mock the existing Download-
+      button test already established: a real
+      `Object.defineProperty(navigator, "clipboard", ...)` mock confirms
+      the copied text matches the real formatted log (including the real
+      message body), the button shows "✅ Copied!", and (via
+      `t.mock.timers.enable({ apis: ["setTimeout"] })` + a real
+      `tick(2000)`) reverts after the delay; a second test mocks a
+      rejecting `writeText` and confirms "Copy failed" appears and still
+      reverts. Applied round 222's own fresh lesson up front this time --
+      both new tests included the real `globalThis.fetch` mock from the
+      start, so neither needed a first failed attempt to discover it was
+      missing.
+
+      Verified with the deliberate-break-and-restore discipline: removed
+      the `try`/`catch` around the real clipboard call, exactly as round
+      222 did -- the failure-path test caught it immediately as a genuine
+      unhandled rejection (process exited on its own, no hang); restored,
+      `diff` byte-identical, both tests green again.
+
+      **And** a real Playwright pass against the live dev server: since a
+      real WhatsApp device can't be driven headlessly (this routine's own
+      established note), used `page.route` to mock the connected status
+      and a one-message log exactly like the app's own test suite does,
+      granted real OS clipboard permissions via `context.grantPermissions`,
+      signed up, built a real project, opened the real WhatsApp panel,
+      clicked the real Copy History button, confirmed the visible
+      "Copied!" label, then read back the actual OS clipboard via
+      `navigator.clipboard.readText()` in-page and confirmed it held both
+      the real panel title and the real mocked message body, not a
+      placeholder.
+
+      Full suite green (838 tests, up from 836 -- `@forge/web` 421 → 423;
+      `@forge/shared` 11, `@forge/spec-engine` 82, `@forge/db` 91,
+      `@forge/api` 231 unchanged) and `npm run build --workspace=@forge/web`
+      clean.
+
 ## Phase 3
 
 - Self-healing: production observability, automatic diagnosis and patch
