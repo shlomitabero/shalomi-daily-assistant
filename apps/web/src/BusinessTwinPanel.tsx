@@ -62,12 +62,43 @@ export function BusinessTwinPanel({
   const { t, lang } = useTranslation();
   const [twin, setTwin] = useState<BusinessTwin | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [copyStatus, setCopyStatus] = useState<"idle" | "copied" | "failed">("idle");
   const dialogRef = useDialogFocusTrap<HTMLDivElement>();
 
   function handleDownload() {
     if (!twin) return;
     downloadTwinReport(formatTwinReport(twin, projectName, lang, t), projectName);
   }
+
+  /**
+   * A "copy to clipboard" companion to the existing download button --
+   * the report is plain text specifically so it's trivially shareable
+   * (WhatsApp, email, paste anywhere, per formatTwinReport's own comment),
+   * but until now the only way to actually get it anywhere was a real file
+   * download + manually opening it. navigator.clipboard.writeText can
+   * genuinely reject (denied permission, insecure context), so a real
+   * failure gets its own transient label rather than silently doing
+   * nothing.
+   */
+  async function handleCopy() {
+    if (!twin) return;
+    try {
+      await navigator.clipboard.writeText(formatTwinReport(twin, projectName, lang, t));
+      setCopyStatus("copied");
+    } catch {
+      setCopyStatus("failed");
+    }
+  }
+
+  // Fades the transient "Copied!"/"Couldn't copy" label back to the
+  // normal button text a couple seconds later, mirroring EntityPanel's
+  // own auto-fading highlight (round 174) -- same cleanup-on-unmount
+  // discipline via clearTimeout.
+  useEffect(() => {
+    if (copyStatus === "idle") return;
+    const timer = setTimeout(() => setCopyStatus("idle"), 2000);
+    return () => clearTimeout(timer);
+  }, [copyStatus]);
 
   function loadTwin() {
     setError(null);
@@ -87,6 +118,15 @@ export function BusinessTwinPanel({
         <div className="history-header">
           <h2 id="twin-panel-title">{t("twin.title")}</h2>
           <div className="history-header-actions">
+            {twin && (
+              <button type="button" className="secondary" onClick={handleCopy}>
+                {copyStatus === "copied"
+                  ? t("twin.copyReport.copied")
+                  : copyStatus === "failed"
+                    ? t("twin.copyReport.failed")
+                    : t("twin.copyReport")}
+              </button>
+            )}
             {twin && (
               <button type="button" className="secondary" onClick={handleDownload}>
                 {t("twin.downloadReport")}

@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { JSDOM } from "jsdom";
 import React from "react";
-import { cleanup, fireEvent, render } from "@testing-library/react";
+import { act, cleanup, fireEvent, render } from "@testing-library/react";
 import type { BusinessTwin, BusinessTwinEntityStat } from "./api.js";
 import { BusinessTwinPanel, computeTwinStatPercent, sortTwinStatsByCount } from "./BusinessTwinPanel.js";
 import { LanguageProvider } from "./i18n/LanguageContext.js";
@@ -510,6 +510,96 @@ test("BusinessTwinPanel's Retry button re-fetches after a failed load and recove
       assert.match(document.querySelector(".twin-total")!.textContent ?? "", /16/, "must show the real data once the retry succeeds");
     } finally {
       globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
+ * New in this round: the report was already plain, shareable text
+ * (formatTwinReport's own comment -- WhatsApp, email, paste anywhere) but
+ * the only way to actually get it anywhere was a real file download. This
+ * new Copy button calls the real navigator.clipboard.writeText with that
+ * exact same formatted text, shows a transient "Copied!" label, and fades
+ * back to its normal label a couple seconds later -- mirroring
+ * EntityPanel's own auto-fading highlight (round 174) via a real,
+ * mocked setTimeout rather than a hardcoded wait.
+ */
+test("BusinessTwinPanel's copy button writes the real formatted report to the clipboard, shows Copied, then reverts", async (t) => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = mockTwinFetch() as typeof fetch;
+    let writtenText: string | undefined;
+    Object.defineProperty(navigator, "clipboard", {
+      value: { writeText: async (text: string) => void (writtenText = text) },
+      configurable: true,
+    });
+    try {
+      renderTwinPanel(() => {});
+      await waitForCondition(() => document.querySelector(".twin-total") !== null);
+
+      t.mock.timers.enable({ apis: ["setTimeout"] });
+
+      const copyButton = Array.from(document.querySelectorAll("button")).find((b) => b.textContent === "📋 Copy report");
+      assert.ok(copyButton, "expected a Copy report button once the twin has loaded");
+
+      await act(async () => {
+        fireEvent.click(copyButton!);
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+
+      assert.equal(typeof writtenText, "string", "clicking Copy must actually call navigator.clipboard.writeText");
+      assert.match(writtenText!, /Test CRM/, "the copied text must be the real formatted report, not a placeholder");
+      assert.equal(copyButton!.textContent, "✅ Copied!", "must show the real Copied confirmation, not silently do nothing");
+
+      act(() => {
+        t.mock.timers.tick(2000);
+      });
+      assert.equal(copyButton!.textContent, "📋 Copy report", "must revert to the normal label once the delay elapses");
+    } finally {
+      t.mock.timers.reset();
+      globalThis.fetch = originalFetch;
+      delete (navigator as { clipboard?: unknown }).clipboard;
+    }
+  });
+});
+
+/** The other half: a real rejection (denied permission, insecure context) must show a real failure label, not fail silently or crash. */
+test("BusinessTwinPanel's copy button shows a failure label when navigator.clipboard.writeText rejects", async (t) => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = mockTwinFetch() as typeof fetch;
+    Object.defineProperty(navigator, "clipboard", {
+      value: {
+        writeText: async () => {
+          throw new Error("denied");
+        },
+      },
+      configurable: true,
+    });
+    try {
+      renderTwinPanel(() => {});
+      await waitForCondition(() => document.querySelector(".twin-total") !== null);
+
+      t.mock.timers.enable({ apis: ["setTimeout"] });
+
+      const copyButton = Array.from(document.querySelectorAll("button")).find((b) => b.textContent === "📋 Copy report");
+      await act(async () => {
+        fireEvent.click(copyButton!);
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+
+      assert.equal(copyButton!.textContent, "Copy failed", "a real clipboard rejection must show a real failure label");
+
+      act(() => {
+        t.mock.timers.tick(2000);
+      });
+      assert.equal(copyButton!.textContent, "📋 Copy report", "must revert to the normal label even after a failure");
+    } finally {
+      t.mock.timers.reset();
+      globalThis.fetch = originalFetch;
+      delete (navigator as { clipboard?: unknown }).clipboard;
     }
   });
 });
