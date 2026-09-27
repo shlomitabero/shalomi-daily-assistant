@@ -11524,6 +11524,70 @@ not a single "make it perfect" claim.
       `@forge/db` 91 unchanged) and `npm run build --workspace=@forge/web`
       clean.
 
+- [x] **Round 217 — "Your projects" on the home screen can now be filtered
+      by status (Built / Draft), on top of the existing search and sort.**
+      Diversification: rounds 210-216 all touched other screens (account/
+      topbar, calendar, Business Twin, CollaboratorsPanel, Global Search,
+      spec review, Time Machine) -- this round deliberately returned to
+      the home screen, untouched substantially since round 204's bulk-
+      select-and-delete. The "Draft" chip (round 149) has labeled a not-
+      yet-built project one card at a time since it shipped, but with
+      several projects there was no way to see only the drafts still
+      waiting to be built, or hide them entirely while looking for a
+      finished app -- a real, missing filter, not a cosmetic one.
+
+      New pure function in `App.tsx`: `filterProjectsByStatus(projects,
+      statusFilter)`, where `statusFilter` is `"all" | "draft" | "built"`.
+      Mirrors `filterCheckpointsByType`'s own "all" passthrough convention
+      (`checkpointDiff.ts`) rather than inventing a new one -- `"all"`
+      returns the list untouched, anything else is a plain `.filter(p =>
+      p.status === statusFilter)`. Composes with the existing
+      `filterAndSortProjects` rather than folding into it: the home
+      screen's own `visibleMyProjects` useMemo now calls
+      `filterAndSortProjects(filterProjectsByStatus(myProjects,
+      projectStatusFilter), projectSearch, pinnedIds, projectSortMode)` --
+      status filter first, search+sort applied to whatever's left, the
+      same "narrow first, then reorder" composition order round 133's own
+      pinned-first sort already established for search.
+
+      Web: a new `<select className="my-projects-status-filter">`
+      dropdown (All / Built / Draft) rendered next to the existing
+      recent/alphabetical sort toggle, shown under the same `myProjects.
+      length > 1` condition. Along the way, renamed the dead-end
+      `home.myProjects.search.noResults` translation key (previously only
+      ever meant "no search match") to the more accurate `home.myProjects.
+      noResults` ("no projects match the current filters"), since the
+      empty state can now be reached by the status filter alone with no
+      search text at all -- the old wording would have been actively
+      misleading in that case.
+
+      New tests in `App.test.ts`: `filterProjectsByStatus` passes
+      everything through for `"all"`, narrows correctly to just the built
+      projects or just the drafts, and a combined test confirming it
+      composes correctly with `filterAndSortProjects` (status filter AND
+      search narrowing both applied, not just one of the two).
+
+      Verified with the deliberate-break-and-restore discipline: removed
+      the `"all"` early-return from `filterProjectsByStatus` (so it always
+      filtered by `p.status === statusFilter`, matching zero projects for
+      `"all"` since no project actually has that literal status) -- caught
+      cleanly by the new "'all' passes everything through" test failing as
+      expected; restored, `diff` byte-identical.
+
+      **And** a real Playwright pass against the live dev server: signed
+      up, created one draft project (submitted a description, reached
+      spec review, then used the real Back button *without* building --
+      status stays `"draft"`), then created and fully built a second,
+      separate project (status becomes `"built"`), reloaded the whole
+      page fresh, and confirmed the new dropdown narrows the real card
+      list to exactly 1/2/1 for built/all/draft respectively, with the
+      correct project name showing in each narrowed case.
+
+      Full suite green (819 tests, up from 816 -- `@forge/web` 403 → 406;
+      `@forge/shared` 11, `@forge/spec-engine` 82, `@forge/db` 91,
+      `@forge/api` 229 unchanged) and `npm run build --workspace=@forge/web`
+      clean.
+
 ## Phase 3
 
 - Self-healing: production observability, automatic diagnosis and patch
