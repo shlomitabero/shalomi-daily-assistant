@@ -10897,6 +10897,78 @@ not a single "make it perfect" claim.
       `@forge/spec-engine` 82 unchanged) and `npm run build
       --workspace=@forge/web` clean.
 
+- [x] **Round 209 — inline rename for Time Machine checkpoints.**
+      Diversification: round 208 touched WhatsApp; this round moves to
+      Time Machine (last real addition: round 189's "Compare with"
+      dropdown), and continues round 208's own pattern of a real DB+API
+      change, not just web -- a checkpoint's own label was previously only
+      ever the automatic one build/refine gave it ("Initial build",
+      "Refine: <instruction>"), with no way to give an important one a
+      name that's actually memorable months later (e.g. "before the
+      pricing overhaul").
+
+      New in `packages/db/src/checkpoints.ts`: `renameCheckpoint(db,
+      projectId, checkpointId, label)`, scoped to `projectId` in the same
+      `WHERE` clause as the checkpoint id itself (mirroring round 208's
+      own `deleteWhatsAppMessage` convention), throwing `NotFoundError`
+      for an id that doesn't exist in this project's own history. New
+      route: `PATCH /projects/:id/checkpoints/:checkpointId`. New
+      component `CheckpointLabelEditor.tsx`, a direct mirror of
+      `EntityLabelEditor.tsx`'s own click-to-edit/Enter-or-blur-saves/
+      Escape-cancels shape (down to the same `cancelling` ref guard docs
+      comment), wired into `HistoryPanel.tsx` in place of the old plain
+      `<strong>{checkpoint.label}</strong>`.
+
+      New tests: `checkpoints.test.ts` (db layer) confirms a rename
+      updates exactly the one checkpoint and leaves a different one in
+      the same project untouched, and that both a real id belonging to a
+      different project and a nonexistent id throw `NotFoundError`.
+      `app.test.ts` (API layer) confirms the real PATCH persists via a
+      fresh GET (not just an echoed response), and mirrors the file's own
+      existing "a user cannot restore another user's checkpoint" test
+      with an identical rename version. `CheckpointLabelEditor.test.ts`
+      (its own dedicated DOM test file, per this project's established
+      convention for new independent UI components) covers commit,
+      Escape-cancel, and a no-op blur when the label didn't actually
+      change. `HistoryPanel.test.ts` gets one new wiring test confirming
+      the editor is genuinely connected to the live checkpoint list (not
+      just correct in isolation) -- and two of that file's own
+      *pre-existing* tests needed a small, real fix: they read a
+      checkpoint's label via `.textContent` on the old plain `<strong>`,
+      which now also picks up the new pencil-icon span's text; fixed by
+      reading `.childNodes[0].textContent` (the label's own text node)
+      instead.
+
+      Verified with the deliberate-break-and-restore discipline, twice,
+      across two different layers again: first, removed the `projectId`
+      scoping from `renameCheckpoint`'s own `WHERE` clause -- the same
+      security-relevant regression class round 208 flagged as its own
+      critical lesson; caught cleanly by the "belongs to a different
+      project" test; restored, `diff` byte-identical. Second, removed the
+      "no real change" guard from `CheckpointLabelEditor`'s own `save()`
+      -- caught by the no-op test's own assertion (`1 !== 0`, a real fetch
+      call that should never have fired), though this time the test
+      process itself didn't exit cleanly afterward and had to be killed
+      by the enclosing `timeout` wrapper -- the same messy-but-valid catch
+      shape rounds 205/206 already established as acceptable, now
+      confirmed to also happen on a plain async component with no
+      timers/intervals involved, not just those; restored, `diff`
+      byte-identical.
+
+      **And** a real Playwright pass against the live dev server: signed
+      up, built a real restaurant-delivery app, opened the real Time
+      Machine panel, clicked the real seeded checkpoint's own label,
+      renamed it to "before the pricing overhaul" via a real PATCH,
+      confirmed the new label rendered immediately -- then reloaded the
+      whole page and reopened Time Machine from scratch, confirming the
+      renamed label had genuinely reached and persisted on the server,
+      not just a client-side illusion.
+
+      Full suite green (782 tests, up from 773 -- `@forge/db` 83 → 86;
+      `@forge/api` 214 → 216; `@forge/web` 383 → 387; `@forge/shared` 11,
+      `@forge/spec-engine` 82 unchanged) and `npm run build
+      --workspace=@forge/web` clean.
+
 ## Phase 3
 
 - Self-healing: production observability, automatic diagnosis and patch
