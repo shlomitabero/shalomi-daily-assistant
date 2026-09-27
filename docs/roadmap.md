@@ -12276,6 +12276,81 @@ not a single "make it perfect" claim.
       `npm run build --workspace=@forge/api` and
       `npm run build --workspace=@forge/web` clean.
 
+- [x] **Round 228 — delete a single entry from the refine-history chat log**
+      (preview screen). Both the copy-to-clipboard arc (Business Twin/
+      WhatsApp log/Time Machine, rounds 222-224) and the click-to-rename arc
+      (entities/fields/roles/assumptions, rounds 126/127/225) are now fully
+      closed, so this round went looking in a screen area the trigger
+      prompt explicitly flagged as under-investigated: the preview
+      screen's own refine/chat pane. `filterRefineHistory`'s own doc
+      comment in `App.tsx` already spelled out the gap in plain words:
+      "Every refine adds one more entry to this list forever (no cap, no
+      delete...)" -- unlike every other history-style list in the app
+      (WhatsApp log messages round 208, Time Machine checkpoints round
+      216), the refine-history chat log had no way to remove a single
+      entry a person didn't want cluttering the list (e.g. an experimental
+      refine that didn't do what they wanted).
+
+      Added `removeRefineHistoryEntry(entries, id)` (`App.tsx`, exported,
+      right next to `filterRefineHistory`) -- a plain `.filter` over the
+      in-memory list. Unlike the WhatsApp/Time-Machine precedents this
+      needs **no API call at all**: refine history is never persisted
+      server-side in the first place (it already resets on every
+      reload/project-switch, per `handleGoHome`/`handleLogout`'s own
+      cleanup), so deleting an entry is purely a local list edit. Wired up
+      via a new `handleRemoveRefineHistoryEntry(id)` handler and a 🗑️
+      button per entry (`.refine-history-delete`, reusing the same bare
+      icon-button styling `.checkpoint-delete-btn`/`.whatsapp-log-delete`
+      already share in `styles.css`, extended to a three-selector group
+      rather than invented fresh). New translation key
+      `preview.refineHistory.remove.hint` in both `he`/`en`.
+
+      Tests: a pure-function test for `removeRefineHistoryEntry` (drops
+      only the matching id, no-ops on an unknown one) plus a
+      handler-level test extracting the real `handleRemoveRefineHistoryEntry`
+      out of `App.tsx` via regex + esbuild + a `new Function` sandbox --
+      the same convention `handleReuseRefineInstruction`'s own test already
+      established for App.tsx-internal handlers (App.tsx itself is never
+      full-render-tested, only its extracted functions are). Deliberately
+      broke the pure function (`e.id !== id` → `e.id === id`, an
+      inverted-filter bug that would delete everything except the
+      targeted entry) and confirmed both new tests failed cleanly -- no
+      hang, since this is a plain filter test with no timers or DOM --
+      then restored from a backup and confirmed a byte-identical `diff`
+      before re-confirming all 38 `App.test.ts` tests green again.
+
+      **Real bug caught while writing the handler-level test (before
+      commit):** the test's own `new Function(...)` cast declared a
+      parameter named `entries: typeof entries`, shadowing the outer
+      `const entries = [...]` it was trying to reference -- TypeScript
+      resolved `typeof entries` to the very parameter being declared,
+      failing the build with "`'entries' is referenced directly or
+      indirectly in its own type annotation.`" Fixed by introducing a
+      named `type Entry = {...}` alias instead of `typeof entries`, so the
+      parameter and the outer variable no longer share an identifier.
+      **New lesson for future App.test.ts handler-extraction tests:**
+      never name a `new Function(...)` cast's parameter the same as an
+      outer `const` you're taking `typeof` from in that same cast -- the
+      shadowing is a real `tsc` build failure, not just a lint nit, and it
+      only surfaces on `npm run build --workspace=@forge/web`, not on the
+      plain `tsx --test` run (Node strips types without checking them), so
+      running only the test file first can miss it.
+
+      Full pipeline verification via the real dev server + Playwright:
+      signed up, built a real "מסעדה עם תפריט והזמנות" project, ran two
+      real refines back-to-back to get two distinct history entries,
+      clicked the 🗑️ on the first one, confirmed via the real DOM that
+      only that entry disappeared (the second survived, unchanged), and
+      confirmed via a real `page.on("request")` listener that **no DELETE
+      request fired at all** -- proving this is genuinely client-only, not
+      a silently-failing API call.
+
+      Full suite green (860 tests, up from 858 -- `@forge/web` 435 → 437;
+      `@forge/shared` 11, `@forge/spec-engine` 82, `@forge/db` 91,
+      `@forge/api` 239 unchanged) and both
+      `npm run build --workspace=@forge/api` and
+      `npm run build --workspace=@forge/web` clean.
+
 ## Phase 3
 
 - Self-healing: production observability, automatic diagnosis and patch
