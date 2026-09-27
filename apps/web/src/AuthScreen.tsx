@@ -11,13 +11,23 @@ export function AuthScreen({ onAuthenticated }: { onAuthenticated: (user: User) 
   const [mode, setMode] = useState<"login" | "signup">("signup");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    setBusy(true);
     setError(null);
+    // Signup is the one place a typo is unrecoverable -- there's no
+    // "forgot password" flow (yet), so a mistyped password here means a
+    // permanently locked-out account. Mirrors ChangePasswordPanel's own
+    // confirm-field mismatch check exactly: caught client-side, before it
+    // ever reaches the server.
+    if (mode === "signup" && password !== confirmPassword) {
+      setError(t("auth.confirmPassword.mismatch"));
+      return;
+    }
+    setBusy(true);
     try {
       const { user, token } = mode === "signup" ? await signup(email, password) : await login(email, password);
       setToken(token);
@@ -57,8 +67,14 @@ export function AuthScreen({ onAuthenticated }: { onAuthenticated: (user: User) 
             </label>
             <label className="field-row">
               <span>{t("auth.password.label")}</span>
-              <PasswordInput value={password} onChange={setPassword} required minLength={8} />
+              <PasswordInput value={password} onChange={setPassword} required minLength={8} autoComplete={mode === "signup" ? "new-password" : "current-password"} />
             </label>
+            {mode === "signup" && (
+              <label className="field-row">
+                <span>{t("auth.confirmPassword.label")}</span>
+                <PasswordInput value={confirmPassword} onChange={setConfirmPassword} required minLength={8} autoComplete="new-password" />
+              </label>
+            )}
             <button type="submit" disabled={busy}>
               {busy ? t("auth.submit.busy") : mode === "signup" ? t("auth.submit.signup") : t("auth.submit.login")}
             </button>
@@ -78,6 +94,7 @@ export function AuthScreen({ onAuthenticated }: { onAuthenticated: (user: User) 
               // taken" showing while the user is trying to log in).
               setMode(mode === "signup" ? "login" : "signup");
               setError(null);
+              setConfirmPassword("");
             }}
           >
             {mode === "signup" ? t("auth.toggle.toLogin") : t("auth.toggle.toSignup")}

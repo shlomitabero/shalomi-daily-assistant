@@ -87,9 +87,10 @@ test("AuthScreen's mode-toggle button is genuinely inert (not just visually disa
       renderAuthScreen(() => {});
 
       const emailInput = document.querySelector('input[type="email"]') as HTMLInputElement;
-      const passwordInput = document.querySelector('input[type="password"]') as HTMLInputElement;
+      const [passwordInput, confirmPasswordInput] = document.querySelectorAll('input[type="password"]') as NodeListOf<HTMLInputElement>;
       fireEvent.change(emailInput, { target: { value: "dana@example.com" } });
       fireEvent.change(passwordInput, { target: { value: "correct-horse" } });
+      fireEvent.change(confirmPasswordInput, { target: { value: "correct-horse" } });
 
       const initialHeading = document.querySelector("h1")!.textContent;
 
@@ -153,9 +154,10 @@ test("AuthScreen sends the exact typed email/password in the signup request body
       renderAuthScreen(() => {});
 
       const emailInput = document.querySelector('input[type="email"]') as HTMLInputElement;
-      const passwordInput = document.querySelector('input[type="password"]') as HTMLInputElement;
+      const [passwordInput, confirmPasswordInput] = document.querySelectorAll('input[type="password"]') as NodeListOf<HTMLInputElement>;
       fireEvent.change(emailInput, { target: { value: "dana@example.com" } });
       fireEvent.change(passwordInput, { target: { value: "correct-horse-battery" } });
+      fireEvent.change(confirmPasswordInput, { target: { value: "correct-horse-battery" } });
 
       const form = document.querySelector("form.auth-form")!;
       await act(async () => {
@@ -193,5 +195,58 @@ test("AuthScreen's mode-toggle button works normally (and clears state) before a
       initialHeading,
       "clicking the toggle button when idle must actually switch between signup and login",
     );
+  });
+});
+
+/**
+ * There's no "forgot password" flow (yet, see docs/roadmap.md's own open
+ * candidates list), so a typo'd password at signup is a permanently
+ * locked-out account -- this confirm-password field (mirroring
+ * ChangePasswordPanel's own established mismatch check) is the only real
+ * defense against that. Confirms the mismatch is actually caught
+ * client-side: zero requests reach the network, and the real error
+ * message shows.
+ */
+test("AuthScreen blocks signup entirely when password and confirmPassword don't match, with zero requests sent", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    let requestCount = 0;
+    globalThis.fetch = (async () => {
+      requestCount += 1;
+      throw new Error("must never be called");
+    }) as typeof fetch;
+    try {
+      renderAuthScreen(() => {});
+
+      const emailInput = document.querySelector('input[type="email"]') as HTMLInputElement;
+      const [passwordInput, confirmPasswordInput] = document.querySelectorAll('input[type="password"]') as NodeListOf<HTMLInputElement>;
+      fireEvent.change(emailInput, { target: { value: "dana@example.com" } });
+      fireEvent.change(passwordInput, { target: { value: "correct-horse-battery" } });
+      fireEvent.change(confirmPasswordInput, { target: { value: "wrong-battery" } });
+
+      const form = document.querySelector("form.auth-form")!;
+      await act(async () => {
+        fireEvent.submit(form);
+        await Promise.resolve();
+      });
+
+      assert.equal(requestCount, 0, "a mismatched confirmation must never send a real signup request");
+      assert.match(document.querySelector(".error")!.textContent ?? "", /match/i);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/** Login mode has no confirm-password field at all -- there's nothing to typo-check against on an existing account, only a real password to authenticate with. */
+test("AuthScreen's confirm-password field only appears in signup mode, never in login mode", async () => {
+  await withJsdom(() => {
+    renderAuthScreen(() => {});
+    assert.equal(document.querySelectorAll('input[type="password"]').length, 2, "signup mode must show both password and confirm-password fields");
+
+    const toggleButton = document.querySelector("button.link-button") as HTMLButtonElement;
+    fireEvent.click(toggleButton);
+
+    assert.equal(document.querySelectorAll('input[type="password"]').length, 1, "login mode must show only the single password field");
   });
 });
