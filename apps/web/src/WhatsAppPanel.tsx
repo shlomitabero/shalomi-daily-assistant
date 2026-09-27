@@ -112,6 +112,7 @@ export function WhatsAppPanel({
   const [clearing, setClearing] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [copyStatus, setCopyStatus] = useState<"idle" | "copied" | "failed">("idle");
   const dialogRef = useDialogFocusTrap<HTMLDivElement>();
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const pollFailuresRef = useRef(0);
@@ -320,6 +321,29 @@ export function WhatsAppPanel({
   }
 
   /**
+   * Same "Copy report" companion action round 222 added to Business Twin's
+   * own Download button -- the log is already formatted as plain,
+   * shareable text (formatWhatsAppLog mirrors formatTwinReport's own
+   * approach), but the only way to actually get it anywhere was a real
+   * file download. Same navigator.clipboard.writeText + auto-fading
+   * copyStatus label, reused verbatim rather than reinvented.
+   */
+  async function handleCopyLog() {
+    try {
+      await navigator.clipboard.writeText(formatWhatsAppLog(messages, projectName, lang, t));
+      setCopyStatus("copied");
+    } catch {
+      setCopyStatus("failed");
+    }
+  }
+
+  useEffect(() => {
+    if (copyStatus === "idle") return;
+    const timer = setTimeout(() => setCopyStatus("idle"), 2000);
+    return () => clearTimeout(timer);
+  }, [copyStatus]);
+
+  /**
    * clearWhatsAppMessages above was previously the only way to remove
    * anything from the log at all -- one junk or test message meant wiping
    * the whole history to get rid of it. Removes exactly the clicked
@@ -449,6 +473,13 @@ export function WhatsAppPanel({
             </h3>
             {messages.length > 0 && (
               <div className="whatsapp-log-header-actions">
+                <button type="button" className="secondary small" onClick={handleCopyLog}>
+                  {copyStatus === "copied"
+                    ? t("whatsapp.log.copy.copied")
+                    : copyStatus === "failed"
+                      ? t("whatsapp.log.copy.failed")
+                      : t("whatsapp.log.copy")}
+                </button>
                 <button type="button" className="secondary small" onClick={handleDownloadLog}>
                   {t("whatsapp.log.download")}
                 </button>
