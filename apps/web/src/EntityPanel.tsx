@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import type { Entity, EntityRecord, Field, Project } from "@forge/shared";
 import { createRecord, deleteRecord, listRecords, updateRecord } from "./api.js";
 import { getHiddenFields, toggleFieldVisibility } from "./columnVisibility.js";
@@ -20,6 +20,8 @@ import {
   formatNumberValue,
   formatRecordCreatedAt,
   groupByField,
+  groupRecordsByField,
+  isGroupableField,
   isInlineEditableField,
   isSameMonth,
   isTypingTarget,
@@ -578,6 +580,7 @@ export function EntityPanel({
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
+  const [groupFieldName, setGroupFieldName] = useState("");
   const [sortKeys, setSortKeys] = useState<SortKey[]>([]);
   const [viewMode, setViewMode] = useState<ViewMode>("table");
   const [calendarMonth, setCalendarMonth] = useState(() => new Date());
@@ -667,6 +670,7 @@ export function EntityPanel({
     setEditingId(null);
     setSearch("");
     setStatusFilter("");
+    setGroupFieldName("");
     setSortKeys([]);
     setViewMode("table");
     setCalendarMonth(new Date());
@@ -846,6 +850,18 @@ export function EntityPanel({
       boardField && statusFilter ? matched.filter((r) => String(r[boardField.name] ?? "") === statusFilter) : matched;
     return sortRecordsMulti(filtered, sortKeys);
   }, [records, entity.fields, search, statusFilter, boardField, sortKeys]);
+
+  // Grouping the plain table by a small-value-space field (enum/boolean) --
+  // distinct from the Kanban board view (which always groups by exactly one
+  // auto-picked field, and always in its own separate view), this lets a
+  // person cluster the ordinary table by ANY such field while staying in
+  // table view, with search/sort/columns all still applying underneath.
+  const groupableFields = useMemo(() => entity.fields.filter(isGroupableField), [entity.fields]);
+  const groupField = groupableFields.find((f) => f.name === groupFieldName) ?? null;
+  const recordGroups = useMemo(
+    () => (groupField ? groupRecordsByField(visibleRecords, groupField, t) : null),
+    [groupField, visibleRecords, t],
+  );
 
   // Scrolls the just-highlighted row into view once it's actually in the
   // rendered table -- runs after visibleRecords updates (the same render
@@ -1277,6 +1293,96 @@ export function EntityPanel({
     void commitInlineEdit();
   }
 
+  // Extracted so the same row markup renders identically whether the table
+  // is flat or grouped (see recordGroups above) -- grouping only changes
+  // what wraps the rows, never the rows themselves.
+  function renderRecordRow(record: EntityRecord) {
+    return (
+      <tr
+        key={record.id as number}
+        data-record-id={record.id as number}
+        className={
+          [
+            record.id === highlightedRecordId ? "record-row-highlighted" : null,
+            record.id === focusedRowId ? "record-row-focused" : null,
+          ]
+            .filter(Boolean)
+            .join(" ") || undefined
+        }
+      >
+        <td className="select-col">
+          <input
+            type="checkbox"
+            aria-label={t("entity.bulk.selectRow")}
+            checked={selectedIds.has(record.id as number)}
+            onChange={() => toggleSelected(record.id as number)}
+          />
+        </td>
+        {visibleFields.map((f) => {
+          const isEditingThisCell =
+            editingCell != null && editingCell.recordId === (record.id as number) && editingCell.field === f.name;
+          const editable = isInlineEditableField(f);
+          return (
+            <td
+              key={f.name}
+              style={columnWidths[f.name] ? { width: columnWidths[f.name] } : undefined}
+              className={isEditingThisCell ? "cell-editing" : editable ? "cell-inline-editable" : undefined}
+              onDoubleClick={editable && !isEditingThisCell ? () => startInlineEdit(record, f) : undefined}
+              title={editable && !isEditingThisCell ? t("entity.inlineEdit.hint") : undefined}
+            >
+              {isEditingThisCell ? (
+                <FieldInput
+                  field={f}
+                  value={cellDraft}
+                  onChange={setCellDraft}
+                  relatedEntity={f.relationTo ? allEntities.find((e) => e.name === f.relationTo) : undefined}
+                  relatedEntityRecords={f.relationTo ? relatedRecords[f.relationTo] : undefined}
+                  autoFocus
+                  onBlur={handleCellBlur}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      void commitInlineEdit();
+                    } else if (e.key === "Escape") {
+                      e.preventDefault();
+                      cancelInlineEdit();
+                    }
+                  }}
+                />
+              ) : (
+                <Cell
+                  field={f}
+                  value={record[f.name]}
+                  lang={lang}
+                  t={t}
+                  relationLabel={
+                    f.type === "relation" ? relationDisplayLabel(f, record[f.name], allEntities, relatedRecords) : undefined
+                  }
+                  highlightQuery={search}
+                />
+              )}
+            </td>
+          );
+        })}
+        <td className="muted small created-at-cell">{formatRecordCreatedAt(record.createdAt as string | undefined, lang)}</td>
+        <td className="row-actions">
+          <button type="button" onClick={() => startEdit(record)}>
+            {t("entity.edit")}
+          </button>
+          <button type="button" onClick={() => handleDuplicate(record.id as number)}>
+            {t("entity.duplicate")}
+          </button>
+          <button type="button" onClick={() => setRecordToPrint(record)}>
+            {t("entity.print")}
+          </button>
+          <button type="button" className="danger" onClick={() => handleDelete(record.id as number)}>
+            {t("entity.delete")}
+          </button>
+        </td>
+      </tr>
+    );
+  }
+
   return (
     <div className="entity-panel">
       <EntityLabelEditor entity={entity} projectId={projectId} onRenamed={onEntityRenamed} />
@@ -1382,6 +1488,21 @@ export function EntityPanel({
                 {(boardField.enumValues ?? []).map((v) => (
                   <option key={v} value={v}>
                     {boardField.enumLabels?.[v] ?? v}
+                  </option>
+                ))}
+              </select>
+            )}
+            {viewMode === "table" && groupableFields.length > 0 && (
+              <select
+                className="entity-group-by"
+                aria-label={t("entity.groupBy.label")}
+                value={groupFieldName}
+                onChange={(e) => setGroupFieldName(e.target.value)}
+              >
+                <option value="">{t("entity.groupBy.none")}</option>
+                {groupableFields.map((f) => (
+                  <option key={f.name} value={f.name}>
+                    {f.label ?? f.name}
                   </option>
                 ))}
               </select>
@@ -1590,98 +1711,18 @@ export function EntityPanel({
                   </tr>
                 </thead>
                 <tbody>
-                  {visibleRecords.map((record) => (
-                    <tr
-                      key={record.id as number}
-                      data-record-id={record.id as number}
-                      className={
-                        [
-                          record.id === highlightedRecordId ? "record-row-highlighted" : null,
-                          record.id === focusedRowId ? "record-row-focused" : null,
-                        ]
-                          .filter(Boolean)
-                          .join(" ") || undefined
-                      }
-                    >
-                      <td className="select-col">
-                        <input
-                          type="checkbox"
-                          aria-label={t("entity.bulk.selectRow")}
-                          checked={selectedIds.has(record.id as number)}
-                          onChange={() => toggleSelected(record.id as number)}
-                        />
-                      </td>
-                      {visibleFields.map((f) => {
-                        const isEditingThisCell =
-                          editingCell != null &&
-                          editingCell.recordId === (record.id as number) &&
-                          editingCell.field === f.name;
-                        const editable = isInlineEditableField(f);
-                        return (
-                          <td
-                            key={f.name}
-                            style={columnWidths[f.name] ? { width: columnWidths[f.name] } : undefined}
-                            className={
-                              isEditingThisCell ? "cell-editing" : editable ? "cell-inline-editable" : undefined
-                            }
-                            onDoubleClick={editable && !isEditingThisCell ? () => startInlineEdit(record, f) : undefined}
-                            title={editable && !isEditingThisCell ? t("entity.inlineEdit.hint") : undefined}
-                          >
-                            {isEditingThisCell ? (
-                              <FieldInput
-                                field={f}
-                                value={cellDraft}
-                                onChange={setCellDraft}
-                                relatedEntity={f.relationTo ? allEntities.find((e) => e.name === f.relationTo) : undefined}
-                                relatedEntityRecords={f.relationTo ? relatedRecords[f.relationTo] : undefined}
-                                autoFocus
-                                onBlur={handleCellBlur}
-                                onKeyDown={(e) => {
-                                  if (e.key === "Enter") {
-                                    e.preventDefault();
-                                    void commitInlineEdit();
-                                  } else if (e.key === "Escape") {
-                                    e.preventDefault();
-                                    cancelInlineEdit();
-                                  }
-                                }}
-                              />
-                            ) : (
-                              <Cell
-                                field={f}
-                                value={record[f.name]}
-                                lang={lang}
-                                t={t}
-                                relationLabel={
-                                  f.type === "relation"
-                                    ? relationDisplayLabel(f, record[f.name], allEntities, relatedRecords)
-                                    : undefined
-                                }
-                                highlightQuery={search}
-                              />
-                            )}
-                          </td>
-                        );
-                      })}
-                      <td className="muted small created-at-cell">
-                        {formatRecordCreatedAt(record.createdAt as string | undefined, lang)}
-                      </td>
-                      <td className="row-actions">
-                        <button type="button" onClick={() => startEdit(record)}>
-                          {t("entity.edit")}
-                        </button>
-                        <button type="button" onClick={() => handleDuplicate(record.id as number)}>
-                          {t("entity.duplicate")}
-                        </button>
-                        <button type="button" onClick={() => setRecordToPrint(record)}>
-                          {t("entity.print")}
-                        </button>
-                        <button type="button" className="danger" onClick={() => handleDelete(record.id as number)}>
-                          {t("entity.delete")}
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
+                  {recordGroups
+                    ? recordGroups.map((group) => (
+                        <Fragment key={group.key}>
+                          <tr className="entity-group-header-row">
+                            <td colSpan={visibleFields.length + 3}>
+                              {group.label} <span className="muted small">({group.records.length})</span>
+                            </td>
+                          </tr>
+                          {group.records.map(renderRecordRow)}
+                        </Fragment>
+                      ))
+                    : visibleRecords.map(renderRecordRow)}
                 </tbody>
               </table>
             </div>

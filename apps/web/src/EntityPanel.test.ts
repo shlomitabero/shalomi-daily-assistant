@@ -2214,3 +2214,48 @@ test("EntityPanel never opens an inline editor for a relation field's cell", asy
     }
   });
 });
+
+/**
+ * New in this round: grouping the plain table by an enum/boolean field
+ * (isGroupableField/groupRecordsByField, see entityFormatting.test.ts for
+ * the pure-function coverage) -- distinct from the Kanban board view, which
+ * only ever groups by one auto-picked field and only in its own separate
+ * view. This confirms the live component actually wires the dropdown to
+ * real group-header rows over the real table, and that switching back to
+ * "no grouping" restores the flat row list.
+ */
+test("EntityPanel's 'Group by' dropdown clusters the table into real group-header rows, and 'no grouping' restores the flat list", async () => {
+  await withJsdom(async () => {
+    const store: EntityRecord[] = [
+      { id: 1, createdAt: "x", name: "Acme Corp", status: "new" },
+      { id: 2, createdAt: "x", name: "Beta Inc", status: "won" },
+      { id: 3, createdAt: "x", name: "Gamma LLC", status: "won" },
+    ];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = mockRecordsFetch(store) as typeof fetch;
+    try {
+      renderEntityPanel();
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 3);
+
+      const groupBySelect = document.querySelector(".entity-group-by") as HTMLSelectElement;
+      assert.ok(groupBySelect, "expected a real 'Group by' dropdown in the toolbar");
+
+      fireEvent.change(groupBySelect, { target: { value: "status" } });
+      await waitForCondition(() => document.querySelectorAll(".entity-group-header-row").length === 2);
+
+      const headerRows = Array.from(document.querySelectorAll(".entity-group-header-row"));
+      assert.deepEqual(
+        headerRows.map((r) => r.textContent?.trim()),
+        ["New (1)", "Won (2)"],
+        "must show one header per status that actually has records, in the enum's own declared order, with the real count -- and skip 'Lost' entirely since nothing matched it",
+      );
+      assert.equal(document.querySelectorAll("table tbody tr").length, 5, "3 record rows + 2 group-header rows");
+
+      fireEvent.change(groupBySelect, { target: { value: "" } });
+      await waitForCondition(() => document.querySelectorAll(".entity-group-header-row").length === 0);
+      assert.equal(document.querySelectorAll("table tbody tr").length, 3, "reverting to 'no grouping' must restore the flat row list");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});

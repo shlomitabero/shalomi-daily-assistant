@@ -16,6 +16,8 @@ import {
   formatNumberValue,
   formatRecordCreatedAt,
   groupByField,
+  groupRecordsByField,
+  isGroupableField,
   isInlineEditableField,
   isSameMonth,
   isTypingTarget,
@@ -930,5 +932,71 @@ test("isInlineEditableField allows every field type except relation", () => {
     isInlineEditableField({ name: "courierId", type: "relation", relationTo: "Courier" } as Field),
     false,
     "a relation field's cell shows a label resolved from a different record, so it must stay excluded from inline editing",
+  );
+});
+
+/**
+ * New in this round: the ordinary table gets its own grouping (distinct
+ * from the Kanban board's own single auto-picked field, see groupByField
+ * above) -- isGroupableField restricts it to enum/boolean fields, the same
+ * finite-value-space fields findBoardField already only ever considers for
+ * the board view, since an unbounded field would produce one group per
+ * distinct value.
+ */
+test("isGroupableField allows only enum and boolean fields", () => {
+  assert.equal(isGroupableField({ name: "status", type: "enum" } as Field), true);
+  assert.equal(isGroupableField({ name: "isBillable", type: "boolean" } as Field), true);
+  for (const type of ["text", "longtext", "number", "date", "relation"] as Field["type"][]) {
+    assert.equal(isGroupableField({ name: "f", type } as Field), false, `expected ${type} to NOT be groupable`);
+  }
+});
+
+test("groupRecordsByField groups by an enum field in the field's own declared order, with an 'other' bucket for a stale value no longer in enumValues", () => {
+  const t = (key: string) => translate("en", key);
+  const field: Field = {
+    name: "status",
+    type: "enum",
+    required: true,
+    enumValues: ["New", "Won", "Lost"],
+    enumLabels: { New: "New", Won: "Won ✅", Lost: "Lost ❌" },
+  };
+  const records = [
+    { id: 1, status: "Won" },
+    { id: 2, status: "New" },
+    { id: 3, status: "Archived" }, // a legacy value no longer declared
+    { id: 4, status: "Won" },
+  ];
+  const groups = groupRecordsByField(records, field, t);
+  assert.deepEqual(
+    groups.map((g) => g.key),
+    ["New", "Won", "__other__"],
+    "must follow the enum's own declared order (New, Won, Lost), skip the empty Lost group entirely, and append one 'other' bucket at the end",
+  );
+  assert.equal(groups[1].label, "Won ✅");
+  assert.deepEqual(
+    groups.find((g) => g.key === "Won")!.records.map((r) => r.id),
+    [1, 4],
+  );
+  assert.deepEqual(groups.find((g) => g.key === "__other__")!.records.map((r) => r.id), [3]);
+});
+
+test("groupRecordsByField groups by a boolean field into exactly true then false, omitting an empty side entirely", () => {
+  const t = (key: string) => translate("en", key);
+  const field: Field = { name: "isBillable", type: "boolean", required: false };
+  const records = [
+    { id: 1, isBillable: true },
+    { id: 2, isBillable: false },
+    { id: 3, isBillable: true },
+  ];
+  const groups = groupRecordsByField(records, field, t);
+  assert.deepEqual(groups.map((g) => g.key), ["true", "false"]);
+  assert.deepEqual(groups[0].records.map((r) => r.id), [1, 3]);
+  assert.deepEqual(groups[1].records.map((r) => r.id), [2]);
+
+  const allTrue = [{ id: 1, isBillable: true }];
+  assert.deepEqual(
+    groupRecordsByField(allTrue, field, t).map((g) => g.key),
+    ["true"],
+    "an empty side (no false records at all) must be omitted, not rendered as an empty group",
   );
 });

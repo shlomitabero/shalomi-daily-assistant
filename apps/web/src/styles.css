@@ -895,10 +895,17 @@ tbody tr:hover {
   padding: 0 1px;
 }
 
-.entity-status-filter {
+.entity-status-filter,
+.entity-group-by {
   max-width: 200px;
   margin-bottom: 0;
   flex-shrink: 0;
+}
+
+.entity-group-header-row td {
+  background: var(--surface-subtle);
+  font-weight: 600;
+  padding: 6px 10px;
 }
 
 .view-toggle {

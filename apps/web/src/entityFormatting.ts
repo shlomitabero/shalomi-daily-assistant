@@ -791,3 +791,58 @@ export function isTypingTarget(target: { tagName?: string; isContentEditable?: b
 export function isInlineEditableField(field: Field): boolean {
   return field.type !== "relation";
 }
+
+/**
+ * Whether a field's own value space is small and fixed enough to group the
+ * table by -- the Kanban board view (round 47) already groups records into
+ * columns, but only ever by one auto-picked "board" field and only in its
+ * own separate view. A plain table has no grouping at all, even when a
+ * person would rather see every record clustered by, say, a Priority or
+ * IsBillable field instead of scrolling a flat list. Free-text/number/date
+ * fields are excluded -- with an unbounded value space, "grouping" by one
+ * would produce one group per distinct value, which isn't grouping at all.
+ */
+export function isGroupableField(field: Field): boolean {
+  return field.type === "enum" || field.type === "boolean";
+}
+
+export interface RecordGroup {
+  key: string;
+  label: string;
+  records: EntityRecord[];
+}
+
+/**
+ * Partitions records into ordered groups by one groupable field's value.
+ * For an enum field, groups follow the field's own enumValues order (its
+ * declared, human-meaningful order) rather than alphabetical or
+ * first-seen, with one final "(other)" bucket for any legacy value no
+ * longer in enumValues -- the same "don't silently drop unrecognized data"
+ * principle badgeTone's own fallback already follows. For a boolean field,
+ * there are only ever the two fixed groups, true then false. A group with
+ * zero matching records is omitted entirely rather than rendered empty.
+ */
+export function groupRecordsByField(
+  records: EntityRecord[],
+  field: Field,
+  t: (key: string, params?: Record<string, string | number>) => string,
+): RecordGroup[] {
+  if (field.type === "boolean") {
+    const groups: RecordGroup[] = [];
+    const truthy = records.filter((r) => Boolean(r[field.name]));
+    const falsy = records.filter((r) => !r[field.name]);
+    if (truthy.length > 0) groups.push({ key: "true", label: t("entity.groupBy.yes"), records: truthy });
+    if (falsy.length > 0) groups.push({ key: "false", label: t("entity.groupBy.no"), records: falsy });
+    return groups;
+  }
+
+  const groups: RecordGroup[] = [];
+  const known = new Set(field.enumValues ?? []);
+  for (const value of field.enumValues ?? []) {
+    const matched = records.filter((r) => String(r[field.name] ?? "") === value);
+    if (matched.length > 0) groups.push({ key: value, label: field.enumLabels?.[value] ?? value, records: matched });
+  }
+  const other = records.filter((r) => !known.has(String(r[field.name] ?? "")));
+  if (other.length > 0) groups.push({ key: "__other__", label: t("entity.groupBy.other"), records: other });
+  return groups;
+}
