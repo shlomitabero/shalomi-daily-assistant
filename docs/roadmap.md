@@ -11799,6 +11799,75 @@ not a single "make it perfect" claim.
       `@forge/api` 231 unchanged) and `npm run build --workspace=@forge/web`
       clean.
 
+- [x] **Round 221 — a live password-strength meter, shown while choosing a
+      new password.**
+      Diversification: investigated the under-explored auth area the
+      trigger's own notes flagged (`PasswordInput.tsx`, `AddRoleForm`/
+      `AddAssumptionForm`, `DeleteAccountPanel.tsx`). `AddRoleForm`/
+      `AddAssumptionForm` (`SpecListItemRemover.tsx`) turned out already
+      fully built out (add + remove both wired, round 178/215 territory);
+      `PasswordInput.tsx` had a real, concrete gap instead: every password
+      field only enforces a bare `minLength={8}`, so `"aaaaaaaa"` and a
+      genuinely strong password look identical while typing, with nothing
+      nudging someone away from the weak choice.
+
+      New pure function `passwordStrength.ts`:
+      `getPasswordStrength(password): "weak" | "fair" | "strong" | null`
+      -- a plain point score, not a real entropy estimate: length brackets
+      (8+/12+) plus character-class variety (upper+lower together, a
+      digit, a symbol), bucketed into three tiers. Returns `null` for an
+      empty password so callers can hide the meter entirely before
+      anything's been typed.
+
+      `PasswordInput.tsx` gained a new opt-in `showStrength` prop -- a
+      three-bar meter (colored via a `data-strength` attribute: red/
+      orange/green matching `--danger`/`--accent`/`--success`) plus a
+      translated label, rendered only once a value exists. Deliberately
+      opt-in rather than automatic: a *current*-password field (login,
+      `ChangePasswordPanel`'s own "current password" field) has nothing
+      left to "choose", so a meter there would be pure noise. Wired into
+      exactly the two real "new password" fields: `AuthScreen.tsx`'s
+      signup password field (`showStrength={mode === "signup"}` -- off in
+      login mode) and `ChangePasswordPanel.tsx`'s "new password" field.
+      The round-220 confirm-password field intentionally does **not** get
+      its own meter -- it's a copy of the same password, not a second
+      independent choice.
+
+      New tests in `passwordStrength.test.ts` (empty → `null`; a long
+      single-character-class password rated weak regardless of length; a
+      password with some variety rated fair; a longer, all-four-class
+      password rated strong; and a monotonicity check that adding variety
+      on top of the same base never lowers the rating) and two new tests
+      in `PasswordInput.test.ts` (the meter stays hidden until a value is
+      typed and then re-rates live as it changes; the meter never renders
+      at all when `showStrength` is left off, even with a value present).
+
+      Verified with the deliberate-break-and-restore discipline, twice:
+      first on the pure function alone (collapsed the "fair" bucket so a
+      mid-range score fell through to "strong" -- exactly 1 test failed,
+      the "some variety is fair" case, `diff` byte-identical after
+      restore); then on the real wiring (dropped the `showStrength ?  ... :
+      null` guard so the meter always computed from `value` regardless of
+      the prop) -- the "never renders when showStrength is left off" test
+      failed as expected, and true to the routine's own confirmed-8-times
+      "hang after catch" pattern, the test process didn't exit on its own
+      and needed the `timeout 60` wrapper to kill it (confirmed via
+      `ps aux` that nothing leaked); restored, `diff` byte-identical.
+
+      **And** a real Playwright pass against the live dev server: no
+      meter visible before typing; typed `"aaaaaaaa"` into the signup
+      password field and confirmed `data-strength="weak"`; replaced it
+      with `"K7$mq!zX9pL"` and confirmed it re-rated live to
+      `data-strength="strong"`; confirmed exactly one meter is visible in
+      signup mode (not a second one next to the round-220 confirm field);
+      switched to login mode, typed a password, and confirmed zero meters
+      appear there at all.
+
+      Full suite green (834 tests, up from 827 -- `@forge/web` 412 → 419;
+      `@forge/shared` 11, `@forge/spec-engine` 82, `@forge/db` 91,
+      `@forge/api` 231 unchanged) and `npm run build --workspace=@forge/web`
+      clean.
+
 ## Phase 3
 
 - Self-healing: production observability, automatic diagnosis and patch
