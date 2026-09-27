@@ -16,11 +16,17 @@ const LOCALE: Record<string, string> = { he: "he-IL", en: "en-US" };
 export function CollaboratorsPanel({
   projectId,
   isOwner,
+  currentUserId,
   onClose,
+  onLeft,
 }: {
   projectId: string;
   isOwner: boolean;
+  /** The signed-in user's own id -- lets this panel tell "my own row" apart from every other collaborator's, so only my own row ever gets a "Leave" button. */
+  currentUserId: string | undefined;
   onClose: () => void;
+  /** Called once a real self-removal succeeds -- the caller no longer has access to this project at all, so it's expected to navigate away (e.g. back to the home screen), not just close this panel. */
+  onLeft: () => void;
 }) {
   const { t, lang } = useTranslation();
   const [collaborators, setCollaborators] = useState<ProjectCollaborator[] | null>(null);
@@ -68,6 +74,29 @@ export function CollaboratorsPanel({
     } catch (err) {
       setError((err as Error).message);
     } finally {
+      setRemovingUserId(null);
+    }
+  }
+
+  /**
+   * Real self-service "leave project" -- previously the only way for a
+   * collaborator to lose access was asking the owner to remove them. Reuses
+   * the exact same DELETE the owner's own "Remove" button calls (the API
+   * route now allows a collaborator to target their own id), just calls
+   * onLeft instead of trimming the local list: once this succeeds, the
+   * caller has no access to this project at all any more, so there's
+   * nothing left here to keep showing.
+   */
+  async function handleLeave() {
+    if (!currentUserId) return;
+    if (!window.confirm(t("collab.confirmLeave"))) return;
+    setRemovingUserId(currentUserId);
+    setError(null);
+    try {
+      await removeCollaborator(projectId, currentUserId);
+      onLeft();
+    } catch (err) {
+      setError((err as Error).message);
       setRemovingUserId(null);
     }
   }
@@ -121,7 +150,7 @@ export function CollaboratorsPanel({
                     <strong>{c.email}</strong>
                     <div className="muted small">{new Date(c.addedAt).toLocaleDateString(LOCALE[lang])}</div>
                   </div>
-                  {isOwner && (
+                  {isOwner ? (
                     <button
                       type="button"
                       className="secondary"
@@ -130,6 +159,12 @@ export function CollaboratorsPanel({
                     >
                       {removingUserId === c.userId ? t("collab.remove.busy") : t("collab.remove")}
                     </button>
+                  ) : (
+                    c.userId === currentUserId && (
+                      <button type="button" className="secondary" onClick={handleLeave} disabled={removingUserId !== null}>
+                        {removingUserId === currentUserId ? t("collab.leave.busy") : t("collab.leave")}
+                      </button>
+                    )
                   )}
                 </li>
               ))}

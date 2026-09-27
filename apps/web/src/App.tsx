@@ -1318,7 +1318,12 @@ function AppContent() {
             <CollaboratorsPanel
               projectId={project.id}
               isOwner={user?.id === project.ownerId}
+              currentUserId={user?.id}
               onClose={() => setShowCollaborators(false)}
+              onLeft={() => {
+                setShowCollaborators(false);
+                handleGoHome();
+              }}
             />
           )}
 

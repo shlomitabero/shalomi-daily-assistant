@@ -387,10 +387,27 @@ export function createProjectsRouter(db: ForgeDatabase, provider: SpecProvider |
     }),
   );
 
+  /**
+   * Removing a collaborator was previously owner-only, full stop -- which
+   * meant a collaborator invited to someone else's project had no way to
+   * actually leave it; only asking the owner to remove them worked. This
+   * now also allows the one case that's always safe regardless of who owns
+   * the project: removing YOURSELF (real, permanent "leave project" self-
+   * service, the collaborator-scoped sibling of round 210's own "delete my
+   * account"). requireProjectAccess (not requireProjectOwner) so a
+   * collaborator's own request to leave doesn't 404 before it even gets a
+   * chance to check who's being removed; the owner-or-self check below is
+   * what actually gates it. A collaborator can never remove a *different*
+   * collaborator -- that stays owner-only.
+   */
   router.delete(
     "/projects/:id/collaborators/:userId",
     asyncRoute(async (req, res) => {
-      const project = requireProjectOwner(db, req.params.id, req.userId!);
+      const project = requireProjectAccess(db, req.params.id, req.userId!);
+      const isSelf = req.params.userId === req.userId;
+      if (project.ownerId !== req.userId! && !isSelf) {
+        throw new HttpError(403, "Only the project owner can remove a different collaborator", "COLLABORATOR_CANNOT_REMOVE_OTHERS");
+      }
       removeCollaborator(db, project.id, req.params.userId);
       res.status(204).end();
     }),

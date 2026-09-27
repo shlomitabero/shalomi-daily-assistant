@@ -793,11 +793,123 @@ test("a collaborator (not the owner) cannot invite or remove other collaborators
     });
     assert.equal(inviteAsCollab.status, 404);
 
+    // Removing a DIFFERENT collaborator's own id stays blocked -- this is
+    // now a real 403 (not the 404 above), since a collaborator DOES have
+    // real access to this project (they just aren't allowed to remove
+    // anyone but themselves); see the dedicated "leave project" tests below
+    // for the one case this route now does allow.
     const removeAsCollab = await fetch(`${baseUrl}/api/projects/${project.id}/collaborators/anyone`, {
       method: "DELETE",
       headers: authHeaders(collabToken),
     });
-    assert.equal(removeAsCollab.status, 404);
+    assert.equal(removeAsCollab.status, 403);
+  });
+});
+
+/**
+ * New in this round: a collaborator invited to someone else's project
+ * previously had no way to actually leave it -- only the owner could
+ * remove them. The DELETE .../collaborators/:userId route now also allows
+ * removing YOURSELF (real, permanent "leave project" self-service, the
+ * collaborator-scoped sibling of round 210's own "delete my account").
+ * Confirms a collaborator can remove their own id and genuinely loses
+ * access afterward, while the owner's own project (and any OTHER
+ * collaborator on it) stays completely untouched.
+ */
+test("a collaborator can leave a project by removing their own id, losing access -- while the owner and any other collaborator are unaffected", async () => {
+  await withServer(async (baseUrl) => {
+    const ownerToken = await signup(baseUrl, "owner-leave1@example.com");
+    const leavingToken = await signup(baseUrl, "leaving-collab1@example.com");
+    const stayingToken = await signup(baseUrl, "staying-collab1@example.com");
+
+    const createRes = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: authHeaders(ownerToken),
+      body: JSON.stringify({ description: "A CRM with customers and deals." }),
+    });
+    const { project } = (await createRes.json()) as { project: { id: string } };
+    await fetch(`${baseUrl}/api/projects/${project.id}/collaborators`, {
+      method: "POST",
+      headers: authHeaders(ownerToken),
+      body: JSON.stringify({ email: "leaving-collab1@example.com" }),
+    });
+    await fetch(`${baseUrl}/api/projects/${project.id}/collaborators`, {
+      method: "POST",
+      headers: authHeaders(ownerToken),
+      body: JSON.stringify({ email: "staying-collab1@example.com" }),
+    });
+
+    const meRes = await fetch(`${baseUrl}/api/auth/me`, { headers: authHeaders(leavingToken) });
+    const { user: leavingUser } = (await meRes.json()) as { user: { id: string } };
+
+    const leaveRes = await fetch(`${baseUrl}/api/projects/${project.id}/collaborators/${leavingUser.id}`, {
+      method: "DELETE",
+      headers: authHeaders(leavingToken),
+    });
+    assert.equal(leaveRes.status, 204);
+
+    // The leaving collaborator has genuinely lost access.
+    const afterLeave = await fetch(`${baseUrl}/api/projects/${project.id}`, { headers: authHeaders(leavingToken) });
+    assert.equal(afterLeave.status, 404);
+
+    // The owner's own project is completely untouched.
+    const ownerAfter = await fetch(`${baseUrl}/api/projects/${project.id}`, { headers: authHeaders(ownerToken) });
+    assert.equal(ownerAfter.status, 200);
+
+    // The OTHER collaborator's own access is completely untouched.
+    const stayingAfter = await fetch(`${baseUrl}/api/projects/${project.id}`, { headers: authHeaders(stayingToken) });
+    assert.equal(stayingAfter.status, 200, "a different collaborator's own access must be completely unaffected by someone else leaving");
+
+    // The collaborator list itself no longer includes the one who left, but still includes the one who stayed.
+    const collabListRes = await fetch(`${baseUrl}/api/projects/${project.id}/collaborators`, { headers: authHeaders(ownerToken) });
+    const { collaborators } = (await collabListRes.json()) as { collaborators: { userId: string }[] };
+    assert.ok(!collaborators.some((c) => c.userId === leavingUser.id));
+    assert.equal(collaborators.length, 1);
+  });
+});
+
+/**
+ * The critical cross-collaborator check this project's established rule
+ * (rounds 208-212) requires for any delete/update endpoint that accepts a
+ * client-supplied id: a real id belonging to a DIFFERENT collaborator, not
+ * a fake placeholder string. Confirms one collaborator can never remove
+ * ANOTHER real collaborator's own access, only their own.
+ */
+test("a collaborator cannot remove a DIFFERENT real collaborator's own access, only their own", async () => {
+  await withServer(async (baseUrl) => {
+    const ownerToken = await signup(baseUrl, "owner-leave2@example.com");
+    const collabAToken = await signup(baseUrl, "collab-a2@example.com");
+    const collabBToken = await signup(baseUrl, "collab-b2@example.com");
+
+    const createRes = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: authHeaders(ownerToken),
+      body: JSON.stringify({ description: "A CRM with customers and deals." }),
+    });
+    const { project } = (await createRes.json()) as { project: { id: string } };
+    await fetch(`${baseUrl}/api/projects/${project.id}/collaborators`, {
+      method: "POST",
+      headers: authHeaders(ownerToken),
+      body: JSON.stringify({ email: "collab-a2@example.com" }),
+    });
+    await fetch(`${baseUrl}/api/projects/${project.id}/collaborators`, {
+      method: "POST",
+      headers: authHeaders(ownerToken),
+      body: JSON.stringify({ email: "collab-b2@example.com" }),
+    });
+
+    const meBRes = await fetch(`${baseUrl}/api/auth/me`, { headers: authHeaders(collabBToken) });
+    const { user: collabB } = (await meBRes.json()) as { user: { id: string } };
+
+    const removeRes = await fetch(`${baseUrl}/api/projects/${project.id}/collaborators/${collabB.id}`, {
+      method: "DELETE",
+      headers: authHeaders(collabAToken),
+    });
+    assert.equal(removeRes.status, 403);
+
+    // Collaborator B's own access must be completely untouched.
+    const stillHasAccess = await fetch(`${baseUrl}/api/projects/${project.id}`, { headers: authHeaders(collabBToken) });
+    assert.equal(stillHasAccess.status, 200);
   });
 });
 
