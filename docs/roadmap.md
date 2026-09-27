@@ -12177,6 +12177,105 @@ not a single "make it perfect" claim.
       `@forge/api` 238 unchanged) and `npm run build --workspace=@forge/web`
       clean.
 
+- [x] **Round 227 — drag-and-drop column reordering ported to the exported
+      standalone (codegen) app.**
+      Diversification: both standing arcs (copy-to-clipboard, click-to-
+      rename on spec review) were fully closed as of round 226, and round
+      226 itself explicitly flagged reordering the actual spec.entities
+      array (not just a display preference) as still open but big/
+      uncertain in value. Investigating `codegen.ts` fresh instead turned
+      up a genuinely missed gap: table columns in the exported app could
+      only be resized (round 201's port) or hidden (round 198's "Columns"
+      menu port) -- never actually REORDERED, unlike the live preview
+      (round 203). Round 218 had believed all three known "port to
+      exported codegen" candidates were closed, but column reorder (round
+      203) was never one of the three actually tracked -- a real gap in
+      that earlier accounting, confirmed empirically by grepping
+      `codegen.ts` for `onDragStart` and finding none on any table header.
+
+      Added a self-contained `applyColumnOrder`/`reorderColumns` pair
+      inside the generated `EntityView.jsx` template, mirroring the live
+      preview's own `columnOrder.ts` verbatim (deliberately plain
+      `function`, not `export function` -- see the lesson below), plus a
+      `COLUMN_ORDER_STORAGE_KEY` localStorage store scoped per entity name
+      (this single-tenant exported app has no project id to scope by,
+      matching `getHiddenColumns`/`getColumnWidths`'s own existing
+      convention). Wired the same `draggable`/`onDragStart`/`onDragOver`/
+      `onDragLeave`/`onDrop` contract `EntityPanel.tsx`'s own column-header
+      drag already uses onto the table's `<th className="resizable-col">`,
+      alongside the existing resize handle, with a new
+      `.resizable-col-drag-over` CSS class.
+
+      **Lesson (real bug, caught before commit, not a deliberate break):**
+      first attempt made the new `applyColumnOrder`/`reorderColumns`
+      `export function` (matching `computeResizedWidth`'s own `export`)
+      and inserted them *before* `computeResizedWidth` in the generated
+      source. This silently broke the **pre-existing**
+      `computeResizedWidth` test: its own regex-extraction span
+      (`const MIN_COLUMN_WIDTH...export function computeResizedWidth`)
+      now also captured the two new `export function` declarations in
+      between, and that test's own `.replace("export ", "")` only strips
+      the *first* occurrence -- leaving two more `export` keywords that
+      `new Function(...)` (correctly) rejects as a syntax error outside a
+      real ES module, with no clear signal pointing at the real cause.
+      Fixed by moving the new block to *after* `computeResizedWidth`
+      instead (so the pre-existing test's own capture span is unaffected)
+      and making the two new functions plain `function` (they're never
+      called from another generated file, unlike `computeResizedWidth`/
+      `recordDisplayLabel`, so they never needed the `export` keyword at
+      all). Also had to broaden that same pre-existing test's own
+      `reset-on-entity-switch` regex to include the new
+      `setColumnOrderState(getColumnOrder(entity.name));` line now
+      standing between `setColumnWidths(...)` and `refresh()`.
+
+      New test: `codegen.test.ts` gained one new test (62 total, up from
+      61) asserting the exact generated JSX/handler shape, executing the
+      real generated `applyColumnOrder`/`reorderColumns` (self-contained,
+      no localStorage needed) and the real generated
+      `getColumnOrder`/`setColumnOrder` against a fake localStorage --
+      the same "run the real generated code" standard this file's other
+      persistence-backed tests already use.
+
+      Verified with the deliberate-break-and-restore discipline: relaxed
+      `handleReorderColumn`'s own no-op guard from
+      `!draggedField || draggedField === targetName` down to just
+      `!draggedField` -- caught cleanly (a real assertion failure, not a
+      hang, since these are regex/string assertions against generated
+      source, not a rendered DOM component); restored, `diff`
+      byte-identical, all 62 codegen tests green again.
+
+      **And** the full real pipeline end to end, not just a Playwright
+      pass against the live dev server: signed up, built a real
+      restaurant app (Order+MenuItem, Order with 5 columns), clicked the
+      real "Export Code" button and captured Playwright's own real
+      `download` event, extracted the real downloaded zip, symlinked
+      `node_modules`, ran the real `vite build` -- one genuine debugging
+      detour here too: running it from the extracted `web/` subdirectory
+      (mirroring an earlier assumption) silently used no config at all and
+      wrote to `web/dist`, while the project's own `vite.config.js`
+      (`root: "web"`, `outDir: "../dist"`) lives at the extracted root and
+      only takes effect when `vite build` is run *from that root* --
+      exactly what the exported `package.json`'s own `"build": "vite
+      build"` script does. Fixed by running it from the extract root
+      instead, matching `dist/` landing exactly where the generated
+      `server.js`'s own `express.static(path.join(__dirname, "dist"))`
+      expects it. Spawned the real `server.js`, and since the exported app
+      starts with a genuinely empty database (no seed data -- the table
+      itself, `<thead>` included, only renders once `visibleRecords.length
+      > 0`), filled and submitted the real record-add form first to create
+      one real row. Then dragged the last real column header onto the
+      first, confirmed the real DOM order changed, confirmed the real
+      `forge_column_order` localStorage entry held the reordered field
+      names keyed by the real entity name -- then **reloaded the whole
+      page**, confirming the new column order survived against the
+      spawned server, not just an in-memory illusion.
+
+      Full suite green (858 tests, up from 857 -- `@forge/api` 238 → 239;
+      `@forge/shared` 11, `@forge/spec-engine` 82, `@forge/db` 91,
+      `@forge/web` 435 unchanged) and both
+      `npm run build --workspace=@forge/api` and
+      `npm run build --workspace=@forge/web` clean.
+
 ## Phase 3
 
 - Self-healing: production observability, automatic diagnosis and patch
