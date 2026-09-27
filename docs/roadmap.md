@@ -10969,6 +10969,102 @@ not a single "make it perfect" claim.
       `@forge/spec-engine` 82 unchanged) and `npm run build
       --workspace=@forge/web` clean.
 
+- [x] **Round 210 — real self-service "delete my account."**
+      Diversification: rounds 207-209 each touched a screen inside an
+      already-built project (preview/chat, entity table, Time Machine).
+      This round moves to account management itself (last real addition:
+      round 163's change-password panel) -- there was previously no way
+      to actually leave: signing up was permanent, and the account plus
+      every project it owned just sat there forever with no path to
+      delete it.
+
+      New in `packages/db/src/collaborators.ts`:
+      `removeAllCollaborationsForUser(db, userId)`, the mirror of the
+      existing `removeAllCollaborators` (which is scoped by `projectId`,
+      for when a *project* is deleted) but scoped by `userId` instead --
+      for when a *user* leaves, cleaning up their collaborator grant on
+      every other project they were invited to, not just projects they
+      own. New in `packages/db/src/users.ts`: `deleteAllSessionsForUser`
+      (revokes every session for a user, signing them out of every device
+      at once) and `deleteUser` (removes the user row itself, last in the
+      cascade). New route: `DELETE /auth/account` in `routes/auth.ts`,
+      which for the real authenticated caller only: lists their owned
+      projects (filtering `listProjectsForUser`'s own owned+collaborated
+      result down to `ownerId === req.userId`, since it returns both),
+      disconnects any live WhatsApp session and calls the existing
+      `deleteProject` cascade for each one, then calls the three new
+      cleanup functions above in order (collaborations, sessions, user
+      row). Only ever acts on `req.userId!` -- the id `requireAuth` itself
+      already proved this session belongs to -- so there's no
+      client-suppliable id anywhere on this route's own attack surface.
+
+      Web side: new `deleteAccount()` client call in `api.ts`, and a new
+      `DeleteAccountPanel.tsx` reachable from a new "Delete account"
+      topbar button next to "Change password"/"Log out". Given how much
+      more severe and irreversible this is than anything else in this app
+      (a single record, a checkpoint, even a whole project a person can
+      still see coming), the guard here is deliberately stronger than the
+      plain `window.confirm` used everywhere else: typing the account's
+      own email address exactly, with the submit button itself staying
+      disabled until it matches (not just a client-side check on submit).
+      On success, `App.tsx`'s new `handleAccountDeleted` clears the local
+      token and resets every piece of local UI state `handleLogout`
+      already resets -- there's no server-side logout call to make this
+      time, since the DELETE route already revoked every session
+      (including this one) before responding.
+
+      New tests: `collaborators.test.ts` and `users.test.ts` (db layer)
+      cover each new function's own scoping -- a different user's grant,
+      session, or row must survive completely untouched. `app.test.ts`
+      (API layer) is the one that matters most here: a real end-to-end
+      test builds a project the deleting user owns *and* makes them a
+      collaborator on a second user's own project, deletes the account,
+      then confirms the owned project, its data, and the collaboration
+      grant are all genuinely gone, the deleted account's own token stops
+      working immediately, a fresh login with the same credentials fails,
+      and -- the critical cross-user check this project's rounds 208-209
+      established as mandatory for any id-accepting delete/update route
+      -- the *other* user's own project, collaborator list, and session
+      are completely untouched. `DeleteAccountPanel.test.ts` covers a
+      correct-confirmation commit, a blank/wrong/case-mismatched
+      confirmation never calling the API (with the submit button itself
+      staying disabled, not just the handler no-oping), a server error
+      being shown without firing `onDeleted`, and Cancel closing without
+      any network call.
+
+      Verified with the deliberate-break-and-restore discipline, twice,
+      across two different layers: first, removed the
+      `ownerId === req.userId` filter from the API route so it looked at
+      *every* project `listProjectsForUser` returns instead of just owned
+      ones -- since a collaborator is included in that list too, this
+      would have deleted a project the user was merely invited to, not
+      one they own; caught cleanly by the cross-user test's own "the
+      staying user's own unrelated project must be completely untouched"
+      assertion (404 instead of 200); restored, `diff` byte-identical.
+      Second, broke `DeleteAccountPanel`'s own email-match guard to always
+      allow submission -- caught by the guard test's assertion (an
+      unexpected DELETE request fired), though the test process itself
+      didn't exit cleanly afterward and had to be killed by the enclosing
+      `timeout` wrapper, the same messy-but-valid catch shape rounds
+      205/206/209 already established as acceptable for a plain
+      component with no timers; restored, `diff` byte-identical; no
+      leftover processes confirmed via `ps aux` after the kill.
+
+      **And** a real Playwright pass against the live dev server: signed
+      up with a fresh email, opened the real "Delete account" dialog,
+      confirmed the submit button starts disabled, stays disabled after
+      typing a wrong email, and only enables once the typed text matches
+      the real account email exactly -- then submitted, confirmed
+      redirected back to the real auth screen, switched that screen to
+      its own login mode (its default is signup, not login), and
+      confirmed a fresh login attempt with the same now-deleted
+      credentials genuinely fails.
+
+      Full suite green (793 tests, up from 782 -- `@forge/db` 86 → 91;
+      `@forge/api` 216 → 218; `@forge/web` 387 → 391; `@forge/shared` 11,
+      `@forge/spec-engine` 82 unchanged) and `npm run build
+      --workspace=@forge/web` clean.
+
 ## Phase 3
 
 - Self-healing: production observability, automatic diagnosis and patch
