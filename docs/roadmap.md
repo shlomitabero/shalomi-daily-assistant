@@ -12351,6 +12351,72 @@ not a single "make it perfect" claim.
       `npm run build --workspace=@forge/api` and
       `npm run build --workspace=@forge/web` clean.
 
+- [x] **Round 229 — "Print list" action for the whole visible Entity
+      table** (live preview). The per-record Print action (round 131) has
+      always been one-record-at-a-time -- there was no way to print the
+      whole filtered/sorted table at once, unlike CSV export (round 51),
+      which already exports exactly that same visible set. A genuinely
+      fresh, well-scoped gap in an area (the entity table toolbar) not
+      touched in several recent rounds.
+
+      Added `RecordListPrintSheet` (`EntityPanel.tsx`), the list-view
+      sibling of the existing `RecordPrintSheet`: an always-mounted (CSS
+      `display: none` on screen, unhidden only under `@media print`)
+      `.print-list-sheet` div holding an actual `<table>` built from
+      `visibleFields`/`visibleRecords` -- the exact same column
+      order/visibility and search/sort-filtered record set the on-screen
+      table and CSV export already use, reusing the existing `Cell`
+      component for per-field formatting (dates, numbers, relation
+      labels) so the printed values match the screen exactly. A new
+      "Print list" toolbar button sits right next to "Export CSV",
+      disabled under the same `visibleRecords.length === 0` guard. Wired
+      up via a second `useEffect` mirroring the existing
+      single-record-print one (`showPrintList` → deferred `window.print()`
+      on the next tick so the table renders into the DOM first), and the
+      shared `afterprint` listener now clears both `recordToPrint` and
+      `showPrintList`. New CSS extends the existing `@media print` rule
+      (previously only unhiding `.print-record-sheet`) to also unhide
+      `.print-list-sheet`. New translation keys `entity.printList` (button
+      label) and `entity.printList.footer` (record count + timestamp,
+      the list's own footer -- reusing the existing single-record
+      `entity.print.generatedAt` phrasing convention).
+
+      New test in `EntityPanel.test.ts` mirrors the existing per-record
+      Print test's own convention exactly: narrows the table to one
+      record via the search box first (to prove the printed list respects
+      the same search filter the on-screen table and CSV export already
+      do, not "every record ever fetched"), clicks "Print list", confirms
+      `window.print()` fired exactly once, confirms the sheet's text
+      includes the matched record and excludes the filtered-out one, and
+      confirms the footer's own count reads "1 records" (not the full
+      store's 2). Deliberately broke it (passed the full `records` array
+      to `RecordListPrintSheet` instead of the filtered `visibleRecords`)
+      and confirmed the new test failed cleanly -- no hang, since this is
+      a plain DOM-content assertion with no timers -- then restored from a
+      backup and confirmed a byte-identical `diff` before re-confirming
+      all 37 `EntityPanel.test.ts` tests green again.
+
+      Full pipeline verification via the real dev server + Playwright:
+      signed up, built a real "מסעדה עם תפריט והזמנות" project (2 real
+      seeded Order records), faked `window.print` to count real calls
+      without blocking on an actual OS print dialog, confirmed the sheet
+      was empty before clicking, clicked "Print list", confirmed
+      `window.print()` fired exactly once, and confirmed the printed
+      sheet's own footer count (2) matched the real on-screen table's own
+      row count (2) exactly. **Verification detour:** the first pass
+      scoped its row-count check to a bare `table tbody tr` selector,
+      which silently double-counted -- `.print-list-sheet` has its own
+      real `<table>` too (that's the whole point), so once populated the
+      page has two matching tables at once. Fixed by scoping the
+      on-screen count to `.table-scroll table tbody tr` (the actual
+      wrapper class around the live table) instead.
+
+      Full suite green (861 tests, up from 860 -- `@forge/web` 437 → 438;
+      `@forge/shared` 11, `@forge/spec-engine` 82, `@forge/db` 91,
+      `@forge/api` 239 unchanged) and both
+      `npm run build --workspace=@forge/api` and
+      `npm run build --workspace=@forge/web` clean.
+
 ## Phase 3
 
 - Self-healing: production observability, automatic diagnosis and patch
