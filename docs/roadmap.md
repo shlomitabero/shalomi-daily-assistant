@@ -13640,6 +13640,75 @@ not a single "make it perfect" claim.
   493, identical to round 244) and `npm run build --workspace=@forge/web`
   clean.
 
+- **Round 246 -- CollaboratorsPanel's header now shows a real
+  "N with access" count.** Diversification: `codegen.ts` (242),
+  `EntityPanel.tsx` (243), `App.tsx`'s spec-review section (244), and
+  `App.tsx`'s export/backup handlers (245) were all ruled out. An
+  Explore subagent surveyed `BuildProgress.tsx`, `BusinessTwinPanel.tsx`/
+  `twin.ts`, the auth/account panels, and `App.tsx`'s home-screen
+  project-list area (a genuinely different section than 244's
+  spec-review touch), returning 5 grep-verified candidates and
+  recommending this one as the cleanest, lowest-risk pick: a brand-new
+  file untouched since the routine began, mirroring an idiom already
+  battle-tested in three sibling panels rather than inventing a new
+  design. Independently re-verified before writing any code: read
+  `CollaboratorsPanel.tsx` end to end and confirmed its `<h2>` (line
+  120) had no count at all, and grepped `language.ts`'s full `collab.*`
+  key list (23 keys across both languages) confirming no `collab.count`
+  key had ever existed.
+
+  The gap: `HistoryPanel.tsx` (`formatCheckpointCount`), the home
+  screen's "My projects" list (`formatMyProjectsCount`), and the entity
+  table's own record count all show a live "N" or "N of M" right next
+  to their own `<h2>` -- `CollaboratorsPanel` was the one remaining
+  overlay panel with a list but no visible count of it at all.
+
+  Fix: `collaboratorCount.ts`'s `formatCollaboratorCount(count, t)`
+  mirrors `formatCheckpointCount`'s exact shape, but simpler -- this
+  list has no search/filter to narrow it, so there's only the one
+  `"{count} with access"` phrasing, no "shown of total" branch needed.
+  Rendered as `— {formatCollaboratorCount(1 + collaborators.length, t)}`
+  next to `collab.title`, guarded on `owner && collaborators !== null`
+  so it never flashes a misleading `0` or `1` before the real
+  `listCollaborators` fetch resolves. The `+ 1` is deliberate: the
+  owner's own access comes from `project.ownerId`, not a row in the
+  `project_collaborators` join table, so `collaborators.length` alone
+  would silently undercount by exactly one person on every project.
+
+  Tests: 2 new pure-function tests (`collaboratorCount.test.ts`,
+  English + Hebrew) plus one new `CollaboratorsPanel.test.ts` DOM test
+  that gates the mock fetch behind a real unresolved `Promise` to
+  confirm `.collab-count` renders nothing at all before the fetch
+  resolves, then asserts the exact real count (owner + 2 real
+  collaborators = 3) once it does -- not just that some count shows
+  up, and not a stale one shown too early. 9/9 `CollaboratorsPanel.
+  test.ts` tests pass (up from 6, the 3 new/changed lines only added
+  the one new test -- the other 6 pre-existing tests were untouched
+  and confirmed still green).
+
+  Deliberate-break-and-restore: changed the pure function's own count
+  param to `count - 1` (an off-by-one undercount) -- exactly the 2 new
+  `collaboratorCount.test.ts` tests and the 1 new
+  `CollaboratorsPanel.test.ts` test failed cleanly, all 6 pre-existing
+  `CollaboratorsPanel.test.ts` tests stayed green throughout (they
+  never assert on the count at all), no hang. Restored from a
+  scratchpad backup and confirmed a byte-identical `diff` before
+  re-confirming all tests green again.
+
+  Real-browser verification against the live dev server: signed up two
+  genuinely separate accounts, built a project as the first, opened the
+  Collaborators panel and confirmed "— 1 with access" (owner only,
+  nobody invited yet), then actually invited the second real account
+  by email through the panel's own invite form and confirmed the count
+  updated live to "— 2 with access" once the real collaborator row
+  appeared -- not a mocked response, a genuine second signed-up user
+  gaining real access. `RESULT: PASS`.
+
+  Full suite green (922 tests, up from 919 -- `@forge/web` 493 → 496;
+  `@forge/shared` 11, `@forge/spec-engine` 82, `@forge/db` 91,
+  `@forge/api` 242 unchanged) and `npm run build --workspace=@forge/web`
+  clean.
+
 ## Phase 4
 
 - Template/agent marketplace
