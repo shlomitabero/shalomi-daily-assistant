@@ -13990,6 +13990,68 @@ not a single "make it perfect" claim.
   `@forge/api` 242 unchanged) and `npm run build --workspace=@forge/web`
   clean.
 
+- **Round 251 -- the WhatsApp log's direction/status filter now
+  persists across a panel close/reopen.** Diversification:
+  `EntityPanel.tsx` (243/250), `App.tsx` (244/245/248/249), and
+  `CollaboratorsPanel.tsx`/`DeleteAccountPanel.tsx` (246/247) were all
+  ruled out this round. An Explore subagent surveyed
+  `WhatsAppPanel.tsx`'s `directionFilter` state, `BuildProgress.tsx`'s
+  unshown computed percentage, and `HistoryPanel.tsx`'s still-missing
+  recentX-memory search box, recommending `directionFilter` as the
+  strongest pick: the exact same "view preference silently resets"
+  shape that closed out the whole `EntityPanel.tsx` view-preference
+  direction across rounds 231/232/243/250, just never applied to
+  WhatsApp's own log filter, which the round-250 survey itself had
+  already flagged as an open candidate. Independently re-verified
+  before writing code: read `WhatsAppPanel.tsx` end to end and
+  confirmed `directionFilter` (line 121) was plain `useState("all")`
+  with no read/write to storage anywhere, and that the filter
+  `<select>` only renders once `messages.length > SEARCH_THRESHOLD`
+  (5) -- relevant later for how the real-browser verification script
+  had to seed enough messages to even see the control.
+
+  Fix: `whatsappLogFilter.ts`'s `getWhatsAppLogFilter`/
+  `setWhatsAppLogFilter` mirrors `whatsappRecentNumbers.ts`'s own
+  per-project try/catch'd localStorage pattern, just for a single
+  filter value instead of a list (`forge.whatsappLogFilter.<projectId>`,
+  the default `"all"` choice clearing the entry rather than storing it
+  explicitly). `directionFilter`'s `useState` initializer became a lazy
+  `() => getWhatsAppLogFilter(projectId)` read (no separate load effect
+  needed -- the panel is a genuine unmount+remount on close/reopen, per
+  App.tsx's `{showWhatsApp && <WhatsAppPanel .../>}` with no `key`,
+  exactly matching the panel's own existing `recentNumbers` lazy-init
+  pattern), and the filter `<select>`'s `onChange` now persists through
+  `setWhatsAppLogFilter` before updating state.
+
+  Tests: 6 new pure-function tests (`whatsappLogFilter.test.ts` --
+  default `"all"`, round trips for all 4 filter values, clearing back
+  to `"all"` removes the storage entry rather than writing one,
+  per-project scoping, corrupted/foreign-data fallback) plus a new
+  `WhatsAppPanel.test.ts` DOM test proving the choice survives a real
+  unmount+remount of the panel and is correctly scoped (a different
+  project shows `"all"`).
+
+  Deliberate-break-and-restore: made `getWhatsAppLogFilter` always
+  return `"all"`, ignoring storage entirely -- 2 of the 6 round-trip
+  tests in `whatsappLogFilter.test.ts` failed cleanly. Restored from a
+  scratchpad backup, confirmed a byte-identical `diff`, and
+  re-confirmed all 6 green.
+
+  Real-browser verification against the live dev server: built a real
+  project, intercepted the messages endpoint with 6 mock log entries
+  so the filter `<select>` actually renders (`SEARCH_THRESHOLD = 5`),
+  selected "Failed", closed the panel via its own real Close button
+  (a genuine unmount, not a simulated one), reopened it, and confirmed
+  the filter was still "Failed" -- then also confirmed it survives a
+  full page reload (`page.reload()` returns to the home screen per
+  this routine's own standing lesson, so the script re-clicked
+  `.my-project-open` before reopening the panel). `RESULT: PASS`.
+
+  Full suite green (952 tests, up from 945 -- `@forge/web` 519 → 526;
+  `@forge/shared` 11, `@forge/spec-engine` 82, `@forge/db` 91,
+  `@forge/api` 242 unchanged) and `npm run build --workspace=@forge/web`
+  clean.
+
 ## Phase 4
 
 - Template/agent marketplace
