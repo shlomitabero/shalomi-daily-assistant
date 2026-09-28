@@ -14052,6 +14052,67 @@ not a single "make it perfect" claim.
   `@forge/api` 242 unchanged) and `npm run build --workspace=@forge/web`
   clean.
 
+- **Round 252 -- the AI Team build screen's progress bar now shows
+  its real completion percentage as visible text.** Diversification:
+  `WhatsAppPanel.tsx` (251), `EntityPanel.tsx` (243/250), `App.tsx`
+  (244/245/248/249), and `CollaboratorsPanel.tsx`/
+  `DeleteAccountPanel.tsx` (246/247) were all ruled out this round. An
+  Explore subagent surveyed `BuildProgress.tsx`'s computed percentage
+  (flagged as an open candidate in round 251's own survey),
+  `HistoryPanel.tsx`'s still-missing recentX-memory search box, and a
+  fresh look at `AuthScreen.tsx` (confirmed no "forgot password" flow
+  exists -- zero email-sending infrastructure anywhere in the backend,
+  correctly flagged as too large for one round) and
+  `ShortcutsPanel.tsx` (a minor, low-impact documentation gap).
+  Recommended `BuildProgress.tsx`'s percentage as the strongest pick:
+  every single build a user watches hits this exact screen, making it
+  the most-seen candidate of the batch, and it's a small, self-
+  contained, pure-render change. Independently re-verified before
+  writing code: read `BuildProgress.tsx` end to end and confirmed
+  `progressPercent` (line 408, derived from the already-existing pure
+  function `computeBuildProgressPercent`) was used in exactly two
+  places -- `aria-valuenow` (screen-reader only) and the fill bar's
+  CSS `width` -- never interpolated into any visible text a sighted
+  user could read.
+
+  Fix: wrapped the progress bar in a new `.build-progress-row` flex
+  container and added a `.build-progress-percent` `<span>` showing
+  `"{progressPercent}%"` right next to it, reading the exact same
+  `computeBuildProgressPercent` value the bar's own `aria-valuenow`
+  already uses, so the visible number and the accessible one can never
+  drift apart. Added `build.progress.percent` to `language.ts` (he+en,
+  mirroring `twin.stat.percentOfTotal`'s existing `"{percent}%"`
+  format from Business Twin's own per-entity percentages, round 171).
+
+  Tests: 1 new DOM test in `BuildProgress.test.ts` rendering a real
+  partial-build event sequence (2 of the 6 non-Debug agents done ->
+  `round(2/6*100) = 33`) and asserting `.build-progress-percent` shows
+  `"33%"` while the bar's `aria-valuenow` also reads `"33"` --
+  confirming they stay in sync, not just that some text renders at
+  all.
+
+  Deliberate-break-and-restore: hardcoded the rendered percent to
+  always show `0` regardless of the real `computeBuildProgressPercent`
+  value -- the new test failed cleanly (expected `"33%"`, got
+  `"0%"`). Restored from a scratchpad backup, confirmed a
+  byte-identical `diff`, and re-confirmed all 22 `BuildProgress.test.ts`
+  tests green.
+
+  Real-browser verification against the live dev server: signed up,
+  generated a real spec, started a real build, and polled the DOM
+  throughout to confirm `.build-progress-percent` renders valid `"NN%"`
+  text that always matches the bar's own `aria-valuenow` at every
+  observed moment. `RESULT: PASS`. The local heuristic build (no
+  `ANTHROPIC_API_KEY`) finishes in well under a second, so this pass
+  mainly proves real end-to-end wiring in a running app rather than
+  a multi-point progression -- the DOM test above is what rigorously
+  proves the number is correct across a full multi-step build.
+
+  Full suite green (953 tests, up from 952 -- `@forge/web` 526 → 527;
+  `@forge/shared` 11, `@forge/spec-engine` 82, `@forge/db` 91,
+  `@forge/api` 242 unchanged) and `npm run build --workspace=@forge/web`
+  clean.
+
 ## Phase 4
 
 - Template/agent marketplace
