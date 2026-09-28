@@ -1,5 +1,6 @@
-import { useState } from "react";
-import { deleteAccount } from "./api.js";
+import { useEffect, useState } from "react";
+import { deleteAccount, listProjects } from "./api.js";
+import { formatDeleteAccountSummary } from "./deleteAccountSummary.js";
 import { useTranslation } from "./i18n/LanguageContext.js";
 import { useDialogFocusTrap } from "./useDialogFocusTrap.js";
 
@@ -11,14 +12,40 @@ import { useDialogFocusTrap } from "./useDialogFocusTrap.js";
  * single record, a checkpoint), the guard here is stronger: typing the
  * account's own email address exactly, not just clicking a confirm button.
  */
-export function DeleteAccountPanel({ email, onClose, onDeleted }: { email: string; onClose: () => void; onDeleted: () => void }) {
+export function DeleteAccountPanel({
+  email,
+  userId,
+  onClose,
+  onDeleted,
+}: {
+  email: string;
+  userId: string;
+  onClose: () => void;
+  onDeleted: () => void;
+}) {
   const { t } = useTranslation();
   const [confirmText, setConfirmText] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [projectSummary, setProjectSummary] = useState<{ owned: number; shared: number } | null>(null);
   const dialogRef = useDialogFocusTrap<HTMLDivElement>();
 
+  // Fetches the real project list itself (rather than trusting App.tsx's own
+  // myProjects, which is only ever populated while `view === "home"` -- this
+  // panel can just as easily be opened from a project's own preview screen,
+  // where myProjects would still be empty), so the warning's own project
+  // count is accurate regardless of which screen this was opened from.
+  useEffect(() => {
+    listProjects()
+      .then(({ projects }) => {
+        const owned = projects.filter((p) => p.ownerId === userId).length;
+        setProjectSummary({ owned, shared: projects.length - owned });
+      })
+      .catch(() => setProjectSummary(null));
+  }, [userId]);
+
   const canSubmit = confirmText.trim().toLowerCase() === email.toLowerCase();
+  const summaryText = projectSummary ? formatDeleteAccountSummary(projectSummary.owned, projectSummary.shared, t) : null;
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -46,6 +73,7 @@ export function DeleteAccountPanel({ email, onClose, onDeleted }: { email: strin
 
         <form className="auth-form" onSubmit={handleSubmit}>
           <p className="delete-account-warning">{t("deleteAccount.warning")}</p>
+          {summaryText && <p className="delete-account-summary muted small">{summaryText}</p>}
           <label className="field-row">
             <span>{t("deleteAccount.confirmLabel", { email })}</span>
             <input

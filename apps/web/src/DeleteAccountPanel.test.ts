@@ -4,6 +4,7 @@ import { test } from "node:test";
 import { JSDOM } from "jsdom";
 import React from "react";
 import { cleanup, fireEvent, render } from "@testing-library/react";
+import type { Project } from "@forge/shared";
 import { DeleteAccountPanel } from "./DeleteAccountPanel.js";
 import { LanguageProvider } from "./i18n/LanguageContext.js";
 import { ThemeProvider } from "./theme/ThemeContext.js";
@@ -52,7 +53,7 @@ async function waitForCondition(check: () => boolean, maxTicks = 40): Promise<vo
   throw new Error("waitForCondition: condition never became true");
 }
 
-function renderPanel(opts?: { onClose?: () => void; onDeleted?: () => void }) {
+function renderPanel(opts?: { onClose?: () => void; onDeleted?: () => void; userId?: string }) {
   render(
     React.createElement(
       ThemeProvider,
@@ -62,12 +63,35 @@ function renderPanel(opts?: { onClose?: () => void; onDeleted?: () => void }) {
         null,
         React.createElement(DeleteAccountPanel, {
           email: "dana@example.com",
+          userId: opts?.userId ?? "user1",
           onClose: opts?.onClose ?? (() => {}),
           onDeleted: opts?.onDeleted ?? (() => {}),
         }),
       ),
     ),
   );
+}
+
+/** Wraps a test's own fetch mock so `GET /api/projects` (fetched unconditionally on mount for the real project-count summary) is answered without every existing test needing to know or care about it. */
+function withListProjectsStub(projects: Project[], handleOther: (input: string, init?: RequestInit) => Promise<Response>) {
+  return (async (input: string, init?: RequestInit) => {
+    if ((init?.method ?? "GET") === "GET" && input === "/api/projects") {
+      return new Response(JSON.stringify({ projects }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    return handleOther(input, init);
+  }) as typeof fetch;
+}
+
+function makeProject(id: string, ownerId: string): Project {
+  return {
+    id,
+    ownerId,
+    name: id,
+    description: "",
+    status: "built",
+    spec: { summary: "", personas: [], roles: ["Admin"], entities: [], screens: [], assumptions: [], openQuestions: [] },
+    createdAt: "2026-01-01T00:00:00.000Z",
+  };
 }
 
 function typeConfirmation(value: string) {
@@ -78,13 +102,13 @@ test("typing the account's own email exactly and submitting calls the real DELET
   await withJsdom(async () => {
     const originalFetch = globalThis.fetch;
     let calls: { method?: string }[] = [];
-    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+    globalThis.fetch = withListProjectsStub([], async (input: string, init?: RequestInit) => {
       if (init?.method === "DELETE" && input === "/api/auth/account") {
         calls.push({ method: init.method });
         return new Response(null, { status: 204 });
       }
       throw new Error(`unexpected request ${init?.method ?? "GET"} ${input}`);
-    }) as typeof fetch;
+    });
 
     let deletedCount = 0;
     try {
@@ -112,10 +136,10 @@ test("submitting with a blank, wrong, or non-matching-case confirmation never ca
   await withJsdom(async () => {
     const originalFetch = globalThis.fetch;
     let calls = 0;
-    globalThis.fetch = (async () => {
+    globalThis.fetch = withListProjectsStub([], async () => {
       calls += 1;
       throw new Error("deleteAccount must never be called when the confirmation doesn't match");
-    }) as typeof fetch;
+    });
 
     try {
       renderPanel();
@@ -142,11 +166,14 @@ test("submitting with a blank, wrong, or non-matching-case confirmation never ca
 test("a server error is shown to the user instead of a silent failure, and onDeleted never fires", async () => {
   await withJsdom(async () => {
     const originalFetch = globalThis.fetch;
-    globalThis.fetch = (async () =>
-      new Response(JSON.stringify({ error: "Something went wrong", code: "INTERNAL_ERROR" }), {
-        status: 500,
-        headers: { "content-type": "application/json" },
-      })) as typeof fetch;
+    globalThis.fetch = withListProjectsStub(
+      [],
+      async () =>
+        new Response(JSON.stringify({ error: "Something went wrong", code: "INTERNAL_ERROR" }), {
+          status: 500,
+          headers: { "content-type": "application/json" },
+        }),
+    );
 
     let deletedCount = 0;
     try {
@@ -165,9 +192,9 @@ test("a server error is shown to the user instead of a silent failure, and onDel
 test("clicking Cancel calls onClose without ever touching the network", async () => {
   await withJsdom(async () => {
     const originalFetch = globalThis.fetch;
-    globalThis.fetch = (async () => {
-      throw new Error("cancelling must never call the API");
-    }) as typeof fetch;
+    globalThis.fetch = withListProjectsStub([], async () => {
+      throw new Error("cancelling must never call any API other than the project-count fetch already done on mount");
+    });
 
     let closed = 0;
     try {
@@ -177,6 +204,79 @@ test("clicking Cancel calls onClose without ever touching the network", async ()
       assert.ok(cancelButton, "expected to find the Cancel button");
       fireEvent.click(cancelButton!);
       assert.equal(closed, 1);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
+ * New in this round: the warning previously only ever described *what
+ * kind* of data would be lost, never *how much* -- confirms the panel now
+ * fetches the real project list itself (not App.tsx's own myProjects,
+ * which is only ever populated while the home screen is open) and shows
+ * the real owned+shared counts, distinguishing "yours, will be deleted"
+ * from "shared with you, access removed" since deleteAccount.warning's
+ * own text makes exactly that distinction.
+ */
+test("shows the real owned-vs-shared project counts once the real fetch resolves, distinguishing the two consequences", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    const projects = [
+      makeProject("p1", "user1"),
+      makeProject("p2", "user1"),
+      makeProject("p3", "someone-else"),
+    ];
+    globalThis.fetch = withListProjectsStub(projects, async (input) => {
+      throw new Error(`unexpected request ${input}`);
+    });
+
+    try {
+      renderPanel({ userId: "user1" });
+      assert.equal(
+        document.querySelector(".delete-account-summary"),
+        null,
+        "must not show a summary before the real project fetch has resolved",
+      );
+
+      await waitForCondition(() => document.querySelector(".delete-account-summary") !== null);
+      const summary = document.querySelector(".delete-account-summary")!.textContent ?? "";
+      // Deliberately tied to the specific role each number plays (not just
+      // "does a 2 and a 1 appear somewhere") -- a broken owned/shared split
+      // that swaps the two counts would still contain the same two digits,
+      // just attached to the wrong phrase, and must still be caught.
+      assert.match(
+        summary,
+        /2 projects you own will be permanently deleted/,
+        "must attribute the real OWNED count (2) to the 'you own, will be deleted' phrase specifically",
+      );
+      assert.match(
+        summary,
+        /access to 1 more shared projects/,
+        "must attribute the real SHARED count (1) to the 'shared, access removed' phrase specifically",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/** The other half: a brand-new account with zero projects at all (owned or shared) must never show an empty/misleading summary line. */
+test("shows no project-count summary at all for an account with zero owned and zero shared projects", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = withListProjectsStub([], async (input) => {
+      throw new Error(`unexpected request ${input}`);
+    });
+
+    try {
+      renderPanel({ userId: "user1" });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      assert.equal(
+        document.querySelector(".delete-account-summary"),
+        null,
+        "a brand-new account with nothing to lose must never show an empty or misleading summary line",
+      );
     } finally {
       globalThis.fetch = originalFetch;
     }

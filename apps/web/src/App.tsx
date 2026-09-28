@@ -940,7 +940,12 @@ function AppContent() {
 
       {showChangePassword && <ChangePasswordPanel onClose={() => setShowChangePassword(false)} />}
       {showDeleteAccount && (
-        <DeleteAccountPanel email={user.email} onClose={() => setShowDeleteAccount(false)} onDeleted={handleAccountDeleted} />
+        <DeleteAccountPanel
+          email={user.email}
+          userId={user.id}
+          onClose={() => setShowDeleteAccount(false)}
+          onDeleted={handleAccountDeleted}
+        />
       )}
 
       {wakingBanner}

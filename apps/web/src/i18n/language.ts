@@ -59,6 +59,9 @@ export const translations: Record<Lang, Record<string, string>> = {
     "deleteAccount.title": "מחיקת החשבון שלך",
     "deleteAccount.warning":
       "פעולה זו תמחק לצמיתות את החשבון שלך, את כל הפרויקטים שבבעלותך (כולל כל הנתונים שלהם) ואת הגישה שלך לפרויקטים ששותפו איתך. אי אפשר לבטל את זה.",
+    "deleteAccount.summary.ownedOnly": "{owned} פרויקטים שבבעלותך יימחקו לצמיתות, כולל כל הנתונים שלהם.",
+    "deleteAccount.summary.sharedOnly": "הגישה שלך ל-{shared} פרויקטים ששותפו איתך תוסר.",
+    "deleteAccount.summary.both": "{owned} פרויקטים שבבעלותך יימחקו לצמיתות (כולל כל הנתונים שלהם), והגישה שלך ל-{shared} פרויקטים נוספים ששותפו איתך תוסר.",
     "deleteAccount.confirmLabel": "כדי לאשר, הקלידו את כתובת האימייל שלכם: {email}",
     "deleteAccount.confirmPlaceholder": "כתובת האימייל שלכם",
     "deleteAccount.submit": "מחיקת החשבון לצמיתות",
@@ -489,6 +492,9 @@ export const translations: Record<Lang, Record<string, string>> = {
     "deleteAccount.title": "Delete your account",
     "deleteAccount.warning":
       "This will permanently delete your account, every project you own (including all of its data), and your access to any project shared with you. This cannot be undone.",
+    "deleteAccount.summary.ownedOnly": "{owned} projects you own will be permanently deleted, including all of their data.",
+    "deleteAccount.summary.sharedOnly": "Your access to {shared} shared projects will be removed.",
+    "deleteAccount.summary.both": "{owned} projects you own will be permanently deleted (including all of their data), and your access to {shared} more shared projects will be removed.",
     "deleteAccount.confirmLabel": "To confirm, type your email address: {email}",
     "deleteAccount.confirmPlaceholder": "Your email address",
     "deleteAccount.submit": "Permanently delete my account",
