@@ -12581,6 +12581,80 @@ not a single "make it perfect" claim.
       `npm run build --workspace=@forge/api` and
       `npm run build --workspace=@forge/web` clean.
 
+- [x] **Round 232 — persist the home screen's "Your projects" status filter**
+      (Built/Draft/All, round 217). Deliberately picked a *different* screen
+      from round 231 (which also touched the Entity table's own "Group by"
+      persistence) to keep honoring the standing diversification guidance --
+      an Explore subagent surveyed WhatsAppPanel.tsx's direction/status
+      filter, HistoryPanel.tsx's checkpoint-type filter and "Compare with"
+      dropdown, BusinessTwinPanel.tsx (no filter/sort state at all there),
+      and the home screen's own `projectStatusFilter`, confirming via grep
+      that none of them had any existing localStorage persistence. The home
+      screen's status filter was the clear best fit: it's the literal
+      sibling of an already-solved preference on the exact same screen --
+      sort mode (round 182, `projectSortMode.ts`) -- so the gap ("one
+      preference persists, the one right next to it doesn't") is obvious and
+      well-scoped the moment you look at the two useState calls side by
+      side. Added `projectStatusFilter.ts`, matching `projectSortMode.ts`'s
+      own shape almost verbatim (a validated 3-value type instead of 2,
+      same try/catch-wrapped get/set pair, same doc-comment convention
+      referencing the sibling feature it mirrors). Moved the
+      `ProjectStatusFilter` type itself out of `App.tsx` and into the new
+      module (confirmed via grep it was only ever referenced from within
+      `App.tsx` itself, so nothing else needed updating), matching how
+      `projectSortMode.ts` already owns the `ProjectSortMode` type rather
+      than `App.tsx` owning it -- avoids a circular import between the two
+      files entirely, rather than casting at the boundary the way
+      `groupByPreference.ts` (round 231) had to for its own untyped string
+      value. `App.tsx`'s `useState` now seeds from `getProjectStatusFilter()`
+      instead of a hardcoded `"all"`, and the existing raw setter was
+      renamed to `setProjectStatusFilterState` (mirroring
+      `setProjectSortModeState`) with a new `handleSetProjectStatusFilter`
+      wrapper that updates both the in-memory state and the persisted
+      value together, exactly paralleling `handleSetProjectSortMode`.
+
+      Pure-function tests (`projectStatusFilter.test.ts`, 5 new): default
+      `"all"`, a real `"built"` round trip, a real `"draft"` round trip,
+      switching back to `"all"` after `"built"` really clears it (not just
+      returns the new value), and tolerance for corrupted localStorage
+      content. One new test in `App.test.ts` extracts the real
+      `handleSetProjectStatusFilter` (same regex-extraction + `new
+      Function` sandbox convention `handleReorderEntityTab`'s own test uses
+      right below it) and, for each of the three filter values, confirms
+      the wrapper calls *both* the mocked state setter and the mocked
+      persistence function with that value -- proving the wiring itself,
+      not just that the underlying pure functions work in isolation.
+
+      Deliberately broke `getProjectStatusFilter` to hard-return `"all"`
+      regardless of what was actually stored. Caught cleanly by 2 of the 5
+      pure-function tests (plain assertion mismatches, no hang, normal
+      exit) -- the mocked-wrapper test in `App.test.ts` was unaffected by
+      this specific break since it never calls the real persistence
+      function at all, only its own mock, which is exactly why the pure-
+      function tests exist as a separate, real-storage-backed layer.
+      Restored from a backup and confirmed a byte-identical `diff` before
+      re-confirming all tests green again.
+
+      Full pipeline verification via the real dev server + Playwright:
+      signed up, created two draft projects (submitted an idea, then used
+      the existing "Back" button on spec review to return home *without*
+      building -- `createProject` itself already persists a real draft-
+      status project the moment an idea is submitted, before any build
+      happens, so this was enough to get `myProjects.length > 1` without
+      waiting on an actual AI Team build) confirmed the status filter
+      dropdown appears once there are 2+ projects, selected "Draft",
+      confirmed both draft cards stayed visible, did a full page **reload**
+      (not just a re-open), confirmed the dropdown came back already
+      showing "Draft" with both cards still visible, then switched back to
+      "All" and reloaded again to confirm *that* direction of the choice
+      also survives a reload, not just the non-default one.
+
+      Full suite green (877 tests, up from 871 -- `@forge/web` 448 → 454;
+      `@forge/shared` 11, `@forge/spec-engine` 82, `@forge/db` 91,
+      `@forge/api` 239 unchanged) and both
+      `npm run build --workspace=@forge/api` and
+      `npm run build --workspace=@forge/web` clean.
+
 ## Phase 3
 
 - Self-healing: production observability, automatic diagnosis and patch
