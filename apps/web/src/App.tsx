@@ -1106,7 +1106,8 @@ function AppContent() {
 
       {view === "spec" && project && (
         <main className="spec-review">
-          <h1>{t("spec.title")}</h1>
+          <ProjectNameEditor project={project} onRenamed={setProject} />
+          <p className="muted small">{t("spec.title")}</p>
           <p>{project.spec.summary}</p>
           {specProviderLabel(specProvider, t) && (
             <p className={specProvider === "anthropic-fallback" ? "error" : "muted small"}>
