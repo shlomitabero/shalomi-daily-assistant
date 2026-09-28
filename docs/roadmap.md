@@ -14113,6 +14113,85 @@ not a single "make it perfect" claim.
   `@forge/api` 242 unchanged) and `npm run build --workspace=@forge/web`
   clean.
 
+- **Round 253 -- Time Machine's own checkpoint search box now
+  remembers recent searches.** Diversification: `BuildProgress.tsx`
+  (252), `WhatsAppPanel.tsx` (251), `EntityPanel.tsx` (243/250),
+  `App.tsx` (244/245/248/249), and `CollaboratorsPanel.tsx`/
+  `DeleteAccountPanel.tsx` (246/247) were all ruled out this round. An
+  Explore subagent surveyed `HistoryPanel.tsx`'s own search box
+  (flagged as a real but repeatedly-deprioritized candidate since
+  round 240), a missing `ShortcutsPanel.tsx` entry for Global Search's
+  arrow-key navigation, `AuthScreen.tsx`'s still-absent "forgot
+  password" flow (confirmed no email infrastructure exists anywhere in
+  the backend -- correctly ruled too large for one round), and
+  `ChangePasswordPanel`'s lack of a "log out other sessions" option
+  (needs new DB-level session revocation -- also too large).
+  Recommended `HistoryPanel.tsx`'s recent searches as the strongest
+  pick: after an independent sweep of the rest of the untouched
+  surface (BusinessTwinPanel, GlobalSearchPanel, ShortcutsPanel,
+  SpecListItemRemover, the various \*LabelEditor/\*Panel components,
+  PasswordInput, and pipeline.ts, all already heavily polished from
+  prior rounds), it was the most substantial *verified* remaining gap,
+  reusing an existing, proven pattern rather than inventing a new one.
+  Independently re-verified before writing code: read
+  `HistoryPanel.tsx` end to end and confirmed `search` (line 41) was
+  plain `useState("")` with no `recentSearches.ts` import anywhere in
+  the file, and that `recentSearches.ts`'s own `storageKey` is keyed
+  only by project id -- meaning History's own recent searches would
+  need a genuinely separate storage key from Global Search's, not a
+  shared one, since checkpoint-label search terms and entity-record
+  search terms are unrelated vocabularies.
+
+  Fix: `historyRecentSearches.ts` mirrors `recentSearches.ts` exactly
+  (same `getX`/`addX`/`removeX`/`clearX` shape, same case-insensitive
+  dedup, same 5-item cap) but under its own
+  `forge.historyRecentSearches.<projectId>` key, matching the
+  established convention of separate same-shape modules per widget
+  (`whatsappRecentNumbers.ts` did the same relative to
+  `recentSearches.ts` in round 240) rather than parameterizing one
+  shared module and risking `GlobalSearchPanel.tsx`'s own existing
+  behavior. Since History's search box is a live filter with no submit
+  button (unlike Global Search's), a search is committed to the recent
+  list on blur or Enter -- not on every keystroke -- then shown as
+  clickable chips reusing Global Search's own `.chips`/
+  `.chip-removable` CSS classes, so no new styling was needed. A
+  clicked chip both fills the search box and re-triggers the existing
+  live filter.
+
+  Tests: 12 new pure-function tests (`historyRecentSearches.test.ts` --
+  round trips, newest-first ordering, case-insensitive dedup moving an
+  entry to the front, the 5-item cap, per-project scoping, a dedicated
+  test confirming History's own storage key never collides with Global
+  Search's, corrupted/foreign-data fallback) plus a new
+  `HistoryPanel.test.ts` DOM test proving a committed search survives a
+  real unmount+remount of the panel and that clicking the resulting
+  chip both fills the search box and genuinely re-filters the
+  checkpoint list to the same matching rows.
+
+  Deliberate-break-and-restore: made `getRecentHistorySearches` always
+  return `[]`, ignoring storage entirely -- 10 of the 12 round-trip
+  tests in `historyRecentSearches.test.ts` failed cleanly (the other 2
+  only assert an empty list, so they trivially still passed). Restored
+  from a scratchpad backup, confirmed a byte-identical `diff`, and
+  re-confirmed all 12 green plus all 15 `HistoryPanel.test.ts` tests
+  green.
+
+  Real-browser verification against the live dev server: built a real
+  project, intercepted the checkpoints endpoint with 6 mock entries so
+  the search box actually renders (the same `>5` threshold the
+  existing search-box tests already establish), typed "invoice" and
+  blurred the field, confirmed the recent-search chip appeared, closed
+  the panel via its own real Close button (a genuine unmount, not a
+  simulated one), reopened it, confirmed the chip survived, then
+  clicked it and confirmed it both filled the search box and
+  re-filtered the checkpoint list to the same 2 matching rows.
+  `RESULT: PASS`.
+
+  Full suite green (966 tests, up from 953 -- `@forge/web` 527 → 540;
+  `@forge/shared` 11, `@forge/spec-engine` 82, `@forge/db` 91,
+  `@forge/api` 242 unchanged) and `npm run build --workspace=@forge/web`
+  clean.
+
 ## Phase 4
 
 - Template/agent marketplace
