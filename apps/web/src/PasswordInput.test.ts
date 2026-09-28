@@ -163,3 +163,35 @@ test("PasswordInput never renders a strength meter when showStrength is left off
     assert.equal(document.querySelector(".password-strength"), null, "a login/current-password field must never show a strength meter");
   });
 });
+
+/**
+ * New in this round: a password field is the one input where "what you
+ * typed doesn't match what you meant" is invisible by design -- Caps Lock
+ * silently being on is the single most common real cause, and this app
+ * had no warning for it at all (verified: no getModifierState usage
+ * anywhere in the codebase before this change). Fires a real keydown with
+ * a stubbed getModifierState (jsdom itself doesn't track real OS caps
+ * lock state) to confirm the warning appears/disappears as Caps Lock
+ * toggles, and is cleared on blur rather than staying stale once focus
+ * moves elsewhere.
+ */
+test("PasswordInput shows a Caps Lock warning while it's on, and clears it once it's off or the field loses focus", async () => {
+  await withJsdom(async () => {
+    renderPasswordInput("", () => {});
+    const input = document.querySelector("input") as HTMLInputElement;
+
+    assert.equal(document.querySelector(".password-caps-warning"), null, "no warning before any keystroke");
+
+    fireEvent.keyDown(input, { key: "a", modifierCapsLock: true });
+    assert.ok(document.querySelector(".password-caps-warning"), "must warn once a keystroke reports Caps Lock is on");
+
+    fireEvent.keyUp(input, { key: "a", modifierCapsLock: false });
+    assert.equal(document.querySelector(".password-caps-warning"), null, "must clear once a keystroke reports Caps Lock is off");
+
+    fireEvent.keyDown(input, { key: "a", modifierCapsLock: true });
+    assert.ok(document.querySelector(".password-caps-warning"), "sanity check: warning is back on before testing blur");
+
+    fireEvent.blur(input);
+    assert.equal(document.querySelector(".password-caps-warning"), null, "must clear on blur rather than risk staying stale once focus moves elsewhere");
+  });
+});

@@ -451,6 +451,12 @@ input[type="checkbox"] {
   gap: 4px;
 }
 
+.password-caps-warning {
+  margin: 0;
+  font-size: 12px;
+  color: var(--danger);
+}
+
 .password-strength {
   display: flex;
   align-items: center;

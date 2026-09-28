@@ -34,7 +34,22 @@ export function PasswordInput({
 }) {
   const { t } = useTranslation();
   const [visible, setVisible] = useState(false);
+  const [capsLockOn, setCapsLockOn] = useState(false);
   const strength = showStrength ? getPasswordStrength(value) : null;
+
+  /**
+   * A password field is the one input where "what you typed doesn't match
+   * what you meant" is invisible by design (the toggle above helps, but
+   * only once you think to use it) -- Caps Lock silently being on is the
+   * single most common real cause, and every other real auth form warns
+   * for it. `getModifierState` only reflects reality while a key event is
+   * actually firing, so this can only ever answer "as of the last
+   * keystroke" -- it clears on blur rather than showing a warning that
+   * could go stale the moment focus moves elsewhere.
+   */
+  function checkCapsLock(e: React.KeyboardEvent<HTMLInputElement>) {
+    setCapsLockOn(e.getModifierState("CapsLock"));
+  }
 
   return (
     <div className="password-input-wrap-outer">
@@ -46,6 +61,9 @@ export function PasswordInput({
           autoComplete={autoComplete}
           value={value}
           onChange={(e) => onChange(e.target.value)}
+          onKeyDown={checkCapsLock}
+          onKeyUp={checkCapsLock}
+          onBlur={() => setCapsLockOn(false)}
         />
         <button
           type="button"
@@ -57,6 +75,11 @@ export function PasswordInput({
           {visible ? "🙈" : "👁️"}
         </button>
       </div>
+      {capsLockOn && (
+        <p className="password-caps-warning" role="alert">
+          {t("password.capsLockWarning")}
+        </p>
+      )}
       {strength && (
         <div className="password-strength" data-strength={strength}>
           <div className="password-strength-bars">
