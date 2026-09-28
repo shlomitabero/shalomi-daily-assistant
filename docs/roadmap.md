@@ -14268,6 +14268,80 @@ not a single "make it perfect" claim.
   `@forge/api` 242 unchanged) and `npm run build --workspace=@forge/web`
   clean.
 
+- **Round 255 -- fixed the Debug Agent's real i18n bug flagged (but
+  deprioritized) in round 254.** Diversification: `pipeline.ts` had
+  never been touched in the diversification window, so this is a new
+  file for the routine, not a repeat. `apps/api/src/pipeline.ts`
+  hardcoded four Debug-agent `AgentStepEvent` messages in Hebrew (the
+  no-API-key notice at line 167, the "analyzing" running message at
+  172, the fix-failed message at 181, and the fix-succeeded message at
+  197) -- unlike every other agent's messages in this same file
+  (Architect/Database/Seed Data/QA/Security/Forge), which are always
+  plain English regardless of the request's own UI language, because
+  `runBuildPipeline` never receives a `lang` parameter at all and
+  `BuildProgress.tsx` renders every event's message verbatim with zero
+  server-side localization. This matches `httpError.ts`'s own
+  documented policy: server text is never localized, only a stable
+  error `code` is, which the client translates via its own `language.ts`
+  dictionary. Two consecutive Explore-subagent surveys (rounds 254 and
+  255) both re-flagged this same bug as a real, verified issue; round
+  254 chose Caps Lock instead on the reasoning that שלומי's own usage
+  is entirely Hebrew-locale so she'd never personally see this leak,
+  but round 255 promoted it after two straight surveys found no fresh
+  broadly-visible feature candidate, and on the reasoning that the
+  app's real Collaborators feature means an English-locale collaborator
+  on a shared project genuinely could hit it, plus שלומי's own standing
+  feedback that the code should be developed to be genuinely correct,
+  not just accumulate cosmetic features while known real bugs sit
+  unfixed.
+
+  Considered threading a `lang` parameter into `runBuildPipeline`
+  instead (the Explore subagent's own literal suggestion), but reading
+  the codebase's own established convention first (`httpError.ts`'s
+  comment, and the fact that every other message in `pipeline.ts` is
+  already always-English) showed that would mean duplicating the
+  client's i18n dictionary server-side and breaking an existing,
+  deliberate architectural decision -- for a bug whose actual fix is
+  simply matching the other six messages in the same file. Translated
+  all four strings to plain English instead.
+
+  Tests: updated `pipeline.test.ts`'s existing assertion (was matching
+  the old Hebrew "אין מפתח" text, now matches "No Claude API key") and
+  added one new, broader regression test that runs both the
+  successful-recovery build path and the no-API-key path and scans
+  every single emitted event's message for any Hebrew character
+  (`U+0590`-`U+05FF`), so this whole bug class is now covered going
+  forward, not just the four strings that happened to trigger it this
+  time.
+
+  Deliberate-break-and-restore: reverted the "running" Debug message
+  back to its original Hebrew text and re-ran the suite -- exactly 1 of
+  6 `pipeline.test.ts` tests failed (the new Hebrew-detection test),
+  the other 5 stayed green, confirming the new test genuinely catches
+  this bug class rather than something broader or narrower. Restored
+  from a scratchpad backup, confirmed a byte-identical `diff`, and
+  re-confirmed all 6 tests green again.
+
+  Real-browser verification against the live dev server: since
+  triggering a genuine database migration failure through the normal
+  UI flow is impractical, intercepted `POST /api/projects/:id/build`
+  with Playwright's `page.route` and supplied a hand-built
+  Server-Sent-Events response (`data: {json}\n\n` per frame, matching
+  `streamPipeline`'s own real parsing in `api.ts`) representing a
+  Database failure recovered by the Debug agent, deliberately omitting
+  the final "Forge success" frame so `BuildProgress.tsx` stays parked
+  on the live build screen (per its own code, `onComplete` only fires
+  on a Forge success) instead of racing an instant transition to the
+  preview screen. Confirmed the Debug agent's rendered row in the
+  `ol.agent-steps` list reads "Found an automatic fix for the issue,
+  and continuing the build with it." in plain English, and scanned
+  that same list's full text for any Hebrew character -- zero found,
+  with zero console errors. `RESULT: PASS`.
+
+  Full suite green (968 tests, up from 967 -- `@forge/api` 242 → 243;
+  `@forge/shared` 11, `@forge/spec-engine` 82, `@forge/db` 91,
+  `@forge/web` 541 unchanged).
+
 ## Phase 4
 
 - Template/agent marketplace
