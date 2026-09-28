@@ -13788,6 +13788,64 @@ not a single "make it perfect" claim.
   `@forge/api` 242 unchanged) and `npm run build --workspace=@forge/web`
   clean.
 
+- **Round 248 -- the browser tab title now reflects the open project.**
+  Diversification: `DeleteAccountPanel.tsx` (247), `CollaboratorsPanel.tsx`
+  (246), `App.tsx`'s export/backup handlers (245) and spec-review section
+  (244) were all ruled out. An Explore subagent surveyed six candidates --
+  `document.title` (flagged in three straight prior survey rounds: 244,
+  246, 247), home-screen bulk-select not reconciling with a changed
+  search/filter/sort (a real data-safety gap: a project selected earlier
+  then hidden by a new filter stays selected and can be silently
+  bulk-deleted), `sortKeys` persistence in `EntityPanel.tsx`, WhatsApp's
+  direction-filter persistence, and `BuildProgress.tsx`'s unshown percent
+  text -- and recommended `document.title` as the strongest pick despite
+  it also living in `App.tsx`: it's additive (a new effect + helper) in a
+  part of the file (browser-chrome/tab-title) with zero overlap with the
+  recently-touched sections, and three rounds of being flagged and
+  deprioritized made it the clearest "actually do it now" candidate.
+  Independently re-verified before writing code: `grep -rn
+  "document.title"` across `apps/web/src` and `index.html` confirmed
+  the only reference anywhere was the static `<title>Forge AI</title>`
+  in `index.html` -- the app never touched `document.title` at runtime
+  at all, on any screen, ever.
+
+  Fix: `documentTitle.ts`'s `formatDocumentTitle(projectName)` returns
+  `"<name> · Forge AI"` when a project is open, or plain `"Forge AI"`
+  otherwise. Wired into `App.tsx` via a new `useEffect(() => {
+  document.title = formatDocumentTitle(project?.name ?? null); },
+  [project])`, placed directly after the existing
+  `exportDone`/`backupDone` effects -- i.e. still above the component's
+  `if (!user) return <AuthScreen />` early return, per this file's own
+  standing hooks-order lesson from round 245. Since `project` is already
+  set to `null` on logout, account deletion, and returning home, and set
+  to the real project on open/build/clone/restore, no extra wiring was
+  needed beyond the one effect.
+
+  Tests: 3 new pure-function tests in `documentTitle.test.ts` (null
+  falls back to the plain app name; a Hebrew project name; an English
+  project name).
+
+  Deliberate-break-and-restore: hardcoded the function to always return
+  `"Forge AI"`, ignoring the project name entirely -- the 2 tests
+  asserting a real project name appears failed cleanly. Restored from a
+  scratchpad backup, confirmed a byte-identical `diff`, and re-confirmed
+  all tests green.
+
+  Real-browser verification against the live dev server: captured
+  `page.title()` at five points across one real signup → build →
+  navigate-home session -- the auth screen ("Forge AI"), the home
+  screen right after signup ("Forge AI"), the spec-review screen right
+  after creating a project (the real Hebrew project name + " · Forge
+  AI"), the preview screen after the real build completed (same title,
+  confirming it survives the build step), and back at the home screen
+  after clicking the logo to leave the project ("Forge AI" again). All
+  five matched exactly. `RESULT: PASS`.
+
+  Full suite green (932 tests, up from 929 -- `@forge/web` 503 → 506;
+  `@forge/shared` 11, `@forge/spec-engine` 82, `@forge/db` 91,
+  `@forge/api` 242 unchanged) and `npm run build --workspace=@forge/web`
+  clean.
+
 ## Phase 4
 
 - Template/agent marketplace
