@@ -40,6 +40,7 @@ import {
   type ProjectStatusFilter,
 } from "./projectStatusFilter.js";
 import { clearIdeaDraft, getIdeaDraft, saveIdeaDraft } from "./ideaDraft.js";
+import { formatDocumentTitle } from "./documentTitle.js";
 import { LanguageProvider, useTranslation } from "./i18n/LanguageContext.js";
 import { LanguageSwitcher } from "./i18n/LanguageSwitcher.js";
 import type { Lang } from "./i18n/language.js";
@@ -526,6 +527,19 @@ function AppContent() {
     const timer = setTimeout(() => setBackupDone(false), 2000);
     return () => clearTimeout(timer);
   }, [backupDone]);
+
+  /**
+   * The browser tab title otherwise stays a static "Forge AI" the entire
+   * session, whether or not a project is open -- with two or more projects
+   * open in separate tabs there's no way to tell them apart from the tab
+   * bar, alt-tab switcher, or browser history. Declared above the
+   * `if (!user) return <AuthScreen />` early return below like every other
+   * hook in this component (see the comment above the exportDone/backupDone
+   * effects for why that placement is required).
+   */
+  useEffect(() => {
+    document.title = formatDocumentTitle(project?.name ?? null);
+  }, [project]);
 
   function openExistingProject(p: Project) {
     setProject(p);
