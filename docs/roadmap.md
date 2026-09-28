@@ -13177,6 +13177,80 @@ not a single "make it perfect" claim.
 - Feedback-to-feature pipeline
 - Real parallel agent execution with a dependency graph, not a fixed sequence
 
+- **Round 240 -- WhatsApp "Send test message" form remembers recent
+  numbers, mirroring Global Search.** Diversification: rounds 238 and 239
+  had just touched `CollaboratorsPanel.tsx` and `SpecListItemRemover.tsx`/
+  `App.tsx`'s spec-review section, so both were ruled out this round,
+  along with the standing exclusions (`EntityPanel.tsx`, `App.tsx`'s home
+  screen, `BusinessTwinPanel.tsx`/`twin.ts`, `BuildProgress.tsx`,
+  `codegen.ts`). An Explore subagent surveyed 3 candidates (this one, the
+  same idea applied to Time Machine's own search box, and a forgot-
+  password flow) with grep-verified evidence for each; its recommendation
+  was independently re-verified by reading `recentSearches.ts`,
+  `GlobalSearchPanel.tsx`'s own chip-row markup, and `WhatsAppPanel.tsx`'s
+  `handleSendTest`/test-form JSX directly before writing any code.
+
+  The gap: the WhatsApp panel's "Send test message" form has a "To" field
+  with zero memory -- a real owner verifying their WhatsApp connection
+  typically tests against the same 1-3 numbers (their own phone, a
+  colleague's) repeatedly, but had to retype the number from scratch every
+  single time. Global Search's own query box had this exact gap before
+  `recentSearches.ts` (round 180) gave it recent-query chips.
+
+  Fix: new `whatsappRecentNumbers.ts` mirrors `recentSearches.ts`'s shape
+  almost exactly -- localStorage, keyed per project, capped at 5 entries,
+  dedup-and-move-to-front on add, single-item remove, clear-all -- just for
+  phone numbers instead of search queries (plain equality instead of
+  case-insensitive comparison, since phone numbers aren't case-sensitive
+  text). `WhatsAppPanel.tsx` now shows a chip row under the "To" field
+  once at least one test send has happened; clicking a chip fills the
+  field, and each chip has its own remove button. Reuses the existing
+  generic `.chip`/`.chip-removable`/`.chip-text`/`.chip-remove` classes
+  `GlobalSearchPanel.tsx` already uses, so only a small amount of new
+  layout CSS (`.whatsapp-recent-numbers`/`-header`) was needed, plus one
+  new translation key group (`whatsapp.test.recent.*`, he+en).
+
+  11 new unit tests for the storage module in
+  `whatsappRecentNumbers.test.ts` (mirroring `recentSearches.test.ts`'s
+  own suite: add/persist, newest-first ordering, dedup-move-to-front, cap
+  at 5, ignore empty input, per-project isolation, clear, single remove,
+  corrupted-storage tolerance) plus 2 new real-DOM tests in
+  `WhatsAppPanel.test.ts` covering the chip appearing after a real send
+  and clicking it to refill the field, and the per-chip remove button
+  actually removing just that one number.
+
+  Deliberate-break-and-restore: made `addRecentWhatsAppNumber` a pure
+  no-op (`return getRecentWhatsAppNumbers(projectId);`) -- 9 of 11
+  `whatsappRecentNumbers.test.ts` tests failed cleanly, no hang. Restored
+  from a scratchpad backup and confirmed a byte-identical `diff` before
+  re-confirming all 11 green. Separately discovered (not a regression, a
+  pre-existing property of this specific test file): running the full
+  `WhatsAppPanel.test.ts` suite completes with all tests green but the
+  Node process doesn't exit for roughly 85 seconds afterward, due to a
+  dangling `setInterval` from one of the file's own earlier polling tests
+  outliving its test -- confirmed harmless (exit code 0, zero failures)
+  by running once under a 150s timeout; a shorter `timeout 60` on this one
+  file alone will read as a hang even though every test already passed.
+
+  Full real-browser verification: a genuine WhatsApp connection needs
+  real phone/QR authentication (Baileys) that a headless automated run
+  can't perform, so the status endpoint was intercepted via `page.route`
+  to report `"connected"` -- the same technique round 235 used to reach a
+  build-failure state no real AI call could reliably reproduce on demand.
+  Signed up, built a real "חנות פרחים קטנה" project, opened the real
+  WhatsApp panel, confirmed no recent-numbers block existed before any
+  send, sent two real test messages to two different numbers, confirmed
+  both appeared as chips in newest-first order, cleared the "To" field and
+  clicked a chip to confirm it refilled the field with that real number,
+  reloaded the page and reopened the project + panel to confirm the
+  numbers had genuinely persisted in localStorage (not just React state),
+  and removed one chip to confirm only that one number disappeared.
+  `RESULT: PASS`.
+
+  Full suite green (902 tests, up from 889 -- `@forge/web` 464 → 477;
+  `@forge/shared` 11, `@forge/spec-engine` 82, `@forge/db` 91, `@forge/api`
+  241 unchanged) and `npm run build --workspace=@forge/web` clean.
+
 ## Phase 4
 
 - Template/agent marketplace
