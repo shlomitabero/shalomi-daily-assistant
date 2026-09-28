@@ -6,6 +6,7 @@ import { computeResizedWidth, getColumnWidths, setColumnWidth } from "./columnWi
 import { applyColumnOrder, getColumnOrder, reorderColumns, setColumnOrder } from "./columnOrder.js";
 import { getGroupByField, setGroupByField } from "./groupByPreference.js";
 import { getViewMode as getViewModePreference, setViewMode as setViewModePreference } from "./viewModePreference.js";
+import { getSortKeys as getSortKeysPreference, setSortKeys as setSortKeysPreference } from "./sortKeysPreference.js";
 import { EntityLabelEditor } from "./EntityLabelEditor.js";
 import { FieldLabelEditor } from "./FieldLabelEditor.js";
 import {
@@ -740,7 +741,6 @@ export function EntityPanel({
     setEditingId(null);
     setSearch("");
     setStatusFilter("");
-    setSortKeys([]);
     setCalendarMonth(new Date());
     setSelectedIds(new Set());
     setImportMessage(null);
@@ -790,6 +790,21 @@ export function EntityPanel({
     const stillValid =
       stored === "table" || (stored === "board" && boardField) || (stored === "calendar" && dateField);
     setViewMode(stillValid ? stored : "table");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [projectId, entity.name]);
+
+  // Same reasoning as viewMode's own effect just above -- the chosen
+  // multi-column sort is scoped per project+entity too (round 250).
+  // Previously sortKeys was hard-reset to [] on every entity switch (see
+  // the combined reset effect above) and never persisted at all, so a
+  // deliberately-set sort didn't even survive clicking to another tab and
+  // back. Drops any persisted key referencing a field this entity no
+  // longer has (e.g. the field was removed), instead of sorting by
+  // something that isn't even shown.
+  useEffect(() => {
+    const validFieldNames = new Set(entity.fields.map((f) => f.name));
+    validFieldNames.add("createdAt");
+    setSortKeys(getSortKeysPreference(projectId, entity.name).filter((k) => validFieldNames.has(k.field)));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectId, entity.name]);
 
@@ -899,16 +914,19 @@ export function EntityPanel({
   function toggleSort(fieldName: string, additive: boolean) {
     setSortKeys((prev) => {
       const existingIndex = prev.findIndex((k) => k.field === fieldName);
+      let next: SortKey[];
       if (!additive) {
-        if (prev.length === 1 && existingIndex === 0) {
-          return [{ field: fieldName, direction: prev[0].direction === "asc" ? "desc" : "asc" }];
-        }
-        return [{ field: fieldName, direction: "asc" }];
+        next =
+          prev.length === 1 && existingIndex === 0
+            ? [{ field: fieldName, direction: prev[0].direction === "asc" ? "desc" : "asc" }]
+            : [{ field: fieldName, direction: "asc" }];
+      } else if (existingIndex === -1) {
+        next = [...prev, { field: fieldName, direction: "asc" }];
+      } else {
+        next = prev.map((k, i) => (i === existingIndex ? { ...k, direction: k.direction === "asc" ? "desc" : "asc" } : k));
       }
-      if (existingIndex === -1) {
-        return [...prev, { field: fieldName, direction: "asc" }];
-      }
-      return prev.map((k, i) => (i === existingIndex ? { ...k, direction: k.direction === "asc" ? "desc" : "asc" } : k));
+      setSortKeysPreference(projectId, entity.name, next);
+      return next;
     });
   }
 

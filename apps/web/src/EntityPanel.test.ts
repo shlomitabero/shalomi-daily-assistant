@@ -10,6 +10,7 @@ import type { Entity, EntityRecord } from "@forge/shared";
 import { getColumnWidths, setColumnWidth } from "./columnWidths.js";
 import { getGroupByField } from "./groupByPreference.js";
 import { getViewMode } from "./viewModePreference.js";
+import { getSortKeys } from "./sortKeysPreference.js";
 import { EntityPanel } from "./EntityPanel.js";
 import { LanguageProvider } from "./i18n/LanguageContext.js";
 import { ThemeProvider } from "./theme/ThemeContext.js";
@@ -2492,6 +2493,85 @@ test("EntityPanel's Table/Board/Calendar view choice survives an unmount+remount
         "a different entity with no board/date field must never inherit Deal's persisted 'board' view -- it must fall back to plain Table with no view toggle at all",
       );
       assert.equal(getViewMode("proj1", "Note"), "table", "and must never have written anything to Note's own storage slot either");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
+ * Regression test for round 250: sortKeys previously reset to [] on every
+ * single entity/tab switch (see the combined reset effect keyed on
+ * entity.name), not just a reload, so a deliberately-set sort -- even a
+ * plain single-column one -- never survived leaving and returning to the
+ * same tab within the same session. Mirrors the Group-by/view-mode
+ * persistence tests just above.
+ */
+test("EntityPanel's multi-column sort survives an unmount+remount of the same entity, and drops a key whose field no longer exists on a different entity", async () => {
+  await withJsdom(async () => {
+    const store: EntityRecord[] = [
+      { id: 1, name: "Globex", status: "won" },
+      { id: 2, name: "Zeta Inc", status: "new" },
+      { id: 3, name: "Acme Corp", status: "new" },
+    ];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = mockRecordsFetch(store) as typeof fetch;
+    try {
+      const firstView = renderEntityPanel();
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 3);
+
+      const statusHeader = Array.from(document.querySelectorAll("thead th button.sort-header")).find((el) =>
+        /Status/.test(el.textContent ?? ""),
+      ) as HTMLButtonElement;
+      const nameHeader = Array.from(document.querySelectorAll("thead th button.sort-header")).find((el) =>
+        /Name/.test(el.textContent ?? ""),
+      ) as HTMLButtonElement;
+      fireEvent.click(statusHeader);
+      fireEvent.click(nameHeader, { shiftKey: true });
+      await waitForCondition(() => document.querySelectorAll(".sort-priority").length === 2);
+      assert.deepEqual(
+        getSortKeys("proj1", "Deal"),
+        [
+          { field: "status", direction: "asc" },
+          { field: "name", direction: "asc" },
+        ],
+        "must actually be persisted, not just held in memory",
+      );
+
+      firstView.unmount();
+      renderEntityPanel();
+      await waitForCondition(() => {
+        const names = Array.from(document.querySelectorAll("table tbody tr")).map((r) => r.textContent ?? "");
+        return /Acme/.test(names[0]) && /Zeta/.test(names[1]) && /Globex/.test(names[2]);
+      });
+      assert.equal(
+        document.querySelectorAll(".sort-priority").length,
+        2,
+        "a fresh mount of the same project+entity must restore both persisted sort keys, not reset to unsorted",
+      );
+
+      cleanup();
+      const textOnlyEntity: Entity = {
+        name: "Note",
+        fields: [{ name: "name", type: "text", required: true }],
+      };
+      globalThis.fetch = (async (input: string) => {
+        if (input === "/api/projects/proj1/entities/Note") {
+          return new Response(JSON.stringify({ records: [{ id: 1, createdAt: "x", name: "Reminder" }] }), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          });
+        }
+        throw new Error(`unexpected request ${input}`);
+      }) as typeof fetch;
+      renderEntityPanel({ entity: textOnlyEntity, allEntities: [textOnlyEntity] });
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 1);
+
+      assert.equal(
+        document.querySelectorAll(".sort-priority").length,
+        0,
+        "a different entity with no 'status' field must never inherit Deal's persisted sort keys",
+      );
     } finally {
       globalThis.fetch = originalFetch;
     }
