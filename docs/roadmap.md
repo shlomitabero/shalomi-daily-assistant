@@ -14192,6 +14192,82 @@ not a single "make it perfect" claim.
   `@forge/api` 242 unchanged) and `npm run build --workspace=@forge/web`
   clean.
 
+- **Round 254 -- every password field in the app now warns when Caps
+  Lock is on.** Diversification: `HistoryPanel.tsx` (253),
+  `BuildProgress.tsx` (252), `WhatsAppPanel.tsx` (251),
+  `EntityPanel.tsx` (243/250), `App.tsx` (244/245/248/249), and
+  `CollaboratorsPanel.tsx`/`DeleteAccountPanel.tsx` (246/247) were all
+  ruled out this round. An Explore subagent surveyed a real, verified
+  bug in `apps/api/src/pipeline.ts` (hardcoded Hebrew debug/auto-fix
+  messages leaking into an English-locale UI regardless of the
+  request's own language, lines 167/172/181/197 -- `runBuildPipeline`
+  takes no `lang` parameter at all), a missing Caps Lock warning on
+  `PasswordInput.tsx`, a small documentation gap in `ShortcutsPanel.tsx`
+  (no entry for Global Search's own arrow-key result navigation), and
+  confirmed `AuthScreen.tsx`'s still-missing "forgot password" flow
+  remains too large for one round (no email infrastructure anywhere
+  in the backend). Chose Caps Lock over the pipeline.ts bug: שלומי's
+  own real usage is entirely Hebrew-locale, so she would never actually
+  encounter that particular leak herself, while Caps Lock silently
+  being on is something she -- or any user -- could hit on literally
+  any of the app's password fields, matching the routine's standing
+  "visible feature over bug-hunting by default" preference when both
+  are real and neither is a data-safety issue. Independently
+  re-verified before writing code: read `PasswordInput.tsx` end to end
+  and confirmed no `getModifierState` call existed anywhere in
+  `apps/web/src` (grep, zero hits), and that the same shared component
+  is genuinely used by all 4 password fields app-wide (signup/login
+  via `AuthScreen.tsx`, and current/new/confirm via
+  `ChangePasswordPanel.tsx`).
+
+  Fix: a new `capsLockOn` state in `PasswordInput.tsx`, updated on both
+  `onKeyDown` and `onKeyUp` via `e.getModifierState("CapsLock")` (both
+  events, so the warning reacts the instant Caps Lock is pressed *or*
+  released, not just on the next full keystroke), and cleared on
+  `onBlur` -- `getModifierState` can only ever answer "as of the
+  keystroke that just fired", so once focus moves elsewhere the app
+  has no way to keep the warning current, and clearing on blur avoids
+  showing one that could go stale rather than pretending it's still
+  accurate. Renders a small `role="alert"` message directly under the
+  input, reusing the same visual weight (`var(--danger)`) as other
+  inline warnings in the app.
+
+  Tests: 1 new DOM test in `PasswordInput.test.ts` firing real
+  keydown/keyup events using jsdom's standard `modifierCapsLock` init
+  flag (confirmed first via a standalone Node script that jsdom's own
+  `KeyboardEvent.getModifierState("CapsLock")` correctly reflects it --
+  overriding `getModifierState` directly as an event property did *not*
+  work through React's synthetic event system, a real gotcha worth
+  remembering), proving the warning appears on a Caps-Lock-on keydown,
+  disappears on a Caps-Lock-off keyup, and also clears on blur without
+  any explicit off-keystroke.
+
+  Deliberate-break-and-restore: made the Caps Lock handler always call
+  `setCapsLockOn(false)` regardless of the real modifier state -- the
+  new test failed cleanly (the warning never appeared). Restored from
+  a scratchpad backup, confirmed a byte-identical `diff`, and
+  re-confirmed all 7 `PasswordInput.test.ts` tests green, plus no
+  regressions in `AuthScreen.test.ts` (5 tests) or
+  `ChangePasswordPanel.test.ts` (4 tests) -- both consumers of this
+  shared component.
+
+  Real-browser verification against the live dev server: on the real
+  signup screen, dispatched a real `KeyboardEvent` with
+  `modifierCapsLock: true` directly on the actual password input
+  (confirmed Chromium's own `KeyboardEvent` constructor honors the
+  same standard init flag jsdom does) and confirmed the visible
+  warning text appears, disappears on a Caps-Lock-off keyup, and
+  clears on a real `.blur()` after genuinely focusing the field first
+  (an earlier attempt calling `.blur()` on a never-focused element was
+  a silent no-op in real Chromium -- another real gotcha, fixed by
+  calling `.focus()` on the field before dispatching any events).
+  `RESULT: PASS`.
+
+  Full suite green (967 tests, up from 966 -- `@forge/web` 540 → 541;
+  `@forge/shared` 11, `@forge/spec-engine` 82, `@forge/db` 91,
+  `@forge/api` 242 unchanged) and `npm run build --workspace=@forge/web`
+  clean.
+
 ## Phase 4
 
 - Template/agent marketplace
