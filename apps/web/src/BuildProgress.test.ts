@@ -838,3 +838,39 @@ test("BuildProgress's ETA is absent until a real step finishes, then reflects th
     }
   });
 });
+
+/**
+ * New in this round: computeBuildProgressPercent already drove the bar's
+ * fill width and its aria-valuenow, but the actual number was never
+ * rendered as visible text anywhere -- a sighted user watching a build had
+ * to eyeball the bar's fill length to guess how far along it was, with no
+ * way to read the real number. Confirms a real "N%" label now renders
+ * alongside the bar, and that it stays in sync with the bar's own
+ * aria-valuenow (both driven by the same computeBuildProgressPercent
+ * value) as the build progresses through a real event sequence.
+ */
+test("BuildProgress shows the real completion percentage as visible text next to the progress bar", async () => {
+  await withJsdom(async () => {
+    const events: AgentStepEvent[] = [
+      { agent: "Architect", status: "running", message: "…" },
+      { agent: "Architect", status: "success", message: "…", detail: { newEntities: [], changedEntities: [] } },
+      { agent: "Database", status: "running", message: "…" },
+      { agent: "Database", status: "success", message: "…", detail: [] },
+      { agent: "Seed Data", status: "running", message: "…" },
+    ];
+    renderBuildProgress(events);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    // Debug never ran, so visibleAgents is the 6 non-Debug agents; 2 of
+    // them (Architect, Database) have a "success" latest event ->
+    // round(2/6*100) = 33.
+    const percentEl = document.querySelector(".build-progress-percent");
+    const barEl = document.querySelector(".build-progress-bar");
+    assert.equal(percentEl?.textContent, "33%", "the visible label must show the real computed percentage, not a placeholder");
+    assert.equal(
+      barEl?.getAttribute("aria-valuenow"),
+      "33",
+      "the visible text and the bar's own aria-valuenow must agree -- both come from the same computeBuildProgressPercent call",
+    );
+  });
+});

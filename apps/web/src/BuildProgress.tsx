@@ -426,15 +426,18 @@ export function BuildProgress({
           </span>
         )}
       </p>
-      <div
-        className="build-progress-bar"
-        role="progressbar"
-        aria-valuenow={progressPercent}
-        aria-valuemin={0}
-        aria-valuemax={100}
-        aria-label={t("build.progress.label")}
-      >
-        <div className="build-progress-bar-fill" style={{ width: `${progressPercent}%` }} />
+      <div className="build-progress-row">
+        <div
+          className="build-progress-bar"
+          role="progressbar"
+          aria-valuenow={progressPercent}
+          aria-valuemin={0}
+          aria-valuemax={100}
+          aria-label={t("build.progress.label")}
+        >
+          <div className="build-progress-bar-fill" style={{ width: `${progressPercent}%` }} />
+        </div>
+        <span className="build-progress-percent">{t("build.progress.percent", { percent: progressPercent })}</span>
       </div>
       <ol className="agent-steps">
         {visibleAgents.map((agent) => {
