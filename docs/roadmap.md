@@ -13574,6 +13574,72 @@ not a single "make it perfect" claim.
   an already-tested component rather than adding new logic) and
   `npm run build --workspace=@forge/web` clean.
 
+- **Round 245 -- Export/Backup buttons now flash a real "done"
+  confirmation.** Diversification: `GlobalSearchPanel.tsx` (241),
+  `codegen.ts` (242), `EntityPanel.tsx` (243), and `App.tsx`'s
+  spec-review section (244) were all ruled out. An Explore subagent
+  surveyed 4 grep-verified candidates (this one; a browser tab title
+  that never reflects the open project; `CollaboratorsPanel`'s header
+  showing no count; `HistoryPanel`'s search box still lacking recentX
+  memory) and recommended this one: `App.tsx`'s `handleExport`/
+  `handleBackup` (then lines 714-738) only ever toggled a `busy` state,
+  with nothing shown once the download actually resolved -- confirmed
+  independently by reading the same code, and by finding the exact
+  sibling idiom this round would reuse: `BuildProgress.tsx`'s own
+  `copyStatus` (round 222+), a transient status flag that flashes for
+  2s via a `setTimeout`-based `useEffect` and auto-resets.
+
+  The gap: both `exportProject`/`backupProject` (`api.ts`) resolve the
+  instant the browser's own save dialog is triggered -- the button just
+  silently reverted to its idle label with no acknowledgment at all,
+  easy to miss for a multi-second zip download, especially since the
+  browser's own download-manager UI isn't guaranteed to be visible.
+
+  Fix: added `exportDone`/`backupDone` state, flipped `true` right after
+  each `await` succeeds, with two `useEffect`s auto-resetting them after
+  2s -- the exact same shape as `copyStatus`. Button labels now branch
+  `busy → done → idle` instead of just `busy → idle`. Two new
+  translation keys per language (`preview.export.done`/
+  `preview.backup.done`).
+
+  **A real bug caught mid-round, not a pre-existing one:** the first
+  attempt declared the two new `useEffect` calls textually *after*
+  `AppContent`'s own `if (!user) return <AuthScreen />` early return
+  (right before `handleBuild`) -- meaning those two hook calls simply
+  never executed during the signed-out render, but did execute once
+  `user` was set, changing the total hook count between renders of the
+  very same component instance. This is exactly React's own "Rendered
+  more hooks than during the previous render" invariant violation. It
+  wasn't caught by `npm run build` (a pure type-level/bundling step,
+  blind to hook-order violations) -- it was caught by the very first
+  real-browser Playwright run, which hit a genuinely blank page after
+  signup with the hooks-order error printed to the console instead of
+  the idea textarea ever appearing. Root-caused via a small debug script
+  that captured `console`/`pageerror` events directly. Fixed by moving
+  both `useEffect` calls up to right after an existing, already-
+  unconditional effect (the `listProjects` one, well above the `!user`
+  early return) -- the same place every other hook in this large
+  component already lives.
+
+  No new unit tests -- this mirrors `copyStatus`, an already-established
+  idiom, not new logic, and `App.tsx` itself has no full-DOM render
+  harness (only function-extraction, per this routine's own standing
+  convention), so the real-browser Playwright script -- which is what
+  actually caught the hooks-order bug above -- served as this round's
+  regression-proof instead. Deliberate-break-and-restore: removed the
+  done-state branch from the Export button's own label ternary and
+  re-ran the same script -- failed cleanly with a `TimeoutError` waiting
+  for the "✓ Exported" text to appear, no hang, no crash. Restored from
+  a scratchpad backup, confirmed a byte-identical `diff`, and re-ran the
+  same script to confirm both Export and Backup passed clean again
+  (idle → done → reverted, for both buttons, against real zip downloads
+  triggered from a real signed-up account with a real built project).
+
+  Full suite green (919 tests, unchanged -- `@forge/shared` 11,
+  `@forge/spec-engine` 82, `@forge/db` 91, `@forge/api` 242, `@forge/web`
+  493, identical to round 244) and `npm run build --workspace=@forge/web`
+  clean.
+
 ## Phase 4
 
 - Template/agent marketplace
