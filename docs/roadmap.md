@@ -12812,6 +12812,69 @@ not a single "make it perfect" claim.
       `npm run build --workspace=@forge/api` and
       `npm run build --workspace=@forge/web` clean.
 
+- [x] **Round 235 — "Copy summary" button on the AI Team build-failure
+      screen.** Diversified away from Business Twin (round 234), the
+      Entity table (231), the home screen (232), and Kanban board (233):
+      an Explore subagent surveyed 4 candidates across different screens
+      and grep-confirmed each before recommending this one. `BuildProgress.tsx`
+      already had a "Download build summary" button next to the failure
+      banner (round 161) -- but Business Twin (222), the WhatsApp log
+      (223), and Time Machine (224) had all since paired their own
+      equivalent Download button with a Copy-to-clipboard companion,
+      leaving this the one remaining screen with that gap (confirmed via
+      grep: zero "copy" hits in the file before this round).
+
+      Added `copyStatus` state and `handleCopySummary` -- a near-verbatim
+      mirror of `HistoryPanel.tsx`'s own `copyStatus`/`handleCopy` pair
+      (idle/copied/failed, reverting via a 2-second timer), writing the
+      exact same `formatBuildSummary(...)` text the Download button
+      already saves to a file. New translation keys `build.summary.copy`
+      / `.copy.copied` / `.copy.failed` (he/en), matching the existing
+      `history.copy*` key-naming convention.
+
+      Two new DOM tests in `BuildProgress.test.ts` (added `fireEvent` to
+      its `@testing-library/react` import), mirroring `HistoryPanel.test.ts`'s
+      own two copy tests: a success case (clipboard receives the real
+      formatted text including both agents' real messages, button shows
+      "Copied!", reverts after a real mocked 2s timer tick) and a failure
+      case (a rejecting `navigator.clipboard.writeText` shows "Copy
+      failed", still reverts).
+
+      Deliberately broke `handleCopySummary` to just call
+      `setCopyStatus("copied")` without ever touching the clipboard.
+      Caught cleanly: 19 of 21 tests passed, exactly the 2 new copy tests
+      failed (one on `typeof writtenText === "string"`, the other on the
+      clipboard-rejection path never being exercised), clean exit, no
+      hang. Restored from a backup and confirmed a byte-identical `diff`
+      before re-confirming all 21 tests green again.
+
+      Full pipeline verification via the real dev server + Playwright,
+      using the same "real component, controlled network layer" technique
+      round 161 itself used to reach this exact failure state: signed up,
+      submitted a real build request, and intercepted the real `POST
+      /api/projects/:id/build` request at the network layer with Playwright's
+      `page.route`, fulfilling it with a hand-built SSE stream (`data:
+      {...}\n\n` frames matching the real server's own framing) ending in
+      a genuine, unrecovered failure. Confirmed the real failure banner
+      appeared, found the real "Copy summary" button, clicked it, and read
+      the REAL OS clipboard back via `navigator.clipboard.readText()`
+      (context granted `clipboard-read`/`clipboard-write` permissions):
+      contained both the Architect's real success message and the
+      injected failure message, the button showed "Copied!", and reverted
+      to normal after the real 2-second wait. (First verification pass
+      falsely reported FAIL: a Playwright `Locator` built with a `hasText`
+      filter on the button's ORIGINAL text goes stale the instant that
+      text changes underneath it -- switched to re-querying all buttons
+      fresh by emoji prefix on every check instead, a distinct lesson from
+      round 233's similar-sounding but different silent-form-validation
+      bug.)
+
+      Full suite green (882 tests, up from 880 -- `@forge/web` 457 → 459;
+      `@forge/shared` 11, `@forge/spec-engine` 82, `@forge/db` 91,
+      `@forge/api` 239 unchanged) and both
+      `npm run build --workspace=@forge/api` and
+      `npm run build --workspace=@forge/web` clean.
+
 ## Phase 3
 
 - Self-healing: production observability, automatic diagnosis and patch
