@@ -12875,6 +12875,73 @@ not a single "make it perfect" claim.
       `npm run build --workspace=@forge/api` and
       `npm run build --workspace=@forge/web` clean.
 
+- [x] **Round 236 — port the Kanban board's "+" add-card button to the
+      exported codegen app.** Diversified away from the last 5 rounds
+      (Entity table 231, home screen 232, Kanban board's live-preview half
+      233, Business Twin 234, AI Team build-failure screen 235): an
+      Explore subagent surveyed 4 candidates and grep-confirmed each
+      before recommending this one, a standing candidate this trigger
+      prompt had flagged since round 233 itself. `startCreateForColumn`
+      (the live preview's own board "+" button, `EntityPanel.tsx`) had
+      never been ported into `apps/api/src/codegen.ts`'s generated
+      `EntityView.jsx` -- the standalone exported app's board columns
+      still only rendered a badge + count, with no way to add a record
+      already set to that column's value short of the general create form.
+
+      Added the same `startCreateForColumn(value, field)` function (a
+      near-verbatim port, minus the live preview's `formRef` scroll --
+      the exported app's generated form has no such ref, matching
+      `startEdit`'s own equally plain shape there) and the same JSX shape:
+      wrapped the badge + count in a new `.board-column-header-info` div
+      so the new `.board-add-card-btn` sits on the opposite side via the
+      existing `justify-content: space-between` layout, plus the matching
+      CSS (byte-identical to the live preview's own rules for these two
+      classes, just reformatted to `codegen.ts`'s single-line-per-rule
+      convention).
+
+      One new test in `codegen.test.ts` (63 total, up from 62): asserts
+      the generated `startCreateForColumn` source, the new button's
+      `className`/`onClick`, the `.board-column-header-info` wrapper, and
+      both new CSS rules are all present in the real generated output --
+      the same "assert against generated source" standard this file's
+      other tests already use for the live-preview-parity arc.
+
+      Deliberately broke the generated `startCreateForColumn` to drop the
+      column's own value from the pre-filled form (`setForm(emptyForm(entity))`
+      instead of merging in `[field.name]: value`). Caught cleanly: 62 of
+      63 tests passed, exactly the new test failed on a plain regex
+      mismatch, clean exit, no hang. Restored from a backup and confirmed
+      a byte-identical `diff` before re-confirming all 63 tests green
+      again.
+
+      Full pipeline verification, not just a Playwright pass against the
+      live dev server: signed up, built a real "מסעדה עם תפריט והזמנות"
+      project (Order entity, status enum 4 values), clicked the real
+      Export button and captured Playwright's own `download` event,
+      extracted the real downloaded zip, symlinked `node_modules`, ran the
+      real `vite build` from the extract root (matching the generated
+      `server.js`'s own `express.static` expectation), and spawned the
+      real `server.js`. Confirmed the new code was genuinely present in
+      the downloaded zip's own `EntityView.jsx` before even building.
+      Since the exported app starts with a genuinely empty database,
+      filled and submitted the general create form first to create one
+      real row, switched to board view (4 real columns), deliberately
+      targeted the *second* column (not the first, the same false-pass
+      guard round 233's own live-preview verification used), clicked its
+      real "+" button, confirmed the create form's status select showed
+      that exact value pre-selected, filled the remaining fields and
+      submitted for real, then confirmed the brand-new card actually
+      rendered inside that same targeted column's own card list against
+      the real spawned server -- a genuine end-to-end round trip through
+      the actual standalone artifact a real user would download, not just
+      the live preview.
+
+      Full suite green (883 tests, up from 882 -- `@forge/api` 239 → 240;
+      `@forge/shared` 11, `@forge/spec-engine` 82, `@forge/db` 91,
+      `@forge/web` 459 unchanged) and both
+      `npm run build --workspace=@forge/api` and
+      `npm run build --workspace=@forge/web` clean.
+
 ## Phase 3
 
 - Self-healing: production observability, automatic diagnosis and patch
