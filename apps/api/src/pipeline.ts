@@ -164,12 +164,12 @@ export async function* runBuildPipeline(
       yield {
         agent: "Debug",
         status: "failed",
-        message: "אין מפתח Claude API מוגדר, אז אין אפשרות לתיקון אוטומטי כרגע. זו השגיאה המדויקת שקרתה: " + dbError,
+        message: "No Claude API key is configured, so an automatic fix isn't available right now. The exact error was: " + dbError,
       };
       return;
     }
 
-    yield { agent: "Debug", status: "running", message: "מנתח מה השתבש ומנסה למצוא תיקון…" };
+    yield { agent: "Debug", status: "running", message: "Analyzing what went wrong and looking for a fix…" };
     let fixedSpec: ProductSpec;
     try {
       fixedSpec = await requestSpecFix(nextSpec, dbError, { apiKey, model: process.env.ANTHROPIC_MODEL });
@@ -178,7 +178,7 @@ export async function* runBuildPipeline(
       yield {
         agent: "Debug",
         status: "failed",
-        message: "הניסיון לתקן אוטומטית נכשל: " + (fixErr as Error).message,
+        message: "The automatic fix attempt failed: " + (fixErr as Error).message,
       };
       return;
     }
@@ -194,7 +194,7 @@ export async function* runBuildPipeline(
     yield {
       agent: "Debug",
       status: "success",
-      message: "נמצא תיקון אוטומטי לבעיה, וממשיכים בבנייה איתו.",
+      message: "Found an automatic fix for the issue, and continuing the build with it.",
       detail: { correctedSpec: fixedSpec },
     };
   }

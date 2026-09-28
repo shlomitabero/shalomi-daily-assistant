@@ -97,11 +97,84 @@ test("Debug Agent honestly reports it can't help when no ANTHROPIC_API_KEY is co
     const debugEvent = events.find((e) => e.agent === "Debug");
     assert.ok(debugEvent);
     assert.equal(debugEvent!.status, "failed");
-    assert.match(debugEvent!.message, /אין מפתח/);
+    assert.match(debugEvent!.message, /No Claude API key/);
 
     assert.ok(!events.some((e) => e.agent === "Forge"), "pipeline must not silently continue past an unrepaired failure");
   } finally {
     process.env.ANTHROPIC_API_KEY = originalKey;
+  }
+});
+
+/**
+ * New in this round: the four Debug Agent messages (no-API-key, running,
+ * fix-failed, fix-succeeded) were hardcoded Hebrew strings, unlike every
+ * other agent's messages in this pipeline (Architect/Database/Seed
+ * Data/QA/Security/Forge), which are always plain English regardless of
+ * the request's own UI language -- runBuildPipeline never even receives a
+ * lang parameter, and BuildProgress.tsx renders every event's message
+ * verbatim with no server-side localization (see httpError.ts's own
+ * documented policy: server text is never localized, only stable error
+ * `code`s are). A collaborator viewing a shared project with English UI
+ * would see raw untranslated Hebrew mid-build. Scans every event from
+ * both the successful-recovery run and the no-API-key run for any Hebrew
+ * character (U+0590-U+05FF) to catch this whole class of bug, not just
+ * the four strings that happened to trigger it this time.
+ */
+test("every pipeline event message is plain English, even on the Debug Agent's recovery path -- no leftover Hebrew text", async () => {
+  const HEBREW_CHAR = /[֐-׿]/;
+  const db = openDatabase(":memory:");
+  ensureProjectsTable(db);
+  ensureCheckpointsTable(db);
+  const project = insertProject(db, {
+    id: "proj1",
+    ownerId: "user1",
+    name: "test",
+    description: "test",
+    spec: brokenSpec,
+  });
+
+  const originalKey = process.env.ANTHROPIC_API_KEY;
+  const originalFetch = globalThis.fetch;
+  process.env.ANTHROPIC_API_KEY = "test-key";
+  globalThis.fetch = (async () =>
+    new Response(JSON.stringify({ content: [{ type: "text", text: JSON.stringify(fixedSpec) }] }), {
+      status: 200,
+    })) as unknown as typeof fetch;
+
+  try {
+    const recoveryEvents = await collect(runBuildPipeline(db, project, { nextSpec: brokenSpec, changeLabel: "Initial build" }));
+    const hebrewInRecovery = recoveryEvents.filter((e) => HEBREW_CHAR.test(e.message));
+    assert.deepEqual(
+      hebrewInRecovery.map((e) => `${e.agent}/${e.status}: ${e.message}`),
+      [],
+      "no event message on the recovery path should contain Hebrew text",
+    );
+  } finally {
+    process.env.ANTHROPIC_API_KEY = originalKey;
+    globalThis.fetch = originalFetch;
+  }
+
+  const noKeyDb = openDatabase(":memory:");
+  ensureProjectsTable(noKeyDb);
+  const noKeyProject = insertProject(noKeyDb, {
+    id: "proj2",
+    ownerId: "user1",
+    name: "test",
+    description: "test",
+    spec: brokenSpec,
+  });
+  const originalKey2 = process.env.ANTHROPIC_API_KEY;
+  delete process.env.ANTHROPIC_API_KEY;
+  try {
+    const noKeyEvents = await collect(runBuildPipeline(noKeyDb, noKeyProject, { nextSpec: brokenSpec, changeLabel: "Initial build" }));
+    const hebrewInNoKey = noKeyEvents.filter((e) => HEBREW_CHAR.test(e.message));
+    assert.deepEqual(
+      hebrewInNoKey.map((e) => `${e.agent}/${e.status}: ${e.message}`),
+      [],
+      "no event message on the no-API-key path should contain Hebrew text",
+    );
+  } finally {
+    process.env.ANTHROPIC_API_KEY = originalKey2;
   }
 });
 
