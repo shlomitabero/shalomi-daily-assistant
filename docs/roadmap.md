@@ -13499,6 +13499,81 @@ not a single "make it perfect" claim.
   `@forge/api` 242 unchanged) and `npm run build --workspace=@forge/web`
   clean.
 
+- **Round 244 -- the project's own name is now visible and renamable on
+  the spec-review screen.** Diversification: `WhatsAppPanel.tsx` (240),
+  `GlobalSearchPanel.tsx` (241), `codegen.ts` (242), and `EntityPanel.tsx`
+  (243) were all ruled out per the standing four-round lookback. An
+  Explore subagent surveyed `BusinessTwinPanel.tsx`/`twin.ts`,
+  `BuildProgress.tsx`, `App.tsx`'s home screen, `CollaboratorsPanel.tsx`,
+  auth/account screens, and several other components, confirming every
+  previously-closed pattern really is closed everywhere it checked, and
+  returned 5 grep-verified new candidates (document tab title reflecting
+  the open project; Export/Backup buttons giving no success feedback;
+  `CollaboratorsPanel`'s header showing no count; refine-textbox draft
+  persistence; and this one). Its top pick was independently re-verified
+  before writing any code: `App.tsx`'s `view === "spec"` branch
+  (line 1107-1109) rendered a static `<h1>{t("spec.title")}</h1>`, while
+  only the `view === "preview"` branch (line 1239-1242, reached only
+  after a build) rendered the already-built `ProjectNameEditor`
+  component; `packages/db/src/projects.ts`'s own `updateProjectName` doc
+  comment independently names the exact gap this closes ("no way to fix
+  an awkward auto-generated name, or the generic '(copy)' suffix a clone
+  starts with... short of deleting and recreating the whole project");
+  and `apps/api/src/routes/projects.ts`'s rename route uses
+  `requireProjectAccess`, not a built-only guard, confirming this was a
+  pure UI gap, not a backend limitation.
+
+  The gap: every new or cloned project lands on spec-review before
+  anything else (confirmed via `handleDuplicateProject`'s own doc
+  comment: "Jumps straight into the new project's spec review screen"),
+  and a clone in particular always starts with the generic "(copy)"/
+  "(עותק)" suffix -- so the one moment someone most wants to fix an
+  awkward name is exactly the screen that had no way to see or edit it
+  at all.
+
+  Fix: two-line change. Swapped the static `<h1>{t("spec.title")}</h1>`
+  for `<ProjectNameEditor project={project} onRenamed={setProject} />`
+  (the exact same call already used on the preview screen) followed by
+  `<p className="muted small">{t("spec.title")}</p>` -- demoting the
+  screen's own explanatory heading ("Here's what we understood") to a
+  subtitle under the project's real name, rather than removing it.
+
+  No new logic, so no new unit tests -- `ProjectNameEditor` is already
+  fully covered in isolation by `ProjectNameEditor.test.ts`. Since
+  `App.tsx` itself is only ever tested via function-extraction (it has
+  no full-DOM render harness), and this change is pure JSX composition
+  with no extractable pure function, the regression-proof for the new
+  call site was a real-browser Playwright script instead -- the third
+  option the standing process explicitly allows. Deliberate-break-and-
+  restore: reverted the two-line change back to the static heading and
+  re-ran the same script -- it failed cleanly at the very first
+  `.spec-review .project-name` lookup (`TimeoutError`, no hang).
+  Restored from a scratchpad backup, confirmed a byte-identical `diff`,
+  and re-ran the same script to confirm it passed again.
+
+  Real-browser verification (the actual regression-proof for this
+  round): signed up, reached spec-review for a brand-new project,
+  confirmed its real auto-derived name rendered as a clickable
+  `.project-name` heading; went home via the topbar logo, duplicated the
+  project, and confirmed the clone landed back on spec-review showing
+  the real "(עותק)" suffix -- the exact motivating scenario; clicked to
+  rename it inline right there, confirmed the new name rendered
+  immediately; then did a genuine full `page.reload()`, reopened the
+  project from the home screen's own list, and confirmed the renamed
+  name was still there -- a real persisted rename, not just local state.
+  `RESULT: PASS`. One script bug along the way: the first run's own pass
+  condition used an English-only `/copy/i` regex against the clone's
+  Hebrew "(עותק)" suffix and reported a false FAIL even though the
+  feature itself worked correctly (confirmed by reading the actual
+  captured name in the log); fixed the regex to `/copy|עותק/i` and
+  re-ran clean.
+
+  Full suite green (919 tests, unchanged -- `@forge/shared` 11,
+  `@forge/spec-engine` 82, `@forge/db` 91, `@forge/api` 242,
+  `@forge/web` 493, all identical to round 243, since this round reused
+  an already-tested component rather than adding new logic) and
+  `npm run build --workspace=@forge/web` clean.
+
 ## Phase 4
 
 - Template/agent marketplace
