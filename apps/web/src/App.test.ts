@@ -20,6 +20,7 @@ import {
 } from "./App.js";
 import { reorderColumns } from "./columnOrder.js";
 import { translate } from "./i18n/language.js";
+import { visibleSelectedIds } from "./projectSelection.js";
 
 const t = (key: string) => key;
 
@@ -582,11 +583,15 @@ test("App's handleBulkDeleteProjects removes only the projects that actually suc
       error: "not-yet-called",
     };
     const confirmCalls: string[] = [];
+    // visibleSelectedProjectIds is what App.tsx's own useMemo would have
+    // computed from `selectedProjectIds` and `visibleMyProjects` at call
+    // time -- here that's every currently-known project (initialMyProjects),
+    // i.e. no active search/filter narrowing the visible list.
     const fn = new Function(
       "window",
       "t",
       "deleteProject",
-      "selectedProjectIds",
+      "visibleSelectedProjectIds",
       "setError",
       "setMyProjects",
       "setSelectedProjectIds",
@@ -595,7 +600,7 @@ test("App's handleBulkDeleteProjects removes only the projects that actually suc
       { confirm: (message: string) => (confirmCalls.push(message), opts.confirmReturns) },
       (key: string, params?: Record<string, unknown>) => (params ? `${key}:${JSON.stringify(params)}` : key),
       opts.deleteProjectFn,
-      state.selectedProjectIds,
+      visibleSelectedIds(state.selectedProjectIds, initialMyProjects.map((p) => p.id)),
       (v: string | null) => (state.error = v),
       (updater: (prev: Project[]) => Project[]) => (state.myProjects = updater(state.myProjects)),
       (next: Set<string>) => (state.selectedProjectIds = next),
@@ -644,6 +649,54 @@ test("App's handleBulkDeleteProjects removes only the projects that actually suc
     /home\.myProjects\.bulk\.partialFailure/,
     "a partial failure must surface the translated partial-failure message, not the raw single-project rejection",
   );
+});
+
+/**
+ * Regression test for this round's own fix: a project selected earlier and
+ * then hidden by a changed search/filter must never be bulk-deleted, even
+ * though it's still present in the raw `selectedProjectIds` set -- only
+ * `visibleSelectedProjectIds` (the real App.tsx useMemo's own intersection
+ * with the currently-visible list) may ever reach the delete API.
+ */
+test("App's handleBulkDeleteProjects only ever deletes visible+selected projects, never a raw-selected one hidden by the current filter", async () => {
+  const appSrc = readFileSync(new URL("./App.tsx", import.meta.url), "utf8");
+  const handlerMatch = appSrc.match(/ {2}async function handleBulkDeleteProjects\(\) \{[\s\S]*?\n {2}\}\n/);
+  assert.ok(handlerMatch, "expected to find handleBulkDeleteProjects in App.tsx");
+  const { code } = transformSync(handlerMatch![0], { loader: "ts" });
+
+  const a = makeProject([makeEntity("Customer")]);
+  a.id = "a";
+  const b = makeProject([makeEntity("Customer")]);
+  b.id = "b";
+
+  // Both "a" and "b" are raw-selected, but only "a" is currently visible
+  // (as if "b" is hidden by a status filter or search term).
+  const attempted: string[] = [];
+  const state = { myProjects: [a, b] as Project[], selectedProjectIds: null as Set<string> | null };
+  const fn = new Function(
+    "window",
+    "t",
+    "deleteProject",
+    "visibleSelectedProjectIds",
+    "setError",
+    "setMyProjects",
+    "setSelectedProjectIds",
+    `${code}\nreturn handleBulkDeleteProjects;`,
+  )(
+    { confirm: () => true },
+    (key: string, params?: Record<string, unknown>) => (params ? `${key}:${JSON.stringify(params)}` : key),
+    async (id: string) => {
+      attempted.push(id);
+    },
+    visibleSelectedIds(new Set(["a", "b"]), ["a"]),
+    () => {},
+    (updater: (prev: Project[]) => Project[]) => (state.myProjects = updater(state.myProjects)),
+    (next: Set<string>) => (state.selectedProjectIds = next),
+  ) as () => Promise<void>;
+
+  await fn();
+  assert.deepEqual(attempted, ["a"], "must attempt to delete only the visible+selected project, never the hidden-but-raw-selected one");
+  assert.deepEqual(state.myProjects, [b], "only the visible+selected project (a) must actually be removed -- the hidden one (b) must remain untouched");
 });
 
 /**

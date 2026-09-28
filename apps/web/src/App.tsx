@@ -33,6 +33,7 @@ import { AddAssumptionForm, AddRoleForm, AssumptionItem, EntitySummaryItem, Role
 import { applyColumnOrder, reorderColumns } from "./columnOrder.js";
 import { getEntityTabOrder, setEntityTabOrder } from "./entityTabOrder.js";
 import { getPinnedIds, sortByPinned, togglePinned } from "./pinnedProjects.js";
+import { visibleSelectedIds } from "./projectSelection.js";
 import { getProjectSortMode, setProjectSortMode, type ProjectSortMode } from "./projectSortMode.js";
 import {
   getProjectStatusFilter,
@@ -388,6 +389,19 @@ function AppContent() {
     [myProjects, projectStatusFilter, projectSearch, pinnedIds, projectSortMode],
   );
 
+  /**
+   * The raw `selectedProjectIds` set is never reset when the search/filter
+   * changes, so a project selected earlier and then hidden by a new filter
+   * would otherwise stay silently "selected" -- still counted in the bulk
+   * bar, and still deleted by a real bulk-delete, with no way for the user
+   * to see it was about to happen. Everything the UI shows or acts on uses
+   * this visibility-scoped view instead of the raw set.
+   */
+  const visibleSelectedProjectIds = useMemo(
+    () => visibleSelectedIds(selectedProjectIds, visibleMyProjects.map((p) => p.id)),
+    [selectedProjectIds, visibleMyProjects],
+  );
+
   function handleSetProjectSortMode(mode: ProjectSortMode) {
     setProjectSortModeState(mode);
     setProjectSortMode(mode);
@@ -608,7 +622,7 @@ function AppContent() {
   // a single rejected delete (a dropped connection, a project someone else
   // already removed) must not hide the ones that *did* succeed.
   async function handleBulkDeleteProjects() {
-    const ids = [...selectedProjectIds];
+    const ids = [...visibleSelectedProjectIds];
     if (ids.length === 0) return;
     if (!window.confirm(t("home.myProjects.bulk.confirmDelete", { count: ids.length }))) return;
     setError(null);
@@ -1040,9 +1054,9 @@ function AppContent() {
                   {t("home.myProjects.bulk.selectAll")}
                 </label>
               )}
-              {selectedProjectIds.size > 0 && (
+              {visibleSelectedProjectIds.size > 0 && (
                 <div className="bulk-actions-bar">
-                  <span>{t("home.myProjects.bulk.selectedCount", { count: selectedProjectIds.size })}</span>
+                  <span>{t("home.myProjects.bulk.selectedCount", { count: visibleSelectedProjectIds.size })}</span>
                   <button type="button" className="danger" onClick={handleBulkDeleteProjects}>
                     {t("home.myProjects.bulk.deleteSelected")}
                   </button>
