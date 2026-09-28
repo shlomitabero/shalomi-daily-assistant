@@ -13106,6 +13106,67 @@ not a single "make it perfect" claim.
   `@forge/db` 91 unchanged) and `npm run build --workspace=@forge/web`
   clean.
 
+- **Round 239 -- click-to-rename for entities on the spec-review screen.** Diversification:
+  round 238 touched `CollaboratorsPanel.tsx`; before that, three straight rounds had
+  touched `codegen.ts` (236, 237) and `BuildProgress.tsx`/`BusinessTwinPanel.tsx`/
+  `twin.ts` (234, 235), so those plus `EntityPanel.tsx` and `App.tsx`'s home screen
+  were explicitly ruled out this round too. An Explore subagent surveyed 3
+  candidates (this one, a forgot-password flow, and recent-numbers memory on the
+  WhatsApp test-send form) with grep-verified evidence for each; its
+  recommendation was independently re-verified by reading
+  `SpecListItemRemover.tsx`, `EntityLabelEditor.tsx`, `api.ts`'s
+  `renameEntityLabel`, and the backend route in `apps/api/src/routes/projects.ts`
+  directly before writing any code.
+
+  The gap: roles and assumptions on the spec-review screen were already
+  click-to-rename in place via this same file's own `useRenamableSpecItem`
+  hook, but the entity list right below them had no correction path beyond
+  outright removal. An AI-mislabeled entity (a generic "Record" instead of
+  "Customer", say) could only be relabeled after committing to a full build,
+  via `EntityPanel.tsx`'s own `EntityLabelEditor` -- or talked into a fix via
+  the free-text "additional request" box and hoping the next build actually
+  picked it up.
+
+  Fix: `EntitySummaryItem` now calls the exact same `useRenamableSpecItem`
+  hook `RoleChip`/`AssumptionItem` already use, wired to the already-built,
+  already-tested `renameEntityLabel` endpoint (a pure `spec.entities[].label`
+  write, no migration, no DB change) that `EntityLabelEditor` already calls
+  post-build. Clicking an entity's name opens an inline edit; Enter/blur
+  saves, Escape cancels -- identical interaction pattern to `RoleChip`. Added
+  one new `spec.entities.rename` translation key (he+en) and CSS for the new
+  `.entity-summary-label`/`.entity-summary-rename-edit` classes, mirroring
+  `.assumption-text`/`.assumption-rename-edit`.
+
+  Three new tests in `SpecListItemRemover.test.ts` cover the save path
+  (correct PATCH endpoint, correct body, returns to display mode), the
+  Escape-cancel path (never calls the endpoint, original label unchanged),
+  and error-surfacing (a failed PATCH shows the real error, never fires
+  `onRenamed`) -- mirroring the existing `RoleChip` rename tests exactly.
+
+  Deliberate-break-and-restore: pointed the rename call's `value` argument at
+  `entity.name` instead of the actual typed value (so any rename attempt
+  would silently save the *unchanged* name) -- exactly 1 of 18
+  `SpecListItemRemover` tests failed cleanly (the new "clicking an entity
+  summary's label..." save test), no hang, no other test affected. Restored
+  from a scratchpad backup and confirmed a byte-identical `diff` before
+  re-confirming all 18 green.
+
+  Full real-browser verification: signed up, described a real "ניהול
+  אירועים בעסק" (event management) idea, landed on the real spec-review
+  screen, clicked the real entity label ("אירועים"), renamed it to "אירוע
+  מיוחד", confirmed the display updated immediately. Reloaded the page (a
+  reload always returns to the home screen for a draft project) and
+  re-opened the still-draft project via its real `.my-project-open` card to
+  confirm the rename had genuinely persisted server-side, not just local
+  React state -- it had. Then confirmed Escape correctly cancels an
+  in-progress edit without saving (typed "should not be saved", pressed
+  Escape, confirmed the label was still "אירוע מיוחד", not the cancelled
+  draft text). `RESULT: PASS`.
+
+  Full suite green (889 tests, up from 886 -- `@forge/web` 461 → 464;
+  `@forge/shared` 11, `@forge/spec-engine` 82, `@forge/db` 91, `@forge/api`
+  241 unchanged) and `npm run build --workspace=@forge/web` clean.
+
 ## Phase 3
 
 - Self-healing: production observability, automatic diagnosis and patch
