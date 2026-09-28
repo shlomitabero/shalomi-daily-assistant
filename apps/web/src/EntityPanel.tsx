@@ -5,6 +5,7 @@ import { getHiddenFields, toggleFieldVisibility } from "./columnVisibility.js";
 import { computeResizedWidth, getColumnWidths, setColumnWidth } from "./columnWidths.js";
 import { applyColumnOrder, getColumnOrder, reorderColumns, setColumnOrder } from "./columnOrder.js";
 import { getGroupByField, setGroupByField } from "./groupByPreference.js";
+import { getViewMode as getViewModePreference, setViewMode as setViewModePreference } from "./viewModePreference.js";
 import { EntityLabelEditor } from "./EntityLabelEditor.js";
 import { FieldLabelEditor } from "./FieldLabelEditor.js";
 import {
@@ -740,7 +741,6 @@ export function EntityPanel({
     setSearch("");
     setStatusFilter("");
     setSortKeys([]);
-    setViewMode("table");
     setCalendarMonth(new Date());
     setSelectedIds(new Set());
     setImportMessage(null);
@@ -778,6 +778,19 @@ export function EntityPanel({
   // even a reload of the same entity.
   useEffect(() => {
     setGroupFieldName(getGroupByField(projectId, entity.name));
+  }, [projectId, entity.name]);
+
+  // Same reasoning as groupFieldName's own effect just above -- the chosen
+  // Table/Board/Calendar view is scoped per project+entity too. Falls back
+  // to "table" if the persisted choice needs a board/date field this entity
+  // no longer has (e.g. the field was removed), instead of rendering a view
+  // toggle button that isn't even shown.
+  useEffect(() => {
+    const stored = getViewModePreference(projectId, entity.name);
+    const stillValid =
+      stored === "table" || (stored === "board" && boardField) || (stored === "calendar" && dateField);
+    setViewMode(stillValid ? stored : "table");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectId, entity.name]);
 
   /**
@@ -1610,7 +1623,7 @@ export function EntityPanel({
                 <button
                   type="button"
                   className={viewMode === "table" ? "view-toggle-btn view-toggle-btn-active" : "view-toggle-btn"}
-                  onClick={() => setViewMode("table")}
+                  onClick={() => setViewMode(setViewModePreference(projectId, entity.name, "table"))}
                 >
                   {t("entity.view.table")}
                 </button>
@@ -1618,7 +1631,7 @@ export function EntityPanel({
                   <button
                     type="button"
                     className={viewMode === "board" ? "view-toggle-btn view-toggle-btn-active" : "view-toggle-btn"}
-                    onClick={() => setViewMode("board")}
+                    onClick={() => setViewMode(setViewModePreference(projectId, entity.name, "board"))}
                   >
                     {t("entity.view.board")}
                   </button>
@@ -1627,7 +1640,7 @@ export function EntityPanel({
                   <button
                     type="button"
                     className={viewMode === "calendar" ? "view-toggle-btn view-toggle-btn-active" : "view-toggle-btn"}
-                    onClick={() => setViewMode("calendar")}
+                    onClick={() => setViewMode(setViewModePreference(projectId, entity.name, "calendar"))}
                   >
                     {t("entity.view.calendar")}
                   </button>

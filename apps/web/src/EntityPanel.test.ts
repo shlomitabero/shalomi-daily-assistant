@@ -9,6 +9,7 @@ import { act, cleanup, fireEvent, render } from "@testing-library/react";
 import type { Entity, EntityRecord } from "@forge/shared";
 import { getColumnWidths, setColumnWidth } from "./columnWidths.js";
 import { getGroupByField } from "./groupByPreference.js";
+import { getViewMode } from "./viewModePreference.js";
 import { EntityPanel } from "./EntityPanel.js";
 import { LanguageProvider } from "./i18n/LanguageContext.js";
 import { ThemeProvider } from "./theme/ThemeContext.js";
@@ -2425,6 +2426,72 @@ test("EntityPanel's 'Group by' choice survives an unmount+remount of the same en
         "a different entity in the same project must never inherit Deal's persisted 'status' group-by choice",
       );
       assert.equal(getGroupByField("proj1", "Customer"), "", "and must never have written anything to Customer's own storage slot either");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
+ * New in this round (243): the Table/Board/Calendar viewMode choice itself
+ * is now persisted (viewModePreference.ts, scoped per project+entity like
+ * groupByPreference.ts) -- previously it was plain useState that hard-reset
+ * to "table" on every entity switch (and even on a plain unmount+remount of
+ * the very same entity), so setting up a Kanban board for one entity meant
+ * re-clicking "Board" by hand every time you switched tabs and came back.
+ * Confirms the live component actually reads and writes through
+ * viewModePreference.ts, not just that the pure functions work in isolation
+ * (see viewModePreference.test.ts for that), and that a persisted choice
+ * which no longer has a matching field (a boardless entity) falls back to
+ * table instead of rendering broken.
+ */
+test("EntityPanel's Table/Board/Calendar view choice survives an unmount+remount of the same entity, and is scoped per entity", async () => {
+  await withJsdom(async () => {
+    const store: EntityRecord[] = [{ id: 1, createdAt: "x", name: "Acme Corp", status: "new" }];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = mockRecordsFetch(store) as typeof fetch;
+    try {
+      const firstView = renderEntityPanel();
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 1);
+
+      const boardToggle = document.querySelectorAll(".view-toggle-btn")[1] as HTMLButtonElement;
+      fireEvent.click(boardToggle);
+      await waitForCondition(() => document.querySelectorAll(".board-column").length === 3);
+      assert.equal(getViewMode("proj1", "Deal"), "board", "must actually be persisted, not just held in memory");
+
+      firstView.unmount();
+      renderEntityPanel();
+      await waitForCondition(() => document.querySelectorAll(".board-column").length === 3);
+
+      assert.ok(
+        document.querySelectorAll(".view-toggle-btn")[1].classList.contains("view-toggle-btn-active"),
+        "a fresh mount of the same project+entity must restore the persisted 'Board' view, not reset to Table",
+      );
+      assert.equal(document.querySelectorAll("table").length, 0, "must genuinely render the board, not just mark the button active while still showing the table");
+
+      cleanup();
+      const textOnlyEntity: Entity = {
+        name: "Note",
+        fields: [{ name: "name", type: "text", required: true }],
+      };
+      globalThis.fetch = (async (input: string) => {
+        if (input === "/api/projects/proj1/entities/Note") {
+          return new Response(JSON.stringify({ records: [{ id: 1, createdAt: "x", name: "Reminder" }] }), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          });
+        }
+        throw new Error(`unexpected request ${input}`);
+      }) as typeof fetch;
+      renderEntityPanel({ entity: textOnlyEntity, allEntities: [textOnlyEntity] });
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 1);
+
+      assert.equal(
+        document.querySelector(".view-toggle"),
+        null,
+        "a different entity with no board/date field must never inherit Deal's persisted 'board' view -- it must fall back to plain Table with no view toggle at all",
+      );
+      assert.equal(getViewMode("proj1", "Note"), "table", "and must never have written anything to Note's own storage slot either");
     } finally {
       globalThis.fetch = originalFetch;
     }
