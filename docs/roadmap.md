@@ -13040,6 +13040,72 @@ not a single "make it perfect" claim.
       `npm run build --workspace=@forge/api` and
       `npm run build --workspace=@forge/web` clean.
 
+- **Round 238 -- CollaboratorsPanel: real feedback when an invite targets
+  someone who already has access.** Diversification: rounds 236 and 237
+  had both just touched `codegen.ts` (board add-card, then calendar
+  click-to-add), so a third codegen round in a row was explicitly ruled
+  out, along with `EntityPanel.tsx`, `App.tsx`'s home screen,
+  `BusinessTwinPanel.tsx`/`twin.ts`, and `BuildProgress.tsx` (all touched
+  in the four rounds before that). An Explore subagent surveyed 3
+  candidates across different screens; its recommendation -- the
+  Collaborators panel -- was independently re-verified by reading
+  `packages/db/src/collaborators.ts`, `apps/api/src/routes/projects.ts`,
+  and `CollaboratorsPanel.tsx` directly before writing any code.
+
+  The gap: `addCollaborator` is deliberately idempotent (`INSERT OR
+  IGNORE`) -- its own comment says inviting an existing collaborator again
+  is "a silent no-op rather than a duplicate-key error." The POST route
+  answers with a 201 and the current (unchanged) collaborator list either
+  way, so the client had no way to tell a real new invite apart from a
+  no-op except by comparing against what it already knew. Until this
+  round that comparison never happened: the owner just watched the email
+  field clear, identical to a real successful invite, with nothing on
+  screen indicating that nothing had actually changed.
+
+  Fix: `CollaboratorsPanel.tsx`'s `handleInvite` now snapshots whether the
+  trimmed, case-insensitively-compared email is already in the on-screen
+  `collaborators` list *before* sending the request (the response alone
+  can't distinguish the two cases). If it was already there, a new
+  `role="status"` message naming the real invited email appears once the
+  request completes ("collab.alreadyCollaborator", added in both Hebrew
+  and English to `i18n/language.ts`). The message clears immediately if
+  the owner edits the email field again, so it can never linger to
+  describe a stale attempt.
+
+  Two new tests in `CollaboratorsPanel.test.ts`: one mocks the real
+  idempotent-201-with-unchanged-list response and confirms the message
+  appears, names the real email, and clears on the next keystroke; the
+  other confirms a genuinely new invite (a real 201 with the list grown
+  by one) never shows the message. Caught one real bug while writing the
+  first test: the interpolated message wraps the email in quote marks
+  (`"dana@example.com" already has access...`), so an assertion checking
+  for the email immediately followed by "already has access" as one
+  substring never matched -- split into two checks (message text, then a
+  separate check that the real email appears somewhere in the panel).
+
+  Deliberate-break-and-restore: forced the pre-check to `const
+  alreadyCollaborator = false;` -- exactly 1 of 8 `CollaboratorsPanel`
+  tests failed (the new "tells the owner" test), a clean failure with no
+  hang and no other test affected. Restored from a scratchpad backup and
+  confirmed a byte-identical `diff` before re-confirming all 8 green.
+
+  Full real-browser verification, not just the unit tests: signed up two
+  real accounts against the live dev server (owner + collaborator-to-be,
+  since `addCollaborator` requires the invited email to already have a
+  real account), built a real "חנות פרחים קטנה" (small flower shop)
+  project as the owner, opened the real Collaborators panel, sent a first
+  real invite to the collaborator's email (confirmed: no "already has
+  access" message, list grew to the real 2 rows), then submitted the
+  identical email a second time -- confirmed the real "already has
+  access" message appeared naming the real collaborator email, and the
+  list still showed exactly 2 rows (owner + the one real collaborator,
+  no duplicate). `RESULT: PASS`.
+
+  Full suite green (886 tests, up from 884 -- `@forge/web` 459 → 461;
+  `@forge/api` 241, `@forge/shared` 11, `@forge/spec-engine` 82,
+  `@forge/db` 91 unchanged) and `npm run build --workspace=@forge/web`
+  clean.
+
 ## Phase 3
 
 - Self-healing: production observability, automatic diagnosis and patch
