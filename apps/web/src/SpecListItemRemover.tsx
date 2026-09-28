@@ -1,6 +1,15 @@
 import { useRef, useState } from "react";
 import type { Entity, Project } from "@forge/shared";
-import { addAssumption, addRole, removeAssumption, removeEntity, removeRole, renameAssumption, renameRole } from "./api.js";
+import {
+  addAssumption,
+  addRole,
+  removeAssumption,
+  removeEntity,
+  removeRole,
+  renameAssumption,
+  renameEntityLabel,
+  renameRole,
+} from "./api.js";
 import { useTranslation } from "./i18n/LanguageContext.js";
 
 /**
@@ -237,36 +246,77 @@ export function AssumptionItem({
 
 /**
  * The spec review screen's "entities" section (the list of screens about
- * to be built) was the one part of this page with no correction path at
- * all -- unlike roles/assumptions above, an unwanted entity the heuristic
- * or AI invented (an "Courier" screen on a business with no delivery, say)
- * could only be talked out of existence via the free-text "additional
- * request" box and hoping the next build actually drops it, never a
- * guaranteed removal. `summary` is passed in already-formatted (App.tsx's
- * own formatEntityFieldSummary) rather than computed here, to avoid a
- * circular import between App.tsx and this file. `canRemove` mirrors
- * RoleChip's own convention: false once this is the only remaining entity
- * (ProductSpecSchema requires entities.min(1), same floor as roles), so
- * the button is disabled instead of letting the user hit the API's 400.
+ * to be built) used to be the one part of this page with no correction
+ * path at all beyond removal -- an AI-mislabeled entity (a generic
+ * "Record" instead of "Customer", say) could only be talked into a
+ * relabel via the free-text "additional request" box and hoping the next
+ * build actually picks it up, or fixed after the fact in EntityPanel.tsx's
+ * own EntityLabelEditor once already built. Reuses that same
+ * renameEntityLabel endpoint (a pure spec.entities[].label write, no
+ * migration) so a mislabeled entity can be corrected before committing to
+ * a full build, not only after. `summary` is passed in already-formatted
+ * (App.tsx's own formatEntityFieldSummary) rather than computed here, to
+ * avoid a circular import between App.tsx and this file. `canRemove`
+ * mirrors RoleChip's own convention: false once this is the only
+ * remaining entity (ProductSpecSchema requires entities.min(1), same
+ * floor as roles), so the button is disabled instead of letting the user
+ * hit the API's 400.
  */
 export function EntitySummaryItem({
   entity,
   summary,
   projectId,
   canRemove,
+  onRenamed,
   onRemoved,
 }: {
   entity: Entity;
   summary: string;
   projectId: string;
   canRemove: boolean;
+  onRenamed: (project: Project) => void;
   onRemoved: (project: Project) => void;
 }) {
   const { t } = useTranslation();
   const { busy, error, handleRemove } = useRemovableSpecItem(() => removeEntity(projectId, entity.name), onRemoved);
+  const rename = useRenamableSpecItem(
+    entity.label ?? entity.name,
+    (value) => renameEntityLabel(projectId, entity.name, value),
+    onRenamed,
+  );
+
+  if (rename.editing) {
+    return (
+      <div className="entity-summary entity-summary-rename-edit">
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            rename.save();
+          }}
+        >
+          <input
+            type="text"
+            aria-label={t("spec.entities.rename")}
+            value={rename.draft}
+            autoFocus
+            disabled={rename.busy}
+            onChange={(e) => rename.setDraft(e.target.value)}
+            onBlur={rename.save}
+            onKeyDown={(e) => {
+              if (e.key === "Escape") rename.cancelEditing();
+            }}
+          />
+        </form>
+        {rename.error && <span className="error small">{rename.error}</span>}
+      </div>
+    );
+  }
+
   return (
     <div className="entity-summary">
-      <strong>{entity.label ?? entity.name}</strong>
+      <strong className="entity-summary-label" onClick={rename.startEditing} title={t("spec.entities.rename")}>
+        {entity.label ?? entity.name}
+      </strong>
       <span className="muted"> — {summary}</span>
       <button
         type="button"

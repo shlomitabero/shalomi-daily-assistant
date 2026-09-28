@@ -755,6 +755,24 @@ button.danger:hover:not(:disabled) {
   border-bottom: 1px solid var(--border-soft);
 }
 
+.entity-summary-label {
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+  padding: 1px 4px;
+  margin: -1px -4px;
+  transition: background 0.12s ease;
+}
+
+.entity-summary-label:hover {
+  background: var(--surface-raised);
+}
+
+.entity-summary-rename-edit input {
+  font: inherit;
+  font-weight: 600;
+  padding: 2px 5px;
+}
+
 .open-question {
   background: var(--surface-raised);
   border: 1px solid var(--border);

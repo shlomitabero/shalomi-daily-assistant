@@ -1141,6 +1141,7 @@ function AppContent() {
                 summary={formatEntityFieldSummary(entity.fields)}
                 projectId={project.id}
                 canRemove={project.spec.entities.length > 1}
+                onRenamed={setProject}
                 onRemoved={setProject}
               />
             ))}

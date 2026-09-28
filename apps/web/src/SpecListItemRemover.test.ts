@@ -109,7 +109,11 @@ function renderAssumptionItem(onRemoved: (p: Project) => void, onRenamed: (p: Pr
   );
 }
 
-function renderEntitySummaryItem(onRemoved: (p: Project) => void, canRemove = true) {
+function renderEntitySummaryItem(
+  onRemoved: (p: Project) => void,
+  canRemove = true,
+  onRenamed: (p: Project) => void = () => {},
+) {
   render(
     React.createElement(
       ThemeProvider,
@@ -122,6 +126,7 @@ function renderEntitySummaryItem(onRemoved: (p: Project) => void, canRemove = tr
           summary: "name *",
           projectId: "proj1",
           canRemove,
+          onRenamed,
           onRemoved,
         }),
       ),
@@ -485,6 +490,111 @@ test("an entity summary surfaces a real removal error (e.g. a dependent-relation
       await waitForCondition(() => document.querySelector(".entity-summary .error") !== null);
       assert.equal(removedProjects.length, 0, "onRemoved must not fire when the request failed");
       assert.match((document.querySelector(".entity-summary .error") as HTMLElement).textContent ?? "", /still links to it/);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
+ * New in this round: entities on the spec-review screen previously had no
+ * correction path beyond removal, unlike roles/assumptions right above them
+ * on the same screen -- an AI-mislabeled entity could only be fixed after
+ * a full build, via EntityPanel.tsx's own EntityLabelEditor. This reuses
+ * the exact same renameEntityLabel endpoint that editor already calls, just
+ * wired into the pre-build spec-review list too.
+ */
+test("clicking an entity summary's label opens an inline edit, and saving it calls the real PATCH endpoint by entity name", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    let patchBody: { label: string } | undefined;
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      if (init?.method === "PATCH" && input === "/api/projects/proj1/entities/Customer/label") {
+        patchBody = JSON.parse(init.body as string) as { label: string };
+        const renamed = {
+          ...baseProject,
+          spec: {
+            ...baseProject.spec,
+            entities: [{ ...baseProject.spec.entities[0], label: patchBody.label }],
+          },
+        };
+        return new Response(JSON.stringify({ project: renamed }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${init?.method ?? "GET"} ${input}`);
+    }) as typeof fetch;
+
+    try {
+      const renamedProjects: Project[] = [];
+      renderEntitySummaryItem(() => {}, true, (p) => renamedProjects.push(p));
+
+      fireEvent.click(document.querySelector(".entity-summary-label") as HTMLElement);
+      const input = document.querySelector(".entity-summary-rename-edit input") as HTMLInputElement;
+      assert.ok(input, "expected an inline edit input after clicking the entity label");
+      assert.equal(input.value, "Customer", "the draft must start pre-filled with the current entity label");
+
+      fireEvent.change(input, { target: { value: "Client" } });
+      fireEvent.blur(input);
+
+      await waitForCondition(() => renamedProjects.length === 1);
+      assert.deepEqual(patchBody, { label: "Client" });
+      assert.deepEqual(renamedProjects[0].spec.entities.map((e) => e.label), ["Client"]);
+      assert.equal(document.querySelector(".entity-summary-rename-edit"), null, "must return to display mode after a successful save");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+test("pressing Escape while editing an entity summary's label cancels without saving", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async () => {
+      throw new Error("renameEntityLabel must never be called after Escape cancels the edit");
+    }) as typeof fetch;
+
+    try {
+      const renamedProjects: Project[] = [];
+      renderEntitySummaryItem(() => {}, true, (p) => renamedProjects.push(p));
+
+      fireEvent.click(document.querySelector(".entity-summary-label") as HTMLElement);
+      const input = document.querySelector(".entity-summary-rename-edit input") as HTMLInputElement;
+      fireEvent.change(input, { target: { value: "Something else entirely" } });
+      fireEvent.keyDown(input, { key: "Escape" });
+      fireEvent.blur(input);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      assert.equal(renamedProjects.length, 0, "Escape must cancel without ever calling renameEntityLabel");
+      assert.equal(
+        document.querySelector(".entity-summary-label")?.textContent,
+        "Customer",
+        "the original entity label must be shown, unchanged",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+test("an entity summary's rename surfaces a real error instead of silently doing nothing", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async () =>
+      new Response(JSON.stringify({ error: "label is required" }), {
+        status: 400,
+        headers: { "content-type": "application/json" },
+      })) as typeof fetch;
+
+    try {
+      const renamedProjects: Project[] = [];
+      renderEntitySummaryItem(() => {}, true, (p) => renamedProjects.push(p));
+
+      fireEvent.click(document.querySelector(".entity-summary-label") as HTMLElement);
+      const input = document.querySelector(".entity-summary-rename-edit input") as HTMLInputElement;
+      fireEvent.change(input, { target: { value: "Something else" } });
+      fireEvent.blur(input);
+
+      await waitForCondition(() => document.querySelector(".entity-summary-rename-edit .error") !== null);
+      assert.equal(renamedProjects.length, 0, "onRenamed must not fire when the request failed");
     } finally {
       globalThis.fetch = originalFetch;
     }
