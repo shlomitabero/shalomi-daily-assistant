@@ -72,6 +72,56 @@ function renderPanel(isOwner = true, currentUserId?: string, onLeft: () => void 
 }
 
 /**
+ * New in this round: the header never showed how many people actually
+ * have access to the project at all -- unlike every sibling overlay panel
+ * (HistoryPanel's own checkpoint count, App.tsx's "My projects" count),
+ * which all show a live count right next to their own <h2>. Confirms the
+ * real count is the owner PLUS every collaborator (not just
+ * collaborators.length on its own, which would silently exclude the
+ * owner), and that it only renders once both the owner and the
+ * collaborator list have actually loaded -- never a misleading "0" or
+ * "1" flashed before the real fetch resolves.
+ */
+test("CollaboratorsPanel's header shows the real total count -- the owner plus every collaborator -- once loaded, and nothing before that", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    const dana = makeCollaborator("u1", "dana@example.com");
+    const yossi = makeCollaborator("u2", "yossi@example.com");
+    let resolveFetch: (() => void) | undefined;
+    const fetchGate = new Promise<void>((resolve) => {
+      resolveFetch = resolve;
+    });
+
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/collaborators") {
+        await fetchGate;
+        return new Response(
+          JSON.stringify({ collaborators: [dana, yossi], owner: { userId: "owner1", email: "amit@example.com" } }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+
+    try {
+      renderPanel(true);
+      assert.equal(document.querySelector(".collab-count"), null, "the count must not render before the real fetch has resolved");
+
+      resolveFetch!();
+      await waitForCondition(() => document.querySelector(".collab-count") !== null);
+      assert.match(
+        document.querySelector(".collab-count")!.textContent ?? "",
+        /3 with access/,
+        "the count must be the owner (1) plus both real collaborators (2) = 3, not just collaborators.length",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * New in this round: removing a collaborator (unlike every other real
  * destructive action in this app -- deleting a project, round 123;
  * deleting a record, round 73) had NO confirmation at all -- one click on

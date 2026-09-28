@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import type { ProjectCollaborator } from "@forge/shared";
 import { addCollaborator, listCollaborators, removeCollaborator, type ProjectOwnerInfo } from "./api.js";
+import { formatCollaboratorCount } from "./collaboratorCount.js";
 import { useTranslation } from "./i18n/LanguageContext.js";
 import { useDialogFocusTrap } from "./useDialogFocusTrap.js";
 
@@ -117,7 +118,12 @@ export function CollaboratorsPanel({
     <div className="history-overlay">
       <div className="history-panel" ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby="collab-panel-title">
         <div className="history-header">
-          <h2 id="collab-panel-title">{t("collab.title")}</h2>
+          <h2 id="collab-panel-title">
+            {t("collab.title")}
+            {owner && collaborators !== null && (
+              <span className="muted small collab-count"> — {formatCollaboratorCount(1 + collaborators.length, t)}</span>
+            )}
+          </h2>
           <button type="button" className="secondary" onClick={onClose}>
             {t("history.close")}
           </button>
