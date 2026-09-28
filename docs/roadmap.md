@@ -13412,6 +13412,93 @@ not a single "make it perfect" claim.
   485 unchanged) and both `npm run build --workspace=@forge/api` and
   `npm run build --workspace=@forge/web` clean.
 
+- **Round 243 -- persisted the Entity Table/Board/Calendar view choice
+  (`viewModePreference.ts`).** Diversification: `codegen.ts` (242),
+  `GlobalSearchPanel.tsx` (241), `WhatsAppPanel.tsx` (240), and
+  `SpecListItemRemover.tsx` (239) were all ruled out per their own
+  four-round-lookback rule. An Explore subagent surveyed 4 candidates
+  with grep-verified line numbers: this one; `sortKeys` (multi-column
+  sort, flagged open since round 177, still a bare `useState`); Time
+  Machine's own search box (`HistoryPanel.tsx`, still no recentX-memory);
+  and an opt-in "remember my email" on the login screen. It also
+  re-checked the "idempotent silent no-op" avenue (round 238's own open
+  thread) by grepping `packages/db/src/*.ts` for
+  `INSERT OR IGNORE`/`ON CONFLICT`/similar -- found only the
+  collaborator-invite case already fixed in round 238 and one real
+  upsert (`whatsapp.ts`'s settings row) that isn't a silent no-op, so
+  that avenue is now genuinely exhausted, not just deprioritized. Its
+  top recommendation (view-mode persistence) was independently
+  re-verified by reading `EntityPanel.tsx` directly -- confirming
+  `viewMode` was still plain `useState("table")`, hard-reset on every
+  entity switch (line 743, in the same combined reset effect
+  `groupFieldName` was deliberately pulled out of back in round 231),
+  and with zero existing `viewModePreference.ts`-shaped file -- before
+  writing any code.
+
+  The gap: unlike `groupFieldName` (round 231) and the hidden/resized/
+  reordered columns (earlier rounds), the Table/Board/Calendar toggle
+  itself was never persisted. Setting up a Kanban board for a "Tasks"
+  entity, switching to another tab, and clicking back silently landed
+  back on Table -- not just on reload, but on every single tab switch,
+  since the combined reset effect fired on `entity.name` changes too.
+  For an entity a user deliberately keeps in Board or Calendar view
+  (the whole point of switching to it), this meant re-clicking the
+  toggle by hand constantly.
+
+  Fix: `viewModePreference.ts` mirrors `groupByPreference.ts` almost
+  exactly -- `getViewMode`/`setViewMode` keyed `projectId:entityName`,
+  defaulting to `"table"` (and, unlike `groupByPreference.ts`'s `""`
+  default, actively deletes the stored entry when a user picks back
+  `"table"` rather than writing an explicit default value). Removed
+  `setViewMode("table")` from the combined per-entity reset effect (the
+  same move round 231 made for `groupFieldName`) and added a dedicated
+  effect, declared right after `groupFieldName`'s own, that reads the
+  persisted choice and falls back to `"table"` if it needs a
+  `boardField`/`dateField` the entity no longer has (e.g. a field got
+  removed) -- so a stale preference degrades gracefully instead of
+  trying to render a view toggle button that isn't even shown. The
+  three toggle buttons' `onClick`s now call `setViewMode` with
+  `setViewModePreference(...)`'s own return value, the identical
+  pattern the "Group by" `<select>`'s `onChange` already used.
+
+  Tests: 7 new pure-function tests in `viewModePreference.test.ts`
+  (default, round trip for `"board"` and `"calendar"`, clearing back to
+  `"table"` removes the stored entry rather than writing it explicitly,
+  per-project+entity scoping, corrupted-JSON and foreign-value
+  fallback) plus one new `EntityPanel.test.ts` DOM test: switches to
+  Board view, confirms the real persisted key
+  (`getViewMode("proj1", "Deal")`), unmounts and remounts the exact
+  same component, and confirms Board -- not Table -- renders
+  immediately on the fresh mount (checking both the active toggle
+  button's class *and* that no `<table>` element exists, not just one
+  or the other); then mounts a second, boardless/dateless entity and
+  confirms it never inherits the first entity's persisted choice and
+  never writes to its own storage slot. 40/40 `EntityPanel.test.ts`
+  tests pass (up from 39).
+
+  Deliberate-break-and-restore: hard-coded the new effect back to
+  `setViewMode("table")` unconditionally (reintroducing the exact bug
+  being fixed) -- exactly 1 of 40 `EntityPanel.test.ts` tests failed
+  cleanly (the new persistence test), no hang, all 39 others still
+  green. Restored from a scratchpad backup and confirmed a
+  byte-identical `diff` before re-confirming all 40 green again.
+
+  Real-browser verification against the live dev server (not just
+  jsdom): signed up, built a real "ניהול אירועים בעסק" (event
+  management) project with a real Event entity, switched to Board view
+  (its `status` enum produced 4 real columns), confirmed the real
+  `localStorage` write (`forge.viewMode` → `{"<projectId>:Event":
+  "board"}`), then did a genuine full `page.reload()` -- which, per the
+  standing lesson, drops back to the home screen -- reopened the
+  project via `.my-project-open`, and confirmed Board view rendered
+  immediately again: same active toggle button, the same 4 board
+  columns, and zero `<table>` elements on the page. `RESULT: PASS`.
+
+  Full suite green (919 tests, up from 911 -- `@forge/web` 485 → 493;
+  `@forge/shared` 11, `@forge/spec-engine` 82, `@forge/db` 91,
+  `@forge/api` 242 unchanged) and `npm run build --workspace=@forge/web`
+  clean.
+
 ## Phase 4
 
 - Template/agent marketplace
