@@ -34,6 +34,11 @@ import { applyColumnOrder, reorderColumns } from "./columnOrder.js";
 import { getEntityTabOrder, setEntityTabOrder } from "./entityTabOrder.js";
 import { getPinnedIds, sortByPinned, togglePinned } from "./pinnedProjects.js";
 import { getProjectSortMode, setProjectSortMode, type ProjectSortMode } from "./projectSortMode.js";
+import {
+  getProjectStatusFilter,
+  setProjectStatusFilter as persistProjectStatusFilter,
+  type ProjectStatusFilter,
+} from "./projectStatusFilter.js";
 import { clearIdeaDraft, getIdeaDraft, saveIdeaDraft } from "./ideaDraft.js";
 import { LanguageProvider, useTranslation } from "./i18n/LanguageContext.js";
 import { LanguageSwitcher } from "./i18n/LanguageSwitcher.js";
@@ -158,8 +163,6 @@ export function filterAndSortProjects(
   const ordered = sortMode === "alphabetical" ? [...matched].sort((a, b) => a.name.localeCompare(b.name)) : matched;
   return sortByPinned(ordered, pinnedIds);
 }
-
-export type ProjectStatusFilter = "all" | Project["status"];
 
 /**
  * Narrows "Your projects" down to just the built ones or just the drafts --
@@ -331,7 +334,7 @@ function AppContent() {
   const [pinnedIds, setPinnedIds] = useState<Set<string>>(() => getPinnedIds());
   const [projectSortMode, setProjectSortModeState] = useState<ProjectSortMode>(() => getProjectSortMode());
   const [projectSearch, setProjectSearch] = useState("");
-  const [projectStatusFilter, setProjectStatusFilter] = useState<ProjectStatusFilter>("all");
+  const [projectStatusFilter, setProjectStatusFilterState] = useState<ProjectStatusFilter>(() => getProjectStatusFilter());
   const [cloningId, setCloningId] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [selectedProjectIds, setSelectedProjectIds] = useState<Set<string>>(new Set());
@@ -385,6 +388,10 @@ function AppContent() {
   function handleSetProjectSortMode(mode: ProjectSortMode) {
     setProjectSortModeState(mode);
     setProjectSortMode(mode);
+  }
+  function handleSetProjectStatusFilter(filter: ProjectStatusFilter) {
+    setProjectStatusFilterState(filter);
+    persistProjectStatusFilter(filter);
   }
   const visibleRefineHistory = useMemo(
     () => filterRefineHistory(refineHistory, refineHistorySearch),
@@ -954,7 +961,7 @@ function AppContent() {
                   className="my-projects-status-filter"
                   aria-label={t("home.myProjects.filter.label")}
                   value={projectStatusFilter}
-                  onChange={(e) => setProjectStatusFilter(e.target.value as ProjectStatusFilter)}
+                  onChange={(e) => handleSetProjectStatusFilter(e.target.value as ProjectStatusFilter)}
                 >
                   <option value="all">{t("home.myProjects.filter.all")}</option>
                   <option value="built">{t("home.myProjects.filter.built")}</option>

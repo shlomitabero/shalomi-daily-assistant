@@ -1100,6 +1100,40 @@ test("App's handleRemoveRefineHistoryEntry removes only the targeted entry via t
 });
 
 /**
+ * New in this round: the home screen's status filter (round 217) is now
+ * persisted (projectStatusFilter.ts), mirroring the sibling sort-mode
+ * preference (round 182) on the same screen -- previously it was plain
+ * useState that silently reset to "all" on reload. Same extraction
+ * convention as handleReorderEntityTab above: mock both the in-memory
+ * state setter and the persistence call, and confirm the wrapper invokes
+ * both with the chosen value, not just one of them.
+ */
+test("App's handleSetProjectStatusFilter updates both the in-memory state and the persisted preference, for every filter value", () => {
+  const appSrc = readFileSync(new URL("./App.tsx", import.meta.url), "utf8");
+  const handlerMatch = appSrc.match(/ {2}function handleSetProjectStatusFilter\([\s\S]*?\n {2}\}\n/);
+  assert.ok(handlerMatch, "expected to find handleSetProjectStatusFilter in App.tsx");
+  const { code } = transformSync(handlerMatch![0], { loader: "ts" });
+
+  for (const filter of ["all", "built", "draft"] as const) {
+    let stateValue: string | null = null;
+    let persistedValue: string | null = null;
+    const fn = new Function(
+      "setProjectStatusFilterState",
+      "persistProjectStatusFilter",
+      `${code}\nreturn handleSetProjectStatusFilter;`,
+    ) as (setProjectStatusFilterState: (v: string) => void, persistProjectStatusFilter: (v: string) => void) => (filter: string) => void;
+
+    const handler = fn(
+      (v) => (stateValue = v),
+      (v) => (persistedValue = v),
+    );
+    handler(filter);
+    assert.equal(stateValue, filter, `must update the in-memory state to '${filter}'`);
+    assert.equal(persistedValue, filter, `must also persist '${filter}', not just hold it in memory`);
+  }
+});
+
+/**
  * New in this round: the live preview's entity-tab bar always mirrored
  * spec.entities' fixed generation order, with no way to put the screen
  * used most often first. Extracts the real handleReorderEntityTab the same
