@@ -419,6 +419,69 @@ test("the exported EntityView renders a real month-calendar view for entities wi
   assert.match(stylesCss, /\.calendar-record-chip/);
 });
 
+/**
+ * New in this round: the live preview's calendar view has had "click an
+ * empty day to create a record dated that day" since round 160
+ * (startCreateForDate), but the exported codegen app's own CalendarView had
+ * no equivalent -- clicking a day did nothing, and the only way to add a
+ * dated record was scrolling up to the general create form and typing the
+ * date in by hand. Confirms the generated startCreateForDate is wired into
+ * CalendarView's day cells (real onClick, real className, real title), and
+ * separately executes the real generated startCreateForDate/formatDateForInput
+ * (extracted from real codegen output, not reimplemented) to confirm the
+ * pre-filled value is the exact date clicked, not off by a day.
+ */
+test("the exported EntityView's calendar has a real clickable day that pre-fills the create form with that day's own date", () => {
+  const withDate: Project = {
+    ...project,
+    spec: {
+      ...project.spec,
+      entities: [
+        ...project.spec.entities,
+        {
+          name: "Appointment",
+          label: "תורים",
+          fields: [
+            { name: "customerName", label: "שם לקוח", type: "text", required: true },
+            { name: "date", label: "תאריך", type: "date", required: true },
+          ],
+        },
+      ],
+    },
+  };
+  const files = generateExportFiles(withDate);
+  const entityViewJsx = files.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+
+  assert.match(entityViewJsx, /function startCreateForDate\(date, field\) \{\s*setEditingId\(null\);\s*setForm\(\{ \.\.\.emptyForm\(entity\), \[field\.name\]: formatDateForInput\(date\) \}\);\s*\}/);
+  assert.match(entityViewJsx, /onDayClick=\{\(date\) => startCreateForDate\(date, dateField\)\}/);
+  assert.match(
+    entityViewJsx,
+    /className=\{day\.inCurrentMonth \? "calendar-day calendar-day-clickable" : "calendar-day calendar-day-outside"\}/,
+  );
+  assert.match(entityViewJsx, /onClick=\{day\.inCurrentMonth \? \(\) => onDayClick\(day\.date\) : undefined\}/);
+
+  const stylesCss = files.find((f) => f.path === "web/src/styles.css")!.content;
+  assert.match(stylesCss, /\.calendar-day-clickable/);
+
+  const formatDateSrc = entityViewJsx.match(/function formatDateForInput\(date\) \{[\s\S]*?\n\}\n/)?.[0];
+  const startCreateSrc = entityViewJsx.match(/function startCreateForDate\(date, field\) \{[\s\S]*?\n {2}\}\n/)?.[0];
+  assert.ok(formatDateSrc && startCreateSrc, "expected to find formatDateForInput/startCreateForDate in generated output");
+
+  let capturedForm = null;
+  let capturedEditingId = "unset";
+  const startCreateForDate = new Function(
+    "entity",
+    "emptyForm",
+    "setForm",
+    "setEditingId",
+    `${formatDateSrc}\n${startCreateSrc}\nreturn startCreateForDate;`,
+  )({ fields: [] }, () => ({}), (f) => (capturedForm = f), (id) => (capturedEditingId = id));
+
+  startCreateForDate(new Date(2026, 8, 15), { name: "date" }); // September 15, 2026 (month is 0-indexed)
+  assert.equal(capturedEditingId, null, "clicking a day must switch out of edit mode, not silently continue editing a different record");
+  assert.equal(capturedForm.date, "2026-09-15", "the pre-filled date must be the exact day clicked, not off by one due to a UTC/local mismatch");
+});
+
 // Regression test: `new Date("2026-09-15")` parses that date-only string
 // as UTC midnight, but the generated CalendarView's own grid cells are
 // built with `new Date(year, month, day)` (local midnight) and compared

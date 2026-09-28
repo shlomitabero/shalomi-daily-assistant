@@ -1307,6 +1307,16 @@ function parseFieldDate(raw) {
   return new Date(raw);
 }
 
+// Reverses a calendar grid cell's own local-midnight Date back into the
+// plain "YYYY-MM-DD" a date field actually stores -- LOCAL getters, matching
+// parseFieldDate's own local construction above, not toISOString() (UTC).
+function formatDateForInput(date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return \`\${year}-\${month}-\${day}\`;
+}
+
 // Builds a fixed 6-week (42-day) month grid starting on the Sunday on/before
 // the 1st and ending on the Saturday on/after the last day -- the standard
 // calendar-UI shape, including leading/trailing days from adjacent months
@@ -1336,7 +1346,7 @@ function buildCalendarMonth(records, field, year, month) {
 // shape every entity gets. Each day cell shows a chip per record landing on
 // that date (click to edit), with a "+N more" overflow instead of an
 // ever-growing cell.
-function CalendarView({ entity, dateField, records, month, onPrevMonth, onNextMonth, onToday, onEdit }) {
+function CalendarView({ entity, dateField, records, month, onPrevMonth, onNextMonth, onToday, onEdit, onDayClick }) {
   const year = month.getFullYear();
   const monthIndex = month.getMonth();
   const days = useMemo(() => buildCalendarMonth(records, dateField, year, monthIndex), [records, dateField, year, monthIndex]);
@@ -1373,11 +1383,24 @@ function CalendarView({ entity, dateField, records, month, onPrevMonth, onNextMo
       </div>
       <div className="calendar-grid calendar-days">
         {days.map((day, i) => (
-          <div key={i} className={day.inCurrentMonth ? "calendar-day" : "calendar-day calendar-day-outside"}>
+          <div
+            key={i}
+            className={day.inCurrentMonth ? "calendar-day calendar-day-clickable" : "calendar-day calendar-day-outside"}
+            onClick={day.inCurrentMonth ? () => onDayClick(day.date) : undefined}
+            title={day.inCurrentMonth ? "Add a record on this day" : undefined}
+          >
             <span className="calendar-day-number">{day.date.getDate()}</span>
             <div className="calendar-day-records">
               {day.records.slice(0, 3).map((record) => (
-                <button type="button" key={record.id} className="calendar-record-chip" onClick={() => onEdit(record)}>
+                <button
+                  type="button"
+                  key={record.id}
+                  className="calendar-record-chip"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onEdit(record);
+                  }}
+                >
                   {String(record[labelField.name] ?? "")}
                 </button>
               ))}
@@ -1755,6 +1778,11 @@ export function EntityView({ entity }) {
   function startCreateForColumn(value, field) {
     setEditingId(null);
     setForm({ ...emptyForm(entity), [field.name]: value });
+  }
+
+  function startCreateForDate(date, field) {
+    setEditingId(null);
+    setForm({ ...emptyForm(entity), [field.name]: formatDateForInput(date) });
   }
 
   // Deleting a record used to call the real DELETE endpoint the instant the
@@ -2179,6 +2207,7 @@ export function EntityView({ entity }) {
               onNextMonth={() => setCalendarMonth((m) => new Date(m.getFullYear(), m.getMonth() + 1, 1))}
               onToday={() => setCalendarMonth(new Date())}
               onEdit={startEdit}
+              onDayClick={(date) => startCreateForDate(date, dateField)}
             />
           ) : (
             <div className="table-scroll">
@@ -2761,6 +2790,8 @@ th, td { text-align: start; padding: 8px 10px; border-bottom: 1px solid var(--bo
 .calendar-weekday { text-align: center; color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: 0.04em; font-weight: 600; padding-bottom: 4px; }
 .calendar-day { min-height: 76px; background: var(--surface-muted); border: 1px solid var(--border-soft); border-radius: 8px; padding: 6px; display: flex; flex-direction: column; gap: 4px; overflow: hidden; }
 .calendar-day-outside { opacity: 0.4; }
+.calendar-day-clickable { cursor: pointer; }
+.calendar-day-clickable:hover { border-color: var(--accent); background: var(--accent-soft); }
 .calendar-day-number { font-size: 12px; font-weight: 600; color: var(--muted); }
 .calendar-day-records { display: flex; flex-direction: column; gap: 3px; }
 .calendar-record-chip { background: var(--surface); border: 1px solid var(--border-soft); border-radius: 4px; padding: 2px 5px; font-size: 11.5px; text-align: start; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: pointer; color: var(--text); }
