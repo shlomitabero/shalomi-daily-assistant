@@ -241,6 +241,111 @@ test("CollaboratorsPanel actually removes the collaborator once the confirmation
 });
 
 /**
+ * New in this round: addCollaborator (packages/db/src/collaborators.ts) is
+ * deliberately idempotent -- inviting someone already on the project is a
+ * silent no-op server-side, still a real 201 with the unchanged list, so
+ * the owner previously got zero feedback that nothing actually happened
+ * (the form just cleared, exactly as if a real new invite had succeeded).
+ * Confirms the panel now tells the owner "already has access" instead of
+ * silently doing nothing.
+ */
+test("CollaboratorsPanel tells the owner when the invited email already has access, instead of silently doing nothing", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    const dana = makeCollaborator("u1", "dana@example.com");
+
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/collaborators") {
+        return new Response(JSON.stringify({ collaborators: [dana], owner: { userId: "owner1", email: "amit@example.com" } }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      if (method === "POST" && input === "/api/projects/proj1/collaborators") {
+        // The real idempotent no-op: 201 with the SAME, unchanged list.
+        return new Response(
+          JSON.stringify({ collaborators: [dana], owner: { userId: "owner1", email: "amit@example.com" } }),
+          { status: 201, headers: { "content-type": "application/json" } },
+        );
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+
+    try {
+      renderPanel(true);
+      await waitForCondition(() => document.querySelectorAll(".collab-list li").length === 2);
+
+      const emailInput = document.querySelector('.collab-invite-form input[type="email"]') as HTMLInputElement;
+      fireEvent.change(emailInput, { target: { value: "dana@example.com" } });
+      fireEvent.submit(document.querySelector(".collab-invite-form")!);
+
+      await waitForCondition(() => document.body.textContent?.includes("already has access to this project") ?? false);
+      assert.ok(document.body.textContent?.includes("dana@example.com"), "the message must name the real invited email");
+      assert.equal(emailInput.value, "", "the input must still clear after a no-op invite, matching a real successful one");
+
+      // Typing again to try a different email must clear the stale message
+      // right away, not leave it sitting there describing a previous attempt.
+      fireEvent.change(emailInput, { target: { value: "someone-else@example.com" } });
+      assert.ok(
+        !document.body.textContent?.includes("already has access"),
+        "the stale 'already has access' message must clear once the owner starts a new invite attempt",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
+ * The other half: a genuinely NEW collaborator must never trigger the
+ * "already has access" message -- it's conditional on the invited email
+ * already being in the list BEFORE the request, not a blanket message
+ * shown after every successful invite.
+ */
+test("CollaboratorsPanel does not show the 'already has access' message for a genuinely new invite", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    const dana = makeCollaborator("u1", "dana@example.com");
+    const yossi = makeCollaborator("u2", "yossi@example.com");
+
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/collaborators") {
+        return new Response(JSON.stringify({ collaborators: [dana], owner: { userId: "owner1", email: "amit@example.com" } }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      if (method === "POST" && input === "/api/projects/proj1/collaborators") {
+        return new Response(
+          JSON.stringify({ collaborators: [dana, yossi], owner: { userId: "owner1", email: "amit@example.com" } }),
+          { status: 201, headers: { "content-type": "application/json" } },
+        );
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+
+    try {
+      renderPanel(true);
+      await waitForCondition(() => document.querySelectorAll(".collab-list li").length === 2);
+
+      const emailInput = document.querySelector('.collab-invite-form input[type="email"]') as HTMLInputElement;
+      fireEvent.change(emailInput, { target: { value: "yossi@example.com" } });
+      fireEvent.submit(document.querySelector(".collab-invite-form")!);
+
+      await waitForCondition(() => document.querySelectorAll(".collab-list li").length === 3);
+      assert.ok(
+        !document.body.textContent?.includes("already has access"),
+        "a genuinely new collaborator must never trigger the 'already has access' message",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * New in this round: a collaborator invited to someone else's project had
  * no way to actually leave it -- only the owner's own "Remove" button
  * (never shown to a non-owner viewer) could revoke their access. Confirms

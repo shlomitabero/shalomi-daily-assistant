@@ -34,6 +34,7 @@ export function CollaboratorsPanel({
   const [error, setError] = useState<string | null>(null);
   const [email, setEmail] = useState("");
   const [inviteBusy, setInviteBusy] = useState(false);
+  const [inviteInfo, setInviteInfo] = useState<string | null>(null);
   const [removingUserId, setRemovingUserId] = useState<string | null>(null);
   const dialogRef = useDialogFocusTrap<HTMLDivElement>();
 
@@ -52,11 +53,22 @@ export function CollaboratorsPanel({
     if (!trimmed) return;
     setInviteBusy(true);
     setError(null);
+    setInviteInfo(null);
+    // addCollaborator (packages/db/src/collaborators.ts) is deliberately
+    // idempotent -- inviting someone already on the project is a silent
+    // no-op server-side, still a 201 with the unchanged list, so the owner
+    // previously got zero feedback that nothing actually happened. Checked
+    // BEFORE the request (against the list already on screen), since the
+    // response alone can't tell a genuine new add apart from a no-op.
+    const alreadyCollaborator = (collaborators ?? []).some((c) => c.email.toLowerCase() === trimmed.toLowerCase());
     try {
       const { collaborators, owner } = await addCollaborator(projectId, trimmed);
       setCollaborators(collaborators);
       setOwner(owner);
       setEmail("");
+      if (alreadyCollaborator) {
+        setInviteInfo(t("collab.alreadyCollaborator", { email: trimmed }));
+      }
     } catch (err) {
       setError((err as Error).message);
     } finally {
@@ -121,12 +133,21 @@ export function CollaboratorsPanel({
               placeholder={t("collab.email.placeholder")}
               aria-label={t("collab.email.placeholder")}
               value={email}
-              onChange={(e) => setEmail(e.target.value)}
+              onChange={(e) => {
+                setEmail(e.target.value);
+                setInviteInfo(null);
+              }}
             />
             <button type="submit" disabled={inviteBusy || !email.trim()}>
               {inviteBusy ? t("collab.invite.busy") : t("collab.invite")}
             </button>
           </form>
+        )}
+
+        {inviteInfo && (
+          <p className="muted small" role="status">
+            {inviteInfo}
+          </p>
         )}
 
         {collaborators === null && !error ? (
