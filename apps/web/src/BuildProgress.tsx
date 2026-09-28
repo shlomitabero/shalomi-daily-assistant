@@ -309,6 +309,7 @@ export function BuildProgress({
   const startedAttempt = useRef(-1);
   const [startedAt, setStartedAt] = useState(() => Date.now());
   const [elapsedMs, setElapsedMs] = useState(0);
+  const [copyStatus, setCopyStatus] = useState<"idle" | "copied" | "failed">("idle");
 
   useEffect(() => {
     if (startedAttempt.current === attempt) return;
@@ -328,6 +329,28 @@ export function BuildProgress({
     setElapsedMs(0);
     setAttempt((a) => a + 1);
   }
+
+  /**
+   * Same "Copy" companion action rounds 222/223/224 added next to Business
+   * Twin's, the WhatsApp log's, and Time Machine's own Download buttons --
+   * this build-failure screen was the one place that pattern hadn't
+   * reached yet, still offering only a real file download of the exact
+   * same already-formatted text.
+   */
+  async function handleCopySummary() {
+    try {
+      await navigator.clipboard.writeText(formatBuildSummary(events, elapsedMs, projectName, lang, t));
+      setCopyStatus("copied");
+    } catch {
+      setCopyStatus("failed");
+    }
+  }
+
+  useEffect(() => {
+    if (copyStatus === "idle") return;
+    const timer = setTimeout(() => setCopyStatus("idle"), 2000);
+    return () => clearTimeout(timer);
+  }, [copyStatus]);
 
   // Ticks once a second while the build is still running, so a person
   // watching a multi-step build knows it's actually progressing rather
@@ -484,6 +507,13 @@ export function BuildProgress({
            * this is the one place a "download what actually happened"
            * button is real, not decorative -- useful for sharing exactly
            * what each agent reported when asking for help with a failure. */}
+          <button type="button" className="secondary small" onClick={handleCopySummary}>
+            {copyStatus === "copied"
+              ? t("build.summary.copy.copied")
+              : copyStatus === "failed"
+                ? t("build.summary.copy.failed")
+                : t("build.summary.copy")}
+          </button>
           <button
             type="button"
             className="secondary small"

@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { JSDOM } from "jsdom";
 import React from "react";
-import { act, cleanup, render } from "@testing-library/react";
+import { act, cleanup, fireEvent, render } from "@testing-library/react";
 import type { AgentStepEvent } from "@forge/shared";
 import { BuildProgress, computeBuildProgressPercent, computeEtaMs, formatBuildSummary, formatElapsedTime } from "./BuildProgress.js";
 import { LanguageProvider } from "./i18n/LanguageContext.js";
@@ -516,6 +516,105 @@ test("BuildProgress shows a real 'Download build summary' button once a build ge
       if (originalCreateObjectURL) (URL as unknown as { createObjectURL: (b: Blob) => string }).createObjectURL = originalCreateObjectURL;
       if (originalRevokeObjectURL) (URL as unknown as { revokeObjectURL: (u: string) => void }).revokeObjectURL = originalRevokeObjectURL;
       anchorProto.click = originalAnchorClick;
+    }
+  });
+});
+
+/**
+ * New in this round: the same "Copy" companion action rounds 222/223/224
+ * already added next to Business Twin's, the WhatsApp log's, and Time
+ * Machine's own Download buttons -- this build-failure screen was the one
+ * place that pattern hadn't reached yet. Confirms navigator.clipboard.writeText
+ * receives the exact same formatted text the download button saves, the
+ * button shows a real "Copied!" confirmation, and (via a real mocked
+ * setTimeout tick, not a hardcoded wait) fades back to normal 2 seconds
+ * later -- the exact same shape HistoryPanel's own copy test already proved.
+ */
+test("BuildProgress's copy button writes the real formatted build summary to the clipboard, shows Copied, then reverts", async (t) => {
+  await withJsdom(async () => {
+    let writtenText: string | undefined;
+    Object.defineProperty(navigator, "clipboard", {
+      value: { writeText: async (text: string) => void (writtenText = text) },
+      configurable: true,
+    });
+
+    try {
+      const events: AgentStepEvent[] = [
+        { agent: "Architect", status: "success", message: "Designed 3 tables.", detail: { newEntities: [], changedEntities: [] } },
+        { agent: "Database", status: "failed", message: "a real migration error" },
+        { agent: "Debug", status: "failed", message: "the automatic fix attempt also failed" },
+      ];
+
+      renderBuildProgress(events);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      t.mock.timers.enable({ apis: ["setTimeout"] });
+
+      const copyButton = Array.from(document.querySelectorAll("button")).find((b) => b.textContent === "📋 Copy summary");
+      assert.ok(copyButton, "expected a Copy summary button once the build has genuinely failed");
+
+      await act(async () => {
+        fireEvent.click(copyButton!);
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+
+      assert.equal(typeof writtenText, "string", "clicking Copy must actually call navigator.clipboard.writeText");
+      assert.match(writtenText!, /Designed 3 tables\./, "the copied text must be the real formatted build summary, not a placeholder");
+      assert.match(writtenText!, /a real migration error/, "the copied text must include the real failure message");
+      assert.equal(copyButton!.textContent, "✅ Copied!", "must show the real Copied confirmation, not silently do nothing");
+
+      act(() => {
+        t.mock.timers.tick(2000);
+      });
+      assert.equal(copyButton!.textContent, "📋 Copy summary", "must revert to the normal label once the delay elapses");
+    } finally {
+      t.mock.timers.reset();
+      delete (navigator as { clipboard?: unknown }).clipboard;
+    }
+  });
+});
+
+/** The other half: a real rejection (denied permission, insecure context) must show a real failure label, not fail silently or crash. */
+test("BuildProgress's copy button shows a failure label when navigator.clipboard.writeText rejects", async (t) => {
+  await withJsdom(async () => {
+    Object.defineProperty(navigator, "clipboard", {
+      value: {
+        writeText: async () => {
+          throw new Error("denied");
+        },
+      },
+      configurable: true,
+    });
+
+    try {
+      const events: AgentStepEvent[] = [
+        { agent: "Architect", status: "success", message: "Designed 3 tables.", detail: { newEntities: [], changedEntities: [] } },
+        { agent: "Database", status: "failed", message: "a real migration error" },
+        { agent: "Debug", status: "failed", message: "the automatic fix attempt also failed" },
+      ];
+
+      renderBuildProgress(events);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      t.mock.timers.enable({ apis: ["setTimeout"] });
+
+      const copyButton = Array.from(document.querySelectorAll("button")).find((b) => b.textContent === "📋 Copy summary");
+      await act(async () => {
+        fireEvent.click(copyButton!);
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+
+      assert.equal(copyButton!.textContent, "Copy failed", "a real clipboard rejection must show a real failure label");
+
+      act(() => {
+        t.mock.timers.tick(2000);
+      });
+      assert.equal(copyButton!.textContent, "📋 Copy summary", "must revert to the normal label even after a failure");
+    } finally {
+      t.mock.timers.reset();
+      delete (navigator as { clipboard?: unknown }).clipboard;
     }
   });
 });
