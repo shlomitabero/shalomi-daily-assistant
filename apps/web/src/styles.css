@@ -2279,6 +2279,18 @@ button.sort-header:hover:not(:disabled) {
   margin-bottom: 8px;
 }
 
+.whatsapp-recent-numbers {
+  margin-top: -4px;
+  margin-bottom: 10px;
+}
+
+.whatsapp-recent-numbers-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 6px;
+}
+
 .global-search-group {
   border-top: 1px solid var(--border-soft);
   padding-top: 12px;

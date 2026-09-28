@@ -21,6 +21,12 @@ import {
   formatWhatsAppMessageCount,
   type WhatsAppLogFilter,
 } from "./whatsappLog.js";
+import {
+  addRecentWhatsAppNumber,
+  clearRecentWhatsAppNumbers,
+  getRecentWhatsAppNumbers,
+  removeRecentWhatsAppNumber,
+} from "./whatsappRecentNumbers.js";
 
 /**
  * Mirrors EntityPanel.tsx's and GlobalSearchPanel.tsx's own Highlighted
@@ -102,6 +108,7 @@ export function WhatsAppPanel({
   const [disconnecting, setDisconnecting] = useState(false);
   const [testTo, setTestTo] = useState("");
   const [testMessage, setTestMessage] = useState("");
+  const [recentNumbers, setRecentNumbers] = useState<string[]>(() => getRecentWhatsAppNumbers(projectId));
   const [sending, setSending] = useState(false);
   const [sendResult, setSendResult] = useState<{ ok: boolean; text: string } | null>(null);
   const [messages, setMessages] = useState<WhatsAppMessageLogEntry[]>([]);
@@ -283,6 +290,7 @@ export function WhatsAppPanel({
     e.preventDefault();
     setSending(true);
     setSendResult(null);
+    setRecentNumbers(addRecentWhatsAppNumber(projectId, testTo));
     try {
       const result = await sendWhatsAppMessage(projectId, testTo, testMessage);
       setSendResult(
@@ -295,6 +303,19 @@ export function WhatsAppPanel({
     } finally {
       setSending(false);
     }
+  }
+
+  function handleRecentNumberClick(n: string) {
+    setTestTo(n);
+  }
+
+  function handleRemoveRecentNumber(n: string) {
+    setRecentNumbers(removeRecentWhatsAppNumber(projectId, n));
+  }
+
+  function handleClearRecentNumbers() {
+    clearRecentWhatsAppNumbers(projectId);
+    setRecentNumbers([]);
   }
 
   async function handleRetry(m: WhatsAppMessageLogEntry) {
@@ -441,6 +462,34 @@ export function WhatsAppPanel({
               <span>{t("whatsapp.test.to")}</span>
               <input type="text" value={testTo} onChange={(e) => setTestTo(e.target.value)} placeholder={t("whatsapp.test.to.placeholder")} required />
             </label>
+            {recentNumbers.length > 0 && (
+              <div className="whatsapp-recent-numbers">
+                <div className="whatsapp-recent-numbers-header">
+                  <span className="muted small">{t("whatsapp.test.recent.heading")}</span>
+                  <button type="button" className="link-button small" onClick={handleClearRecentNumbers}>
+                    {t("whatsapp.test.recent.clear")}
+                  </button>
+                </div>
+                <div className="chips">
+                  {recentNumbers.map((n) => (
+                    <span className="chip chip-removable" key={n}>
+                      <button type="button" className="chip-text" onClick={() => handleRecentNumberClick(n)}>
+                        {n}
+                      </button>
+                      <button
+                        type="button"
+                        className="chip-remove"
+                        title={t("whatsapp.test.recent.remove")}
+                        aria-label={t("whatsapp.test.recent.remove", { number: n })}
+                        onClick={() => handleRemoveRecentNumber(n)}
+                      >
+                        ×
+                      </button>
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
             <label className="field-row">
               <span>{t("whatsapp.test.message")}</span>
               <input

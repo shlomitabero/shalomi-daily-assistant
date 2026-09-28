@@ -349,6 +349,122 @@ test("WhatsAppPanel sends the exact typed recipient/message and refreshes the me
 });
 
 /**
+ * New in this round: the "To" field had no memory at all -- a real owner
+ * testing their WhatsApp connection typically sends to the same 1-3
+ * numbers repeatedly, but had to retype the number from scratch every
+ * single time, the exact same gap Global Search's own query box had
+ * before recentSearches.ts (round 180). Confirms a sent number appears as
+ * a real chip afterward, and clicking that chip fills the "To" field with
+ * that number instead of requiring it to be typed again.
+ */
+test("WhatsAppPanel remembers a sent test number as a clickable recent-number chip", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/integrations/whatsapp/status") {
+        return new Response(
+          JSON.stringify({ status: "connected", phoneNumber: "972501234567", qrDataUrl: null, error: null }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      if (method === "GET" && input === "/api/projects/proj1/integrations/whatsapp/messages") {
+        return new Response(JSON.stringify({ messages: [] }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      if (method === "POST" && input === "/api/projects/proj1/integrations/whatsapp/send") {
+        return new Response(JSON.stringify({ ok: true }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+    try {
+      render(
+        React.createElement(
+          ThemeProvider,
+          null,
+          React.createElement(LanguageProvider, null, React.createElement(WhatsAppPanel, { projectId: "proj1", projectName: "Test Project", onClose: () => {}, onJumpToEntity: () => {}, onJumpToRecord: () => {} })),
+        ),
+      );
+      await waitForCondition(() => document.querySelector(".whatsapp-test-form") !== null);
+
+      const inputs = document.querySelectorAll('.whatsapp-test-form input[type="text"]');
+      const toInput = inputs[0] as HTMLInputElement;
+      const messageInput = inputs[1] as HTMLInputElement;
+      fireEvent.change(toInput, { target: { value: "972521112233" } });
+      fireEvent.change(messageInput, { target: { value: "Hi" } });
+      fireEvent.submit(document.querySelector("form.whatsapp-test-form")!);
+
+      await waitForCondition(() => document.querySelector(".whatsapp-recent-numbers .chip-text") !== null);
+      const chip = document.querySelector(".whatsapp-recent-numbers .chip-text") as HTMLButtonElement;
+      assert.equal(chip.textContent, "972521112233", "the just-sent number must appear as a recent-number chip");
+
+      fireEvent.change(toInput, { target: { value: "" } });
+      assert.equal(toInput.value, "", "sanity check: the To field is genuinely cleared before clicking the chip");
+      fireEvent.click(chip);
+      assert.equal(toInput.value, "972521112233", "clicking the chip must fill the To field with that number");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
+ * The other half: a recent-number chip's own remove button must delete
+ * just that one number, mirroring Global Search's own recentSearches.ts
+ * single-item removal (round 230) -- the previous state for this kind of
+ * list was "no way to trim it except by never having sent to it, or
+ * wiping everything" and this proves the per-chip remove button, once
+ * added, actually calls through to real per-number removal rather than
+ * only updating some unrelated piece of state.
+ */
+test("WhatsAppPanel's recent-number chip has a working per-number remove button", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/integrations/whatsapp/status") {
+        return new Response(
+          JSON.stringify({ status: "connected", phoneNumber: "972501234567", qrDataUrl: null, error: null }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      if (method === "GET" && input === "/api/projects/proj1/integrations/whatsapp/messages") {
+        return new Response(JSON.stringify({ messages: [] }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      if (method === "POST" && input === "/api/projects/proj1/integrations/whatsapp/send") {
+        return new Response(JSON.stringify({ ok: true }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+    try {
+      render(
+        React.createElement(
+          ThemeProvider,
+          null,
+          React.createElement(LanguageProvider, null, React.createElement(WhatsAppPanel, { projectId: "proj1", projectName: "Test Project", onClose: () => {}, onJumpToEntity: () => {}, onJumpToRecord: () => {} })),
+        ),
+      );
+      await waitForCondition(() => document.querySelector(".whatsapp-test-form") !== null);
+
+      const inputs = document.querySelectorAll('.whatsapp-test-form input[type="text"]');
+      fireEvent.change(inputs[0], { target: { value: "972521112233" } });
+      fireEvent.change(inputs[1], { target: { value: "Hi" } });
+      fireEvent.submit(document.querySelector("form.whatsapp-test-form")!);
+
+      await waitForCondition(() => document.querySelector(".whatsapp-recent-numbers") !== null);
+      fireEvent.click(document.querySelector(".whatsapp-recent-numbers .chip-remove") as HTMLButtonElement);
+
+      assert.equal(
+        document.querySelector(".whatsapp-recent-numbers"),
+        null,
+        "removing the only recent number must make the whole recent-numbers block disappear, not leave an empty chip row",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * New in this round: each message log row shows the real `createdAt` the
  * server actually recorded for it -- the type has always carried this
  * field (see api.ts's WhatsAppMessageLogEntry), but the row markup never
