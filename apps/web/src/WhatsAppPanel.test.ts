@@ -8,6 +8,7 @@ import React from "react";
 import { act, cleanup, fireEvent, render } from "@testing-library/react";
 import type { WhatsAppMessageLogEntry } from "./api.js";
 import { WhatsAppPanel } from "./WhatsAppPanel.js";
+import { getWhatsAppLogFilter } from "./whatsappLogFilter.js";
 import { LanguageProvider } from "./i18n/LanguageContext.js";
 import { ThemeProvider } from "./theme/ThemeContext.js";
 
@@ -1443,6 +1444,87 @@ test("WhatsAppPanel's copy button shows a failure label when navigator.clipboard
       t.mock.timers.reset();
       globalThis.fetch = originalFetch;
       delete (navigator as { clipboard?: unknown }).clipboard;
+    }
+  });
+});
+
+/**
+ * New in this round: the log's direction/status filter (All/Incoming/
+ * Outgoing/Failed) was plain useState with no persistence -- filtering down
+ * to "Failed" to track failed sends, closing the panel to check something
+ * else, then reopening it silently reset back to "All" and lost the exact
+ * view the owner was mid-triage on. Confirms the choice survives a real
+ * unmount+remount of the panel (its own close/reopen lifecycle, per
+ * App.tsx's `{showWhatsApp && <WhatsAppPanel .../>}`), and that it's scoped
+ * per project rather than leaking across projects.
+ */
+test("WhatsAppPanel's log filter choice survives a real unmount+remount, and is scoped per project", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    const manyMessages: WhatsAppMessageLogEntry[] = Array.from({ length: 6 }, (_, i) => ({
+      id: `m${i}`,
+      direction: i % 2 === 0 ? "in" : "out",
+      fromNumber: "972501234567",
+      toNumber: "972521112233",
+      body: `Message ${i}`,
+      matchedLabel: null,
+      matchedEntityName: null,
+      matchedRecordId: null,
+      status: "sent",
+      createdAt: new Date().toISOString(),
+    }));
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      const method = init?.method ?? "GET";
+      const projectId = (input as string).split("/projects/")[1]?.split("/")[0];
+      if (method === "GET" && (input as string) === `/api/projects/${projectId}/integrations/whatsapp/status`) {
+        return new Response(
+          JSON.stringify({ status: "connected", phoneNumber: "972501234567", qrDataUrl: null, error: null }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      if (method === "GET" && (input as string) === `/api/projects/${projectId}/integrations/whatsapp/messages`) {
+        return new Response(JSON.stringify({ messages: manyMessages }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+
+    function renderPanel(projectId: string) {
+      return render(
+        React.createElement(
+          ThemeProvider,
+          null,
+          React.createElement(
+            LanguageProvider,
+            null,
+            React.createElement(WhatsAppPanel, { projectId, projectName: "Test Project", onClose: () => {}, onJumpToEntity: () => {}, onJumpToRecord: () => {} }),
+          ),
+        ),
+      );
+    }
+
+    try {
+      const first = renderPanel("proj-filter");
+      await waitForCondition(() => document.querySelector(".whatsapp-log-direction-filter") !== null);
+      const select = document.querySelector(".whatsapp-log-direction-filter") as HTMLSelectElement;
+      assert.equal(select.value, "all", "sanity check: starts at the default before any choice is made");
+      fireEvent.change(select, { target: { value: "failed" } });
+      assert.equal(select.value, "failed");
+      assert.equal(getWhatsAppLogFilter("proj-filter"), "failed", "the choice must actually be persisted, not just held in memory");
+      first.unmount();
+
+      const second = renderPanel("proj-filter");
+      await waitForCondition(() => document.querySelector(".whatsapp-log-direction-filter") !== null);
+      const reopenedSelect = document.querySelector(".whatsapp-log-direction-filter") as HTMLSelectElement;
+      assert.equal(reopenedSelect.value, "failed", "reopening the panel for the same project must restore the persisted filter");
+      second.unmount();
+
+      const third = renderPanel("proj-other");
+      await waitForCondition(() => document.querySelector(".whatsapp-log-direction-filter") !== null);
+      const otherSelect = document.querySelector(".whatsapp-log-direction-filter") as HTMLSelectElement;
+      assert.equal(otherSelect.value, "all", "a different project must not inherit proj-filter's persisted choice");
+      third.unmount();
+    } finally {
+      globalThis.fetch = originalFetch;
     }
   });
 });

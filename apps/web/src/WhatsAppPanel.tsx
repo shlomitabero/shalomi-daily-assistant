@@ -27,6 +27,7 @@ import {
   getRecentWhatsAppNumbers,
   removeRecentWhatsAppNumber,
 } from "./whatsappRecentNumbers.js";
+import { getWhatsAppLogFilter, setWhatsAppLogFilter as persistWhatsAppLogFilter } from "./whatsappLogFilter.js";
 
 /**
  * Mirrors EntityPanel.tsx's and GlobalSearchPanel.tsx's own Highlighted
@@ -113,7 +114,11 @@ export function WhatsAppPanel({
   const [sendResult, setSendResult] = useState<{ ok: boolean; text: string } | null>(null);
   const [messages, setMessages] = useState<WhatsAppMessageLogEntry[]>([]);
   const [search, setSearch] = useState("");
-  const [directionFilter, setDirectionFilter] = useState<WhatsAppLogFilter>("all");
+  // Lazy initializer, same shape as recentNumbers just above -- this panel
+  // unmounts entirely on close (see App.tsx's `{showWhatsApp && <WhatsAppPanel .../>}`),
+  // so a fresh mount always re-reads the real persisted choice for this
+  // project rather than needing a separate load effect.
+  const [directionFilter, setDirectionFilter] = useState<WhatsAppLogFilter>(() => getWhatsAppLogFilter(projectId));
   const [retryingId, setRetryingId] = useState<string | null>(null);
   const [retryError, setRetryError] = useState<string | null>(null);
   const [clearing, setClearing] = useState(false);
@@ -554,7 +559,7 @@ export function WhatsAppPanel({
                 className="whatsapp-log-direction-filter"
                 aria-label={t("whatsapp.log.filter.label")}
                 value={directionFilter}
-                onChange={(e) => setDirectionFilter(e.target.value as WhatsAppLogFilter)}
+                onChange={(e) => setDirectionFilter(persistWhatsAppLogFilter(projectId, e.target.value as WhatsAppLogFilter))}
               >
                 <option value="all">{t("whatsapp.log.filter.all")}</option>
                 <option value="in">{t("whatsapp.log.filter.incoming")}</option>
