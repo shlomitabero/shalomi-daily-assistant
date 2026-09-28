@@ -1037,6 +1037,18 @@ export function EntityPanel({
     formRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
   }
 
+  /**
+   * Kanban board's own sibling to startCreateForDate just above -- there was
+   * no way to add a new record already set to one column's own value
+   * without opening the general create form and picking that value by hand,
+   * unlike the calendar view's own "click an empty day" convenience.
+   */
+  function startCreateForColumn(value: string, field: Field) {
+    setEditingId(null);
+    setForm({ ...emptyForm(entity), [field.name]: value });
+    formRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }
+
   // Fires the real DELETE request for a record the undo window has already
   // closed on (either the timer ran out, or a newer delete pre-empted it) --
   // it was already removed from view the moment Delete was confirmed, so
@@ -1681,8 +1693,19 @@ export function EntityPanel({
                   onDrop={(e) => handleCardDrop(e, boardField.name, column.value)}
                 >
                   <div className="board-column-header">
-                    <span className={`badge badge-${badgeTone(column.value)}`}>{column.label}</span>
-                    <span className="muted small">{column.records.length}</span>
+                    <div className="board-column-header-info">
+                      <span className={`badge badge-${badgeTone(column.value)}`}>{column.label}</span>
+                      <span className="muted small">{column.records.length}</span>
+                    </div>
+                    <button
+                      type="button"
+                      className="board-add-card-btn"
+                      title={t("entity.board.addCard", { value: column.label })}
+                      aria-label={t("entity.board.addCard", { value: column.label })}
+                      onClick={() => startCreateForColumn(column.value, boardField)}
+                    >
+                      +
+                    </button>
                   </div>
                   {column.records.map((record) => (
                     <BoardCard

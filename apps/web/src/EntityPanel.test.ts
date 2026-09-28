@@ -479,6 +479,50 @@ test("EntityPanel's board view renders an empty column for every declared status
 });
 
 /**
+ * New in this round: the board view's own sibling to the calendar view's
+ * "click an empty day to create a record for that date" (startCreateForDate)
+ * -- a "+" button in each column's header that opens the general create
+ * form already pre-filled with that column's own status value, via the new
+ * startCreateForColumn. Picks the "Won" column specifically (not the first
+ * one) so a bug that left the value unset (falling through to the default
+ * "new") can't slip past a same-as-default false pass.
+ */
+test("EntityPanel's board view '+' button opens the create form pre-filled with that column's own status value", async () => {
+  await withJsdom(async () => {
+    const store: EntityRecord[] = [{ id: 1, createdAt: "x", name: "Acme Corp", status: "new" }];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = mockRecordsFetch(store) as typeof fetch;
+    try {
+      renderEntityPanel();
+      await waitForCondition(() => document.querySelector(".entity-toolbar") !== null);
+
+      const boardToggle = document.querySelectorAll(".view-toggle-btn")[1] as HTMLButtonElement;
+      fireEvent.click(boardToggle);
+      await waitForCondition(() => document.querySelectorAll(".board-column").length === 3);
+
+      const wonColumn = Array.from(document.querySelectorAll(".board-column")).find((col) =>
+        col.querySelector(".board-column-header")?.textContent?.includes("Won"),
+      );
+      assert.ok(wonColumn, "expected a 'Won' column");
+
+      const addButton = wonColumn!.querySelector(".board-add-card-btn") as HTMLButtonElement;
+      assert.ok(addButton, "expected a real add-card button in the column header");
+
+      fireEvent.click(addButton);
+
+      const statusSelect = document.querySelector(".record-form select") as HTMLSelectElement;
+      assert.equal(statusSelect.value, "won", "the create form must be pre-filled with this column's own status value");
+
+      const submitButton = document.querySelector(".form-actions button[type=submit]") as HTMLButtonElement;
+      assert.equal(submitButton.textContent, "Add", "must be in create mode (not edit mode) after clicking a column's add button");
+      assert.equal(document.querySelector(".form-actions button.secondary"), null, "no Cancel button -- confirms this isn't edit mode");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * New in this round: a "Filter by <field>" dropdown next to the search box,
  * scoped to whichever enum field the board view already uses (findBoardField
  * -- usually "status"/"stage"), so a long table can be narrowed to one
