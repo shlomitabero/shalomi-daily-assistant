@@ -13709,6 +13709,85 @@ not a single "make it perfect" claim.
   `@forge/api` 242 unchanged) and `npm run build --workspace=@forge/web`
   clean.
 
+- **Round 247 -- Delete Account now shows the real owned-vs-shared
+  project count, not just abstract prose.** Diversification:
+  `CollaboratorsPanel.tsx` (246), `EntityPanel.tsx` (243), `App.tsx`'s
+  spec-review section (244) and export/backup handlers (245) were all
+  ruled out. An Explore subagent surveyed `document.title` (never
+  reflecting the open project -- flagged 3 survey-rounds running, likely
+  forced next round), home screen bulk-select reconciliation,
+  `DeleteAccountPanel.tsx`, `BuildProgress.tsx`'s unshown percentage
+  text, and the WhatsApp direction-filter, returning 5 grep-verified
+  candidates. Picked `DeleteAccountPanel.tsx`: it's the single most
+  severe, irreversible action in the whole app, yet its warning
+  (`deleteAccount.warning`) had never told the user *how much* they'd
+  actually lose -- only *what kind*. Independently re-verified before
+  writing code: read the panel end to end and confirmed there was no
+  project-count logic anywhere in it, and confirmed `App.tsx`'s own
+  `myProjects` state (the obvious first choice to just pass down as a
+  prop) is only ever populated by a `useEffect` gated on
+  `view === "home"` -- since the Delete Account button lives in the
+  topbar and is reachable from *any* view, including a project's own
+  preview screen, trusting that state would silently show `0` projects
+  whenever opened from anywhere but home.
+
+  Fix: `deleteAccountSummary.ts`'s `formatDeleteAccountSummary(owned,
+  shared, t)` mirrors `deleteAccount.warning`'s own two-part
+  distinction -- projects you own will be permanently deleted
+  (including their data) vs. projects shared with you where only your
+  access is removed -- with three phrasings (owned-only, shared-only,
+  both) and `null` when there's nothing to lose at all. Rather than
+  prop-drilling from `App.tsx`, `DeleteAccountPanel` now takes a new
+  `userId` prop and fetches its own real project list via
+  `listProjects()` on mount (mirroring `CollaboratorsPanel`'s own
+  established self-fetch pattern), computing
+  `owned = projects.filter(p => p.ownerId === userId).length` and
+  `shared = projects.length - owned`. Rendered as a new
+  `.delete-account-summary` paragraph right under the existing warning
+  text, present only once the real fetch resolves.
+
+  Tests: 5 new pure-function tests (`deleteAccountSummary.test.ts`
+  -- owned-only/shared-only/both/neither phrasing, in both languages)
+  plus 2 new `DeleteAccountPanel.test.ts` DOM tests (the real
+  owned-vs-shared split renders correctly once the fetch resolves and
+  nothing shows before it does; a brand-new account with nothing to
+  lose shows no summary line at all), and the other 4 pre-existing
+  `DeleteAccountPanel.test.ts` tests updated to stub the new
+  unconditional `GET /api/projects` call. 6/6
+  `DeleteAccountPanel.test.ts` tests pass (up from 4).
+
+  Deliberate-break-and-restore, with a self-caught test-weakness
+  along the way: flipped the owned/shared split's filter condition.
+  The *first* attempt at the new DOM test's assertions --
+  `assert.match(summary, /\b2\b/)` and `assert.match(summary, /\b1\b/)`
+  -- did not catch this at all, because a swapped owned/shared split
+  still contains the exact same two digits, just attached to the wrong
+  phrase; the deliberately-broken version still passed. Caught this by
+  inspecting the actual (wrong but digit-matching) rendered text,
+  rewrote the assertions to check each count's *specific phrase
+  attribution* (`/2 projects you own will be permanently deleted/`,
+  `/access to 1 more shared projects/`), re-ran against the same broken
+  code and confirmed it now failed cleanly, then restored from a
+  scratchpad backup, confirmed a byte-identical `diff`, and
+  re-confirmed all tests green. Durable lesson for future rounds:
+  when testing multi-value output, tie assertions to which value plays
+  which *role*, not just that the right digits appear somewhere.
+
+  Real-browser verification against the live dev server: signed up two
+  genuinely separate accounts; had the first build a real project and
+  share it with the second via the real invite flow; had the second
+  account then build two of its own real projects; opened Delete
+  Account directly from the second project's own *preview screen* (not
+  home) to specifically prove the self-fetch design choice was
+  necessary; confirmed the real rendered summary text: "2 projects you
+  own will be permanently deleted..., and your access to 1 more shared
+  projects will be removed." `RESULT: PASS`.
+
+  Full suite green (929 tests, up from 922 -- `@forge/web` 496 → 503;
+  `@forge/shared` 11, `@forge/spec-engine` 82, `@forge/db` 91,
+  `@forge/api` 242 unchanged) and `npm run build --workspace=@forge/web`
+  clean.
+
 ## Phase 4
 
 - Template/agent marketplace
