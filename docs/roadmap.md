@@ -12942,6 +12942,104 @@ not a single "make it perfect" claim.
       `npm run build --workspace=@forge/api` and
       `npm run build --workspace=@forge/web` clean.
 
+- [x] **Round 237 — click an empty calendar day to create a record dated
+      that day, in the exported codegen app.** Diversified away from the
+      last 6 rounds (Entity table 231, home screen 232, Kanban board live
+      preview 233, Business Twin 234, AI Team build-failure screen 235,
+      Kanban board's own codegen port 236): an Explore subagent surveyed 4
+      candidates and grep-confirmed each; rejected two (pending-invite
+      collaborators, viewer/editor permission tiers) as genuinely
+      multi-layer work that couldn't honestly ship in one round, and a
+      third (forgot-password) as needing infrastructure (email sending)
+      this codebase doesn't have at all. The live preview's calendar view
+      (`EntityPanel.tsx`) has had "click an empty day to create a record
+      dated that day" since round 160 (`startCreateForDate`) -- but the
+      exported standalone app's own generated `CalendarView` in
+      `apps/api/src/codegen.ts` had never gotten it, confirmed via grep
+      (zero hits for `onDayClick`/`startCreateForDate` there before this
+      round). Deliberately scoped to just this half of the live preview's
+      calendar feature set (skipping drag-to-reschedule, flagged as a
+      good follow-up round), matching round 236's own board-port scope.
+
+      Added a `formatDateForInput(date)` helper to `codegen.ts` -- the
+      exact reverse of the file's own existing `parseFieldDate` (which
+      already has a full doc comment on why LOCAL date-component getters,
+      not `toISOString()`, must be used to avoid an off-by-one-day shift
+      for any viewer behind UTC) -- and `startCreateForDate(date, field)`,
+      a near-verbatim port of the live preview's own function (minus the
+      live preview's `formRef` scroll, which the exported app's generated
+      form has no equivalent ref for, matching how `startEdit` is
+      similarly plain there). Wired a new `onDayClick` prop through
+      `CalendarView`, wrapped each in-month day cell in a real
+      `.calendar-day-clickable` class + `onClick` + `title`, and added the
+      matching CSS (byte-identical to the live preview's own two rules for
+      that class, reformatted to `codegen.ts`'s single-line-per-rule
+      convention). Record chips inside a day cell call
+      `e.stopPropagation()` on their own click so editing a record never
+      also fires the day cell's create-a-new-record handler underneath it
+      -- the same pattern the board view's "+" button already established
+      last round for a card's own click vs. its column's.
+
+      One new test in `codegen.test.ts` (64 total, up from 63): asserts
+      the generated JSX wiring (the `onDayClick` prop, the day cell's
+      `className`/`onClick`, the new CSS rule) via regex against the real
+      generated source, **and** separately executes the real generated
+      `formatDateForInput`/`startCreateForDate` (extracted from that same
+      generated output via `new Function`, not reimplemented) to confirm
+      clicking September 15, 2026 pre-fills the form with the string
+      `"2026-09-15"` exactly -- not off by a day, not missing zero-padding.
+      Hit one real regex bug while writing this test: the first attempt at
+      extracting `startCreateForDate`'s own source via
+      `[\s\S]*?\n\}\n` (a pattern copied from an existing top-level-function
+      test) silently consumed hundreds of extra lines past the function's
+      real end and into the surrounding JSX, because that function is
+      indented two spaces inside the component (its closing brace is
+      `"  }\n"`, not bare `"}\n"`) -- caught immediately by a genuine
+      `SyntaxError: Unexpected token '<'` when the captured JSX hit `new
+      Function`; fixed by anchoring the regex to the real two-space
+      indent (`\n {2}\}\n`) instead.
+
+      Deliberately broke `formatDateForInput` to drop its own zero-padding
+      (`String(date.getMonth() + 1)` instead of
+      `String(...).padStart(2, "0")`). Caught cleanly: 63 of 64 tests
+      passed, exactly the new test failed on a plain string-equality
+      mismatch (`"2026-9-15"` instead of `"2026-09-15"`), clean exit, no
+      hang. Restored from a backup and confirmed a byte-identical `diff`
+      before re-confirming all 64 tests green again.
+
+      Full pipeline verification, not just a Playwright pass against the
+      live dev server: signed up, built a real "ניהול אירועים בעסק" (event
+      management) project (Event entity: name/date/venue/capacity/status),
+      clicked the real Export button and captured Playwright's own
+      `download` event, extracted the real downloaded zip, symlinked
+      `node_modules`, ran the real `vite build` from the extract root, and
+      spawned the real `server.js`. Confirmed the new code was genuinely
+      present in the downloaded zip's own `EntityView.jsx` before even
+      building. Created one seed Event dated June 10, switched to calendar
+      view, navigated to June 2026, clicked the *20th* specifically (not
+      the 10th where the seed record already lived, ruling out a false
+      pass where the pre-filled value coincidentally matches an existing
+      date), confirmed the create form's real date input showed exactly
+      `"2026-06-20"`, filled the remaining fields and submitted for real,
+      then confirmed via the real spawned server's own API that the new
+      record actually landed with `date: "2026-06-20"` -- a genuine
+      end-to-end round trip through the actual standalone artifact a real
+      user would download. First verification pass falsely read FAIL: a
+      Playwright locator that filtered the day cell by its own full
+      `textContent` (`hasText: /^20$/`) went stale the instant a record
+      chip was added inside that same cell, changing its text -- the
+      identical class of bug round 235 already caught for a button whose
+      own label changes after being clicked, just on a container element
+      this time instead of a button. Fixed by filtering on the day
+      cell's `.calendar-day-number` CHILD specifically (which never
+      changes) instead of the whole cell's own text.
+
+      Full suite green (884 tests, up from 883 -- `@forge/api` 240 → 241;
+      `@forge/shared` 11, `@forge/spec-engine` 82, `@forge/db` 91,
+      `@forge/web` 459 unchanged) and both
+      `npm run build --workspace=@forge/api` and
+      `npm run build --workspace=@forge/web` clean.
+
 ## Phase 3
 
 - Self-healing: production observability, automatic diagnosis and patch
