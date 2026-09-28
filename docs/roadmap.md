@@ -13251,6 +13251,85 @@ not a single "make it perfect" claim.
   `@forge/shared` 11, `@forge/spec-engine` 82, `@forge/db` 91, `@forge/api`
   241 unchanged) and `npm run build --workspace=@forge/web` clean.
 
+- **Round 241 -- Copy/Download companions for Global Search's own result
+  list.** Diversification: round 240 touched `WhatsAppPanel.tsx`, 239
+  touched `SpecListItemRemover.tsx`/`App.tsx`'s spec-review section, 238
+  touched `CollaboratorsPanel.tsx`, so all three were ruled out this round
+  alongside the standing exclusions (`EntityPanel.tsx`, `App.tsx`'s home
+  screen, `BusinessTwinPanel.tsx`/`twin.ts`, `BuildProgress.tsx`). An
+  Explore subagent surveyed 3-4 candidates (this one, a recent-searches
+  memory for Time Machine's own search box, and a forgot-password flow)
+  with grep-verified evidence for each, and separately ruled out two
+  stale candidates from earlier rounds' open-thread notes as already
+  closed (calendar drag-to-reschedule was already ported to
+  `codegen.ts`; no fresh idempotent-no-op gap exists beyond the one round
+  238 already fixed). Its recommendation was independently re-verified by
+  reading `HistoryPanel.tsx`'s own Copy/Download wiring and
+  `checkpointDiff.ts`'s `formatCheckpointHistory`/`downloadCheckpointHistory`
+  directly before writing any code.
+
+  The gap: Business Twin (round 222), the WhatsApp log (round 223), and
+  Time Machine (round 224) all already have a Copy/Download companion
+  pair for their own read-heavy views -- Global Search, the one panel that
+  searches across every entity in a project at once, had neither. A
+  cross-entity result set only ever existed on screen until the panel
+  closed, with no way to take it anywhere.
+
+  Fix: new `searchReport.ts` mirrors `checkpointDiff.ts`'s
+  `formatCheckpointHistory`/`downloadCheckpointHistory` shape almost
+  exactly -- `formatSearchResults` renders the query, project name, and
+  each matched entity group (using whatever sample is currently
+  displayed, including any "Show all" expansion via an `expandedSamples`
+  parameter, so the export never disagrees with what's actually on
+  screen) as plain shareable text; `downloadSearchResults` saves it as a
+  real `.txt` file via the same Blob/anchor mechanics every other panel's
+  download button already uses. `GlobalSearchPanel.tsx` gained a
+  `projectName` prop (needed for the report header, mirroring
+  `HistoryPanel`/`WhatsAppPanel`/`BusinessTwinPanel`'s own convention)
+  and the same `copyStatus` state + Copy/Download buttons pattern as
+  those three panels, shown only once a real search has actually
+  returned results.
+
+  8 new tests: 6 for the formatter in `searchReport.test.ts` (project
+  name/query/entity grouping, English rendering, empty-results message,
+  the "and N more" remaining-count line, using an expanded sample over
+  the capped one, and multiple entity groups) plus 2 real-DOM
+  `GlobalSearchPanel` tests (both buttons appear only once results exist
+  and Copy writes the real formatted text to the clipboard; Download
+  saves a real named file, mirroring `HistoryPanel.test.ts`'s own
+  Blob-URL-stub download test technique).
+
+  Deliberate-break-and-restore: made `formatSearchResults` ignore
+  `expandedSamples` (always fall back to the capped base `sample`) --
+  exactly 1 of 6 `searchReport.test.ts` tests failed cleanly (the
+  expanded-sample-aware test), no hang, no other test affected. Restored
+  from a scratchpad backup and confirmed a byte-identical `diff` before
+  re-confirming all 6 green.
+
+  Full real-browser verification: signed up, built a real "חנות פרחים
+  קטנה" (small flower shop) project, added a real record with a
+  distinctive marker value (filling every required field -- a required
+  select left on its placeholder silently blocks native form submission,
+  a known issue class from earlier rounds), opened Global Search via the
+  real Ctrl+K shortcut, confirmed neither Copy nor Download appeared
+  before any search, searched for the real marker, confirmed both
+  buttons appeared once results existed, clicked Copy and read back the
+  real clipboard content (project name, query, and the real record all
+  present), then captured Playwright's own real `download` event and
+  read the saved file's actual content back off disk to confirm it
+  matched. One real hiccup along the way, not a bug: Chromium's headless
+  `download.suggestedFilename()` read back as the generic string
+  `"download"` rather than the real `a.download` attribute for a
+  blob-URL download -- a known Playwright/Chromium quirk, not a
+  functional gap (the DOM-level unit test already independently confirms
+  the real filename via direct anchor-attribute inspection, and the
+  saved file's actual downloaded *content* was verified correct).
+  `RESULT: PASS`.
+
+  Full suite green (910 tests, up from 902 -- `@forge/web` 477 → 485;
+  `@forge/shared` 11, `@forge/spec-engine` 82, `@forge/db` 91, `@forge/api`
+  241 unchanged) and `npm run build --workspace=@forge/web` clean.
+
 ## Phase 4
 
 - Template/agent marketplace
