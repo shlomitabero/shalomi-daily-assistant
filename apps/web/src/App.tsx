@@ -324,6 +324,8 @@ function AppContent() {
   const [showSearch, setShowSearch] = useState(false);
   const [exportBusy, setExportBusy] = useState(false);
   const [backupBusy, setBackupBusy] = useState(false);
+  const [exportDone, setExportDone] = useState(false);
+  const [backupDone, setBackupDone] = useState(false);
   const [showTwin, setShowTwin] = useState(false);
   const [showWhatsApp, setShowWhatsApp] = useState(false);
   const [showCollaborators, setShowCollaborators] = useState(false);
@@ -499,6 +501,31 @@ function AppContent() {
       .then(({ projects }) => setMyProjects(projects))
       .catch(() => setMyProjects([]));
   }, [user, view]);
+
+  /**
+   * Both handleExport/handleBackup's own downloads resolve the instant the
+   * browser's own save dialog is triggered, with nothing shown afterward --
+   * the button just silently reverted to its idle label, easy to miss for a
+   * multi-second zip download. Same transient "done" flash + auto-reset
+   * idiom as BuildProgress.tsx's own copyStatus (round 222+), just for a
+   * real file download instead of a clipboard copy. Declared here (above
+   * the `if (!user) return <AuthScreen />` early return further down) so
+   * these two hooks run on every render regardless of auth state, like
+   * every other hook in this component -- declaring them further down,
+   * after that early return, would call a different number of hooks
+   * between the signed-out and signed-in renders and crash React.
+   */
+  useEffect(() => {
+    if (!exportDone) return;
+    const timer = setTimeout(() => setExportDone(false), 2000);
+    return () => clearTimeout(timer);
+  }, [exportDone]);
+
+  useEffect(() => {
+    if (!backupDone) return;
+    const timer = setTimeout(() => setBackupDone(false), 2000);
+    return () => clearTimeout(timer);
+  }, [backupDone]);
 
   function openExistingProject(p: Project) {
     setProject(p);
@@ -717,6 +744,7 @@ function AppContent() {
     setError(null);
     try {
       await exportProject(project.id, project.name);
+      setExportDone(true);
     } catch (err) {
       setError((err as Error).message);
     } finally {
@@ -730,6 +758,7 @@ function AppContent() {
     setError(null);
     try {
       await backupProject(project.id, project.name);
+      setBackupDone(true);
     } catch (err) {
       setError((err as Error).message);
     } finally {
@@ -1250,10 +1279,10 @@ function AppContent() {
                 {t("preview.twin")}
               </button>
               <button type="button" className="secondary" onClick={handleExport} disabled={exportBusy}>
-                {exportBusy ? t("preview.export.busy") : t("preview.export")}
+                {exportBusy ? t("preview.export.busy") : exportDone ? t("preview.export.done") : t("preview.export")}
               </button>
               <button type="button" className="secondary" onClick={handleBackup} disabled={backupBusy}>
-                {backupBusy ? t("preview.backup.busy") : t("preview.backup")}
+                {backupBusy ? t("preview.backup.busy") : backupDone ? t("preview.backup.done") : t("preview.backup")}
               </button>
               <button type="button" className="secondary" onClick={() => openPanel("whatsapp")}>
                 {t("preview.whatsapp")}
