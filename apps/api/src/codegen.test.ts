@@ -454,10 +454,11 @@ test("the exported EntityView's calendar has a real clickable day that pre-fills
 
   assert.match(entityViewJsx, /function startCreateForDate\(date, field\) \{\s*setEditingId\(null\);\s*setForm\(\{ \.\.\.emptyForm\(entity\), \[field\.name\]: formatDateForInput\(date\) \}\);\s*\}/);
   assert.match(entityViewJsx, /onDayClick=\{\(date\) => startCreateForDate\(date, dateField\)\}/);
-  assert.match(
-    entityViewJsx,
-    /className=\{day\.inCurrentMonth \? "calendar-day calendar-day-clickable" : "calendar-day calendar-day-outside"\}/,
-  );
+  // The day cell's className now also branches on a real drag-over state
+  // (round 242's own drag-to-reschedule) -- still lands on the exact same
+  // "calendar-day-clickable"/"calendar-day-outside" classes this test has
+  // always cared about, just via a slightly longer ternary.
+  assert.match(entityViewJsx, /"calendar-day calendar-day-clickable"\s*: "calendar-day calendar-day-outside"/);
   assert.match(entityViewJsx, /onClick=\{day\.inCurrentMonth \? \(\) => onDayClick\(day\.date\) : undefined\}/);
 
   const stylesCss = files.find((f) => f.path === "web/src/styles.css")!.content;
@@ -480,6 +481,88 @@ test("the exported EntityView's calendar has a real clickable day that pre-fills
   startCreateForDate(new Date(2026, 8, 15), { name: "date" }); // September 15, 2026 (month is 0-indexed)
   assert.equal(capturedEditingId, null, "clicking a day must switch out of edit mode, not silently continue editing a different record");
   assert.equal(capturedForm.date, "2026-09-15", "the pre-filled date must be the exact day clicked, not off by one due to a UTC/local mismatch");
+});
+
+/**
+ * New in this round: the exported standalone app's calendar could only
+ * reschedule a record by opening its edit form and retyping the date --
+ * unlike the live Forge AI preview (round 211's own native HTML5
+ * drag-and-drop), dragging a record's chip onto a different day did
+ * nothing at all. Ports the identical drag mechanics -- draggable chips,
+ * drop targets that highlight while dragged over, and a real no-op guard
+ * for dropping a chip back onto the day it's already on -- reusing the
+ * exact same handleMove the Kanban board's own drag-and-drop (round 236)
+ * already calls.
+ */
+test("the exported EntityView's calendar record chips are drag-and-drop-able onto another day, reusing the same handleMove the Kanban board already calls", () => {
+  const withDate: Project = {
+    ...project,
+    spec: {
+      ...project.spec,
+      entities: [
+        ...project.spec.entities,
+        {
+          name: "Appointment",
+          label: "תורים",
+          fields: [
+            { name: "customerName", label: "שם לקוח", type: "text", required: true },
+            { name: "date", label: "תאריך", type: "date", required: true },
+          ],
+        },
+      ],
+    },
+  };
+  const files = generateExportFiles(withDate);
+  const entityViewJsx = files.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+
+  assert.match(entityViewJsx, /const \[dragOverDay, setDragOverDay\] = useState\(null\);/);
+  // The record chip itself must be a real drag source, not just visually styled.
+  assert.match(entityViewJsx, /className="calendar-record-chip"\s*draggable\s*onDragStart=\{\(e\) => \{/);
+  assert.match(entityViewJsx, /e\.dataTransfer\.setData\("text\/plain", String\(record\.id\)\);\s*e\.dataTransfer\.effectAllowed = "move";/);
+  // The day cell itself must be a real drop target, highlighted only while actually dragged over.
+  assert.match(entityViewJsx, /onDragOver=\{\s*day\.inCurrentMonth\s*\?\s*\(e\) => \{\s*e\.preventDefault\(\);\s*setDragOverDay\(dayKey\);\s*\}\s*: undefined\s*\}/);
+  assert.match(
+    entityViewJsx,
+    /onDragLeave=\{\s*day\.inCurrentMonth \? \(\) => setDragOverDay\(\(prev\) => \(prev === dayKey \? null : prev\)\) : undefined\s*\}/,
+  );
+  assert.match(entityViewJsx, /isDragOver = day\.inCurrentMonth && dragOverDay === dayKey;/);
+  assert.match(
+    entityViewJsx,
+    /"calendar-day calendar-day-clickable calendar-day-drag-over"\s*: "calendar-day calendar-day-clickable"/,
+  );
+  assert.match(entityViewJsx, /onReschedule=\{\(record, date\) => handleCalendarDrop\(record, dateField\.name, date\)\}/);
+
+  // handleCalendarDrop must guard against a real no-op (dropping a chip back onto the day it's already on) before ever calling handleMove.
+  const dropSrc = entityViewJsx.match(/function handleCalendarDrop\(record, dateFieldName, date\) \{[\s\S]*?\n {2}\}\n/)?.[0];
+  assert.ok(dropSrc, "expected to find handleCalendarDrop in generated output");
+  assert.match(dropSrc!, /const value = formatDateForInput\(date\);/);
+  assert.match(dropSrc!, /if \(String\(record\[dateFieldName\] \?\? ""\) === value\) return;/);
+  assert.match(dropSrc!, /void handleMove\(record\.id, dateFieldName, value\);/);
+
+  const stylesCss = files.find((f) => f.path === "web/src/styles.css")!.content;
+  assert.match(stylesCss, /\.calendar-day-drag-over/);
+
+  // Executes the real generated formatDateForInput + handleCalendarDrop
+  // (extracted from real codegen output, not reimplemented), the same
+  // "run the real generated code" standard this file's other pure-function
+  // tests use.
+  const formatDateSrc = entityViewJsx.match(/function formatDateForInput\(date\) \{[\s\S]*?\n\}\n/)?.[0];
+  assert.ok(formatDateSrc, "expected to find formatDateForInput in generated output");
+
+  const calls: Array<{ id: unknown; fieldName: string; value: string }> = [];
+  const handleCalendarDrop = new Function(
+    "handleMove",
+    `${formatDateSrc}\n${dropSrc}\nreturn handleCalendarDrop;`,
+  )((id: unknown, fieldName: string, value: string) => {
+    calls.push({ id, fieldName, value });
+  }) as (record: { id: number; date: string }, dateFieldName: string, date: Date) => void;
+
+  handleCalendarDrop({ id: 7, date: "2026-09-15" }, "date", new Date(2026, 8, 20)); // September 20, 2026
+  assert.deepEqual(calls, [{ id: 7, fieldName: "date", value: "2026-09-20" }], "a genuine reschedule must call the real handleMove with the new day");
+
+  calls.length = 0;
+  handleCalendarDrop({ id: 7, date: "2026-09-15" }, "date", new Date(2026, 8, 15)); // dropped back on the same day
+  assert.deepEqual(calls, [], "dropping a chip back onto the day it's already on must never call handleMove");
 });
 
 // Regression test: `new Date("2026-09-15")` parses that date-only string

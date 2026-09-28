@@ -1346,10 +1346,11 @@ function buildCalendarMonth(records, field, year, month) {
 // shape every entity gets. Each day cell shows a chip per record landing on
 // that date (click to edit), with a "+N more" overflow instead of an
 // ever-growing cell.
-function CalendarView({ entity, dateField, records, month, onPrevMonth, onNextMonth, onToday, onEdit, onDayClick }) {
+function CalendarView({ entity, dateField, records, month, onPrevMonth, onNextMonth, onToday, onEdit, onDayClick, onReschedule }) {
   const year = month.getFullYear();
   const monthIndex = month.getMonth();
   const days = useMemo(() => buildCalendarMonth(records, dateField, year, monthIndex), [records, dateField, year, monthIndex]);
+  const [dragOverDay, setDragOverDay] = useState(null);
   const monthLabel = month.toLocaleDateString(undefined, { month: "long", year: "numeric" });
   const isCurrentMonth = isSameCalendarMonth(month, new Date());
   const weekdayLabels = useMemo(() => {
@@ -1382,12 +1383,44 @@ function CalendarView({ entity, dateField, records, month, onPrevMonth, onNextMo
         ))}
       </div>
       <div className="calendar-grid calendar-days">
-        {days.map((day, i) => (
+        {days.map((day, i) => {
+          const dayKey = formatDateForInput(day.date);
+          const isDragOver = day.inCurrentMonth && dragOverDay === dayKey;
+          return (
           <div
             key={i}
-            className={day.inCurrentMonth ? "calendar-day calendar-day-clickable" : "calendar-day calendar-day-outside"}
+            className={
+              day.inCurrentMonth
+                ? isDragOver
+                  ? "calendar-day calendar-day-clickable calendar-day-drag-over"
+                  : "calendar-day calendar-day-clickable"
+                : "calendar-day calendar-day-outside"
+            }
             onClick={day.inCurrentMonth ? () => onDayClick(day.date) : undefined}
             title={day.inCurrentMonth ? "Add a record on this day" : undefined}
+            onDragOver={
+              day.inCurrentMonth
+                ? (e) => {
+                    e.preventDefault();
+                    setDragOverDay(dayKey);
+                  }
+                : undefined
+            }
+            onDragLeave={
+              day.inCurrentMonth ? () => setDragOverDay((prev) => (prev === dayKey ? null : prev)) : undefined
+            }
+            onDrop={
+              day.inCurrentMonth
+                ? (e) => {
+                    e.preventDefault();
+                    setDragOverDay(null);
+                    const id = Number(e.dataTransfer.getData("text/plain"));
+                    if (Number.isNaN(id)) return;
+                    const record = records.find((r) => r.id === id);
+                    if (record) onReschedule(record, day.date);
+                  }
+                : undefined
+            }
           >
             <span className="calendar-day-number">{day.date.getDate()}</span>
             <div className="calendar-day-records">
@@ -1396,6 +1429,12 @@ function CalendarView({ entity, dateField, records, month, onPrevMonth, onNextMo
                   type="button"
                   key={record.id}
                   className="calendar-record-chip"
+                  draggable
+                  onDragStart={(e) => {
+                    e.stopPropagation();
+                    e.dataTransfer.setData("text/plain", String(record.id));
+                    e.dataTransfer.effectAllowed = "move";
+                  }}
                   onClick={(e) => {
                     e.stopPropagation();
                     onEdit(record);
@@ -1407,7 +1446,8 @@ function CalendarView({ entity, dateField, records, month, onPrevMonth, onNextMo
               {day.records.length > 3 && <span className="calendar-record-more">+{day.records.length - 3} more</span>}
             </div>
           </div>
-        ))}
+          );
+        })}
       </div>
     </div>
   );
@@ -1961,6 +2001,18 @@ export function EntityView({ entity }) {
     void handleMove(id, fieldName, value);
   }
 
+  // The calendar view's own drag-and-drop, the direct sibling of
+  // handleCardDrop above -- dragging a record's chip onto a different day
+  // reschedules it there without opening the edit form. Reuses the same
+  // handleMove PATCH+refresh, just addressed by the date field's own name
+  // and a freshly-formatted "YYYY-MM-DD" value. Mirrors the live preview's
+  // own EntityPanel.tsx (round 211).
+  function handleCalendarDrop(record, dateFieldName, date) {
+    const value = formatDateForInput(date);
+    if (String(record[dateFieldName] ?? "") === value) return;
+    void handleMove(record.id, dateFieldName, value);
+  }
+
   function handleExportCsv() {
     const csv = recordsToCsv(entity.fields, visibleRecords, relatedRecords);
     const blob = new Blob(["\\uFEFF" + csv], { type: "text/csv;charset=utf-8;" });
@@ -2208,6 +2260,7 @@ export function EntityView({ entity }) {
               onToday={() => setCalendarMonth(new Date())}
               onEdit={startEdit}
               onDayClick={(date) => startCreateForDate(date, dateField)}
+              onReschedule={(record, date) => handleCalendarDrop(record, dateField.name, date)}
             />
           ) : (
             <div className="table-scroll">
@@ -2792,10 +2845,12 @@ th, td { text-align: start; padding: 8px 10px; border-bottom: 1px solid var(--bo
 .calendar-day-outside { opacity: 0.4; }
 .calendar-day-clickable { cursor: pointer; }
 .calendar-day-clickable:hover { border-color: var(--accent); background: var(--accent-soft); }
+.calendar-day-drag-over { border-color: var(--accent); background: var(--accent-soft); }
 .calendar-day-number { font-size: 12px; font-weight: 600; color: var(--muted); }
 .calendar-day-records { display: flex; flex-direction: column; gap: 3px; }
-.calendar-record-chip { background: var(--surface); border: 1px solid var(--border-soft); border-radius: 4px; padding: 2px 5px; font-size: 11.5px; text-align: start; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: pointer; color: var(--text); }
+.calendar-record-chip { background: var(--surface); border: 1px solid var(--border-soft); border-radius: 4px; padding: 2px 5px; font-size: 11.5px; text-align: start; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: grab; color: var(--text); }
 .calendar-record-chip:hover { background: var(--bg); }
+.calendar-record-chip:active { cursor: grabbing; }
 .calendar-record-more { font-size: 11px; color: var(--muted); padding: 0 5px; }
 .csv-export-btn { flex-shrink: 0; padding: 8px 14px; font-size: 13px; border-radius: 8px; border: 1px solid var(--border); background: var(--surface); color: var(--text); cursor: pointer; font: inherit; }
 .csv-export-btn:hover:not(:disabled) { background: var(--bg); }
