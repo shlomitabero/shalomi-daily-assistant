@@ -363,6 +363,32 @@ test("the exported EntityView renders a real Kanban board for entities with a st
   assert.match(stylesCss, /\.view-toggle/);
 });
 
+/**
+ * New in this round: the live-preview Kanban board's own "+" add-card
+ * button (startCreateForColumn, round 233) was never ported here -- the
+ * exported app's generated board-column-header only rendered a badge +
+ * count, with no way to add a record already set to that column's value
+ * short of opening the general create form and picking it by hand.
+ */
+test("the exported EntityView's Kanban board has a real '+' button per column that pre-fills the create form with that column's own value", () => {
+  const files = generateExportFiles(project);
+  const entityViewJsx = files.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+
+  assert.match(
+    entityViewJsx,
+    /function startCreateForColumn\(value, field\) \{\s*setEditingId\(null\);\s*setForm\(\{ \.\.\.emptyForm\(entity\), \[field\.name\]: value \}\);\s*\}/,
+  );
+  assert.match(entityViewJsx, /className="board-add-card-btn"/);
+  assert.match(entityViewJsx, /onClick=\{\(\) => startCreateForColumn\(column\.value, boardField\)\}/);
+  // The badge + count must still be grouped together so the new button can
+  // sit on the opposite side of the header via justify-content: space-between.
+  assert.match(entityViewJsx, /<div className="board-column-header-info">/);
+
+  const stylesCss = files.find((f) => f.path === "web/src/styles.css")!.content;
+  assert.match(stylesCss, /\.board-column-header-info/);
+  assert.match(stylesCss, /\.board-add-card-btn/);
+});
+
 test("the exported EntityView renders a real month-calendar view for entities with a date field", () => {
   const withDate: Project = {
     ...project,

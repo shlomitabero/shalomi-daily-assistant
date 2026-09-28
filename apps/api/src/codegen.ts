@@ -1752,6 +1752,11 @@ export function EntityView({ entity }) {
     setEditingId(record.id);
   }
 
+  function startCreateForColumn(value, field) {
+    setEditingId(null);
+    setForm({ ...emptyForm(entity), [field.name]: value });
+  }
+
   // Deleting a record used to call the real DELETE endpoint the instant the
   // confirm dialog closed -- irreversible the moment you clicked, with the
   // confirm dialog as the only safety net. Removes it from view immediately
@@ -2134,8 +2139,19 @@ export function EntityView({ entity }) {
                   onDrop={(e) => handleCardDrop(e, boardField.name, column.value)}
                 >
                   <div className="board-column-header">
-                    <span className={\`badge badge-\${badgeTone(column.value)}\`}>{column.label}</span>
-                    <span className="muted small">{column.records.length}</span>
+                    <div className="board-column-header-info">
+                      <span className={\`badge badge-\${badgeTone(column.value)}\`}>{column.label}</span>
+                      <span className="muted small">{column.records.length}</span>
+                    </div>
+                    <button
+                      type="button"
+                      className="board-add-card-btn"
+                      title={\`Add a record under "\${column.label}"\`}
+                      aria-label={\`Add a record under "\${column.label}"\`}
+                      onClick={() => startCreateForColumn(column.value, boardField)}
+                    >
+                      +
+                    </button>
                   </div>
                   {column.records.map((r) => (
                     <BoardCard
@@ -2729,6 +2745,9 @@ th, td { text-align: start; padding: 8px 10px; border-bottom: 1px solid var(--bo
 .board-column { flex: 0 0 240px; background: var(--surface-muted); border: 1px solid var(--border-soft); border-radius: 10px; padding: 12px; display: flex; flex-direction: column; gap: 10px; }
 .board-column-drag-over { background: var(--accent-soft); border-color: var(--accent); }
 .board-column-header { display: flex; align-items: center; justify-content: space-between; padding-bottom: 8px; border-bottom: 1px solid var(--border-soft); }
+.board-column-header-info { display: flex; align-items: center; gap: 6px; }
+.board-add-card-btn { background: none; border: none; padding: 0 4px; font-size: 16px; font-weight: 600; opacity: 0.5; cursor: pointer; line-height: 1; }
+.board-add-card-btn:hover { opacity: 1; color: var(--accent); }
 .board-card { background: var(--surface); border: 1px solid var(--border-soft); border-radius: 8px; padding: 10px 12px; box-shadow: var(--shadow-sm); display: flex; flex-direction: column; gap: 6px; }
 .board-card-field { display: flex; flex-direction: column; gap: 1px; font-size: 13.5px; }
 .board-card-move { margin-top: 4px; }
