@@ -13846,6 +13846,82 @@ not a single "make it perfect" claim.
   `@forge/api` 242 unchanged) and `npm run build --workspace=@forge/web`
   clean.
 
+- **Round 249 -- fixed a real data-safety bug: bulk-delete on the home
+  screen could silently delete a project the user could no longer
+  see.** Diversification: `App.tsx`'s spec-review section (244),
+  export/backup handlers (245), and document-title effect (248) were
+  all different areas, but this round picked `App.tsx`'s home-screen
+  bulk-select logic specifically -- flagged as a genuinely compelling,
+  non-cosmetic candidate by round 248's own Explore-subagent survey,
+  and prioritized on its own merits (a correctness/data-safety bug
+  outranks a fresh diversification pick). Independently re-verified
+  before writing code: read `handleBulkDeleteProjects` (line 610),
+  `visibleMyProjects` (line 386), and every `setSelectedProjectIds`
+  call in the file, and confirmed the raw `selectedProjectIds` set was
+  never reset or intersected against the currently-*visible* project
+  list anywhere -- not on search change, not on status-filter change,
+  not on sort change.
+
+  The gap: select a project, then change the status filter or search
+  box so that project is hidden from the list, and it stayed silently
+  "selected" -- still counted in the bulk-actions bar's own "N
+  selected" count, and still passed straight through to a real
+  `deleteProject` call if the user clicked "Delete selected", with no
+  way to see beforehand that an invisible project was about to be
+  destroyed alongside whatever they could actually see and meant to
+  delete.
+
+  Fix: `projectSelection.ts`'s `visibleSelectedIds(selectedIds,
+  visibleIds)` intersects the raw selection against whichever ids are
+  currently visible. `App.tsx` computes `visibleSelectedProjectIds` via
+  a new `useMemo` (declared right after the existing `visibleMyProjects`
+  memo, well above the component's early returns) and uses it in place
+  of the raw set for the bulk bar's visibility gate, its displayed
+  count, and `handleBulkDeleteProjects`'s own `ids` array. Per-row
+  checkbox state deliberately kept referencing the raw
+  `selectedProjectIds` set, since a row that's actually rendering is by
+  definition visible, making the two equivalent there -- no behavior
+  change needed.
+
+  Tests: 4 new pure-function tests (`projectSelection.test.ts` --
+  keeps a still-visible id, drops a hidden one, empty result when
+  nothing selected is visible, doesn't mutate the input) plus a new
+  `App.test.ts` regression test proving `handleBulkDeleteProjects`
+  deletes only the visible+selected project, never a hidden-but-raw-
+  selected one. The pre-existing `handleBulkDeleteProjects` test (which
+  extracts the real function via this file's own regex+`new Function`
+  sandbox pattern) broke immediately on first run with `visibleSelectedProjectIds
+  is not defined` -- it had been injecting the raw `selectedProjectIds`
+  directly as a sandbox parameter, which no longer matches what the real
+  function body now references; updated it to compute
+  `visibleSelectedProjectIds` the same way App.tsx's own render would
+  (via the real `visibleSelectedIds` helper, not a reimplementation).
+
+  Deliberate-break-and-restore: made `visibleSelectedIds` return the
+  raw, unfiltered set -- the 2 tests asserting a hidden id gets dropped
+  failed cleanly, the other 2 (which never actually exercise hiding)
+  stayed green throughout. Restored from a scratchpad backup, confirmed
+  a byte-identical `diff`, and re-confirmed all tests green.
+
+  Real-browser verification against the live dev server: signed up a
+  real account, built one real project and left a second as an unbuilt
+  draft, selected both, switched the status filter to "Built" only
+  (hiding the still-selected draft) and confirmed the bulk bar's count
+  dropped from "2 selected" to "1 selected", switched back to "all" and
+  confirmed both projects stayed checked (a mere filter change must
+  never silently wipe the underlying selection), deselected the draft
+  and filtered to "Draft" only (hiding the one remaining selection
+  entirely) to confirm the bulk bar disappears completely rather than
+  showing a stale "0 selected", then re-selected both, filtered to
+  "Built" only, and ran a real bulk-delete -- it deleted only the
+  visible built project, leaving the hidden draft project completely
+  untouched. `RESULT: PASS`.
+
+  Full suite green (937 tests, up from 932 -- `@forge/web` 506 → 511;
+  `@forge/shared` 11, `@forge/spec-engine` 82, `@forge/db` 91,
+  `@forge/api` 242 unchanged) and `npm run build --workspace=@forge/web`
+  clean.
+
 ## Phase 4
 
 - Template/agent marketplace
