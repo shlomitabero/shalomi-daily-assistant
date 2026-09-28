@@ -12655,6 +12655,80 @@ not a single "make it perfect" claim.
       `npm run build --workspace=@forge/api` and
       `npm run build --workspace=@forge/web` clean.
 
+      **Also this round: the trigger prompt itself hit a hard 65536-byte
+      limit** on `update_trigger` (a real `invalid_prompt` rejection, not the
+      routine non-fatal "exceeds max output tokens" echo-back every prior
+      round had seen) -- 210+ rounds of accumulated per-round narrative had
+      finally pushed the stored prompt over the line. Restructured it from
+      scratch: kept every durable, generally-applicable lesson as a short
+      bullet, but dropped the verbose "round X found Y, added Z" prose --
+      that detail already lives permanently right here in this file, which
+      the prompt itself already cited as the source of truth for rounds
+      120+. New byte count: ~21.7KB (down from the failing ~68KB), leaving
+      roughly 44KB of headroom. New standing rule folded into the prompt
+      itself: every future round's own trigger-prompt note must stay to
+      2-4 lines, with any real detail landing here instead -- and the size
+      must be checked in bytes (not just "did the call error") before every
+      submit, so this doesn't silently recur a few dozen rounds from now.
+
+- [x] **Round 233 — "+" button to create a record directly into a Kanban
+      board column** (live preview). An Explore subagent surveyed several
+      areas for a genuinely fresh gap (not persistence-related, and not the
+      Entity table or home screen again, both touched the last two rounds)
+      and found a real, concrete one: the calendar view has had "click an
+      empty day to create a record dated that day" since round 160
+      (`startCreateForDate`), but the board view's own columns had no
+      equivalent -- adding a card already set to e.g. "Done" meant opening
+      the general create form and picking that status by hand, the exact
+      friction the calendar view had already solved for dates. Added
+      `startCreateForColumn(value, field)`, a near-verbatim sibling of
+      `startCreateForDate` (same `setEditingId(null)` + pre-filled
+      `setForm` + `formRef.current?.scrollIntoView(...)` shape), and a new
+      "+" button in each `.board-column-header`, styled to match the
+      existing small-icon-button convention (`.field-label-edit-btn`).
+      Restructured the column header's markup slightly (badge + count now
+      wrapped in `.board-column-header-info` so `justify-content:
+      space-between` places the new button on the opposite side, rather
+      than splitting three children evenly). New translation key
+      `entity.board.addCard` (he/en) for the button's title/aria-label.
+
+      One new DOM test in `EntityPanel.test.ts`: renders the board view
+      (3 declared statuses), deliberately targets the *second* column
+      ("Won", not the first "New") so a bug that left the value unset
+      couldn't slip past a same-as-default false pass, clicks its "+"
+      button, and confirms the create form's status `<select>` shows
+      "won" selected, the submit button reads "Add" (not "Save"), and no
+      Cancel button is present -- proving it's real create mode, not
+      accidentally reusing edit mode.
+
+      Deliberately broke `startCreateForColumn` to build the form from
+      `emptyForm(entity)` alone (dropping the column's own value). Caught
+      cleanly: 38 of 39 tests passed, the new test failed with a plain
+      `'' !== 'won'` assertion mismatch, clean exit, no hang. Restored
+      from a backup and confirmed a byte-identical `diff` before
+      re-confirming all 39 tests green again.
+
+      Full pipeline verification via the real dev server + Playwright:
+      signed up, built a real "מסעדה עם תפריט והזמנות" project (Order
+      entity, status enum 4 values: ממתינה/נשלחה/נמסרה/בוטלה), switched to
+      board view (4 real columns), deliberately targeted the *third*
+      column ("נמסרה"/Delivered, not the first) and clicked its "+"
+      button, confirmed the create form's status select showed that exact
+      value pre-selected, filled the two other required fields (customer
+      name + total amount -- Order has a required number field the first
+      verification pass missed, causing a silent native-validation block
+      with zero network request; caught and fixed before declaring this
+      round's own verification complete) and submitted for real, then
+      confirmed the brand-new card actually rendered inside that same
+      "נמסרה" column's own card list -- a genuine end-to-end round trip,
+      not just a form field that looked right for a moment.
+
+      Full suite green (878 tests, up from 877 -- `@forge/web` 454 → 455;
+      `@forge/shared` 11, `@forge/spec-engine` 82, `@forge/db` 91,
+      `@forge/api` 239 unchanged) and both
+      `npm run build --workspace=@forge/api` and
+      `npm run build --workspace=@forge/web` clean.
+
 ## Phase 3
 
 - Self-healing: production observability, automatic diagnosis and patch
