@@ -13922,6 +13922,74 @@ not a single "make it perfect" claim.
   `@forge/api` 242 unchanged) and `npm run build --workspace=@forge/web`
   clean.
 
+- **Round 250 -- the Entity table's multi-column sort now persists
+  across tab switches.** Diversification: `App.tsx` (touched in
+  244/245/248/249) and `CollaboratorsPanel.tsx`/`DeleteAccountPanel.tsx`
+  (246/247) were all ruled out this round. An Explore subagent surveyed
+  `EntityPanel.tsx`'s own `sortKeys` state, WhatsApp's direction-filter
+  persistence, `BuildProgress.tsx`'s unshown percentage text, and
+  `HistoryPanel.tsx`'s recent-searches gap (plus a fresh look at
+  `BusinessTwinPanel.tsx`, `GlobalSearchPanel.tsx`, and EntityPanel's
+  own Kanban/Calendar views, all confirmed already fully built with no
+  gaps), recommending `sortKeys` as the strongest pick: flagged as a
+  real, currently-broken gap in four straight prior survey rounds
+  (244, 246, 247, 248) and deprioritized every time in favor of
+  something more urgent -- those forcing reasons finally ran out.
+  Independently re-verified before writing code: read
+  `EntityPanel.tsx` end to end and confirmed `sortKeys` (line 653) was
+  a plain `useState` reset to `[]` inside the combined reset effect
+  (line 743) keyed only on `entity.name` -- meaning the sort was wiped
+  on *every single tab switch within the same session*, not merely on
+  a page reload, which is worse than the original survey note assumed.
+
+  Fix: `sortKeysPreference.ts`'s `getSortKeys`/`setSortKeys` mirrors
+  `viewModePreference.ts`'s own project+entity-scoped localStorage
+  pattern exactly (`readStore`/`writeStore`/`keyFor`, a validity guard
+  on the stored shape, an empty result cleared from storage rather
+  than written explicitly). Removed the unconditional `setSortKeys([])`
+  from the reset effect; added a new dedicated load effect (identical
+  shape to the existing `hiddenFields`/`columnOrder`/`groupFieldName`/
+  `viewMode` effects right above it) that restores the persisted sort
+  on every project+entity change, filtering out any key referencing a
+  field this entity no longer has (a field could be removed between
+  visits) so it never silently sorts by something not even shown.
+  `toggleSort` now persists on every plain click and shift-click,
+  alongside its existing state update.
+
+  Tests: 7 new pure-function tests (`sortKeysPreference.test.ts` --
+  single- and multi-column round trips, clearing back to `[]` removes
+  the storage entry rather than writing an empty one, per-project+
+  entity scoping, corrupted/foreign-data fallback) plus a new
+  `EntityPanel.test.ts` DOM test proving the sort survives a real
+  unmount+remount of the same entity and is correctly dropped when
+  switching to a different entity that doesn't have the sorted-by
+  field at all.
+
+  Deliberate-break-and-restore: made `getSortKeys` always return `[]`,
+  ignoring storage entirely -- the round-trip tests in
+  `sortKeysPreference.test.ts` failed cleanly, and *separately* the
+  new `EntityPanel.test.ts` persistence test failed too, confirming
+  the break was caught at both the unit and integration layer, not
+  just one. Restored from a scratchpad backup, confirmed a
+  byte-identical `diff`, and re-confirmed all tests green.
+
+  Real-browser verification against the live dev server: built a real
+  project (an Event entity), discovering along the way that the build
+  pipeline auto-seeds 2 sample records per new entity -- the
+  verification script had to capture the real starting row count
+  rather than assume an empty table. Added 2 more real records with
+  distinct names, clicked the "Name" column header to sort ascending,
+  confirmed the correct row order, then reloaded the page and reopened
+  the project from home (`page.reload()` always returns to the home
+  screen, per this routine's own standing lesson) -- the exact same
+  sort order, interleaved seeded and manually-added records alike, was
+  restored on the fresh remount. `RESULT: PASS`.
+
+  Full suite green (945 tests, up from 937 -- `@forge/web` 511 → 519;
+  `@forge/shared` 11, `@forge/spec-engine` 82, `@forge/db` 91,
+  `@forge/api` 242 unchanged) and `npm run build --workspace=@forge/web`
+  clean.
+
 ## Phase 4
 
 - Template/agent marketplace
