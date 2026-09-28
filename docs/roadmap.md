@@ -13330,6 +13330,88 @@ not a single "make it perfect" claim.
   `@forge/shared` 11, `@forge/spec-engine` 82, `@forge/db` 91, `@forge/api`
   241 unchanged) and `npm run build --workspace=@forge/web` clean.
 
+- **Round 242 -- calendar drag-to-reschedule ported to the exported
+  codegen app.** Diversification: rounds 238-241 had each touched
+  `CollaboratorsPanel.tsx`, `SpecListItemRemover.tsx`/`App.tsx`'s
+  spec-review section, `WhatsAppPanel.tsx`, and `GlobalSearchPanel.tsx`
+  respectively, so all four were ruled out alongside the standing
+  exclusions (`EntityPanel.tsx`, `App.tsx`'s home screen,
+  `BusinessTwinPanel.tsx`/`twin.ts`, `BuildProgress.tsx`) -- but
+  `codegen.ts` was explicitly noted as fair game again this round, now
+  5-6 rounds distant from its last touch (236, 237). An Explore subagent
+  surveyed 4 candidates (this one, recent-searches memory for Time
+  Machine's own search box, and two that turned out already closed --
+  `ShortcutsPanel.tsx` checked complete against every real keybinding,
+  and home-screen sort/pin actions confirmed to live entirely inside the
+  excluded `App.tsx` home-screen area) with grep-verified evidence for
+  each. Its recommendation directly closed a standing open thread flagged
+  since round 237's own roadmap entry; it was independently re-verified
+  by reading `EntityPanel.tsx`'s own drag-and-drop `CalendarView` JSX and
+  `handleCalendarDrop`, and `codegen.ts`'s existing (drag-less)
+  `CalendarView` and `handleCardDrop`, directly before writing any code.
+
+  The gap: the live preview's calendar view lets a user drag a record's
+  chip from one day onto another to reschedule it (round 211) -- the
+  exported standalone app's own `CalendarView` never got this. Chips were
+  plain non-draggable buttons that only opened the edit form; day cells
+  had no drop-target handlers at all. A user who exported a
+  calendar-based app (bookings, appointments, events) silently lost this
+  interaction, left to reopen the edit form and retype the date for
+  every reschedule.
+
+  Fix: ports the identical drag mechanics the Kanban board's own
+  `handleCardDrop` already established in this same file (round 236):
+  draggable chips, day cells that highlight while dragged over
+  (`dragOverDay` state), and a real no-op guard for dropping a chip back
+  onto the day it's already on. `handleCalendarDrop` reuses the exact
+  same `handleMove` PATCH+refresh every other move-a-record action in
+  the exported app already calls, addressed by the date field's own name
+  and a freshly-formatted `"YYYY-MM-DD"` value -- the direct sibling of
+  `handleCardDrop`.
+
+  One new test in `codegen.test.ts` asserts the generated JSX/CSS shape
+  (draggable chip, drop-target day cell, drag-over highlighting) and
+  exercises the real generated `handleCalendarDrop` (extracted via
+  regex, run through `new Function`) to confirm both the no-op guard and
+  the real `handleMove` call, on two branches (a genuine reschedule; a
+  drop back onto the same day). Also updated one pre-existing test
+  (round 237's own click-to-add-day coverage) whose `className` regex
+  assumed the old single-branch ternary, since the day cell's className
+  now legitimately also branches on the new drag-over state -- the exact
+  same kind of intentional, expected staleness round 227 warned about
+  ("grep empirically before trusting a prior round's own claim that
+  something is fully closed").
+
+  Deliberate-break-and-restore: removed `handleCalendarDrop`'s no-op
+  guard -- exactly 1 of 65 `codegen.test.ts` tests failed cleanly (the
+  new drag-to-reschedule test), no hang, no other test affected. Restored
+  from a scratchpad backup and confirmed a byte-identical `diff` before
+  re-confirming all 65 green.
+
+  Full real export-pipeline verification, not just a Playwright pass
+  against the live dev server: signed up, built a real "ניהול אירועים
+  בעסק" (event management) project with a real Event entity
+  (date/venue/capacity/status), clicked the real Export button and
+  captured Playwright's own `download` event, confirmed the new
+  drag-to-reschedule code was genuinely present in the downloaded zip's
+  own `EntityView.jsx` before even building (extracted via a plain
+  `unzip` CLI call, no npm zip library needed), symlinked
+  `node_modules`, ran a real `vite build` from the extract root, spawned
+  the real generated `server.js`, created a real Event record dated
+  2026-06-10 in a real standalone-server browser session, switched to
+  calendar view, navigated to June 2026, and dragged the record's chip
+  from day 10 to day 20 using a real native HTML5 `DataTransfer` +
+  three separately-dispatched `DragEvent`s (dragstart/dragover/drop --
+  a single batched dispatch fails silently under React 18, the same
+  known issue class as rounds 185/186/203/227). Confirmed via the real
+  spawned server's own API (`GET /api/Event`) that the record's `date`
+  field had genuinely moved to `"2026-06-20"`. `RESULT: PASS`.
+
+  Full suite green (911 tests, up from 910 -- `@forge/api` 241 → 242;
+  `@forge/shared` 11, `@forge/spec-engine` 82, `@forge/db` 91, `@forge/web`
+  485 unchanged) and both `npm run build --workspace=@forge/api` and
+  `npm run build --workspace=@forge/web` clean.
+
 ## Phase 4
 
 - Template/agent marketplace
