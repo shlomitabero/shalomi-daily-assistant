@@ -1459,6 +1459,7 @@ function AppContent() {
           {showSearch && (
             <GlobalSearchPanel
               projectId={project.id}
+              projectName={project.name}
               entities={project.spec.entities}
               onClose={() => setShowSearch(false)}
               onJumpToEntity={(entityName) => {

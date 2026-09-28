@@ -1,10 +1,11 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { Entity, EntityRecord } from "@forge/shared";
 import { listRecords } from "./api.js";
 import { recordDisplayLabel, searchEntityRecords, splitHighlightSegments, type EntitySearchResult } from "./entityFormatting.js";
 import { useTranslation } from "./i18n/LanguageContext.js";
 import { useDialogFocusTrap } from "./useDialogFocusTrap.js";
 import { addRecentSearch, clearRecentSearches, getRecentSearches, removeRecentSearch } from "./recentSearches.js";
+import { downloadSearchResults, formatSearchResults } from "./searchReport.js";
 
 /**
  * Mirrors EntityPanel.tsx's own Highlighted wrapper (round 195) around the
@@ -46,18 +47,20 @@ function Highlighted({ text, query }: { text: string; query: string }) {
  */
 export function GlobalSearchPanel({
   projectId,
+  projectName,
   entities,
   onClose,
   onJumpToEntity,
   onJumpToRecord,
 }: {
   projectId: string;
+  projectName: string;
   entities: Entity[];
   onClose: () => void;
   onJumpToEntity: (entityName: string) => void;
   onJumpToRecord: (entityName: string, recordId: number) => void;
 }) {
-  const { t } = useTranslation();
+  const { t, lang } = useTranslation();
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<EntitySearchResult[]>([]);
   const [loading, setLoading] = useState(false);
@@ -77,6 +80,7 @@ export function GlobalSearchPanel({
   // entityName so expanding one group's "Show all" never affects another's.
   const [expandedSamples, setExpandedSamples] = useState<Record<string, EntityRecord[]>>({});
   const [showAllLoading, setShowAllLoading] = useState<Set<string>>(new Set());
+  const [copyStatus, setCopyStatus] = useState<"idle" | "copied" | "failed">("idle");
   const dialogRef = useDialogFocusTrap<HTMLDivElement>();
   // Bumped once per runSearch call, so a stale search whose network round
   // trip just happens to take longer than a newer one's can recognize
@@ -179,6 +183,38 @@ export function GlobalSearchPanel({
     setRecentSearches(removeRecentSearch(projectId, q));
   }
 
+  function handleDownload() {
+    downloadSearchResults(
+      formatSearchResults(results, entities, expandedSamples, highlightQuery, projectName, lang, t),
+      projectName,
+    );
+  }
+
+  /**
+   * Same "Copy report" companion action every other read-heavy panel in
+   * this app already has (Business Twin round 222, WhatsApp log round
+   * 223, Time Machine round 224) for its own Download button -- Global
+   * Search was the one panel that searches across every entity in a
+   * project at once and had no way to take that result set anywhere at
+   * all, not even a Download button, let alone a Copy one.
+   */
+  async function handleCopy() {
+    try {
+      await navigator.clipboard.writeText(
+        formatSearchResults(results, entities, expandedSamples, highlightQuery, projectName, lang, t),
+      );
+      setCopyStatus("copied");
+    } catch {
+      setCopyStatus("failed");
+    }
+  }
+
+  useEffect(() => {
+    if (copyStatus === "idle") return;
+    const timer = setTimeout(() => setCopyStatus("idle"), 2000);
+    return () => clearTimeout(timer);
+  }, [copyStatus]);
+
   function recordPreview(entity: Entity, record: EntityRecord): string {
     return recordDisplayLabel(entity, record);
   }
@@ -210,9 +246,25 @@ export function GlobalSearchPanel({
       <div className="history-panel search-panel" ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby="search-panel-title">
         <div className="history-header">
           <h2 id="search-panel-title">{t("search.title")}</h2>
-          <button type="button" className="secondary" onClick={onClose}>
-            {t("history.close")}
-          </button>
+          <div className="history-header-actions">
+            {!loading && results.length > 0 && (
+              <button type="button" className="secondary" onClick={handleCopy}>
+                {copyStatus === "copied"
+                  ? t("search.copy.copied")
+                  : copyStatus === "failed"
+                    ? t("search.copy.failed")
+                    : t("search.copy")}
+              </button>
+            )}
+            {!loading && results.length > 0 && (
+              <button type="button" className="secondary" onClick={handleDownload}>
+                {t("search.download")}
+              </button>
+            )}
+            <button type="button" className="secondary" onClick={onClose}>
+              {t("history.close")}
+            </button>
+          </div>
         </div>
         <p className="muted small">{t("search.description")}</p>
 

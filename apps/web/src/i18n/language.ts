@@ -461,6 +461,13 @@ export const translations: Record<Lang, Record<string, string>> = {
     "search.jumpTo": "מעבר לטאב",
     "search.keyboardHint": "↑↓ לניווט בין התוצאות, Enter למעבר ללשונית",
     "search.partialFailure": "החיפוש נכשל ב-{failed} מתוך {total} ישויות. התוצאות למטה הן מהישויות שכן הצליחו.",
+    "search.copy": "📋 העתקת התוצאות",
+    "search.copy.copied": "✅ הועתק!",
+    "search.copy.failed": "ההעתקה נכשלה",
+    "search.download": "⬇️ הורדת התוצאות",
+    "search.report.generatedAt": "נוצר ב-{date}",
+    "search.report.query": "חיפוש: \"{query}\"",
+    "search.report.andMore": "ועוד {count}…",
   },
   en: {
     "brand.tagline": "Describe your business in your own words — get a working app.",
@@ -890,6 +897,13 @@ export const translations: Record<Lang, Record<string, string>> = {
     "search.jumpTo": "Go to tab",
     "search.keyboardHint": "↑↓ to navigate results, Enter to jump to a tab",
     "search.partialFailure": "Search failed for {failed} of {total} entities. Results below are from the ones that succeeded.",
+    "search.copy": "📋 Copy results",
+    "search.copy.copied": "✅ Copied!",
+    "search.copy.failed": "Copy failed",
+    "search.download": "⬇️ Download results",
+    "search.report.generatedAt": "Generated on {date}",
+    "search.report.query": 'Search: "{query}"',
+    "search.report.andMore": "and {count} more…",
   },
 };
 

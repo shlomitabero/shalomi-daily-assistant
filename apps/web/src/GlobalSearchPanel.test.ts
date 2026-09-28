@@ -5,7 +5,7 @@ import { test } from "node:test";
 import { transformSync } from "esbuild";
 import { JSDOM } from "jsdom";
 import React from "react";
-import { cleanup, fireEvent, render } from "@testing-library/react";
+import { act, cleanup, fireEvent, render } from "@testing-library/react";
 import type { Entity, EntityRecord } from "@forge/shared";
 import { GlobalSearchPanel } from "./GlobalSearchPanel.js";
 import { LanguageProvider } from "./i18n/LanguageContext.js";
@@ -311,6 +311,7 @@ function renderGlobalSearchPanel(
         null,
         React.createElement(GlobalSearchPanel, {
           projectId: "proj1",
+          projectName: "Test Project",
           entities: [SEARCH_CUSTOMER_ENTITY, SEARCH_ORDER_ENTITY],
           onClose: () => {},
           onJumpToEntity,
@@ -693,6 +694,128 @@ test("GlobalSearchPanel's per-chip remove button deletes only that one recent se
       assert.ok(chipTextOf("gadget"), "a fresh mount must still show the untouched 'gadget' entry");
     } finally {
       globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
+ * New in this round: Global Search was the one read-heavy panel in this
+ * app with no Copy/Download companions at all (Business Twin round 222,
+ * WhatsApp log round 223, Time Machine round 224 all already have both) --
+ * a cross-entity result set only ever existed on screen until the panel
+ * closed. Confirms neither button renders before a real search has run,
+ * both appear once real results exist, and clicking Copy writes the real
+ * formatted results (not a placeholder) to the clipboard.
+ */
+test("GlobalSearchPanel shows Copy/Download buttons only once real results exist, and Copy writes the real formatted results to the clipboard", async (t) => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = mockGlobalSearchFetch() as typeof fetch;
+
+    let writtenText: string | undefined;
+    Object.defineProperty(navigator, "clipboard", {
+      value: { writeText: async (text: string) => void (writtenText = text) },
+      configurable: true,
+    });
+
+    try {
+      renderGlobalSearchPanel(() => {});
+
+      assert.equal(
+        Array.from(document.querySelectorAll("button")).some((b) => b.textContent?.includes("Copy results")),
+        false,
+        "no Copy button should render before any search has run",
+      );
+      assert.equal(
+        Array.from(document.querySelectorAll("button")).some((b) => b.textContent?.includes("Download results")),
+        false,
+        "no Download button should render before any search has run",
+      );
+
+      const input = document.querySelector(".global-search-input") as HTMLInputElement;
+      fireEvent.change(input, { target: { value: "widget" } });
+      fireEvent.submit(document.querySelector("form.global-search-form")!);
+
+      await waitForCondition(() => document.querySelectorAll(".global-search-group").length === 2);
+
+      const copyButton = Array.from(document.querySelectorAll("button")).find((b) => b.textContent?.includes("Copy results"));
+      const downloadButton = Array.from(document.querySelectorAll("button")).find((b) => b.textContent?.includes("Download results"));
+      assert.ok(copyButton, "expected a Copy results button once real results exist");
+      assert.ok(downloadButton, "expected a Download results button once real results exist");
+
+      t.mock.timers.enable({ apis: ["setTimeout"] });
+
+      await act(async () => {
+        fireEvent.click(copyButton!);
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+
+      assert.equal(typeof writtenText, "string", "clicking Copy must actually call navigator.clipboard.writeText");
+      assert.match(writtenText!, /Test Project/, "the copied text must be the real formatted results, not a placeholder");
+      assert.match(writtenText!, /widget/, "the copied text must include the real search query");
+      assert.equal(copyButton!.textContent, "✅ Copied!", "must show the real Copied confirmation");
+
+      act(() => {
+        t.mock.timers.tick(2000);
+      });
+      assert.equal(copyButton!.textContent, "📋 Copy results", "must revert to the normal label once the delay elapses");
+    } finally {
+      t.mock.timers.reset();
+      globalThis.fetch = originalFetch;
+      delete (navigator as { clipboard?: unknown }).clipboard;
+    }
+  });
+});
+
+test("GlobalSearchPanel's Download button downloads the real results as a named file", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = mockGlobalSearchFetch() as typeof fetch;
+
+    // jsdom doesn't implement the real Blob-URL machinery -- stub just
+    // enough of it to observe what the click handler actually does, the
+    // same technique HistoryPanel.test.ts's own download test uses.
+    const originalCreateObjectURL = (URL as unknown as { createObjectURL?: (b: Blob) => string }).createObjectURL;
+    const originalRevokeObjectURL = (URL as unknown as { revokeObjectURL?: (u: string) => void }).revokeObjectURL;
+    const anchorProto = (globalThis as unknown as { window: { HTMLAnchorElement: { prototype: HTMLAnchorElement } } }).window
+      .HTMLAnchorElement.prototype;
+    const originalAnchorClick = anchorProto.click;
+    let capturedDownloadName: string | null = null;
+    let clickCount = 0;
+    (URL as unknown as { createObjectURL: (b: Blob) => string }).createObjectURL = () => "blob:mock-url";
+    (URL as unknown as { revokeObjectURL: (u: string) => void }).revokeObjectURL = () => {};
+    anchorProto.click = function (this: HTMLAnchorElement) {
+      capturedDownloadName = this.download;
+      clickCount += 1;
+    };
+
+    try {
+      renderGlobalSearchPanel(() => {});
+
+      const input = document.querySelector(".global-search-input") as HTMLInputElement;
+      fireEvent.change(input, { target: { value: "widget" } });
+      fireEvent.submit(document.querySelector("form.global-search-form")!);
+
+      await waitForCondition(() => document.querySelectorAll(".global-search-group").length === 2);
+
+      const downloadButton = Array.from(document.querySelectorAll("button")).find((b) => b.textContent?.includes("Download results"));
+      assert.ok(downloadButton, "expected a Download results button once real results exist");
+
+      fireEvent.click(downloadButton!);
+
+      assert.equal(clickCount, 1, "clicking the download button must trigger exactly one real anchor click");
+      const downloadName: string = capturedDownloadName ?? "";
+      assert.ok(
+        downloadName.includes("Test Project"),
+        `expected the downloaded filename to be derived from the real project name "Test Project", got "${downloadName}"`,
+      );
+      assert.ok(downloadName.endsWith("search-results.txt"), `expected a search-results.txt filename, got "${downloadName}"`);
+    } finally {
+      globalThis.fetch = originalFetch;
+      if (originalCreateObjectURL) (URL as unknown as { createObjectURL: (b: Blob) => string }).createObjectURL = originalCreateObjectURL;
+      if (originalRevokeObjectURL) (URL as unknown as { revokeObjectURL: (u: string) => void }).revokeObjectURL = originalRevokeObjectURL;
+      anchorProto.click = originalAnchorClick;
     }
   });
 });
