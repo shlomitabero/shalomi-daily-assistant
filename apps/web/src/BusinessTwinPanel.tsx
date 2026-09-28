@@ -181,7 +181,10 @@ export function BusinessTwinPanel({
               ))}
             </div>
 
-            {(twin.observations.length > 0 || twin.mostLinkedRecord || twin.mostActiveObservation) && (
+            {(twin.observations.length > 0 ||
+              twin.jumpableObservations.length > 0 ||
+              twin.mostLinkedRecord ||
+              twin.mostActiveObservation) && (
               <div className="twin-observations">
                 <span className="label">{t("twin.observations")}</span>
                 <ul>
@@ -207,6 +210,17 @@ export function BusinessTwinPanel({
                       </button>
                     </li>
                   )}
+                  {twin.jumpableObservations.map((o, i) => (
+                    <li key={`jumpable-${i}`}>
+                      <button
+                        type="button"
+                        className="link-button twin-observation-link"
+                        onClick={() => onJumpToEntity(o.entityName)}
+                      >
+                        {o.text}
+                      </button>
+                    </li>
+                  ))}
                   {twin.observations.map((o, i) => (
                     <li key={i}>{o}</li>
                   ))}

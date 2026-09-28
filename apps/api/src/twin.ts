@@ -44,6 +44,17 @@ export interface BusinessTwin {
    * it names a real, jumpable entity (mostActive.name), not just a fact.
    */
   mostActiveObservation: { text: string; entityName: string } | null;
+  /**
+   * Relation-coverage and duplicate-detection facts (computeRelationCoverageObservations/
+   * computeDuplicateObservations below) each name one specific real entity --
+   * the exact same "can't jump to it" gap round 174/175/176/212 already
+   * closed for Global Search, WhatsApp, mostLinkedRecord, and
+   * mostActiveObservation. Kept separate from `observations` (never
+   * duplicated into it) for the same reason. Unlike mostActive/
+   * mostLinkedRecord (each singular), a project can have several of these
+   * at once, so this is an array rather than a single nullable value.
+   */
+  jumpableObservations: { text: string; entityName: string }[];
 }
 
 /**
@@ -54,8 +65,12 @@ export interface BusinessTwin {
  * Business Twin: it never guesses *why* a relation is unset, just surfaces
  * the honest count so a real person can decide whether that's expected.
  */
-function computeRelationCoverageObservations(db: ForgeDatabase, project: Project, hebrew: boolean): string[] {
-  const observations: string[] = [];
+function computeRelationCoverageObservations(
+  db: ForgeDatabase,
+  project: Project,
+  hebrew: boolean,
+): { text: string; entityName: string }[] {
+  const observations: { text: string; entityName: string }[] = [];
   for (const entity of project.spec.entities) {
     const relationFields = entity.fields.filter((f) => f.type === "relation");
     if (relationFields.length === 0) continue;
@@ -67,11 +82,12 @@ function computeRelationCoverageObservations(db: ForgeDatabase, project: Project
       if (unassigned === 0) continue;
       const entityLabel = entity.label ?? entity.name;
       const fieldLabel = field.label ?? field.name;
-      observations.push(
-        hebrew
+      observations.push({
+        text: hebrew
           ? `ב"${entityLabel}", ל-${unassigned} מתוך ${records.length} רשומות אין "${fieldLabel}" מוגדר.`
           : `In "${entityLabel}", ${unassigned} of ${records.length} records have no "${fieldLabel}" set.`,
-      );
+        entityName: entity.name,
+      });
     }
   }
   return observations;
@@ -190,8 +206,12 @@ function computeRelationHubObservation(
  * records sharing that exact value really does suggest the same person or
  * thing was entered twice.
  */
-function computeDuplicateObservations(db: ForgeDatabase, project: Project, hebrew: boolean): string[] {
-  const observations: string[] = [];
+function computeDuplicateObservations(
+  db: ForgeDatabase,
+  project: Project,
+  hebrew: boolean,
+): { text: string; entityName: string }[] {
+  const observations: { text: string; entityName: string }[] = [];
   for (const entity of project.spec.entities) {
     const displayField = pickDisplayField(entity);
     if (!displayField || displayField.type !== "text") continue;
@@ -207,11 +227,12 @@ function computeDuplicateObservations(db: ForgeDatabase, project: Project, hebre
     const entityLabel = entity.label ?? entity.name;
     for (const [label, count] of countByLabel) {
       if (count < 2) continue;
-      observations.push(
-        hebrew
+      observations.push({
+        text: hebrew
           ? `ב"${entityLabel}", ${count} רשומות חולקות את השם "${label}" — יתכן כפילות.`
           : `In "${entityLabel}", ${count} records share the name "${label}" — possibly a duplicate.`,
-      );
+        entityName: entity.name,
+      });
     }
   }
   return observations;
@@ -284,6 +305,7 @@ export function computeBusinessTwin(db: ForgeDatabase, project: Project): Busine
   }, null);
 
   const observations: string[] = [];
+  const jumpableObservations: { text: string; entityName: string }[] = [];
   let mostLinkedRecord: { text: string; entityName: string; recordId: number } | null = null;
   let mostActiveObservation: { text: string; entityName: string } | null = null;
   if (totalRecords === 0) {
@@ -310,8 +332,8 @@ export function computeBusinessTwin(db: ForgeDatabase, project: Project): Busine
       );
     }
     mostLinkedRecord = computeRelationHubObservation(db, project, hebrew);
-    observations.push(...computeRelationCoverageObservations(db, project, hebrew));
-    observations.push(...computeDuplicateObservations(db, project, hebrew));
+    jumpableObservations.push(...computeRelationCoverageObservations(db, project, hebrew));
+    jumpableObservations.push(...computeDuplicateObservations(db, project, hebrew));
     observations.push(...computeActivityObservations(db, project, hebrew));
   }
 
@@ -325,5 +347,6 @@ export function computeBusinessTwin(db: ForgeDatabase, project: Project): Busine
     observations,
     mostLinkedRecord,
     mostActiveObservation,
+    jumpableObservations,
   };
 }

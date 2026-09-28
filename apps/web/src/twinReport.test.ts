@@ -18,6 +18,7 @@ function makeTwin(overrides: Partial<BusinessTwin> = {}): BusinessTwin {
     observations: ['ב"לקוחות", 2 רשומות חולקות את השם "דנה" — יתכן כפילות.'],
     mostLinkedRecord: null,
     mostActiveObservation: null,
+    jumpableObservations: [],
     ...overrides,
   };
 }
@@ -91,6 +92,28 @@ test("formatTwinReport folds the structured mostActiveObservation insight back i
   const report = formatTwinReport(twin, "Flower Shop", "en", t);
 
   assert.match(report, /Most activity is in "Customers"/);
+});
+
+/**
+ * New in this round: relation-coverage and duplicate-detection facts
+ * (jumpableObservations) were split out of the plain `observations` array
+ * too, the same split mostLinkedRecord/mostActiveObservation already went
+ * through above, so the live panel can make each a real clickable jump.
+ * Confirms the downloadable report doesn't silently drop these facts either.
+ */
+test("formatTwinReport folds jumpableObservations back into the observations section", () => {
+  const t = (key: string, params?: Record<string, string | number>) => translate("en", key, params);
+  const twin = makeTwin({
+    observations: [],
+    jumpableObservations: [
+      { text: 'In "Tickets", 2 of 3 records have no "Customer" set.', entityName: "Ticket" },
+      { text: 'In "Customers", 2 records share the name "Dana Levi" — possibly a duplicate.', entityName: "Customer" },
+    ],
+  });
+  const report = formatTwinReport(twin, "Flower Shop", "en", t);
+
+  assert.match(report, /2 of 3 records have no "Customer" set/);
+  assert.match(report, /possibly a duplicate/);
 });
 
 test("formatTwinReport still lists every entity's count even when there are zero total records", () => {

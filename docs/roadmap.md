@@ -12729,6 +12729,89 @@ not a single "make it perfect" claim.
       `npm run build --workspace=@forge/api` and
       `npm run build --workspace=@forge/web` clean.
 
+- [x] **Round 234 — make Business Twin's relation-coverage and
+      duplicate-detection facts real clickable jumps, not inert text**.
+      `mostActiveObservation` (round 212) and `mostLinkedRecord` (round
+      176) had each already been split out of the plain `observations:
+      string[]` array into its own structured `{text, entityName}` (or
+      `{..., recordId}`) field specifically so the live panel could render
+      a real "jump to entity/record" button instead of dead prose -- but
+      `computeRelationCoverageObservations` (round 63) and
+      `computeDuplicateObservations` (round 89-era) still each named one
+      specific real entity per fact and were left behind in the plain
+      array, rendered as inert `<li>` text exactly like every other
+      never-actionable observation. Closed that gap the same way its two
+      siblings already were.
+
+      Added a new `jumpableObservations: { text: string; entityName:
+      string }[]` field to the `BusinessTwin` interface (in both
+      `apps/api/src/twin.ts`, the source of truth, and the independently
+      maintained client-side copy in `apps/web/src/api.ts` that
+      `BusinessTwinPanel.tsx` actually imports -- caught via a proactive
+      grep/read of both copies *before* attempting a build, precisely to
+      avoid a "missing property" TypeScript error surfacing only later).
+      Converted `computeRelationCoverageObservations` and
+      `computeDuplicateObservations` from returning `string[]` to
+      returning `{text, entityName}[]`, and `computeBusinessTwin` now
+      pushes their output into the new `jumpableObservations` array
+      instead of the plain `observations` one. `BusinessTwinPanel.tsx`
+      renders each as `<li><button class="link-button
+      twin-observation-link" onClick={() => onJumpToEntity(o.entityName)}>`,
+      the exact same JSX shape already used for `mostActiveObservation`/
+      `mostLinkedRecord`. The downloadable/copyable text report
+      (`twinReport.ts`, rounds 129/222) already had an established
+      precedent -- and its own code comment documenting it -- for folding
+      such structured fields back into `allObservations` as plain bullets
+      for that format's benefit; extended the same fold to
+      `jumpableObservations`.
+
+      Updated `apps/api/src/twin.test.ts`'s existing relation-coverage and
+      duplicate assertions to check `twin.jumpableObservations` instead of
+      `twin.observations`, and added explicit negative assertions
+      confirming neither fact is ALSO duplicated into the plain array
+      (mirroring the existing precedent tests already in place for
+      `mostActiveObservation`/`mostLinkedRecord`). Added one new DOM test
+      in `BusinessTwinPanel.test.ts` confirming two jumpable observations
+      render as real buttons (not plain `<li>`s) and that clicking one
+      fires `onJumpToEntity` with the correct entity name, never
+      `onJumpToRecord`. Added one new test in `twinReport.test.ts`
+      confirming the report still surfaces these facts as plain bullets
+      even though the live panel now treats them as structured/clickable.
+
+      Deliberately broke `computeBusinessTwin` to push
+      `computeDuplicateObservations`'s output back into the plain
+      `observations` array instead of `jumpableObservations`. Caught
+      cleanly: 13 of 15 `twin.test.ts` tests passed, exactly the 2 new
+      duplicate-specific assertions failed with a plain
+      "expected duplicate observation in jumpableObservations, got: []"
+      style mismatch, clean exit, no hang. Restored from a backup and
+      confirmed a byte-identical `diff` before re-confirming all 15 tests
+      green again.
+
+      Full pipeline verification via the real dev server + Playwright:
+      signed up, built a real "מערכת פניות תמיכה ללקוחות" project
+      (Customer entity with a required status select, Ticket entity with
+      a relation field to Customer), created two Customer records with
+      the identical display name "דנה כהן" (explicitly selecting the
+      required status dropdown each time -- a native-`required`-select
+      silent-block risk of the same class round 233 already caught for a
+      required number field) and one Ticket record with its Customer
+      relation deliberately left unset, opened the Business Twin panel,
+      and confirmed 3 real clickable `.twin-observation-link` buttons
+      rendered: the pre-existing `mostActiveObservation`, a genuine
+      relation-coverage fact ("ל-2 מתוך 2 רשומות אין \"לקוח\" מוגדר"), and
+      a genuine duplicate fact ("2 רשומות חולקות את השם \"דנה כהן\" —
+      יתכן כפילות"). Clicked the duplicate button and confirmed it
+      actually switched the active entity tab to "לקוחות" (Customer) --
+      a real end-to-end jump, not just a button that looked clickable.
+
+      Full suite green (880 tests, up from 878 -- `@forge/web` 455 → 457;
+      `@forge/shared` 11, `@forge/spec-engine` 82, `@forge/db` 91,
+      `@forge/api` 239 unchanged, though several existing assertions
+      within it were rewritten to target the new field) and both
+      `npm run build --workspace=@forge/api` and
+      `npm run build --workspace=@forge/web` clean.
+
 ## Phase 3
 
 - Self-healing: production observability, automatic diagnosis and patch

@@ -66,6 +66,7 @@ const TWIN: BusinessTwin = {
   observations: [],
   mostLinkedRecord: null,
   mostActiveObservation: null,
+  jumpableObservations: [],
 };
 
 function mockTwinFetch() {
@@ -274,6 +275,57 @@ test("BusinessTwinPanel's most-active-entity insight is a real clickable button 
 });
 
 /**
+ * New in this round: relation-coverage and duplicate-detection facts
+ * (twin.jumpableObservations) each name one specific real entity, the same
+ * "can't jump to it" gap already closed above for mostLinkedRecord and
+ * mostActiveObservation. Confirms each renders as a real clickable button
+ * (not a plain <li>) and calls onJumpToEntity with the real entity name,
+ * and that a genuinely plain observation in the same list is unaffected.
+ */
+test("BusinessTwinPanel's jumpable observations (relation-coverage, duplicates) render as real clickable buttons that call onJumpToEntity", async () => {
+  await withJsdom(async () => {
+    const twinWithJumpable: BusinessTwin = {
+      ...TWIN,
+      observations: ["No records yet in: Orders."],
+      jumpableObservations: [
+        { text: 'In "Tickets", 2 of 3 records have no "Customer" set.', entityName: "Ticket" },
+        { text: 'In "Customers", 2 records share the name "Dana Levi" — possibly a duplicate.', entityName: "Customer" },
+      ],
+    };
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string) => {
+      if (input === "/api/projects/proj1/twin") {
+        return new Response(JSON.stringify({ twin: twinWithJumpable }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${input}`);
+    }) as typeof fetch;
+    const entityJumps: string[] = [];
+    const recordJumps: [string, number][] = [];
+    try {
+      renderTwinPanel(
+        (entityName) => entityJumps.push(entityName),
+        (entityName, recordId) => recordJumps.push([entityName, recordId]),
+      );
+      await waitForCondition(() => document.querySelectorAll(".twin-observation-link").length === 2);
+
+      const jumpableButtons = document.querySelectorAll(".twin-observation-link") as NodeListOf<HTMLButtonElement>;
+      assert.equal(jumpableButtons.length, 2, "both jumpable observations must render as real clickable buttons");
+      assert.match(jumpableButtons[0].textContent ?? "", /Tickets/);
+      assert.match(jumpableButtons[1].textContent ?? "", /Dana Levi/);
+
+      const plainObservations = document.querySelectorAll(".twin-observations li:not(:has(button))");
+      assert.equal(plainObservations.length, 1, "the OTHER plain-text observation must still render as inert text, unaffected");
+
+      fireEvent.click(jumpableButtons[1]);
+      assert.deepEqual(entityJumps, ["Customer"], "must call onJumpToEntity with the real entity name from the clicked observation");
+      assert.deepEqual(recordJumps, [], "jumpable observations must never fire the record-specific onJumpToRecord");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * New in this round: computeBusinessTwin has always computed a real
  * totalRecords figure -- it was already included in the downloadable text
  * report (round 129's twinReport.ts) -- but the live panel itself never
@@ -322,6 +374,7 @@ test("BusinessTwinPanel renders stat tiles sorted by real record count (busiest 
       observations: [],
       mostLinkedRecord: null,
       mostActiveObservation: null,
+      jumpableObservations: [],
     };
     const originalFetch = globalThis.fetch;
     globalThis.fetch = (async (input: string) => {
@@ -416,6 +469,7 @@ test("BusinessTwinPanel omits the percent line for a genuinely empty (0-record) 
       observations: [],
       mostLinkedRecord: null,
       mostActiveObservation: null,
+      jumpableObservations: [],
     };
     const originalFetch = globalThis.fetch;
     globalThis.fetch = (async (input: string) => {

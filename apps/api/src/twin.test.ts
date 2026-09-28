@@ -121,8 +121,12 @@ test("computeBusinessTwin reports how many records are missing a relation field,
 
   const twin = computeBusinessTwin(db, relationProject);
   assert.ok(
-    twin.observations.some((o) => o.includes("2 of 3 records have no") && o.includes("Customer")),
-    `expected a relation-coverage observation, got: ${JSON.stringify(twin.observations)}`,
+    twin.jumpableObservations.some((o) => o.text.includes("2 of 3 records have no") && o.entityName === "Ticket"),
+    `expected a relation-coverage observation, got: ${JSON.stringify(twin.jumpableObservations)}`,
+  );
+  assert.ok(
+    !twin.observations.some((o) => o.includes("have no")),
+    "the relation-coverage fact must live only in jumpableObservations now, not also duplicated into the plain observations array",
   );
 
   // Once every ticket has a customer, the observation must disappear -- it
@@ -132,7 +136,7 @@ test("computeBusinessTwin reports how many records are missing a relation field,
   const { id: customerId2 } = insertRecord(db2, relationProject.id, customer, { name: "Dana Levi" });
   insertRecord(db2, relationProject.id, ticket, { subject: "Can't log in", customerId: customerId2 });
   const twinFullyLinked = computeBusinessTwin(db2, relationProject);
-  assert.ok(!twinFullyLinked.observations.some((o) => o.includes("have no")));
+  assert.ok(!twinFullyLinked.jumpableObservations.some((o) => o.text.includes("have no")));
 });
 
 test("computeBusinessTwin identifies the record most referenced across multiple relation fields, with a per-entity breakdown", () => {
@@ -335,11 +339,16 @@ test("computeBusinessTwin flags two records that share the exact same display na
   insertRecord(db, enProject.id, customer, { name: "Yossi Cohen" });
 
   const twin = computeBusinessTwin(db, enProject);
-  const dupObservation = twin.observations.find((o) => o.includes("possibly a duplicate"));
-  assert.ok(dupObservation, `expected a duplicate observation, got: ${JSON.stringify(twin.observations)}`);
-  assert.ok(dupObservation!.includes("2 records"));
-  assert.ok(dupObservation!.includes("Dana Levi"));
-  assert.ok(!dupObservation!.includes("Yossi Cohen"), "Yossi Cohen appears only once and must not be reported");
+  const dupObservation = twin.jumpableObservations.find((o) => o.text.includes("possibly a duplicate"));
+  assert.ok(dupObservation, `expected a duplicate observation, got: ${JSON.stringify(twin.jumpableObservations)}`);
+  assert.ok(dupObservation!.text.includes("2 records"));
+  assert.ok(dupObservation!.text.includes("Dana Levi"));
+  assert.ok(dupObservation!.entityName === "Customer");
+  assert.ok(!dupObservation!.text.includes("Yossi Cohen"), "Yossi Cohen appears only once and must not be reported");
+  assert.ok(
+    !twin.observations.some((o) => o.includes("possibly a duplicate")),
+    "the duplicate fact must live only in jumpableObservations now, not also duplicated into the plain observations array",
+  );
 });
 
 test("computeBusinessTwin stays silent about duplicates when every record's display name is genuinely unique", () => {
@@ -351,7 +360,7 @@ test("computeBusinessTwin stays silent about duplicates when every record's disp
   insertRecord(db, enProject.id, customer, { name: "Yossi Cohen" });
 
   const twin = computeBusinessTwin(db, enProject);
-  assert.ok(!twin.observations.some((o) => o.includes("possibly a duplicate")));
+  assert.ok(!twin.jumpableObservations.some((o) => o.text.includes("possibly a duplicate")));
 });
 
 test("computeBusinessTwin never flags two records as duplicates just because they share the same value on a non-text fallback field", () => {
@@ -376,8 +385,8 @@ test("computeBusinessTwin never flags two records as duplicates just because the
 
   const twin = computeBusinessTwin(db, noNameProject);
   assert.ok(
-    !twin.observations.some((o) => o.includes("possibly a duplicate")),
-    `an entity with no text display field must never be flagged for duplicates, got: ${JSON.stringify(twin.observations)}`,
+    !twin.jumpableObservations.some((o) => o.text.includes("possibly a duplicate")),
+    `an entity with no text display field must never be flagged for duplicates, got: ${JSON.stringify(twin.jumpableObservations)}`,
   );
 });
 
@@ -389,7 +398,7 @@ test("computeBusinessTwin phrases the duplicate observation in Hebrew for a Hebr
   insertRecord(db, project.id, customer, { name: "Dana Levi" });
 
   const twin = computeBusinessTwin(db, project);
-  assert.ok(twin.observations.some((o) => o.includes("יתכן כפילות")));
+  assert.ok(twin.jumpableObservations.some((o) => o.text.includes("יתכן כפילות")));
 });
 
 /** Backdates a real record's own createdAt column directly (insertRecord always stamps "now", with no override param), the same raw-SQL technique the most-linked-record fallback test above already uses via tableNameFor. */
