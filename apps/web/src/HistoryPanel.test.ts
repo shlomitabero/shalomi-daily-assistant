@@ -1210,3 +1210,93 @@ test("HistoryPanel's copy button shows a failure label when navigator.clipboard.
     }
   });
 });
+
+/**
+ * New in this round: the checkpoint search box (shown once there are more
+ * than 5 checkpoints) had no memory at all -- reopening History to find
+ * "before the pricing overhaul" again meant retyping the exact same search
+ * from scratch every time, the same gap Global Search's own query box had
+ * before recentSearches.ts (round 180) and WhatsApp's test-send number
+ * field had before whatsappRecentNumbers.ts (round 240). Since this
+ * search box is a live filter (no submit button), a search is "committed"
+ * to the recent list on blur or Enter, not on every keystroke. Confirms a
+ * committed search survives a real unmount+remount of the panel (its own
+ * close/reopen lifecycle) via historyRecentSearches.ts's real localStorage,
+ * and that clicking the resulting chip both fills the search box and
+ * genuinely re-filters the checkpoint list.
+ */
+test("HistoryPanel remembers a committed checkpoint search as a recent-search chip, surviving a close/reopen, and the chip both fills and re-filters", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    const checkpoints = [
+      makeCheckpoint("cp1", "Initial build"),
+      makeCheckpoint("cp2", "Refine: add invoice tracking"),
+      makeCheckpoint("cp3", "Refine: add customer notes"),
+      makeCheckpoint("cp4", "Refine: fix invoice totals"),
+      makeCheckpoint("cp5", "Refine: add reminders"),
+      makeCheckpoint("cp6", "Refine: add tags"),
+    ];
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/checkpoints") {
+        return new Response(JSON.stringify({ checkpoints }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+
+    function renderPanel() {
+      return render(
+        React.createElement(
+          ThemeProvider,
+          null,
+          React.createElement(
+            LanguageProvider,
+            null,
+            React.createElement(HistoryPanel, {
+              projectId: "proj1",
+              projectName: "Test Project",
+              currentSpec: checkpoints[0].spec,
+              onRestored: () => {},
+              onClose: () => {},
+            }),
+          ),
+        ),
+      );
+    }
+
+    try {
+      const first = renderPanel();
+      await waitForCondition(() => document.querySelectorAll(".checkpoint-list li").length === 6);
+
+      assert.equal(document.querySelector(".history-recent-searches"), null, "no recent-searches section before any search is committed");
+
+      const searchBox = document.querySelector(".history-search") as HTMLInputElement;
+      fireEvent.change(searchBox, { target: { value: "invoice" } });
+      await waitForCondition(() => document.querySelectorAll(".checkpoint-list li").length === 2);
+      fireEvent.blur(searchBox);
+
+      await waitForCondition(() => document.querySelector(".history-recent-searches .chip-text") !== null);
+      const chipAfterCommit = document.querySelector(".history-recent-searches .chip-text");
+      assert.equal(chipAfterCommit?.textContent, "invoice", "blurring the search box must commit it as a real recent search");
+
+      first.unmount();
+
+      const second = renderPanel();
+      await waitForCondition(() => document.querySelectorAll(".checkpoint-list li").length === 6);
+      await waitForCondition(() => document.querySelector(".history-recent-searches .chip-text") !== null);
+      const chipAfterRemount = document.querySelector(".history-recent-searches .chip-text");
+      assert.equal(chipAfterRemount?.textContent, "invoice", "reopening the panel must show the persisted recent search");
+
+      const reopenedSearchBox = document.querySelector(".history-search") as HTMLInputElement;
+      assert.equal(reopenedSearchBox.value, "", "sanity check: the search box itself starts empty on a fresh mount");
+
+      fireEvent.click(document.querySelector(".history-recent-searches .chip-text")!);
+      assert.equal(reopenedSearchBox.value, "invoice", "clicking the chip must fill the search box with that query");
+      await waitForCondition(() => document.querySelectorAll(".checkpoint-list li").length === 2);
+
+      second.unmount();
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});

@@ -3,6 +3,12 @@ import type { Checkpoint, Project, ProductSpec } from "@forge/shared";
 import { deleteCheckpoint, listCheckpoints, restoreCheckpoint } from "./api.js";
 import { CheckpointLabelEditor } from "./CheckpointLabelEditor.js";
 import {
+  addRecentHistorySearch,
+  clearRecentHistorySearches,
+  getRecentHistorySearches,
+  removeRecentHistorySearch,
+} from "./historyRecentSearches.js";
+import {
   type CheckpointType,
   computeCheckpointDiff,
   downloadCheckpointHistory,
@@ -39,6 +45,7 @@ export function HistoryPanel({
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [compareTargetId, setCompareTargetId] = useState<string | null>(null);
   const [search, setSearch] = useState("");
+  const [recentSearches, setRecentSearches] = useState<string[]>(() => getRecentHistorySearches(projectId));
   const [typeFilter, setTypeFilter] = useState<"all" | CheckpointType>("all");
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [deleteError, setDeleteError] = useState<string | null>(null);
@@ -124,6 +131,31 @@ export function HistoryPanel({
     }
   }
 
+  /**
+   * Records a real committed search (blur or Enter, not every keystroke --
+   * the search itself is already a live filter via `search` state) into
+   * this project's own recent-history-searches list, same "commit on
+   * leaving the field" convention as this app's other recentX lists.
+   */
+  function commitRecentSearch() {
+    if (!search.trim()) return;
+    setRecentSearches(addRecentHistorySearch(projectId, search));
+  }
+
+  function handleRecentSearchClick(q: string) {
+    setSearch(q);
+    setRecentSearches(addRecentHistorySearch(projectId, q));
+  }
+
+  function handleClearRecentSearches() {
+    clearRecentHistorySearches(projectId);
+    setRecentSearches([]);
+  }
+
+  function handleRemoveRecentSearch(q: string) {
+    setRecentSearches(removeRecentHistorySearch(projectId, q));
+  }
+
   return (
     <div className="history-overlay">
       <div className="history-panel" ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby="history-panel-title">
@@ -169,6 +201,10 @@ export function HistoryPanel({
               aria-label={t("history.search.placeholder")}
               value={search}
               onChange={(e) => setSearch(e.target.value)}
+              onBlur={commitRecentSearch}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") commitRecentSearch();
+              }}
             />
             <select
               className="history-type-filter"
@@ -180,6 +216,34 @@ export function HistoryPanel({
               <option value="build">{t("history.filter.build")}</option>
               <option value="refine">{t("history.filter.refine")}</option>
             </select>
+          </div>
+        )}
+        {checkpoints.length > 5 && recentSearches.length > 0 && (
+          <div className="global-search-recent history-recent-searches">
+            <div className="global-search-recent-header">
+              <span className="muted small">{t("history.recent.heading")}</span>
+              <button type="button" className="link-button small" onClick={handleClearRecentSearches}>
+                {t("history.recent.clear")}
+              </button>
+            </div>
+            <div className="chips">
+              {recentSearches.map((q) => (
+                <span className="chip chip-removable" key={q}>
+                  <button type="button" className="chip-text" onClick={() => handleRecentSearchClick(q)}>
+                    {q}
+                  </button>
+                  <button
+                    type="button"
+                    className="chip-remove"
+                    title={t("history.recent.remove")}
+                    aria-label={t("history.recent.remove", { query: q })}
+                    onClick={() => handleRemoveRecentSearch(q)}
+                  >
+                    ×
+                  </button>
+                </span>
+              ))}
+            </div>
           </div>
         )}
         {checkpoints.length === 0 ? (
