@@ -31,6 +31,7 @@ test("computeCheckpointDiff reports an entity present now but missing from the c
 
   const diff = computeCheckpointDiff(current, checkpoint);
   assert.deepEqual(diff.removedEntities, [{ name: "Invoice", label: "Invoices" }]);
+  assert.deepEqual(diff.addedEntities, []);
   assert.deepEqual(diff.changedEntities, []);
 });
 
@@ -51,7 +52,10 @@ test("computeCheckpointDiff reports fields present now but missing from the chec
 
   const diff = computeCheckpointDiff(current, checkpoint);
   assert.deepEqual(diff.removedEntities, []);
-  assert.deepEqual(diff.changedEntities, [{ name: "Customer", label: "Customers", removedFieldNames: ["Loyalty Points"] }]);
+  assert.deepEqual(
+    diff.changedEntities,
+    [{ name: "Customer", label: "Customers", removedFieldNames: ["Loyalty Points"], addedFieldNames: [] }],
+  );
 });
 
 test("computeCheckpointDiff falls back to the raw name when a field or entity has no label", () => {
@@ -59,33 +63,35 @@ test("computeCheckpointDiff falls back to the raw name when a field or entity ha
   const checkpoint = makeSpec([{ name: "Customer", fields: [{ name: "name", type: "text", required: true }] }]);
 
   const diff = computeCheckpointDiff(current, checkpoint);
-  assert.deepEqual(diff.changedEntities, [{ name: "Customer", label: "Customer", removedFieldNames: ["notes"] }]);
+  assert.deepEqual(diff.changedEntities, [{ name: "Customer", label: "Customer", removedFieldNames: ["notes"], addedFieldNames: [] }]);
 });
 
-test("computeCheckpointDiff reports nothing when the checkpoint has strictly the same or more entities/fields", () => {
+test("computeCheckpointDiff reports checkpoint-only entities/fields as additions, not as absence of removals", () => {
   const current = makeSpec([{ name: "Customer", fields: [{ name: "name", type: "text", required: true }] }]);
   const checkpointWithExtra = makeSpec([
     {
       name: "Customer",
       fields: [
         { name: "name", type: "text", required: true },
-        { name: "phone", type: "text", required: false },
+        { name: "phone", label: "Phone", type: "text", required: false },
       ],
     },
-    { name: "Order", fields: [{ name: "total", type: "number", required: true }] },
+    { name: "Order", label: "Orders", fields: [{ name: "total", type: "number", required: true }] },
   ]);
 
   const diff = computeCheckpointDiff(current, checkpointWithExtra);
   assert.deepEqual(diff.removedEntities, []);
-  assert.deepEqual(diff.changedEntities, []);
+  assert.deepEqual(diff.addedEntities, [{ name: "Order", label: "Orders" }]);
+  assert.deepEqual(diff.changedEntities, [{ name: "Customer", label: "Customer", removedFieldNames: [], addedFieldNames: ["Phone"] }]);
 });
 
-test("computeCheckpointDiff never flags a brand-new entity in the checkpoint as a removal -- only the reverse direction counts", () => {
+test("computeCheckpointDiff reports a brand-new entity in the checkpoint as addedEntities, never as a removal -- this is what makes resolveCompareSpec's 'what did a later refine add' comparison actually work", () => {
   // Restoring a checkpoint that has entities the CURRENT spec doesn't have
   // yet (a "future" checkpoint relative to a refine that later dropped
-  // something) is a gain from the current spec's perspective, not a loss --
-  // only entities/fields present now and absent from the checkpoint are
-  // real removals.
+  // something, OR an older checkpoint being compared against a newer one via
+  // resolveCompareSpec's "compare with" dropdown) is a gain from the current
+  // spec's perspective, not a loss -- and it must show up as a real,
+  // user-visible addition, not silently vanish into "no changes".
   const current = makeSpec([{ name: "Customer", fields: [{ name: "name", type: "text", required: true }] }]);
   const checkpoint = makeSpec([
     { name: "Customer", fields: [{ name: "name", type: "text", required: true }] },
@@ -94,7 +100,36 @@ test("computeCheckpointDiff never flags a brand-new entity in the checkpoint as 
 
   const diff = computeCheckpointDiff(current, checkpoint);
   assert.deepEqual(diff.removedEntities, []);
+  assert.deepEqual(diff.addedEntities, [{ name: "Invoice", label: "Invoice" }]);
   assert.deepEqual(diff.changedEntities, []);
+});
+
+test("computeCheckpointDiff reports an entity that both lost and gained fields at once with both lists populated", () => {
+  const current = makeSpec([
+    {
+      name: "Customer",
+      label: "Customers",
+      fields: [
+        { name: "name", label: "Name", type: "text", required: true },
+        { name: "notes", label: "Notes", type: "text", required: false },
+      ],
+    },
+  ]);
+  const checkpoint = makeSpec([
+    {
+      name: "Customer",
+      label: "Customers",
+      fields: [
+        { name: "name", label: "Name", type: "text", required: true },
+        { name: "phone", label: "Phone", type: "text", required: false },
+      ],
+    },
+  ]);
+
+  const diff = computeCheckpointDiff(current, checkpoint);
+  assert.deepEqual(diff.changedEntities, [
+    { name: "Customer", label: "Customers", removedFieldNames: ["Notes"], addedFieldNames: ["Phone"] },
+  ]);
 });
 
 /**
@@ -381,13 +416,20 @@ test("computeCheckpointDiff correctly compares two arbitrary checkpoints against
     { name: "Invoice", label: "Invoices", fields: [{ name: "total", type: "number", required: true }] },
   ]);
 
-  // Diffing "older as baseline" vs "newer checkpoint": nothing in older is
-  // missing from newer (newer only adds Invoice), so no changes reported.
-  assert.deepEqual(computeCheckpointDiff(olderSpec, newerSpec), { removedEntities: [], changedEntities: [] });
+  // Diffing "older as baseline" vs "newer checkpoint": this is exactly
+  // resolveCompareSpec's own motivating example ("what did refine #3 add
+  // that refine #1 didn't have yet?") -- Invoice must show up as an
+  // addedEntity, not silently disappear into "no changes" just because
+  // nothing was REMOVED going from older to newer.
+  const forward = computeCheckpointDiff(olderSpec, newerSpec);
+  assert.deepEqual(forward.removedEntities, []);
+  assert.deepEqual(forward.addedEntities, [{ name: "Invoice", label: "Invoices" }]);
 
   // The reverse direction: newer as the baseline, older as the checkpoint
   // being compared -- Invoice exists in the baseline but not in older, so
-  // it's correctly reported as what restoring "older" would remove.
+  // it's correctly reported as what restoring "older" would remove (and
+  // nothing is reported as added, since older adds nothing newer lacks).
   const reversed = computeCheckpointDiff(newerSpec, olderSpec);
   assert.deepEqual(reversed.removedEntities, [{ name: "Invoice", label: "Invoices" }]);
+  assert.deepEqual(reversed.addedEntities, []);
 });

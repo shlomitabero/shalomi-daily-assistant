@@ -6,24 +6,32 @@ const LOCALE: Record<Lang, string> = { he: "he-IL", en: "en-US" };
 
 export interface CheckpointDiff {
   removedEntities: { name: string; label: string }[];
-  changedEntities: { name: string; label: string; removedFieldNames: string[] }[];
+  addedEntities: { name: string; label: string }[];
+  changedEntities: { name: string; label: string; removedFieldNames: string[]; addedFieldNames: string[] }[];
 }
 
 /**
  * Restoring never destroys data (migrations are additive-only, see
  * projects.ts's restore route), but it DOES move which entities/fields the
  * live app currently *shows* -- so before clicking Restore, a real question
- * is "what would disappear from the screens I see right now if I go back to
- * this older checkpoint?" This answers exactly that, in the opposite
- * direction from pipeline.ts's own computeImpact (which reports what a
- * build newly ADDS going forward): an entity present now but missing from
- * the checkpoint would be removed, and a field present now but missing from
- * the checkpoint (on an entity that still exists) would be removed too.
+ * is "what would disappear from (or newly appear on) the screens I see right
+ * now if I go back to this older checkpoint?" This answers exactly that, in
+ * the opposite direction from pipeline.ts's own computeImpact (which reports
+ * what a build newly ADDS going forward relative to a fixed live spec): an
+ * entity/field present in one spec but not the other is reported on
+ * whichever side it's missing from. Both directions matter equally here,
+ * unlike computeImpact's single fixed direction, because resolveCompareSpec
+ * lets the "current" argument be an arbitrary older checkpoint too (see its
+ * own doc comment) -- e.g. "what did refine #3 add that refine #1 didn't
+ * have yet?" is exactly an addedEntities/addedFieldNames question, not a
+ * removal one, even though it's asked through this same function.
  */
 export function computeCheckpointDiff(currentSpec: ProductSpec, checkpointSpec: ProductSpec): CheckpointDiff {
   const checkpointEntities = new Map(checkpointSpec.entities.map((e) => [e.name, e]));
+  const currentEntities = new Map(currentSpec.entities.map((e) => [e.name, e]));
   const removedEntities: { name: string; label: string }[] = [];
-  const changedEntities: { name: string; label: string; removedFieldNames: string[] }[] = [];
+  const addedEntities: { name: string; label: string }[] = [];
+  const changedEntities: { name: string; label: string; removedFieldNames: string[]; addedFieldNames: string[] }[] = [];
 
   for (const entity of currentSpec.entities) {
     const inCheckpoint = checkpointEntities.get(entity.name);
@@ -32,13 +40,21 @@ export function computeCheckpointDiff(currentSpec: ProductSpec, checkpointSpec: 
       continue;
     }
     const checkpointFieldNames = new Set(inCheckpoint.fields.map((f) => f.name));
+    const currentFieldNames = new Set(entity.fields.map((f) => f.name));
     const removedFieldNames = entity.fields.filter((f) => !checkpointFieldNames.has(f.name)).map((f) => f.label ?? f.name);
-    if (removedFieldNames.length > 0) {
-      changedEntities.push({ name: entity.name, label: entity.label ?? entity.name, removedFieldNames });
+    const addedFieldNames = inCheckpoint.fields.filter((f) => !currentFieldNames.has(f.name)).map((f) => f.label ?? f.name);
+    if (removedFieldNames.length > 0 || addedFieldNames.length > 0) {
+      changedEntities.push({ name: entity.name, label: entity.label ?? entity.name, removedFieldNames, addedFieldNames });
     }
   }
 
-  return { removedEntities, changedEntities };
+  for (const entity of checkpointSpec.entities) {
+    if (!currentEntities.has(entity.name)) {
+      addedEntities.push({ name: entity.name, label: entity.label ?? entity.name });
+    }
+  }
+
+  return { removedEntities, addedEntities, changedEntities };
 }
 
 /**

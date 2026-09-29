@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { Fragment, useEffect, useState } from "react";
 import type { Checkpoint, Project, ProductSpec } from "@forge/shared";
 import { deleteCheckpoint, listCheckpoints, restoreCheckpoint } from "./api.js";
 import { CheckpointLabelEditor } from "./CheckpointLabelEditor.js";
@@ -256,7 +256,7 @@ export function HistoryPanel({
               const isOpen = expandedId === checkpoint.id;
               const compareSpec = isOpen ? resolveCompareSpec(checkpoints, compareTargetId, currentSpec) : currentSpec;
               const diff = computeCheckpointDiff(compareSpec, checkpoint.spec);
-              const hasChanges = diff.removedEntities.length > 0 || diff.changedEntities.length > 0;
+              const hasChanges = diff.removedEntities.length > 0 || diff.addedEntities.length > 0 || diff.changedEntities.length > 0;
               const isCurrent = isCheckpointCurrent(currentSpec, checkpoint.spec);
               return (
                 <li key={checkpoint.id}>
@@ -307,12 +307,24 @@ export function HistoryPanel({
                         ) : (
                           <ul className="detail-list">
                             {diff.removedEntities.map((e) => (
-                              <li key={e.name}>{t("history.diff.entityRemoved", { entity: e.label })}</li>
+                              <li key={`removed-${e.name}`}>{t("history.diff.entityRemoved", { entity: e.label })}</li>
+                            ))}
+                            {diff.addedEntities.map((e) => (
+                              <li key={`added-${e.name}`}>{t("history.diff.entityAdded", { entity: e.label })}</li>
                             ))}
                             {diff.changedEntities.map((e) => (
-                              <li key={e.name}>
-                                {t("history.diff.entityLostFields", { entity: e.label, fields: e.removedFieldNames.join(", ") })}
-                              </li>
+                              <Fragment key={e.name}>
+                                {e.removedFieldNames.length > 0 && (
+                                  <li>
+                                    {t("history.diff.entityLostFields", { entity: e.label, fields: e.removedFieldNames.join(", ") })}
+                                  </li>
+                                )}
+                                {e.addedFieldNames.length > 0 && (
+                                  <li>
+                                    {t("history.diff.entityGainedFields", { entity: e.label, fields: e.addedFieldNames.join(", ") })}
+                                  </li>
+                                )}
+                              </Fragment>
                             ))}
                           </ul>
                         )}
