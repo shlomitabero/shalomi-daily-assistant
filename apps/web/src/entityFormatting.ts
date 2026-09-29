@@ -72,8 +72,15 @@ export type BadgeTone = "positive" | "negative" | "neutral";
  */
 export function badgeTone(rawValue: string): BadgeTone {
   const lower = rawValue.toLowerCase();
-  if (POSITIVE_WORDS.some((w) => lower.includes(w))) return "positive";
+  // Negative words checked FIRST: "inactive" contains "active" as a
+  // substring, so checking POSITIVE_WORDS first would classify the
+  // built-in Volunteer/DEFAULT_ENTITY "Inactive" status as a positive
+  // (green) badge -- the exact opposite of what it means. No other
+  // word pair in these two lists has the reverse collision (a positive
+  // word being a substring of a negative one), so this ordering alone
+  // fixes it without introducing a new false negative elsewhere.
   if (NEGATIVE_WORDS.some((w) => lower.includes(w))) return "negative";
+  if (POSITIVE_WORDS.some((w) => lower.includes(w))) return "positive";
   return "neutral";
 }
 

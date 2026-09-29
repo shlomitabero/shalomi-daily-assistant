@@ -2307,6 +2307,25 @@ test("the exported EntityView's badgeTone classifies 'Denied' as negative, match
 });
 
 /**
+ * Regression test for the same real bug this round fixed in the
+ * live-preview version: "Inactive" contains "active" as a substring, so
+ * checking POSITIVE_WORDS before NEGATIVE_WORDS classified it as a green
+ * "positive" badge -- the exact opposite of what it means, and directly
+ * visible in the exported app's own table cells and Kanban column
+ * headers (both render via this same badgeTone). Runs the real generated
+ * badgeTone, not a reference copy.
+ */
+test("the exported EntityView's badgeTone classifies 'Inactive' as negative, not positive from matching 'active' as a substring", () => {
+  const entityViewJsx = generateExportFiles(project).find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+  const badgeToneSrc = entityViewJsx.match(/const POSITIVE_WORDS[\s\S]*?\nfunction badgeTone\(rawValue\) \{[\s\S]*?\n\}\n/)?.[0];
+  assert.ok(badgeToneSrc, "expected to find POSITIVE_WORDS/NEGATIVE_WORDS/badgeTone in generated output");
+
+  const badgeTone = new Function(`${badgeToneSrc}\nreturn badgeTone;`)() as (v: string) => string;
+  assert.equal(badgeTone("Inactive"), "negative");
+  assert.equal(badgeTone("Active"), "positive");
+});
+
+/**
  * New in this round: the exported standalone app's entity table columns
  * were a fixed auto-layout width, unlike the live Forge AI preview (round
  * 185's own drag-to-resize columns, persisted per entity via

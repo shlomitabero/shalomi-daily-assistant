@@ -964,8 +964,8 @@ const POSITIVE_WORDS = ["won", "completed", "active", "paid", "delivered", "succ
 const NEGATIVE_WORDS = ["lost", "cancelled", "canceled", "inactive", "overdue", "no-show", "failed", "rejected", "declined", "denied"];
 function badgeTone(rawValue) {
   const lower = String(rawValue).toLowerCase();
-  if (POSITIVE_WORDS.some((w) => lower.includes(w))) return "positive";
   if (NEGATIVE_WORDS.some((w) => lower.includes(w))) return "negative";
+  if (POSITIVE_WORDS.some((w) => lower.includes(w))) return "positive";
   return "neutral";
 }
 

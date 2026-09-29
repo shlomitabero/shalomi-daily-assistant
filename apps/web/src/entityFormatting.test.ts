@@ -63,6 +63,21 @@ test("badgeTone recognizes 'Denied' as negative, matching InsuranceClaim's real 
   assert.equal(badgeTone("Approved"), "positive");
 });
 
+/**
+ * Regression test for a real bug found by this round's Explore survey:
+ * "Inactive" contains "active" as a substring, so checking POSITIVE_WORDS
+ * before NEGATIVE_WORDS classified it as "positive" (a green badge) --
+ * the exact opposite of what it means, and directly visible wherever
+ * badgeTone renders a status badge (EntityPanel's table cells and Kanban
+ * column headers). This is a real, built-in status pair (Volunteer's own
+ * status enum, and the generic DEFAULT_ENTITY fallback -- see
+ * spec-engine/domainEntities.ts), not a contrived edge case.
+ */
+test("badgeTone recognizes 'Inactive' as negative, not positive from matching 'active' as a substring", () => {
+  assert.equal(badgeTone("Inactive"), "negative");
+  assert.equal(badgeTone("Active"), "positive");
+});
+
 test("formatDateValue formats a valid ISO date per locale, and leaves an invalid one unchanged", () => {
   const result = formatDateValue("2026-03-15", "en");
   assert.match(result, /3\/15\/2026|15\/3\/2026/); // exact format is locale/engine-dependent, just confirm it parsed
