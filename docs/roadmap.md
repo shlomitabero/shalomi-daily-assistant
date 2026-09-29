@@ -14428,6 +14428,79 @@ not a single "make it perfect" claim.
   `@forge/db` 91 unchanged) and `npm run build --workspace=@forge/web`
   clean.
 
+- **Round 257 -- the exported/downloaded standalone app's Global Search
+  can now jump to the exact matched record, not just its entity's tab.**
+  Diversification: an Explore survey found that `apps/api/src/codegen.ts`
+  (the exported-app generator) had never picked up this one specific
+  capability, even though it was otherwise a thorough port of the live
+  preview's search -- grep-verified zero matches on
+  `onJumpToRecord`/`highlightRecordId`/`scrollIntoView` anywhere in the
+  file, and `<activeEntity.View />` took no props at all. `codegen.ts`
+  had not been touched in the recent diversification window; most other
+  candidates surveyed (the small click-to-rename editor twins,
+  BusinessTwinPanel.tsx, GlobalSearchPanel.tsx itself) turned out to
+  already be fully symmetric/feature-complete.
+
+  Before this round, someone using their own deployed (exported) app --
+  not the live Forge AI preview -- could search across every entity at
+  once and land on the right tab, but then had to re-scan the whole
+  table by eye for the specific row they'd already found via search.
+  The live preview itself solved this long ago
+  (`GlobalSearchPanel.tsx`'s per-row click, `App.tsx`'s
+  `onJumpToRecord`/`highlightRecordId`, `EntityPanel.tsx`'s
+  scroll-and-fade highlight), but that mechanism was simply never
+  carried over into the separate, duplicated codegen implementation.
+
+  Ported the exact same mechanism into the four generated files:
+  `App.jsx` now owns a `highlightRecordId` state, threaded into the
+  active entity's `View`; `GlobalSearch.jsx`'s result rows became real
+  `<button>`s calling a new `onJumpToRecord(entityName, recordId)` prop
+  instead of plain `<li>` text, which sets both the active tab and the
+  record to highlight in one call; `EntityView.jsx` applies an incoming
+  `highlightRecordId` once records have actually loaded (clearing any
+  leftover search filter, switching to table view), marks the matching
+  `<tr>` with a real `data-record-id` attribute and a
+  `record-row-highlighted` class, scrolls it into view, and auto-fades
+  the highlight after 4 seconds -- mirroring `EntityPanel.tsx`'s own
+  logic line for line, including the same CSS rule
+  (`.record-row-highlighted`) and button styling
+  (`.global-search-hit-button`) already used by the live preview.
+
+  Tests: one new `codegen.test.ts` test asserting the generated wiring
+  across all four affected files via precise regex on the real
+  generated source, matching this file's own established convention
+  for JSX-heavy exported-app features (the same approach the existing
+  Kanban/calendar/CSV-export tests already use, since the JSX can't be
+  trivially extracted into a plain-function sandbox the way pure logic
+  like `deriveEntityName` can).
+
+  Deliberate-break-and-restore: reverted `GlobalSearch.jsx`'s per-row
+  button back to plain `<li>` text (no `onClick`, no `onJumpToRecord`
+  call) -- exactly 1 of 66 `codegen.test.ts` tests failed (the new
+  one), the other 65 stayed green. Restored from a scratchpad backup,
+  confirmed a byte-identical `diff`, and re-confirmed all 66 tests
+  green again.
+
+  Real-browser verification, and the most thorough exported-app check
+  this session has run: built a genuinely real exported app end to end
+  (`generateExportFiles` → `vite build` → spawned the real `server.js`,
+  no interception or mocking anywhere), seeded 5 real `Customer`
+  records through the exported app's own REST API, opened it in real
+  Chromium, started on the *Services* tab specifically (so a successful
+  jump would prove the tab actually switched), searched "Zelda" via
+  Ctrl+K, and clicked the matched "Zelda Zephyr" row. Confirmed: the
+  search overlay closed, the active tab became "Customers", the exact
+  right `<tr data-record-id>` carried `.record-row-highlighted` and was
+  scrolled into view, the highlight faded back off within ~4 seconds as
+  designed, and zero console errors were logged throughout.
+  `RESULT: PASS`.
+
+  Full suite green (979 tests, up from 978 -- `@forge/api` 251 → 252;
+  `@forge/shared` 11, `@forge/spec-engine` 82, `@forge/db` 91,
+  `@forge/web` 543 unchanged) and both
+  `npm run build --workspace=@forge/web` and
+  `npm run build --workspace=@forge/api` clean.
+
 ## Phase 4
 
 - Template/agent marketplace
