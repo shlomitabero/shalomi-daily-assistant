@@ -15089,6 +15089,91 @@ not a single "make it perfect" claim.
   `@forge/shared` 11, `@forge/spec-engine` 82, `@forge/db` 93, `@forge/web`
   559 unchanged) via `npm test` at the repo root.
 
+- **Round 266 -- relation-cell click-to-jump (round 260, live preview
+  only) is now also available in the exported/standalone codegen app.**
+  This round's Explore survey investigated the two candidates the
+  trigger prompt's own "port-to-exported-codegen" notes had flagged as
+  "relevant but not yet verified" -- round 260's relation-cell jump and
+  round 261's longtext tooltip -- and confirmed both are real, concrete
+  gaps in `apps/api/src/codegen.ts`'s `Cell` component (which the
+  exported app's table, Kanban board, and global search results all
+  share): relation fields rendered as static text with no click target,
+  and longtext fields had no hover tooltip for the untruncated value.
+  Picked the relation-cell jump as this round's feature: more genuinely
+  useful data-navigation parity than a cosmetic tooltip, and the
+  App-level `setActive`/`setHighlightRecordId` wiring Global Search's own
+  jump-to-record already uses in the exported app made this a legitimately
+  scoped port rather than new infrastructure. This does mean touching
+  `codegen.ts` again right after round 265's large ICS port -- a real
+  diversification trade-off, but no other file yielded a genuine
+  unclosed gap this round (the survey also re-checked Collaborators,
+  History, Shortcuts, Business Twin, Global Search, and WhatsApp panels;
+  all already closed), so re-touching it was the honest choice over
+  inventing a weaker candidate elsewhere.
+
+  The port: `Cell`'s relation branch now renders `<button type="button"
+  className="link-button" onClick={() => onJumpToRecord(field.relationTo,
+  Number(value))}>` when both an `onJumpToRecord` handler and a
+  `field.relationTo` target are present -- reusing the `.link-button`
+  CSS class that already existed in the generated stylesheet from Global
+  Search's own jump links, so no new CSS was needed. `onJumpToRecord` is
+  threaded through every layer that can render a relation cell: `App`'s
+  own `activeEntity.View` call (passing the exact same
+  `setActive(name); setHighlightRecordId(recordId);` handler already
+  built for `GlobalSearch`'s `onJumpToRecord`), the per-entity `View`
+  wrapper (`entities/<Name>.jsx`), `EntityView` (the table), and
+  `BoardCard` (the Kanban board) down to `Cell` itself. Without a jump
+  handler, or when a relation field has no `relationTo` target, a
+  relation cell still falls back to the original plain, non-clickable
+  text -- the same guard the live-preview's own `Cell` in
+  `EntityPanel.tsx` uses.
+
+  Tests: one new test in `codegen.test.ts` covering the real generated
+  `Cell` component's conditional button-vs-plain-text source (both
+  branches), and confirming `onJumpToRecord` is genuinely threaded
+  through `BoardCard`, `EntityView`, the per-entity `View` wrapper, and
+  `App`'s own `activeEntity.View` call -- not just present on the leaf
+  component. Three existing tests needed fixing since they asserted
+  exact regexes against the old `Cell`/`EntityView`/`View` signatures or
+  single-line JSX prop layouts that this round's edits changed the shape
+  of (`function Cell({ field, value, relationLabel })` →
+  `..., onJumpToRecord })`, and two spots where previously-adjacent JSX
+  props landed on separate lines after threading the new prop through) --
+  a direct instance of round 265's own durable lesson about extracting
+  logic from generated code needing a check of existing tests that
+  assumed the old structure.
+
+  Deliberate-break-and-restore: first attempt backed up `codegen.ts`
+  *before* implementing the feature rather than after, so restoring from
+  it after breaking one line wiped out the whole feature, not just the
+  deliberate break -- caught immediately when the full suite came back
+  with 2 failures instead of the expected 1, from `Cell`'s original
+  (pre-port) signature having returned. Redid all six edits, took a
+  fresh backup of the actually-feature-complete file, then re-ran the
+  proof correctly: removed the `setHighlightRecordId(recordId)` call
+  from `App`'s own jump handler -- exactly the new test failed (the
+  regex asserting that exact handler body no longer matched), the other
+  68 `codegen.test.ts` tests stayed green. Restored from the
+  correctly-timed backup, confirmed a byte-identical `diff`, re-confirmed
+  all 69 tests green again.
+
+  Real end-to-end verification against a genuinely built and served
+  standalone exported app -- the strongest possible proof for a codegen
+  change: called `generateExportFiles()` for a real Customer/Order
+  project (Order has a `customerId` relation field), wrote the full
+  multi-file export to a temp directory, ran a genuine `vite build`,
+  spawned the real generated `server.js`, created a real Customer and a
+  real Order referencing it via the exported app's own REST API, then
+  drove real headless Chromium against the real running server: switched
+  to the Order tab, confirmed a real `.link-button` reading "Dana Levi"
+  was present in the customer relation cell, clicked it, and confirmed
+  the app switched to the Customer tab and highlighted (`tr.record-row-
+  highlighted`) exactly the right row. `RESULT: PASS`.
+
+  Full suite green (1001 tests, up from 1000 -- `@forge/api` 255 → 256;
+  `@forge/shared` 11, `@forge/spec-engine` 82, `@forge/db` 93, `@forge/web`
+  559 unchanged) via `npm test` at the repo root.
+
 ## Phase 4
 
 - Template/agent marketplace
