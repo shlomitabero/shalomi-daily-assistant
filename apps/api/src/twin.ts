@@ -249,13 +249,22 @@ const DAY_MS = 24 * 60 * 60 * 1000;
  * entity that USED to get data but has clearly gone stale (a process that
  * quietly stopped, a form nobody fills out anymore) is a genuinely
  * different signal from the existing "unused" observation above, which
- * only catches an entity that never had any data at all.
+ * only catches an entity that never had any data at all. Each stale
+ * entity gets its own jumpableObservations entry (rather than one sentence
+ * naming several at once) so it's clickable straight to that entity's own
+ * tab, matching every other insight in this same list -- see
+ * computeBusinessTwin's own "unused" block for the identical reasoning.
  */
-function computeActivityObservations(db: ForgeDatabase, project: Project, hebrew: boolean): string[] {
+function computeActivityObservations(
+  db: ForgeDatabase,
+  project: Project,
+  hebrew: boolean,
+): { observations: string[]; jumpableObservations: { text: string; entityName: string }[] } {
   const observations: string[] = [];
+  const jumpableObservations: { text: string; entityName: string }[] = [];
   const now = Date.now();
   let recentCount = 0;
-  const staleEntities: string[] = [];
+  const staleEntities: { name: string; label: string }[] = [];
 
   for (const entity of project.spec.entities) {
     const records = listRecords(db, project.id, entity);
@@ -269,7 +278,7 @@ function computeActivityObservations(db: ForgeDatabase, project: Project, hebrew
       if (ageMs <= 7 * DAY_MS) recentCount += 1;
       if (ageMs < newestAgeMs) newestAgeMs = ageMs;
     }
-    if (newestAgeMs > 30 * DAY_MS) staleEntities.push(entity.label ?? entity.name);
+    if (newestAgeMs > 30 * DAY_MS) staleEntities.push({ name: entity.name, label: entity.label ?? entity.name });
   }
 
   if (recentCount > 0) {
@@ -277,15 +286,15 @@ function computeActivityObservations(db: ForgeDatabase, project: Project, hebrew
       hebrew ? `${recentCount} רשומות נוספו בשבוע האחרון.` : `${recentCount} record${recentCount === 1 ? "" : "s"} added in the last week.`,
     );
   }
-  if (staleEntities.length > 0) {
-    const names = staleEntities.join(hebrew ? ", " : ", ");
-    observations.push(
-      hebrew
-        ? `לא נוספו רשומות חדשות ב-30 הימים האחרונים ב: ${names}.`
-        : `No new records added in the last 30 days in: ${names}.`,
-    );
+  for (const e of staleEntities) {
+    jumpableObservations.push({
+      text: hebrew
+        ? `לא נוספו רשומות חדשות ב-30 הימים האחרונים ב"${e.label}".`
+        : `No new records added in the last 30 days in "${e.label}".`,
+      entityName: e.name,
+    });
   }
-  return observations;
+  return { observations, jumpableObservations };
 }
 
 export function computeBusinessTwin(db: ForgeDatabase, project: Project): BusinessTwin {
@@ -323,18 +332,25 @@ export function computeBusinessTwin(db: ForgeDatabase, project: Project): Busine
         entityName: mostActive.name,
       };
     }
-    if (unused.length > 0) {
-      const names = unused.map((e) => e.label).join(hebrew ? ", " : ", ");
-      observations.push(
-        hebrew
-          ? `עדיין אין רשומות ב: ${names} — כדאי לבדוק אם זה בכוונה.`
-          : `No records yet in: ${names} — worth checking whether that's expected.`,
-      );
+    // One jumpableObservations entry per unused entity (rather than one
+    // sentence naming several at once) so each is clickable straight to
+    // that entity's own tab -- before this, this was the only observation
+    // in the whole panel that named a specific entity but gave no way to
+    // jump to it, unlike every other insight in the same list.
+    for (const e of unused) {
+      jumpableObservations.push({
+        text: hebrew
+          ? `עדיין אין רשומות ב"${e.label}" — כדאי לבדוק אם זה בכוונה.`
+          : `No records yet in "${e.label}" — worth checking whether that's expected.`,
+        entityName: e.name,
+      });
     }
     mostLinkedRecord = computeRelationHubObservation(db, project, hebrew);
     jumpableObservations.push(...computeRelationCoverageObservations(db, project, hebrew));
     jumpableObservations.push(...computeDuplicateObservations(db, project, hebrew));
-    observations.push(...computeActivityObservations(db, project, hebrew));
+    const activity = computeActivityObservations(db, project, hebrew);
+    observations.push(...activity.observations);
+    jumpableObservations.push(...activity.jumpableObservations);
   }
 
   return {

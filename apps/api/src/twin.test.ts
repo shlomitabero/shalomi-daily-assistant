@@ -57,7 +57,59 @@ test("computeBusinessTwin identifies the most active entity and unused ones from
     !twin.observations.some((o) => o.includes("לקוחות")),
     "the most-active fact must live only in mostActiveObservation now, not also duplicated into the plain observations array",
   );
-  assert.ok(twin.observations.some((o) => o.includes("תורים")));
+  assert.ok(
+    !twin.observations.some((o) => o.includes("תורים")),
+    "the unused-entity fact must live only in jumpableObservations now, not the plain observations array",
+  );
+  const unusedObservation = twin.jumpableObservations.find((o) => o.text.includes("תורים"));
+  assert.ok(unusedObservation, `expected a jumpable unused-entity observation naming "תורים", got: ${JSON.stringify(twin.jumpableObservations)}`);
+  assert.equal(unusedObservation!.entityName, "Appointment");
+});
+
+/**
+ * New in this round: before, two or more unused entities were folded into
+ * one sentence naming all of them at once ("No records yet in: X, Y"),
+ * which meant it could never be a single clickable jump anyway. Now each
+ * gets its own jumpableObservations entry, exactly like every other insight
+ * in this panel already gets one entry per fact. This is the case that
+ * proves the fix genuinely handles more than one stale/unused entity at
+ * once, not just the single-entity case the test above already covers.
+ */
+test("computeBusinessTwin gives each of several unused entities its own independently-jumpable observation, not one sentence naming all of them", () => {
+  const threeEntityProject: Project = {
+    ...project,
+    spec: {
+      ...project.spec,
+      entities: [
+        ...project.spec.entities,
+        { name: "Invoice", label: "חשבוניות", fields: [{ name: "total", type: "number", required: true }] },
+      ],
+    },
+  };
+  const db = openDatabase(":memory:");
+  applyMigrations(db, threeEntityProject.id, threeEntityProject.spec);
+  // Give Customer at least one record so it's the only non-unused entity;
+  // Appointment and Invoice both stay unused.
+  insertRecord(db, threeEntityProject.id, threeEntityProject.spec.entities[0], { name: "Alice" });
+
+  const twin = computeBusinessTwin(db, threeEntityProject);
+  assert.deepEqual(
+    twin.unused.map((e) => e.name).sort(),
+    ["Appointment", "Invoice"],
+  );
+  const unusedEntityNames = twin.jumpableObservations
+    .filter((o) => o.text.includes("תורים") || o.text.includes("חשבוניות"))
+    .map((o) => o.entityName)
+    .sort();
+  assert.deepEqual(
+    unusedEntityNames,
+    ["Appointment", "Invoice"],
+    `expected one independently-jumpable observation per unused entity, got: ${JSON.stringify(twin.jumpableObservations)}`,
+  );
+  assert.ok(
+    !twin.jumpableObservations.some((o) => o.text.includes("תורים") && o.text.includes("חשבוניות")),
+    "the two unused entities must never be bundled into a single observation's text",
+  );
 });
 
 /**
@@ -449,10 +501,14 @@ test("computeBusinessTwin flags an entity with real records but none added in th
   insertRecord(db, enProject.id, appointment, { title: "New haircut" });
 
   const twin = computeBusinessTwin(db, enProject);
-  const staleObservation = twin.observations.find((o) => o.includes("No new records added in the last 30 days"));
-  assert.ok(staleObservation, `expected a stale-entity observation, got: ${JSON.stringify(twin.observations)}`);
-  assert.ok(staleObservation!.includes("Customers"), `expected the stale Customer entity named, got: "${staleObservation}"`);
-  assert.ok(!staleObservation!.includes("Appointments"), "Appointment has a recent record and must not be flagged stale");
+  const staleObservation = twin.jumpableObservations.find((o) => o.text.includes("No new records added in the last 30 days"));
+  assert.ok(staleObservation, `expected a jumpable stale-entity observation, got: ${JSON.stringify(twin.jumpableObservations)}`);
+  assert.ok(staleObservation!.text.includes("Customers"), `expected the stale Customer entity named, got: "${staleObservation!.text}"`);
+  assert.equal(staleObservation!.entityName, "Customer");
+  assert.ok(
+    !twin.jumpableObservations.some((o) => o.text.includes("Appointments") && o.text.includes("30 days")),
+    "Appointment has a recent record and must not be flagged stale",
+  );
 });
 
 test("computeBusinessTwin phrases the activity observations in Hebrew for a Hebrew description", () => {
@@ -463,5 +519,5 @@ test("computeBusinessTwin phrases the activity observations in Hebrew for a Hebr
   backdateRecord(db, project.id, customer.name, old.id as number, 45);
 
   const twin = computeBusinessTwin(db, project);
-  assert.ok(twin.observations.some((o) => o.includes("לא נוספו רשומות חדשות ב-30 הימים האחרונים")));
+  assert.ok(twin.jumpableObservations.some((o) => o.text.includes("לא נוספו רשומות חדשות ב-30 הימים האחרונים")));
 });
