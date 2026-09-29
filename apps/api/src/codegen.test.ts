@@ -1379,6 +1379,59 @@ test("the exported app includes a real cross-entity global search, ported from t
   assert.match(appJsx, /shortcut-hint/);
 });
 
+/**
+ * The live Forge AI preview's own GlobalSearchPanel.tsx lets a person click
+ * an individual matched row (not just the group's "Go to tab" button) and
+ * land scrolled-to/highlighted on that exact record -- see EntityPanel.tsx's
+ * own highlightRecordId prop and App.tsx's onJumpToRecord handler. The
+ * exported app's GlobalSearch.jsx was otherwise a thorough port (group
+ * navigation, ArrowUp/Down, "Go to tab" all present) but never got this one
+ * record-level jump, so someone using their own deployed app had to re-scan
+ * the whole table for the row they'd already found via search. Round 257.
+ */
+test("the exported app's Global Search can jump to an individual matched record, not just the entity's tab", () => {
+  const files = generateExportFiles(project);
+  const globalSearchJsx = files.find((f) => f.path === "web/src/components/GlobalSearch.jsx")!.content;
+  const entityViewJsx = files.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+  const appJsx = files.find((f) => f.path === "web/src/App.jsx")!.content;
+  const stylesCss = files.find((f) => f.path === "web/src/styles.css")!.content;
+
+  // GlobalSearch.jsx: each result row is a real clickable button calling
+  // onJumpToRecord with that record's own entity name and id, not just
+  // plain text inside a <li>.
+  assert.match(globalSearchJsx, /export function GlobalSearch\(\{ entities, onClose, onJumpToEntity, onJumpToRecord \}\)/);
+  assert.match(globalSearchJsx, /onClick=\{\(\) => onJumpToRecord\(result\.entityName, record\.id\)\}/);
+  assert.match(globalSearchJsx, /className="link-button global-search-hit-button"/);
+
+  // EntityView.jsx: accepts highlightRecordId/onHighlightHandled, applies
+  // it (clearing search, switching to table view) once records have
+  // loaded, fades it out after a few seconds, and marks + scrolls to the
+  // real highlighted row via a real data-record-id attribute.
+  assert.match(entityViewJsx, /export function EntityView\(\{ entity, highlightRecordId, onHighlightHandled \}\)/);
+  assert.match(entityViewJsx, /if \(highlightRecordId == null \|\| loading\) return;/);
+  assert.match(entityViewJsx, /setHighlightedRecordId\(highlightRecordId\);/);
+  assert.match(entityViewJsx, /onHighlightHandled\?\.\(\);/);
+  assert.match(entityViewJsx, /setTimeout\(\(\) => setHighlightedRecordId\(null\), 4000\)/);
+  assert.match(entityViewJsx, /data-record-id=\{r\.id\} className=\{r\.id === highlightedRecordId \? "record-row-highlighted" : undefined\}/);
+  assert.match(entityViewJsx, /querySelector\(`tr\[data-record-id="\$\{highlightedRecordId\}"\]`\)/);
+
+  // App.jsx: owns the highlightRecordId state, threads it into the active
+  // entity's View, and GlobalSearch's onJumpToRecord sets both the active
+  // tab and the record to highlight in one go, mirroring App.tsx's own
+  // onJumpToRecord handlers.
+  assert.match(appJsx, /const \[highlightRecordId, setHighlightRecordId\] = useState\(null\);/);
+  assert.match(appJsx, /highlightRecordId=\{highlightRecordId\} onHighlightHandled=\{\(\) => setHighlightRecordId\(null\)\}/);
+  assert.match(appJsx, /onJumpToRecord=\{\(name, recordId\) => \{\s*setActive\(name\);\s*setHighlightRecordId\(recordId\);\s*setShowSearch\(false\);\s*\}\}/);
+
+  // entities/Customer.jsx's own View forwards the new props through to
+  // EntityView rather than swallowing them.
+  const customerJsx = files.find((f) => f.path === "web/src/entities/Customer.jsx")!.content;
+  assert.match(customerJsx, /export default function View\(\{ highlightRecordId, onHighlightHandled \}\)/);
+  assert.match(customerJsx, /highlightRecordId=\{highlightRecordId\} onHighlightHandled=\{onHighlightHandled\}/);
+
+  assert.match(stylesCss, /\.record-row-highlighted, \.record-row-highlighted:hover \{ background: var\(--accent-soft\)/);
+});
+
 // Regression test: runSearch used to await a bare
 // Promise.all(entities.map(searchEntity)) -- one entity whose records
 // failed to load (a transient network blip, a cold-starting backend)

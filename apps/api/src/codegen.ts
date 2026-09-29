@@ -1560,13 +1560,14 @@ function FieldInput({ entity, field, value, onChange, relatedEntity, relatedEnti
 const UNDO_WINDOW_MS = 5000;
 
 /** Shared list + form UI used by every entity's own component file. */
-export function EntityView({ entity }) {
+export function EntityView({ entity, highlightRecordId, onHighlightHandled }) {
   const [records, setRecords] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [form, setForm] = useState(() => emptyForm(entity));
   const [editingId, setEditingId] = useState(null);
   const [search, setSearch] = useState("");
+  const [highlightedRecordId, setHighlightedRecordId] = useState(null);
   const [sortKeys, setSortKeys] = useState([]);
   const [viewMode, setViewMode] = useState("table");
   const [calendarMonth, setCalendarMonth] = useState(() => new Date());
@@ -1668,6 +1669,30 @@ export function EntityView({ entity }) {
     refresh();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [entity.name]);
+
+  // Applies an incoming highlightRecordId (from GlobalSearch's own per-row
+  // "jump to record" click) once this entity's records have actually
+  // loaded -- switching to table view and clearing any leftover search
+  // filter, since either could otherwise hide the very row this was
+  // supposed to reveal. Reports back via onHighlightHandled so the parent
+  // clears its own copy and a second click on the same record can
+  // re-trigger it. Mirrors the live Forge AI preview's own EntityPanel.tsx.
+  useEffect(() => {
+    if (highlightRecordId == null || loading) return;
+    setSearch("");
+    setViewMode("table");
+    setHighlightedRecordId(highlightRecordId);
+    onHighlightHandled?.();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [highlightRecordId, loading]);
+
+  // Auto-fades the highlight a few seconds after it lands, so an old
+  // "jump to record" doesn't stay visually marked forever.
+  useEffect(() => {
+    if (highlightedRecordId == null) return;
+    const timer = setTimeout(() => setHighlightedRecordId(null), 4000);
+    return () => clearTimeout(timer);
+  }, [highlightedRecordId]);
 
   // Fires the real DELETE request for a record the undo window has already
   // closed on (either the timer ran out, or a newer delete pre-empted it) --
@@ -1790,6 +1815,15 @@ export function EntityView({ entity }) {
     const filtered = records.filter((r) => matchesSearch(r, entity.fields, search));
     return sortRecordsMulti(filtered, sortKeys);
   }, [records, entity.fields, search, sortKeys]);
+
+  // Scrolls the just-highlighted row into view once it's actually in the
+  // rendered table -- runs after visibleRecords updates too, since the row
+  // doesn't exist in the DOM until then.
+  useEffect(() => {
+    if (highlightedRecordId == null) return;
+    const row = document.querySelector(\`tr[data-record-id="\${highlightedRecordId}"]\`);
+    row?.scrollIntoView?.({ behavior: "smooth", block: "center" });
+  }, [highlightedRecordId, visibleRecords]);
 
   async function handleSubmit(e) {
     e.preventDefault();
@@ -2323,7 +2357,7 @@ export function EntityView({ entity }) {
                 </thead>
                 <tbody>
                   {visibleRecords.map((r) => (
-                    <tr key={r.id}>
+                    <tr key={r.id} data-record-id={r.id} className={r.id === highlightedRecordId ? "record-row-highlighted" : undefined}>
                       <td className="select-col">
                         <input type="checkbox" checked={selectedIds.has(r.id)} onChange={() => toggleSelected(r.id)} />
                       </td>
@@ -2415,7 +2449,7 @@ async function searchEntity(entity, query) {
  * group is highlighted. Enter with nothing highlighted still submits the
  * form as a normal search.
  */
-export function GlobalSearch({ entities, onClose, onJumpToEntity }) {
+export function GlobalSearch({ entities, onClose, onJumpToEntity, onJumpToRecord }) {
   const [query, setQuery] = useState("");
   const [results, setResults] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -2512,7 +2546,15 @@ export function GlobalSearch({ entities, onClose, onJumpToEntity }) {
                 </div>
                 <ul className="global-search-hits">
                   {result.sample.map((record) => (
-                    <li key={record.id}>{recordDisplayLabel(entities.find((e) => e.name === result.entityName), record)}</li>
+                    <li key={record.id}>
+                      <button
+                        type="button"
+                        className="link-button global-search-hit-button"
+                        onClick={() => onJumpToRecord(result.entityName, record.id)}
+                      >
+                        {recordDisplayLabel(entities.find((e) => e.name === result.entityName), record)}
+                      </button>
+                    </li>
                   ))}
                 </ul>
                 {result.totalMatches > result.sample.length && (
@@ -2555,8 +2597,8 @@ export const entity = {
   fields: ${fieldsJson},
 };
 
-export default function View() {
-  return <EntityView entity={entity} />;
+export default function View({ highlightRecordId, onHighlightHandled }) {
+  return <EntityView entity={entity} highlightRecordId={highlightRecordId} onHighlightHandled={onHighlightHandled} />;
 }
 `;
 }
@@ -2618,6 +2660,7 @@ function prefersDarkFromSystem() {
 export default function App() {
   const [active, setActive] = useState(ENTITIES[0]?.name ?? null);
   const [showSearch, setShowSearch] = useState(false);
+  const [highlightRecordId, setHighlightRecordId] = useState(null);
   const [theme, setTheme] = useState(() => detectInitialTheme(readStoredTheme(), prefersDarkFromSystem()));
   const activeEntity = ENTITIES.find((e) => e.name === active);
 
@@ -2680,13 +2723,20 @@ export default function App() {
           </button>
         ))}
       </nav>
-      {activeEntity && <activeEntity.View />}
+      {activeEntity && (
+        <activeEntity.View highlightRecordId={highlightRecordId} onHighlightHandled={() => setHighlightRecordId(null)} />
+      )}
       {showSearch && (
         <GlobalSearch
           entities={ENTITIES}
           onClose={() => setShowSearch(false)}
           onJumpToEntity={(name) => {
             setActive(name);
+            setShowSearch(false);
+          }}
+          onJumpToRecord={(name, recordId) => {
+            setActive(name);
+            setHighlightRecordId(recordId);
             setShowSearch(false);
           }}
         />
@@ -2892,6 +2942,8 @@ th, td { text-align: start; padding: 8px 10px; border-bottom: 1px solid var(--bo
 .global-search-entity-label { font-weight: 700; }
 .global-search-group-header button.small { margin-inline-start: auto; padding: 4px 10px; font-size: 13px; }
 .global-search-hits { margin: 10px 0 0; padding-inline-start: 20px; display: flex; flex-direction: column; gap: 6px; font-size: 14.5px; }
+.global-search-hit-button { display: block; width: 100%; text-align: start; white-space: normal; }
+.record-row-highlighted, .record-row-highlighted:hover { background: var(--accent-soft); transition: background 1.5s ease; }
 `;
 }
 
