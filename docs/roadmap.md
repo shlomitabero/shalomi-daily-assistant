@@ -14996,6 +14996,99 @@ not a single "make it perfect" claim.
   `@forge/shared` 11, `@forge/spec-engine` 82, `@forge/db` 93, `@forge/api`
   253 unchanged) via `npm test` at the repo root.
 
+- **Round 265 -- round 264's calendar ICS export is now also available in
+  the exported/standalone codegen app, not just the live preview.** This
+  round's Explore survey investigated the pre-identified "port to
+  codegen" candidate concretely rather than assuming it was real: grepped
+  `apps/api/src/codegen.ts` for `.ics`/`VCALENDAR`/`text/calendar` (zero
+  hits), located the exported app's own `CalendarView` component (ported
+  to codegen back in round 50), and confirmed it genuinely had no export
+  action of any kind -- only prev/next/Today navigation, day-click-to-add,
+  and drag-to-reschedule. Someone who deploys their own exported
+  booking/appointment app got a calendar tab with no way to get a month
+  of records into their phone's real calendar, even though the live
+  preview sitting right next to it in this same session already could.
+  The survey also checked and ruled out a print-feature port (a
+  comparably-sized gap, but a paper printout is less useful to שלומי than
+  a real calendar file) and re-swept WhatsApp/GlobalSearch/History/
+  Collaborators/BusinessTwin/Shortcuts/App.tsx-home, all already closed.
+
+  `apps/api/src/codegen.ts` is a large template-literal-based code
+  generator: the entire exported `web/src/components/EntityView.jsx`
+  file's source text lives inside one ~1700-line template literal in
+  `renderEntityViewJsx`, meaning porting round 264's `calendarIcs.ts`
+  meant re-encoding it as plain JS (no TypeScript types, since the
+  exported app has none) with every backslash, backtick, and `${`
+  doubled/escaped so the *outer* template literal in codegen.ts preserves
+  them as literal text in the *generated* file rather than interpreting
+  them itself. Wrote the target plain-JS text first, verified the exact
+  escaping rule against several already-correct examples already in the
+  file (e.g. `` a.download = \`${entity.name}.csv\`; `` in the existing
+  CSV handler), then applied a small Node script to transform the ported text
+  (double every backslash, escape every backtick, escape every `${`)
+  rather than hand-escaping ~90 lines and risking a subtle mistake.
+  Verified the transform was correct by actually calling
+  `generateExportFiles()` and running the result through esbuild's real
+  JSX transform before ever touching the test suite.
+
+  The port itself: `buildCalendarIcs` and its RFC 5545 helpers
+  (`icsPad2`, `formatIcsDate`, `formatIcsTimestamp`, `icsEscapeText`,
+  `foldIcsLine`) inserted right after the existing `buildCalendarMonth`;
+  a new `handleExportIcs` beside the existing `handleExportCsv`; a
+  `.ics-export-btn` button in the toolbar, visible only in calendar view,
+  disabled when the visible month has no records (via a new
+  `icsMonthRecords` memo mirroring the live-preview's own); and matching
+  `.ics-export-btn` CSS beside `.csv-export-btn`. Also extracted
+  `CalendarView`'s own inline day-chip-label logic (previously duplicated
+  3 lines of `pickDisplayField` handling directly in the component) into
+  a shared `calendarLabelField(entity, dateField)` helper, so the new ICS
+  export picks exactly the same label field the day chips already show,
+  rather than re-deriving it separately and risking the two disagreeing.
+
+  Tests: 2 new tests in `codegen.test.ts` -- one static check that every
+  new function/marker (`buildCalendarIcs`, `icsEscapeText`,
+  `foldIcsLine`, `handleExportIcs`, `ics-export-btn`, the Blob
+  `text/calendar` type, the CSS rule) is genuinely present in real
+  generated output; one that extracts the real generated
+  `buildCalendarIcs` and its dependencies via regex (the same
+  extract-and-`new Function`-execute pattern this file already uses for
+  `buildCalendarMonth`/`isSameCalendarMonth`/etc.) and actually calls it,
+  confirming the exclusive-end `DTEND` and RFC 5545 comma-escaping both
+  work in the real generated code, not just that the source text looks
+  right. One existing test (`the exported CalendarView picks its
+  day-chip label via pickDisplayField...`) needed updating since the
+  `calendarLabelField` extraction moved its direct `pickDisplayField`
+  call one level of indirection away -- fixed to check the new
+  `calendarLabelField` call site and that the helper itself still calls
+  `pickDisplayField`.
+
+  Deliberate-break-and-restore: removed the same `end.setDate(...)`
+  next-day line round 264 tested, this time in `codegen.ts`'s ported copy
+  -- exactly the new exclusive-end-`DTEND` test failed
+  (`DTEND;VALUE=DATE:20260315` instead of `20260316`), the rest of
+  `codegen.test.ts`'s 68 tests stayed green. Restored from a scratchpad
+  backup, confirmed a byte-identical `diff`, re-confirmed both new tests
+  green again.
+
+  Real end-to-end verification -- the strongest possible proof for a
+  codegen change: called `generateExportFiles()` for a real "Appointment"
+  entity, wrote the full multi-file export to a temp directory, ran a
+  genuine `vite build` (the exact command the exported app's own
+  `package.json` promises), spawned the real generated `server.js`,
+  seeded two real appointments via the exported app's own REST API
+  (including one with a comma in its name specifically to exercise
+  escaping), then drove real headless Chromium against the real running
+  server: switched to calendar view, confirmed the ICS button was
+  enabled with 2 visible chips, clicked it, captured Playwright's real
+  `download` event, and read the actual downloaded file -- a well-formed
+  `BEGIN:VCALENDAR`...`END:VCALENDAR` with exactly 2 `VEVENT`s, correct
+  `DTEND` (next day), and `SUMMARY:Wedding\, & Co` showing the comma
+  correctly backslash-escaped. `RESULT: PASS`.
+
+  Full suite green (1000 tests, up from 998 -- `@forge/api` 253 → 255;
+  `@forge/shared` 11, `@forge/spec-engine` 82, `@forge/db` 93, `@forge/web`
+  559 unchanged) via `npm test` at the repo root.
+
 ## Phase 4
 
 - Template/agent marketplace
