@@ -14920,6 +14920,82 @@ not a single "make it perfect" claim.
   `@forge/web` 548 → 550; `@forge/shared` 11, `@forge/spec-engine` 82,
   `@forge/api` 253 unchanged) via `npm test` at the repo root.
 
+- **Round 264 -- the entity calendar view gets a real "Export to Calendar
+  (ICS)" button, so a month of appointments or bookings can be dropped
+  straight into a phone's real calendar app.** This round's Explore
+  survey checked HistoryPanel, GlobalSearchPanel, CollaboratorsPanel,
+  BusinessTwinPanel, ChangePasswordPanel, AuthScreen, ShortcutsPanel,
+  DeleteAccountPanel, and BuildProgress first -- all already fully
+  saturated with copy/download/delete/persistence features from earlier
+  rounds -- before confirming, via a repo-wide grep for
+  `.ics`/`VCALENDAR`/`text/calendar`, that CalendarView
+  (`EntityPanel.tsx`) had genuinely zero "take it with you" action of its
+  own: every other read-heavy panel (Business Twin, WhatsApp log, Time
+  Machine, Global Search) already got a Download+Copy pair in earlier
+  rounds, but the calendar view's only export was CSV of the raw table --
+  useless for actually getting a month of bookings into Google
+  Calendar/Outlook/a phone's calendar app.
+
+  New file `apps/web/src/calendarIcs.ts` builds a real RFC 5545 `.ics`
+  calendar client-side (no backend change needed -- the records are
+  already loaded): one all-day `VEVENT` per record currently shown in the
+  calendar grid (the active month, respecting whatever search/filter is
+  on, via a new `icsMonthRecords` memo in `EntityPanel.tsx` built the same
+  way `CalendarView`'s own grid already is), with `DTSTART`/`DTEND` as the
+  record's date and the next day (RFC 5545's exclusive-end convention for
+  a single-day all-day event), `SUMMARY` from the calendar chip's own
+  label field, and every other field folded into `DESCRIPTION` as "Label:
+  value" lines -- a relation field resolves to the related record's real
+  display label via the existing `relationDisplayLabel`, never a raw
+  foreign-key id. Handles the two correctness details a naive
+  string-template `.ics` writer would get wrong: RFC 5545 §3.3.11 TEXT
+  escaping (backslash, semicolon, comma, newline) and §3.1 line folding
+  (any content line over 75 octets needs a CRLF + single-space
+  continuation, or a strict calendar parser can reject or truncate it).
+  The new "📅 Export to Calendar (ICS)" button sits beside the existing
+  CSV export button, visible only in calendar view, and disables itself
+  when the currently-shown month genuinely has no records -- not just
+  when the whole entity is empty, since CSV export's own disabled check
+  only needed the latter.
+
+  Tests: 8 new unit tests in `calendarIcs.test.ts` covering the
+  VCALENDAR wrapper, correct next-day exclusive `DTEND`, `SUMMARY`/`UID`
+  correctness, `DESCRIPTION` correctly excluding the date/label fields
+  while including every other one, relation-field label resolution
+  (asserting the real name appears and the raw id does not), skipping a
+  record with a missing/unparseable date instead of emitting a broken
+  event, RFC 5545 TEXT escaping, and line folding at the 75-octet
+  boundary. Plus one new `EntityPanel.test.ts` real-render test
+  confirming the button never appears in table view, starts enabled when
+  the current month has a record, disables itself after paging to an
+  empty month, and re-enables after returning to the current month via
+  the existing "Today" button.
+
+  Deliberate-break-and-restore: removed the `end.setDate(end.getDate() +
+  1)` line (the next-day DTEND fix) -- exactly the DTSTART/DTEND test
+  failed (`DTEND;VALUE=DATE:20260315` instead of `20260316`), the other 7
+  `calendarIcs.test.ts` tests stayed green. Restored from a scratchpad
+  backup, confirmed a byte-identical `diff`, and re-confirmed all 8 green
+  again.
+
+  Real-browser verification against the live dev server: signed up,
+  built "ניהול אירועים לעסק, כנסים וחתונות" (event management, an idea
+  that reliably triggers spec-engine's built-in Event entity: name/date/
+  venue/capacity/status), opened the Event tab, confirmed the ICS button
+  is genuinely absent in table view, switched to calendar view, confirmed
+  it appears there enabled (the two auto-seeded example events both land
+  within the current month), clicked it, captured the real Playwright
+  `download` event, and read the actual downloaded file: a well-formed
+  `BEGIN:VCALENDAR`...`END:VCALENDAR` with one `VEVENT` per visible chip,
+  real `DTSTART;VALUE=DATE:`/`DTEND;VALUE=DATE:` pairs, and real Hebrew
+  content in both `SUMMARY` ("חתונה") and `DESCRIPTION` (venue/capacity/
+  status field labels correctly resolved, no `undefined`/`null` leakage).
+  `RESULT: PASS`.
+
+  Full suite green (998 tests, up from 989 -- `@forge/web` 550 → 559;
+  `@forge/shared` 11, `@forge/spec-engine` 82, `@forge/db` 93, `@forge/api`
+  253 unchanged) via `npm test` at the repo root.
+
 ## Phase 4
 
 - Template/agent marketplace
