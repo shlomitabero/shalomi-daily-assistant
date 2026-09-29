@@ -318,6 +318,100 @@ test("sortRecordsMulti returns records unchanged (same reference) when given no 
   assert.equal(sortRecordsMulti(records, []), records);
 });
 
+/**
+ * New in this round: a relation column's own table cell visibly shows the
+ * related record's resolved display label (e.g. "Dana Levi"), not the raw
+ * stored foreign-key id -- but compareValues sorted on the raw id, so
+ * clicking that header shuffled rows by an internal number no one could
+ * see, looking broken/random. Same root cause and fix shape as round 271's
+ * matchesSearch relation fix. fields/allEntities/relatedRecords are
+ * optional so a caller with no relation data on hand (or the plain
+ * numbers/strings/booleans tests above) still gets the previous,
+ * raw-value sort instead of a required-but-unavailable argument.
+ */
+test("sortRecords sorts a relation field by its related record's display label, not the raw foreign-key id", () => {
+  const customer: Entity = { name: "Customer", fields: [{ name: "name", type: "text", required: true }] };
+  const orderFields: Field[] = [{ name: "customerId", type: "relation", required: true, relationTo: "Customer" }];
+  // Customer ids are deliberately assigned in REVERSE alphabetical order of
+  // their names (id 1 = "Zed", the alphabetically-last name; id 3 = "Abe",
+  // the alphabetically-first) -- if this test's fixture instead happened to
+  // let ascending id order coincide with ascending name order, a version of
+  // sortRecords that never resolved relations at all (still sorting by the
+  // raw id) would pass it too, silently proving nothing. Sorting ascending
+  // by raw id here gives exactly the opposite order of sorting ascending by
+  // resolved name, so only a real fix can produce the expected result.
+  const records = [
+    { id: 1, customerId: 1 }, // Zed
+    { id: 2, customerId: 2 }, // Mona
+    { id: 3, customerId: 3 }, // Abe
+  ];
+  const allEntities = [customer];
+  const relatedRecords = {
+    Customer: [
+      { id: 1, name: "Zed" },
+      { id: 2, name: "Mona" },
+      { id: 3, name: "Abe" },
+    ],
+  };
+  const sorted = sortRecords(records, "customerId", "asc", orderFields, allEntities, relatedRecords);
+  assert.deepEqual(
+    sorted.map((r) => r.id),
+    [3, 2, 1],
+    "alphabetical by resolved name (Abe, Mona, Zed), not numeric by the raw stored id (1, 2, 3)",
+  );
+});
+
+test("sortRecords falls back to sorting a relation field by its raw id when no allEntities/relatedRecords are given", () => {
+  const orderFields: Field[] = [{ name: "customerId", type: "relation", required: true, relationTo: "Customer" }];
+  const records = [
+    { id: 1, customerId: 3 },
+    { id: 2, customerId: 1 },
+  ];
+  const sorted = sortRecords(records, "customerId", "asc", orderFields);
+  assert.deepEqual(sorted.map((r) => r.customerId), [1, 3]);
+});
+
+test("sortRecordsMulti resolves a relation key to its display label too, composing correctly with a non-relation tiebreaker key", () => {
+  const courier: Entity = { name: "Courier", fields: [{ name: "name", type: "text", required: true }] };
+  const orderFields: Field[] = [
+    { name: "courierId", type: "relation", required: true, relationTo: "Courier" },
+    { name: "total", type: "number", required: true },
+  ];
+  // Courier id 1 is named "Zed" (alphabetically last) and id 2 is "Abe"
+  // (alphabetically first) -- reversed from raw-id order, same reasoning as
+  // the sortRecords test above: this way a version that never resolved the
+  // relation (sorting by raw id 1 before 2) would order the records
+  // differently from a version that correctly sorts by name (Abe before
+  // Zed), so this fixture can actually tell the two apart.
+  const records = [
+    { id: 1, courierId: 1, total: 50 }, // Zed
+    { id: 2, courierId: 2, total: 10 }, // Abe
+    { id: 3, courierId: 2, total: 20 }, // Abe
+  ];
+  const allEntities = [courier];
+  const relatedRecords = {
+    Courier: [
+      { id: 1, name: "Zed" },
+      { id: 2, name: "Abe" },
+    ],
+  };
+  const sorted = sortRecordsMulti(
+    records,
+    [
+      { field: "courierId", direction: "asc" },
+      { field: "total", direction: "asc" },
+    ],
+    orderFields,
+    allEntities,
+    relatedRecords,
+  );
+  assert.deepEqual(
+    sorted.map((r) => r.id),
+    [2, 3, 1],
+    "Abe's two orders first (resolved name), tie-broken by total ascending, then Zed's order",
+  );
+});
+
 test("findBoardField prefers a field literally named status/stage over other enum fields", () => {
   const fields: Field[] = [
     { name: "priority", type: "enum", required: true, enumValues: ["Low", "High"] },

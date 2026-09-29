@@ -1434,7 +1434,7 @@ test("the exported EntityView renders a real Undo toast after a single-record de
 test("the exported EntityView's sortRecordsMulti sorts by several fields in priority order, breaking ties with later keys", () => {
   const entityViewJsx = generateExportFiles(project).find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
   const compareSrc = entityViewJsx.match(/function compareValues\(a, b\) \{[\s\S]*?\n\}\n/)?.[0];
-  const sortSrc = entityViewJsx.match(/export function sortRecordsMulti\(records, sortKeys\) \{[\s\S]*?\n\}\n/)?.[0]?.replace("export ", "");
+  const sortSrc = entityViewJsx.match(/export function sortRecordsMulti\(records, sortKeys, fields, relatedRecords\) \{[\s\S]*?\n\}\n/)?.[0]?.replace("export ", "");
   assert.ok(compareSrc, "expected to find compareValues in generated output");
   assert.ok(sortSrc, "expected to find sortRecordsMulti in generated output");
 
@@ -2498,6 +2498,85 @@ test("the exported EntityView's matchesSearch resolves a relation field to its r
 
   assert.equal(matchesSearch(order, orderFields, "dana", relatedRecords), true);
   assert.equal(matchesSearch(order, orderFields, "9", relatedRecords), false, "the raw foreign-key id is never shown on screen, so it must not match");
+});
+
+/**
+ * New in this round: the exported app's own sortRecordsMulti had the same
+ * gap as matchesSearch above -- a relation column's cell shows the related
+ * record's resolved label, but clicking that header sorted by the raw
+ * stored foreign-key id. Runs the real generated sortRecordsMulti (plus
+ * the real relationDisplayLabel it depends on) against real relation
+ * values whose id order and name order genuinely disagree: courier
+ * names are assigned in REVERSE alphabetical order of their ids (id 1 =
+ * "Zed", id 3 = "Abe") -- if they had instead happened to be alphabetical
+ * in id order, ascending-by-raw-id and ascending-by-resolved-name would
+ * produce the same row order, and this test would pass even against
+ * unfixed code that never resolved the relation at all.
+ */
+test("the exported EntityView's sortRecordsMulti resolves a relation field to its related record's display label, not the raw foreign-key id", () => {
+  const withRelation: Project = {
+    ...project,
+    spec: {
+      ...project.spec,
+      entities: [
+        ...project.spec.entities,
+        { name: "Courier", label: "Courier", fields: [{ name: "name", label: "Name", type: "text", required: true }] },
+        {
+          name: "Order",
+          label: "Order",
+          fields: [
+            { name: "item", label: "Item", type: "text", required: true },
+            { name: "courierId", label: "Assigned Courier", type: "relation", required: false, relationTo: "Courier" },
+          ],
+        },
+      ],
+    },
+  };
+  const entityViewJsx = generateExportFiles(withRelation).find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+
+  const allEntitiesSrc = entityViewJsx.match(/const ALL_ENTITIES = [\s\S]*?;\n/)?.[0];
+  const displayFieldHintsSrc = entityViewJsx.match(/const DISPLAY_FIELD_NAME_HINTS = .*;\n/)?.[0];
+  const pickDisplayFieldSrc = entityViewJsx.match(/export function pickDisplayField\([\s\S]*?\n\}\n/)?.[0]?.replace("export ", "");
+  const recordDisplayLabelSrc = entityViewJsx.match(/export function recordDisplayLabel\([\s\S]*?\n\}\n/)?.[0]?.replace("export ", "");
+  const relationDisplayLabelSrc = entityViewJsx.match(/function relationDisplayLabel\([\s\S]*?\n\}\n/)?.[0];
+  const compareValuesSrc = entityViewJsx.match(/function compareValues\([\s\S]*?\n\}\n/)?.[0];
+  const resolveSortValueSrc = entityViewJsx.match(/function resolveSortValue\([\s\S]*?\n\}\n/)?.[0];
+  const sortRecordsMultiSrc = entityViewJsx.match(/export function sortRecordsMulti\([\s\S]*?\n\}\n/)?.[0]?.replace("export ", "");
+  assert.ok(
+    allEntitiesSrc &&
+      displayFieldHintsSrc &&
+      pickDisplayFieldSrc &&
+      recordDisplayLabelSrc &&
+      relationDisplayLabelSrc &&
+      compareValuesSrc &&
+      resolveSortValueSrc &&
+      sortRecordsMultiSrc,
+    "expected to find ALL_ENTITIES/DISPLAY_FIELD_NAME_HINTS/pickDisplayField/recordDisplayLabel/relationDisplayLabel/compareValues/resolveSortValue/sortRecordsMulti in generated output",
+  );
+
+  const sortRecordsMulti = new Function(
+    `${allEntitiesSrc}\n${displayFieldHintsSrc}\n${pickDisplayFieldSrc}\n${recordDisplayLabelSrc}\n${relationDisplayLabelSrc}\n${compareValuesSrc}\n${resolveSortValueSrc}\n${sortRecordsMultiSrc}\nreturn sortRecordsMulti;`,
+  )() as (records: { id: number }[], sortKeys: { field: string; direction: string }[], fields: unknown[], relatedRecords: unknown) => { id: number }[];
+
+  const orderFields = [{ name: "item", type: "text" }, { name: "courierId", type: "relation", relationTo: "Courier" }];
+  const records = [
+    { id: 1, courierId: 1 }, // Zed
+    { id: 2, courierId: 2 }, // Mona
+    { id: 3, courierId: 3 }, // Abe
+  ];
+  const relatedRecords = {
+    Courier: [
+      { id: 1, name: "Zed" },
+      { id: 2, name: "Mona" },
+      { id: 3, name: "Abe" },
+    ],
+  };
+  const sorted = sortRecordsMulti(records, [{ field: "courierId", direction: "asc" }], orderFields, relatedRecords);
+  assert.deepEqual(
+    sorted.map((r) => r.id),
+    [3, 2, 1],
+    "alphabetical by resolved courier name (Abe, Mona, Zed), not numeric by the raw stored id (1, 2, 3)",
+  );
 });
 
 // Ported from the Forge AI live preview's EntityPanel.tsx (round 206):

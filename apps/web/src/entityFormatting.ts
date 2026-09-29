@@ -232,10 +232,44 @@ function compareValues(a: unknown, b: unknown): number {
   return String(a).localeCompare(String(b));
 }
 
+/**
+ * A relation field's own stored value is a foreign-key id, but the column
+ * sorts on the label shown in the cell (e.g. "Dana Levi") -- otherwise
+ * clicking that header sorts by an internal number no one can see, which
+ * looks broken/random. Mirrors matchesSearch's own optional
+ * `fields`/`allEntities`/`relatedRecords` params (round 271): a caller
+ * with no relation data on hand (or a plain unit test) still gets the
+ * previous, raw-value sort instead of a required-but-unavailable argument.
+ */
+function resolveSortValue(
+  fieldName: string,
+  value: unknown,
+  fields?: Field[],
+  allEntities?: Entity[],
+  relatedRecords?: RelatedRecordsByEntity,
+): unknown {
+  if (!fields || !allEntities || !relatedRecords) return value;
+  const field = fields.find((f) => f.name === fieldName);
+  if (field?.type !== "relation") return value;
+  return relationDisplayLabel(field, value, allEntities, relatedRecords);
+}
+
 /** Sorts a copy of `records` by `field.name`; returns `records` unchanged (same reference) when `sortField` is null. */
-export function sortRecords(records: EntityRecord[], sortField: string | null, direction: SortDirection): EntityRecord[] {
+export function sortRecords(
+  records: EntityRecord[],
+  sortField: string | null,
+  direction: SortDirection,
+  fields?: Field[],
+  allEntities?: Entity[],
+  relatedRecords?: RelatedRecordsByEntity,
+): EntityRecord[] {
   if (!sortField) return records;
-  const sorted = [...records].sort((a, b) => compareValues(a[sortField], b[sortField]));
+  const sorted = [...records].sort((a, b) =>
+    compareValues(
+      resolveSortValue(sortField, a[sortField], fields, allEntities, relatedRecords),
+      resolveSortValue(sortField, b[sortField], fields, allEntities, relatedRecords),
+    ),
+  );
   return direction === "desc" ? sorted.reverse() : sorted;
 }
 
@@ -254,11 +288,20 @@ export interface SortKey {
  * key, which is wrong whenever two keys don't share the same direction.
  * Returns `records` unchanged (same reference) when `sortKeys` is empty.
  */
-export function sortRecordsMulti(records: EntityRecord[], sortKeys: SortKey[]): EntityRecord[] {
+export function sortRecordsMulti(
+  records: EntityRecord[],
+  sortKeys: SortKey[],
+  fields?: Field[],
+  allEntities?: Entity[],
+  relatedRecords?: RelatedRecordsByEntity,
+): EntityRecord[] {
   if (sortKeys.length === 0) return records;
   return [...records].sort((a, b) => {
     for (const { field, direction } of sortKeys) {
-      const cmp = compareValues(a[field], b[field]);
+      const cmp = compareValues(
+        resolveSortValue(field, a[field], fields, allEntities, relatedRecords),
+        resolveSortValue(field, b[field], fields, allEntities, relatedRecords),
+      );
       if (cmp !== 0) return direction === "desc" ? -cmp : cmp;
     }
     return 0;

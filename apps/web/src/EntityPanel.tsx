@@ -1002,7 +1002,7 @@ export function EntityPanel({
     const matched = records.filter((r) => matchesSearch(r, entity.fields, search, allEntities, relatedRecords));
     const filtered =
       boardField && statusFilter ? matched.filter((r) => String(r[boardField.name] ?? "") === statusFilter) : matched;
-    return sortRecordsMulti(filtered, sortKeys);
+    return sortRecordsMulti(filtered, sortKeys, entity.fields, allEntities, relatedRecords);
   }, [records, entity.fields, search, statusFilter, boardField, sortKeys, allEntities, relatedRecords]);
 
   /** Exactly the records the calendar grid's current month is showing -- the same computation handleExportIcs uses, kept separate so the export button can disable itself when the visible month is genuinely empty, not just when the whole entity has no records. */

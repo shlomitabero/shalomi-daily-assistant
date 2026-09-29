@@ -1056,17 +1056,34 @@ function compareValues(a, b) {
   return String(a).localeCompare(String(b));
 }
 
+// A relation field's own stored value is a foreign-key id, but the column
+// sorts on the label shown in the cell (e.g. "Dana Levi") -- otherwise
+// clicking that header sorts by an internal number no one can see, which
+// looks broken/random. Mirrors the live preview's own entityFormatting.ts
+// resolveSortValue/matchesSearch pattern.
+function resolveSortValue(fieldName, value, fields, relatedRecords) {
+  const field = fields.find((f) => f.name === fieldName);
+  if (field?.type !== "relation") return value;
+  return relationDisplayLabel(field, value, relatedRecords);
+}
+
 // Sorts a copy of records by several fields in priority order -- each key
 // after the first only breaks ties the ones before it left standing.
 // Direction is applied per-key inside the comparator (not by reversing the
 // whole result afterward), so an earlier key's own tie-break order never
 // flips when a later key's direction differs from it. Mirrors the live
 // preview's own entityFormatting.ts sortRecordsMulti (round 177).
-export function sortRecordsMulti(records, sortKeys) {
+export function sortRecordsMulti(records, sortKeys, fields, relatedRecords) {
   if (sortKeys.length === 0) return records;
   return [...records].sort((a, b) => {
     for (const { field, direction } of sortKeys) {
-      const cmp = compareValues(a[field], b[field]);
+      const cmp =
+        fields && relatedRecords
+          ? compareValues(
+              resolveSortValue(field, a[field], fields, relatedRecords),
+              resolveSortValue(field, b[field], fields, relatedRecords),
+            )
+          : compareValues(a[field], b[field]);
       if (cmp !== 0) return direction === "desc" ? -cmp : cmp;
     }
     return 0;
@@ -1920,7 +1937,7 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
 
   const visibleRecords = useMemo(() => {
     const filtered = records.filter((r) => matchesSearch(r, entity.fields, search, relatedRecords));
-    return sortRecordsMulti(filtered, sortKeys);
+    return sortRecordsMulti(filtered, sortKeys, entity.fields, relatedRecords);
   }, [records, entity.fields, search, sortKeys, relatedRecords]);
 
   // Exactly the records the calendar grid's current month is showing -- lets

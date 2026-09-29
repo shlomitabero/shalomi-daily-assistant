@@ -2500,6 +2500,84 @@ test("EntityPanel's search box matches a relation field's resolved display label
 });
 
 /**
+ * New in this round: clicking a relation column's header sorted the table
+ * by the raw stored foreign-key id, not the resolved display label the
+ * cell actually shows (e.g. "Abe"/"Mona"/"Zed") -- the same root cause
+ * round 271 already fixed for the search box, now fixed for sort.
+ * Courier ids are deliberately named in REVERSE alphabetical order (id 1
+ * = "Zed", id 3 = "Abe") -- if the courier names had instead happened to
+ * be alphabetical in id order, ascending-by-raw-id and ascending-by-
+ * resolved-name would produce the exact same row order, and this test
+ * would pass even against the old, unfixed code (a real mistake this
+ * round's first draft of this test made before catching it during
+ * deliberate-break-and-restore -- see round 272's roadmap entry). With
+ * the reversal, the two sort orders are opposite, so only a real fix
+ * produces the expected result.
+ */
+test("EntityPanel's relation column header sorts by the related record's resolved display label, not its raw stored id", async () => {
+  await withJsdom(async () => {
+    const orderEntity: Entity = {
+      name: "Order",
+      label: "Order",
+      fields: [
+        { name: "item", label: "Item", type: "text", required: true },
+        { name: "courierId", label: "Courier", type: "relation", relationTo: "Courier", required: false },
+      ],
+    };
+    const courierEntity: Entity = { name: "Courier", label: "Courier", fields: [{ name: "name", label: "Name", type: "text", required: true }] };
+    const courierRelated: EntityRecord[] = [
+      { id: 1, createdAt: "x", name: "Zed" },
+      { id: 2, createdAt: "x", name: "Mona" },
+      { id: 3, createdAt: "x", name: "Abe" },
+    ];
+    const store: EntityRecord[] = [
+      { id: 1, createdAt: "x", item: "Pizza", courierId: 1 }, // Zed
+      { id: 2, createdAt: "x", item: "Burger", courierId: 2 }, // Mona
+      { id: 3, createdAt: "x", item: "Salad", courierId: 3 }, // Abe
+    ];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      if (input === "/api/projects/proj1/entities/Order") {
+        return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      if (input === "/api/projects/proj1/entities/Courier") {
+        return new Response(JSON.stringify({ records: courierRelated }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${init?.method ?? "GET"} ${input}`);
+    }) as typeof fetch;
+    try {
+      renderEntityPanel({ entity: orderEntity, allEntities: [orderEntity, courierEntity] });
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 3);
+      await waitForCondition(() => document.querySelector("table tbody td:nth-child(3)")?.textContent !== "#1");
+
+      const courierHeader = Array.from(document.querySelectorAll("thead th button.sort-header")).find((el) =>
+        /Courier/.test(el.textContent ?? ""),
+      ) as HTMLButtonElement;
+      assert.ok(courierHeader, "expected a sortable 'Courier' column header");
+      fireEvent.click(courierHeader);
+
+      await waitForCondition(() => {
+        const items = Array.from(document.querySelectorAll("table tbody tr")).map(
+          (r) => r.querySelector("td:nth-child(2)")?.textContent,
+        );
+        return items[0] === "Salad" && items[1] === "Burger" && items[2] === "Pizza";
+      });
+
+      const items = Array.from(document.querySelectorAll("table tbody tr")).map(
+        (r) => r.querySelector("td:nth-child(2)")?.textContent,
+      );
+      assert.deepEqual(
+        items,
+        ["Salad", "Burger", "Pizza"],
+        "alphabetical by resolved courier name (Abe, Mona, Zed), not by the raw stored id order (1, 2, 3)",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * A relation field's cell shows a label resolved from a *different*
  * record (relationDisplayLabel), not the field's own raw stored value --
  * isInlineEditableField excludes it for exactly that reason (see
