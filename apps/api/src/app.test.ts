@@ -2311,6 +2311,279 @@ test("adding an entity to a project that's already been built is rejected with E
   });
 });
 
+test("adding a field to an entity appends it with a derived camelCase name, as a plain optional text field", async () => {
+  await withServer(async (baseUrl) => {
+    const token = await signup(baseUrl, "field-add-owner1@example.com");
+    const createRes = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ description: "A CRM with customers and deals." }),
+    });
+    const { project } = (await createRes.json()) as {
+      project: { id: string; spec: { entities: { name: string; fields: { name: string }[] }[] } };
+    };
+    const entityName = project.spec.entities[0].name;
+    const originalFieldCount = project.spec.entities[0].fields.length;
+
+    const res = await fetch(`${baseUrl}/api/projects/${project.id}/entities/${entityName}/fields`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ label: "Phone Number" }),
+    });
+    assert.equal(res.status, 200);
+    const { project: updated } = (await res.json()) as {
+      project: { spec: { entities: { name: string; fields: { name: string; label?: string; type: string; required: boolean }[] }[] } };
+    };
+    const updatedEntity = updated.spec.entities.find((e) => e.name === entityName)!;
+    assert.equal(updatedEntity.fields.length, originalFieldCount + 1);
+    const newField = updatedEntity.fields.at(-1)!;
+    assert.equal(newField.name, "phoneNumber", "the label must derive a camelCase ASCII name, matching deriveFieldName");
+    assert.equal(newField.label, "Phone Number");
+    assert.equal(newField.type, "text");
+    assert.equal(newField.required, false);
+
+    // Adding to the entity a collaborator can also access is the same combined-access
+    // story every other add/remove route in this file already exercises via requireProjectAccess.
+    const otherEntities = updated.spec.entities.filter((e) => e.name !== entityName);
+    assert.deepEqual(otherEntities.map((e) => e.fields.length), project.spec.entities.filter((e) => e.name !== entityName).map((e) => e.fields.length));
+  });
+});
+
+test("adding a blank/whitespace-only field label is rejected with 400 instead of appending an invalid field", async () => {
+  await withServer(async (baseUrl) => {
+    const token = await signup(baseUrl, "field-add-blank@example.com");
+    const createRes = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ description: "A CRM with customers and deals." }),
+    });
+    const { project } = (await createRes.json()) as { project: { id: string; spec: { entities: { name: string; fields: unknown[] }[] } } };
+    const entityName = project.spec.entities[0].name;
+
+    const res = await fetch(`${baseUrl}/api/projects/${project.id}/entities/${entityName}/fields`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ label: "   " }),
+    });
+    assert.equal(res.status, 400);
+    assert.equal(((await res.json()) as { code?: string }).code, "VALIDATION_ERROR");
+
+    const getRes = await fetch(`${baseUrl}/api/projects/${project.id}`, { headers: authHeaders(token) });
+    const { project: unchanged } = (await getRes.json()) as { project: { spec: { entities: { name: string; fields: unknown[] }[] } } };
+    assert.deepEqual(unchanged.spec.entities, project.spec.entities);
+  });
+});
+
+test("adding a field to a non-existent entity 404s with ENTITY_NOT_FOUND", async () => {
+  await withServer(async (baseUrl) => {
+    const token = await signup(baseUrl, "field-add-no-entity@example.com");
+    const createRes = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ description: "A CRM with customers and deals." }),
+    });
+    const { project } = (await createRes.json()) as { project: { id: string } };
+
+    const res = await fetch(`${baseUrl}/api/projects/${project.id}/entities/NoSuchEntity/fields`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ label: "Phone" }),
+    });
+    assert.equal(res.status, 404);
+    assert.equal(((await res.json()) as { code?: string }).code, "ENTITY_NOT_FOUND");
+  });
+});
+
+test("adding a field on a project you have no access to still 404s, the same as any other project route", async () => {
+  await withServer(async (baseUrl) => {
+    const ownerToken = await signup(baseUrl, "field-add-owner2@example.com");
+    const outsiderToken = await signup(baseUrl, "field-add-outsider2@example.com");
+    const createRes = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: authHeaders(ownerToken),
+      body: JSON.stringify({ description: "A CRM with customers and deals." }),
+    });
+    const { project } = (await createRes.json()) as { project: { id: string; spec: { entities: { name: string }[] } } };
+
+    const res = await fetch(`${baseUrl}/api/projects/${project.id}/entities/${project.spec.entities[0].name}/fields`, {
+      method: "POST",
+      headers: authHeaders(outsiderToken),
+      body: JSON.stringify({ label: "Should not be added" }),
+    });
+    assert.equal(res.status, 404);
+  });
+});
+
+test("adding a field to a project that's already been built is rejected with FIELD_ADD_AFTER_BUILD, since the real database column and generated code would never reflect it", async () => {
+  await withServer(async (baseUrl) => {
+    const token = await signup(baseUrl, "field-add-afterbuild@example.com");
+    const createRes = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ description: "A CRM with customers and deals." }),
+    });
+    const { project } = (await createRes.json()) as { project: { id: string; spec: { entities: { name: string }[] } } };
+
+    const buildRes = await fetch(`${baseUrl}/api/projects/${project.id}/build`, {
+      method: "POST",
+      headers: authHeaders(token),
+    });
+    await collectSSE(buildRes);
+
+    const res = await fetch(`${baseUrl}/api/projects/${project.id}/entities/${project.spec.entities[0].name}/fields`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ label: "Phone" }),
+    });
+    assert.equal(res.status, 409);
+    assert.equal(((await res.json()) as { code?: string }).code, "FIELD_ADD_AFTER_BUILD");
+  });
+});
+
+test("removing a field deletes it from the entity's fields list and reports the updated project", async () => {
+  await withServer(async (baseUrl) => {
+    const token = await signup(baseUrl, "field-remove-owner1@example.com");
+    const createRes = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ description: "A CRM with customers and deals." }),
+    });
+    const { project } = (await createRes.json()) as {
+      project: { id: string; spec: { entities: { name: string; fields: { name: string }[] }[] } };
+    };
+    const entityName = project.spec.entities[0].name;
+    assert.ok(project.spec.entities[0].fields.length > 1, "the Customer entity from a plain CRM description should have more than one field");
+    const fieldToRemove = project.spec.entities[0].fields[1].name;
+
+    const res = await fetch(`${baseUrl}/api/projects/${project.id}/entities/${entityName}/fields/${fieldToRemove}`, {
+      method: "DELETE",
+      headers: authHeaders(token),
+    });
+    assert.equal(res.status, 200);
+    const { project: updated } = (await res.json()) as { project: { spec: { entities: { name: string; fields: { name: string }[] }[] } } };
+    const updatedEntity = updated.spec.entities.find((e) => e.name === entityName)!;
+    assert.ok(
+      !updatedEntity.fields.some((f) => f.name === fieldToRemove),
+      "the removed field must no longer be present",
+    );
+    assert.equal(updatedEntity.fields.length, project.spec.entities[0].fields.length - 1);
+  });
+});
+
+test("removing fields down to the last remaining one is rejected with 400 instead of crashing -- EntitySchema requires fields.min(1)", async () => {
+  await withServer(async (baseUrl) => {
+    const token = await signup(baseUrl, "field-remove-lastone@example.com");
+    const createRes = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ description: "A CRM with customers and deals." }),
+    });
+    const { project } = (await createRes.json()) as {
+      project: { id: string; spec: { entities: { name: string; fields: { name: string }[] }[] } };
+    };
+    const entityName = project.spec.entities[0].name;
+    const fieldNames = project.spec.entities[0].fields.map((f) => f.name);
+    assert.ok(fieldNames.length > 1, "the Customer entity from a plain CRM description should have more than one field");
+
+    for (const fieldName of fieldNames.slice(0, -1)) {
+      const res = await fetch(`${baseUrl}/api/projects/${project.id}/entities/${entityName}/fields/${fieldName}`, {
+        method: "DELETE",
+        headers: authHeaders(token),
+      });
+      assert.equal(res.status, 200, `removing "${fieldName}" down to one remaining field must still succeed`);
+    }
+
+    const lastRes = await fetch(`${baseUrl}/api/projects/${project.id}/entities/${entityName}/fields/${fieldNames.at(-1)}`, {
+      method: "DELETE",
+      headers: authHeaders(token),
+    });
+    assert.equal(lastRes.status, 400, "removing the very last field must be rejected, not crash");
+    assert.equal(((await lastRes.json()) as { code?: string }).code, "VALIDATION_ERROR");
+
+    const getRes = await fetch(`${baseUrl}/api/projects/${project.id}`, { headers: authHeaders(token) });
+    const { project: unchanged } = (await getRes.json()) as { project: { spec: { entities: { name: string; fields: unknown[] }[] } } };
+    assert.equal(
+      unchanged.spec.entities.find((e) => e.name === entityName)!.fields.length,
+      1,
+      "the one remaining field must survive the rejected attempt untouched",
+    );
+  });
+});
+
+test("removing a field name that doesn't exist on the entity 404s with FIELD_NOT_FOUND, and the fields list is left untouched", async () => {
+  await withServer(async (baseUrl) => {
+    const token = await signup(baseUrl, "field-remove-notfound@example.com");
+    const createRes = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ description: "A CRM with customers and deals." }),
+    });
+    const { project } = (await createRes.json()) as {
+      project: { id: string; spec: { entities: { name: string; fields: unknown[] }[] } };
+    };
+    const entityName = project.spec.entities[0].name;
+
+    const res = await fetch(`${baseUrl}/api/projects/${project.id}/entities/${entityName}/fields/NoSuchField`, {
+      method: "DELETE",
+      headers: authHeaders(token),
+    });
+    assert.equal(res.status, 404);
+    assert.equal(((await res.json()) as { code?: string }).code, "FIELD_NOT_FOUND");
+
+    const getRes = await fetch(`${baseUrl}/api/projects/${project.id}`, { headers: authHeaders(token) });
+    const { project: unchanged } = (await getRes.json()) as { project: { spec: { entities: { name: string; fields: unknown[] }[] } } };
+    assert.deepEqual(unchanged.spec.entities, project.spec.entities);
+  });
+});
+
+test("removing a field on a project you have no access to still 404s, the same as any other project route", async () => {
+  await withServer(async (baseUrl) => {
+    const ownerToken = await signup(baseUrl, "field-remove-owner2@example.com");
+    const outsiderToken = await signup(baseUrl, "field-remove-outsider2@example.com");
+    const createRes = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: authHeaders(ownerToken),
+      body: JSON.stringify({ description: "A CRM with customers and deals." }),
+    });
+    const { project } = (await createRes.json()) as {
+      project: { id: string; spec: { entities: { name: string; fields: { name: string }[] }[] } };
+    };
+
+    const res = await fetch(
+      `${baseUrl}/api/projects/${project.id}/entities/${project.spec.entities[0].name}/fields/${project.spec.entities[0].fields[0].name}`,
+      { method: "DELETE", headers: authHeaders(outsiderToken) },
+    );
+    assert.equal(res.status, 404);
+  });
+});
+
+test("removing a field from a project that's already been built is rejected with FIELD_REMOVE_AFTER_BUILD, since the real database column and generated code for it already exist", async () => {
+  await withServer(async (baseUrl) => {
+    const token = await signup(baseUrl, "field-remove-afterbuild@example.com");
+    const createRes = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ description: "A CRM with customers and deals." }),
+    });
+    const { project } = (await createRes.json()) as {
+      project: { id: string; spec: { entities: { name: string; fields: { name: string }[] }[] } };
+    };
+
+    const buildRes = await fetch(`${baseUrl}/api/projects/${project.id}/build`, {
+      method: "POST",
+      headers: authHeaders(token),
+    });
+    await collectSSE(buildRes);
+
+    const res = await fetch(
+      `${baseUrl}/api/projects/${project.id}/entities/${project.spec.entities[0].name}/fields/${project.spec.entities[0].fields[0].name}`,
+      { method: "DELETE", headers: authHeaders(token) },
+    );
+    assert.equal(res.status, 409);
+    assert.equal(((await res.json()) as { code?: string }).code, "FIELD_REMOVE_AFTER_BUILD");
+  });
+});
+
 test("adding a blank/whitespace-only assumption is rejected with 400 instead of appending an empty string", async () => {
   await withServer(async (baseUrl) => {
     const token = await signup(baseUrl, "assumption-add-blank@example.com");

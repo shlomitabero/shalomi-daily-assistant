@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { deriveEntityName, deriveName } from "./projects.js";
+import { deriveEntityName, deriveFieldName, deriveName } from "./projects.js";
 
 /**
  * deriveName picks a project's display name from its free-text description
@@ -62,4 +62,43 @@ test("deriveEntityName appends the first free numeric suffix on a case-insensiti
   assert.equal(deriveEntityName("Payment", ["Customer", "Payment"]), "Payment2");
   assert.equal(deriveEntityName("payment", ["Customer", "Payment"]), "Payment2");
   assert.equal(deriveEntityName("Payment", ["Payment", "Payment2"]), "Payment3");
+});
+
+/**
+ * deriveFieldName is deriveEntityName's own counterpart for AddFieldForm --
+ * same ASCII-identifier, no-collision requirements (it becomes a real SQL
+ * column name in both packages/db/src/migrate.ts and apps/api/src/codegen.ts),
+ * just camelCase instead of PascalCase, matching every existing domain-
+ * library field's own convention (domainEntities.ts's "customerName",
+ * "courierId", etc).
+ */
+test("deriveFieldName camelCases multi-word labels with no separator", () => {
+  assert.equal(deriveFieldName("Phone Number", []), "phoneNumber");
+  assert.equal(deriveFieldName("phone-number", []), "phoneNumber");
+  assert.equal(deriveFieldName("Email", []), "email");
+});
+
+test("deriveFieldName falls back to 'field' when the label has no ASCII letters/digits at all", () => {
+  assert.equal(deriveFieldName("מספר טלפון", []), "field");
+});
+
+test("deriveFieldName appends the first free numeric suffix on a case-insensitive collision with an existing field on the same entity", () => {
+  assert.equal(deriveFieldName("Phone", ["name"]), "phone");
+  assert.equal(deriveFieldName("Phone", ["name", "phone"]), "phone2");
+  assert.equal(deriveFieldName("phone", ["name", "phone"]), "phone2");
+  assert.equal(deriveFieldName("Phone", ["phone", "phone2"]), "phone3");
+});
+
+/**
+ * A field named "id" or "createdAt" (in any casing) collides with the two
+ * built-in columns every table already has (see FieldSchema's own
+ * RESERVED_FIELD_NAMES check in @forge/shared) -- without this, a label
+ * like "Id" or "Created At" would hand FieldSchema's refine() a name it
+ * rejects, crashing updateProjectSpec's re-read with an uncaught schema
+ * error instead of just picking a free name the same way a real collision
+ * with another field on the entity does.
+ */
+test("deriveFieldName treats the built-in 'id'/'createdAt' column names as already taken", () => {
+  assert.equal(deriveFieldName("Id", []), "id2");
+  assert.equal(deriveFieldName("Created At", []), "createdAt2");
 });

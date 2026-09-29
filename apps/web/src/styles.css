@@ -755,10 +755,20 @@ button.danger:hover:not(:disabled) {
 
 .entity-summary {
   display: flex;
-  align-items: center;
-  gap: 6px;
+  flex-direction: column;
+  gap: 8px;
   padding: 10px 0;
   border-bottom: 1px solid var(--border-soft);
+}
+
+.entity-summary-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.spec-add-field-form {
+  margin-top: 0;
 }
 
 .entity-summary-label {

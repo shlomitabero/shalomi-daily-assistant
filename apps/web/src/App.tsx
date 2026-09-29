@@ -1201,7 +1201,7 @@ function AppContent() {
               <EntitySummaryItem
                 key={entity.name}
                 entity={entity}
-                summary={formatEntityFieldSummary(entity.fields)}
+                fieldsSummary={formatEntityFieldSummary(entity.fields)}
                 projectId={project.id}
                 canRemove={project.spec.entities.length > 1}
                 onRenamed={setProject}

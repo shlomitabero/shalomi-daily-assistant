@@ -239,6 +239,17 @@ export function renameFieldLabel(
   });
 }
 
+export function addField(projectId: string, entityName: string, label: string): Promise<{ project: Project }> {
+  return request(`/projects/${projectId}/entities/${entityName}/fields`, {
+    method: "POST",
+    body: JSON.stringify({ label }),
+  });
+}
+
+export function removeField(projectId: string, entityName: string, fieldName: string): Promise<{ project: Project }> {
+  return request(`/projects/${projectId}/entities/${entityName}/fields/${fieldName}`, { method: "DELETE" });
+}
+
 export function deleteProject(projectId: string): Promise<void> {
   return request(`/projects/${projectId}`, { method: "DELETE" });
 }

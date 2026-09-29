@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { Router, type Request, type Response, type NextFunction } from "express";
 import { z } from "zod";
-import type { Entity, Project } from "@forge/shared";
+import type { Entity, Field, Project } from "@forge/shared";
 import {
   getCheckpoint,
   getProject,
@@ -97,6 +97,10 @@ const AddEntitySchema = z.object({
   label: z.string().trim().min(1, "label is required"),
 });
 
+const AddFieldSchema = z.object({
+  label: z.string().trim().min(1, "label is required"),
+});
+
 /** Exported for direct unit testing of the word-truncation and empty-input fallback below. */
 export function deriveName(description: string): string {
   const words = description.trim().split(/\s+/).slice(0, 6).join(" ");
@@ -135,6 +139,35 @@ export function deriveEntityName(label: string, existingNames: string[]): string
   if (!existingLower.has(base.toLowerCase())) return base;
   let suffix = 2;
   while (existingLower.has(`${base}${suffix}`.toLowerCase())) suffix += 1;
+  return `${base}${suffix}`;
+}
+
+/**
+ * A newly-added field's `label` is free text (possibly Hebrew), but its
+ * `name` becomes a real SQL column name in both the live preview
+ * (packages/db/src/migrate.ts) and the exported codegen app
+ * (apps/api/src/codegen.ts) -- the same ASCII-identifier requirement
+ * deriveEntityName's own comment above explains, just camelCase (matching
+ * every existing domain-library field's own convention -- see
+ * domainEntities.ts's "customerName"/"courierId") instead of PascalCase.
+ * Falls back to "field" for a label with no ASCII letters/digits at all,
+ * the same as deriveEntityName falls back to "Entity". De-duplicates
+ * case-insensitively against both the entity's existing field names and
+ * the two column names every table already carries as a built-in (id,
+ * createdAt -- see FieldSchema's own RESERVED_FIELD_NAMES check in
+ * @forge/shared), appending the first free numeric suffix, so this can
+ * never hand FieldSchema's own refine() a name it would reject.
+ */
+export function deriveFieldName(label: string, existingNames: string[]): string {
+  const words = label
+    .split(/[^A-Za-z0-9]+/)
+    .filter((w) => w.length > 0)
+    .map((w, i) => (i === 0 ? w[0].toLowerCase() + w.slice(1).toLowerCase() : w[0].toUpperCase() + w.slice(1).toLowerCase()));
+  const base = words.join("") || "field";
+  const taken = new Set(["id", "createdat", ...existingNames.map((n) => n.toLowerCase())]);
+  if (!taken.has(base.toLowerCase())) return base;
+  let suffix = 2;
+  while (taken.has(`${base}${suffix}`.toLowerCase())) suffix += 1;
   return `${base}${suffix}`;
 }
 
@@ -1090,6 +1123,78 @@ export function createProjectsRouter(db: ForgeDatabase, provider: SpecProvider |
         fields: [{ name: "name", type: "text", required: true }],
       };
       const nextSpec = { ...project.spec, entities: [...project.spec.entities, newEntity] };
+      const updated = updateProjectSpec(db, project.id, nextSpec);
+      res.json({ project: updated });
+    }),
+  );
+
+  /**
+   * The other half of the same one-directional gap entities themselves had
+   * before the add route above -- roles, assumptions, and whole entities
+   * all got a real add/remove/rename correction path on the spec review
+   * screen, but a single *field* within an entity had none at all: the
+   * only field-level mutation anywhere in the app was renameFieldLabel
+   * (cosmetic label-only). An AI/heuristic-mis-scoped entity missing an
+   * obvious field (no "email" on a Customer, say) could only be fixed via
+   * a full natural-language Refine round-trip after committing to a build.
+   * Mirrors AddEntityForm's own shape (a single free-text label, appended)
+   * -- the new field is born as a plain optional text field (type: "text",
+   * required: false), the least assumption-laden starting point, using
+   * deriveFieldName the same way the entity-add route above uses
+   * deriveEntityName. Same pre-build-only gate as entity/field-label
+   * routes: once built, the real database column and generated code
+   * already exist and don't track further spec edits.
+   */
+  router.post(
+    "/projects/:id/entities/:entityName/fields",
+    asyncRoute(async (req, res) => {
+      const project = requireProjectAccess(db, req.params.id, req.userId!);
+      if (project.status === "built") {
+        throw new HttpError(409, "Cannot add a field after the project has already been built", "FIELD_ADD_AFTER_BUILD");
+      }
+      const entity = findEntity(project, req.params.entityName);
+      const parsed = AddFieldSchema.safeParse(req.body);
+      if (!parsed.success) {
+        throw new HttpError(400, formatValidationError(parsed.error), "VALIDATION_ERROR");
+      }
+      const name = deriveFieldName(parsed.data.label, entity.fields.map((f) => f.name));
+      const newField: Field = { name, label: parsed.data.label, type: "text", required: false };
+      const nextSpec = {
+        ...project.spec,
+        entities: project.spec.entities.map((e) => (e.name === entity.name ? { ...e, fields: [...e.fields, newField] } : e)),
+      };
+      const updated = updateProjectSpec(db, project.id, nextSpec);
+      res.json({ project: updated });
+    }),
+  );
+
+  /**
+   * Removal side of the same gap. `entity.fields` carries EntitySchema's
+   * own `fields.min(1)` floor (an entity with zero fields can't render a
+   * record form at all), the same reasoning as roles'/entities' own
+   * `.min(1)` guards above -- checked explicitly here for a clear 400
+   * rather than an uncaught schema-validation error inside
+   * updateProjectSpec. Same pre-build-only gate as every other
+   * spec-shape-changing route in this file.
+   */
+  router.delete(
+    "/projects/:id/entities/:entityName/fields/:fieldName",
+    asyncRoute(async (req, res) => {
+      const project = requireProjectAccess(db, req.params.id, req.userId!);
+      if (project.status === "built") {
+        throw new HttpError(409, "Cannot remove a field after the project has already been built", "FIELD_REMOVE_AFTER_BUILD");
+      }
+      const entity = findEntity(project, req.params.entityName);
+      findField(entity, req.params.fieldName);
+      if (entity.fields.length <= 1) {
+        throw new HttpError(400, "Cannot remove the last remaining field -- at least one is required", "VALIDATION_ERROR");
+      }
+      const nextSpec = {
+        ...project.spec,
+        entities: project.spec.entities.map((e) =>
+          e.name === entity.name ? { ...e, fields: e.fields.filter((f) => f.name !== req.params.fieldName) } : e,
+        ),
+      };
       const updated = updateProjectSpec(db, project.id, nextSpec);
       res.json({ project: updated });
     }),

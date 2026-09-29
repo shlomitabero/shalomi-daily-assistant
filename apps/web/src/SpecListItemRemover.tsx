@@ -1,14 +1,17 @@
 import { useRef, useState } from "react";
-import type { Entity, Project } from "@forge/shared";
+import type { Entity, Field, Project } from "@forge/shared";
 import {
   addAssumption,
   addEntity,
+  addField,
   addRole,
   removeAssumption,
   removeEntity,
+  removeField,
   removeRole,
   renameAssumption,
   renameEntityLabel,
+  renameFieldLabel,
   renameRole,
 } from "./api.js";
 import { useTranslation } from "./i18n/LanguageContext.js";
@@ -265,14 +268,15 @@ export function AssumptionItem({
  */
 export function EntitySummaryItem({
   entity,
-  summary,
+  fieldsSummary,
   projectId,
   canRemove,
   onRenamed,
   onRemoved,
 }: {
   entity: Entity;
-  summary: string;
+  /** Formatted via App.tsx's own formatEntityFieldSummary, applied as an aria-label on the fields row below so a screen reader gets one flat sentence instead of navigating each chip individually. Computed there rather than here to avoid a circular import between App.tsx and this file (see AddEntityForm's own comment below). */
+  fieldsSummary: string;
   projectId: string;
   canRemove: boolean;
   onRenamed: (project: Project) => void;
@@ -315,26 +319,128 @@ export function EntitySummaryItem({
 
   return (
     <div className="entity-summary">
-      <strong className="entity-summary-label" onClick={rename.startEditing} title={t("spec.entities.rename")}>
-        {entity.label ?? entity.name}
-      </strong>
-      <span className="muted"> — {summary}</span>
-      <button
-        type="button"
-        className="entity-summary-remove"
-        onClick={handleRemove}
-        disabled={busy || !canRemove}
-        aria-label={t("spec.entities.remove")}
-        title={canRemove ? t("spec.entities.remove") : t("spec.entities.lastOneHint")}
-      >
-        ×
-      </button>
+      <div className="entity-summary-header">
+        <strong className="entity-summary-label" onClick={rename.startEditing} title={t("spec.entities.rename")}>
+          {entity.label ?? entity.name}
+        </strong>
+        <button
+          type="button"
+          className="entity-summary-remove"
+          onClick={handleRemove}
+          disabled={busy || !canRemove}
+          aria-label={t("spec.entities.remove")}
+          title={canRemove ? t("spec.entities.remove") : t("spec.entities.lastOneHint")}
+        >
+          ×
+        </button>
+      </div>
       {error && (
         <p className="error small" role="alert">
           {error}
         </p>
       )}
+      <div className="entity-summary-fields chips" aria-label={fieldsSummary}>
+        {entity.fields.map((field) => (
+          <FieldChip
+            key={field.name}
+            field={field}
+            projectId={projectId}
+            entityName={entity.name}
+            canRemove={entity.fields.length > 1}
+            onChanged={onRenamed}
+          />
+        ))}
+      </div>
+      <AddFieldForm projectId={projectId} entityName={entity.name} onAdded={onRenamed} />
     </div>
+  );
+}
+
+/**
+ * The per-field counterpart to RoleChip above, mirroring its remove/rename
+ * shape exactly (a real DELETE for removal, reusing the existing
+ * renameFieldLabel PATCH -- already used post-build in FieldLabelEditor.tsx
+ * -- for click-to-rename), rather than the flat, non-interactive
+ * `formatEntityFieldSummary` string EntitySummaryItem used to render in its
+ * place. `onChanged` is a single callback (unlike RoleChip's separate
+ * onRenamed/onRemoved) since both call sites in EntitySummaryItem above
+ * pass the exact same setProject-style function for either outcome -- a
+ * field add/remove/rename all just replace the whole project the same way.
+ */
+export function FieldChip({
+  field,
+  projectId,
+  entityName,
+  canRemove,
+  onChanged,
+}: {
+  field: Field;
+  projectId: string;
+  entityName: string;
+  /** False once this is the only remaining field on the entity -- the API rejects removing it (EntitySchema requires fields.min(1)), so the button is disabled instead of letting the user hit that error. */
+  canRemove: boolean;
+  onChanged: (project: Project) => void;
+}) {
+  const { t } = useTranslation();
+  const { busy, error, handleRemove } = useRemovableSpecItem(
+    () => removeField(projectId, entityName, field.name),
+    onChanged,
+  );
+  const rename = useRenamableSpecItem(
+    field.label ?? field.name,
+    (value) => renameFieldLabel(projectId, entityName, field.name, value),
+    onChanged,
+  );
+
+  if (rename.editing) {
+    return (
+      <span className="chip chip-removable chip-rename-edit">
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            rename.save();
+          }}
+        >
+          <input
+            type="text"
+            aria-label={t("spec.fields.rename")}
+            value={rename.draft}
+            autoFocus
+            disabled={rename.busy}
+            onChange={(e) => rename.setDraft(e.target.value)}
+            onBlur={rename.save}
+            onKeyDown={(e) => {
+              if (e.key === "Escape") rename.cancelEditing();
+            }}
+          />
+        </form>
+        {rename.error && <span className="error small">{rename.error}</span>}
+      </span>
+    );
+  }
+
+  return (
+    <span className="chip chip-removable">
+      <span className="chip-text" onClick={rename.startEditing} title={t("spec.fields.rename")}>
+        {field.label ?? field.name}
+        {field.required ? " *" : ""}
+      </span>
+      <button
+        type="button"
+        className="chip-remove"
+        onClick={handleRemove}
+        disabled={busy || !canRemove}
+        aria-label={t("spec.fields.remove")}
+        title={canRemove ? t("spec.fields.remove") : t("spec.fields.lastOneHint")}
+      >
+        ×
+      </button>
+      {error && (
+        <span className="error small" role="alert">
+          {error}
+        </span>
+      )}
+    </span>
   );
 }
 
@@ -419,6 +525,51 @@ export function AddEntityForm({ projectId, onAdded }: { projectId: string; onAdd
       />
       <button type="submit" className="secondary" disabled={busy || !value.trim()}>
         {t("spec.entities.add")}
+      </button>
+      {error && (
+        <span className="error small" role="alert">
+          {error}
+        </span>
+      )}
+    </form>
+  );
+}
+
+/**
+ * The other half of FieldChip's own removal/rename correction workflow,
+ * matching AddEntityForm's shape exactly (a single free-text label,
+ * appended). The typed text becomes the new field's human-facing `label`
+ * -- the server derives a valid camelCase ASCII `name` from it (see
+ * deriveFieldName in apps/api/src/routes/projects.ts) and the field starts
+ * as a plain optional text field, the same starting point a newly-added
+ * entity's own first field gets.
+ */
+export function AddFieldForm({
+  projectId,
+  entityName,
+  onAdded,
+}: {
+  projectId: string;
+  entityName: string;
+  onAdded: (project: Project) => void;
+}) {
+  const { t } = useTranslation();
+  const { value, setValue, busy, error, handleSubmit } = useAddableSpecItem(
+    (label) => addField(projectId, entityName, label),
+    onAdded,
+  );
+  return (
+    <form className="spec-add-item-form spec-add-field-form" onSubmit={handleSubmit}>
+      <input
+        type="text"
+        value={value}
+        onChange={(e) => setValue(e.target.value)}
+        placeholder={t("spec.fields.addPlaceholder")}
+        aria-label={t("spec.fields.addPlaceholder")}
+        disabled={busy}
+      />
+      <button type="submit" className="secondary" disabled={busy || !value.trim()}>
+        {t("spec.fields.add")}
       </button>
       {error && (
         <span className="error small" role="alert">
