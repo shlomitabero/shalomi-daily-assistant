@@ -15842,6 +15842,67 @@ not a single "make it perfect" claim.
   `@forge/web` 577 → 579; `@forge/shared` 11, `@forge/spec-engine` 82,
   `@forge/db` 93 unchanged) via `npm test` at the repo root.
 
+- **Round 275 -- Time Machine's "What would change?" diff, and its
+  "current" chip, now detect a field that changed TYPE, not just a field
+  that was added or removed by name.** An Explore survey comparing two
+  logic-file candidates (`checkpointDiff.ts` vs. `pipeline.ts`'s
+  `runQaChecks` only smoke-testing an entity's first required field)
+  picked this one as the stronger, more directly user-visible gap:
+  `computeCheckpointDiff` and `isCheckpointCurrent` (both in
+  `apps/web/src/checkpointDiff.ts`) compared an entity's fields purely by
+  `Set<string>` membership on `f.name` -- a same-named field that changed
+  `type` (e.g. a refine turning a free-text "Status" field into an enum),
+  `enumValues`, or `relationTo` was invisible to either function, since
+  it's neither added nor removed by that comparison. Concretely: `computeCheckpointDiff`
+  could report an entity has "no changes" (or omit it from
+  `changedEntities` entirely) even though restoring the checkpoint would
+  genuinely alter what a field does, and `isCheckpointCurrent` could
+  wrongly mark a checkpoint as "you are already looking at this" (the
+  `[Current]` chip) when a field's type actually differs -- both are
+  exactly the "what would restoring change" and "am I already here"
+  questions these two functions exist to answer correctly.
+
+  Fix: added a `fieldSignature(f)` helper (`` `${type}|${relationTo ??
+  ""}|${sorted enumValues}` ``) and a new `changedFieldNames` list
+  alongside the existing `removedFieldNames`/`addedFieldNames`, rendered
+  in `HistoryPanel.tsx` as `"<entity>" would change the type of these
+  fields: <fields>` (he+en, matching the existing
+  `entityLostFields`/`entityGainedFields` phrasing convention exactly).
+  Deliberately does **not** flag a field as changed just because its
+  `label` or `required` flag differs -- those aren't structural changes
+  to what the field does, matching `FieldLabelEditor`'s own view that a
+  label rename isn't worth flagging here; a dedicated test proves this
+  boundary explicitly (label/required-only diffs still report `[]`, not
+  a false-positive `changedFieldNames`).
+
+  Tests: 4 new unit tests in `checkpointDiff.test.ts` (a type change
+  reported as `changedFieldNames`; an enum-only `enumValues` change also
+  reported; label/required-only changes correctly producing zero
+  `changedEntities`; `isCheckpointCurrent` going `false` on a type-only
+  difference despite matching names/counts). Plus 1 new real-DOM test in
+  `HistoryPanel.test.ts` (jsdom + `@testing-library/react`) that renders
+  the actual panel with a checkpoint whose `status` field is `text` and a
+  live spec where the same field is `enum`, clicks the real `.detail-toggle`
+  button, and confirms the rendered `.detail-list` text contains the new
+  "would change the type of these fields: Status" message rather than the
+  "No changes" message -- proving the fix reaches the real UI surface,
+  not just the pure function in isolation. Deliberate-break-and-restore:
+  reverted both functions to the prior name-only comparison and confirmed
+  exactly the 3 new `checkpointDiff.ts` assertions failed (`not ok 7`,
+  `not ok 8`, `not ok 10`) while all 29 pre-existing tests in that file
+  stayed green; restored from a pre-taken backup and confirmed a
+  byte-identical `diff` before re-running clean.
+
+  No exported-codegen counterpart exists for this logic -- Time Machine
+  (build/refine checkpoint history) is a Forge AI platform feature about
+  *this app's own* AI build process, not something a generated business
+  app itself would ever need, so unlike round 274's fix this one needed
+  no corresponding change in `codegen.ts`.
+
+  Full suite green: 1057 tests (up from 1052 -- `@forge/web` 579 → 584;
+  `@forge/shared` 11, `@forge/spec-engine` 82, `@forge/db` 93, `@forge/api`
+  287 unchanged) via `npm test` at the repo root.
+
 ## Phase 4
 
 - Template/agent marketplace
