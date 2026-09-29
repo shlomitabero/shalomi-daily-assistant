@@ -297,6 +297,109 @@ function computeActivityObservations(
   return { observations, jumpableObservations };
 }
 
+/**
+ * Every observation above is derived from record counts, relation fields,
+ * the display field, or `createdAt` -- the Business Twin never once reads a
+ * `number` field's actual value, even though most of this app's own
+ * domain-library entities have one (Order.total, Payment.amount,
+ * Booking.amount, Claim.claimAmount -- see domainEntities.ts): a small
+ * business's most business-meaningful numbers (money, quantities) were
+ * silently invisible to the one panel meant to summarize the data. A real
+ * sum + average across every record with a real value for that field --
+ * the same "genuine fact derived from live data, never a guess" principle
+ * as every observation above -- closes that gap. Skipped entirely when no
+ * record has a real numeric value for the field, the same "nothing to
+ * report yet" guard computeRelationCoverageObservations and
+ * computeDuplicateObservations both already use.
+ */
+function computeNumericAggregateObservations(
+  db: ForgeDatabase,
+  project: Project,
+  hebrew: boolean,
+): { text: string; entityName: string }[] {
+  const observations: { text: string; entityName: string }[] = [];
+  for (const entity of project.spec.entities) {
+    const numberFields = entity.fields.filter((f) => f.type === "number");
+    if (numberFields.length === 0) continue;
+    const records = listRecords(db, project.id, entity);
+    if (records.length === 0) continue;
+
+    const entityLabel = entity.label ?? entity.name;
+    for (const field of numberFields) {
+      const values: number[] = [];
+      for (const record of records) {
+        const raw = record[field.name];
+        if (raw === null || raw === undefined || raw === "") continue;
+        const num = Number(raw);
+        if (!Number.isNaN(num)) values.push(num);
+      }
+      if (values.length === 0) continue;
+
+      const sum = values.reduce((total, v) => total + v, 0);
+      const average = sum / values.length;
+      const fieldLabel = field.label ?? field.name;
+      observations.push({
+        text: hebrew
+          ? `סה"כ "${fieldLabel}" ב"${entityLabel}": ${sum.toLocaleString()} (ממוצע ${average.toLocaleString(undefined, { maximumFractionDigits: 1 })} על פני ${values.length} רשומות).`
+          : `Total "${fieldLabel}" in "${entityLabel}": ${sum.toLocaleString()} (average ${average.toLocaleString(undefined, { maximumFractionDigits: 1 })} across ${values.length} records).`,
+        entityName: entity.name,
+      });
+    }
+  }
+  return observations;
+}
+
+/**
+ * The `enum` counterpart to the numeric aggregate above -- the same
+ * invisible-field-type gap, for status/category fields instead of money
+ * (Order.status, Ticket.status, Booking.status, and every other seeded
+ * enum field in domainEntities.ts). A real per-value count, sorted by
+ * count so the largest bucket -- the one most worth a second look -- reads
+ * first, e.g. "18 'pending', 4 'shipped', 2 'cancelled'". Skipped when
+ * every record shares the same single value: a distribution of one value
+ * isn't a distribution, the same "nothing to report yet" guard the
+ * duplicate/relation-coverage observations above already apply to their
+ * own single-candidate case.
+ */
+function computeEnumDistributionObservations(
+  db: ForgeDatabase,
+  project: Project,
+  hebrew: boolean,
+): { text: string; entityName: string }[] {
+  const observations: { text: string; entityName: string }[] = [];
+  for (const entity of project.spec.entities) {
+    const enumFields = entity.fields.filter((f) => f.type === "enum" && f.enumValues && f.enumValues.length > 0);
+    if (enumFields.length === 0) continue;
+    const records = listRecords(db, project.id, entity);
+    if (records.length === 0) continue;
+
+    const entityLabel = entity.label ?? entity.name;
+    for (const field of enumFields) {
+      const countByValue = new Map<string, number>();
+      for (const record of records) {
+        const raw = record[field.name];
+        if (raw === null || raw === undefined || raw === "") continue;
+        const value = String(raw);
+        countByValue.set(value, (countByValue.get(value) ?? 0) + 1);
+      }
+      if (countByValue.size < 2) continue;
+
+      const breakdown = [...countByValue.entries()]
+        .sort((a, b) => b[1] - a[1])
+        .map(([value, count]) => `${count} "${(field.enumLabels && field.enumLabels[value]) || value}"`)
+        .join(", ");
+      const fieldLabel = field.label ?? field.name;
+      observations.push({
+        text: hebrew
+          ? `פילוח "${fieldLabel}" ב"${entityLabel}": ${breakdown}.`
+          : `"${fieldLabel}" breakdown in "${entityLabel}": ${breakdown}.`,
+        entityName: entity.name,
+      });
+    }
+  }
+  return observations;
+}
+
 export function computeBusinessTwin(db: ForgeDatabase, project: Project): BusinessTwin {
   const hebrew = isHebrewText(project.description);
   const entities: BusinessTwinEntityStat[] = project.spec.entities.map((entity) => ({
@@ -348,6 +451,8 @@ export function computeBusinessTwin(db: ForgeDatabase, project: Project): Busine
     mostLinkedRecord = computeRelationHubObservation(db, project, hebrew);
     jumpableObservations.push(...computeRelationCoverageObservations(db, project, hebrew));
     jumpableObservations.push(...computeDuplicateObservations(db, project, hebrew));
+    jumpableObservations.push(...computeNumericAggregateObservations(db, project, hebrew));
+    jumpableObservations.push(...computeEnumDistributionObservations(db, project, hebrew));
     const activity = computeActivityObservations(db, project, hebrew);
     observations.push(...activity.observations);
     jumpableObservations.push(...activity.jumpableObservations);

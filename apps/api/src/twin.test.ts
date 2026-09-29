@@ -521,3 +521,205 @@ test("computeBusinessTwin phrases the activity observations in Hebrew for a Hebr
   const twin = computeBusinessTwin(db, project);
   assert.ok(twin.jumpableObservations.some((o) => o.text.includes("לא נוספו רשומות חדשות ב-30 הימים האחרונים")));
 });
+
+/**
+ * New in this round: every observation above is derived from counts,
+ * relation fields, the display field, or createdAt -- the Business Twin
+ * never once read a `number` field's actual value, even though most of
+ * this app's own domain-library entities have one (Order.total,
+ * Payment.amount). A real order-total sum was invisible to the one panel
+ * meant to summarize the business's data.
+ */
+test("computeBusinessTwin reports a number field's total and average across real records", () => {
+  const orderProject: Project = {
+    ...project,
+    description: "An online store with orders",
+    spec: {
+      ...project.spec,
+      entities: [
+        {
+          name: "Order",
+          label: "Orders",
+          fields: [
+            { name: "customer", type: "text", required: true },
+            { name: "total", label: "Total", type: "number", required: true },
+          ],
+        },
+      ],
+    },
+  };
+  const db = openDatabase(":memory:");
+  applyMigrations(db, orderProject.id, orderProject.spec);
+  const order = orderProject.spec.entities[0];
+  insertRecord(db, orderProject.id, order, { customer: "Dana", total: 100 });
+  insertRecord(db, orderProject.id, order, { customer: "Yossi", total: 250 });
+  insertRecord(db, orderProject.id, order, { customer: "Noa", total: 150 });
+
+  const twin = computeBusinessTwin(db, orderProject);
+  const numeric = twin.jumpableObservations.find((o) => o.text.includes("Total"));
+  assert.ok(numeric, `expected a numeric-aggregate observation, got: ${JSON.stringify(twin.jumpableObservations)}`);
+  assert.equal(numeric!.entityName, "Order");
+  assert.match(numeric!.text, /500/);
+  assert.match(numeric!.text, /166\.7/, "the average of 100+250+150 across 3 records is 166.666..., rounded to one decimal");
+  assert.match(numeric!.text, /3 records/);
+});
+
+test("computeBusinessTwin stays silent about a number field when no record has a real value for it", () => {
+  const orderProject: Project = {
+    ...project,
+    spec: {
+      ...project.spec,
+      entities: [
+        {
+          name: "Order",
+          label: "Orders",
+          fields: [
+            { name: "customer", type: "text", required: true },
+            { name: "total", label: "Total", type: "number", required: false },
+          ],
+        },
+      ],
+    },
+  };
+  const db = openDatabase(":memory:");
+  applyMigrations(db, orderProject.id, orderProject.spec);
+  insertRecord(db, orderProject.id, orderProject.spec.entities[0], { customer: "Dana", total: null });
+
+  const twin = computeBusinessTwin(db, orderProject);
+  assert.ok(!twin.jumpableObservations.some((o) => o.text.includes("Total")));
+});
+
+test("computeBusinessTwin phrases the numeric-aggregate observation in Hebrew for a Hebrew description", () => {
+  const orderProject: Project = {
+    ...project,
+    description: "חנות מקוונת עם הזמנות",
+    spec: {
+      ...project.spec,
+      entities: [
+        {
+          name: "Order",
+          label: "הזמנות",
+          fields: [
+            { name: "customer", type: "text", required: true },
+            { name: "total", label: "סכום", type: "number", required: true },
+          ],
+        },
+      ],
+    },
+  };
+  const db = openDatabase(":memory:");
+  applyMigrations(db, orderProject.id, orderProject.spec);
+  insertRecord(db, orderProject.id, orderProject.spec.entities[0], { customer: "דנה", total: 200 });
+
+  const twin = computeBusinessTwin(db, orderProject);
+  assert.ok(twin.jumpableObservations.some((o) => o.text.includes('סה"כ') && o.text.includes("הזמנות")));
+});
+
+/**
+ * The `enum` counterpart to the numeric-aggregate gap above -- a status
+ * field's actual value distribution (e.g. how many Orders are 'pending'
+ * vs. 'shipped') was equally invisible.
+ */
+test("computeBusinessTwin reports an enum field's value distribution when there's a real split to see", () => {
+  const orderProject: Project = {
+    ...project,
+    description: "An online store with orders",
+    spec: {
+      ...project.spec,
+      entities: [
+        {
+          name: "Order",
+          label: "Orders",
+          fields: [
+            { name: "customer", type: "text", required: true },
+            {
+              name: "status",
+              label: "Status",
+              type: "enum",
+              required: true,
+              enumValues: ["Pending", "Shipped", "Cancelled"],
+            },
+          ],
+        },
+      ],
+    },
+  };
+  const db = openDatabase(":memory:");
+  applyMigrations(db, orderProject.id, orderProject.spec);
+  const order = orderProject.spec.entities[0];
+  insertRecord(db, orderProject.id, order, { customer: "Dana", status: "Pending" });
+  insertRecord(db, orderProject.id, order, { customer: "Yossi", status: "Pending" });
+  insertRecord(db, orderProject.id, order, { customer: "Noa", status: "Shipped" });
+
+  const twin = computeBusinessTwin(db, orderProject);
+  const distribution = twin.jumpableObservations.find((o) => o.text.includes("Status"));
+  assert.ok(distribution, `expected an enum-distribution observation, got: ${JSON.stringify(twin.jumpableObservations)}`);
+  assert.equal(distribution!.entityName, "Order");
+  // Sorted by count descending -- the larger bucket (2 "Pending") reads before the smaller one (1 "Shipped").
+  assert.match(distribution!.text, /2 "Pending".*1 "Shipped"/);
+});
+
+test("computeBusinessTwin stays silent about an enum field when every record shares the exact same single value", () => {
+  const orderProject: Project = {
+    ...project,
+    spec: {
+      ...project.spec,
+      entities: [
+        {
+          name: "Order",
+          label: "Orders",
+          fields: [
+            { name: "customer", type: "text", required: true },
+            { name: "status", label: "Status", type: "enum", required: true, enumValues: ["Pending", "Shipped"] },
+          ],
+        },
+      ],
+    },
+  };
+  const db = openDatabase(":memory:");
+  applyMigrations(db, orderProject.id, orderProject.spec);
+  const order = orderProject.spec.entities[0];
+  insertRecord(db, orderProject.id, order, { customer: "Dana", status: "Pending" });
+  insertRecord(db, orderProject.id, order, { customer: "Yossi", status: "Pending" });
+
+  const twin = computeBusinessTwin(db, orderProject);
+  assert.ok(!twin.jumpableObservations.some((o) => o.text.includes("Status")));
+});
+
+test("computeBusinessTwin's enum distribution uses the enum's display label, not the raw stored value", () => {
+  const orderProject: Project = {
+    ...project,
+    description: "חנות מקוונת עם הזמנות",
+    spec: {
+      ...project.spec,
+      entities: [
+        {
+          name: "Order",
+          label: "הזמנות",
+          fields: [
+            { name: "customer", type: "text", required: true },
+            {
+              name: "status",
+              label: "סטטוס",
+              type: "enum",
+              required: true,
+              enumValues: ["Pending", "Shipped"],
+              enumLabels: { Pending: "ממתין", Shipped: "נשלח" },
+            },
+          ],
+        },
+      ],
+    },
+  };
+  const db = openDatabase(":memory:");
+  applyMigrations(db, orderProject.id, orderProject.spec);
+  const order = orderProject.spec.entities[0];
+  insertRecord(db, orderProject.id, order, { customer: "דנה", status: "Pending" });
+  insertRecord(db, orderProject.id, order, { customer: "יוסי", status: "Shipped" });
+
+  const twin = computeBusinessTwin(db, orderProject);
+  const distribution = twin.jumpableObservations.find((o) => o.text.includes("סטטוס"));
+  assert.ok(distribution, `expected an enum-distribution observation, got: ${JSON.stringify(twin.jumpableObservations)}`);
+  assert.match(distribution!.text, /ממתין/);
+  assert.match(distribution!.text, /נשלח/);
+});
