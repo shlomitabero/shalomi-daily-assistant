@@ -15903,6 +15903,60 @@ not a single "make it perfect" claim.
   `@forge/shared` 11, `@forge/spec-engine` 82, `@forge/db` 93, `@forge/api`
   287 unchanged) via `npm test` at the repo root.
 
+- **Round 276 -- Build QA now smoke-tests every required field of an
+  entity, not just the first one, closing the candidate rounds 274/275's
+  surveys flagged and left open.** An Explore survey re-verified this
+  exact candidate before implementing: `runQaChecks` (`pipeline.ts`)
+  picked an entity's required field to validate via `entity.fields.find((f)
+  => f.required)` -- the first match only -- then smoke-tested it with a
+  single `insertRecord(db, ..., {})` call. Root-caused down to
+  `coerceValue` (`packages/db/src/repository.ts`): it throws on the FIRST
+  required field it encounters missing (in field order), so `{}` always
+  fails for whichever field `find()` picked and never even reaches the
+  2nd or 3rd. An entity with `name`+`email`+`phone` all required (a
+  realistic, common shape -- not a contrived edge case) got real
+  `insertRecord`-backed validation coverage for `name` only; a future
+  regression that broke required-field enforcement specifically for
+  `email` or `phone` would sail through this gate with the pipeline's own
+  success message (`"N/N entity checks passed"`, gating an actual
+  publish) implying coverage that was never there.
+
+  Fix: loop over *every* required field, each tested individually with a
+  record built from `generateSeedRecords` (the exact same generator real
+  seed data uses, so every OTHER field is genuinely valid) with only that
+  one field's key deleted -- so a broken 2nd/3rd required field would now
+  actually surface as its own distinct `FAILED:` check line, not be
+  silently masked by the first field's check already passing. Exported
+  `runQaChecks` (previously un-exported) to make it directly unit-testable.
+
+  Tests: 3 new tests on `runQaChecks` (every required field of a
+  3-required-field entity individually validated, not just the first;
+  the omitted-field record is otherwise genuinely valid so a rejection is
+  correctly attributed to the intended field rather than some unrelated
+  seed-value artifact; an entity with no required fields still reports
+  "nothing to validate" and leaves zero rows behind, confirming the
+  invariant that a QA smoke test never leaves real data in the entity's
+  own table). Plus a real end-to-end test running the actual
+  `runBuildPipeline` async generator (not the isolated function) with a
+  genuine 3-required-field `Applicant` entity and asserting the real QA
+  "success" event's own `detail` shows all three fields individually
+  validated -- proving the fix reaches the actual event stream
+  `BuildProgress.tsx` renders, not just a unit-tested function in
+  isolation. Deliberate-break-and-restore: reverted to the old
+  `find()`-based logic and confirmed exactly the 2 new unit-test
+  assertions failed (`not ok 7`, `not ok 8`) while the pre-existing Debug
+  Agent tests in the same file stayed green; restored from a pre-taken
+  backup and confirmed a byte-identical `diff` before re-running clean.
+
+  No exported-codegen counterpart exists -- build-pipeline QA is a Forge
+  AI platform-only step that runs once during this app's own build
+  process, never something a generated standalone business app itself
+  would run.
+
+  Full suite green: 1061 tests (up from 1057 -- `@forge/api` 287 → 291;
+  `@forge/shared` 11, `@forge/spec-engine` 82, `@forge/db` 93, `@forge/web`
+  584 unchanged) via `npm test` at the repo root.
+
 ## Phase 4
 
 - Template/agent marketplace
