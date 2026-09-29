@@ -15527,6 +15527,102 @@ not a single "make it perfect" claim.
   `@forge/shared` 11, `@forge/spec-engine` 82, `@forge/db` 93, `@forge/web`
   567 unchanged) via `npm test` at the repo root.
 
+- **Round 271 -- search (both the per-tab search box and Global Search)
+  now matches a relation field's own shown name, not the raw
+  foreign-key id it's stored as.** This round's Explore survey, directed
+  again at logic files rather than UI panels (the approach that
+  succeeded in rounds 269-270), read `apps/web/src/entityFormatting.ts`'s
+  `matchesSearch` end-to-end and found it special-cases `enum` fields
+  (resolving via `enumLabels`) but has no branch for `relation` --
+  it falls through to `String(value)`, the raw stored id. Confirmed
+  directly by reading the code (`matchesSearch`, `apps/web/src/
+  entityFormatting.ts:121-130` before this round), not just trusting the
+  subagent: every other field-value consumer in that file (the table
+  cell itself, CSV export, ICS export, inline-edit exclusion) already
+  resolves a relation via `relationDisplayLabel`, but the one place that
+  decides *whether a search query matches* never did. Round 195 had
+  already documented this exact root cause -- its own entry explains
+  that a relation field's *displayed* text isn't the same string
+  `matchesSearch` matches against -- but only used that fact to skip
+  highlighting a relation cell, never to fix the matching itself. For
+  any real generated app with a relation field on its most
+  business-meaningful entity (an Order's Customer, a Ticket's Assignee,
+  an Order's Courier -- see `domainEntities.ts`), typing the exact name
+  visibly shown in that column found nothing at all.
+
+  `matchesSearch` (both `apps/web/src/entityFormatting.ts`'s live-preview
+  copy and `apps/api/src/codegen.ts`'s exported-app copy) now resolves a
+  relation field via `relationDisplayLabel` before comparing against the
+  query. The live-preview signature gained two *optional* trailing
+  params, `allEntities`/`relatedRecords`, so every existing caller that
+  has no relation data on hand (or a plain unit test) keeps the
+  previous, id-only behavior instead of a required-but-unavailable
+  argument; `searchEntityRecords` threads the same two params through.
+  `EntityPanel.tsx`'s own per-tab search already had both `allEntities`
+  and `relatedRecords` sitting in scope at its `matchesSearch` call site
+  (used elsewhere in the same component for CSV/ICS export) -- a
+  1-line change. `GlobalSearchPanel.tsx` was trickier: it searches every
+  entity in the project at once but never fetched any OTHER entity's
+  records to resolve a relation against. Rather than adding new network
+  calls, `runSearch` was restructured to collect every entity's own
+  already-being-fetched records into one `recordsByEntity` map first,
+  then reuse that exact map as `relatedRecords` -- since Global Search
+  already fetches every entity to search it, the very same response set
+  doubles as the relation lookup table for whichever other entity a
+  relation field happens to point at, at zero extra request cost. A new
+  `lastRecordsByEntityRef` keeps that same map available to
+  `handleShowAll`'s own follow-up re-search. The exported app's
+  `GlobalSearch.jsx` got the identical restructuring: its old
+  `searchEntity(entity, query)` (one fetch + filter per entity) became
+  `searchAllEntities(entities, query)` (fetch every entity first, then
+  filter all of them against the shared map), preserving byte-for-byte
+  the same partial-failure error messages the file's own regression
+  tests already lock in.
+
+  Tests: 4 new unit tests in `entityFormatting.test.ts` (a relation
+  field resolves to its display label; falls back to raw-id matching
+  with no `allEntities`/`relatedRecords` given; degrades gracefully
+  rather than throwing when the target entity/records genuinely aren't
+  available) plus one for `searchEntityRecords` threading the same
+  params through. One new real-DOM `EntityPanel.test.ts` test: typing a
+  courier's real name into the live search box narrows the table to the
+  matching order, and searching the raw id it's stored as (never shown
+  on screen) now correctly finds nothing. One new real-DOM
+  `GlobalSearchPanel.test.ts` test confirming Global Search finds both
+  the Courier directly and the Order via its resolved relation label in
+  the same search. One new `codegen.test.ts` test running the real
+  generated `matchesSearch` (plus the real `ALL_ENTITIES`/
+  `pickDisplayField`/`recordDisplayLabel`/`relationDisplayLabel` it
+  actually depends on, extracted via regex from the genuinely generated
+  source, the same convention this file already uses for `runSearch`)
+  against a real relation value.
+
+  Deliberate-break-and-restore (backup taken only after the feature was
+  complete, built, and every test green): removed the relation branch
+  from `entityFormatting.ts`'s `matchesSearch` -- exactly the 2 new
+  relation-matching unit tests failed (85/87 passed), every other test
+  in the file stayed green. Restored from the backup, confirmed a
+  byte-identical `diff`, re-confirmed all 87 tests green again.
+
+  Real end-to-end verification against a genuinely running dev server
+  (live preview, not exported codegen): built both `@forge/api` and
+  `@forge/web`, spawned the real built `server.js`, signed up via the
+  real REST API, created and built a project from the description "A
+  small courier delivery business" (the existing heuristic match for
+  `Order`+`Courier`, `Order.courierId` relating to `Courier`), seeded a
+  real `Courier` record named "Dana Cohen" and a real `Order` record
+  pointing to it, then drove real headless Chromium: typing "Dana Cohen"
+  into the Order tab's own search box narrowed the table to exactly the
+  1 matching order (previously would have shown 0, since the id "3" was
+  never what was typed); typing the same query into Global Search
+  (`Cmd/Ctrl+K`) returned both the `Courier` group (direct name match)
+  and the `Order` group (relation-label match) in one search.
+  `RESULT: PASS`.
+
+  Full suite green: 1042 tests (up from 1035 -- `@forge/api` 282 → 283,
+  `@forge/web` 567 → 573; `@forge/shared` 11, `@forge/spec-engine` 82,
+  `@forge/db` 93 unchanged) via `npm test` at the repo root.
+
 ## Phase 4
 
 - Template/agent marketplace
