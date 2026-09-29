@@ -15779,6 +15779,69 @@ not a single "make it perfect" claim.
   "shipped"` shows the raw English enum value instead of the Hebrew label
   a Hebrew-speaking user sees everywhere else in the app.
 
+- **Round 274 -- Calendar ICS export now resolves an enum field to its
+  Hebrew label, closing the gap round 273's survey flagged.** An Explore
+  survey re-verified this exact candidate (grep-confirmed the file is
+  actually `apps/web/src/calendarIcs.ts`, not `apps/api/` as round 273's
+  note said -- there is no api-side copy) before implementing: inside
+  `buildCalendarIcs`'s per-record DESCRIPTION-line builder, only a
+  `relation` field was special-cased to resolve to its related record's
+  display label; an `enum` field fell through to `record[f.name]`, its
+  raw stored value, unlike every other view of this data
+  (`entityFormatting.ts`'s `fieldDisplayValue`, used by table grouping,
+  Kanban, CSV export, and search -- all already resolve an enum via
+  `field.enumLabels?.[String(value)] ?? String(value)`). A second,
+  same-root-cause instance existed in SUMMARY: `calendarChipLabelField`
+  falls back to the entity's first non-date field when no text/name field
+  exists, which can itself be an enum -- so SUMMARY could show a raw enum
+  value too, on an entity shaped that way.
+
+  Fixed both instances in the live-preview `calendarIcs.ts`, mirroring
+  the existing convention with an inline enum branch (kept the fix
+  minimal and scoped rather than exporting the private `fieldDisplayValue`
+  and switching callers to it, which would also silently add boolean
+  TRUE/FALSE formatting -- a separate, unasked-for behavior change).
+  Ported the identical fix into `codegen.ts`'s own byte-adapted copy of
+  `buildCalendarIcs` (the exported standalone app's own generated
+  source), matching that file's own established `(x && x[y]) || y` style
+  rather than the live-preview file's `?.`/`??` style, since no optional
+  chaining is used anywhere else in that section of the generated-code
+  template.
+
+  Tests: 2 new unit tests in `calendarIcs.test.ts` (DESCRIPTION resolves
+  an enum field to its Hebrew label, not raw "shipped"; SUMMARY does the
+  same when the label field itself is an enum). 1 new test in
+  `codegen.test.ts`, extracting and executing the real generated
+  `buildCalendarIcs` (via the same `new Function(...)` sandbox pattern
+  the existing DTEND/escaping test in that file already uses) against a
+  genuinely generated `Appointment` entity with a `status` enum field.
+  Deliberate-break-and-restore: reverted both files to the prior
+  exact-relation-only logic (byte-for-byte the old behavior) and
+  confirmed all 3 new tests failed; restored from a pre-taken backup and
+  confirmed a byte-identical `diff` against both files before re-running
+  clean.
+
+  Real end-to-end verification against a genuinely running server (live
+  preview, not a mock): built both `@forge/api` and `@forge/web`, spawned
+  the real built `server.js`, drove real headless Chromium through
+  signup → idea ("עסק לתיאום תורים ופגישות עם לקוחות") → build, which
+  heuristically matched the `Appointment` domain entity (`status` enum
+  with real Hebrew `enumLabels`: Scheduled/Completed/Cancelled/No-show →
+  מתוכנן/הושלם/בוטל/לא הגיע/ה), added a real record with status
+  "Completed" via the real add-record form, switched to calendar view,
+  clicked the real "Export to Calendar (ICS)" button, captured the real
+  browser download event, and read its content: `DESCRIPTION:סטטוס:
+  הושלם` for the manually added record -- and, unprompted, the same
+  correct resolution for the build pipeline's own auto-seeded example
+  `Appointment` records (`סטטוס: מתוכנן`, `סטטוס: הושלם`), confirming the
+  fix generalizes rather than only covering the one hand-crafted test
+  case. Never once saw a raw English `Completed`/`Scheduled` in the
+  downloaded file. `RESULT: PASS`.
+
+  Full suite green: 1052 tests (up from 1049 -- `@forge/api` 286 → 287,
+  `@forge/web` 577 → 579; `@forge/shared` 11, `@forge/spec-engine` 82,
+  `@forge/db` 93 unchanged) via `npm test` at the repo root.
+
 ## Phase 4
 
 - Template/agent marketplace
