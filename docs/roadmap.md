@@ -14833,6 +14833,93 @@ not a single "make it perfect" claim.
   `@forge/web` 548 unchanged) and `npm run build --workspace=@forge/web`
   clean.
 
+- **Round 263 -- the WhatsApp message log can finally reach messages past
+  its own 50-message page, instead of silently losing them forever.**
+  This round's Explore survey re-examined a candidate round 262 had
+  already found but deprioritized (it touched
+  `apps/api/src/routes/projects.ts`, which round 256 had also touched):
+  `listWhatsAppMessages` in `packages/db/src/whatsapp.ts` always queried
+  `LIMIT 50` with no `offset` parameter at all, and neither the API route
+  nor the web client ever passed one. The moment a real business
+  conversation passed 50 messages, everything older than that became
+  permanently unreachable through the UI -- with nothing telling anyone
+  this had happened. Worse, `whatsappLog.ts`'s own
+  `formatWhatsAppMessageCount` took the returned array's length as the
+  true total, so the log's own count label actively lied, reading "50 of
+  50 (all messages)" while an unknown number of real messages sat
+  unreachable behind it. A stale doc comment on
+  `filterWhatsAppMessagesByDirection` even asserted outright that "this
+  log has no cap and no delete" -- wrong on both counts, and nobody had
+  revisited this path since the 50-message cap was first added.
+
+  Fix: `listWhatsAppMessages(db, projectId, limit, offset)` now accepts a
+  real offset and returns `{ messages, hasMore }` instead of a bare
+  array. `hasMore` is computed by fetching `limit + 1` rows and checking
+  whether the extra one came back -- deliberately never
+  `messages.length === limit`, which is also true on a genuinely final
+  page whose real count happens to be an exact multiple of the limit (a
+  dedicated test guards exactly this case). The GET
+  `/projects/:id/integrations/whatsapp/messages` route reads a real
+  `?offset=` query parameter (falling back to 0 for anything that isn't a
+  genuine non-negative integer, rather than passing `NaN`/a negative
+  value into the SQL `LIMIT`/`OFFSET` clause), and the web client's
+  `listWhatsAppMessages(projectId, offset)` only appends the query string
+  when `offset > 0`, keeping every existing exact-URL-match test
+  untouched. `WhatsAppPanel.tsx` now tracks `hasMoreMessages`, and a new
+  "Load older messages" button appears under the log exactly while more
+  exist; clicking it calls `listWhatsAppMessages(projectId,
+  messages.length)` and appends the result rather than replacing state,
+  so previously-loaded messages are never dropped mid-scroll.
+  `formatWhatsAppMessageCount` gained an `hasMore` parameter so it never
+  claims "N of N (all)" while more genuinely exist, instead reading "N+"
+  -- and the stale "no cap and no delete" doc comments were corrected to
+  describe what the code has actually done since rounds 263 and the
+  earlier per-message delete feature, respectively.
+
+  Tests: `whatsapp.test.ts` (db) gained two new tests -- one walking
+  three full pages of a 5-message log with exact body-order and
+  `hasMore` transition assertions, one specifically covering the
+  exact-multiple-of-limit edge case the naive `messages.length ===
+  limit` check would get wrong. `whatsappLog.test.ts` (web) gained a
+  test asserting `formatWhatsAppMessageCount` reports "50+ messages"
+  when `hasMore` is true even though shown equals total. `WhatsAppPanel
+  .test.ts` gained a full real-render test: mocks a first page of 2
+  messages with `hasMore: true` and a second page (`offset=2`) of 1 more
+  with `hasMore: false`, confirms the "Load older messages" button only
+  appears in the first state, clicking it appends (never replaces) the
+  older message so all three render in the correct newest-to-oldest
+  order, and the button disappears once the server reports nothing left.
+  Fixing this surfaced two casualties of the shape change elsewhere:
+  `packages/db/src/projects.test.ts`'s delete-project test asserted
+  `listWhatsAppMessages(...) === []` (now `{ messages: [], hasMore:
+  false }`), and `apps/api/src/whatsappWeb.test.ts` had two call sites
+  reading `.length` directly off the old bare-array return value -- both
+  fixed to destructure `.messages` first.
+
+  Deliberate-break-and-restore: reverted `listWhatsAppMessages` to the
+  naive `LIMIT limit` / `hasMore = rows.length === limit` version --
+  exactly the new exact-multiple-of-limit test failed (`true !== false`,
+  "exactly 4 messages exist and the limit is 4 -- there is nothing
+  more"), the other new test and the rest of the suite stayed green.
+  Restored from a scratchpad backup, confirmed a byte-identical `diff`
+  against the backup, and re-confirmed both new tests green again.
+
+  Real-browser verification against the live dev server: signed up,
+  built "חנות פרחים קטנה" (a small flower shop), intercepted the
+  WhatsApp status/messages endpoints via Playwright's own request
+  routing to report "connected" with a first page of 2 messages
+  (`hasMore: true`) and a second page at `offset=2` of 1 more message
+  (`hasMore: false`) -- opened the WhatsApp panel, confirmed the count
+  read "2+ messages" and a real "Load older messages" button was
+  present, clicked it, confirmed exactly one new request landed at
+  `?offset=2`, all three messages rendered in the correct
+  newest-to-oldest order with nothing dropped, the button disappeared,
+  and the count label switched to a plain "3 messages". `RESULT: PASS`.
+
+  Full suite green (989 tests, up from 985 -- `@forge/db` 91 → 93,
+  `@forge/web` 548 → 550; `@forge/shared` 11, `@forge/spec-engine` 82,
+  `@forge/api` 253 unchanged) via `npm test` at the repo root.
+
 ## Phase 4
 
 - Template/agent marketplace
