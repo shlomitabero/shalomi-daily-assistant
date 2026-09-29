@@ -14342,6 +14342,92 @@ not a single "make it perfect" claim.
   `@forge/shared` 11, `@forge/spec-engine` 82, `@forge/db` 91,
   `@forge/web` 541 unchanged).
 
+- **Round 256 -- the spec review screen's "entities" section (the
+  screens the AI Team is about to build) can now have a screen added
+  to it, not just removed or renamed.** Diversification: an Explore
+  survey found `SpecListItemRemover.tsx`'s own comments explicitly
+  flagging this exact gap -- roles and assumptions each got a real
+  "add a missing item" form a while back, but entities never did,
+  leaving that one section of the page correction-in-one-direction
+  only. This file had not been touched in the recent diversification
+  window.
+
+  Before this round, an entity the heuristic/AI engine missed entirely
+  (a two-sided marketplace where it only spotted "Order" and never
+  "Payment", say) had no direct fix on the spec review screen itself --
+  only a full Refine round-trip after committing to a build, or
+  talking it into existence via the free-text "additional request" box
+  and hoping the regenerated spec happened to include it.
+
+  Added a new `AddEntityForm` in `SpecListItemRemover.tsx`, mirroring
+  `AddRoleForm`/`AddAssumptionForm`'s own shape exactly: a single
+  free-text input, appended on submit. An entity needs more than a bare
+  string to satisfy `EntitySchema`, though (`fields.min(1)`, and a
+  `name` that becomes a real SQL table name), so a new
+  `deriveEntityName` helper in `apps/api/src/routes/projects.ts` turns
+  the typed label into a valid ASCII identifier: splits on any
+  non-alphanumeric run, title-cases each surviving word, joins with
+  nothing in between (`"Loyalty Program"` / `"loyalty-program"` both
+  become `"LoyaltyProgram"`), and falls back to `"Entity"` for a label
+  with no ASCII letters or digits at all (pure Hebrew). De-duplicates
+  case-insensitively against the project's existing entity names --
+  the same collision SQLite itself can't distinguish, per
+  `ProductSpecSchema`'s own `.refine()` in `@forge/shared` -- by
+  appending the first free numeric suffix, so two labels that would
+  otherwise both derive to `"Payment"` don't silently collide into one
+  shared table. The new entity gets the one required "name" text field
+  every domain-library entity already starts with (see
+  `domainEntities.ts`), rather than being born with zero fields and
+  failing validation. New POST route gated to a project that hasn't
+  been built yet (`ENTITY_ADD_AFTER_BUILD`, mirroring the existing
+  removal route's own `ENTITY_REMOVAL_AFTER_BUILD` gate) since once
+  built, the real database table and generated code don't track
+  further spec edits.
+
+  Considered and rejected: the Explore subagent's survey also
+  mentioned two other real gaps (the exported codegen app has no
+  language switching at all, and CSV import there doesn't support
+  required-relation fields) -- both judged too large for one round
+  (comparable in scope to the already-repeatedly-rejected
+  forgot-password flow), and the CSV-import gap really lives in
+  `EntityPanel.tsx`, a file this round was specifically avoiding per
+  the diversification window.
+
+  Tests: 4 new pure-function unit tests for `deriveEntityName` in
+  `projects.test.ts` (multi-word joining, the Hebrew-only fallback, and
+  the numeric-suffix collision logic across several existing-name
+  combinations), 5 new integration tests in `app.test.ts` (owner and
+  collaborator add with the derived name/label/starter-field asserted
+  directly, the collision-suffix behavior end-to-end through the real
+  route, blank-label rejection, cross-project 404, and the after-build
+  409 gate), and 2 new DOM tests for `AddEntityForm` in
+  `SpecListItemRemover.test.ts` mirroring `AddRoleForm`'s own
+  success/error tests exactly.
+
+  Deliberate-break-and-restore: removed the numeric-suffix while-loop
+  from `deriveEntityName` (falling straight through to the un-suffixed
+  base name) -- exactly 1 of 8 `projects.test.ts` tests failed (the
+  collision-suffix test), the other 7 stayed green, confirming the new
+  tests genuinely isolate that one piece of logic. Restored from a
+  scratchpad backup, confirmed a byte-identical `diff`, and
+  re-confirmed all 8 tests green again.
+
+  Real-browser verification against the live dev server, no
+  interception: signed up, generated a real spec, typed "Loyalty
+  Program" into the new form on the actual running entities section,
+  and confirmed via the DOM that a new `.entity-summary` appeared with
+  that exact label through the real POST endpoint -- then typed
+  "loyalty program" (same label, different case) into the same form
+  again and confirmed both entities now coexist rather than the second
+  add erroring, proving the case-insensitive collision-suffix logic
+  end-to-end through the real server, not just in the unit test.
+  `RESULT: PASS`.
+
+  Full suite green (978 tests, up from 968 -- `@forge/api` 243 → 251,
+  `@forge/web` 541 → 543; `@forge/shared` 11, `@forge/spec-engine` 82,
+  `@forge/db` 91 unchanged) and `npm run build --workspace=@forge/web`
+  clean.
+
 ## Phase 4
 
 - Template/agent marketplace
