@@ -2440,6 +2440,66 @@ test("EntityPanel's inline cell editor discards the draft on Escape without send
 });
 
 /**
+ * New in this round: the search box's own matchesSearch fell through to
+ * the raw stored foreign-key id for a relation field, so typing the exact
+ * name a relation cell visibly shows (e.g. "Dana", resolved via
+ * relationDisplayLabel) found nothing at all -- a real, everyday gap the
+ * moment someone tries to search an Order table by its courier's name.
+ * This confirms the live search box now matches the resolved label, and
+ * that a query matching only the raw id no longer matches (the id was
+ * never shown on screen to begin with, so there's nothing to preserve).
+ */
+test("EntityPanel's search box matches a relation field's resolved display label, not its raw stored id", async () => {
+  await withJsdom(async () => {
+    const orderEntity: Entity = {
+      name: "Order",
+      label: "Order",
+      fields: [
+        { name: "item", label: "Item", type: "text", required: true },
+        { name: "courierId", label: "Courier", type: "relation", relationTo: "Courier", required: false },
+      ],
+    };
+    const courierEntity: Entity = { name: "Courier", label: "Courier", fields: [{ name: "name", label: "Name", type: "text", required: true }] };
+    const courierRelated: EntityRecord[] = [{ id: 9, createdAt: "x", name: "Dana" }];
+    const store: EntityRecord[] = [
+      { id: 1, createdAt: "x", item: "Pizza", courierId: 9 },
+      { id: 2, createdAt: "x", item: "Burger", courierId: null },
+    ];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      if (input === "/api/projects/proj1/entities/Order") {
+        return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      if (input === "/api/projects/proj1/entities/Courier") {
+        return new Response(JSON.stringify({ records: courierRelated }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${init?.method ?? "GET"} ${input}`);
+    }) as typeof fetch;
+    try {
+      renderEntityPanel({ entity: orderEntity, allEntities: [orderEntity, courierEntity] });
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 2);
+
+      const searchInput = document.querySelector(".entity-search") as HTMLInputElement;
+      fireEvent.change(searchInput, { target: { value: "Dana" } });
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 1);
+
+      assert.equal(document.querySelectorAll("table tbody tr").length, 1, "searching the courier's resolved name must find the one matching order");
+      assert.equal(document.querySelector("table tbody td:nth-child(2)")?.textContent, "Pizza");
+
+      fireEvent.change(searchInput, { target: { value: "9" } });
+      await waitForCondition(() => document.querySelector(".empty-state") !== null);
+      assert.equal(
+        document.querySelectorAll("table tbody tr").length,
+        0,
+        "the raw foreign-key id was never shown on screen, so searching for it must no longer match",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * A relation field's cell shows a label resolved from a *different*
  * record (relationDisplayLabel), not the field's own raw stored value --
  * isInlineEditableField excludes it for exactly that reason (see

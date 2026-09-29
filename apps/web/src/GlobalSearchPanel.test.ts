@@ -54,6 +54,7 @@ test("GlobalSearchPanel's runSearch shows results from every entity that succeed
     "setHighlightQuery",
     "setSelectedIndex",
     "searchRequestId",
+    "lastRecordsByEntityRef",
     `${code}\nreturn runSearch;`,
   )(
     [entityA, entityB, entityC],
@@ -75,6 +76,7 @@ test("GlobalSearchPanel's runSearch shows results from every entity that succeed
     () => {},
     () => {},
     { current: 0 },
+    { current: {} },
   ) as (q: string) => Promise<void>;
 
   await fn("match");
@@ -112,6 +114,7 @@ test("GlobalSearchPanel's runSearch still surfaces the raw error message when ev
     "setHighlightQuery",
     "setSelectedIndex",
     "searchRequestId",
+    "lastRecordsByEntityRef",
     `${code}\nreturn runSearch;`,
   )(
     [entityA],
@@ -130,6 +133,7 @@ test("GlobalSearchPanel's runSearch still surfaces the raw error message when ev
     () => {},
     () => {},
     { current: 0 },
+    { current: {} },
   ) as (q: string) => Promise<void>;
 
   await fn("match");
@@ -185,6 +189,7 @@ test("GlobalSearchPanel's runSearch ignores a stale, still-in-flight search's re
     "setHighlightQuery",
     "setSelectedIndex",
     "searchRequestId",
+    "lastRecordsByEntityRef",
     `${code}\nreturn runSearch;`,
   )(
     [entityA],
@@ -208,6 +213,7 @@ test("GlobalSearchPanel's runSearch ignores a stale, still-in-flight search's re
     () => {},
     () => {},
     searchRequestId,
+    { current: {} },
   ) as (q: string) => Promise<void>;
 
   const stalePromise = fn("first query");
@@ -816,6 +822,79 @@ test("GlobalSearchPanel's Download button downloads the real results as a named 
       if (originalCreateObjectURL) (URL as unknown as { createObjectURL: (b: Blob) => string }).createObjectURL = originalCreateObjectURL;
       if (originalRevokeObjectURL) (URL as unknown as { revokeObjectURL: (u: string) => void }).revokeObjectURL = originalRevokeObjectURL;
       anchorProto.click = originalAnchorClick;
+    }
+  });
+});
+
+/**
+ * New in this round: real-DOM proof that Global Search now matches a
+ * relation field's resolved display label (e.g. a Courier's own "Dana"),
+ * the same gap fixed in EntityPanel's own per-tab search box -- both share
+ * the exact same matchesSearch rule via searchEntityRecords, so leaving
+ * this one behind would have made "found here" and "found everywhere"
+ * genuinely disagree for the first time. Every entity's records are
+ * already being fetched to search them, so this also confirms that
+ * shared fetch doubles as the relation lookup with no separate request.
+ */
+test("GlobalSearchPanel matches a relation field's resolved display label, not the raw foreign-key id it's stored as", async () => {
+  const courierEntity: Entity = { name: "Courier", label: "Courier", fields: [{ name: "name", label: "Name", type: "text", required: true }] };
+  const orderEntity: Entity = {
+    name: "Order",
+    label: "Order",
+    fields: [
+      { name: "item", label: "Item", type: "text", required: true },
+      { name: "courierId", label: "Courier", type: "relation", relationTo: "Courier", required: false },
+    ],
+  };
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async (input: string): Promise<Response> => {
+    if (input === "/api/projects/proj1/entities/Courier") {
+      return new Response(JSON.stringify({ records: [{ id: 9, name: "Dana" }] }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    if (input === "/api/projects/proj1/entities/Order") {
+      return new Response(JSON.stringify({ records: [{ id: 1, item: "Pizza", courierId: 9 }] }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }
+    throw new Error(`unexpected request ${input}`);
+  }) as typeof fetch;
+
+  await withJsdom(async () => {
+    try {
+      render(
+        React.createElement(
+          ThemeProvider,
+          null,
+          React.createElement(
+            LanguageProvider,
+            null,
+            React.createElement(GlobalSearchPanel, {
+              projectId: "proj1",
+              projectName: "Test Project",
+              entities: [courierEntity, orderEntity],
+              onClose: () => {},
+              onJumpToEntity: () => {},
+              onJumpToRecord: () => {},
+            }),
+          ),
+        ),
+      );
+
+      const input = document.querySelector(".global-search-input") as HTMLInputElement;
+      fireEvent.change(input, { target: { value: "Dana" } });
+      fireEvent.submit(document.querySelector("form.global-search-form")!);
+
+      await waitForCondition(() => document.querySelectorAll(".global-search-group").length > 0);
+
+      const groupLabels = [...document.querySelectorAll(".global-search-entity-label")].map((el) => el.textContent);
+      assert.deepEqual(
+        groupLabels,
+        ["Courier", "Order"],
+        "searching the courier's own name must match Courier directly AND Order via its resolved relation label",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
     }
   });
 });

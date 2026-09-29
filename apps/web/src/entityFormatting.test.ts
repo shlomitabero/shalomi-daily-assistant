@@ -119,6 +119,44 @@ test("matchesSearch matches on any field, is case-insensitive, and an empty quer
 });
 
 /**
+ * New in this round: a relation field's own table cell visibly shows the
+ * related record's display label (e.g. "Dana Levi"), resolved via
+ * relationDisplayLabel -- but matchesSearch fell through to String(value)
+ * for a relation field, i.e. the raw stored foreign-key id, so typing the
+ * exact name shown right there on screen found nothing. allEntities/
+ * relatedRecords are optional so a caller with no relation data on hand
+ * (or this same test's own no-args cases below) still gets the previous,
+ * id-only behavior instead of a crash.
+ */
+test("matchesSearch resolves a relation field to its related record's display label, not the raw foreign-key id", () => {
+  const customer: Entity = { name: "Customer", fields: [{ name: "name", type: "text", required: true }] };
+  const orderFields: Field[] = [
+    { name: "total", type: "number", required: true },
+    { name: "customerId", type: "relation", required: true, relationTo: "Customer" },
+  ];
+  const order = { total: 150, customerId: 1 };
+  const allEntities = [customer];
+  const relatedRecords = { Customer: [{ id: 1, name: "Dana Levi" }] };
+
+  assert.ok(matchesSearch(order, orderFields, "dana levi", allEntities, relatedRecords));
+  assert.ok(!matchesSearch(order, orderFields, "yossi", allEntities, relatedRecords));
+});
+
+test("matchesSearch falls back to matching the raw relation id when no allEntities/relatedRecords are given", () => {
+  const orderFields: Field[] = [{ name: "customerId", type: "relation", required: true, relationTo: "Customer" }];
+  const order = { customerId: 1 };
+  assert.ok(matchesSearch(order, orderFields, "1"));
+  assert.ok(!matchesSearch(order, orderFields, "dana levi"));
+});
+
+test("matchesSearch degrades gracefully to the raw id for a relation whose target entity/records aren't available, instead of throwing", () => {
+  const orderFields: Field[] = [{ name: "customerId", type: "relation", required: true, relationTo: "Customer" }];
+  const order = { customerId: 1 };
+  assert.ok(matchesSearch(order, orderFields, "1", [], {}));
+  assert.ok(!matchesSearch(order, orderFields, "dana levi", [], {}));
+});
+
+/**
  * New in this round: matchesSearch already tells the table a record
  * matched, but nothing showed *where* within a cell's own text -- a real
  * everyday annoyance the moment a search term is short/common and you
@@ -173,6 +211,32 @@ test("searchEntityRecords finds matches, caps the sample, and reports the real t
   assert.equal(result!.totalMatches, 3); // 3 real matches...
   assert.equal(result!.sample.length, 2); // ...but the sample is capped at the given limit
   assert.deepEqual(result!.sample.map((r) => r.name), ["Dana Levi", "Dana Cohen"]);
+});
+
+test("searchEntityRecords resolves relation fields to their display label when allEntities/relatedRecords are given", () => {
+  const customer: Entity = { name: "Customer", fields: [{ name: "name", type: "text", required: true }] };
+  const order: Entity = {
+    name: "Order",
+    label: "Orders",
+    fields: [
+      { name: "total", type: "number", required: true },
+      { name: "customerId", type: "relation", required: true, relationTo: "Customer" },
+    ],
+  };
+  const records = [
+    { id: 1, total: 100, customerId: 1 },
+    { id: 2, total: 200, customerId: 2 },
+  ];
+  const allEntities = [customer];
+  const relatedRecords = {
+    Customer: [
+      { id: 1, name: "Dana Levi" },
+      { id: 2, name: "Yossi Cohen" },
+    ],
+  };
+  const result = searchEntityRecords(order, records, "dana levi", 5, allEntities, relatedRecords);
+  assert.ok(result);
+  assert.deepEqual(result!.sample.map((r) => r.id), [1]);
 });
 
 test("searchEntityRecords returns null for an empty query or when nothing in this entity matched", () => {

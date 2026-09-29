@@ -117,14 +117,34 @@ export function formatNumberValue(value: number, lang: Lang): string {
   return value.toLocaleString(LOCALE[lang]);
 }
 
-/** True if any of the entity's fields on this record contain the search query (case-insensitive). */
-export function matchesSearch(record: EntityRecord, fields: Field[], query: string): boolean {
+/**
+ * True if any of the entity's fields on this record contain the search
+ * query (case-insensitive). A relation field is matched against its
+ * resolved display label (e.g. "Dana Levi"), the same text a table cell
+ * actually shows, rather than the raw stored foreign-key id -- otherwise a
+ * search for the customer name shown right there on screen finds nothing.
+ * `allEntities`/`relatedRecords` are optional so a caller with no relation
+ * data on hand yet (or a plain unit test) still gets the previous,
+ * id-only behavior instead of a required-but-unavailable argument.
+ */
+export function matchesSearch(
+  record: EntityRecord,
+  fields: Field[],
+  query: string,
+  allEntities?: Entity[],
+  relatedRecords?: RelatedRecordsByEntity,
+): boolean {
   const trimmed = query.trim().toLowerCase();
   if (!trimmed) return true;
   return fields.some((field) => {
     const value = record[field.name];
     if (value === null || value === undefined) return false;
-    const display = field.type === "enum" ? (field.enumLabels?.[String(value)] ?? String(value)) : String(value);
+    const display =
+      field.type === "enum"
+        ? (field.enumLabels?.[String(value)] ?? String(value))
+        : field.type === "relation" && allEntities && relatedRecords
+          ? relationDisplayLabel(field, value, allEntities, relatedRecords)
+          : String(value);
     return display.toLowerCase().includes(trimmed);
   });
 }
@@ -188,9 +208,11 @@ export function searchEntityRecords(
   records: EntityRecord[],
   query: string,
   limit = 5,
+  allEntities?: Entity[],
+  relatedRecords?: RelatedRecordsByEntity,
 ): EntitySearchResult | null {
   if (!query.trim()) return null;
-  const matches = records.filter((r) => matchesSearch(r, entity.fields, query));
+  const matches = records.filter((r) => matchesSearch(r, entity.fields, query, allEntities, relatedRecords));
   if (matches.length === 0) return null;
   return {
     entityName: entity.name,

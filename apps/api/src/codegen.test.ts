@@ -1670,11 +1670,11 @@ test("the exported GlobalSearch's runSearch shows results from every entity that
   const entityViewJsx = files.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
 
   const matchesSearchSrc = entityViewJsx.match(/export function matchesSearch\([\s\S]*?\n\}\n/)?.[0]?.replace("export ", "");
-  const searchEntitySrc = globalSearchJsx.match(/async function searchEntity\([\s\S]*?\n\}\n/)?.[0];
+  const searchAllEntitiesSrc = globalSearchJsx.match(/async function searchAllEntities\([\s\S]*?\n\}\n/)?.[0];
   const runSearchSrc = globalSearchJsx.match(/ {2}async function runSearch\(q\) \{[\s\S]*?\n {2}\}\n/)?.[0];
   assert.ok(
-    matchesSearchSrc && searchEntitySrc && runSearchSrc,
-    "expected to find matchesSearch/searchEntity/runSearch in generated output",
+    matchesSearchSrc && searchAllEntitiesSrc && runSearchSrc,
+    "expected to find matchesSearch/searchAllEntities/runSearch in generated output",
   );
 
   const entityA = { name: "Alpha", label: "Alpha", fields: [{ name: "name", label: "Name", type: "text" }] };
@@ -1694,7 +1694,7 @@ test("the exported GlobalSearch's runSearch shows results from every entity that
     "setSearched",
     "setSelectedIndex",
     "searchRequestId",
-    `${matchesSearchSrc}\n${searchEntitySrc}\n${runSearchSrc}\nreturn runSearch;`,
+    `${matchesSearchSrc}\n${searchAllEntitiesSrc}\n${runSearchSrc}\nreturn runSearch;`,
   )(
     [entityA, entityB, entityC],
     async (entityName: string) => {
@@ -1748,11 +1748,11 @@ test("the exported GlobalSearch's runSearch ignores a stale, still-in-flight sea
   const entityViewJsx = files.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
 
   const matchesSearchSrc = entityViewJsx.match(/export function matchesSearch\([\s\S]*?\n\}\n/)?.[0]?.replace("export ", "");
-  const searchEntitySrc = globalSearchJsx.match(/async function searchEntity\([\s\S]*?\n\}\n/)?.[0];
+  const searchAllEntitiesSrc = globalSearchJsx.match(/async function searchAllEntities\([\s\S]*?\n\}\n/)?.[0];
   const runSearchSrc = globalSearchJsx.match(/ {2}async function runSearch\(q\) \{[\s\S]*?\n {2}\}\n/)?.[0];
   assert.ok(
-    matchesSearchSrc && searchEntitySrc && runSearchSrc,
-    "expected to find matchesSearch/searchEntity/runSearch in generated output",
+    matchesSearchSrc && searchAllEntitiesSrc && runSearchSrc,
+    "expected to find matchesSearch/searchAllEntities/runSearch in generated output",
   );
 
   const entityA = { name: "Alpha", label: "Alpha", fields: [{ name: "name", label: "Name", type: "text" }] };
@@ -1774,7 +1774,7 @@ test("the exported GlobalSearch's runSearch ignores a stale, still-in-flight sea
     "setSearched",
     "setSelectedIndex",
     "searchRequestId",
-    `${matchesSearchSrc}\n${searchEntitySrc}\n${runSearchSrc}\nreturn runSearch;`,
+    `${matchesSearchSrc}\n${searchAllEntitiesSrc}\n${runSearchSrc}\nreturn runSearch;`,
   )(
     [entityA],
     async () => {
@@ -2443,6 +2443,61 @@ test("the exported EntityView's isInlineEditableField allows every field type ex
     assert.equal(isInlineEditableField({ type }), true, `expected ${type} to be inline-editable`);
   }
   assert.equal(isInlineEditableField({ type: "relation" }), false, "a relation field's cell shows a label resolved from a different record, so it must stay excluded");
+});
+
+/**
+ * New in this round: the exported app's own matchesSearch had the exact
+ * same gap the live preview's matchesSearch did -- a relation field's
+ * table cell visibly shows a related record's resolved label (e.g.
+ * "Dana", via relationDisplayLabel), but search fell through to
+ * String(value), the raw stored foreign-key id, so typing the name shown
+ * right there on screen found nothing in an exported/standalone app
+ * either. Runs the real generated matchesSearch (plus the real
+ * ALL_ENTITIES/pickDisplayField/recordDisplayLabel/relationDisplayLabel
+ * it actually depends on) against a real relation field and value.
+ */
+test("the exported EntityView's matchesSearch resolves a relation field to its related record's display label, not the raw foreign-key id", () => {
+  const withRelation: Project = {
+    ...project,
+    spec: {
+      ...project.spec,
+      entities: [
+        ...project.spec.entities,
+        { name: "Courier", label: "Courier", fields: [{ name: "name", label: "Name", type: "text", required: true }] },
+        {
+          name: "Order",
+          label: "Order",
+          fields: [
+            { name: "item", label: "Item", type: "text", required: true },
+            { name: "courierId", label: "Assigned Courier", type: "relation", required: false, relationTo: "Courier" },
+          ],
+        },
+      ],
+    },
+  };
+  const entityViewJsx = generateExportFiles(withRelation).find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+
+  const allEntitiesSrc = entityViewJsx.match(/const ALL_ENTITIES = [\s\S]*?;\n/)?.[0];
+  const displayFieldHintsSrc = entityViewJsx.match(/const DISPLAY_FIELD_NAME_HINTS = .*;\n/)?.[0];
+  const pickDisplayFieldSrc = entityViewJsx.match(/export function pickDisplayField\([\s\S]*?\n\}\n/)?.[0]?.replace("export ", "");
+  const recordDisplayLabelSrc = entityViewJsx.match(/export function recordDisplayLabel\([\s\S]*?\n\}\n/)?.[0]?.replace("export ", "");
+  const relationDisplayLabelSrc = entityViewJsx.match(/function relationDisplayLabel\([\s\S]*?\n\}\n/)?.[0];
+  const matchesSearchSrc = entityViewJsx.match(/export function matchesSearch\([\s\S]*?\n\}\n/)?.[0]?.replace("export ", "");
+  assert.ok(
+    allEntitiesSrc && displayFieldHintsSrc && pickDisplayFieldSrc && recordDisplayLabelSrc && relationDisplayLabelSrc && matchesSearchSrc,
+    "expected to find ALL_ENTITIES/DISPLAY_FIELD_NAME_HINTS/pickDisplayField/recordDisplayLabel/relationDisplayLabel/matchesSearch in generated output",
+  );
+
+  const matchesSearch = new Function(
+    `${allEntitiesSrc}\n${displayFieldHintsSrc}\n${pickDisplayFieldSrc}\n${recordDisplayLabelSrc}\n${relationDisplayLabelSrc}\n${matchesSearchSrc}\nreturn matchesSearch;`,
+  )() as (record: unknown, fields: unknown[], query: string, relatedRecords: unknown) => boolean;
+
+  const orderFields = [{ name: "item", type: "text" }, { name: "courierId", type: "relation", relationTo: "Courier" }];
+  const order = { item: "Pizza", courierId: 9 };
+  const relatedRecords = { Courier: [{ id: 9, name: "Dana" }] };
+
+  assert.equal(matchesSearch(order, orderFields, "dana", relatedRecords), true);
+  assert.equal(matchesSearch(order, orderFields, "9", relatedRecords), false, "the raw foreign-key id is never shown on screen, so it must not match");
 });
 
 // Ported from the Forge AI live preview's EntityPanel.tsx (round 206):

@@ -1,7 +1,13 @@
 import { useEffect, useRef, useState } from "react";
 import type { Entity, EntityRecord } from "@forge/shared";
 import { listRecords } from "./api.js";
-import { recordDisplayLabel, searchEntityRecords, splitHighlightSegments, type EntitySearchResult } from "./entityFormatting.js";
+import {
+  recordDisplayLabel,
+  searchEntityRecords,
+  splitHighlightSegments,
+  type EntitySearchResult,
+  type RelatedRecordsByEntity,
+} from "./entityFormatting.js";
 import { useTranslation } from "./i18n/LanguageContext.js";
 import { useDialogFocusTrap } from "./useDialogFocusTrap.js";
 import { addRecentSearch, clearRecentSearches, getRecentSearches, removeRecentSearch } from "./recentSearches.js";
@@ -87,6 +93,15 @@ export function GlobalSearchPanel({
   // itself as superseded (see the guard right after the await below)
   // instead of overwriting the newer, still-correct results on screen.
   const searchRequestId = useRef(0);
+  // Every entity's own records from the most recently *completed* search,
+  // keyed by entity name -- reused as `matchesSearch`'s relatedRecords so a
+  // relation field's search match resolves to its real display label (e.g.
+  // "Dana Levi") instead of a raw foreign-key id, with zero extra network
+  // calls: since this search already fetches every entity's records to
+  // search them, that same result set doubles as the lookup table for
+  // whichever OTHER entity a relation field happens to point at. handleShowAll
+  // reuses it too, since it's a same-query follow-up on results already shown.
+  const lastRecordsByEntityRef = useRef<RelatedRecordsByEntity>({});
 
   // Promise.allSettled rather than Promise.all: a single entity whose
   // records fail to load (a transient network blip, a cold-starting
@@ -108,7 +123,7 @@ export function GlobalSearchPanel({
     const settled = await Promise.allSettled(
       entities.map(async (entity) => {
         const { records } = await listRecords(projectId, entity.name);
-        return searchEntityRecords(entity, records, q);
+        return [entity.name, records] as const;
       }),
     );
     // A later call to runSearch (the user editing/resubmitting the query
@@ -118,10 +133,22 @@ export function GlobalSearchPanel({
     // ones on screen with stale ones for a query the user has already
     // moved past.
     if (searchRequestId.current !== requestId) return;
-    const succeeded = settled
-      .filter((r): r is PromiseFulfilledResult<EntitySearchResult | null> => r.status === "fulfilled")
-      .map((r) => r.value);
-    setResults(succeeded.filter((r): r is EntitySearchResult => r !== null));
+    const recordsByEntity: RelatedRecordsByEntity = {};
+    for (const result of settled) {
+      if (result.status === "fulfilled") {
+        const [name, records] = result.value;
+        recordsByEntity[name] = records;
+      }
+    }
+    lastRecordsByEntityRef.current = recordsByEntity;
+    const succeeded = entities
+      .map((entity) =>
+        recordsByEntity[entity.name]
+          ? searchEntityRecords(entity, recordsByEntity[entity.name], q, 5, entities, recordsByEntity)
+          : null,
+      )
+      .filter((r): r is EntitySearchResult => r !== null);
+    setResults(succeeded);
     setSearched(true);
     setHighlightQuery(q);
     setSelectedIndex(null);
@@ -163,7 +190,14 @@ export function GlobalSearchPanel({
     setShowAllLoading((prev) => new Set(prev).add(entityName));
     try {
       const { records } = await listRecords(projectId, entityName);
-      const full = searchEntityRecords(entity, records, highlightQuery, records.length);
+      const full = searchEntityRecords(
+        entity,
+        records,
+        highlightQuery,
+        records.length,
+        entities,
+        lastRecordsByEntityRef.current,
+      );
       setExpandedSamples((prev) => ({ ...prev, [entityName]: full?.sample ?? [] }));
     } finally {
       setShowAllLoading((prev) => {

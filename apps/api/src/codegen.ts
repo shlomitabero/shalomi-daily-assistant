@@ -1017,13 +1017,24 @@ function Cell({ field, value, relationLabel, onJumpToRecord }) {
   return <>{String(value)}</>;
 }
 
-export function matchesSearch(record, fields, query) {
+// A relation field is matched against its resolved display label (e.g.
+// "Dana Levi"), the same text a table cell actually shows, rather than the
+// raw stored foreign-key id -- otherwise a search for the customer name
+// shown right there on screen finds nothing. relatedRecords is optional so
+// a caller with no relation data on hand yet still gets the previous,
+// id-only behavior instead of a required-but-unavailable argument.
+export function matchesSearch(record, fields, query, relatedRecords) {
   const trimmed = query.trim().toLowerCase();
   if (!trimmed) return true;
   return fields.some((f) => {
     const value = record[f.name];
     if (value === null || value === undefined) return false;
-    const display = f.type === "enum" && f.enumLabels && f.enumLabels[value] ? f.enumLabels[value] : String(value);
+    const display =
+      f.type === "enum" && f.enumLabels && f.enumLabels[value]
+        ? f.enumLabels[value]
+        : f.type === "relation" && relatedRecords
+          ? relationDisplayLabel(f, value, relatedRecords)
+          : String(value);
     return String(display).toLowerCase().includes(trimmed);
   });
 }
@@ -1908,9 +1919,9 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
   }
 
   const visibleRecords = useMemo(() => {
-    const filtered = records.filter((r) => matchesSearch(r, entity.fields, search));
+    const filtered = records.filter((r) => matchesSearch(r, entity.fields, search, relatedRecords));
     return sortRecordsMulti(filtered, sortKeys);
-  }, [records, entity.fields, search, sortKeys]);
+  }, [records, entity.fields, search, sortKeys, relatedRecords]);
 
   // Exactly the records the calendar grid's current month is showing -- lets
   // the ICS export button disable itself when the visible month is
@@ -2565,11 +2576,36 @@ function renderGlobalSearchJsx(): string {
 import { listRecords } from "../api.js";
 import { matchesSearch, recordDisplayLabel } from "./EntityView.jsx";
 
-async function searchEntity(entity, query) {
-  const { records } = await listRecords(entity.name);
-  const matches = records.filter((r) => matchesSearch(r, entity.fields, query));
-  if (matches.length === 0) return null;
-  return { entityName: entity.name, entityLabel: entity.label, totalMatches: matches.length, sample: matches.slice(0, 5) };
+// Fetches every entity's own records once, then searches all of them using
+// that same result set as matchesSearch's relatedRecords -- so a relation
+// field's search match resolves to its real display label (e.g. "Dana
+// Levi") instead of a raw foreign-key id, with no extra network calls
+// beyond what searching every entity already required.
+async function searchAllEntities(entities, query) {
+  const settled = await Promise.allSettled(
+    entities.map(async (entity) => {
+      const { records } = await listRecords(entity.name);
+      return [entity.name, records];
+    }),
+  );
+  const recordsByEntity = {};
+  for (const result of settled) {
+    if (result.status === "fulfilled") {
+      const [name, records] = result.value;
+      recordsByEntity[name] = records;
+    }
+  }
+  const results = entities
+    .map((entity) => {
+      const records = recordsByEntity[entity.name];
+      if (!records) return null;
+      const matches = records.filter((r) => matchesSearch(r, entity.fields, query, recordsByEntity));
+      if (matches.length === 0) return null;
+      return { entityName: entity.name, entityLabel: entity.label, totalMatches: matches.length, sample: matches.slice(0, 5) };
+    })
+    .filter((r) => r !== null);
+  const failures = settled.filter((r) => r.status === "rejected");
+  return { results, failures };
 }
 
 /**
@@ -2601,13 +2637,11 @@ export function GlobalSearch({ entities, onClose, onJumpToEntity, onJumpToRecord
     const requestId = ++searchRequestId.current;
     setLoading(true);
     setError(null);
-    const settled = await Promise.allSettled(entities.map((entity) => searchEntity(entity, q)));
+    const { results: succeeded, failures } = await searchAllEntities(entities, q);
     if (searchRequestId.current !== requestId) return;
-    const succeeded = settled.filter((r) => r.status === "fulfilled").map((r) => r.value);
-    setResults(succeeded.filter((r) => r !== null));
+    setResults(succeeded);
     setSearched(true);
     setSelectedIndex(null);
-    const failures = settled.filter((r) => r.status === "rejected");
     if (failures.length > 0) {
       setError(
         failures.length === entities.length
