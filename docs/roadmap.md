@@ -14766,6 +14766,73 @@ not a single "make it perfect" claim.
   `@forge/api` 252 unchanged) and `npm run build --workspace=@forge/web`
   clean.
 
+- **Round 262 -- Business Twin's "no records yet" and "gone stale"
+  observations now jump to the specific entity they name, closing the
+  one remaining inconsistency in an otherwise fully clickable panel.**
+  Diversification: `EntityPanel.tsx` had been touched in 3 of the
+  previous 4 rounds (258, 260, 261), so this round's Explore survey was
+  explicitly told to avoid it entirely and look elsewhere. It found that
+  `apps/api/src/twin.ts`'s `computeBusinessTwin` builds two separate
+  arrays -- `jumpableObservations` (rendered by `BusinessTwinPanel.tsx`
+  as real `<button onClick={() => onJumpToEntity(...)}>` elements) and
+  plain `observations` (rendered as inert `<li>{o}</li>` text) -- and
+  that the "unused entity" fact (`unused.length > 0`) and the "stale
+  entity" fact (inside `computeActivityObservations`) were the only two
+  observations left in the plain array that name a specific entity by
+  label, while every other entity-naming insight (most-active,
+  relation-coverage, duplicate records) was already migrated to the
+  jumpable array in earlier rounds. Confirmed via git history
+  (`git log` on `twin.ts`) that three separate prior commits each
+  converted a different insight to jumpable, but none touched these two.
+
+  Concretely: Shlomi opens Business Twin, sees "No records yet in:
+  Orders" or "No new records added in the last 30 days in: Customers",
+  and instinctively clicks it exactly like every other line in that same
+  list -- nothing happens, because it was still a plain string. Both
+  facts already name a specific entity; there was never a good reason
+  for them to not jump like their neighbors.
+
+  Also fixed along the way (not just wiring): both facts previously
+  batched every affected entity into one comma-joined sentence ("No
+  records yet in: Orders, Vendors"), which could never have become a
+  single working link anyway once made clickable. Both
+  `computeActivityObservations` and the "unused" block in
+  `computeBusinessTwin` now emit one `jumpableObservations` entry per
+  entity instead, so a project with several stale or empty entities gets
+  one independently-clickable line for each, not one static paragraph
+  naming several at once.
+
+  Tests: reworked the existing single-unused-entity assertion in
+  `twin.test.ts` to check `jumpableObservations` (with the correct
+  `entityName`) instead of the old plain-text `observations` array, did
+  the same for the existing stale-entity and Hebrew-phrasing tests, and
+  added one genuinely new test asserting the multi-entity case: a
+  three-entity project with two unused entities gets two separate
+  jumpable observations, one per entity, never bundled into a single
+  sentence naming both.
+
+  Deliberate-break-and-restore: reverted the "unused" block back to its
+  old single comma-joined `observations.push(...)` form -- exactly 2 of
+  16 `twin.test.ts` tests failed (the single-entity and multi-entity
+  unused-observation tests), the other 14 stayed green. Restored from a
+  scratchpad backup, confirmed a byte-identical `diff`, and re-confirmed
+  all 16 tests green again.
+
+  Real-browser verification against the live dev server: signed up,
+  built "A CRM for tracking customers and deals" (Customer + Deal),
+  bulk-selected and deleted every seeded Deal record via the real API
+  (an entirely ordinary user action, not a synthetic DB write) to make
+  Deal genuinely unused, opened Business Twin, found the real clickable
+  observation reading `No records yet in "Deal" — worth checking whether
+  that's expected.`, clicked it, and confirmed the app closed the Twin
+  overlay and switched the active entity tab to Deal -- zero console
+  errors throughout. `RESULT: PASS`.
+
+  Full suite green (985 tests, up from 984 -- `@forge/api` 252 → 253;
+  `@forge/shared` 11, `@forge/spec-engine` 82, `@forge/db` 91,
+  `@forge/web` 548 unchanged) and `npm run build --workspace=@forge/web`
+  clean.
+
 ## Phase 4
 
 - Template/agent marketplace
