@@ -15354,6 +15354,91 @@ not a single "make it perfect" claim.
   `@forge/shared` 11, `@forge/spec-engine` 82, `@forge/db` 93, `@forge/web`
   567 unchanged) via `npm test` at the repo root.
 
+- **Round 269 -- the Business Twin now surfaces real number-field totals
+  and enum-field value distributions, closing a genuine blind spot in
+  the panel meant to summarize a business's own data.** With nearly
+  every previously-known gap closed (round 268 finished the last
+  port-to-exported-codegen item, round 267 closed the spec-review
+  field-correction gap), this round's Explore survey deliberately
+  looked at fresh angles -- WhatsApp phone-matching logic, onboarding,
+  mobile CSS, the Business Twin's own insight-*generation* logic (not
+  just clickability, which was already fully closed) -- rather than
+  re-scanning the same panel list. The winning candidate: `apps/api/
+  src/twin.ts`'s `computeBusinessTwin` and its helper functions derive
+  every observation from record counts, relation fields, the display
+  field, or `createdAt` -- confirmed via `grep -n '"number"\|"enum"'
+  apps/api/src/twin.ts` returning zero hits across the whole 368-line
+  file. Yet most of this app's own seeded domain-library entities carry
+  exactly these two field types on their most business-meaningful
+  columns (`Order.total`, `Payment.amount`, `Booking.amount` as
+  numbers; `Order.status`, `Ticket.status`, `Claim.status` as enums --
+  see `domainEntities.ts`). For the overwhelming majority of real
+  generated apps, the one panel meant to summarize "what's actually
+  going on in your data" was silently blind to money and status, the
+  two facts a real small-business owner would look for first.
+
+  Two new observation-computing functions, added next to the file's
+  existing five (`computeRelationCoverageObservations`,
+  `computeRelationHubObservation`, `computeDuplicateObservations`,
+  `computeActivityObservations`) and following their exact same shape:
+  `computeNumericAggregateObservations` sums every number field across
+  every record with a real (non-null, non-NaN) value and reports the
+  total plus the average (rounded to one decimal), e.g. `Total "total"
+  in "Order": 500 (average 166.7 across 3 records)`; skipped entirely
+  when no record has a real value, the same "nothing to report yet"
+  guard the file's existing observations already use.
+  `computeEnumDistributionObservations` counts every enum field's
+  distinct values across the entity's records and reports a
+  count-sorted breakdown using each value's own `enumLabels` display
+  text where one exists, e.g. `"status" breakdown in "Order": 2
+  "Pending", 1 "Shipped"`; skipped when every record shares the exact
+  same single value, since a distribution of one value isn't a
+  distribution worth surfacing (the same principle
+  `computeDuplicateObservations` already applies to its own
+  single-candidate case). Both feed into the existing
+  `jumpableObservations` array `computeBusinessTwin` already builds, so
+  `BusinessTwinPanel.tsx` needed zero changes at all -- it already
+  renders every entry in that array as a clickable jump-to-entity link.
+
+  Tests: 7 new tests in `twin.test.ts` -- a real sum/average across 3
+  records, silence when no record has a real value, Hebrew phrasing, a
+  real 2-vs-1 enum breakdown sorted by count, silence when every record
+  shares one value, and that the breakdown uses `enumLabels` display
+  text (Hebrew) rather than the raw stored English enum value.
+
+  Deliberate-break-and-restore (backup taken only after the feature was
+  complete and the full suite was green): removed the
+  `if (countByValue.size < 2) continue;` single-value guard from
+  `computeEnumDistributionObservations` -- exactly the new
+  "stays silent about an enum field when every record shares the exact
+  same single value" test failed, the other 21 `twin.test.ts` tests
+  stayed green. Restored from the backup, confirmed a byte-identical
+  `diff`, re-confirmed all 22 tests green again.
+
+  Real end-to-end verification against a genuinely running dev server
+  (not a mock, live preview rather than exported codegen this time):
+  built both `@forge/api` and `@forge/web`, spawned the real built
+  `server.js`, drove real headless Chromium through the actual signup →
+  idea → build flow with the description "A small courier delivery
+  business" (heuristically matching the `Order`+`Courier` domain
+  entities, `Order` carrying both a `total` number field and a `status`
+  enum field), replaced the build pipeline's own auto-seeded `Order`
+  records with 3 known values via the real REST API (totals 100/250/150,
+  statuses Pending/Pending/Shipped), re-entered the project after a page
+  reload, opened the real Business Twin panel, and confirmed the live
+  DOM showed both `Total "total" in "Order": 500 (average 166.7 across 3
+  records)` and `"status" breakdown in "Order": 2 "Pending", 1
+  "Shipped"` -- along with two bonus observations the same code path
+  produced unprompted for the auto-seeded `Courier` entity's own
+  `vehicleType` and `status` enum fields, confirming the feature
+  genuinely generalizes across entities and field types rather than
+  only working for the one hand-crafted case the unit tests cover.
+  `RESULT: PASS`.
+
+  Full suite green (1030 tests, up from 1024 -- `@forge/api` 271 → 277;
+  `@forge/shared` 11, `@forge/spec-engine` 82, `@forge/db` 93, `@forge/web`
+  567 unchanged) via `npm test` at the repo root.
+
 ## Phase 4
 
 - Template/agent marketplace
