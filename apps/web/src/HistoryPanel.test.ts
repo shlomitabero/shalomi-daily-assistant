@@ -1300,3 +1300,98 @@ test("HistoryPanel remembers a committed checkpoint search as a recent-search ch
     }
   });
 });
+
+/**
+ * New in this round: computeCheckpointDiff (checkpointDiff.ts) previously
+ * detected a field only by name -- a same-named field that changed TYPE
+ * between the checkpoint and the live spec (e.g. a refine turning a
+ * free-text "status" field into an enum) was invisible to the diff,
+ * silently showing "no changes" even though restoring would genuinely
+ * change what the field does. This confirms the real, rendered "What would
+ * change?" panel actually surfaces that -- not just the pure function in
+ * isolation (already covered by checkpointDiff.test.ts).
+ */
+test("HistoryPanel's diff panel shows a real, rendered message when a checkpoint field's type differs from the live spec, not 'no changes'", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    const cp: Checkpoint = {
+      id: "cp1",
+      projectId: "proj1",
+      label: "Initial build",
+      spec: {
+        summary: "s",
+        personas: [],
+        roles: ["Admin"],
+        entities: [
+          {
+            name: "Order",
+            label: "Orders",
+            fields: [{ name: "status", label: "Status", type: "text", required: true }],
+          },
+        ],
+        screens: [],
+        assumptions: [],
+        openQuestions: [],
+      },
+      createdAt: new Date().toISOString(),
+    };
+    const currentSpec: ProductSpec = {
+      ...cp.spec,
+      entities: [
+        {
+          name: "Order",
+          label: "Orders",
+          fields: [
+            { name: "status", label: "Status", type: "enum", required: true, enumValues: ["Pending", "Shipped"] },
+          ],
+        },
+      ],
+    };
+
+    globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/checkpoints") {
+        return new Response(JSON.stringify({ checkpoints: [cp] }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+
+    try {
+      render(
+        React.createElement(
+          ThemeProvider,
+          null,
+          React.createElement(
+            LanguageProvider,
+            null,
+            React.createElement(HistoryPanel, {
+              projectId: "proj1",
+              projectName: "Test Project",
+              currentSpec,
+              onRestored: () => {},
+              onClose: () => {},
+            }),
+          ),
+        ),
+      );
+      await waitForCondition(() => document.querySelectorAll(".checkpoint-list li").length === 1);
+
+      const toggle = document.querySelector(".detail-toggle") as HTMLButtonElement;
+      fireEvent.click(toggle);
+      await waitForCondition(() => document.querySelector(".detail-list") !== null);
+
+      const detailText = document.querySelector(".detail-list")!.textContent ?? "";
+      assert.match(
+        detailText,
+        /Orders.*would change the type of these fields.*Status/,
+        "a same-named field that changed type must be reported as a real change, not silently as 'no changes'",
+      );
+      assert.doesNotMatch(document.body.textContent ?? "", /No changes -- restoring/, "must never show the no-changes message when a field's type genuinely differs");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});

@@ -324,6 +324,11 @@ export function HistoryPanel({
                                     {t("history.diff.entityGainedFields", { entity: e.label, fields: e.addedFieldNames.join(", ") })}
                                   </li>
                                 )}
+                                {e.changedFieldNames.length > 0 && (
+                                  <li>
+                                    {t("history.diff.entityChangedFields", { entity: e.label, fields: e.changedFieldNames.join(", ") })}
+                                  </li>
+                                )}
                               </Fragment>
                             ))}
                           </ul>

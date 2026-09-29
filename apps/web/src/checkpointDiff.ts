@@ -1,4 +1,4 @@
-import type { Checkpoint, ProductSpec } from "@forge/shared";
+import type { Checkpoint, Field, ProductSpec } from "@forge/shared";
 import { safeDownloadName } from "./api.js";
 import type { Lang } from "./i18n/language.js";
 
@@ -7,7 +7,24 @@ const LOCALE: Record<Lang, string> = { he: "he-IL", en: "en-US" };
 export interface CheckpointDiff {
   removedEntities: { name: string; label: string }[];
   addedEntities: { name: string; label: string }[];
-  changedEntities: { name: string; label: string; removedFieldNames: string[]; addedFieldNames: string[] }[];
+  changedEntities: { name: string; label: string; removedFieldNames: string[]; addedFieldNames: string[]; changedFieldNames: string[] }[];
+}
+
+/**
+ * A field's "shape" for diff/current-check purposes -- everything about it
+ * that changes what the app actually does with the field, not just its
+ * display label (which computeCheckpointDiff intentionally never compares,
+ * matching FieldLabelEditor's own view that a label rename isn't a
+ * structural change worth flagging here). Two same-named fields with equal
+ * signatures are the "same field, unchanged" that both functions below
+ * already assumed name-matching alone implied -- which silently stopped
+ * being true the moment a refine changes a field's type (e.g. free text ->
+ * enum) without renaming it, exactly the gap this fixes.
+ */
+function fieldSignature(f: Field): string {
+  const enumPart = f.type === "enum" ? (f.enumValues ?? []).slice().sort().join(",") : "";
+  const relationPart = f.type === "relation" ? (f.relationTo ?? "") : "";
+  return `${f.type}|${relationPart}|${enumPart}`;
 }
 
 /**
@@ -31,7 +48,13 @@ export function computeCheckpointDiff(currentSpec: ProductSpec, checkpointSpec: 
   const currentEntities = new Map(currentSpec.entities.map((e) => [e.name, e]));
   const removedEntities: { name: string; label: string }[] = [];
   const addedEntities: { name: string; label: string }[] = [];
-  const changedEntities: { name: string; label: string; removedFieldNames: string[]; addedFieldNames: string[] }[] = [];
+  const changedEntities: {
+    name: string;
+    label: string;
+    removedFieldNames: string[];
+    addedFieldNames: string[];
+    changedFieldNames: string[];
+  }[] = [];
 
   for (const entity of currentSpec.entities) {
     const inCheckpoint = checkpointEntities.get(entity.name);
@@ -39,12 +62,18 @@ export function computeCheckpointDiff(currentSpec: ProductSpec, checkpointSpec: 
       removedEntities.push({ name: entity.name, label: entity.label ?? entity.name });
       continue;
     }
-    const checkpointFieldNames = new Set(inCheckpoint.fields.map((f) => f.name));
+    const checkpointFieldsByName = new Map(inCheckpoint.fields.map((f) => [f.name, f]));
     const currentFieldNames = new Set(entity.fields.map((f) => f.name));
-    const removedFieldNames = entity.fields.filter((f) => !checkpointFieldNames.has(f.name)).map((f) => f.label ?? f.name);
+    const removedFieldNames = entity.fields.filter((f) => !checkpointFieldsByName.has(f.name)).map((f) => f.label ?? f.name);
     const addedFieldNames = inCheckpoint.fields.filter((f) => !currentFieldNames.has(f.name)).map((f) => f.label ?? f.name);
-    if (removedFieldNames.length > 0 || addedFieldNames.length > 0) {
-      changedEntities.push({ name: entity.name, label: entity.label ?? entity.name, removedFieldNames, addedFieldNames });
+    const changedFieldNames = entity.fields
+      .filter((f) => {
+        const inCheckpointField = checkpointFieldsByName.get(f.name);
+        return inCheckpointField !== undefined && fieldSignature(f) !== fieldSignature(inCheckpointField);
+      })
+      .map((f) => f.label ?? f.name);
+    if (removedFieldNames.length > 0 || addedFieldNames.length > 0 || changedFieldNames.length > 0) {
+      changedEntities.push({ name: entity.name, label: entity.label ?? entity.name, removedFieldNames, addedFieldNames, changedFieldNames });
     }
   }
 
@@ -65,9 +94,13 @@ export function computeCheckpointDiff(currentSpec: ProductSpec, checkpointSpec: 
  * list's own newest-first order no longer lines up with which entry is
  * actually current -- the most-recently-created checkpoint at the top can
  * be stale once you've gone back to an earlier one, with nothing in the
- * list itself saying so. Compared as sets of entity/field names (matching
- * computeCheckpointDiff's own scope) rather than full JSON equality, since
- * array order is never meaningful here and isn't guaranteed stable.
+ * list itself saying so. Compared as sets of entity/field names plus each
+ * shared field's own fieldSignature (matching computeCheckpointDiff's own
+ * scope) rather than full JSON equality, since array order is never
+ * meaningful here and isn't guaranteed stable -- but a same-named field
+ * that changed type/enum/relation between the two specs is a real
+ * structural difference, not "still current", so name-matching alone is
+ * deliberately not enough here either.
  */
 export function isCheckpointCurrent(currentSpec: ProductSpec, checkpointSpec: ProductSpec): boolean {
   const currentNames = new Set(currentSpec.entities.map((e) => e.name));
@@ -80,11 +113,13 @@ export function isCheckpointCurrent(currentSpec: ProductSpec, checkpointSpec: Pr
   const checkpointEntities = new Map(checkpointSpec.entities.map((e) => [e.name, e]));
   for (const entity of currentSpec.entities) {
     const inCheckpoint = checkpointEntities.get(entity.name)!;
-    const currentFieldNames = new Set(entity.fields.map((f) => f.name));
-    const checkpointFieldNames = new Set(inCheckpoint.fields.map((f) => f.name));
-    if (currentFieldNames.size !== checkpointFieldNames.size) return false;
-    for (const fieldName of currentFieldNames) {
-      if (!checkpointFieldNames.has(fieldName)) return false;
+    const currentFieldsByName = new Map(entity.fields.map((f) => [f.name, f]));
+    const checkpointFieldsByName = new Map(inCheckpoint.fields.map((f) => [f.name, f]));
+    if (currentFieldsByName.size !== checkpointFieldsByName.size) return false;
+    for (const [fieldName, field] of currentFieldsByName) {
+      const inCheckpointField = checkpointFieldsByName.get(fieldName);
+      if (!inCheckpointField) return false;
+      if (fieldSignature(field) !== fieldSignature(inCheckpointField)) return false;
     }
   }
 

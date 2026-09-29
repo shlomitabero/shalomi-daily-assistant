@@ -54,7 +54,7 @@ test("computeCheckpointDiff reports fields present now but missing from the chec
   assert.deepEqual(diff.removedEntities, []);
   assert.deepEqual(
     diff.changedEntities,
-    [{ name: "Customer", label: "Customers", removedFieldNames: ["Loyalty Points"], addedFieldNames: [] }],
+    [{ name: "Customer", label: "Customers", removedFieldNames: ["Loyalty Points"], addedFieldNames: [], changedFieldNames: [] }],
   );
 });
 
@@ -63,7 +63,7 @@ test("computeCheckpointDiff falls back to the raw name when a field or entity ha
   const checkpoint = makeSpec([{ name: "Customer", fields: [{ name: "name", type: "text", required: true }] }]);
 
   const diff = computeCheckpointDiff(current, checkpoint);
-  assert.deepEqual(diff.changedEntities, [{ name: "Customer", label: "Customer", removedFieldNames: ["notes"], addedFieldNames: [] }]);
+  assert.deepEqual(diff.changedEntities, [{ name: "Customer", label: "Customer", removedFieldNames: ["notes"], addedFieldNames: [], changedFieldNames: [] }]);
 });
 
 test("computeCheckpointDiff reports checkpoint-only entities/fields as additions, not as absence of removals", () => {
@@ -82,7 +82,7 @@ test("computeCheckpointDiff reports checkpoint-only entities/fields as additions
   const diff = computeCheckpointDiff(current, checkpointWithExtra);
   assert.deepEqual(diff.removedEntities, []);
   assert.deepEqual(diff.addedEntities, [{ name: "Order", label: "Orders" }]);
-  assert.deepEqual(diff.changedEntities, [{ name: "Customer", label: "Customer", removedFieldNames: [], addedFieldNames: ["Phone"] }]);
+  assert.deepEqual(diff.changedEntities, [{ name: "Customer", label: "Customer", removedFieldNames: [], addedFieldNames: ["Phone"], changedFieldNames: [] }]);
 });
 
 test("computeCheckpointDiff reports a brand-new entity in the checkpoint as addedEntities, never as a removal -- this is what makes resolveCompareSpec's 'what did a later refine add' comparison actually work", () => {
@@ -128,8 +128,93 @@ test("computeCheckpointDiff reports an entity that both lost and gained fields a
 
   const diff = computeCheckpointDiff(current, checkpoint);
   assert.deepEqual(diff.changedEntities, [
-    { name: "Customer", label: "Customers", removedFieldNames: ["Notes"], addedFieldNames: ["Phone"] },
+    { name: "Customer", label: "Customers", removedFieldNames: ["Notes"], addedFieldNames: ["Phone"], changedFieldNames: [] },
   ]);
+});
+
+/**
+ * New in this round: a same-named field that changed TYPE between the two
+ * specs (e.g. a free-text "status" field a refine turned into an enum) was
+ * previously invisible to computeCheckpointDiff -- name-matching alone
+ * treated it as neither removed nor added, so the entity could disappear
+ * from changedEntities entirely even though restoring this checkpoint
+ * would genuinely change what the field does.
+ */
+test("computeCheckpointDiff reports a same-named field that changed type as changedFieldNames, not silently as no change", () => {
+  const current = makeSpec([
+    {
+      name: "Order",
+      label: "Orders",
+      fields: [
+        { name: "name", label: "Name", type: "text", required: true },
+        { name: "status", label: "Status", type: "enum", required: true, enumValues: ["Pending", "Shipped"] },
+      ],
+    },
+  ]);
+  const checkpoint = makeSpec([
+    {
+      name: "Order",
+      label: "Orders",
+      fields: [
+        { name: "name", label: "Name", type: "text", required: true },
+        { name: "status", label: "Status", type: "text", required: true },
+      ],
+    },
+  ]);
+
+  const diff = computeCheckpointDiff(current, checkpoint);
+  assert.deepEqual(diff.changedEntities, [
+    { name: "Order", label: "Orders", removedFieldNames: [], addedFieldNames: [], changedFieldNames: ["Status"] },
+  ]);
+});
+
+test("computeCheckpointDiff reports a same-named enum field whose enumValues changed as changedFieldNames", () => {
+  const current = makeSpec([
+    {
+      name: "Order",
+      fields: [{ name: "status", label: "Status", type: "enum", required: true, enumValues: ["Pending", "Shipped", "Cancelled"] }],
+    },
+  ]);
+  const checkpoint = makeSpec([
+    { name: "Order", fields: [{ name: "status", label: "Status", type: "enum", required: true, enumValues: ["Pending", "Shipped"] }] },
+  ]);
+
+  const diff = computeCheckpointDiff(current, checkpoint);
+  assert.deepEqual(diff.changedEntities, [
+    { name: "Order", label: "Order", removedFieldNames: [], addedFieldNames: [], changedFieldNames: ["Status"] },
+  ]);
+});
+
+test("computeCheckpointDiff never flags a field as changed just because its label or required-ness differs -- only type/enum/relation shape matters", () => {
+  const current = makeSpec([
+    {
+      name: "Order",
+      fields: [{ name: "status", label: "Order Status", type: "text", required: true }],
+    },
+  ]);
+  const checkpoint = makeSpec([{ name: "Order", fields: [{ name: "status", label: "Status", type: "text", required: false }] }]);
+
+  const diff = computeCheckpointDiff(current, checkpoint);
+  assert.deepEqual(diff.changedEntities, [], "a label rename or required-ness flip alone must not be reported as a structural change");
+});
+
+/**
+ * New in this round: isCheckpointCurrent had the identical gap --
+ * name-matching alone meant a checkpoint whose field changed type could be
+ * wrongly reported as "you are already looking at this", even though
+ * restoring it would genuinely change the field's behavior.
+ */
+test("isCheckpointCurrent is false when a same-named field changed type, even though names and counts still match", () => {
+  const current = makeSpec([
+    { name: "Order", fields: [{ name: "status", type: "enum", required: true, enumValues: ["Pending", "Shipped"] }] },
+  ]);
+  const typeChanged = makeSpec([{ name: "Order", fields: [{ name: "status", type: "text", required: true }] }]);
+
+  assert.equal(
+    isCheckpointCurrent(current, typeChanged),
+    false,
+    "same field name and field count must not be enough when the field's own type genuinely differs",
+  );
 });
 
 /**
