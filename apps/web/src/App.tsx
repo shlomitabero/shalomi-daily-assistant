@@ -1454,6 +1454,10 @@ function AppContent() {
                     onEntityRenamed={setProject}
                     highlightRecordId={highlightRecordId}
                     onHighlightHandled={() => setHighlightRecordId(null)}
+                    onJumpToRecord={(targetEntity, recordId) => {
+                      setActiveEntity(targetEntity);
+                      setHighlightRecordId(recordId);
+                    }}
                   />
                 ))}
             </div>

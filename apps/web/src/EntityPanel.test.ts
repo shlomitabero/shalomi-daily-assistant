@@ -2428,6 +2428,74 @@ test("EntityPanel never opens an inline editor for a relation field's cell", asy
 
       assert.equal(relationCell.querySelector("select, input"), null, "a relation cell must never open an inline editor on double-click");
       assert.equal(relationCell.textContent, "Dana", "the relation cell must keep showing its resolved label");
+      assert.equal(
+        relationCell.querySelector("button"),
+        null,
+        "without an onJumpToRecord callback, a relation cell must render as plain text, not a clickable button",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
+ * New in this round: clicking a relation cell's resolved label now jumps
+ * straight to the related record on its own entity's tab, via the same
+ * onJumpToRecord callback App.tsx already wires up for Global Search,
+ * WhatsApp log, and Business Twin jumps (see App.tsx). Before this, seeing
+ * a related record's own fields meant manually switching tabs and
+ * searching/scrolling to find it by name -- this confirms the live
+ * component actually renders the cell as a real button and fires the
+ * callback with the target entity name and record id, not just that
+ * onJumpToRecord exists as a prop.
+ */
+test("EntityPanel's relation cell jumps to the related record when onJumpToRecord is given", async () => {
+  await withJsdom(async () => {
+    const orderEntity: Entity = {
+      name: "Order",
+      label: "Order",
+      fields: [
+        { name: "item", label: "Item", type: "text", required: true },
+        { name: "courierId", label: "Courier", type: "relation", relationTo: "Courier", required: false },
+      ],
+    };
+    const courierEntity: Entity = { name: "Courier", label: "Courier", fields: [{ name: "name", label: "Name", type: "text", required: true }] };
+    const courierRelated: EntityRecord[] = [{ id: 9, createdAt: "x", name: "Dana" }];
+    const store: EntityRecord[] = [{ id: 1, createdAt: "x", item: "Pizza", courierId: 9 }];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      if (input === "/api/projects/proj1/entities/Order") {
+        const method = init?.method ?? "GET";
+        if (method === "GET") {
+          return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
+        }
+      }
+      if (input === "/api/projects/proj1/entities/Courier") {
+        return new Response(JSON.stringify({ records: courierRelated }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${init?.method ?? "GET"} ${input}`);
+    }) as typeof fetch;
+    let jumped: [string, number] | null = null;
+    try {
+      renderEntityPanel({
+        entity: orderEntity,
+        allEntities: [orderEntity, courierEntity],
+        onJumpToRecord: (targetEntity: string, recordId: number) => {
+          jumped = [targetEntity, recordId];
+        },
+      });
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 1);
+      await waitForCondition(() => document.querySelectorAll("table tbody td")[2]?.textContent === "Dana");
+
+      const relationCell = document.querySelectorAll("table tbody td")[2] as HTMLTableCellElement;
+      const relationButton = relationCell.querySelector("button");
+      assert.ok(relationButton, "with an onJumpToRecord callback, the relation cell must render as a real clickable button");
+      assert.equal(relationButton!.textContent, "Dana", "the button must still show the resolved related-record label");
+
+      fireEvent.click(relationButton!);
+
+      assert.deepEqual(jumped, ["Courier", 9], "clicking must call onJumpToRecord with the relation's own target entity name and the related record's real id");
     } finally {
       globalThis.fetch = originalFetch;
     }

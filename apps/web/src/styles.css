@@ -1524,6 +1524,12 @@ button.sort-header:hover:not(:disabled) {
   background: none;
 }
 
+.relation-jump-link {
+  padding: 0;
+  font-weight: inherit;
+  font: inherit;
+}
+
 .preview-header {
   display: flex;
   align-items: center;

@@ -105,6 +105,7 @@ function Cell({
   t,
   relationLabel,
   highlightQuery,
+  onJumpToRecord,
 }: {
   field: Field;
   value: unknown;
@@ -119,12 +120,27 @@ function Cell({
    * different displayed text, so highlighting there would point at text
    * the search didn't actually match. */
   highlightQuery?: string;
+  /** When given, a relation cell renders as a clickable link that jumps
+   * straight to the related record on its own entity's tab -- the same
+   * jump-to-record plumbing Global Search, WhatsApp log, and Business
+   * Twin already use, now reachable from the value itself instead of
+   * only from those other panels. Omitted entirely in print output,
+   * where a click target makes no sense. */
+  onJumpToRecord?: (targetEntity: string, recordId: number) => void;
 }) {
   if (value === null || value === undefined || value === "") {
     return <span className="muted">{t("entity.empty")}</span>;
   }
   if (field.type === "relation") {
-    return <>{relationLabel || `#${value}`}</>;
+    const label = relationLabel || `#${value}`;
+    if (onJumpToRecord && field.relationTo) {
+      return (
+        <button type="button" className="link-button relation-jump-link" onClick={() => onJumpToRecord(field.relationTo!, Number(value))}>
+          {label}
+        </button>
+      );
+    }
+    return <>{label}</>;
   }
   if (field.type === "boolean") {
     return value ? <span className="bool-yes">✓</span> : <span className="muted">–</span>;
@@ -283,6 +299,7 @@ function BoardCard({
   onEdit,
   onDuplicate,
   onDelete,
+  onJumpToRecord,
 }: {
   entity: Entity;
   boardField: Field;
@@ -296,6 +313,7 @@ function BoardCard({
   onEdit: () => void;
   onDuplicate: () => void;
   onDelete: () => void;
+  onJumpToRecord?: (targetEntity: string, recordId: number) => void;
 }) {
   const otherFields = entity.fields.filter((f) => f.name !== boardField.name);
   return (
@@ -317,6 +335,7 @@ function BoardCard({
               f.type === "relation" ? relationDisplayLabel(f, record[f.name], allEntities, relatedRecords) : undefined
             }
             highlightQuery={highlightQuery}
+            onJumpToRecord={onJumpToRecord}
           />
         </div>
       ))}
@@ -630,6 +649,7 @@ export function EntityPanel({
   onEntityRenamed,
   highlightRecordId,
   onHighlightHandled,
+  onJumpToRecord,
 }: {
   projectId: string;
   entity: Entity;
@@ -639,6 +659,8 @@ export function EntityPanel({
   highlightRecordId?: number | null;
   /** Called once the incoming highlightRecordId has actually been applied, so the caller can clear it and not re-trigger on the next render. */
   onHighlightHandled?: () => void;
+  /** Called when a relation cell's value (in the table or a board card) is clicked, so the caller can switch to the target entity's own tab and highlight that record there -- the same "jump to record" mechanism Global Search, WhatsApp log, and Business Twin already trigger from their own panels. */
+  onJumpToRecord?: (targetEntity: string, recordId: number) => void;
 }) {
   const { t, lang } = useTranslation();
   const [records, setRecords] = useState<EntityRecord[]>([]);
@@ -1534,6 +1556,7 @@ export function EntityPanel({
                     f.type === "relation" ? relationDisplayLabel(f, record[f.name], allEntities, relatedRecords) : undefined
                   }
                   highlightQuery={search}
+                  onJumpToRecord={onJumpToRecord}
                 />
               )}
             </td>
@@ -1799,6 +1822,7 @@ export function EntityPanel({
                       onEdit={() => startEdit(record)}
                       onDuplicate={() => handleDuplicate(record.id as number)}
                       onDelete={() => handleDelete(record.id as number)}
+                      onJumpToRecord={onJumpToRecord}
                     />
                   ))}
                 </div>
