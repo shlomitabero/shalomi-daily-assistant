@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { AgentStepEvent, Project, ProductSpec } from "@forge/shared";
 import { applyMigrations, countRecords, ensureCheckpointsTable, ensureProjectsTable, insertProject, listRecords, openDatabase } from "@forge/db";
-import { runBuildPipeline } from "./pipeline.js";
+import { runBuildPipeline, runQaChecks } from "./pipeline.js";
 
 const brokenSpec: ProductSpec = {
   summary: "test",
@@ -339,4 +339,181 @@ test("Debug Agent reports failure clearly when its own fix attempt is also inval
     process.env.ANTHROPIC_API_KEY = originalKey;
     globalThis.fetch = originalFetch;
   }
+});
+
+/**
+ * Regression test for the QA gap this round fixes: runQaChecks previously
+ * picked only the FIRST required field via `entity.fields.find((f) =>
+ * f.required)`, so an entity with 2+ required fields (e.g. "name" and
+ * "email" both required) got real insertRecord-backed validation coverage
+ * for just the first one -- the "3/3 entity checks passed" message a real
+ * build reports implied every required field was exercised, which was
+ * never actually true. Confirms every required field on a multi-required-
+ * field entity now produces its own "required-field validation enforced"
+ * check, not just the first.
+ */
+test("runQaChecks validates every required field of an entity, not just the first one found", () => {
+  const spec: ProductSpec = {
+    summary: "test",
+    personas: [],
+    roles: ["Admin"],
+    screens: [],
+    assumptions: [],
+    openQuestions: [],
+    entities: [
+      {
+        name: "Customer",
+        fields: [
+          { name: "name", type: "text", required: true },
+          { name: "email", type: "text", required: true },
+          { name: "phone", type: "text", required: true },
+          { name: "notes", type: "text", required: false },
+        ],
+      },
+    ],
+  };
+  const db = openDatabase(":memory:");
+  applyMigrations(db, "proj1", spec);
+
+  const qa = runQaChecks(db, "proj1", spec);
+
+  assert.equal(qa.allPassed, true);
+  const customerChecks = qa.results.find((r) => r.entity === "Customer")!.checks;
+  assert.ok(
+    customerChecks.includes('required-field validation enforced for "name"'),
+    "the first required field must still be checked",
+  );
+  assert.ok(
+    customerChecks.includes('required-field validation enforced for "email"'),
+    "the SECOND required field must also be checked -- this is exactly what was missing before this round's fix",
+  );
+  assert.ok(
+    customerChecks.includes('required-field validation enforced for "phone"'),
+    "the THIRD required field must also be checked",
+  );
+  assert.ok(
+    !customerChecks.some((c) => c.includes('"notes"')),
+    "an optional field must never be reported as a required-field check",
+  );
+  assert.equal(
+    countRecords(db, "proj1", spec.entities[0]),
+    0,
+    "every per-field QA insert is expected to be rejected, so none of them should leave a real row behind",
+  );
+});
+
+/**
+ * Confirms the omitted-field record generateSeedRecords + delete produces
+ * is otherwise genuinely valid -- if it weren't (e.g. a stray invalid value
+ * on some other field), insertRecord would throw for the WRONG reason and
+ * this check would misreport an unrelated failure as if it were the
+ * intended required-field rejection.
+ */
+test("runQaChecks's per-required-field check omits only the field under test, leaving every other field validly filled", () => {
+  const spec: ProductSpec = {
+    summary: "test",
+    personas: [],
+    roles: ["Admin"],
+    screens: [],
+    assumptions: [],
+    openQuestions: [],
+    entities: [
+      {
+        name: "Order",
+        fields: [
+          { name: "total", type: "number", required: true },
+          { name: "placedOn", type: "date", required: true },
+          { name: "status", type: "enum", required: true, enumValues: ["Pending", "Shipped"] },
+        ],
+      },
+    ],
+  };
+  const db = openDatabase(":memory:");
+  applyMigrations(db, "proj1", spec);
+
+  const qa = runQaChecks(db, "proj1", spec);
+
+  assert.equal(qa.allPassed, true);
+  const orderChecks = qa.results.find((r) => r.entity === "Order")!.checks;
+  for (const fieldName of ["total", "placedOn", "status"]) {
+    assert.ok(
+      orderChecks.includes(`required-field validation enforced for "${fieldName}"`),
+      `expected a real, correctly-attributed rejection for "${fieldName}", not a misattributed failure from some other field's seed value being invalid`,
+    );
+  }
+});
+
+/**
+ * Real end-to-end proof through the actual build pipeline (not just the
+ * isolated runQaChecks call above): a real multi-required-field entity,
+ * run through the genuine runBuildPipeline generator exactly as a real
+ * build would, must reach a real QA "success" event whose own detail
+ * shows every required field individually validated -- proving the fix
+ * reaches the actual event stream BuildProgress.tsx renders, not just a
+ * unit-tested function in isolation.
+ */
+test("a real build with a multi-required-field entity reaches a genuine QA success event covering every required field", async () => {
+  const spec: ProductSpec = {
+    summary: "test",
+    personas: [],
+    roles: ["Admin"],
+    screens: [],
+    assumptions: [],
+    openQuestions: [],
+    entities: [
+      {
+        name: "Applicant",
+        fields: [
+          { name: "fullName", type: "text", required: true },
+          { name: "email", type: "text", required: true },
+          { name: "role", type: "text", required: true },
+        ],
+      },
+    ],
+  };
+  const db = openDatabase(":memory:");
+  ensureProjectsTable(db);
+  ensureCheckpointsTable(db);
+  const project = insertProject(db, {
+    id: "proj1",
+    ownerId: "user1",
+    name: "test",
+    description: "test",
+    spec,
+  });
+
+  const events = await collect(runBuildPipeline(db, project, { nextSpec: spec, changeLabel: "Initial build" }));
+
+  const qaEvent = events.find((e) => e.agent === "QA" && e.status === "success");
+  assert.ok(qaEvent, "a real build of a valid multi-required-field spec must reach a successful QA event");
+  const applicantChecks = (qaEvent!.detail as { entity: string; checks: string[] }[]).find((r) => r.entity === "Applicant")!.checks;
+  for (const fieldName of ["fullName", "email", "role"]) {
+    assert.ok(
+      applicantChecks.includes(`required-field validation enforced for "${fieldName}"`),
+      `the real build's own QA event must show "${fieldName}" individually validated, not just the first required field`,
+    );
+  }
+});
+
+test("runQaChecks reports an entity with no required fields as having nothing to validate, without touching insertRecord", () => {
+  const spec: ProductSpec = {
+    summary: "test",
+    personas: [],
+    roles: ["Admin"],
+    screens: [],
+    assumptions: [],
+    openQuestions: [],
+    entities: [{ name: "Tag", fields: [{ name: "label", type: "text", required: false }] }],
+  };
+  const db = openDatabase(":memory:");
+  applyMigrations(db, "proj1", spec);
+
+  const qa = runQaChecks(db, "proj1", spec);
+
+  assert.equal(qa.allPassed, true);
+  assert.deepEqual(qa.results.find((r) => r.entity === "Tag")!.checks, [
+    "list endpoint returns data without error",
+    "no required fields to validate",
+  ]);
+  assert.equal(countRecords(db, "proj1", spec.entities[0]), 0, "a QA smoke test must never leave a real row behind in the entity's own table");
 });

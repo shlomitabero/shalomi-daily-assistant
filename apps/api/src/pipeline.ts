@@ -65,7 +65,7 @@ function architectEvent(previousSpec: ProductSpec | undefined, nextSpec: Product
   return { agent: "Architect", status: "success", message, detail: impact };
 }
 
-function runQaChecks(
+export function runQaChecks(
   db: ForgeDatabase,
   projectId: string,
   spec: ProductSpec,
@@ -83,18 +83,30 @@ function runQaChecks(
       checks.push(`FAILED: list endpoint threw: ${(err as Error).message}`);
     }
 
-    const requiredField = entity.fields.find((f) => f.required);
-    if (requiredField) {
-      try {
-        insertRecord(db, projectId, entity, {});
-        allPassed = false;
-        checks.push(`FAILED: inserting without required "${requiredField.name}" was not rejected`);
-      } catch (err) {
-        if (err instanceof ValidationError) {
-          checks.push(`required-field validation enforced for "${requiredField.name}"`);
-        } else {
+    const requiredFields = entity.fields.filter((f) => f.required);
+    if (requiredFields.length > 0) {
+      // A record valid for every OTHER field, so omitting exactly the field
+      // under test is the only thing that should make insertRecord reject
+      // it -- reusing generateSeedRecords (the same generator that seeds a
+      // freshly built app's own demo data) rather than {} means testing the
+      // 2nd, 3rd, etc. required field no longer needs the 1st one to be
+      // missing too, which is what let every required field past the first
+      // go completely unchecked before this fix.
+      const validRecord = generateSeedRecords(entity, 1)[0];
+      for (const requiredField of requiredFields) {
+        const recordMissingThisField = { ...validRecord };
+        delete recordMissingThisField[requiredField.name];
+        try {
+          insertRecord(db, projectId, entity, recordMissingThisField);
           allPassed = false;
-          checks.push(`FAILED: unexpected error validating "${requiredField.name}": ${(err as Error).message}`);
+          checks.push(`FAILED: inserting without required "${requiredField.name}" was not rejected`);
+        } catch (err) {
+          if (err instanceof ValidationError) {
+            checks.push(`required-field validation enforced for "${requiredField.name}"`);
+          } else {
+            allPassed = false;
+            checks.push(`FAILED: unexpected error validating "${requiredField.name}": ${(err as Error).message}`);
+          }
         }
       }
     } else {
