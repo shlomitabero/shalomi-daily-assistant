@@ -14625,6 +14625,89 @@ not a single "make it perfect" claim.
   `@forge/api` 252 unchanged) and `npm run build --workspace=@forge/web`
   clean.
 
+- **Round 260 -- clicking a relation field's resolved value in the live
+  entity table (or a Kanban card) now jumps straight to the related
+  record on its own entity's tab, instead of being inert text.**
+  Diversification: with checkpoint-diff closed as of round 259, an
+  Explore survey looked at `EntityPanel.tsx`'s `Cell` component (the
+  shared renderer for every field type in both the table and the Kanban
+  board) and found its relation branch (`field.type === "relation"`)
+  rendered `relationLabel || \`#${value}\`` as plain text, with no
+  `onClick` anywhere -- confirmed by grep across the file for any
+  existing relation-cell link mechanism (none). Meanwhile `App.tsx`
+  already wires an identical `onJumpToEntity`/`onJumpToRecord` ->
+  `setActiveEntity`/`setHighlightRecordId` pair into Global Search, the
+  WhatsApp log, and Business Twin -- so the jump-to-record plumbing
+  exists everywhere a record reference shows up in this app *except* the
+  one place a person looks at it most: the table itself.
+
+  Concretely: an "Orders" entity with a "Customer" relation field shows
+  the customer's own name in the Orders table -- reads exactly like a
+  link, but clicking did nothing. Seeing that customer's other fields
+  meant manually switching to the Customers tab and finding them by
+  name. This app has already trained its own users to expect a one-click
+  jump on any record reference; its absence in the main data table was a
+  real, felt gap, not a hypothetical one.
+
+  `Cell` now takes an optional `onJumpToRecord?: (targetEntity: string,
+  recordId: number) => void` prop; when given (and the field actually has
+  a `relationTo`), the relation branch renders a real `<button
+  class="relation-jump-link">` instead of a bare string, calling
+  `onJumpToRecord(field.relationTo, Number(value))` on click. Threaded
+  through `EntityPanel`'s own props, into the main table's
+  `renderRecordRow` *and* into `BoardCard` (the Kanban view renders the
+  exact same `Cell` for its "other fields"), so both views get the fix
+  from one shared change -- but deliberately left out of
+  `RecordPrintSheet`/`RecordListPrintSheet` (the print-only renderers),
+  where a click target makes no sense. `App.tsx` wires the new prop on
+  `<EntityPanel>` with the same `setActiveEntity` + `setHighlightRecordId`
+  pair its other three panels already use.
+
+  Tests: 1 new test in `EntityPanel.test.ts` reusing the existing
+  Order/Courier relation fixture (`renderEntityPanel` + a mocked
+  `/api/projects/proj1/entities/{Order,Courier}` fetch) -- renders with
+  an `onJumpToRecord` spy, confirms the relation cell is a real `<button>`
+  showing the resolved "Dana" label, clicks it, and asserts the spy fired
+  with exactly `["Courier", 9]`. Also strengthened the pre-existing
+  "never opens an inline editor for a relation field" test with an
+  explicit assertion that a relation cell renders with **no** button at
+  all when `onJumpToRecord` is omitted, confirming the feature is
+  opt-in and doesn't change any existing panel invocation's behavior
+  by accident.
+
+  Deliberate-break-and-restore: removed the `onJumpToRecord`
+  button-rendering branch from `Cell`'s relation case entirely, falling
+  back to the old plain-text render unconditionally -- exactly 1 of 44
+  `EntityPanel.test.ts` tests failed (the new click-jump test), the other
+  43 stayed green (including the strengthened "no button" assertion,
+  since removing the branch made both cases render the same way).
+  Restored from a scratchpad backup, confirmed a byte-identical `diff`,
+  and re-confirmed all 44 tests green again.
+
+  Real-browser verification against the live dev server: signed up,
+  described "Track customers and their support tickets" (matches
+  `domainEntities.ts`'s Ticket entity, with a `customerId` relation to
+  Customer), and discovered along the way that every domain-entity
+  relation field is `required: false` (see `packages/db/src/seed.ts`'s
+  `generateFieldValue`, which only guesses a value for a *required*
+  relation) -- so auto-seeded example records never populate a relation
+  field, and no relation-jump button exists until one is actually set.
+  Linked a real Ticket to a real Customer via a direct authenticated
+  PATCH to `/api/projects/:id/entities/Ticket/:id` (the same REST call
+  `updateRecord` makes), reloaded (through the real `.my-project-open`
+  re-entry flow, since a reload always lands back on the project list),
+  switched to the Ticket tab, confirmed the relation cell now rendered as
+  a real button showing "Yossi Cohen" (not a `#id` fallback), clicked it,
+  and confirmed the app switched to the Customer tab with exactly that
+  customer's row highlighted (`.record-row-highlighted`, matched by
+  record id, not just by text) -- zero console errors throughout.
+  `RESULT: PASS`.
+
+  Full suite green (983 tests, up from 982 -- `@forge/web` 546 → 547;
+  `@forge/shared` 11, `@forge/spec-engine` 82, `@forge/db` 91,
+  `@forge/api` 252 unchanged) and `npm run build --workspace=@forge/web`
+  clean.
+
 ## Phase 4
 
 - Template/agent marketplace
