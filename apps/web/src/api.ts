@@ -274,6 +274,10 @@ export function removeEntity(projectId: string, entityName: string): Promise<{ p
   return request(`/projects/${projectId}/entities/${entityName}`, { method: "DELETE" });
 }
 
+export function addEntity(projectId: string, label: string): Promise<{ project: Project }> {
+  return request(`/projects/${projectId}/entities`, { method: "POST", body: JSON.stringify({ label }) });
+}
+
 /**
  * Sends the user's answers to the spec's open questions (quick-pick or
  * freely typed), and/or a free-standing request not tied to any specific

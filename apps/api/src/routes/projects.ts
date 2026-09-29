@@ -93,10 +93,49 @@ const AddAssumptionSchema = z.object({
   assumption: z.string().trim().min(1, "assumption is required"),
 });
 
+const AddEntitySchema = z.object({
+  label: z.string().trim().min(1, "label is required"),
+});
+
 /** Exported for direct unit testing of the word-truncation and empty-input fallback below. */
 export function deriveName(description: string): string {
   const words = description.trim().split(/\s+/).slice(0, 6).join(" ");
   return words.length > 0 ? words : "Untitled Project";
+}
+
+/**
+ * A newly-added entity's `label` is free text a user typed (possibly
+ * Hebrew, possibly punctuation-laden), but its `name` becomes a SQL table
+ * name in both the live preview (packages/db/src/migrate.ts, per-project
+ * prefixed) and the exported codegen app (apps/api/src/codegen.ts, used
+ * directly), so it has to be a non-empty run of ASCII identifier
+ * characters, matching every existing domain entity's own PascalCase
+ * convention (see domainEntities.ts -- "Customer", "WorkOrder", etc.).
+ * Splits on any non-alphanumeric run (so both "Loyalty Program" and
+ * "loyalty-program" become "LoyaltyProgram"), title-cases each surviving
+ * word, and joins them with nothing in between. A label with no ASCII
+ * letters/digits at all (pure Hebrew, say) leaves nothing to join, so it
+ * falls back to "Entity" rather than producing the empty string
+ * EntitySchema's `name: z.string().min(1)` would reject.
+ *
+ * De-duplicates case-insensitively against the project's existing entity
+ * names (SQLite's own case-insensitive identifier comparison -- see
+ * ProductSpecSchema's own case-collision `.refine()` in @forge/shared) by
+ * appending the first free numeric suffix, so two entities that would
+ * otherwise both derive to "Payments" never collide into one shared table
+ * instead of silently corrupting either entity's data.
+ */
+export function deriveEntityName(label: string, existingNames: string[]): string {
+  const words = label
+    .split(/[^A-Za-z0-9]+/)
+    .filter((w) => w.length > 0)
+    .map((w) => w[0].toUpperCase() + w.slice(1).toLowerCase());
+  const base = words.join("") || "Entity";
+  const existingLower = new Set(existingNames.map((n) => n.toLowerCase()));
+  if (!existingLower.has(base.toLowerCase())) return base;
+  let suffix = 2;
+  while (existingLower.has(`${base}${suffix}`.toLowerCase())) suffix += 1;
+  return `${base}${suffix}`;
 }
 
 function findEntity(project: Project, entityName: string): Entity {
@@ -1002,6 +1041,47 @@ export function createProjectsRouter(db: ForgeDatabase, provider: SpecProvider |
         ...project.spec,
         entities: project.spec.entities.filter((e) => e.name !== req.params.entityName),
       };
+      const updated = updateProjectSpec(db, project.id, nextSpec);
+      res.json({ project: updated });
+    }),
+  );
+
+  /**
+   * The other direction of the same gap the comment above describes --
+   * removal alone was one-directional. If the heuristic/AI engine missed a
+   * whole screen entirely (a two-sided marketplace where it only spotted
+   * "Order", say, and never "Payment"), there was no way to add it back
+   * short of a full Refine round-trip after committing to a build, or
+   * talking it into existence via the free-text "additional request" box
+   * and hoping the regenerated spec actually includes it. Mirrors
+   * AddRoleForm/AddAssumptionForm's own shape (a single free-text field,
+   * appended), but an entity needs more than a bare string to satisfy
+   * EntitySchema -- `deriveEntityName` turns the typed label into a valid
+   * ASCII table-name `name`, and the new entity gets the same single
+   * required "name" text field every domain-library entity starts with
+   * (see domainEntities.ts), rather than being born with zero fields and
+   * failing `fields.min(1)`. Same pre-build-only gate as the DELETE route
+   * above, for the same reason: once built, the real database table and
+   * generated code already exist and don't track further spec edits.
+   */
+  router.post(
+    "/projects/:id/entities",
+    asyncRoute(async (req, res) => {
+      const project = requireProjectAccess(db, req.params.id, req.userId!);
+      if (project.status === "built") {
+        throw new HttpError(409, "Cannot add a screen after the project has already been built", "ENTITY_ADD_AFTER_BUILD");
+      }
+      const parsed = AddEntitySchema.safeParse(req.body);
+      if (!parsed.success) {
+        throw new HttpError(400, formatValidationError(parsed.error), "VALIDATION_ERROR");
+      }
+      const name = deriveEntityName(parsed.data.label, project.spec.entities.map((e) => e.name));
+      const newEntity: Entity = {
+        name,
+        label: parsed.data.label,
+        fields: [{ name: "name", type: "text", required: true }],
+      };
+      const nextSpec = { ...project.spec, entities: [...project.spec.entities, newEntity] };
       const updated = updateProjectSpec(db, project.id, nextSpec);
       res.json({ project: updated });
     }),

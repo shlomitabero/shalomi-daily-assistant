@@ -2173,6 +2173,144 @@ test("the owner can add an assumption, and a collaborator can too -- both are ap
   });
 });
 
+test("the owner can add an entity, and a collaborator can too -- each gets a derived name, the typed text as its label, and one required starter field", async () => {
+  await withServer(async (baseUrl) => {
+    const ownerToken = await signup(baseUrl, "entity-add-owner1@example.com");
+    const collabToken = await signup(baseUrl, "entity-add-collab1@example.com");
+    const createRes = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: authHeaders(ownerToken),
+      body: JSON.stringify({ description: "A CRM with customers and deals." }),
+    });
+    const { project } = (await createRes.json()) as { project: { id: string; spec: { entities: { name: string }[] } } };
+    const originalEntityCount = project.spec.entities.length;
+    await fetch(`${baseUrl}/api/projects/${project.id}/collaborators`, {
+      method: "POST",
+      headers: authHeaders(ownerToken),
+      body: JSON.stringify({ email: "entity-add-collab1@example.com" }),
+    });
+
+    const ownerRes = await fetch(`${baseUrl}/api/projects/${project.id}/entities`, {
+      method: "POST",
+      headers: authHeaders(ownerToken),
+      body: JSON.stringify({ label: "  Loyalty Program  " }),
+    });
+    assert.equal(ownerRes.status, 200);
+    const { project: afterFirstAdd } = (await ownerRes.json()) as {
+      project: { spec: { entities: { name: string; label?: string; fields: { name: string; type: string; required: boolean }[] }[] } };
+    };
+    const added = afterFirstAdd.spec.entities[originalEntityCount];
+    assert.equal(added.name, "LoyaltyProgram", "the label is turned into a valid ASCII table-name identifier");
+    assert.equal(added.label, "Loyalty Program", "the trimmed, un-transformed typed text is kept as the human-facing label");
+    assert.deepEqual(added.fields, [{ name: "name", type: "text", required: true }]);
+
+    const collabRes = await fetch(`${baseUrl}/api/projects/${project.id}/entities`, {
+      method: "POST",
+      headers: authHeaders(collabToken),
+      body: JSON.stringify({ label: "Warehouse" }),
+    });
+    assert.equal(collabRes.status, 200);
+    const { project: afterSecondAdd } = (await collabRes.json()) as { project: { spec: { entities: { name: string }[] } } };
+    assert.equal(
+      afterSecondAdd.spec.entities.length,
+      originalEntityCount + 2,
+      "a collaborator can add an entity too",
+    );
+  });
+});
+
+test("adding an entity whose derived name collides (case-insensitively) with an existing one gets a numeric suffix instead of erroring", async () => {
+  await withServer(async (baseUrl) => {
+    const token = await signup(baseUrl, "entity-add-collision@example.com");
+    const createRes = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ description: "A CRM with customers and deals." }),
+    });
+    const { project } = (await createRes.json()) as { project: { id: string; spec: { entities: { name: string }[] } } };
+    const existingName = project.spec.entities[0].name;
+
+    const res = await fetch(`${baseUrl}/api/projects/${project.id}/entities`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ label: existingName.toLowerCase() }),
+    });
+    assert.equal(res.status, 200);
+    const { project: updated } = (await res.json()) as { project: { spec: { entities: { name: string }[] } } };
+    assert.equal(updated.spec.entities.at(-1)!.name, `${existingName}2`);
+  });
+});
+
+test("adding a blank/whitespace-only entity label is rejected with 400 instead of appending an invalid entity", async () => {
+  await withServer(async (baseUrl) => {
+    const token = await signup(baseUrl, "entity-add-blank@example.com");
+    const createRes = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ description: "A CRM with customers and deals." }),
+    });
+    const { project } = (await createRes.json()) as { project: { id: string; spec: { entities: { name: string }[] } } };
+
+    const res = await fetch(`${baseUrl}/api/projects/${project.id}/entities`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ label: "   " }),
+    });
+    assert.equal(res.status, 400);
+    assert.equal(((await res.json()) as { code?: string }).code, "VALIDATION_ERROR");
+
+    const getRes = await fetch(`${baseUrl}/api/projects/${project.id}`, { headers: authHeaders(token) });
+    const { project: unchanged } = (await getRes.json()) as { project: { spec: { entities: { name: string }[] } } };
+    assert.deepEqual(unchanged.spec.entities, project.spec.entities);
+  });
+});
+
+test("adding an entity on a project you have no access to still 404s, the same as any other project route", async () => {
+  await withServer(async (baseUrl) => {
+    const ownerToken = await signup(baseUrl, "entity-add-owner2@example.com");
+    const outsiderToken = await signup(baseUrl, "entity-add-outsider2@example.com");
+    const createRes = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: authHeaders(ownerToken),
+      body: JSON.stringify({ description: "A CRM with customers and deals." }),
+    });
+    const { project } = (await createRes.json()) as { project: { id: string } };
+
+    const res = await fetch(`${baseUrl}/api/projects/${project.id}/entities`, {
+      method: "POST",
+      headers: authHeaders(outsiderToken),
+      body: JSON.stringify({ label: "Should not be added" }),
+    });
+    assert.equal(res.status, 404);
+  });
+});
+
+test("adding an entity to a project that's already been built is rejected with ENTITY_ADD_AFTER_BUILD, since the real database table and generated code would never reflect it", async () => {
+  await withServer(async (baseUrl) => {
+    const token = await signup(baseUrl, "entity-add-afterbuild@example.com");
+    const createRes = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ description: "A CRM with customers and deals." }),
+    });
+    const { project } = (await createRes.json()) as { project: { id: string } };
+
+    const buildRes = await fetch(`${baseUrl}/api/projects/${project.id}/build`, {
+      method: "POST",
+      headers: authHeaders(token),
+    });
+    await collectSSE(buildRes);
+
+    const res = await fetch(`${baseUrl}/api/projects/${project.id}/entities`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ label: "Payment" }),
+    });
+    assert.equal(res.status, 409);
+    assert.equal(((await res.json()) as { code?: string }).code, "ENTITY_ADD_AFTER_BUILD");
+  });
+});
+
 test("adding a blank/whitespace-only assumption is rejected with 400 instead of appending an empty string", async () => {
   await withServer(async (baseUrl) => {
     const token = await signup(baseUrl, "assumption-add-blank@example.com");

@@ -2,6 +2,7 @@ import { useRef, useState } from "react";
 import type { Entity, Project } from "@forge/shared";
 import {
   addAssumption,
+  addEntity,
   addRole,
   removeAssumption,
   removeEntity,
@@ -380,6 +381,44 @@ export function AddRoleForm({ projectId, onAdded }: { projectId: string; onAdded
       />
       <button type="submit" className="secondary" disabled={busy || !value.trim()}>
         {t("spec.roles.add")}
+      </button>
+      {error && (
+        <span className="error small" role="alert">
+          {error}
+        </span>
+      )}
+    </form>
+  );
+}
+
+/**
+ * The other half of EntitySummaryItem's own removal/rename correction
+ * workflow, matching AddRoleForm/AddAssumptionForm's shape exactly (a
+ * single free-text input, appended on submit). The typed text becomes the
+ * new entity's human-facing `label` -- the server derives a valid ASCII
+ * `name` and a starter "name" field from it (see deriveEntityName in
+ * apps/api/src/routes/projects.ts), so nothing more than a label is needed
+ * here, the same as adding a role or assumption needs nothing more than
+ * their own single string.
+ */
+export function AddEntityForm({ projectId, onAdded }: { projectId: string; onAdded: (project: Project) => void }) {
+  const { t } = useTranslation();
+  const { value, setValue, busy, error, handleSubmit } = useAddableSpecItem(
+    (label) => addEntity(projectId, label),
+    onAdded,
+  );
+  return (
+    <form className="spec-add-item-form" onSubmit={handleSubmit}>
+      <input
+        type="text"
+        value={value}
+        onChange={(e) => setValue(e.target.value)}
+        placeholder={t("spec.entities.addPlaceholder")}
+        aria-label={t("spec.entities.addPlaceholder")}
+        disabled={busy}
+      />
+      <button type="submit" className="secondary" disabled={busy || !value.trim()}>
+        {t("spec.entities.add")}
       </button>
       {error && (
         <span className="error small" role="alert">

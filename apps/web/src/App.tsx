@@ -29,7 +29,7 @@ import { ChangePasswordPanel } from "./ChangePasswordPanel.js";
 import { DeleteAccountPanel } from "./DeleteAccountPanel.js";
 import { ProjectNameEditor } from "./ProjectNameEditor.js";
 import { ShortcutsPanel } from "./ShortcutsPanel.js";
-import { AddAssumptionForm, AddRoleForm, AssumptionItem, EntitySummaryItem, RoleChip } from "./SpecListItemRemover.js";
+import { AddAssumptionForm, AddEntityForm, AddRoleForm, AssumptionItem, EntitySummaryItem, RoleChip } from "./SpecListItemRemover.js";
 import { applyColumnOrder, reorderColumns } from "./columnOrder.js";
 import { getEntityTabOrder, setEntityTabOrder } from "./entityTabOrder.js";
 import { getPinnedIds, sortByPinned, togglePinned } from "./pinnedProjects.js";
@@ -1211,6 +1211,7 @@ function AppContent() {
             {project.spec.entities.some((e) => e.fields.some((f) => f.required)) && (
               <p className="muted small">{t("spec.entities.requiredHint")}</p>
             )}
+            <AddEntityForm projectId={project.id} onAdded={setProject} />
           </section>
 
           <section>

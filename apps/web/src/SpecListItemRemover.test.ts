@@ -5,7 +5,7 @@ import { JSDOM } from "jsdom";
 import React from "react";
 import { cleanup, fireEvent, render } from "@testing-library/react";
 import type { Project } from "@forge/shared";
-import { AddAssumptionForm, AddRoleForm, AssumptionItem, EntitySummaryItem, RoleChip } from "./SpecListItemRemover.js";
+import { AddAssumptionForm, AddEntityForm, AddRoleForm, AssumptionItem, EntitySummaryItem, RoleChip } from "./SpecListItemRemover.js";
 import { LanguageProvider } from "./i18n/LanguageContext.js";
 import { ThemeProvider } from "./theme/ThemeContext.js";
 
@@ -150,6 +150,16 @@ function renderAddAssumptionForm(onAdded: (p: Project) => void) {
       ThemeProvider,
       null,
       React.createElement(LanguageProvider, null, React.createElement(AddAssumptionForm, { projectId: "proj1", onAdded })),
+    ),
+  );
+}
+
+function renderAddEntityForm(onAdded: (p: Project) => void) {
+  render(
+    React.createElement(
+      ThemeProvider,
+      null,
+      React.createElement(LanguageProvider, null, React.createElement(AddEntityForm, { projectId: "proj1", onAdded })),
     ),
   );
 }
@@ -694,6 +704,71 @@ test("submitting the add-assumption form calls the real POST endpoint with the t
       assert.equal(postedAssumption, "Only one warehouse");
       assert.deepEqual(addedProjects[0].spec.assumptions, ["First assumption", "Second assumption", "Only one warehouse"]);
       assert.equal(input.value, "");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+test("submitting the add-entity form calls the real POST endpoint with the trimmed label and reports the returned project", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    let postedLabel: string | undefined;
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      if (init?.method === "POST" && input === "/api/projects/proj1/entities") {
+        postedLabel = (JSON.parse(init.body as string) as { label: string }).label;
+        const newEntity = { name: "Payment", label: postedLabel, fields: [{ name: "name", type: "text", required: true }] };
+        const withNewEntity = { ...baseProject, spec: { ...baseProject.spec, entities: [...baseProject.spec.entities, newEntity] } };
+        return new Response(JSON.stringify({ project: withNewEntity }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${init?.method ?? "GET"} ${input}`);
+    }) as typeof fetch;
+
+    try {
+      const addedProjects: Project[] = [];
+      renderAddEntityForm((p) => addedProjects.push(p));
+
+      const input = document.querySelector(".spec-add-item-form input") as HTMLInputElement;
+      const button = document.querySelector(".spec-add-item-form button") as HTMLButtonElement;
+      assert.ok(input && button, "expected an add-entity input and submit button");
+      assert.equal(button.disabled, true, "the submit button must start disabled with an empty input");
+
+      fireEvent.change(input, { target: { value: "  Payment  " } });
+      fireEvent.click(button);
+
+      await waitForCondition(() => addedProjects.length === 1);
+      assert.equal(postedLabel, "Payment", "the posted label must be trimmed before sending");
+      assert.deepEqual(
+        addedProjects[0].spec.entities.map((e) => e.name),
+        ["Customer", "Payment"],
+      );
+      assert.equal(input.value, "", "the input must clear after a successful add");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+test("the add-entity form surfaces a real error instead of silently doing nothing, and never fires onAdded", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async () =>
+      new Response(JSON.stringify({ error: "label is required" }), {
+        status: 400,
+        headers: { "content-type": "application/json" },
+      })) as typeof fetch;
+
+    try {
+      const addedProjects: Project[] = [];
+      renderAddEntityForm((p) => addedProjects.push(p));
+
+      fireEvent.change(document.querySelector(".spec-add-item-form input") as HTMLInputElement, {
+        target: { value: "Payment" },
+      });
+      fireEvent.click(document.querySelector(".spec-add-item-form button") as HTMLButtonElement);
+
+      await waitForCondition(() => document.querySelector(".spec-add-item-form .error") !== null);
+      assert.equal(addedProjects.length, 0, "onAdded must not fire when the request failed");
     } finally {
       globalThis.fetch = originalFetch;
     }

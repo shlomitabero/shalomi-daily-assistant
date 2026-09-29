@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { deriveName } from "./projects.js";
+import { deriveEntityName, deriveName } from "./projects.js";
 
 /**
  * deriveName picks a project's display name from its free-text description
@@ -38,4 +38,28 @@ test("deriveName falls back to 'Untitled Project' for a whitespace-only descript
 
 test("deriveName falls back to 'Untitled Project' for a genuinely empty description", () => {
   assert.equal(deriveName(""), "Untitled Project");
+});
+
+/**
+ * deriveEntityName turns a free-text label typed into AddEntityForm into a
+ * valid ASCII entity `name` -- the value both packages/db/src/migrate.ts and
+ * apps/api/src/codegen.ts use directly as a SQL table name, so it can't be
+ * empty, can't contain spaces/punctuation, and can't collide (even
+ * case-insensitively) with an existing entity in the same spec.
+ */
+test("deriveEntityName title-cases and joins multi-word labels with no separator", () => {
+  assert.equal(deriveEntityName("Loyalty Program", []), "LoyaltyProgram");
+  assert.equal(deriveEntityName("loyalty-program", []), "LoyaltyProgram");
+  assert.equal(deriveEntityName("payment", []), "Payment");
+});
+
+test("deriveEntityName falls back to 'Entity' when the label has no ASCII letters/digits at all", () => {
+  assert.equal(deriveEntityName("תוכנית נאמנות", []), "Entity");
+});
+
+test("deriveEntityName appends the first free numeric suffix on a case-insensitive collision", () => {
+  assert.equal(deriveEntityName("Payment", ["Customer"]), "Payment");
+  assert.equal(deriveEntityName("Payment", ["Customer", "Payment"]), "Payment2");
+  assert.equal(deriveEntityName("payment", ["Customer", "Payment"]), "Payment2");
+  assert.equal(deriveEntityName("Payment", ["Payment", "Payment2"]), "Payment3");
 });
