@@ -670,7 +670,7 @@ test("the exported record table's date cell shows the correct calendar day even 
   const entityViewJsx = generateExportFiles(project).find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
 
   const dateHelperSrc = entityViewJsx.match(/const CALENDAR_DATE_FORMAT[\s\S]*?\nfunction parseFieldDate\(raw\) \{[\s\S]*?\n\}\n/)?.[0];
-  const cellSrc = entityViewJsx.match(/function Cell\(\{ field, value, relationLabel \}\) \{[\s\S]*?\n\}\n/)?.[0];
+  const cellSrc = entityViewJsx.match(/function Cell\(\{ field, value, relationLabel, onJumpToRecord \}\) \{[\s\S]*?\n\}\n/)?.[0];
   assert.ok(dateHelperSrc && cellSrc, "expected to find parseFieldDate/Cell in generated output");
 
   const transformed = transformSync(`${dateHelperSrc}\n${cellSrc}`, { loader: "jsx", jsxFactory: "h", jsxFragment: "Frag" }).code;
@@ -1199,6 +1199,67 @@ test("the exported EntityView renders a real picker for relation fields, not a r
   assert.match(entityViewJsx, /function recordsToCsv\(fields, records, relatedRecords\)/);
 });
 
+// The live-preview app's relation cells became a real "jump to the related
+// record" link in round 260 (apps/web/src/EntityPanel.tsx), but the
+// exported/standalone codegen app's own Cell component (used by the table,
+// the Kanban board, AND global search results) still rendered a relation
+// field as static text -- someone who exports their own CRM and clicks a
+// Customer name on an Order row gets nothing, even though the same click
+// works in the live preview they tested first. Ports the identical
+// onClick={() => onJumpToRecord(field.relationTo, Number(value))} pattern,
+// reusing the App-level setActive/setHighlightRecordId wiring already built
+// for Global Search's own jump-to-record (so a relation-cell click and a
+// search-result click land on the exact same highlighted row).
+test("the exported EntityView's relation cells jump to the related record via the same App-level wiring Global Search already uses", () => {
+  const withRelation: Project = {
+    ...project,
+    spec: {
+      ...project.spec,
+      entities: [
+        ...project.spec.entities,
+        {
+          name: "Courier",
+          label: "Courier",
+          fields: [{ name: "name", label: "Name", type: "text", required: true }],
+        },
+        {
+          name: "Order",
+          label: "Order",
+          fields: [
+            { name: "customerName", label: "Customer", type: "text", required: true },
+            { name: "courierId", label: "Assigned Courier", type: "relation", required: false, relationTo: "Courier" },
+          ],
+        },
+      ],
+    },
+  };
+  const files = generateExportFiles(withRelation);
+  const entityViewJsx = files.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+
+  const cellSrc = entityViewJsx.match(/function Cell\(\{ field, value, relationLabel, onJumpToRecord \}\) \{[\s\S]*?\n\}\n/)?.[0];
+  assert.ok(cellSrc, "expected to find the real generated Cell component");
+  assert.match(cellSrc!, /if \(onJumpToRecord && field\.relationTo\) \{/);
+  assert.match(cellSrc!, /<button type="button" className="link-button" onClick=\{\(\) => onJumpToRecord\(field\.relationTo, Number\(value\)\)\}>/);
+  // Without a jump handler (or without a relationTo target), a relation
+  // cell must still fall back to plain, non-clickable text -- the same
+  // guard the live-preview's own Cell uses.
+  assert.match(cellSrc!, /return <>\{label\}<\/>;/);
+
+  // Threaded through every layer that can render a relation cell: the
+  // table, the Kanban board (via BoardCard), the per-entity View wrapper,
+  // and App's own activeEntity.View call -- not just the leaf component.
+  assert.match(entityViewJsx, /function BoardCard\(\{ entity, boardField, record, relatedRecords, onMove, onEdit, onDuplicate, onDelete, onJumpToRecord \}\)/);
+  assert.match(entityViewJsx, /<Cell\s+field=\{f\}\s+value=\{record\[f\.name\]\}\s+relationLabel=\{[^}]+\}\s+onJumpToRecord=\{onJumpToRecord\}/);
+  assert.match(entityViewJsx, /export function EntityView\(\{ entity, highlightRecordId, onHighlightHandled, onJumpToRecord \}\)/);
+
+  const orderJsx = files.find((f) => f.path === "web/src/entities/Order.jsx")!.content;
+  assert.match(orderJsx, /export default function View\(\{ highlightRecordId, onHighlightHandled, onJumpToRecord \}\)/);
+  assert.match(orderJsx, /onJumpToRecord=\{onJumpToRecord\}/);
+
+  const appJsx = files.find((f) => f.path === "web/src/App.jsx")!.content;
+  assert.match(appJsx, /onJumpToRecord=\{\(name, recordId\) => \{\s*setActive\(name\);\s*setHighlightRecordId\(recordId\);\s*\}\}/);
+});
+
 test("generateExportFiles includes a real render.yaml matching this repo's own proven Render Blueprint structure", () => {
   const files = generateExportFiles(project);
   const renderYaml = files.find((f) => f.path === "render.yaml")!.content;
@@ -1529,7 +1590,7 @@ test("the exported app's Global Search can jump to an individual matched record,
   // it (clearing search, switching to table view) once records have
   // loaded, fades it out after a few seconds, and marks + scrolls to the
   // real highlighted row via a real data-record-id attribute.
-  assert.match(entityViewJsx, /export function EntityView\(\{ entity, highlightRecordId, onHighlightHandled \}\)/);
+  assert.match(entityViewJsx, /export function EntityView\(\{ entity, highlightRecordId, onHighlightHandled, onJumpToRecord \}\)/);
   assert.match(entityViewJsx, /if \(highlightRecordId == null \|\| loading\) return;/);
   assert.match(entityViewJsx, /setHighlightedRecordId\(highlightRecordId\);/);
   assert.match(entityViewJsx, /onHighlightHandled\?\.\(\);/);
@@ -1542,14 +1603,14 @@ test("the exported app's Global Search can jump to an individual matched record,
   // tab and the record to highlight in one go, mirroring App.tsx's own
   // onJumpToRecord handlers.
   assert.match(appJsx, /const \[highlightRecordId, setHighlightRecordId\] = useState\(null\);/);
-  assert.match(appJsx, /highlightRecordId=\{highlightRecordId\} onHighlightHandled=\{\(\) => setHighlightRecordId\(null\)\}/);
+  assert.match(appJsx, /highlightRecordId=\{highlightRecordId\}\s+onHighlightHandled=\{\(\) => setHighlightRecordId\(null\)\}/);
   assert.match(appJsx, /onJumpToRecord=\{\(name, recordId\) => \{\s*setActive\(name\);\s*setHighlightRecordId\(recordId\);\s*setShowSearch\(false\);\s*\}\}/);
 
   // entities/Customer.jsx's own View forwards the new props through to
   // EntityView rather than swallowing them.
   const customerJsx = files.find((f) => f.path === "web/src/entities/Customer.jsx")!.content;
-  assert.match(customerJsx, /export default function View\(\{ highlightRecordId, onHighlightHandled \}\)/);
-  assert.match(customerJsx, /highlightRecordId=\{highlightRecordId\} onHighlightHandled=\{onHighlightHandled\}/);
+  assert.match(customerJsx, /export default function View\(\{ highlightRecordId, onHighlightHandled, onJumpToRecord \}\)/);
+  assert.match(customerJsx, /highlightRecordId=\{highlightRecordId\}\s+onHighlightHandled=\{onHighlightHandled\}/);
 
   assert.match(stylesCss, /\.record-row-highlighted, \.record-row-highlighted:hover \{ background: var\(--accent-soft\)/);
 });

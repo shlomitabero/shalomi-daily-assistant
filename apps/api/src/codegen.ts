@@ -977,9 +977,19 @@ export function isInlineEditableField(field) {
   return field.type !== "relation";
 }
 
-function Cell({ field, value, relationLabel }) {
+function Cell({ field, value, relationLabel, onJumpToRecord }) {
   if (value === null || value === undefined || value === "") return <span className="muted">—</span>;
-  if (field.type === "relation") return <>{relationLabel || \`#\${value}\`}</>;
+  if (field.type === "relation") {
+    const label = relationLabel || \`#\${value}\`;
+    if (onJumpToRecord && field.relationTo) {
+      return (
+        <button type="button" className="link-button" onClick={() => onJumpToRecord(field.relationTo, Number(value))}>
+          {label}
+        </button>
+      );
+    }
+    return <>{label}</>;
+  }
   if (field.type === "boolean") return value ? <span className="bool-yes">✓</span> : <span className="muted">–</span>;
   if (field.type === "enum") {
     const label = (field.enumLabels && field.enumLabels[value]) || value;
@@ -1535,7 +1545,7 @@ function CalendarView({ entity, dateField, records, month, onPrevMonth, onNextMo
 // field itself, since that's implied by which column the card is in), a
 // select to move it directly to another column, and the same Edit/Delete
 // actions the table row has.
-function BoardCard({ entity, boardField, record, relatedRecords, onMove, onEdit, onDuplicate, onDelete }) {
+function BoardCard({ entity, boardField, record, relatedRecords, onMove, onEdit, onDuplicate, onDelete, onJumpToRecord }) {
   const otherFields = entity.fields.filter((f) => f.name !== boardField.name);
   return (
     <div className="board-card" draggable onDragStart={(e) => e.dataTransfer.setData("text/plain", String(record.id))}>
@@ -1546,6 +1556,7 @@ function BoardCard({ entity, boardField, record, relatedRecords, onMove, onEdit,
             field={f}
             value={record[f.name]}
             relationLabel={f.type === "relation" ? relationDisplayLabel(f, record[f.name], relatedRecords) : undefined}
+            onJumpToRecord={onJumpToRecord}
           />
         </div>
       ))}
@@ -1638,7 +1649,7 @@ function FieldInput({ entity, field, value, onChange, relatedEntity, relatedEnti
 const UNDO_WINDOW_MS = 5000;
 
 /** Shared list + form UI used by every entity's own component file. */
-export function EntityView({ entity, highlightRecordId, onHighlightHandled }) {
+export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJumpToRecord }) {
   const [records, setRecords] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -2388,6 +2399,7 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled }) {
                       onEdit={() => startEdit(r)}
                       onDuplicate={() => handleDuplicate(r.id)}
                       onDelete={() => handleDelete(r.id)}
+                      onJumpToRecord={onJumpToRecord}
                     />
                   ))}
                 </div>
@@ -2507,6 +2519,7 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled }) {
                                 field={f}
                                 value={r[f.name]}
                                 relationLabel={f.type === "relation" ? relationDisplayLabel(f, r[f.name], relatedRecords) : undefined}
+                                onJumpToRecord={onJumpToRecord}
                               />
                             )}
                           </td>
@@ -2707,8 +2720,15 @@ export const entity = {
   fields: ${fieldsJson},
 };
 
-export default function View({ highlightRecordId, onHighlightHandled }) {
-  return <EntityView entity={entity} highlightRecordId={highlightRecordId} onHighlightHandled={onHighlightHandled} />;
+export default function View({ highlightRecordId, onHighlightHandled, onJumpToRecord }) {
+  return (
+    <EntityView
+      entity={entity}
+      highlightRecordId={highlightRecordId}
+      onHighlightHandled={onHighlightHandled}
+      onJumpToRecord={onJumpToRecord}
+    />
+  );
 }
 `;
 }
@@ -2834,7 +2854,14 @@ export default function App() {
         ))}
       </nav>
       {activeEntity && (
-        <activeEntity.View highlightRecordId={highlightRecordId} onHighlightHandled={() => setHighlightRecordId(null)} />
+        <activeEntity.View
+          highlightRecordId={highlightRecordId}
+          onHighlightHandled={() => setHighlightRecordId(null)}
+          onJumpToRecord={(name, recordId) => {
+            setActive(name);
+            setHighlightRecordId(recordId);
+          }}
+        />
       )}
       {showSearch && (
         <GlobalSearch
