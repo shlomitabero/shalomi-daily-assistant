@@ -1,5 +1,5 @@
 import type { Entity, EntityRecord, Field, Project } from "@forge/shared";
-import { listRecords, type ForgeDatabase } from "@forge/db";
+import { listRecords, listWhatsAppMessages, type ForgeDatabase, type WhatsAppMessage } from "@forge/db";
 import { recordDisplayLabel } from "./displayField.js";
 
 /**
@@ -71,11 +71,64 @@ function entityToCsv(entity: Entity, records: EntityRecord[], allEntities: Entit
 }
 
 /**
+ * listWhatsAppMessages (packages/db/src/whatsapp.ts) is paginated -- built
+ * for the log panel's own "load more" UI, never meant to return a whole
+ * project's history in one call. A backup has no such limit: it walks
+ * every page (using the same `limit+1`-derived `hasMore` flag the panel's
+ * own "load more" button already relies on) until none remain, so a
+ * project with thousands of messages backs up in full, not just its most
+ * recent 50.
+ */
+function collectAllWhatsAppMessages(db: ForgeDatabase, projectId: string): WhatsAppMessage[] {
+  const all: WhatsAppMessage[] = [];
+  const pageSize = 200;
+  let offset = 0;
+  for (;;) {
+    const { messages, hasMore } = listWhatsAppMessages(db, projectId, pageSize, offset);
+    all.push(...messages);
+    if (!hasMore) break;
+    offset += pageSize;
+  }
+  return all;
+}
+
+function whatsappMessagesToCsv(messages: WhatsAppMessage[]): string {
+  const header = ["Direction", "From", "To", "Message", "Matched Record", "Status", "Date"].map(csvEscape).join(",");
+  const rows = messages.map((m) =>
+    [
+      m.direction === "in" ? "Incoming" : "Outgoing",
+      m.fromNumber,
+      m.toNumber,
+      m.body,
+      m.matchedLabel ?? "",
+      m.status,
+      m.createdAt,
+    ]
+      .map((v) => csvEscape(v))
+      .join(","),
+  );
+  return [header, ...rows].join("\r\n");
+}
+
+/**
  * Builds one ZIP entry per entity ("<EntityName>.csv"), each a real,
  * Excel-friendly CSV (BOM + CRLF) of every record currently stored for
  * it. Every entity's records are fetched once up front so relation
  * fields resolve to the related record's display label regardless of
  * which entity is processed first.
+ *
+ * A project's real WhatsApp conversation history is genuine business
+ * data too -- a shop owner backing up "all data" and later needing to
+ * show what a customer actually said has no other way to get it out,
+ * since the log panel's own "Download log" only ever serializes whatever
+ * page happens to be loaded in the browser at that moment, not the whole
+ * history. Added as one more CSV entry, "WhatsApp Messages.csv", using
+ * the exact same BOM/CRLF/csvEscape conventions as every entity CSV
+ * above -- omitted entirely (not an empty file) for a project that never
+ * connected WhatsApp at all, the same "nothing to report" convention
+ * empty-but-real entities don't get (they still exist in the spec, so
+ * they always get a CSV; WhatsApp is a project-optional integration, not
+ * part of the spec, so its absence is the normal case, not a gap).
  */
 export function generateBackupZipEntries(db: ForgeDatabase, project: Project): { path: string; content: string }[] {
   const allEntities = project.spec.entities;
@@ -84,8 +137,18 @@ export function generateBackupZipEntries(db: ForgeDatabase, project: Project): {
     recordsByEntity[entity.name] = listRecords(db, project.id, entity);
   }
 
-  return allEntities.map((entity) => ({
+  const entries = allEntities.map((entity) => ({
     path: `${entity.name}.csv`,
     content: "﻿" + entityToCsv(entity, recordsByEntity[entity.name], allEntities, recordsByEntity),
   }));
+
+  const whatsappMessages = collectAllWhatsAppMessages(db, project.id);
+  if (whatsappMessages.length > 0) {
+    entries.push({
+      path: "WhatsApp Messages.csv",
+      content: "﻿" + whatsappMessagesToCsv(whatsappMessages),
+    });
+  }
+
+  return entries;
 }

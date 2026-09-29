@@ -1,8 +1,33 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { Project } from "@forge/shared";
-import { applyMigrations, insertRecord, openDatabase } from "@forge/db";
+import {
+  applyMigrations,
+  ensureWhatsAppConnectionsTable,
+  ensureWhatsAppMessagesTable,
+  insertRecord,
+  insertWhatsAppMessage,
+  openDatabase,
+  type ForgeDatabase,
+} from "@forge/db";
 import { generateBackupZipEntries } from "./backup.js";
+
+/**
+ * Every real server opens its database through store.ts, which calls
+ * ensureWhatsAppConnectionsTable/ensureWhatsAppMessagesTable once at
+ * startup -- generateBackupZipEntries (since this round) always queries
+ * whatsapp_messages, so a bare openDatabase(":memory:")+applyMigrations
+ * pair (the only two calls this file's own tests used before) no longer
+ * matches what every real request actually runs against, and throws "no
+ * such table" the instant a test calls generateBackupZipEntries at all.
+ */
+function createTestDb(p: Project): ForgeDatabase {
+  const db = openDatabase(":memory:");
+  applyMigrations(db, p.id, p.spec);
+  ensureWhatsAppConnectionsTable(db);
+  ensureWhatsAppMessagesTable(db);
+  return db;
+}
 
 const project: Project = {
   id: "proj1",
@@ -47,8 +72,7 @@ const project: Project = {
 };
 
 test("generateBackupZipEntries produces one CSV entry per entity, named after it", () => {
-  const db = openDatabase(":memory:");
-  applyMigrations(db, project.id, project.spec);
+  const db = createTestDb(project);
   const entries = generateBackupZipEntries(db, project);
   assert.deepEqual(
     entries.map((e) => e.path),
@@ -57,8 +81,7 @@ test("generateBackupZipEntries produces one CSV entry per entity, named after it
 });
 
 test("each CSV has a real header row from field labels, even with zero records", () => {
-  const db = openDatabase(":memory:");
-  applyMigrations(db, project.id, project.spec);
+  const db = createTestDb(project);
   const entries = generateBackupZipEntries(db, project);
   const customerCsv = entries.find((e) => e.path === "Customer.csv")!.content;
   // A UTF-8 BOM prefix (Excel-friendly, matches the client's own CSV export) precedes the header.
@@ -67,8 +90,7 @@ test("each CSV has a real header row from field labels, even with zero records",
 });
 
 test("real inserted records appear in the CSV with translated enum labels, not raw stored values", () => {
-  const db = openDatabase(":memory:");
-  applyMigrations(db, project.id, project.spec);
+  const db = createTestDb(project);
   const customer = project.spec.entities[0];
   insertRecord(db, project.id, customer, { name: "Dana Levi", status: "Won" });
 
@@ -80,8 +102,7 @@ test("real inserted records appear in the CSV with translated enum labels, not r
 });
 
 test("a relation field resolves to the related record's display label, not the raw foreign-key id", () => {
-  const db = openDatabase(":memory:");
-  applyMigrations(db, project.id, project.spec);
+  const db = createTestDb(project);
   const customer = project.spec.entities[0];
   const order = project.spec.entities[1];
   const dana = insertRecord(db, project.id, customer, { name: "Dana Levi", status: "New" });
@@ -95,8 +116,7 @@ test("a relation field resolves to the related record's display label, not the r
 });
 
 test("a number >= 1000 is written unformatted, without a thousands separator (this CSV shares its column format with the per-entity Import CSV feature, so a locale-formatted \"1,234\" would fail that feature's plain Number() re-parse)", () => {
-  const db = openDatabase(":memory:");
-  applyMigrations(db, project.id, project.spec);
+  const db = createTestDb(project);
   const order = project.spec.entities[1];
   insertRecord(db, project.id, order, { amount: 12345 });
 
@@ -107,8 +127,7 @@ test("a number >= 1000 is written unformatted, without a thousands separator (th
 });
 
 test("a value containing a comma or quote is correctly CSV-escaped", () => {
-  const db = openDatabase(":memory:");
-  applyMigrations(db, project.id, project.spec);
+  const db = createTestDb(project);
   const customer = project.spec.entities[0];
   insertRecord(db, project.id, customer, { name: 'Says "hi", bye', status: "New" });
 
@@ -151,8 +170,7 @@ test("a boolean field renders as Excel's own TRUE/FALSE convention -- and unlike
       ],
     },
   };
-  const db = openDatabase(":memory:");
-  applyMigrations(db, boolProject.id, boolProject.spec);
+  const db = createTestDb(boolProject);
   const task = boolProject.spec.entities[0];
   insertRecord(db, boolProject.id, task, { title: "Finished", done: true });
   insertRecord(db, boolProject.id, task, { title: "Not finished", done: false });
@@ -169,12 +187,95 @@ test("a boolean field renders as Excel's own TRUE/FALSE convention -- and unlike
   assert.equal(lines[3], "Finished,TRUE");
 });
 
+test("real WhatsApp messages produce a 'WhatsApp Messages.csv' entry, correctly escaped and ordered", () => {
+  const db = createTestDb(project);
+  const first = insertWhatsAppMessage(db, {
+    projectId: project.id,
+    direction: "in",
+    fromNumber: "+972501111111",
+    toNumber: "+972502222222",
+    body: "מתי אפשר לקבל, את ההזמנה?",
+    matchedLabel: "Dana Levi",
+    matchedEntityName: "Customer",
+    matchedRecordId: 1,
+    status: "received",
+  });
+  const second = insertWhatsAppMessage(db, {
+    projectId: project.id,
+    direction: "out",
+    fromNumber: "+972502222222",
+    toNumber: "+972501111111",
+    body: "מחר בבוקר",
+    status: "sent",
+  });
+
+  const entries = generateBackupZipEntries(db, project);
+  assert.deepEqual(
+    entries.map((e) => e.path),
+    ["Customer.csv", "Order.csv", "WhatsApp Messages.csv"],
+  );
+  const csv = entries.find((e) => e.path === "WhatsApp Messages.csv")!.content.replace(/^﻿/, "");
+  const lines = csv.split("\r\n");
+  assert.equal(lines[0], "Direction,From,To,Message,Matched Record,Status,Date");
+  // A phone number's leading "+" is also a formula-injection trigger character to csvEscape, so From/To are
+  // guarded with a leading single quote just like any other field -- same convention, no special case.
+  // listWhatsAppMessages returns newest-first, so the "out" reply comes first.
+  assert.equal(lines[1], `Outgoing,'+972502222222,'+972501111111,מחר בבוקר,,sent,${second.createdAt}`);
+  assert.equal(
+    lines[2],
+    `Incoming,'+972501111111,'+972502222222,"מתי אפשר לקבל, את ההזמנה?",Dana Levi,received,${first.createdAt}`,
+  );
+});
+
+test("a WhatsApp message containing a comma is CSV-escaped like any other field, and the createdAt timestamp is real, not blank", () => {
+  const db = createTestDb(project);
+  const inserted = insertWhatsAppMessage(db, {
+    projectId: project.id,
+    direction: "in",
+    fromNumber: "+972501111111",
+    toNumber: "+972502222222",
+    body: "מתי אפשר לקבל, את ההזמנה?",
+    matchedLabel: "Dana Levi",
+    status: "received",
+  });
+
+  const entries = generateBackupZipEntries(db, project);
+  const csv = entries.find((e) => e.path === "WhatsApp Messages.csv")!.content.replace(/^﻿/, "");
+  const lines = csv.split("\r\n");
+  assert.equal(lines[1], `Incoming,'+972501111111,'+972502222222,"מתי אפשר לקבל, את ההזמנה?",Dana Levi,received,${inserted.createdAt}`);
+});
+
+test("collectAllWhatsAppMessages walks every page, not just the first 200, so a large history backs up in full", () => {
+  const db = createTestDb(project);
+  for (let i = 0; i < 205; i += 1) {
+    insertWhatsAppMessage(db, {
+      projectId: project.id,
+      direction: "in",
+      fromNumber: "+972501111111",
+      toNumber: "+972502222222",
+      body: `message ${i}`,
+      status: "received",
+    });
+  }
+
+  const entries = generateBackupZipEntries(db, project);
+  const csv = entries.find((e) => e.path === "WhatsApp Messages.csv")!.content.replace(/^﻿/, "");
+  const lines = csv.split("\r\n");
+  // header + 205 rows, proving the second page (messages 201-205) wasn't dropped
+  assert.equal(lines.length, 206);
+});
+
+test("a project that never used WhatsApp gets no 'WhatsApp Messages.csv' entry at all (omitted, not an empty file)", () => {
+  const db = createTestDb(project);
+  const entries = generateBackupZipEntries(db, project);
+  assert.ok(!entries.some((e) => e.path === "WhatsApp Messages.csv"));
+});
+
 test("a value that would be interpreted as a spreadsheet formula is guarded with a leading single quote (CSV/formula injection)", () => {
   // A stored "name" field can hold arbitrary text -- not just values this
   // app itself ever wrote -- and Excel/Sheets/LibreOffice treat an
   // unguarded cell starting with =, +, -, or @ as a formula to evaluate.
-  const db = openDatabase(":memory:");
-  applyMigrations(db, project.id, project.spec);
+  const db = createTestDb(project);
   const customer = project.spec.entities[0];
   insertRecord(db, project.id, customer, { name: "=cmd|' /C calc'!A1", status: "New" });
 

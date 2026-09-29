@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { AgentStepEvent } from "@forge/shared";
-import type { ForgeDatabase } from "@forge/db";
+import { insertWhatsAppMessage, type ForgeDatabase } from "@forge/db";
 import { HeuristicSpecProvider, type SpecProvider } from "@forge/spec-engine";
 import { createApp } from "./app.js";
 import { createStore } from "./store.js";
@@ -3294,6 +3294,53 @@ test("backup refuses before build, and returns a real zip with one CSV per entit
       assert.ok(buffer.includes(`${entity.name}.csv`), `expected the backup zip to contain an entry for "${entity.name}.csv"`);
     }
   });
+});
+
+test("backup includes a real 'WhatsApp Messages.csv' entry with the message's actual content once a message has arrived, and omits it for a project with no WhatsApp history", async () => {
+  let capturedDb: ForgeDatabase | undefined;
+  await withServer(
+    async (baseUrl) => {
+      const token = await signup(baseUrl);
+      const createRes = await fetch(`${baseUrl}/api/projects`, {
+        method: "POST",
+        headers: authHeaders(token),
+        body: JSON.stringify({ description: "A CRM with customers and deals." }),
+      });
+      const { project } = (await createRes.json()) as { project: { id: string } };
+      const buildRes = await fetch(`${baseUrl}/api/projects/${project.id}/build`, { method: "POST", headers: authHeaders(token) });
+      await collectSSE(buildRes);
+
+      const beforeBackupRes = await fetch(`${baseUrl}/api/projects/${project.id}/backup`, { headers: authHeaders(token) });
+      const beforeBuffer = Buffer.from(await beforeBackupRes.arrayBuffer());
+      assert.ok(!beforeBuffer.includes("WhatsApp Messages.csv"), "a project with zero WhatsApp messages should have no WhatsApp entry at all");
+
+      assert.ok(capturedDb, "withServer must hand the real server db to the whatsapp opt so a real message can be inserted against it");
+      insertWhatsAppMessage(capturedDb!, {
+        projectId: project.id,
+        direction: "in",
+        fromNumber: "+972501234567",
+        toNumber: "+972509999999",
+        body: "שלום, מתי אפשר להגיע?",
+        status: "received",
+      });
+
+      const afterBackupRes = await fetch(`${baseUrl}/api/projects/${project.id}/backup`, { headers: authHeaders(token) });
+      assert.equal(afterBackupRes.status, 200);
+      const afterBuffer = Buffer.from(await afterBackupRes.arrayBuffer());
+      assert.ok(afterBuffer.includes("WhatsApp Messages.csv"));
+      // The zip uses store (no compression), so the real message text is
+      // searchable directly in the raw response bytes, proving the backup
+      // carries the message's actual content, not just an empty entry.
+      assert.ok(afterBuffer.includes(Buffer.from("שלום, מתי אפשר להגיע?", "utf8")));
+      assert.ok(afterBuffer.includes(Buffer.from("Incoming,'+972501234567,'+972509999999", "utf8")));
+    },
+    {
+      whatsapp: (db) => {
+        capturedDb = db;
+        return createTestWhatsAppManager(db).manager;
+      },
+    },
+  );
 });
 
 test("WhatsApp status starts disconnected, connect surfaces a real QR code, and status flips to connected once the phone links", async () => {
