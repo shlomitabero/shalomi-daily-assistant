@@ -113,6 +113,12 @@ export function WhatsAppPanel({
   const [sending, setSending] = useState(false);
   const [sendResult, setSendResult] = useState<{ ok: boolean; text: string } | null>(null);
   const [messages, setMessages] = useState<WhatsAppMessageLogEntry[]>([]);
+  // Whether older messages exist beyond what's currently loaded -- the
+  // server only ever hands back one page (see listWhatsAppMessages,
+  // round 263), so this drives both the "load older" button's visibility
+  // and formatWhatsAppMessageCount's "N+" vs "N (all)" phrasing.
+  const [hasMoreMessages, setHasMoreMessages] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [search, setSearch] = useState("");
   // Lazy initializer, same shape as recentNumbers just above -- this panel
   // unmounts entirely on close (see App.tsx's `{showWhatsApp && <WhatsAppPanel .../>}`),
@@ -216,8 +222,9 @@ export function WhatsAppPanel({
         if (next.status === "connected" || next.status === "disconnected") {
           stopPolling();
           if (next.status === "connected") {
-            const { messages } = await listWhatsAppMessages(projectId);
+            const { messages, hasMore } = await listWhatsAppMessages(projectId);
             setMessages(messages);
+            setHasMoreMessages(hasMore);
             startConnectedPolling();
           }
         }
@@ -241,7 +248,12 @@ export function WhatsAppPanel({
         setStatus(s);
         if (s.status === "connecting" || s.status === "qr") startPolling();
         if (s.status === "connected") {
-          listWhatsAppMessages(projectId).then(({ messages }) => setMessages(messages)).catch(() => {});
+          listWhatsAppMessages(projectId)
+            .then(({ messages, hasMore }) => {
+              setMessages(messages);
+              setHasMoreMessages(hasMore);
+            })
+            .catch(() => {});
           startConnectedPolling();
         }
       })
@@ -276,6 +288,7 @@ export function WhatsAppPanel({
       const next = await disconnectWhatsApp(projectId);
       setStatus(next);
       setMessages([]);
+      setHasMoreMessages(false);
     } catch (err) {
       setLoadError((err as Error).message);
       // The disconnect request itself failed -- nothing changed
@@ -301,8 +314,9 @@ export function WhatsAppPanel({
       setSendResult(
         result.ok ? { ok: true, text: t("whatsapp.send.success") } : { ok: false, text: result.error ?? t("whatsapp.send.genericError") },
       );
-      const { messages } = await listWhatsAppMessages(projectId);
+      const { messages, hasMore } = await listWhatsAppMessages(projectId);
       setMessages(messages);
+      setHasMoreMessages(hasMore);
     } catch (err) {
       setSendResult({ ok: false, text: (err as Error).message });
     } finally {
@@ -333,12 +347,33 @@ export function WhatsAppPanel({
       // send) -- in that case the message log is unchanged, so show the
       // reason directly instead of leaving the button silently reset.
       if (!result.ok) setRetryError(result.error ?? t("whatsapp.log.retryError"));
-      const { messages } = await listWhatsAppMessages(projectId);
+      const { messages, hasMore } = await listWhatsAppMessages(projectId);
       setMessages(messages);
+      setHasMoreMessages(hasMore);
     } catch (err) {
       setRetryError((err as Error).message);
     } finally {
       setRetryingId(null);
+    }
+  }
+
+  /**
+   * Appends the next older page rather than replacing state, since
+   * listWhatsAppMessages' offset is server-side pagination over a
+   * DESC-ordered log -- messages.length as the offset means "everything
+   * already showing," so this always asks for the page right after what's
+   * currently loaded, regardless of how many load-more clicks came before.
+   */
+  async function handleLoadMore() {
+    setLoadingMore(true);
+    try {
+      const { messages: older, hasMore } = await listWhatsAppMessages(projectId, messages.length);
+      setMessages((prev) => [...prev, ...older]);
+      setHasMoreMessages(hasMore);
+    } catch (err) {
+      setLoadError((err as Error).message);
+    } finally {
+      setLoadingMore(false);
     }
   }
 
@@ -398,6 +433,7 @@ export function WhatsAppPanel({
     try {
       await clearWhatsAppMessages(projectId);
       setMessages([]);
+      setHasMoreMessages(false);
       setRetryError(null);
     } catch (err) {
       setLoadError((err as Error).message);
@@ -521,7 +557,7 @@ export function WhatsAppPanel({
               {messages.length > 0 && (
                 <span className="muted small whatsapp-log-count">
                   {" "}
-                  — {formatWhatsAppMessageCount(visibleMessages.length, messages.length, t)}
+                  — {formatWhatsAppMessageCount(visibleMessages.length, messages.length, t, hasMoreMessages)}
                 </span>
               )}
             </h3>
@@ -628,6 +664,13 @@ export function WhatsAppPanel({
                 </li>
               ))}
             </ul>
+          )}
+          {hasMoreMessages && (
+            <div className="whatsapp-log-load-more">
+              <button type="button" className="secondary small" onClick={handleLoadMore} disabled={loadingMore}>
+                {loadingMore ? t("whatsapp.log.loadingMore") : t("whatsapp.log.loadMore")}
+              </button>
+            </div>
           )}
         </div>
       </div>

@@ -166,15 +166,36 @@ export function insertWhatsAppMessage(
   return { ...message, id, createdAt, matchedLabel: message.matchedLabel ?? null, matchedEntityName: message.matchedEntityName ?? null, matchedRecordId: message.matchedRecordId ?? null };
 }
 
-export function listWhatsAppMessages(db: ForgeDatabase, projectId: string, limit = 50): WhatsAppMessage[] {
+/**
+ * A conversation with a real customer only ever grows, and this always
+ * returned at most `limit` rows with no way to ask for the ones before
+ * them -- once a project's log passed 50 messages, everything older
+ * silently became permanently unreachable, with nothing in the response
+ * even hinting that more existed (see formatWhatsAppMessageCount's own
+ * "N of N (all)" phrasing in whatsappLog.ts, which took the returned
+ * array's own length as the true total). `offset` lets the panel ask for
+ * the next older page, and `hasMore` -- computed by asking for one extra
+ * row past `limit` and checking whether it came back, never a second
+ * COUNT(*) query -- tells it honestly whether there's anything left to
+ * load, instead of it having to guess from `messages.length === limit`
+ * (which is also true on the last page, whenever the log's real total is
+ * an exact multiple of `limit`).
+ */
+export function listWhatsAppMessages(
+  db: ForgeDatabase,
+  projectId: string,
+  limit = 50,
+  offset = 0,
+): { messages: WhatsAppMessage[]; hasMore: boolean } {
   // createdAt has only millisecond precision, so two messages inserted in
   // the same millisecond (a real possibility for a fast reply, or in a
   // test) would tie -- break the tie with rowid so "most recent first"
   // always matches actual insertion order, not an arbitrary one.
   const rows = db
-    .prepare("SELECT * FROM whatsapp_messages WHERE projectId = ? ORDER BY createdAt DESC, rowid DESC LIMIT ?")
-    .all(projectId, limit) as Record<string, unknown>[];
-  return rows.map(rowToMessage);
+    .prepare("SELECT * FROM whatsapp_messages WHERE projectId = ? ORDER BY createdAt DESC, rowid DESC LIMIT ? OFFSET ?")
+    .all(projectId, limit + 1, offset) as Record<string, unknown>[];
+  const hasMore = rows.length > limit;
+  return { messages: rows.slice(0, limit).map(rowToMessage), hasMore };
 }
 
 /** Wipes a project's whole WhatsApp message log (both directions) -- the user's own explicit "clear history" action, not something triggered automatically. */

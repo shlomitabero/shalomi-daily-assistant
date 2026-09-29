@@ -168,3 +168,17 @@ test("formatWhatsAppMessageCount reports 'shown of total' once a search has narr
   const tr = (key: string, params?: Record<string, string | number>) => translate("he", key, params);
   assert.equal(formatWhatsAppMessageCount(2, 9, tr), "2 מתוך 9 הודעות");
 });
+
+/**
+ * New in round 263: before pagination, every loaded message passing the
+ * filter meant "shown === total," which this function took as proof
+ * nothing was missing -- even when the server's own listWhatsAppMessages
+ * response said older messages still existed unfetched. hasMore=true must
+ * override that "all" claim into an honest "N+", regardless of shown/total
+ * both being equal.
+ */
+test("formatWhatsAppMessageCount reports 'N+' instead of falsely claiming 'all' when more messages exist beyond what's loaded", () => {
+  const tr = (key: string, params?: Record<string, string | number>) => translate("en", key, params);
+  assert.equal(formatWhatsAppMessageCount(50, 50, tr, true), "50+ messages");
+  assert.equal(formatWhatsAppMessageCount(50, 50, tr, false), "50 messages", "sanity check: hasMore=false keeps the old plain phrasing");
+});

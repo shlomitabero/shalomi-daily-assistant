@@ -49,6 +49,7 @@ test("WhatsAppPanel's handleDisconnect resumes the background connected-poll aft
     "disconnectWhatsApp",
     "setStatus",
     "setMessages",
+    "setHasMoreMessages",
     "setLoadError",
     "startConnectedPolling",
     "projectId",
@@ -65,6 +66,7 @@ test("WhatsAppPanel's handleDisconnect resumes the background connected-poll aft
     async () => {
       throw rejection;
     },
+    () => {},
     () => {},
     () => {},
     (msg: string) => {
@@ -103,6 +105,7 @@ test("WhatsAppPanel's handleDisconnect does not resume connected-polling after a
     "disconnectWhatsApp",
     "setStatus",
     "setMessages",
+    "setHasMoreMessages",
     "setLoadError",
     "startConnectedPolling",
     "projectId",
@@ -116,6 +119,7 @@ test("WhatsAppPanel's handleDisconnect does not resume connected-polling after a
     (next: unknown) => {
       capturedStatus = next;
     },
+    () => {},
     () => {},
     () => {},
     () => {
@@ -1523,6 +1527,136 @@ test("WhatsAppPanel's log filter choice survives a real unmount+remount, and is 
       const otherSelect = document.querySelector(".whatsapp-log-direction-filter") as HTMLSelectElement;
       assert.equal(otherSelect.value, "all", "a different project must not inherit proj-filter's persisted choice");
       third.unmount();
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
+ * New in this round (263): listWhatsAppMessages always capped at 50 with no
+ * way to reach anything older -- once a real conversation passed that, the
+ * rest of the log was permanently unreachable, with the count label itself
+ * wrongly claiming "N of N (all)". This is a real-render regression test
+ * for the fix: a "Load older messages" button appears exactly while more
+ * exist, clicking it appends (never replaces) the next page onto what's
+ * already showing, and it disappears once the server reports nothing left.
+ */
+test("WhatsAppPanel's 'Load older messages' button appends the next page without replacing what's shown, and disappears once hasMore is false", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    const page1: WhatsAppMessageLogEntry[] = [
+      {
+        id: "m1",
+        direction: "out",
+        fromNumber: "972501234567",
+        toNumber: "972521112233",
+        body: "Newest message",
+        matchedLabel: null,
+        matchedEntityName: null,
+        matchedRecordId: null,
+        status: "sent",
+        createdAt: new Date().toISOString(),
+      },
+      {
+        id: "m2",
+        direction: "in",
+        fromNumber: "972521112233",
+        toNumber: "972501234567",
+        body: "Second message",
+        matchedLabel: null,
+        matchedEntityName: null,
+        matchedRecordId: null,
+        status: "received",
+        createdAt: new Date().toISOString(),
+      },
+    ];
+    const page2: WhatsAppMessageLogEntry[] = [
+      {
+        id: "m3",
+        direction: "in",
+        fromNumber: "972521112233",
+        toNumber: "972501234567",
+        body: "Oldest message",
+        matchedLabel: null,
+        matchedEntityName: null,
+        matchedRecordId: null,
+        status: "received",
+        createdAt: new Date().toISOString(),
+      },
+    ];
+    let messagesRequestCount = 0;
+    globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/integrations/whatsapp/status") {
+        return new Response(
+          JSON.stringify({ status: "connected", phoneNumber: "972501234567", qrDataUrl: null, error: null }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      if (method === "GET" && input.startsWith("/api/projects/proj1/integrations/whatsapp/messages")) {
+        messagesRequestCount += 1;
+        // The first load must ask for no offset at all (offset=0 is the
+        // implicit default -- see listWhatsAppMessages in api.ts), and the
+        // "load more" click must ask for exactly offset=2 (messages.length
+        // at the moment of the click), never replaying offset=0.
+        if (!input.includes("offset=")) {
+          return new Response(JSON.stringify({ messages: page1, hasMore: true }), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          });
+        }
+        if (input.endsWith("offset=2")) {
+          return new Response(JSON.stringify({ messages: page2, hasMore: false }), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          });
+        }
+        throw new Error(`unexpected offset in ${input}`);
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+
+    try {
+      render(
+        React.createElement(
+          ThemeProvider,
+          null,
+          React.createElement(
+            LanguageProvider,
+            null,
+            React.createElement(WhatsAppPanel, { projectId: "proj1", projectName: "Test Project", onClose: () => {}, onJumpToEntity: () => {}, onJumpToRecord: () => {} }),
+          ),
+        ),
+      );
+
+      await waitForCondition(() => document.querySelectorAll(".whatsapp-log-list li").length === 2);
+      assert.equal(messagesRequestCount, 1, "sanity check: exactly one messages request so far");
+
+      const countLabel = document.querySelector(".whatsapp-log-count");
+      assert.ok(countLabel?.textContent?.includes("2+"), `expected the count to read "2+" while more exist, got "${countLabel?.textContent}"`);
+
+      const loadMoreButton = Array.from(document.querySelectorAll("button")).find((b) => b.textContent === "Load older messages");
+      assert.ok(loadMoreButton, "expected a 'Load older messages' button while hasMore is true");
+
+      fireEvent.click(loadMoreButton!);
+
+      await waitForCondition(() => document.querySelectorAll(".whatsapp-log-list li").length === 3);
+      assert.equal(messagesRequestCount, 2, "the click must trigger exactly one more request");
+
+      const bodies = Array.from(document.querySelectorAll(".whatsapp-log-body")).map((el) => el.textContent);
+      assert.deepEqual(
+        bodies,
+        ["Newest message", "Second message", "Oldest message"],
+        "the older page must be appended after the existing two, never replacing them",
+      );
+
+      await waitForCondition(() => Array.from(document.querySelectorAll("button")).every((b) => b.textContent !== "Load older messages"));
+      const countLabelAfter = document.querySelector(".whatsapp-log-count");
+      assert.ok(
+        countLabelAfter?.textContent?.includes("3") && !countLabelAfter.textContent.includes("+"),
+        `expected the count to read a plain "3" once nothing more is left, got "${countLabelAfter?.textContent}"`,
+      );
     } finally {
       globalThis.fetch = originalFetch;
     }

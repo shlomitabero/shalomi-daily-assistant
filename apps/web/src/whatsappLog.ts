@@ -47,11 +47,11 @@ export function formatWhatsAppLog(
  * Case-insensitive substring match against a message's own body text AND
  * the same "who" a person actually sees in the log row (matchedLabel, or
  * the raw phone number when nothing matched) -- mirrors filterCheckpoints'
- * own convention in checkpointDiff.ts for a long, ever-growing list with no
- * cap and no delete (a WhatsApp conversation only ever gets longer).
- * Matching on the displayed "who", not just the body, lets someone find
- * every message from a specific customer even when their own words don't
- * happen to repeat a search term.
+ * own convention in checkpointDiff.ts for a long, ever-growing list (a
+ * WhatsApp conversation only ever gets longer, and paginates rather than
+ * capping out, since round 263). Matching on the displayed "who", not just
+ * the body, lets someone find every message from a specific customer even
+ * when their own words don't happen to repeat a search term.
  */
 export function filterWhatsAppMessages(messages: WhatsAppMessageLogEntry[], search: string): WhatsAppMessageLogEntry[] {
   const query = search.trim().toLowerCase();
@@ -72,15 +72,22 @@ export function filterWhatsAppMessages(messages: WhatsAppMessageLogEntry[], sear
  * SEARCH_THRESHOLD messages, exactly the point where a person can no
  * longer tell at a glance how many of a long, never-capped conversation
  * history a search actually matched.
+ *
+ * `hasMore` (round 263) covers the case a plain shown===total comparison
+ * can't see: the server itself only ever hands over one page at a time, so
+ * "all 50 loaded so far are showing" and "these are truly every message
+ * that exists" are different facts. Before pagination, this always claimed
+ * "N of N (all)" once every *loaded* message passed the search/filter --
+ * even when 200 older ones sat unfetched behind the "load older" button.
  */
 export function formatWhatsAppMessageCount(
   shown: number,
   total: number,
   t: (key: string, params?: Record<string, string | number>) => string,
+  hasMore = false,
 ): string {
-  return shown === total
-    ? t("whatsapp.log.count.all", { count: total })
-    : t("whatsapp.log.count.filtered", { shown, total });
+  if (shown !== total) return t("whatsapp.log.count.filtered", { shown, total });
+  return hasMore ? t("whatsapp.log.count.hasMore", { count: total }) : t("whatsapp.log.count.all", { count: total });
 }
 
 export type WhatsAppLogFilter = "all" | "in" | "out" | "failed";
@@ -90,10 +97,11 @@ export type WhatsAppLogFilter = "all" | "in" | "out" | "failed";
  * or only failed sends -- applied together with (not instead of)
  * filterWhatsAppMessages' own text search, the same two-independent-
  * filters combination EntityPanel.tsx's search+statusFilter already use
- * on the entity table. A long, ever-growing conversation (this log has no
- * cap and no delete, per filterWhatsAppMessages' own comment) is exactly
- * where being able to isolate "just what I sent" or "just what failed"
- * matters -- scanning by eye stops working once the log gets long.
+ * on the entity table. A long, ever-growing conversation -- paginated since
+ * round 263, and always deletable one message (or the whole log) at a time
+ * via deleteWhatsAppMessage/clearWhatsAppMessages -- is exactly where being
+ * able to isolate "just what I sent" or "just what failed" matters --
+ * scanning by eye stops working once the log gets long.
  */
 export function filterWhatsAppMessagesByDirection(
   messages: WhatsAppMessageLogEntry[],

@@ -232,7 +232,7 @@ test("an incoming text message is logged and matched to the right customer recor
     ],
   });
 
-  const messages = listWhatsAppMessages(db, project.id);
+  const { messages } = listWhatsAppMessages(db, project.id);
   assert.equal(messages.length, 1);
   assert.equal(messages[0].direction, "in");
   assert.equal(messages[0].body, "מתי התור שלי?");
@@ -257,7 +257,7 @@ test("an incoming message is skipped when it is from the linked device itself or
     ],
   });
 
-  assert.equal(listWhatsAppMessages(db, project.id).length, 0);
+  assert.equal(listWhatsAppMessages(db, project.id).messages.length, 0);
 });
 
 test("disconnect logs out the real socket, clears the live session, and keeps the last known phone number in the DB", async () => {

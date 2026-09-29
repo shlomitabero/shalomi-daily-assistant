@@ -204,7 +204,7 @@ test("deleteProject removes the project row, its real generated data table, chec
   assert.deepEqual(listCheckpoints(db, project.id), [], "checkpoints should be gone");
   assert.equal(isCollaborator(db, project.id, "collaborator1"), false, "collaborator grant should be gone");
   assert.equal(getWhatsAppConnection(db, project.id), undefined, "WhatsApp connection row should be gone");
-  assert.deepEqual(listWhatsAppMessages(db, project.id), [], "WhatsApp message log should be gone");
+  assert.deepEqual(listWhatsAppMessages(db, project.id), { messages: [], hasMore: false }, "WhatsApp message log should be gone");
   assert.throws(
     () => db.prepare(`SELECT * FROM "entity_to_delete_Customer"`).all(),
     /no such table/,

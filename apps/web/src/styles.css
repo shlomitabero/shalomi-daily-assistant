@@ -2472,6 +2472,12 @@ button.sort-header:hover:not(:disabled) {
   gap: 8px;
 }
 
+.whatsapp-log-load-more {
+  display: flex;
+  justify-content: center;
+  margin-top: 10px;
+}
+
 .whatsapp-log-list li {
   display: flex;
   align-items: center;

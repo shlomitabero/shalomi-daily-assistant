@@ -746,7 +746,15 @@ export function createProjectsRouter(db: ForgeDatabase, provider: SpecProvider |
     "/projects/:id/integrations/whatsapp/messages",
     asyncRoute(async (req, res) => {
       const project = requireProjectAccess(db, req.params.id, req.userId!);
-      res.json({ messages: listWhatsAppMessages(db, project.id) });
+      // A conversation only ever grows, and listWhatsAppMessages always
+      // capped at 50 with no way to ask for anything older -- offset lets
+      // the panel's own "load older messages" button actually reach them.
+      // Anything that isn't a genuine non-negative integer (missing, "abc",
+      // "-5") falls back to 0 rather than passing NaN/a negative value
+      // straight into the SQL LIMIT/OFFSET clause.
+      const parsedOffset = Number(req.query.offset);
+      const offset = Number.isInteger(parsedOffset) && parsedOffset >= 0 ? parsedOffset : 0;
+      res.json(listWhatsAppMessages(db, project.id, 50, offset));
     }),
   );
 

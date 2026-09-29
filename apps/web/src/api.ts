@@ -577,8 +577,12 @@ export interface WhatsAppMessageLogEntry {
   createdAt: string;
 }
 
-export function listWhatsAppMessages(projectId: string): Promise<{ messages: WhatsAppMessageLogEntry[] }> {
-  return request(`/projects/${projectId}/integrations/whatsapp/messages`);
+export function listWhatsAppMessages(
+  projectId: string,
+  offset = 0,
+): Promise<{ messages: WhatsAppMessageLogEntry[]; hasMore: boolean }> {
+  const suffix = offset > 0 ? `?offset=${offset}` : "";
+  return request(`/projects/${projectId}/integrations/whatsapp/messages${suffix}`);
 }
 
 export function clearWhatsAppMessages(projectId: string): Promise<void> {
