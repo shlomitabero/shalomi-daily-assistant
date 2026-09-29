@@ -14708,6 +14708,64 @@ not a single "make it perfect" claim.
   `@forge/api` 252 unchanged) and `npm run build --workspace=@forge/web`
   clean.
 
+- **Round 261 -- a longtext field's table cell (Notes, Description) now
+  shows its complete, untruncated value in a native hover tooltip.**
+  Diversification: with relation-cell click-to-jump closed as of round
+  260, an Explore survey weighed porting that same feature into
+  `codegen.ts`'s exported app (real, but the 14th "port X to exported
+  codegen" repetition in this app's own history) against a fresh
+  legibility gap in `EntityPanel.tsx`'s `Cell` component -- `longtext`
+  had no dedicated branch at all, falling through to the exact same
+  plain-string render as a short `text` field, confirmed by grep against
+  the file for any existing truncation/tooltip/expand mechanism (none).
+
+  Concretely: `td { white-space: nowrap }` (styles.css) means an
+  unresized column with a long "Notes" value just stretches the whole
+  table absurdly wide; once a person manually resizes a column,
+  `.entity-table-resized td` switches to `overflow: hidden; text-overflow:
+  ellipsis`, silently clipping the value with no way to read the rest
+  except double-clicking into the real edit textarea -- which feels like
+  committing to a change just to read one. A notes/description field is
+  close to universal on any real CRM, project tracker, or inventory app
+  this tool generates, making this a constant, felt pain point rather
+  than a hypothetical edge case.
+
+  `Cell` now gives `field.type === "longtext"` its own branch: wraps the
+  value in `<span className="longtext-cell" title={fullValue}>`, so
+  hovering shows the browser's own native tooltip with the complete text
+  regardless of how narrow the column is. Every other field type
+  (including plain `text`, which is rarely long enough to need this) is
+  untouched.
+
+  Tests: 1 new test in `EntityPanel.test.ts` -- a fresh `Customer`-style
+  entity with both a `text` and a `longtext` field, asserting the
+  longtext cell's inner `.longtext-cell` span carries the seeded value's
+  full text as its `title` attribute, while the plain-text cell gets no
+  such wrapper at all (its `<td>`'s own pre-existing "double-click to
+  edit" hint title is unrelated and confirmed still present, not
+  conflated with the new tooltip).
+
+  Deliberate-break-and-restore: removed the new `longtext` branch from
+  `Cell` entirely, falling back to the old generic-string render --
+  exactly 1 of 45 `EntityPanel.test.ts` tests failed (the new test), the
+  other 44 stayed green. Restored from a scratchpad backup, confirmed a
+  byte-identical `diff`, and re-confirmed all 45 tests green again.
+
+  Real-browser verification against the live dev server: signed up,
+  built "A CRM for tracking customers and deals" (produces a Customer
+  entity with a seeded "notes" longtext field -- generateFieldValue in
+  `packages/db/src/seed.ts` fills longtext regardless of `required`,
+  unlike the relation-field gap round 260 found), located the real
+  `.longtext-cell` in the live table, and confirmed its `title` attribute
+  exactly matched its own visible text, with exactly one such cell per
+  row (the notes column only) -- zero console errors throughout.
+  `RESULT: PASS`.
+
+  Full suite green (984 tests, up from 983 -- `@forge/web` 547 → 548;
+  `@forge/shared` 11, `@forge/spec-engine` 82, `@forge/db` 91,
+  `@forge/api` 252 unchanged) and `npm run build --workspace=@forge/web`
+  clean.
+
 ## Phase 4
 
 - Template/agent marketplace
