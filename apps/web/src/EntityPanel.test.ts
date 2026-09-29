@@ -251,6 +251,126 @@ test("EntityPanel's handleBulkDelete still surfaces the raw error message when e
 });
 
 /**
+ * New in this round: bulk delete/duplicate already existed, but there was
+ * no way to change a single shared field's value across several selected
+ * records at once (e.g. marking 15 selected orders "Shipped") without
+ * editing each row individually. Same Promise.allSettled resilience test
+ * as handleBulkDelete/handleBulkDuplicate's own above: a single rejected
+ * updateRecord call (a validation failure on one record's current state,
+ * say) must not hide the updates that DID succeed, and must not stop the
+ * loop from even attempting the remaining ids.
+ */
+test("EntityPanel's handleBulkUpdate refreshes and keeps only the ids that actually failed selected, instead of one rejection hiding the updates that succeeded", async () => {
+  const handlerMatch = entityPanelSrc.match(/ {2}async function handleBulkUpdate\(\) \{[\s\S]*?\n {2}\}\n/);
+  assert.ok(handlerMatch, "expected to find handleBulkUpdate in EntityPanel.tsx");
+  const { code } = transformSync(handlerMatch![0], { loader: "ts" });
+
+  let capturedError: string | undefined;
+  let capturedSelectedIds: Set<number> | undefined;
+  let refreshCalled = 0;
+  const attemptedUpdates: { id: number; patch: Record<string, unknown> }[] = [];
+
+  const fn = new Function(
+    "t",
+    "projectId",
+    "entity",
+    "selectedIds",
+    "bulkEditField",
+    "bulkEditValue",
+    "setError",
+    "updateRecord",
+    "setSelectedIds",
+    "refresh",
+    `${code}\nreturn handleBulkUpdate;`,
+  )(
+    (key: string, params?: Record<string, unknown>) => (params ? `${key}:${JSON.stringify(params)}` : key),
+    "proj1",
+    { name: "Order" },
+    new Set([1, 2, 3]),
+    "status",
+    "Shipped",
+    (msg: string | null) => {
+      capturedError = msg ?? undefined;
+    },
+    async (_projectId: string, _entityName: string, id: number, patch: Record<string, unknown>) => {
+      attemptedUpdates.push({ id, patch });
+      if (id === 2) throw new Error("record 2 network error");
+    },
+    (next: Set<number>) => {
+      capturedSelectedIds = next;
+    },
+    async () => {
+      refreshCalled += 1;
+    },
+  ) as () => Promise<void>;
+
+  await fn();
+
+  assert.deepEqual(
+    attemptedUpdates.map((u) => u.id).sort(),
+    [1, 2, 3],
+    "must attempt every selected id, not stop at the first failure",
+  );
+  assert.deepEqual(
+    attemptedUpdates.map((u) => u.patch),
+    [{ status: "Shipped" }, { status: "Shipped" }, { status: "Shipped" }],
+    "every update must send the same chosen field/value patch",
+  );
+  assert.deepEqual(
+    [...capturedSelectedIds!].sort(),
+    [2],
+    "only the id that actually failed to update should remain selected -- the two that succeeded must be cleared",
+  );
+  assert.match(
+    capturedError!,
+    /entity\.bulk\.updatePartialFailure/,
+    "a partial failure must surface the translated update-partial-failure message, not the raw single-record rejection",
+  );
+  assert.equal(refreshCalled, 1, "refresh() must still run so the table shows the records that WERE successfully updated");
+});
+
+test("EntityPanel's handleBulkUpdate does nothing when no field has been chosen yet", async () => {
+  const handlerMatch = entityPanelSrc.match(/ {2}async function handleBulkUpdate\(\) \{[\s\S]*?\n {2}\}\n/);
+  const { code } = transformSync(handlerMatch![0], { loader: "ts" });
+
+  let updateCalled = false;
+  let refreshCalled = false;
+  const fn = new Function(
+    "t",
+    "projectId",
+    "entity",
+    "selectedIds",
+    "bulkEditField",
+    "bulkEditValue",
+    "setError",
+    "updateRecord",
+    "setSelectedIds",
+    "refresh",
+    `${code}\nreturn handleBulkUpdate;`,
+  )(
+    (key: string) => key,
+    "proj1",
+    { name: "Order" },
+    new Set([1]),
+    "",
+    "",
+    () => {},
+    async () => {
+      updateCalled = true;
+    },
+    () => {},
+    async () => {
+      refreshCalled = true;
+    },
+  ) as () => Promise<void>;
+
+  await fn();
+
+  assert.equal(updateCalled, false, "must not call updateRecord when bulkEditField is empty");
+  assert.equal(refreshCalled, false, "must not refresh when nothing was updated");
+});
+
+/**
  * Regression test: refresh() is called from many independent places
  * (handleSubmit, handleDelete, handleDuplicate, handleBulkDelete,
  * handleImportFile, handleMove, and the mount/entity-change effect) with

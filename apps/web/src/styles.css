@@ -883,6 +883,7 @@ button.danger:hover:not(:disabled) {
 .bulk-actions-bar {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 12px;
   padding: 8px 12px;
   margin-bottom: 8px;
@@ -890,6 +891,12 @@ button.danger:hover:not(:disabled) {
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   font-size: 13.5px;
+}
+
+.bulk-edit-field-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
 }
 
 .select-col {

@@ -655,6 +655,8 @@ export function EntityPanel({
   const [viewMode, setViewMode] = useState<ViewMode>("table");
   const [calendarMonth, setCalendarMonth] = useState(() => new Date());
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
+  const [bulkEditField, setBulkEditField] = useState("");
+  const [bulkEditValue, setBulkEditValue] = useState<unknown>("");
   const [relatedRecords, setRelatedRecords] = useState<RelatedRecordsByEntity>({});
   const [importBusy, setImportBusy] = useState(false);
   const [importMessage, setImportMessage] = useState<string | null>(null);
@@ -1260,6 +1262,50 @@ export function EntityPanel({
     await refresh();
   }
 
+  /**
+   * Bulk delete/duplicate already existed, but changing a single shared
+   * field's value across several selected records (e.g. marking 15
+   * selected orders "Shipped", or moving 8 leads to "Closed") still meant
+   * editing each row one at a time -- double-clicking a cell, or dragging
+   * board cards one card at a time -- for what any real ops tool treats as
+   * a single mass action. Same Promise.allSettled resilience as
+   * handleBulkDelete/handleBulkDuplicate above: one record another tab
+   * already deleted, or a validation failure on one record's current
+   * value, must not hide the successful updates to the rest. Restricted to
+   * isInlineEditableField fields (excludes relation) for the same reason
+   * the inline cell editor itself is: a relation's "value" is another
+   * record's id, not something a single shared value across N different
+   * records makes sense for.
+   */
+  async function handleBulkUpdate() {
+    const ids = [...selectedIds];
+    if (ids.length === 0 || !bulkEditField) return;
+    setError(null);
+    const results = await Promise.allSettled(
+      ids.map((id) => updateRecord(projectId, entity.name, id, { [bulkEditField]: bulkEditValue })),
+    );
+    const failedIds = ids.filter((_, i) => results[i].status === "rejected");
+    setSelectedIds(new Set(failedIds));
+    if (failedIds.length > 0) {
+      const firstFailure = results.find((r): r is PromiseRejectedResult => r.status === "rejected")!;
+      setError(
+        failedIds.length === ids.length
+          ? (firstFailure.reason as Error).message
+          : t("entity.bulk.updatePartialFailure", { failed: failedIds.length, total: ids.length }),
+      );
+    }
+    await refresh();
+  }
+
+  /** A field's "empty" starting value depends on its type -- switching the
+   * bulk-edit field picker from, say, an enum to a boolean must not leave
+   * a stale string value FieldInput would render nonsensically. */
+  function handleBulkEditFieldChange(fieldName: string) {
+    setBulkEditField(fieldName);
+    const field = entity.fields.find((f) => f.name === fieldName);
+    setBulkEditValue(field?.type === "boolean" ? false : "");
+  }
+
   function handleExportCsv() {
     const csv = recordsToCsv(entity.fields, visibleRecords, lang, allEntities, relatedRecords);
     const blob = new Blob(["﻿" + csv], { type: "text/csv;charset=utf-8;" });
@@ -1779,6 +1825,29 @@ export function EntityPanel({
               {selectedIds.size > 0 && (
                 <div className="bulk-actions-bar">
                   <span>{t("entity.bulk.selectedCount", { count: selectedIds.size })}</span>
+                  <label className="bulk-edit-field-label">
+                    {t("entity.bulk.setField")}
+                    <select value={bulkEditField} onChange={(e) => handleBulkEditFieldChange(e.target.value)}>
+                      <option value="">{t("entity.bulk.chooseField")}</option>
+                      {entity.fields.filter(isInlineEditableField).map((f) => (
+                        <option key={f.name} value={f.name}>
+                          {f.label ?? f.name}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  {bulkEditField && (
+                    <FieldInput
+                      field={entity.fields.find((f) => f.name === bulkEditField)!}
+                      value={bulkEditValue}
+                      onChange={setBulkEditValue}
+                    />
+                  )}
+                  {bulkEditField && (
+                    <button type="button" className="secondary" onClick={handleBulkUpdate}>
+                      {t("entity.bulk.apply", { count: selectedIds.size })}
+                    </button>
+                  )}
                   <button type="button" className="secondary" onClick={handleBulkDuplicate}>
                     {t("entity.bulk.duplicateSelected")}
                   </button>
