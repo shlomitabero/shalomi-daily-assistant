@@ -695,13 +695,19 @@ test("the exported CalendarView picks its day-chip label via pickDisplayField, n
   // declare its "name"/"title" field before its date field, so "first
   // field that isn't the date field" has always coincidentally agreed with
   // the real display field there -- but an AI-generated spec has no such
-  // ordering guarantee. This asserts the generated component actually
-  // reuses pickDisplayField (already generated earlier in the same file for
-  // recordDisplayLabel) instead of the old blind first-field fallback.
+  // ordering guarantee. Round 265 extracted this into a shared
+  // calendarLabelField helper (also reused by the new ICS export, which
+  // needs the exact same label field the day chips already show) --
+  // confirms CalendarView calls that helper, and that the helper itself
+  // still reuses pickDisplayField rather than the old blind first-field
+  // fallback.
   const files = generateExportFiles(project);
   const entityViewJsx = files.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
   const calendarViewSource = entityViewJsx.slice(entityViewJsx.indexOf("function CalendarView"));
-  assert.match(calendarViewSource, /pickDisplayField\(entity\)/);
+  assert.match(calendarViewSource, /calendarLabelField\(entity, dateField\)/);
+  const labelFieldSrc = entityViewJsx.match(/function calendarLabelField\(entity, dateField\) \{[\s\S]*?\n\}\n/)?.[0];
+  assert.ok(labelFieldSrc, "expected to find calendarLabelField in generated output");
+  assert.match(labelFieldSrc, /pickDisplayField\(entity\)/);
 });
 
 test("the exported EntityView renders a real CSV export button backed by RFC-4180-correct CSV building", () => {
@@ -719,6 +725,122 @@ test("the exported EntityView renders a real CSV export button backed by RFC-418
   assert.match(entityViewJsx, /new Blob\(\["\\uFEFF" \+ csv\]/);
   const stylesCss = files.find((f) => f.path === "web/src/styles.css")!.content;
   assert.match(stylesCss, /\.csv-export-btn/);
+});
+
+// The live-preview app's calendar view got a real "Export to Calendar
+// (ICS)" button in round 264 (apps/web/src/calendarIcs.ts), but the
+// exported/standalone codegen app's own CalendarView -- ported to codegen
+// back in round 50 -- had no equivalent: someone who deploys their own
+// exported booking app gets a calendar tab with no way to get a month of
+// appointments into their phone's real calendar. Confirms the ICS builder,
+// its RFC 5545 helpers, and the button/handler are all present in the
+// generated output.
+test("the exported EntityView renders a real 'Export to Calendar (ICS)' button backed by a genuine RFC 5545 .ics builder", () => {
+  const withDate: Project = {
+    ...project,
+    spec: {
+      ...project.spec,
+      entities: [
+        ...project.spec.entities,
+        {
+          name: "Appointment",
+          label: "תורים",
+          fields: [
+            { name: "customerName", label: "שם לקוח", type: "text", required: true },
+            { name: "date", label: "תאריך", type: "date", required: true },
+          ],
+        },
+      ],
+    },
+  };
+  const files = generateExportFiles(withDate);
+  const entityViewJsx = files.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+
+  assert.match(entityViewJsx, /function calendarLabelField/);
+  assert.match(entityViewJsx, /function icsEscapeText/);
+  assert.match(entityViewJsx, /function foldIcsLine/);
+  assert.match(entityViewJsx, /function buildCalendarIcs/);
+  assert.match(entityViewJsx, /function handleExportIcs/);
+  assert.match(entityViewJsx, /ics-export-btn/);
+  assert.match(entityViewJsx, /Export to Calendar \(ICS\)/);
+  assert.match(entityViewJsx, /new Blob\(\[ics\], \{ type: "text\/calendar;charset=utf-8" \}\)/);
+
+  const stylesCss = files.find((f) => f.path === "web/src/styles.css")!.content;
+  assert.match(stylesCss, /\.ics-export-btn/);
+});
+
+// Executes the real generated buildCalendarIcs (extracted from real codegen
+// output, not reimplemented) to prove the ported RFC 5545 logic actually
+// works, not just that the source text is present. Covers the two details a
+// naive string-template .ics writer gets wrong: the exclusive-end DTEND for
+// an all-day event (must be the next day, not the same day) and RFC
+// 5545 §3.3.11 TEXT escaping (a comma in a field value must be
+// backslash-escaped or it corrupts the VEVENT's own field boundaries).
+test("the exported EntityView's real generated buildCalendarIcs produces a genuine calendar with a correct exclusive-end DTEND and real TEXT escaping", () => {
+  const withDate: Project = {
+    ...project,
+    spec: {
+      ...project.spec,
+      entities: [
+        ...project.spec.entities,
+        {
+          name: "Appointment",
+          label: "תורים",
+          fields: [
+            { name: "customerName", label: "שם לקוח", type: "text", required: true },
+            { name: "date", label: "תאריך", type: "date", required: true },
+          ],
+        },
+      ],
+    },
+  };
+  const entityViewJsx = generateExportFiles(withDate).find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+
+  const pickDisplaySrc = entityViewJsx.match(/export function pickDisplayField\(entity\) \{[\s\S]*?\n\}\n/)?.[0]?.replace(/^export /, "");
+  const labelFieldSrc = entityViewJsx.match(/function calendarLabelField\(entity, dateField\) \{[\s\S]*?\n\}\n/)?.[0];
+  const pad2Src = entityViewJsx.match(/function icsPad2\(n\) \{[\s\S]*?\n\}\n/)?.[0];
+  const dateSrc = entityViewJsx.match(/function formatIcsDate\(date\) \{[\s\S]*?\n\}\n/)?.[0];
+  const tsSrc = entityViewJsx.match(/function formatIcsTimestamp\(date\) \{[\s\S]*?\n\}\n/)?.[0];
+  const escSrc = entityViewJsx.match(/function icsEscapeText\(value\) \{[\s\S]*?\n\}\n/)?.[0];
+  const foldSrc = entityViewJsx.match(/function foldIcsLine\(line\) \{[\s\S]*?\n\}\n/)?.[0];
+  const buildSrc = entityViewJsx.match(
+    /function buildCalendarIcs\(entity, dateField, labelField, records, relatedRecords, now\) \{[\s\S]*?\n\}\n/,
+  )?.[0];
+  assert.ok(
+    pickDisplaySrc && labelFieldSrc && pad2Src && dateSrc && tsSrc && escSrc && foldSrc && buildSrc,
+    "expected to find every ICS helper function in the real generated output",
+  );
+
+  // No relation field in this test's entity, so a trivial stub is enough --
+  // this test is about buildCalendarIcs' own date/escaping logic, not
+  // relation resolution (already covered by the live-preview's own
+  // calendarIcs.test.ts, which this ported code is byte-for-byte adapted
+  // from).
+  const relationStub = "function relationDisplayLabel() { return ''; }\n";
+  const buildCalendarIcs = new Function(
+    `${pickDisplaySrc}\n${labelFieldSrc}\n${pad2Src}\n${dateSrc}\n${tsSrc}\n${escSrc}\n${foldSrc}\n${relationStub}\n${buildSrc}\nreturn buildCalendarIcs;`,
+  )() as (entity: unknown, dateField: unknown, labelField: unknown, records: unknown[], relatedRecords: unknown, now: Date) => string;
+
+  const entity = {
+    name: "Appointment",
+    label: "תורים",
+    fields: [
+      { name: "customerName", label: "שם לקוח", type: "text" },
+      { name: "date", label: "תאריך", type: "date" },
+    ],
+  };
+  const dateField = entity.fields[1];
+  const labelField = entity.fields[0];
+  const records = [{ id: 5, customerName: "Dana, Levi", date: "2026-03-15" }];
+
+  const ics = buildCalendarIcs(entity, dateField, labelField, records, {}, new Date("2026-01-01T00:00:00Z"));
+
+  assert.match(ics, /^BEGIN:VCALENDAR\r\nVERSION:2\.0/);
+  assert.match(ics, /END:VCALENDAR$/);
+  assert.match(ics, /UID:Appointment-5@forge-ai/);
+  assert.match(ics, /DTSTART;VALUE=DATE:20260315/);
+  assert.match(ics, /DTEND;VALUE=DATE:20260316/, "an all-day single-day event's DTEND must be the next day (exclusive end), not the same day");
+  assert.match(ics, /SUMMARY:Dana\\, Levi/, "a comma in the summary must be backslash-escaped per RFC 5545 §3.3.11");
 });
 
 // The live-preview app's own EntityPanel.tsx got a "Columns" menu (hide/show

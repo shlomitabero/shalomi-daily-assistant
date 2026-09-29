@@ -1341,6 +1341,88 @@ function buildCalendarMonth(records, field, year, month) {
   return days;
 }
 
+// The calendar view's own "take it with you" action -- CSV export dumps
+// the whole raw table, but a month of appointments/bookings is exactly
+// what a real business owner wants to drop straight into their phone's
+// real calendar app, which CSV can't do. Picks the same label field
+// CalendarView's own day chips already use.
+function calendarLabelField(entity, dateField) {
+  const preferred = pickDisplayField(entity);
+  return (preferred && preferred.name !== dateField.name ? preferred : null) || entity.fields.find((f) => f.name !== dateField.name) || dateField;
+}
+
+function icsPad2(n) {
+  return String(n).padStart(2, "0");
+}
+
+// YYYYMMDD, the VALUE=DATE form RFC 5545 requires for an all-day VEVENT's DTSTART/DTEND.
+function formatIcsDate(date) {
+  return \`\${date.getFullYear()}\${icsPad2(date.getMonth() + 1)}\${icsPad2(date.getDate())}\`;
+}
+
+// UTC "when this file was generated" timestamp (YYYYMMDDTHHMMSSZ) -- not a record's own date, which DTSTART already carries.
+function formatIcsTimestamp(date) {
+  return \`\${date.getUTCFullYear()}\${icsPad2(date.getUTCMonth() + 1)}\${icsPad2(date.getUTCDate())}T\${icsPad2(date.getUTCHours())}\${icsPad2(date.getUTCMinutes())}\${icsPad2(date.getUTCSeconds())}Z\`;
+}
+
+// RFC 5545 §3.3.11 TEXT escaping: backslash, semicolon, comma, and newline must be backslash-escaped, or a real calendar app's parser can misread the field boundary or drop the value outright.
+function icsEscapeText(value) {
+  return value.replace(/\\\\/g, "\\\\\\\\").replace(/;/g, "\\\\;").replace(/,/g, "\\\\,").replace(/\\r\\n|\\r|\\n/g, "\\\\n");
+}
+
+// RFC 5545 §3.1 requires folding any content line longer than 75 octets: a CRLF followed by a single leading space starts the continuation.
+function foldIcsLine(line) {
+  if (line.length <= 75) return line;
+  const parts = [];
+  let rest = line;
+  while (rest.length > 75) {
+    parts.push(rest.slice(0, 75));
+    rest = rest.slice(75);
+  }
+  parts.push(rest);
+  return parts.join("\\r\\n ");
+}
+
+// Builds a real RFC 5545 .ics calendar, one all-day VEVENT per record --
+// every field other than the date/label fields becomes a "Label: value"
+// line in DESCRIPTION, and a relation field resolves to its real display
+// label rather than a raw id.
+function buildCalendarIcs(entity, dateField, labelField, records, relatedRecords, now) {
+  const dtstamp = formatIcsTimestamp(now || new Date());
+  const descriptionFields = entity.fields.filter((f) => f.name !== dateField.name && f.name !== labelField.name);
+  const lines = ["BEGIN:VCALENDAR", "VERSION:2.0", \`PRODID:-//Forge AI//\${icsEscapeText(entity.label || entity.name)}//EN\`, "CALSCALE:GREGORIAN"];
+  for (const record of records) {
+    const raw = record[dateField.name];
+    if (raw === null || raw === undefined || raw === "") continue;
+    const match = /^(\\d{4})-(\\d{2})-(\\d{2})/.exec(String(raw));
+    if (!match) continue;
+    const start = new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]));
+    if (Number.isNaN(start.getTime())) continue;
+    const end = new Date(start);
+    end.setDate(end.getDate() + 1);
+    const summary = String(record[labelField.name] ?? entity.label ?? entity.name);
+    const descriptionLines = descriptionFields
+      .map((f) => {
+        const value = f.type === "relation" ? relationDisplayLabel(f, record[f.name], relatedRecords) : record[f.name];
+        if (value === null || value === undefined || value === "") return null;
+        return \`\${f.label || f.name}: \${value}\`;
+      })
+      .filter((line) => line !== null);
+    lines.push("BEGIN:VEVENT");
+    lines.push(foldIcsLine(\`UID:\${entity.name}-\${record.id}@forge-ai\`));
+    lines.push(\`DTSTAMP:\${dtstamp}\`);
+    lines.push(\`DTSTART;VALUE=DATE:\${formatIcsDate(start)}\`);
+    lines.push(\`DTEND;VALUE=DATE:\${formatIcsDate(end)}\`);
+    lines.push(foldIcsLine(\`SUMMARY:\${icsEscapeText(summary)}\`));
+    if (descriptionLines.length > 0) {
+      lines.push(foldIcsLine(\`DESCRIPTION:\${icsEscapeText(descriptionLines.join("\\n"))}\`));
+    }
+    lines.push("END:VEVENT");
+  }
+  lines.push("END:VCALENDAR");
+  return lines.join("\\r\\n");
+}
+
 // Renders a month grid for entities with a date field (e.g. "Appointment"),
 // so a date-heavy entity gets a real calendar instead of the same table
 // shape every entity gets. Each day cell shows a chip per record landing on
@@ -1363,11 +1445,7 @@ function CalendarView({ entity, dateField, records, month, onPrevMonth, onNextMo
   // to declare its identifying field before its date field, but an
   // AI-generated spec has no such ordering guarantee, and "first non-date
   // field" could otherwise land on a boolean, a status, or a foreign-key id.
-  const preferredLabelField = pickDisplayField(entity);
-  const labelField =
-    (preferredLabelField && preferredLabelField.name !== dateField.name ? preferredLabelField : null) ||
-    entity.fields.find((f) => f.name !== dateField.name) ||
-    dateField;
+  const labelField = calendarLabelField(entity, dateField);
 
   return (
     <div className="calendar-view">
@@ -1816,6 +1894,15 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled }) {
     return sortRecordsMulti(filtered, sortKeys);
   }, [records, entity.fields, search, sortKeys]);
 
+  // Exactly the records the calendar grid's current month is showing -- lets
+  // the ICS export button disable itself when the visible month is
+  // genuinely empty, not just when the whole entity has no records.
+  const icsMonthRecords = useMemo(() => {
+    if (!dateField) return [];
+    const days = buildCalendarMonth(visibleRecords, dateField, calendarMonth.getFullYear(), calendarMonth.getMonth());
+    return days.filter((d) => d.inCurrentMonth).flatMap((d) => d.records);
+  }, [visibleRecords, dateField, calendarMonth]);
+
   // Scrolls the just-highlighted row into view once it's actually in the
   // rendered table -- runs after visibleRecords updates too, since the row
   // doesn't exist in the DOM until then.
@@ -2060,6 +2147,24 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled }) {
     URL.revokeObjectURL(url);
   }
 
+  // The calendar view's own "take it with you" action -- exports exactly
+  // the records the calendar grid's current month is showing as a real
+  // RFC 5545 .ics calendar.
+  function handleExportIcs() {
+    if (!dateField) return;
+    const labelField = calendarLabelField(entity, dateField);
+    const ics = buildCalendarIcs(entity, dateField, labelField, icsMonthRecords, relatedRecords);
+    const blob = new Blob([ics], { type: "text/calendar;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = \`\${entity.name}.ics\`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  }
+
   // The complement to CSV export: parses an uploaded file, converts it to
   // record payloads (already validated client-side), then POSTs each
   // valid row. Uses allSettled rather than assuming success once
@@ -2215,6 +2320,11 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled }) {
                   </button>
                 )}
               </div>
+            )}
+            {viewMode === "calendar" && dateField && (
+              <button type="button" className="ics-export-btn" onClick={handleExportIcs} disabled={icsMonthRecords.length === 0}>
+                📅 Export to Calendar (ICS)
+              </button>
             )}
             <button type="button" className="csv-export-btn" onClick={handleExportCsv} disabled={visibleRecords.length === 0}>
               ⬇️ Export CSV
@@ -2902,9 +3012,9 @@ th, td { text-align: start; padding: 8px 10px; border-bottom: 1px solid var(--bo
 .calendar-record-chip:hover { background: var(--bg); }
 .calendar-record-chip:active { cursor: grabbing; }
 .calendar-record-more { font-size: 11px; color: var(--muted); padding: 0 5px; }
-.csv-export-btn { flex-shrink: 0; padding: 8px 14px; font-size: 13px; border-radius: 8px; border: 1px solid var(--border); background: var(--surface); color: var(--text); cursor: pointer; font: inherit; }
-.csv-export-btn:hover:not(:disabled) { background: var(--bg); }
-.csv-export-btn:disabled { opacity: 0.55; cursor: default; }
+.csv-export-btn, .ics-export-btn { flex-shrink: 0; padding: 8px 14px; font-size: 13px; border-radius: 8px; border: 1px solid var(--border); background: var(--surface); color: var(--text); cursor: pointer; font: inherit; }
+.csv-export-btn:hover:not(:disabled), .ics-export-btn:hover:not(:disabled) { background: var(--bg); }
+.csv-export-btn:disabled, .ics-export-btn:disabled { opacity: 0.55; cursor: default; }
 .columns-menu-wrapper { position: relative; flex-shrink: 0; }
 .columns-menu-btn { padding: 8px 14px; font-size: 13px; border-radius: 8px; border: 1px solid var(--border); background: var(--surface); color: var(--text); cursor: pointer; font: inherit; }
 .columns-menu-btn:hover { background: var(--bg); }
