@@ -1007,6 +1007,13 @@ function Cell({ field, value, relationLabel, onJumpToRecord }) {
     return <>{Number.isNaN(date.getTime()) ? value : date.toLocaleDateString()}</>;
   }
   if (field.type === "number") return <>{Number(value).toLocaleString()}</>;
+  if (field.type === "longtext") {
+    return (
+      <span className="longtext-cell" title={String(value)}>
+        {String(value)}
+      </span>
+    );
+  }
   return <>{String(value)}</>;
 }
 

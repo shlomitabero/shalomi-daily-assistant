@@ -1260,6 +1260,46 @@ test("the exported EntityView's relation cells jump to the related record via th
   assert.match(appJsx, /onJumpToRecord=\{\(name, recordId\) => \{\s*setActive\(name\);\s*setHighlightRecordId\(recordId\);\s*\}\}/);
 });
 
+// Ported from the Forge AI live preview's EntityPanel.tsx Cell (round 261):
+// a longtext field (a Notes or Description column, say) routinely runs
+// longer than any reasonable table/board-column width, and the only way
+// to read the rest was double-clicking into the real edit textarea --
+// which feels like committing to a change just to read one. The exported/
+// standalone app's own Cell (shared by the table and the Kanban board, see
+// the relation-jump test above) had no longtext branch at all and fell
+// through to plain, untruncated-in-markup-but-visually-clipped text with
+// no way to see the full value on hover.
+test("the exported EntityView's Cell renders a longtext field with a native hover tooltip carrying the full untruncated value", () => {
+  const withLongtext: Project = {
+    ...project,
+    spec: {
+      ...project.spec,
+      entities: [
+        ...project.spec.entities,
+        {
+          name: "Note",
+          label: "Note",
+          fields: [
+            { name: "title", label: "Title", type: "text", required: true },
+            { name: "body", label: "Body", type: "longtext", required: false },
+          ],
+        },
+      ],
+    },
+  };
+  const files = generateExportFiles(withLongtext);
+  const entityViewJsx = files.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+
+  const cellSrc = entityViewJsx.match(/function Cell\(\{ field, value, relationLabel, onJumpToRecord \}\) \{[\s\S]*?\n\}\n/)?.[0];
+  assert.ok(cellSrc, "expected to find the real generated Cell component");
+  assert.match(cellSrc!, /if \(field\.type === "longtext"\) \{/);
+  assert.match(cellSrc!, /<span className="longtext-cell" title=\{String\(value\)\}>/);
+  // The board card (BoardCard) and the table both render every non-board
+  // field through this exact same Cell component, so fixing it once here
+  // covers both -- confirmed via the relation-jump test above already
+  // asserting BoardCard's own <Cell .../> call site exists.
+});
+
 test("generateExportFiles includes a real render.yaml matching this repo's own proven Render Blueprint structure", () => {
   const files = generateExportFiles(project);
   const renderYaml = files.find((f) => f.path === "render.yaml")!.content;
