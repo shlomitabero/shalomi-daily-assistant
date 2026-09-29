@@ -2503,6 +2503,61 @@ test("EntityPanel's relation cell jumps to the related record when onJumpToRecor
 });
 
 /**
+ * New in this round: a longtext cell (a "Notes"/"Description" field) now
+ * carries its full, untruncated value in a native `title` attribute --
+ * before this, the only way to read a longtext value once the column was
+ * narrow (or the table was manually resized, see the `.entity-table-resized`
+ * ellipsis rule in styles.css) was double-clicking into the real edit
+ * textarea, which feels like committing to a change just to read the rest.
+ * A short text field must NOT get this treatment, since it's rarely long
+ * enough to truncate and every other cell type already renders fine without
+ * a tooltip.
+ */
+test("EntityPanel's longtext cell carries its full value in a title attribute, but a plain text cell does not", async () => {
+  await withJsdom(async () => {
+    const noteEntity: Entity = {
+      name: "Customer",
+      label: "Customer",
+      fields: [
+        { name: "name", label: "Name", type: "text", required: true },
+        { name: "notes", label: "Notes", type: "longtext", required: false },
+      ],
+    };
+    const longNote =
+      "Called on Tuesday about the delayed shipment, promised a refund by Friday, followed up again on Thursday when nothing arrived, escalated to the warehouse team.";
+    const store: EntityRecord[] = [{ id: 1, createdAt: "x", name: "Acme Corp", notes: longNote }];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      if (input === "/api/projects/proj1/entities/Customer" && (init?.method ?? "GET") === "GET") {
+        return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${init?.method ?? "GET"} ${input}`);
+    }) as typeof fetch;
+    try {
+      renderEntityPanel({ entity: noteEntity, allEntities: [noteEntity] });
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 1);
+
+      const nameCell = document.querySelectorAll("table tbody td")[1] as HTMLTableCellElement;
+      const notesCell = document.querySelectorAll("table tbody td")[2] as HTMLTableCellElement;
+      await waitForCondition(() => notesCell.textContent === longNote);
+
+      assert.equal(
+        nameCell.querySelector(".longtext-cell"),
+        null,
+        "a plain text cell must not get the longtext tooltip wrapper (its <td> already carries an unrelated inline-edit hint title)",
+      );
+      assert.equal(
+        notesCell.querySelector(".longtext-cell")?.getAttribute("title"),
+        longNote,
+        "the longtext cell's title attribute must carry the complete, untruncated value",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * New in this round: grouping the plain table by an enum/boolean field
  * (isGroupableField/groupRecordsByField, see entityFormatting.test.ts for
  * the pure-function coverage) -- distinct from the Kanban board view, which

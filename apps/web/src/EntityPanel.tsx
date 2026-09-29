@@ -96,8 +96,13 @@ function Highlighted({ text, query }: { text: string; query: string | undefined 
 }
 
 /** Renders a table cell for a field's value -- a status badge for enums, a
- * checkmark/dash for booleans, a locale-formatted date or number, and plain
- * text otherwise -- instead of one generic string for every field type. */
+ * checkmark/dash for booleans, a locale-formatted date or number, a native
+ * hover tooltip carrying the untruncated value for longtext (a Notes or
+ * Description field routinely runs longer than any reasonable column width,
+ * and the only other way to read the rest was double-clicking into the real
+ * edit textarea, which feels like committing to a change just to read one),
+ * and plain text otherwise -- instead of one generic string for every field
+ * type. */
 function Cell({
   field,
   value,
@@ -158,6 +163,13 @@ function Cell({
   }
   if (field.type === "number") {
     return <>{formatNumberValue(Number(value), lang)}</>;
+  }
+  if (field.type === "longtext") {
+    return (
+      <span className="longtext-cell" title={String(value)}>
+        <Highlighted text={String(value)} query={highlightQuery} />
+      </span>
+    );
   }
   return <Highlighted text={String(value)} query={highlightQuery} />;
 }
