@@ -843,6 +843,70 @@ test("the exported EntityView's real generated buildCalendarIcs produces a genui
   assert.match(ics, /SUMMARY:Dana\\, Levi/, "a comma in the summary must be backslash-escaped per RFC 5545 §3.3.11");
 });
 
+// Regression test for the enum-field gap fixed this round: the exported
+// app's own buildCalendarIcs (ported from calendarIcs.ts) previously
+// showed an enum field's raw stored value in DESCRIPTION instead of its
+// real Hebrew enumLabels translation, the same gap live-preview's
+// calendarIcs.test.ts covers for the un-exported version.
+test("the exported EntityView's real generated buildCalendarIcs resolves an enum field to its Hebrew enumLabels translation, not the raw stored value", () => {
+  const withStatus: Project = {
+    ...project,
+    spec: {
+      ...project.spec,
+      entities: [
+        ...project.spec.entities,
+        {
+          name: "Appointment",
+          label: "תורים",
+          fields: [
+            { name: "customerName", label: "שם לקוח", type: "text", required: true },
+            { name: "date", label: "תאריך", type: "date", required: true },
+            {
+              name: "status",
+              label: "סטטוס",
+              type: "enum",
+              required: false,
+              enumValues: ["pending", "shipped"],
+              enumLabels: { pending: "ממתין", shipped: "נשלח" },
+            },
+          ],
+        },
+      ],
+    },
+  };
+  const entityViewJsx = generateExportFiles(withStatus).find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+
+  const pickDisplaySrc = entityViewJsx.match(/export function pickDisplayField\(entity\) \{[\s\S]*?\n\}\n/)?.[0]?.replace(/^export /, "");
+  const labelFieldSrc = entityViewJsx.match(/function calendarLabelField\(entity, dateField\) \{[\s\S]*?\n\}\n/)?.[0];
+  const pad2Src = entityViewJsx.match(/function icsPad2\(n\) \{[\s\S]*?\n\}\n/)?.[0];
+  const dateSrc = entityViewJsx.match(/function formatIcsDate\(date\) \{[\s\S]*?\n\}\n/)?.[0];
+  const tsSrc = entityViewJsx.match(/function formatIcsTimestamp\(date\) \{[\s\S]*?\n\}\n/)?.[0];
+  const escSrc = entityViewJsx.match(/function icsEscapeText\(value\) \{[\s\S]*?\n\}\n/)?.[0];
+  const foldSrc = entityViewJsx.match(/function foldIcsLine\(line\) \{[\s\S]*?\n\}\n/)?.[0];
+  const buildSrc = entityViewJsx.match(
+    /function buildCalendarIcs\(entity, dateField, labelField, records, relatedRecords, now\) \{[\s\S]*?\n\}\n/,
+  )?.[0];
+  assert.ok(
+    pickDisplaySrc && labelFieldSrc && pad2Src && dateSrc && tsSrc && escSrc && foldSrc && buildSrc,
+    "expected to find every ICS helper function in the real generated output",
+  );
+
+  const relationStub = "function relationDisplayLabel() { return ''; }\n";
+  const buildCalendarIcs = new Function(
+    `${pickDisplaySrc}\n${labelFieldSrc}\n${pad2Src}\n${dateSrc}\n${tsSrc}\n${escSrc}\n${foldSrc}\n${relationStub}\n${buildSrc}\nreturn buildCalendarIcs;`,
+  )() as (entity: unknown, dateField: unknown, labelField: unknown, records: unknown[], relatedRecords: unknown, now: Date) => string;
+
+  const entity = withStatus.spec.entities.find((e) => e.name === "Appointment")!;
+  const dateField = entity.fields.find((f) => f.name === "date")!;
+  const labelField = entity.fields.find((f) => f.name === "customerName")!;
+  const records = [{ id: 5, customerName: "Dana Levi", date: "2026-03-15", status: "shipped" }];
+
+  const ics = buildCalendarIcs(entity, dateField, labelField, records, {}, new Date("2026-01-01T00:00:00Z"));
+
+  assert.match(ics, /סטטוס: נשלח/);
+  assert.doesNotMatch(ics, /סטטוס: shipped/, "must never leak the raw enum value once a real Hebrew label exists for it");
+});
+
 // The live-preview app's own EntityPanel.tsx got a "Columns" menu (hide/show
 // individual table columns, persisted in localStorage) in round 138, but the
 // exported app's separate CalendarView-style EntityView.jsx never picked it

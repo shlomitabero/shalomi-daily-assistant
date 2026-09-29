@@ -1445,10 +1445,11 @@ function buildCalendarIcs(entity, dateField, labelField, records, relatedRecords
     if (Number.isNaN(start.getTime())) continue;
     const end = new Date(start);
     end.setDate(end.getDate() + 1);
-    const summary = String(record[labelField.name] ?? entity.label ?? entity.name);
+    const labelRaw = labelField.type === "enum" ? ((labelField.enumLabels && labelField.enumLabels[record[labelField.name]]) || record[labelField.name]) : record[labelField.name];
+    const summary = String(labelRaw ?? entity.label ?? entity.name);
     const descriptionLines = descriptionFields
       .map((f) => {
-        const value = f.type === "relation" ? relationDisplayLabel(f, record[f.name], relatedRecords) : record[f.name];
+        const value = f.type === "relation" ? relationDisplayLabel(f, record[f.name], relatedRecords) : f.type === "enum" ? ((f.enumLabels && f.enumLabels[record[f.name]]) || record[f.name]) : record[f.name];
         if (value === null || value === undefined || value === "") return null;
         return \`\${f.label || f.name}: \${value}\`;
       })

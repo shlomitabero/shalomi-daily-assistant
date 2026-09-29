@@ -79,10 +79,23 @@ export function buildCalendarIcs(
     if (Number.isNaN(start.getTime())) continue;
     const end = new Date(start);
     end.setDate(end.getDate() + 1);
-    const summary = String(record[labelField.name] ?? entity.label ?? entity.name);
+    const labelRaw = labelField.type === "enum" ? (labelField.enumLabels?.[String(record[labelField.name])] ?? record[labelField.name]) : record[labelField.name];
+    const summary = String(labelRaw ?? entity.label ?? entity.name);
     const descriptionLines = descriptionFields
       .map((f) => {
-        const value = f.type === "relation" ? relationDisplayLabel(f, record[f.name], allEntities, relatedRecords) : record[f.name];
+        // Mirrors entityFormatting.ts's own relation/enum resolution (used
+        // by CSV export, Kanban, table grouping, and search) -- without
+        // this, an enum field like status="shipped" would show its raw
+        // stored value in the exported .ics instead of the same Hebrew
+        // enumLabels translation every other view of this data already
+        // shows, which is exactly the "take it with you" gap this export
+        // exists to avoid.
+        const value =
+          f.type === "relation"
+            ? relationDisplayLabel(f, record[f.name], allEntities, relatedRecords)
+            : f.type === "enum"
+              ? (f.enumLabels?.[String(record[f.name])] ?? record[f.name])
+              : record[f.name];
         if (value === null || value === undefined || value === "") return null;
         return `${f.label ?? f.name}: ${value}`;
       })

@@ -88,6 +88,50 @@ test("buildCalendarIcs escapes commas, semicolons, backslashes, and newlines in 
   assert.match(ics, /line one\\nline two/);
 });
 
+/**
+ * Regression test for the enum-field gap this round fixes: DESCRIPTION
+ * previously showed an enum field's raw stored value (e.g. "shipped")
+ * instead of the same Hebrew enumLabels translation every other view of
+ * this data (table, Kanban, CSV export) already shows for that field.
+ */
+test("buildCalendarIcs resolves an enum field to its Hebrew enumLabels translation in DESCRIPTION, not the raw stored value", () => {
+  const statusField: Field = {
+    name: "status",
+    label: "סטטוס",
+    type: "enum",
+    required: false,
+    enumValues: ["pending", "shipped"],
+    enumLabels: { pending: "ממתין", shipped: "נשלח" },
+  };
+  const statusEntity: Entity = { name: "Appointment", label: "תור", fields: [dateField, nameField, statusField] };
+  const records: EntityRecord[] = [{ id: 1, appointmentDate: "2026-03-15", customerName: "Dana Levi", status: "shipped" }];
+  const ics = buildCalendarIcs(statusEntity, dateField, nameField, records, [], {});
+  assert.match(ics, /סטטוס: נשלח/);
+  assert.doesNotMatch(ics, /סטטוס: shipped/, "must never leak the raw enum value once a real Hebrew label exists for it");
+});
+
+/**
+ * Same gap, other affected line: SUMMARY uses whatever field
+ * calendarChipLabelField picked as the label field, which falls back to
+ * the entity's first non-date field when no text/name field exists --
+ * for an entity like this one, that field can itself be an enum.
+ */
+test("buildCalendarIcs resolves an enum field to its Hebrew enumLabels translation in SUMMARY when the label field itself is an enum", () => {
+  const statusField: Field = {
+    name: "status",
+    label: "סטטוס",
+    type: "enum",
+    required: false,
+    enumValues: ["pending", "shipped"],
+    enumLabels: { pending: "ממתין", shipped: "נשלח" },
+  };
+  const statusOnlyEntity: Entity = { name: "Order", label: "הזמנה", fields: [dateField, statusField] };
+  const records: EntityRecord[] = [{ id: 1, appointmentDate: "2026-03-15", status: "shipped" }];
+  const ics = buildCalendarIcs(statusOnlyEntity, dateField, statusField, records, [], {});
+  assert.match(ics, /SUMMARY:נשלח/);
+  assert.doesNotMatch(ics, /SUMMARY:shipped/, "must never leak the raw enum value in SUMMARY once a real Hebrew label exists for it");
+});
+
 test("buildCalendarIcs folds a long DESCRIPTION line at 75 octets with a CRLF + single leading space continuation", () => {
   const longNote = "x".repeat(120);
   const records: EntityRecord[] = [
