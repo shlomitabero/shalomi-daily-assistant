@@ -15957,6 +15957,62 @@ not a single "make it perfect" claim.
   `@forge/shared` 11, `@forge/spec-engine` 82, `@forge/db` 93, `@forge/web`
   584 unchanged) via `npm test` at the repo root.
 
+- **Round 277 -- fixed a real, visibly-wrong status badge: "Inactive"
+  rendered green (positive) instead of red (negative).** Explicitly
+  steered back toward a UI-visible fix after round 276's internal-only
+  QA fix. An Explore survey (re-checking several older panels the
+  trigger's own notes flagged as worth a fresh look, plus a fresh scan
+  of formatting logic) found `badgeTone` (`entityFormatting.ts`, used by
+  every status badge `EntityPanel.tsx` renders in table cells and Kanban
+  column headers) checks `POSITIVE_WORDS` before `NEGATIVE_WORDS`, both
+  via plain substring match (`lower.includes(w)`). `"Inactive"` contains
+  `"active"` as a substring, so it matched the positive branch first and
+  came back `"positive"` -- a green badge -- even though `"inactive"` is
+  *also* literally listed in `NEGATIVE_WORDS` and unambiguously means the
+  opposite. Confirmed by direct execution: `badgeTone("Inactive")` →
+  `"positive"` before the fix. This isn't a contrived edge case: `Active`/
+  `Inactive` is the built-in Volunteer domain entity's own real status
+  enum (see `spec-engine/domainEntities.ts`), and also the generic
+  `DEFAULT_ENTITY` fallback used whenever a generated spec doesn't match
+  a known domain template -- so a real shop owner (or nonprofit
+  coordinator) scanning a table or Kanban board for who's inactive would
+  see the exact opposite color from what the word means, the moment they
+  looked at the screen.
+
+  Fix: swapped the check order to test `NEGATIVE_WORDS` first. Verified
+  by hand that no other word pair across both lists has the reverse
+  collision (a positive word being a substring of a negative one), so
+  this ordering alone resolves the bug without introducing any new false
+  negative for the other nine word pairs. Ported the identical one-line
+  reorder to `codegen.ts`'s own duplicate copy of `badgeTone` (the
+  exported standalone app renders its own table/Kanban badges through
+  this same duplicated function, per this codebase's established
+  "duplicate small formatting helpers per surface" pattern).
+
+  Tests: 1 new unit test in `entityFormatting.test.ts` (`Inactive` →
+  negative, `Active` → positive) and 1 new test in `codegen.test.ts`
+  extracting and executing the real generated `badgeTone` (via the same
+  `new Function(...)` sandbox the existing `Denied`/`Approved` regression
+  test in that file already uses) against genuinely generated output.
+  Deliberate-break-and-restore: reverted both files to the old
+  positive-first check order and confirmed both new tests failed before
+  restoring, with a byte-identical `diff` against both files after
+  restore.
+
+  Real end-to-end verification against a genuinely running server + real
+  headless Chromium (not a mock): signed up, built a real "volunteer
+  management for a nonprofit" project via the idea `"ניהול מתנדבים
+  לעמותה"`, which heuristically matched the built-in Volunteer domain
+  entity (its real `Active`/`Inactive` status enum, Hebrew labels `פעיל/ה`/
+  `לא פעיל/ה`), added a real record with status `Inactive` through the
+  genuine add-record form, and confirmed the rendered table row's real
+  `<span>` badge carries class `"badge-negative"`, never
+  `"badge-positive"`. `RESULT: PASS`.
+
+  Full suite green: 1063 tests (up from 1061 -- `@forge/api` 291 → 292,
+  `@forge/web` 584 → 585; `@forge/shared` 11, `@forge/spec-engine` 82,
+  `@forge/db` 93 unchanged) via `npm test` at the repo root.
+
 ## Phase 4
 
 - Template/agent marketplace
