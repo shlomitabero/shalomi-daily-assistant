@@ -16013,6 +16013,116 @@ not a single "make it perfect" claim.
   `@forge/web` 584 → 585; `@forge/shared` 11, `@forge/spec-engine` 82,
   `@forge/db` 93 unchanged) via `npm test` at the repo root.
 
+- **Round 278 -- fixed a real "data you can see but can't reach" bug in
+  the calendar view: clicking "+N more" on a busy day did nothing itself,
+  and silently opened an unrelated blank create-record form instead.**
+  An Explore survey (instructed to bias toward genuinely new UI-visible
+  gaps, since round 277 had just closed out the last flagged "worth
+  rechecking" panel) read `EntityPanel.tsx`'s `CalendarView` end to end
+  and found the day-cell overflow indicator (`day.records.length > 3` →
+  `<span className="calendar-record-more">+N more</span>`) was a plain,
+  unclickable `<span>` -- confirmed by direct grep and read, not just the
+  subagent's word. The day cell itself is wired
+  (`onClick={() => onDayClick(day.date)}`) to `startCreateForDate`, which
+  resets the form to a genuinely blank create form pre-filled with that
+  day's date. Since the inert span has no click handler of its own,
+  clicking directly on the "+2 more" text bubbles straight through to the
+  day cell's own click -- so the one thing a user would naturally try
+  (click the label naming the hidden records) instead silently discarded
+  whatever they were doing and popped open an unrelated blank form. The
+  only real way to reach record #4+ on a busy day was to abandon Calendar
+  view entirely and go hunt through Table view. Not a contrived edge
+  case: any date-heavy entity (Appointment, Order, Event, ...) with
+  realistic daily volume (a busy clinic day, several orders landing on
+  one date) hits this immediately, and it exists identically in the
+  exported/standalone app's own generated `CalendarView` (`codegen.ts`),
+  since every shipped app ships this same component.
+
+  Fix: turned "+N more" into a real `<button>` that toggles a new
+  `expandedDays` (`Set<string>`, keyed by the same `formatDateForInput`
+  day key already used for drag-over tracking) React state -- when a
+  day is expanded, the cell renders every record for that day instead of
+  the first 3, and the button's label switches to a new "Show less" to
+  collapse back. The button's `onClick` calls `e.stopPropagation()` so
+  the day cell's own blank-create `onClick` underneath it never also
+  fires (same pattern the existing record chips already use for the same
+  reason). Verified the day-cell grid has no fixed row height (`grid`
+  with implicit auto-rows, `.calendar-day`'s `min-height` is a floor, not
+  a cap), so letting a cell grow taller when expanded is visually safe --
+  no separate popover/overlay needed. Ported the identical fix to
+  `codegen.ts`'s duplicated `CalendarView`, including its own CSS block;
+  had to convert one interpolated template-literal string
+  (`` `+${n} more` ``) to plain string concatenation, since `codegen.ts`'s
+  own giant template literal cannot contain a nested backtick/`${}`
+  without breaking its own `esbuild` parse -- confirmed by an immediate
+  build failure on the first attempt, fixed, then a clean
+  `npm run build --workspace=@forge/api`.
+
+  New Hebrew/English translation key `entity.calendar.showLess` (הצג
+  פחות / Show less) added to `i18n/language.ts`.
+
+  Tests: 1 new real-DOM test in `EntityPanel.test.ts` (renders 4 same-day
+  records, confirms the overflow control is a real `<button>`, clicking
+  it reveals all 4 chips, and -- the key regression proof -- that the
+  persistent `.record-form`'s title input, first set to an open record's
+  own title via a chip click, survives the "+N more" click completely
+  unchanged, proving the day cell's own onClick never also fired) and 1
+  new regex-based test in `codegen.test.ts` (extracts the generated
+  `CalendarView` source and confirms the `expandedDays` state, the
+  conditional full-record-list render, and the button's
+  `stopPropagation()`/`setExpandedDays`/"Show less" all appear in the
+  real generated output, plus that the generated CSS gives the control
+  `cursor: pointer`). Deliberate-break-and-restore on both files:
+  reverted each to the original inert-`<span>` version, confirmed the
+  new test in each file failed against it (the web test failed on a
+  `'SPAN' !== 'BUTTON'` assertion; the codegen test failed because the
+  `expandedDays`/button source no longer matched), then restored from a
+  pre-fix backup copy with a byte-identical `diff` in both cases.
+
+  One real debugging detour worth recording: the first version of the
+  new web test asserted `.record-form input[type="text"]` was `null`
+  after the "+N more" click, based on a wrong assumption that the create
+  form only exists once summoned. It doesn't -- per this codebase's own
+  established fact, `.record-form` is *always* rendered (the same form
+  serves both "add" and "edit"), so that element is never `null` and the
+  assertion was simply wrong. Worse, `assert.equal(anHTMLInputElement,
+  null)` doesn't fail fast: node's default assertion-diff formatting
+  tries to serialize the real DOM node (with its circular parent/child
+  references) into a human-readable diff, which for a mounted React tree
+  effectively never finishes -- the whole test file appeared to hang and
+  got `SIGKILL`'d, with zero indication of which assertion was the cause,
+  until bisected via `--test-timeout=Nms` plus `--test-name-pattern` to
+  isolate the one hanging test. **New durable lesson: never
+  `assert.equal`/`assert.deepEqual` a live DOM node/element directly
+  against anything (including `null`) -- compare a primitive derived from
+  it instead (`.value`, `.textContent`, `.tagName`, `.className`), or a
+  slow-to-serialize circular structure can make a real bug look like an
+  unrelated process hang.** Fixed by asserting on the title input's
+  `.value` string instead (following the exact pattern the file's own
+  existing chip-click test already established: open a chip, note the
+  form's title, act, confirm the title survived).
+
+  Real end-to-end verification against a genuinely running server + real
+  headless Chromium (not a mock): signed up, built a real "appointment
+  scheduling for a hair salon" project via the idea `"ניהול תורים
+  למספרה, עם יומן תורים יומי"`, which heuristically matched the built-in
+  Appointment domain entity, switched to its real Calendar view, and
+  created 4 real appointments on today's date through the genuine
+  add-record form (hit one more real bug along the way: Appointment's
+  `status` enum field is required but starts unselected, so the first
+  attempt got a real `400 VALIDATION_ERROR` from the server -- fixed the
+  fixture script to explicitly select a status, not a product bug).
+  Confirmed the day cell showed exactly 3 real chips plus a real
+  `<button class="calendar-record-more">+1 more</button>`, opened one
+  appointment for editing (title field became `"תור מספר 4"`), clicked
+  the overflow button, and confirmed both that all 4 chips became
+  visible AND that the title field still read `"תור מספר 4"` (proving
+  the day cell's own click never fired). `RESULT: PASS`.
+
+  Full suite green: 1065 tests (up from 1063 -- `@forge/api` 292 → 293,
+  `@forge/web` 585 → 586; `@forge/shared` 11, `@forge/spec-engine` 82,
+  `@forge/db` 93 unchanged) via `npm test` at the repo root.
+
 ## Phase 4
 
 - Template/agent marketplace
