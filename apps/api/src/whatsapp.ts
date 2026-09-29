@@ -9,7 +9,17 @@ import { recordDisplayLabel } from "./displayField.js";
  * message log can show "דנה לוי" instead of a bare phone number.
  */
 
-const PHONE_FIELD_NAME = "phone";
+/**
+ * Mirrors entityFormatting.ts's own DATE_FIELD_NAME_HINTS/
+ * BOARD_FIELD_NAME_HINTS convention (a hint array + case-insensitive
+ * compare) rather than a single hardcoded name -- the domain library's
+ * own entities all happen to name this field exactly "phone", but an
+ * AI-generated spec from a freeform idea description has no such
+ * guarantee, and a field named "Phone", "mobile", or "phoneNumber" is
+ * an entirely plausible, common alternative a real business owner's
+ * own description would produce.
+ */
+const PHONE_FIELD_NAME_HINTS = ["phone", "mobile", "phonenumber", "mobilenumber", "cellphone", "cell", "telephone", "tel"];
 
 /**
  * Keeps only digits, then strips every leading zero -- the local dialing
@@ -41,10 +51,13 @@ export interface MatchedRecord {
 }
 
 /**
- * Best-effort match: looks across every entity that has a field literally
- * named "phone" (the domain library's own convention -- see
- * spec-engine/domainEntities.ts) for a record whose phone number
- * normalizes to the same digits as the incoming message's sender.
+ * Best-effort match: looks across every entity that has a field whose
+ * name matches a common phone-field convention (see
+ * PHONE_FIELD_NAME_HINTS -- "phone" is the domain library's own
+ * convention, see spec-engine/domainEntities.ts, but "mobile"/
+ * "phoneNumber"/etc. are just as plausible from an AI-generated spec)
+ * for a record whose phone number normalizes to the same digits as the
+ * incoming message's sender.
  * International prefixes (a stored "050-..." vs. an incoming
  * "972 50 ..." from the same real number) are reconciled by comparing
  * digit suffixes, not exact equality -- a genuine, common mismatch this
@@ -57,7 +70,7 @@ export function findMatchingRecord(db: ForgeDatabase, project: Project, fromNumb
   if (!normalizedFrom) return null;
 
   for (const entity of project.spec.entities) {
-    const phoneField = entity.fields.find((f) => f.name === PHONE_FIELD_NAME);
+    const phoneField = entity.fields.find((f) => PHONE_FIELD_NAME_HINTS.includes(f.name.toLowerCase()));
     if (!phoneField) continue;
     const records = listRecords(db, project.id, entity);
     for (const record of records) {
