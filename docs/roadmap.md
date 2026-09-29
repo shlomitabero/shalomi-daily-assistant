@@ -15623,6 +15623,95 @@ not a single "make it perfect" claim.
   `@forge/web` 567 → 573; `@forge/shared` 11, `@forge/spec-engine` 82,
   `@forge/db` 93 unchanged) via `npm test` at the repo root.
 
+- **Round 272 -- clicking a relation column's header now sorts by the
+  related record's own shown name, not the raw foreign-key id it's
+  stored as.** This round's Explore survey was pointed first at the two
+  open-but-unimplemented candidates round 271 had already flagged (not
+  "tested and rejected" -- just found and left for a future round):
+  `entityFormatting.ts`'s `compareValues` sorting relation fields by raw
+  id, and `whatsapp.ts`'s `PHONE_FIELD_NAME` only matching an exact
+  lowercase "phone" field name. The subagent verified both directly in
+  the code and confirmed the sort gap was the stronger, more
+  user-visible pick: `compareValues` (`entityFormatting.ts:227-233`
+  before this round) had no `field.type === "relation"` branch at all --
+  unlike `matchesSearch`, which round 271 had already fixed the exact
+  same way -- and `EntityPanel.tsx`'s own table header renders every
+  field, relation fields included, as a real clickable
+  `button.sort-header`. A business owner clicking an Order table's
+  "Customer" or "Courier" column header, expecting the same alphabetical
+  sort the cell's own visible text implies, instead got rows shuffled by
+  an internal number never shown anywhere on screen -- looking broken or
+  random.
+
+  Added `resolveSortValue` next to `compareValues` in both
+  `apps/web/src/entityFormatting.ts` (live preview) and its equivalent
+  in `apps/api/src/codegen.ts` (exported/standalone app): resolves a
+  relation field to `relationDisplayLabel(...)` before the two values are
+  compared, leaving every other field type's comparison untouched.
+  `sortRecords`/`sortRecordsMulti` both gained optional trailing
+  `fields`/`allEntities`/`relatedRecords` params (mirroring round 271's
+  own `matchesSearch` signature change) so every existing caller with no
+  relation data on hand -- including every pre-existing test in both
+  files -- keeps the previous, raw-value sort instead of a
+  required-but-unavailable argument. `EntityPanel.tsx`'s own
+  `visibleRecords` `useMemo` (the same one round 271 already touched for
+  search) already had `entity.fields`/`allEntities`/`relatedRecords` in
+  scope, so wiring the fix in was a one-line change at that call site;
+  the exported app's equivalent `EntityView.jsx` component needed the
+  same one-line change.
+
+  **A genuine test-design mistake, caught by the process itself:** this
+  round's first draft of all three new tests assigned the related
+  entity's records ids in the SAME order as their names' own alphabetical
+  order (e.g. Customer id 1 = "Ana", id 2 = "Ben", id 3 = "Yossi"). That
+  made ascending-by-raw-id and ascending-by-resolved-name produce the
+  *exact same* row order regardless of which order the test's own
+  records referenced those ids in -- so a deliberately-broken version of
+  `resolveSortValue` that unconditionally returned the raw, unresolved
+  value (i.e. the bug this round exists to fix) still passed all 90
+  `entityFormatting.test.ts` tests on the first deliberate-break run,
+  proving nothing. Caught precisely because the standing process runs
+  deliberate-break-and-restore as a real empirical check rather than
+  trusting that new tests "look right": all three fixtures (in
+  `entityFormatting.test.ts`, `EntityPanel.test.ts`, and
+  `codegen.test.ts`) were rewritten so the related entity's ids are
+  assigned in *reverse* alphabetical order of their own names (id 1 =
+  "Zed", the alphabetically-last name; the highest id = "Abe", the
+  alphabetically-first) -- guaranteeing ascending-by-id and
+  ascending-by-name produce genuinely opposite row orders, so only a real
+  fix can produce the expected result. Re-running deliberate-break after
+  the fixture fix correctly failed exactly the 2 relation-sort unit
+  tests (88/90 passed) and the 1 relation-sort DOM test, then passed
+  clean again after restoring.
+
+  Tests: 3 new unit tests in `entityFormatting.test.ts` (`sortRecords`
+  resolves a relation field to its display label; falls back to raw-id
+  sort with no relation data given; `sortRecordsMulti` resolves a
+  relation *primary* key correctly while still composing with a
+  non-relation tiebreaker key). One new real-DOM `EntityPanel.test.ts`
+  test: clicking the real "Courier" column header in a rendered table
+  reorders the rows alphabetically by the courier's own name. One new
+  `codegen.test.ts` test running the real generated `sortRecordsMulti`
+  (plus the real `relationDisplayLabel`/`compareValues`/
+  `resolveSortValue` it depends on, extracted via regex from genuinely
+  generated output) against real relation values.
+
+  Real end-to-end verification against a genuinely running dev server
+  (live preview): built both `@forge/api` and `@forge/web`, spawned the
+  real built `server.js`, signed up, created and built a real
+  courier-delivery project (`Order`+`Courier`, matching the existing
+  heuristic), seeded 3 real `Courier` records named "Zed"/"Mona"/"Abe"
+  (created in that order, so their ids run 1/2/3 -- reverse-alphabetical,
+  same fixture-design lesson as above) and one `Order` per courier, drove
+  real headless Chromium to click the real "Courier" table header --
+  rows reordered to Abe/Mona/Zed by name, correctly ignoring the build
+  pipeline's own 2 auto-seeded example `Order` records (which carry no
+  courier at all). `RESULT: PASS`.
+
+  Full suite green: 1047 tests (up from 1042 -- `@forge/api` 283 → 284,
+  `@forge/web` 573 → 577; `@forge/shared` 11, `@forge/spec-engine` 82,
+  `@forge/db` 93 unchanged) via `npm test` at the repo root.
+
 ## Phase 4
 
 - Template/agent marketplace
