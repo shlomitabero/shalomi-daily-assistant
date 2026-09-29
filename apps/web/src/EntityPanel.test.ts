@@ -983,6 +983,86 @@ test("EntityPanel's calendar view shows at most 3 record chips per day, with a '
 });
 
 /**
+ * Regression test for a real bug found by this round's Explore survey: the
+ * "+N more" overflow label above was rendered as an inert <span> with no
+ * click handler of its own. Since the day cell it sits inside is itself
+ * wired to onDayClick (open a blank create-record form for that date),
+ * clicking the "+N more" text did NOT reveal the hidden records it names --
+ * it silently opened an unrelated blank form instead. The only way to reach
+ * record #4+ on a busy day was to abandon Calendar view for Table view.
+ * Fixed by turning "+N more" into a real button that toggles showing every
+ * record for that day (with a "Show less" button to collapse back), while
+ * stopping propagation so the day cell's own onDayClick never also fires.
+ * This test proves both halves: clicking reveals the previously-hidden 4th
+ * chip WITHOUT opening the create-record form, and clicking "Show less"
+ * collapses back to 3 chips + the overflow button.
+ */
+test("EntityPanel's calendar view '+N more' button reveals every hidden record on that day, without opening a blank create-record form", async () => {
+  await withJsdom(async () => {
+    const today = isoDateToday();
+    const store: EntityRecord[] = [
+      { id: 1, title: "A", date: today },
+      { id: 2, title: "B", date: today },
+      { id: 3, title: "C", date: today },
+      { id: 4, title: "D", date: today },
+    ];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = mockListRecordsFetch(store) as typeof fetch;
+    try {
+      renderAppointmentPanel();
+      await waitForCondition(() => document.querySelector(".entity-toolbar") !== null);
+
+      const calendarToggle = document.querySelectorAll(".view-toggle-btn")[1] as HTMLButtonElement;
+      fireEvent.click(calendarToggle);
+      await waitForCondition(() => document.querySelectorAll(".calendar-record-chip").length > 0);
+
+      const todayDayNumber = String(new Date().getDate());
+      const dayCell = [...document.querySelectorAll(".calendar-day:not(.calendar-day-outside)")].find(
+        (cell) => cell.querySelector(".calendar-day-number")?.textContent === todayDayNumber,
+      );
+      assert.ok(dayCell, "today's cell must render in the current month's grid");
+
+      // First open one record for editing, the same way the existing
+      // chip-click test above does -- this leaves the persistent
+      // .record-form's title input holding that record's real title ("A").
+      // The form is ALWAYS rendered on screen (there is no separate blank
+      // vs. edit form), so the only way to prove the overflow click did NOT
+      // also fire the day cell's own onClick underneath it (which would
+      // reset the form to a genuinely blank one, per startCreateForDate) is
+      // to check that this title survives the "+N more" click unchanged.
+      const firstChip = dayCell!.querySelector(".calendar-record-chip") as HTMLButtonElement;
+      fireEvent.click(firstChip);
+      await waitForCondition(() => (document.querySelector('.record-form input[type="text"]') as HTMLInputElement)?.value === "A");
+
+      const more = dayCell!.querySelector(".calendar-record-more") as HTMLButtonElement;
+      assert.equal(more.tagName, "BUTTON", "the overflow label must be a real, clickable button, not an inert span");
+
+      fireEvent.click(more);
+      assert.equal(
+        dayCell!.querySelectorAll(".calendar-record-chip").length,
+        4,
+        "clicking '+N more' must reveal all 4 records as chips, not just the original 3",
+      );
+      assert.equal(
+        (document.querySelector('.record-form input[type="text"]') as HTMLInputElement).value,
+        "A",
+        "clicking the overflow button must NOT also fire the day cell's own onClick and reset the form to a blank create form",
+      );
+
+      const showLess = dayCell!.querySelector(".calendar-record-more") as HTMLButtonElement;
+      fireEvent.click(showLess);
+      assert.equal(
+        dayCell!.querySelectorAll(".calendar-record-chip").length,
+        3,
+        "clicking 'Show less' must collapse back down to 3 chips",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * Confirms clicking a calendar day's record chip actually opens that
  * record for editing (CalendarView's onEdit prop is wired to EntityPanel's
  * own startEdit) -- the same real-DOM/real-click contract this session's

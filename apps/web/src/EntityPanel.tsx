@@ -419,6 +419,7 @@ function CalendarView({
     [records, dateField, year, monthIndex],
   );
   const [dragOverDay, setDragOverDay] = useState<string | null>(null);
+  const [expandedDays, setExpandedDays] = useState<Set<string>>(new Set());
   const monthLabel = month.toLocaleDateString(LOCALE[lang], { month: "long", year: "numeric" });
   const weekdayLabels = useMemo(() => {
     const formatter = new Intl.DateTimeFormat(LOCALE[lang], { weekday: "short" });
@@ -490,7 +491,7 @@ function CalendarView({
           >
             <span className="calendar-day-number">{day.date.getDate()}</span>
             <div className="calendar-day-records">
-              {day.records.slice(0, 3).map((record) => (
+              {(expandedDays.has(dayKey) ? day.records : day.records.slice(0, 3)).map((record) => (
                 <button
                   type="button"
                   key={record.id as number}
@@ -520,9 +521,27 @@ function CalendarView({
                 </button>
               ))}
               {day.records.length > 3 && (
-                <span className="calendar-record-more">
-                  {t("entity.calendar.more", { count: day.records.length - 3 })}
-                </span>
+                <button
+                  type="button"
+                  className="calendar-record-more"
+                  onClick={(e) => {
+                    // Without stopping propagation this would also trigger
+                    // the day cell's own onDayClick and pop open a blank
+                    // create-record form instead of revealing the hidden
+                    // records this button names.
+                    e.stopPropagation();
+                    setExpandedDays((prev) => {
+                      const next = new Set(prev);
+                      if (next.has(dayKey)) next.delete(dayKey);
+                      else next.add(dayKey);
+                      return next;
+                    });
+                  }}
+                >
+                  {expandedDays.has(dayKey)
+                    ? t("entity.calendar.showLess")
+                    : t("entity.calendar.more", { count: day.records.length - 3 })}
+                </button>
               )}
             </div>
           </div>

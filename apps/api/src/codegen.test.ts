@@ -710,6 +710,51 @@ test("the exported CalendarView picks its day-chip label via pickDisplayField, n
   assert.match(labelFieldSrc, /pickDisplayField\(entity\)/);
 });
 
+/**
+ * Regression test for the same real bug this round fixed in the live-preview
+ * version (apps/web/src/EntityPanel.tsx): the exported CalendarView's own
+ * "+N more" overflow was an inert <span> with no click handler, sitting
+ * inside a day cell whose own onClick opens a blank create-record form for
+ * that date. Clicking "+N more" therefore did nothing itself and, because
+ * clicks bubble, silently triggered the day cell's blank-create-form click
+ * instead of ever revealing the hidden 4th+ record -- identical to the
+ * live-preview bug, since every exported app ships this same generated
+ * component. Fixed by turning it into a real button that toggles an
+ * expandedDays Set (showing every record for that day when expanded, with a
+ * "Show less" button to collapse back) and stops the click from bubbling
+ * into the day cell underneath it.
+ */
+test("the exported CalendarView's '+N more' overflow is a real button that reveals every hidden record, not an inert span", () => {
+  const files = generateExportFiles(project);
+  const entityViewJsx = files.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+  const calendarViewSource = entityViewJsx.slice(
+    entityViewJsx.indexOf("function CalendarView"),
+    entityViewJsx.indexOf("function BoardCard"),
+  );
+
+  assert.match(
+    calendarViewSource,
+    /const \[expandedDays, setExpandedDays\] = useState\(new Set\(\)\)/,
+    "CalendarView must track which days are expanded",
+  );
+  assert.match(
+    calendarViewSource,
+    /\(expandedDays\.has\(dayKey\) \? day\.records : day\.records\.slice\(0, 3\)\)\.map/,
+    "the day's chip list must show every record once that day is expanded, not always just the first 3",
+  );
+  const moreButtonSrc = calendarViewSource.match(
+    /day\.records\.length > 3 && \([\s\S]*?<button[\s\S]*?<\/button>\s*\)\)?\}/,
+  )?.[0];
+  assert.ok(moreButtonSrc, "expected the '+N more' overflow to render as a real <button>, not an inert <span>");
+  assert.match(moreButtonSrc!, /className="calendar-record-more"/);
+  assert.match(moreButtonSrc!, /e\.stopPropagation\(\)/, "the overflow button must stop its click from also opening the day cell's blank create-record form");
+  assert.match(moreButtonSrc!, /setExpandedDays/);
+  assert.match(moreButtonSrc!, /"Show less"/);
+
+  const stylesCss = files.find((f) => f.path === "web/src/styles.css")!.content;
+  assert.match(stylesCss, /\.calendar-record-more\s*\{[^}]*cursor: pointer/, "the overflow control must look clickable, not plain text");
+});
+
 test("the exported EntityView renders a real CSV export button backed by RFC-4180-correct CSV building", () => {
   const files = generateExportFiles(project);
   const entityViewJsx = files.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;

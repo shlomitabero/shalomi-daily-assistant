@@ -1479,6 +1479,7 @@ function CalendarView({ entity, dateField, records, month, onPrevMonth, onNextMo
   const monthIndex = month.getMonth();
   const days = useMemo(() => buildCalendarMonth(records, dateField, year, monthIndex), [records, dateField, year, monthIndex]);
   const [dragOverDay, setDragOverDay] = useState(null);
+  const [expandedDays, setExpandedDays] = useState(new Set());
   const monthLabel = month.toLocaleDateString(undefined, { month: "long", year: "numeric" });
   const isCurrentMonth = isSameCalendarMonth(month, new Date());
   const weekdayLabels = useMemo(() => {
@@ -1548,7 +1549,7 @@ function CalendarView({ entity, dateField, records, month, onPrevMonth, onNextMo
           >
             <span className="calendar-day-number">{day.date.getDate()}</span>
             <div className="calendar-day-records">
-              {day.records.slice(0, 3).map((record) => (
+              {(expandedDays.has(dayKey) ? day.records : day.records.slice(0, 3)).map((record) => (
                 <button
                   type="button"
                   key={record.id}
@@ -1567,7 +1568,23 @@ function CalendarView({ entity, dateField, records, month, onPrevMonth, onNextMo
                   {String(record[labelField.name] ?? "")}
                 </button>
               ))}
-              {day.records.length > 3 && <span className="calendar-record-more">+{day.records.length - 3} more</span>}
+              {day.records.length > 3 && (
+                <button
+                  type="button"
+                  className="calendar-record-more"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setExpandedDays((prev) => {
+                      const next = new Set(prev);
+                      if (next.has(dayKey)) next.delete(dayKey);
+                      else next.add(dayKey);
+                      return next;
+                    });
+                  }}
+                >
+                  {expandedDays.has(dayKey) ? "Show less" : "+" + (day.records.length - 3) + " more"}
+                </button>
+              )}
             </div>
           </div>
           );
@@ -3097,7 +3114,8 @@ th, td { text-align: start; padding: 8px 10px; border-bottom: 1px solid var(--bo
 .calendar-record-chip { background: var(--surface); border: 1px solid var(--border-soft); border-radius: 4px; padding: 2px 5px; font-size: 11.5px; text-align: start; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: grab; color: var(--text); }
 .calendar-record-chip:hover { background: var(--bg); }
 .calendar-record-chip:active { cursor: grabbing; }
-.calendar-record-more { font-size: 11px; color: var(--muted); padding: 0 5px; }
+.calendar-record-more { font-size: 11px; color: var(--muted); padding: 2px 5px; background: none; border: none; text-align: start; cursor: pointer; font: inherit; }
+.calendar-record-more:hover { color: var(--text); text-decoration: underline; }
 .csv-export-btn, .ics-export-btn { flex-shrink: 0; padding: 8px 14px; font-size: 13px; border-radius: 8px; border: 1px solid var(--border); background: var(--surface); color: var(--text); cursor: pointer; font: inherit; }
 .csv-export-btn:hover:not(:disabled), .ics-export-btn:hover:not(:disabled) { background: var(--bg); }
 .csv-export-btn:disabled, .ics-export-btn:disabled { opacity: 0.55; cursor: default; }
