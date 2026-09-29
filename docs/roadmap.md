@@ -15439,6 +15439,94 @@ not a single "make it perfect" claim.
   `@forge/shared` 11, `@forge/spec-engine` 82, `@forge/db` 93, `@forge/web`
   567 unchanged) via `npm test` at the repo root.
 
+- **Round 270 -- "Backup All Data" now includes a project's real WhatsApp
+  conversation history, closing a gap in the feature's own literal
+  promise.** Continuing round 269's successful pattern of surveying logic
+  files rather than re-scanning the same UI-panel list, this round's
+  Explore survey targeted `apps/api/src/backup.ts`
+  (`generateBackupZipEntries`) and found it builds one CSV per entity in
+  the spec but never once touches `whatsapp_messages` -- so a shop owner
+  clicking "Backup All Data" to get "all" of their data out got every
+  entity record but zero WhatsApp history, even though the WhatsApp log
+  panel's own "Download log" button proves that data is exactly the kind
+  of thing a real business owner would want to keep (proof of what a
+  customer actually said). That panel button only ever serializes
+  whatever page is currently loaded in the browser, not the full history,
+  so there was no existing way to get a project's complete WhatsApp
+  history out in one file at all.
+
+  `apps/api/src/backup.ts` gained `collectAllWhatsAppMessages(db,
+  projectId)`, which walks every page of the existing
+  `listWhatsAppMessages(db, projectId, limit, offset)` (built for the
+  panel's own paginated "load more" UI, capped at `limit` per call) via
+  its `hasMore` flag until none remain -- so a project with thousands of
+  messages backs up in full, not just its most recent 50.
+  `whatsappMessagesToCsv(messages)` follows the file's own established
+  CSV conventions (`csvEscape` for formula-injection safety, the same BOM
+  + CRLF Excel-friendly format every entity CSV already uses) with
+  columns Direction/From/To/Message/Matched Record/Status/Date.
+  `generateBackupZipEntries` now pushes a `"WhatsApp Messages.csv"` entry
+  only when `collectAllWhatsAppMessages(...).length > 0` -- omitted
+  entirely (not an empty file) for a project that never connected
+  WhatsApp, mirroring the "nothing to report" convention already used
+  elsewhere in this codebase, since the integration is project-optional
+  unlike entities (which always exist once a spec is built, so they
+  always get a CSV).
+
+  A genuine, previously-unknown test-infrastructure gap surfaced while
+  writing this feature's tests: `backup.test.ts`'s own fixture only ever
+  called bare `openDatabase(":memory:")` + `applyMigrations(...)`,
+  bypassing `store.ts` (which every real server request goes through,
+  and which is the only place `ensureWhatsAppConnectionsTable`/
+  `ensureWhatsAppMessagesTable` get called). Once
+  `generateBackupZipEntries` started unconditionally querying
+  `whatsapp_messages`, every existing test in the file broke with "no
+  such table: whatsapp_messages" -- a pure fixture gap, not a production
+  bug, since real requests always go through `store.ts` first. Fixed
+  with a `createTestDb(p: Project)` helper that also calls both
+  `ensure*Table` functions, matching the pattern already used correctly
+  in `whatsapp.test.ts`/`whatsappWeb.test.ts`/`projects.test.ts`; all 8
+  pre-existing tests in the file were mechanically migrated to it and
+  continue passing unchanged.
+
+  Tests: 4 new tests in `backup.test.ts` -- real inserted WhatsApp
+  messages produce a correctly-escaped, newest-first CSV entry (a phone
+  number's leading "+" is itself a formula-injection trigger character
+  to `csvEscape`, so From/To get the same leading-single-quote guard as
+  any other field -- confirmed empirically, not assumed); a message body
+  containing a comma round-trips through CSV escaping correctly with a
+  real, non-blank timestamp; `collectAllWhatsAppMessages` walks a second
+  page (205 messages, past the 200-per-page limit) without dropping any;
+  a project with zero messages gets no `"WhatsApp Messages.csv"` entry at
+  all. Plus 1 new integration test in `app.test.ts`, hitting the real
+  `GET /projects/:id/backup` HTTP route against a genuinely running
+  server (real signup → real project create → real build via SSE), with
+  a real WhatsApp message inserted directly against the server's own db
+  (captured via the existing `withServer`'s `opts.whatsapp` callback) --
+  confirms the real, uncompressed (store-method) ZIP response bytes
+  contain both the exact message text and the escaped phone numbers, and
+  that a fresh project with no messages yet produces no such entry.
+
+  Deliberate-break-and-restore (backup taken only after the feature was
+  complete and every test green): replaced
+  `collectAllWhatsAppMessages(db, project.id)` with a hardcoded empty
+  array in `generateBackupZipEntries` -- exactly the 3 new
+  WhatsApp-specific tests failed (9/12 passed), every other test stayed
+  green. Restored from the backup, confirmed a byte-identical `diff`,
+  re-confirmed all 12 `backup.test.ts` tests green again.
+
+  Real end-to-end verification: the new `app.test.ts` integration test
+  itself *is* the strongest form of proof available for this
+  purely-server-side feature (a real HTTP server, a real ZIP response,
+  real message content) -- no browser/Playwright pass was needed since
+  nothing about this feature touches the UI (the existing "Backup All
+  Data" button and its request/response handling were untouched). Ran
+  standalone (`RESULT: PASS`) and as part of the full `@forge/api` suite.
+
+  Full suite green: 1035 tests (up from 1030 -- `@forge/api` 277 → 282;
+  `@forge/shared` 11, `@forge/spec-engine` 82, `@forge/db` 93, `@forge/web`
+  567 unchanged) via `npm test` at the repo root.
+
 ## Phase 4
 
 - Template/agent marketplace
