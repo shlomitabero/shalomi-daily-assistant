@@ -14570,6 +14570,61 @@ not a single "make it perfect" claim.
   `@forge/api` 252 unchanged) and `npm run build --workspace=@forge/web`
   clean.
 
+- **Round 259 -- Time Machine's "compare with" checkpoint diff can now
+  show what a comparison actually *added*, not only what it removed.**
+  Diversification: with EntityPanel.tsx's bulk actions now fully closed
+  (duplicate+delete+update), an Explore survey moved to `HistoryPanel.tsx`
+  / `checkpointDiff.ts` (untouched since well before the recent
+  diversification window) and found that `computeCheckpointDiff` only
+  ever computed one direction -- entities/fields present in the "current"
+  spec argument but missing from the "checkpoint" argument -- despite
+  `resolveCompareSpec`'s own doc comment explicitly motivating the
+  "compare with" dropdown with "what did refine #3 add that refine #1
+  didn't have yet?", a question only answerable by the *other* direction.
+
+  Since every checkpoint is purely additive (refines only ever add
+  entities/fields, per the app's own migration model), picking an older
+  checkpoint as the comparison baseline against a newer one always found
+  zero removals and silently rendered "No changes -- restoring won't
+  remove any existing entity or field" -- a real, actively misleading
+  answer to the exact question the dropdown exists to answer, not a rare
+  edge case: additive growth is the normal shape of every real project's
+  history.
+
+  Extended `CheckpointDiff` with `addedEntities` (mirrors
+  `removedEntities`) and `addedFieldNames` on each `changedEntities` entry
+  (mirrors `removedFieldNames`), computed by also scanning the checkpoint
+  spec's own entities/fields for anything absent from the current side --
+  the exact reverse traversal `computeCheckpointDiff` already did, just
+  run in both directions instead of one. `HistoryPanel.tsx`'s diff list
+  now renders two new line kinds (`history.diff.entityAdded`,
+  `history.diff.entityGainedFields`, he+en) alongside the existing
+  removal lines, and `hasChanges` now also considers the added side so
+  "No changes" only shows when genuinely nothing differs either way.
+
+  Tests: rewrote `checkpointDiff.test.ts`'s existing "checkpoint has more
+  entities/fields than current" tests to assert the new `addedEntities`/
+  `addedFieldNames` output instead of documenting the old removal-only
+  blind spot as correct, added a dedicated test asserting an entity can
+  lose one field and gain another in the same diff (both lists populated
+  independently), and rewrote the two-arbitrary-checkpoints test
+  (`older` as baseline vs `newer` as the compared checkpoint) to assert
+  the newer checkpoint's added `Invoice` entity now surfaces as
+  `addedEntities` instead of vanishing into an empty diff -- this is the
+  exact bug scenario, now fixed and pinned by a test.
+
+  Deliberate-break-and-restore: removed the new reverse-direction loop
+  that populates `addedEntities` from `computeCheckpointDiff` entirely --
+  exactly 3 of 28 `checkpointDiff.test.ts` tests failed (the three tests
+  above that depend on `addedEntities` reporting something), the other 25
+  stayed green. Restored from a scratchpad backup, confirmed a
+  byte-identical `diff`, and re-confirmed all 28 tests green again.
+
+  Full suite green (982 tests, up from 981 -- `@forge/web` 545 → 546;
+  `@forge/shared` 11, `@forge/spec-engine` 82, `@forge/db` 91,
+  `@forge/api` 252 unchanged) and `npm run build --workspace=@forge/web`
+  clean.
+
 ## Phase 4
 
 - Template/agent marketplace
