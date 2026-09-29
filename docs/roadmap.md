@@ -14501,6 +14501,75 @@ not a single "make it perfect" claim.
   `npm run build --workspace=@forge/web` and
   `npm run build --workspace=@forge/api` clean.
 
+- **Round 258 -- selected records in a live-preview entity table can now
+  have one shared field set across all of them at once, not just
+  duplicated or deleted in bulk.** Diversification: with port-to-
+  exported-codegen fully closed as of round 257, an Explore survey went
+  back into `EntityPanel.tsx` itself (last actually touched a while
+  before the recent diversification window, despite being the single
+  biggest, most feature-dense file in the app) and found the bulk-
+  actions bar's own two actions -- `handleBulkDuplicate`/
+  `handleBulkDelete` -- had no bulk-*update* sibling, grep-verified via
+  a scan of every `entity.bulk.*` translation key in `language.ts`.
+
+  Before this round, changing one field's value across several selected
+  records -- marking 15 selected orders "Shipped", moving 8 leads to
+  "Closed" -- meant editing each row individually: double-clicking a
+  table cell, or dragging one Kanban board card at a time. Any real
+  ops/CRM tool treats this as a single mass action, and it's exactly
+  the shape (status/enum/boolean/date fields on multi-row tables) this
+  app's own domain templates produce most often.
+
+  Added a "Set field: [picker] [value input] Apply to N" control to the
+  bulk-actions bar, built entirely from infrastructure that already
+  existed: the field picker lists only `isInlineEditableField` fields
+  (excludes relation, the same restriction the inline cell editor
+  itself already has -- a relation's "value" is another record's id,
+  not something a single shared value across N different records makes
+  sense for), the value input reuses the existing `FieldInput`
+  component so every field type gets its correct native control
+  (checkbox for boolean, `<select>` for enum, a real date picker, etc.
+  -- no new input-rendering logic needed), and the new
+  `handleBulkUpdate` mirrors `handleBulkDelete`/`handleBulkDuplicate`'s
+  own `Promise.allSettled` resilience pattern exactly: one record's
+  update failing (a row another tab already changed underneath it, a
+  validation error on that record's current state) doesn't hide the
+  ones that succeeded, and the table still refreshes to show them.
+
+  Tests: 2 new tests in `EntityPanel.test.ts` extracting the real
+  `handleBulkUpdate` straight from `EntityPanel.tsx` (the same regex-
+  extraction + `new Function` sandbox pattern this file already uses
+  for `handleBulkDelete`/`handleBulkDuplicate`'s own tests) -- one
+  confirming partial-failure resilience (every id genuinely attempted,
+  only the one that failed stays selected, the translated partial-
+  failure message surfaces instead of the raw rejection), one
+  confirming the handler is a clean no-op when no field has been chosen
+  yet (no `updateRecord` call, no `refresh()`).
+
+  Deliberate-break-and-restore: stripped the failure-tracking/error-
+  surfacing logic out of `handleBulkUpdate`, leaving only the bare
+  `Promise.allSettled` call and an unconditional `setSelectedIds(new
+  Set())` -- exactly 1 of 43 `EntityPanel.test.ts` tests failed (the
+  new partial-failure resilience test), the other 42 stayed green.
+  Restored from a scratchpad backup, confirmed a byte-identical `diff`,
+  and re-confirmed all 43 tests green again.
+
+  Real-browser verification against the live dev server: signed up,
+  built a real CRM app (a `Customer` entity with an enum `status`
+  field), selected two genuinely seeded records, picked `status` in the
+  new field picker, and -- to rule out a false-positive coincidental
+  match -- deliberately chose a target value ("Qualified") verified
+  distinct from either record's own already-seeded status ("New" and
+  "Contacted") before applying. Clicked Apply, and confirmed via the
+  DOM that both records' status genuinely changed to "Qualified"
+  through the real API, with zero console errors throughout.
+  `RESULT: PASS`.
+
+  Full suite green (981 tests, up from 979 -- `@forge/web` 543 → 545;
+  `@forge/shared` 11, `@forge/spec-engine` 82, `@forge/db` 91,
+  `@forge/api` 252 unchanged) and `npm run build --workspace=@forge/web`
+  clean.
+
 ## Phase 4
 
 - Template/agent marketplace
