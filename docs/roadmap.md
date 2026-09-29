@@ -15279,6 +15279,81 @@ not a single "make it perfect" claim.
   `@forge/web` 559 → 567; `@forge/shared` 11, `@forge/spec-engine` 82,
   `@forge/db` 93 unchanged) via `npm test` at the repo root.
 
+- **Round 268 -- the exported/standalone codegen app's table and Kanban
+  board cells now show a real hover tooltip with a longtext field's full
+  value, closing the last remaining item in the
+  port-to-exported-codegen backlog.** The live preview's own
+  `EntityPanel.tsx` `Cell` component gained this in round 261: a Notes
+  or Description field routinely runs longer than any reasonable column
+  width, and the only other way to read the rest was double-clicking
+  into the real edit textarea, which feels like committing to a change
+  just to read one. The exported app never got the port.
+
+  This round's Explore survey's top recommendation -- adding a "log out
+  of all other devices" session-revocation action -- was independently
+  cross-checked against the trigger prompt's own standing rejected-list
+  and found to be exactly the `"log out other sessions"` entry already
+  flagged there as a big/security-sensitive feature requiring שלומי's
+  explicit sign-off before autonomous implementation (the durable
+  "נבדק ונדחה" list carries this precisely to prevent an Explore
+  subagent, which doesn't see that list's own reasoning, from
+  re-proposing it). Declined on that basis without asking, and used the
+  survey's own explicitly-flagged runner-up instead -- the longtext
+  tooltip port -- re-verified directly via grep: `apps/web/src/
+  EntityPanel.tsx`'s `Cell` has a `field.type === "longtext"` branch
+  (lines 168-174) rendering `<span className="longtext-cell"
+  title={String(value)}>`, while `apps/api/src/codegen.ts`'s own `Cell`
+  (lines 980-1011, shared by both the record table and `BoardCard`) fell
+  straight from the `number` branch to a bare `return
+  <>{String(value)}</>;` fallback with no longtext case at all.
+
+  The port itself is a single small addition matching the live
+  preview's own markup exactly (`<span className="longtext-cell"
+  title={String(value)}>{String(value)}</span>`, no highlighting since
+  the exported app's `Cell` has no query-highlighting infrastructure to
+  begin with -- confirmed neither the live-preview's own `Highlighted`
+  helper nor anything equivalent exists anywhere in `codegen.ts`, so
+  adding one was out of scope for this gap). No new CSS was needed:
+  `.longtext-cell` turned out to carry no styling in the live preview's
+  own `apps/web/src/styles.css` either -- it's a bare selector hook for
+  tests, and the tooltip itself is just the native browser `title`
+  attribute. Both of `Cell`'s two call sites (the table's `<td>` and
+  `BoardCard`'s per-field row) share the one function, so this single
+  change covers both surfaces at once, the same one-fix-two-surfaces
+  shape round 266's relation-jump port had.
+
+  Tests: one new `codegen.test.ts` test builds a small Note entity with
+  a longtext `body` field, generates the real export, and asserts
+  against the real generated `Cell` source (regex-matched, per the
+  established "codegen.ts is JSX-heavy, no `new Function` sandbox
+  without a transpile step" convention) that the longtext branch and its
+  exact JSX markup are present. Verified via `esbuild transformSync`
+  that the generated `EntityView.jsx` still parses cleanly before
+  running the suite.
+
+  Deliberate-break-and-restore (backup taken only after the feature was
+  complete and the full suite was green, per round 266's own durable
+  lesson): removed the new longtext branch entirely -- exactly the new
+  test failed (`cellSrc` no longer matched `field.type === "longtext"`),
+  the other 69 `codegen.test.ts` tests stayed green. Restored from the
+  backup, confirmed a byte-identical `diff`, re-confirmed all 70 tests
+  green again.
+
+  Real end-to-end verification against a genuinely built and served
+  standalone exported app -- the strongest available proof for a
+  codegen change: called `generateExportFiles()` for a real Note entity
+  (title + longtext body), wrote the full export to a temp directory,
+  ran a genuine `vite build`, spawned the real generated `server.js`,
+  created a real Note via the exported app's own REST API with a long
+  body string, then drove real headless Chromium against the real
+  running server: confirmed exactly one `.longtext-cell` element in the
+  table, and that both its `title` attribute and its DOM `textContent`
+  carried the complete, untruncated body text. `RESULT: PASS`.
+
+  Full suite green (1024 tests, up from 1023 -- `@forge/api` 270 → 271;
+  `@forge/shared` 11, `@forge/spec-engine` 82, `@forge/db` 93, `@forge/web`
+  567 unchanged) via `npm test` at the repo root.
+
 ## Phase 4
 
 - Template/agent marketplace
