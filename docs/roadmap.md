@@ -15174,6 +15174,111 @@ not a single "make it perfect" claim.
   `@forge/shared` 11, `@forge/spec-engine` 82, `@forge/db` 93, `@forge/web`
   559 unchanged) via `npm test` at the repo root.
 
+- **Round 267 -- an entity's individual *fields* can now be added,
+  removed, and renamed right on the pre-build spec review screen,
+  closing the one remaining gap in that screen's own correction
+  workflow.** Roles, assumptions, and whole entities already had a real
+  add/remove/rename path there (rounds 120-256's own work), but a
+  single field within an entity had none at all -- the only field-level
+  mutation anywhere in the app was the existing `renameFieldLabel`
+  endpoint (cosmetic label-only, reachable only from the post-build
+  `EntityPanel.tsx`'s `FieldLabelEditor`). An AI/heuristic-mis-scoped
+  entity missing an obvious field (no "email" on a Customer, say) could
+  previously only be fixed via a full natural-language Refine
+  round-trip after already committing to a build, or by hoping the
+  free-text "additional request" box happened to steer the regenerated
+  spec correctly.
+
+  This round's Explore survey investigated 5+ different panels
+  (CollaboratorsPanel.tsx's missing permission tiers -- rejected as too
+  security-sensitive for an autonomous round; BuildProgress.tsx's
+  missing mid-build cancel -- rejected as architecturally riskier than a
+  client-side toggle since it touches the live streaming pipeline;
+  GlobalSearchPanel/HistoryPanel/BusinessTwinPanel/WhatsAppPanel --
+  all re-confirmed genuinely closed) before landing on this one as the
+  strongest concretely-verified, low-risk candidate: grep-confirmed via
+  `apps/web/src/api.ts` (only `renameFieldLabel` existed for fields, vs.
+  full add/remove/rename for roles/assumptions/entities) and
+  `apps/api/src/routes/projects.ts` (the field routes list had only one
+  PATCH `.../fields/:fieldName/label`, no POST/DELETE).
+
+  Server: two new routes mirror the existing entity add/remove routes
+  exactly -- `POST /projects/:id/entities/:entityName/fields` (body:
+  `{ label }`, appends a plain optional text field) and `DELETE
+  .../fields/:fieldName` (guarded by the same `fields.min(1)` floor
+  `EntitySchema` already requires, the same reasoning as roles' own
+  `.min(1)` guard). Both are pre-build-only (409
+  `FIELD_ADD_AFTER_BUILD`/`FIELD_REMOVE_AFTER_BUILD`), the same gate
+  every other spec-shape-changing route in this file uses, since once
+  built the real database column and generated code already exist and
+  don't track further spec edits. A new `deriveFieldName` helper mirrors
+  `deriveEntityName`'s own ASCII-identifier/no-collision logic, just
+  camelCase (matching every domain-library field's own convention --
+  "customerName", "courierId") instead of PascalCase, and additionally
+  treats the two built-in column names every table already carries
+  ("id", "createdAt") as pre-taken so it can never hand `FieldSchema`'s
+  own `refine()` a name it would reject.
+
+  Web: `FieldChip`/`AddFieldForm` (new components in
+  `SpecListItemRemover.tsx`) replace `EntitySummaryItem`'s old flat,
+  non-interactive `formatEntityFieldSummary` text with real chips --
+  click a chip's text to rename it in place (reusing the existing
+  `renameFieldLabel` PATCH, the same click-to-edit pattern `RoleChip`
+  already uses), click × to remove it, or use the nested add-field form
+  to append a new one. `formatEntityFieldSummary` itself is kept
+  (unchanged, still fully tested) and now feeds an `aria-label` on the
+  fields row instead of rendering as visible text, so a screen reader
+  still gets one flat summary sentence while sighted users get the
+  interactive chips. `EntitySummaryItem`'s markup was restructured from
+  a single flex row into a header row (label + remove) plus a fields row
+  below, since it now needs to stack the chips and the add-field form
+  underneath the entity's own label/remove controls.
+
+  Tests: 4 new `deriveFieldName` unit tests (camelCase derivation,
+  fallback to "field" for a label with no ASCII characters, numeric-
+  suffix collision handling, and the built-in id/createdAt-name guard)
+  plus 10 new API integration tests in `app.test.ts` (add success with
+  the derived name/type/required defaults, blank-label rejection,
+  ENTITY_NOT_FOUND, cross-project 404, FIELD_ADD_AFTER_BUILD; remove
+  success, last-field-guard 400, FIELD_NOT_FOUND, cross-project 404,
+  FIELD_REMOVE_AFTER_BUILD) -- mirroring the existing entity add/remove
+  test suite's own coverage shape. 8 new DOM tests in
+  `SpecListItemRemover.test.ts` for `FieldChip`/`AddFieldForm` (remove
+  success/disabled/error, rename success/Escape-cancel, add
+  success/error, plus one integration test confirming
+  `EntitySummaryItem` renders one chip per field and a nested add-field
+  form). 3 pre-existing tests needed a one-line prop-name fix
+  (`EntitySummaryItem`'s `summary` prop became `fieldsSummary`, feeding
+  the aria-label instead of visible text) since this round's
+  restructuring changed that component's own props.
+
+  Deliberate-break-and-restore (this time correctly timed per round
+  266's own new durable lesson -- the backup was taken only after
+  running the full test suite green on the feature-complete file):
+  removed `deriveFieldName`'s reserved-name dedup guard (the
+  `["id", "createdat", ...]` seed in its `taken` set) -- exactly the new
+  `"treats the built-in 'id'/'createdAt' column names as already taken"`
+  test failed (`'id' !== 'id2'`), the other 3 `deriveFieldName` tests
+  stayed green. Restored from the backup, confirmed a byte-identical
+  `diff`, re-confirmed all 4 tests green again.
+
+  Real end-to-end verification against a genuinely running dev server
+  (not a mock): built both `@forge/api` and `@forge/web`, spawned the
+  real built `server.js` (which serves the real built web `dist/` the
+  same way production does), and drove real headless Chromium through
+  the actual browser UI -- signed up a fresh account, described "A CRM
+  with customers and deals," landed on the real spec-review screen,
+  added a "Loyalty Points" field to the Customer entity via the real
+  add-field form, confirmed the new chip appeared among the entity's 6
+  original field chips, renamed it in place to "Reward Points" via
+  click-to-edit, confirmed the renamed chip appeared, then removed it
+  via its × button, confirming the Customer entity's field-chip count
+  returned to exactly its original 6. `RESULT: PASS`.
+
+  Full suite green (1023 tests, up from 1001 -- `@forge/api` 256 → 270;
+  `@forge/web` 559 → 567; `@forge/shared` 11, `@forge/spec-engine` 82,
+  `@forge/db` 93 unchanged) via `npm test` at the repo root.
+
 ## Phase 4
 
 - Template/agent marketplace
