@@ -1058,7 +1058,8 @@ tbody tr:hover {
   max-width: 160px;
 }
 
-.csv-export-btn {
+.csv-export-btn,
+.ics-export-btn {
   flex-shrink: 0;
   padding: 8px 14px;
   font-size: 13px;

@@ -1,6 +1,7 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import type { Entity, EntityRecord, Field, Project } from "@forge/shared";
 import { createRecord, deleteRecord, listRecords, updateRecord } from "./api.js";
+import { buildCalendarIcs, downloadCalendarIcs } from "./calendarIcs.js";
 import { getHiddenFields, toggleFieldVisibility } from "./columnVisibility.js";
 import { computeResizedWidth, getColumnWidths, setColumnWidth } from "./columnWidths.js";
 import { applyColumnOrder, getColumnOrder, reorderColumns, setColumnOrder } from "./columnOrder.js";
@@ -1004,6 +1005,13 @@ export function EntityPanel({
     return sortRecordsMulti(filtered, sortKeys);
   }, [records, entity.fields, search, statusFilter, boardField, sortKeys]);
 
+  /** Exactly the records the calendar grid's current month is showing -- the same computation handleExportIcs uses, kept separate so the export button can disable itself when the visible month is genuinely empty, not just when the whole entity has no records. */
+  const icsMonthRecords = useMemo(() => {
+    if (!dateField) return [];
+    const days = buildCalendarMonth(visibleRecords, dateField, calendarMonth.getFullYear(), calendarMonth.getMonth());
+    return days.filter((d) => d.inCurrentMonth).flatMap((d) => d.records);
+  }, [visibleRecords, dateField, calendarMonth]);
+
   // Grouping the plain table by a small-value-space field (enum/boolean) --
   // distinct from the Kanban board view (which always groups by exactly one
   // auto-picked field, and always in its own separate view), this lets a
@@ -1351,6 +1359,21 @@ export function EntityPanel({
     a.click();
     a.remove();
     URL.revokeObjectURL(url);
+  }
+
+  /**
+   * The calendar view's own "take it with you" action -- CSV export dumps
+   * the whole raw table, but a month of appointments/bookings is exactly
+   * what a real business owner wants to drop straight into their phone's
+   * real calendar app, which CSV can't do. Exports only the records the
+   * calendar grid is currently showing (this month, respecting the active
+   * search/filter via visibleRecords), not the whole entity.
+   */
+  function handleExportIcs() {
+    if (!dateField) return;
+    const labelField = calendarChipLabelField(entity, dateField);
+    const ics = buildCalendarIcs(entity, dateField, labelField, icsMonthRecords, allEntities, relatedRecords);
+    downloadCalendarIcs(ics, entity.name);
   }
 
   /**
@@ -1745,6 +1768,16 @@ export function EntityPanel({
                   </button>
                 )}
               </div>
+            )}
+            {viewMode === "calendar" && dateField && (
+              <button
+                type="button"
+                className="secondary ics-export-btn"
+                onClick={handleExportIcs}
+                disabled={icsMonthRecords.length === 0}
+              >
+                {t("entity.exportIcs")}
+              </button>
             )}
             <button
               type="button"

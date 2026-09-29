@@ -1219,6 +1219,66 @@ test("EntityPanel's calendar view 'Today' button is disabled on the current mont
   });
 });
 
+/**
+ * New in this round: the calendar view's only "take it with you" action was
+ * CSV export of the raw table -- nothing turned a month of appointments
+ * into a file a real business owner could drop into their phone's actual
+ * calendar app. Confirms the new "Export to Calendar (ICS)" button only
+ * renders in calendar view (never table/board), starts disabled when the
+ * currently-shown month has zero records, and enables itself once paging
+ * lands on a month that actually has one -- proving it tracks the visible
+ * month, not just "does this entity have any records at all" (see
+ * icsMonthRecords in EntityPanel.tsx).
+ */
+test("EntityPanel's ICS export button only appears in calendar view, and is disabled/enabled based on whether the currently-shown month has records", async () => {
+  await withJsdom(async () => {
+    const today = isoDateToday();
+    const store: EntityRecord[] = [{ id: 1, title: "Dana's appointment", date: today }];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = mockListRecordsFetch(store) as typeof fetch;
+    try {
+      renderAppointmentPanel();
+      await waitForCondition(() => document.querySelector(".entity-toolbar") !== null);
+
+      assert.equal(
+        document.querySelector(".ics-export-btn"),
+        null,
+        "the ICS export button must not render at all in table view -- CSV already covers that",
+      );
+
+      const calendarToggle = document.querySelectorAll(".view-toggle-btn")[1] as HTMLButtonElement;
+      fireEvent.click(calendarToggle);
+      await waitForCondition(() => document.querySelector(".calendar-month-label") !== null);
+
+      const icsBtn = document.querySelector(".ics-export-btn") as HTMLButtonElement;
+      assert.ok(icsBtn, "the ICS export button must render once in calendar view");
+      assert.equal(icsBtn.disabled, false, "this month genuinely has one record, so the button must be enabled");
+
+      const nextBtn = document.querySelectorAll(".calendar-nav button")[2] as HTMLButtonElement;
+      const monthLabel = () => document.querySelector(".calendar-month-label")!.textContent;
+      const currentMonthLabel = monthLabel();
+      fireEvent.click(nextBtn);
+      await waitForCondition(() => monthLabel() !== currentMonthLabel);
+      assert.equal(
+        (document.querySelector(".ics-export-btn") as HTMLButtonElement).disabled,
+        true,
+        "next month has no records of its own, so the export button must disable itself -- not stay enabled just because the entity has records somewhere",
+      );
+
+      const todayBtn = document.querySelector(".calendar-today-btn") as HTMLButtonElement;
+      fireEvent.click(todayBtn);
+      await waitForCondition(() => monthLabel() === currentMonthLabel);
+      assert.equal(
+        (document.querySelector(".ics-export-btn") as HTMLButtonElement).disabled,
+        false,
+        "returning to the current month must re-enable the button",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
 const CUSTOMER_ENTITY: Entity = {
   name: "Customer",
   label: "Customer",
