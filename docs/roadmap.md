@@ -16206,6 +16206,73 @@ not a single "make it perfect" claim.
   82 → 83; `@forge/shared` 11, `@forge/db` 93, `@forge/api` 293,
   `@forge/web` 586 unchanged) via `npm test` at the repo root.
 
+- **Round 280 -- found and fixed two more instances of round 279's exact
+  bug class in the same file: Courier's "driver" keyword and Product's
+  "stock" keyword each spuriously matched an unrelated common word.**
+  Directed the Explore survey specifically at re-checking the REST of
+  `domainEntities.ts`'s keyword lists via real execution, since round
+  279 had only closely examined Order's own keywords. Confirmed by
+  actually running `matchEntities()` (not just reading the list):
+  - Courier's bare `"driver"` keyword matched "We run a hardware store
+    selling screwdrivers, hammers, and drills to contractors" (→
+    `["Courier"]`) and "An app to manage our webdriver test suite for QA
+    engineers" (→ `["Courier"]`) -- "driver" is a substring of both
+    "screwdriver(s)" and "webdriver".
+  - Product's bare `"stock"` keyword matched "A farm management app for
+    tracking livestock and pasture rotation" (→ `["Product"]`) -- "stock"
+    is a substring of "livestock".
+
+  Neither a hardware store, a QA-tooling app, nor a livestock farm has
+  anything to do with delivery couriers or retail inventory, but each
+  got a spurious entity/table (Courier's own vehicleType/status enum
+  fields and screens, or Product's sku/price/quantity fields and
+  screens) silently injected into its generated spec -- directly visible
+  on the Spec Review screen and, if unnoticed, shipped into the built
+  app's schema. Same root cause and same fix as round 279's Order bug:
+  a plain-string keyword matched via substring
+  (`lower.includes(kw)` in `heuristic.ts`'s `matchEntities`) with no
+  word-boundary check.
+
+  Fix: converted both keywords to the same `\b`-bounded `RegExp` pattern
+  round 279 introduced -- `/\bdriver(s)?\b/` and `/\bstock(s)?\b/` --
+  reusing the `DomainEntityRule.keywords: (string | RegExp)[]` extension
+  and `matchesKeyword()` helper round 279 already added to
+  `heuristic.ts`, so this round needed no new mechanism, only applying
+  the existing one to two more entries. Added the same style of
+  explanatory comment at each keyword (mirroring Order's own) rather
+  than a generic one-liner, naming the specific colliding word(s) for
+  future readers.
+
+  Tests: 1 new test in `heuristic.test.ts` (placed right after round
+  279's Order regression test) covering all 3 confirmed false positives
+  via the real `HeuristicSpecProvider.generate()`, plus 2 recall-
+  preserving assertions ("Manage our fleet of delivery drivers" must
+  still match Courier, "Track warehouse stock levels for our shop" must
+  still match Product). Deliberate-break-and-restore: reverted both
+  RegExp keywords back to their original bare strings, confirmed the new
+  test failed with the expected "a hardware store selling screwdrivers
+  must not get a spurious Courier entity" assertion message, then
+  restored from a pre-fix backup copy with a byte-identical `diff`.
+  Checked `apps/api/src/codegen.ts` for a duplicate copy of this
+  matching logic (same discipline as round 279) -- found none, as
+  expected: codegen.ts never re-runs keyword matching, it only consumes
+  an already-generated spec.
+
+  Real end-to-end verification against a genuinely running server + real
+  headless Chromium (not a mock), across three separate real
+  signup/session flows: submitted "We run a hardware store selling
+  screwdrivers, hammers, and drills to contractors" and confirmed the
+  word "Courier" appears nowhere on the real rendered Spec Review page;
+  submitted "A farm management app for tracking livestock and pasture
+  rotation" and confirmed "Product" appears nowhere; submitted "Manage
+  our fleet of delivery drivers and their daily routes" and confirmed
+  "Courier" *does* appear, proving the fix preserved real recall. All
+  three: `RESULT: PASS`.
+
+  Full suite green: 1067 tests (up from 1066 -- `@forge/spec-engine`
+  83 → 84; `@forge/shared` 11, `@forge/db` 93, `@forge/api` 293,
+  `@forge/web` 586 unchanged) via `npm test` at the repo root.
+
 ## Phase 4
 
 - Template/agent marketplace
