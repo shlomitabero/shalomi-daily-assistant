@@ -10,7 +10,9 @@ import {
   enhanceIdea,
   exportProject,
   getToken,
+  getWhatsAppStatus,
   listProjects,
+  listWhatsAppMessages,
   logout,
   me,
   streamBuild,
@@ -42,6 +44,7 @@ import {
 } from "./projectStatusFilter.js";
 import { clearIdeaDraft, getIdeaDraft, saveIdeaDraft } from "./ideaDraft.js";
 import { formatDocumentTitle } from "./documentTitle.js";
+import { countUnreadWhatsAppMessages, getWhatsAppLastSeenId } from "./whatsappUnread.js";
 import { LanguageProvider, useTranslation } from "./i18n/LanguageContext.js";
 import { LanguageSwitcher } from "./i18n/LanguageSwitcher.js";
 import type { Lang } from "./i18n/language.js";
@@ -51,6 +54,9 @@ import { ThemeSwitcher } from "./theme/ThemeSwitcher.js";
 type View = "home" | "spec" | "building" | "preview";
 
 const LOCALE: Record<string, string> = { he: "he-IL", en: "en-US" };
+
+/** How often the topbar's own WhatsApp unread-badge poll checks for new messages -- lighter than WhatsAppPanel's own 10s CONNECTED_POLL_INTERVAL_MS since this runs for every built project, not just while its panel happens to be open. */
+const WHATSAPP_UNREAD_POLL_INTERVAL_MS = 20000;
 
 /** A project card's own creation date, locale-formatted -- separated out (rather than inlined in the JSX) purely so it's directly unit-testable, matching this file's own summarizeRefineImpact/filterAndSortProjects convention. */
 export function formatProjectCreatedDate(createdAt: string, lang: Lang): string {
@@ -330,6 +336,7 @@ function AppContent() {
   const [backupDone, setBackupDone] = useState(false);
   const [showTwin, setShowTwin] = useState(false);
   const [showWhatsApp, setShowWhatsApp] = useState(false);
+  const [whatsappUnreadCount, setWhatsappUnreadCount] = useState(0);
   const [showCollaborators, setShowCollaborators] = useState(false);
   const [showChangePassword, setShowChangePassword] = useState(false);
   const [showDeleteAccount, setShowDeleteAccount] = useState(false);
@@ -434,7 +441,61 @@ function AppContent() {
     setShowCollaborators(panel === "collaborators");
     setShowSearch(panel === "search");
     setShowShortcuts(panel === "shortcuts");
+    // Opening the WhatsApp panel is itself "marking read" from the user's
+    // point of view -- she's about to see every message right now. Zeroing
+    // this immediately (rather than waiting for the next background poll
+    // tick below) avoids a stale badge count flashing for a few seconds
+    // after she's already looking at the log. WhatsAppPanel's own effect
+    // then keeps the real "last seen" marker in storage in sync as it loads.
+    if (panel === "whatsapp") setWhatsappUnreadCount(0);
   }
+
+  /**
+   * A real, visible unread-message signal on the topbar's own WhatsApp
+   * button -- previously the only way to know a new WhatsApp message had
+   * arrived was to open the panel and look (round 288 made the panel
+   * itself live-update once open, but gave no signal at all while it was
+   * closed, which is most of the time). Runs independently of
+   * WhatsAppPanel (which unmounts entirely when the panel is closed, see
+   * `{showWhatsApp && <WhatsAppPanel .../>}` below) so the badge keeps
+   * updating even with the panel shut. Checks the connection status first
+   * and only fetches the message list -- and only keeps polling -- while
+   * actually connected, so a project that never connected WhatsApp (the
+   * common case) costs nothing beyond one cheap status check.
+   */
+  useEffect(() => {
+    if (!project || project.status !== "built") {
+      setWhatsappUnreadCount(0);
+      return;
+    }
+    const projectId = project.id;
+    let cancelled = false;
+    let intervalId: ReturnType<typeof setInterval> | null = null;
+
+    async function checkUnread() {
+      try {
+        const status = await getWhatsAppStatus(projectId);
+        if (cancelled) return;
+        if (status.status !== "connected") {
+          setWhatsappUnreadCount(0);
+          return;
+        }
+        const { messages } = await listWhatsAppMessages(projectId);
+        if (cancelled) return;
+        setWhatsappUnreadCount(countUnreadWhatsAppMessages(messages, getWhatsAppLastSeenId(projectId)));
+      } catch {
+        // A single failed background check isn't worth surfacing to the
+        // user -- just skip this tick and try again on the next one.
+      }
+    }
+
+    checkUnread();
+    intervalId = setInterval(checkUnread, WHATSAPP_UNREAD_POLL_INTERVAL_MS);
+    return () => {
+      cancelled = true;
+      if (intervalId) clearInterval(intervalId);
+    };
+  }, [project?.id, project?.status]);
 
   /**
    * Ctrl/Cmd+K opens global search from anywhere in the preview screen (a
@@ -1320,6 +1381,11 @@ function AppContent() {
               </button>
               <button type="button" className="secondary" onClick={() => openPanel("whatsapp")}>
                 {t("preview.whatsapp")}
+                {whatsappUnreadCount > 0 && (
+                  <span className="whatsapp-unread-badge" aria-label={t("whatsapp.unreadBadge", { count: String(whatsappUnreadCount) })}>
+                    {whatsappUnreadCount}
+                  </span>
+                )}
               </button>
               <button type="button" className="secondary" onClick={() => openPanel("collaborators")}>
                 {t("preview.collaborators")}

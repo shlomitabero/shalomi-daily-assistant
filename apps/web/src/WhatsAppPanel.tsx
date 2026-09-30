@@ -28,6 +28,7 @@ import {
   removeRecentWhatsAppNumber,
 } from "./whatsappRecentNumbers.js";
 import { getWhatsAppLogFilter, setWhatsAppLogFilter as persistWhatsAppLogFilter } from "./whatsappLogFilter.js";
+import { setWhatsAppLastSeenId } from "./whatsappUnread.js";
 
 /**
  * Mirrors EntityPanel.tsx's and GlobalSearchPanel.tsx's own Highlighted
@@ -284,6 +285,21 @@ export function WhatsAppPanel({
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectId]);
+
+  /**
+   * Keeps the "last seen" marker (see whatsappUnread.ts) in sync with
+   * whatever's actually loaded here, from every source that updates
+   * `messages` -- the initial mount fetch, the connected-poll's own live
+   * refresh (round 288), sending/retrying a test message, all of them.
+   * The topbar's own unread badge (App.tsx) is what actually reads this
+   * marker; this panel only ever writes it. Deliberately keyed on
+   * `messages` itself (not just its length) so a message removed via
+   * "delete" or "clear" -- which never advances how far the owner has
+   * genuinely read -- doesn't spuriously bump the marker either.
+   */
+  useEffect(() => {
+    if (messages.length > 0) setWhatsAppLastSeenId(projectId, messages[0].id);
+  }, [projectId, messages]);
 
   async function handleConnect() {
     setConnecting(true);

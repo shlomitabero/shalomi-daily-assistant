@@ -9,6 +9,7 @@ import { act, cleanup, fireEvent, render } from "@testing-library/react";
 import type { WhatsAppMessageLogEntry } from "./api.js";
 import { WhatsAppPanel } from "./WhatsAppPanel.js";
 import { getWhatsAppLogFilter } from "./whatsappLogFilter.js";
+import { getWhatsAppLastSeenId } from "./whatsappUnread.js";
 import { LanguageProvider } from "./i18n/LanguageContext.js";
 import { ThemeProvider } from "./theme/ThemeContext.js";
 
@@ -448,6 +449,84 @@ test("WhatsAppPanel sends the exact typed recipient/message and refreshes the me
 
       const logEntry = document.querySelector(".whatsapp-log-list li")!;
       assert.match(logEntry.textContent ?? "", /Hello from test/, "the message log must reflect the real server response after sending");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
+ * Regression test for round 289's WhatsApp unread-badge feature
+ * (whatsappUnread.ts + App.tsx's topbar poll): the badge reads its "last
+ * seen" marker purely from localStorage, written by this panel -- if the
+ * panel never actually wrote it after loading real messages, the badge
+ * would have no way to ever settle back to 0 after being opened. Confirms
+ * a real render, connected with messages already present, ends up with
+ * the newest message's id (not any other message's, and not left empty)
+ * persisted as the last-seen marker for this exact project.
+ */
+test("WhatsAppPanel marks the newest loaded message as 'seen' in localStorage once messages load, for the topbar's own unread badge to read", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    const messages: WhatsAppMessageLogEntry[] = [
+      {
+        id: "m2",
+        direction: "in",
+        fromNumber: "972521112233",
+        toNumber: "972501234567",
+        body: "Newest",
+        matchedLabel: null,
+        matchedEntityName: null,
+        matchedRecordId: null,
+        status: "received",
+        createdAt: new Date().toISOString(),
+      },
+      {
+        id: "m1",
+        direction: "in",
+        fromNumber: "972521112233",
+        toNumber: "972501234567",
+        body: "Older",
+        matchedLabel: null,
+        matchedEntityName: null,
+        matchedRecordId: null,
+        status: "received",
+        createdAt: new Date().toISOString(),
+      },
+    ];
+    globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/integrations/whatsapp/status") {
+        return new Response(
+          JSON.stringify({ status: "connected", phoneNumber: "972501234567", qrDataUrl: null, error: null }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      if (method === "GET" && input === "/api/projects/proj1/integrations/whatsapp/messages") {
+        return new Response(JSON.stringify({ messages }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+    try {
+      assert.equal(getWhatsAppLastSeenId("proj1"), null, "nothing should be marked seen before the panel has ever loaded anything");
+
+      render(
+        React.createElement(
+          ThemeProvider,
+          null,
+          React.createElement(LanguageProvider, null, React.createElement(WhatsAppPanel, { projectId: "proj1", projectName: "Test Project", onClose: () => {}, onJumpToEntity: () => {}, onJumpToRecord: () => {} })),
+        ),
+      );
+      await waitForCondition(() => document.querySelectorAll(".whatsapp-log-list li").length === 2);
+      // The DOM commit and the "mark seen" effect are two separate
+      // useEffects reacting to the same `messages` update -- React's
+      // scheduler can run the DOM-affecting render and flush this file's
+      // passive effects on separate scheduler ticks, so poll the actual
+      // thing under test (the storage write) rather than assuming it's
+      // already landed the instant the DOM looks right.
+      await waitForCondition(() => getWhatsAppLastSeenId("proj1") !== null);
+
+      assert.equal(getWhatsAppLastSeenId("proj1"), "m2", "the newest loaded message's id must be marked seen, not the older one and not left empty");
     } finally {
       globalThis.fetch = originalFetch;
     }

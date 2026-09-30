@@ -387,7 +387,7 @@ test("removeRefineHistoryEntry drops only the matching entry, leaving the rest (
  * App.tsx, strips its TypeScript with esbuild, and runs it with mock
  * setShowX functions to confirm every open closes the other four.
  */
-test("App's openPanel closes every other overlay panel when opening one, instead of letting them stack", () => {
+test("App's openPanel closes every other overlay panel when opening one, instead of letting them stack, and zeroes the WhatsApp unread badge only when opening the WhatsApp panel", () => {
   const appSrc = readFileSync(new URL("./App.tsx", import.meta.url), "utf8");
   const handlerMatch = appSrc.match(
     / {2}function openPanel\(panel: "history" \| "twin" \| "whatsapp" \| "collaborators" \| "search" \| "shortcuts"\) \{[\s\S]*?\n {2}\}\n/,
@@ -396,7 +396,15 @@ test("App's openPanel closes every other overlay panel when opening one, instead
   const { code } = transformSync(handlerMatch![0], { loader: "ts" });
 
   function run(panel: string) {
-    const state = { history: false, twin: false, whatsapp: false, collaborators: false, search: false, shortcuts: false };
+    const state = {
+      history: false,
+      twin: false,
+      whatsapp: false,
+      collaborators: false,
+      search: false,
+      shortcuts: false,
+      whatsappUnreadResetCalls: 0,
+    };
     const fn = new Function(
       "setShowHistory",
       "setShowTwin",
@@ -404,6 +412,7 @@ test("App's openPanel closes every other overlay panel when opening one, instead
       "setShowCollaborators",
       "setShowSearch",
       "setShowShortcuts",
+      "setWhatsappUnreadCount",
       `${code}\nreturn openPanel;`,
     )(
       (v: boolean) => (state.history = v),
@@ -412,18 +421,22 @@ test("App's openPanel closes every other overlay panel when opening one, instead
       (v: boolean) => (state.collaborators = v),
       (v: boolean) => (state.search = v),
       (v: boolean) => (state.shortcuts = v),
+      (v: number) => {
+        assert.equal(v, 0, "openPanel must only ever reset the badge to 0, never any other value");
+        state.whatsappUnreadResetCalls += 1;
+      },
     ) as (panel: string) => void;
     fn(panel);
     return state;
   }
 
   const closed = { history: false, twin: false, whatsapp: false, collaborators: false, search: false, shortcuts: false };
-  assert.deepEqual(run("history"), { ...closed, history: true });
-  assert.deepEqual(run("twin"), { ...closed, twin: true });
-  assert.deepEqual(run("whatsapp"), { ...closed, whatsapp: true });
-  assert.deepEqual(run("collaborators"), { ...closed, collaborators: true });
-  assert.deepEqual(run("search"), { ...closed, search: true });
-  assert.deepEqual(run("shortcuts"), { ...closed, shortcuts: true });
+  assert.deepEqual(run("history"), { ...closed, history: true, whatsappUnreadResetCalls: 0 });
+  assert.deepEqual(run("twin"), { ...closed, twin: true, whatsappUnreadResetCalls: 0 });
+  assert.deepEqual(run("whatsapp"), { ...closed, whatsapp: true, whatsappUnreadResetCalls: 1 });
+  assert.deepEqual(run("collaborators"), { ...closed, collaborators: true, whatsappUnreadResetCalls: 0 });
+  assert.deepEqual(run("search"), { ...closed, search: true, whatsappUnreadResetCalls: 0 });
+  assert.deepEqual(run("shortcuts"), { ...closed, shortcuts: true, whatsappUnreadResetCalls: 0 });
 });
 
 /**
