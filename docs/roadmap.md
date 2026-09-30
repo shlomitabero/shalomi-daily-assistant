@@ -17316,6 +17316,82 @@ not a single "make it perfect" claim.
   clean builds for both `@forge/web` (`tsc -b` + `vite build`, 85
   modules transformed) and `@forge/api` (`esbuild`).
 
+### Round 294 — The calendar view now actually highlights today's cell
+
+  Real, visible feature found by a fresh Explore survey (no candidate was
+  known going in). The calendar view's day-cell grid never distinguished
+  "today" from any other day in the currently-viewed month: confirmed via
+  a full-repo grep for `calendar-day-today|isToday` turning up zero
+  matches, and by reading the day-cell `className` logic in both
+  `EntityPanel.tsx` and `codegen.ts`, which only ever branched on
+  `inCurrentMonth` and drag-over state. The only existing "today"
+  affordance anywhere was the nav bar's own "Today" button, which jumps
+  the visible *month* back to now -- the actual grid cell for today's
+  date looked identical to every other day, so a user scanning the
+  calendar for appointments/deadlines had to mentally compute which cell
+  was "now".
+
+  Exported the previously-private `isSameDay` helper from
+  `entityFormatting.ts` (it already existed, used internally by
+  `buildCalendarMonth` to match records onto their day), and reused it
+  in `CalendarView`'s day-cell render to compute `isToday =
+  day.inCurrentMonth && isSameDay(day.date, new Date())`. Rewrote the
+  cell's `className` from a nested ternary into a small `dayClasses`
+  array (a third independent condition no longer fit cleanly as one
+  ternary), adding a new `calendar-day-today` class when `isToday` is
+  true. Styled it in `styles.css` with an accent-colored border
+  (`box-shadow: inset 0 0 0 1px var(--accent)`) and a bolded,
+  accent-colored day number.
+
+  Ported the identical logic to `codegen.ts`'s exported `EntityView.jsx`,
+  reusing its own existing `isSameCalendarDay` helper (no new date-math
+  duplicated), with a matching `.calendar-day-today` rule added to the
+  exported app's embedded stylesheet.
+
+  Test: 1 new `entityFormatting.test.ts` unit test for the now-exported
+  `isSameDay` (same year/month/day regardless of time-of-day; false
+  across a day, month, or year boundary). 1 new `EntityPanel.test.ts` DOM
+  test renders the real calendar grid and confirms exactly one in-month
+  cell carries `calendar-day-today`, and that it's the cell showing
+  today's real day-of-month number (an empty record store was tried
+  first and had to be dropped -- `EntityPanel.tsx:1763` falls into a
+  separate "no records yet" empty-state branch before the toolbar/view
+  toggle ever renders at all, so the test now seeds one unrelated
+  record on an arbitrary past date instead). Updated 2 existing
+  `codegen.test.ts` assertions that had matched the *exact previous*
+  ternary-string form of the generated `className` (`"calendar-day
+  calendar-day-clickable" : "calendar-day-outside"` and its drag-over
+  sibling), which the new `dayClasses`-array form no longer produces
+  verbatim -- re-pointed them at the new `dayClasses.push(...)` calls
+  instead. Added 1 new `codegen.test.ts` test asserting the generated
+  `isToday`/`dayClasses.push("calendar-day-today")` wiring and the
+  matching CSS rule, plus executing the real generated
+  `isSameCalendarDay` (extracted via `new Function`, not reimplemented).
+
+  Deliberate-break-and-restore, done on both the live and exported
+  implementations independently: forced `isToday` to always be `false`
+  in each -- the live DOM test failed with the exact expected `0 !== 1`
+  assertion diff, and the codegen test failed on its `isToday`/CSS regex
+  match. Restored both from verified pre-fix backups with byte-identical
+  `diff` against each; re-ran everything and confirmed all tests passed
+  again.
+
+  Live Playwright verification (real Chromium, real dev servers): signed
+  up, built a real clinic project ("A clinic with patients and
+  appointments."), created a real Appointment record dated today via the
+  API (the toolbar and its view-mode toggle only render once at least
+  one record exists), reloaded and reopened the project, switched to
+  Calendar view, and confirmed: exactly one `.calendar-day-today` cell
+  in the grid, showing the real current day-of-month number, and its
+  actual computed `border-color` genuinely differs from a normal day
+  cell's -- a real rendered-pixel check, not just a class-name assertion.
+
+  Full suite green: **1108 tests** (up from 1105 -- `@forge/web` 612 →
+  614, `@forge/api` 303 → 304; `@forge/shared` 13, `@forge/spec-engine`
+  84, `@forge/db` 93 unchanged) via `npm test` at the repo root, plus
+  clean builds for both `@forge/web` (`tsc -b` + `vite build`, 85
+  modules transformed) and `@forge/api` (`esbuild`).
+
 ## Phase 4
 
 - Template/agent marketplace
