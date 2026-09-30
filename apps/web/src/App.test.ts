@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import { transformSync } from "esbuild";
 import type { AgentStepEvent, Entity, Field, OpenQuestion, Project } from "@forge/shared";
+import type { WhatsAppMessageLogEntry } from "./api.js";
 import {
   countAnsweredOpenQuestions,
   filterAndSortProjects,
@@ -14,6 +15,7 @@ import {
   formatProjectCreatedDate,
   formatRefineTimestamp,
   isEditableEventTarget,
+  maybeNotifyNewWhatsAppMessages,
   removeRefineHistoryEntry,
   specProviderLabel,
   summarizeRefineImpact,
@@ -437,6 +439,139 @@ test("App's openPanel closes every other overlay panel when opening one, instead
   assert.deepEqual(run("collaborators"), { ...closed, collaborators: true, whatsappUnreadResetCalls: 0 });
   assert.deepEqual(run("search"), { ...closed, search: true, whatsappUnreadResetCalls: 0 });
   assert.deepEqual(run("shortcuts"), { ...closed, shortcuts: true, whatsappUnreadResetCalls: 0 });
+});
+
+function whatsAppMsg(overrides: Partial<WhatsAppMessageLogEntry> & { id: string }): WhatsAppMessageLogEntry {
+  return {
+    direction: "in",
+    fromNumber: "972521112233",
+    toNumber: "972501234567",
+    body: "hello",
+    matchedLabel: null,
+    matchedEntityName: null,
+    matchedRecordId: null,
+    status: "received",
+    createdAt: new Date().toISOString(),
+    ...overrides,
+  };
+}
+
+const notifyT = (key: string, params?: Record<string, string>) =>
+  params ? `${key}:${JSON.stringify(params)}` : key;
+
+/**
+ * New in this round: a real desktop notification for a WhatsApp message
+ * that arrives while the tab is backgrounded -- the topbar unread badge
+ * (round 288/289) is invisible then. This is the impure "decide AND fire"
+ * glue around findNewInboundMessages' own pure comparison (already unit
+ * tested in whatsappNotify.test.ts), extracted out of App.tsx's unread-poll
+ * effect specifically so this wiring has its own regression test -- round
+ * 292's own lesson that a pure helper's unit tests don't cover the glue
+ * code that actually calls it. Stubs a minimal constructible
+ * globalThis.Notification to capture what would have been shown, the same
+ * "stub the missing browser API" approach round 291's matchMedia stub used.
+ */
+test("maybeNotifyNewWhatsAppMessages fires a real Notification with the correct title/body when the tab is hidden and permission is granted", () => {
+  const originalNotification = (globalThis as { Notification?: unknown }).Notification;
+  const calls: Array<{ title: string; body: string }> = [];
+  class FakeNotification {
+    static permission = "granted";
+    constructor(title: string, options?: { body?: string }) {
+      calls.push({ title, body: options?.body ?? "" });
+    }
+  }
+  (globalThis as { Notification: unknown }).Notification = FakeNotification;
+  try {
+    const messages = [whatsAppMsg({ id: "m2", fromNumber: "972529998888", body: "Are you open tomorrow?" }), whatsAppMsg({ id: "m1" })];
+    const ref = { current: "m1" };
+    maybeNotifyNewWhatsAppMessages(messages, ref, true, notifyT);
+    assert.deepEqual(calls, [{ title: 'whatsapp.notification.title.one:{"from":"972529998888"}', body: "Are you open tomorrow?" }]);
+    assert.equal(ref.current, "m2", "the ref must advance to the newest message id");
+  } finally {
+    (globalThis as { Notification?: unknown }).Notification = originalNotification;
+  }
+});
+
+test("maybeNotifyNewWhatsAppMessages never calls Notification when the tab is NOT hidden, even with new messages and granted permission -- but still advances the ref", () => {
+  const originalNotification = (globalThis as { Notification?: unknown }).Notification;
+  let constructed = 0;
+  class FakeNotification {
+    static permission = "granted";
+    constructor() {
+      constructed++;
+    }
+  }
+  (globalThis as { Notification: unknown }).Notification = FakeNotification;
+  try {
+    const messages = [whatsAppMsg({ id: "m2" }), whatsAppMsg({ id: "m1" })];
+    const ref = { current: "m1" };
+    maybeNotifyNewWhatsAppMessages(messages, ref, false, notifyT);
+    assert.equal(constructed, 0, "must never construct a Notification while the tab is focused");
+    assert.equal(ref.current, "m2", "the ref must still advance even though no notification fired");
+  } finally {
+    (globalThis as { Notification?: unknown }).Notification = originalNotification;
+  }
+});
+
+test("maybeNotifyNewWhatsAppMessages never calls Notification when permission isn't granted, even while the tab is hidden", () => {
+  const originalNotification = (globalThis as { Notification?: unknown }).Notification;
+  let constructed = 0;
+  class FakeNotification {
+    static permission = "default";
+    constructor() {
+      constructed++;
+    }
+  }
+  (globalThis as { Notification: unknown }).Notification = FakeNotification;
+  try {
+    const messages = [whatsAppMsg({ id: "m2" }), whatsAppMsg({ id: "m1" })];
+    const ref = { current: "m1" };
+    maybeNotifyNewWhatsAppMessages(messages, ref, true, notifyT);
+    assert.equal(constructed, 0, "must never construct a Notification while permission is merely 'default' (not yet granted)");
+  } finally {
+    (globalThis as { Notification?: unknown }).Notification = originalNotification;
+  }
+});
+
+test("maybeNotifyNewWhatsAppMessages shows the 'many' title with a real count when several inbound messages arrived at once", () => {
+  const originalNotification = (globalThis as { Notification?: unknown }).Notification;
+  const calls: Array<{ title: string; body: string }> = [];
+  class FakeNotification {
+    static permission = "granted";
+    constructor(title: string, options?: { body?: string }) {
+      calls.push({ title, body: options?.body ?? "" });
+    }
+  }
+  (globalThis as { Notification: unknown }).Notification = FakeNotification;
+  try {
+    const messages = [whatsAppMsg({ id: "m3", body: "newest" }), whatsAppMsg({ id: "m2", body: "middle" }), whatsAppMsg({ id: "m1" })];
+    const ref = { current: "m1" };
+    maybeNotifyNewWhatsAppMessages(messages, ref, true, notifyT);
+    assert.deepEqual(calls, [{ title: 'whatsapp.notification.title.many:{"count":"2"}', body: "newest" }]);
+  } finally {
+    (globalThis as { Notification?: unknown }).Notification = originalNotification;
+  }
+});
+
+test("maybeNotifyNewWhatsAppMessages does nothing at all on the first-ever check (null ref baseline), even with the tab hidden and permission granted", () => {
+  const originalNotification = (globalThis as { Notification?: unknown }).Notification;
+  let constructed = 0;
+  class FakeNotification {
+    static permission = "granted";
+    constructor() {
+      constructed++;
+    }
+  }
+  (globalThis as { Notification: unknown }).Notification = FakeNotification;
+  try {
+    const messages = [whatsAppMsg({ id: "m2" }), whatsAppMsg({ id: "m1" })];
+    const ref = { current: null as string | null };
+    maybeNotifyNewWhatsAppMessages(messages, ref, true, notifyT);
+    assert.equal(constructed, 0, "the very first check must only seed the baseline, never notify for pre-existing history");
+    assert.equal(ref.current, "m2", "the baseline must still be seeded to the newest message id");
+  } finally {
+    (globalThis as { Notification?: unknown }).Notification = originalNotification;
+  }
 });
 
 /**

@@ -2491,6 +2491,18 @@ button.sort-header:hover:not(:disabled) {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
+  flex-wrap: wrap;
+}
+
+.whatsapp-connected-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.whatsapp-notify-status {
+  margin: 0;
 }
 
 .whatsapp-connected-status {

@@ -533,6 +533,124 @@ test("WhatsAppPanel marks the newest loaded message as 'seen' in localStorage on
   });
 });
 
+function mockConnectedStatusFetch(): typeof fetch {
+  return (async (input: string, init?: RequestInit): Promise<Response> => {
+    const method = init?.method ?? "GET";
+    if (method === "GET" && input === "/api/projects/proj1/integrations/whatsapp/status") {
+      return new Response(
+        JSON.stringify({ status: "connected", phoneNumber: "972501234567", qrDataUrl: null, error: null }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    }
+    if (method === "GET" && input === "/api/projects/proj1/integrations/whatsapp/messages") {
+      return new Response(JSON.stringify({ messages: [] }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    throw new Error(`unexpected request ${method} ${input}`);
+  }) as typeof fetch;
+}
+
+/**
+ * New in this round: a real desktop-notification permission toggle so a
+ * new WhatsApp message can alert the user even with the tab backgrounded
+ * (App.tsx's own background poll only shows a topbar badge, invisible while
+ * the tab isn't focused -- see whatsappNotify.ts). jsdom implements no
+ * Notification API at all, so this stubs one with a controllable
+ * requestPermission the way round 291's own matchMedia stub did for
+ * ThemeContext. Confirms the real button appears when permission is still
+ * "default", that clicking it calls the real requestPermission and updates
+ * the UI to reflect a "granted" result, without reimplementing the click
+ * handler's own logic.
+ */
+test("WhatsAppPanel's notification toggle requests permission on click and reflects a granted result", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    let requestPermissionCalls = 0;
+    (globalThis as unknown as { Notification: unknown }).Notification = {
+      permission: "default",
+      requestPermission: async () => {
+        requestPermissionCalls++;
+        return "granted";
+      },
+    };
+    globalThis.fetch = mockConnectedStatusFetch();
+    try {
+      render(
+        React.createElement(
+          ThemeProvider,
+          null,
+          React.createElement(LanguageProvider, null, React.createElement(WhatsAppPanel, { projectId: "proj1", projectName: "Test Project", onClose: () => {}, onJumpToEntity: () => {}, onJumpToRecord: () => {} })),
+        ),
+      );
+      await waitForCondition(() => document.querySelector(".whatsapp-connected-box") !== null);
+
+      const enableButton = [...document.querySelectorAll(".whatsapp-connected-actions button")].find(
+        (b) => b.textContent === "🔔 Enable desktop notifications",
+      ) as HTMLButtonElement;
+      assert.ok(enableButton, "a real enable-notifications button must render while permission is still 'default'");
+
+      fireEvent.click(enableButton);
+      await waitForCondition(() => document.querySelector(".whatsapp-notify-status") !== null);
+
+      assert.equal(requestPermissionCalls, 1, "clicking must call the real Notification.requestPermission, not a reimplementation");
+      assert.equal(
+        document.querySelector(".whatsapp-notify-status")?.textContent,
+        "🔔 Desktop notifications enabled",
+        "once granted, the UI must reflect the real permission result instead of still showing the enable button",
+      );
+      assert.equal(
+        [...document.querySelectorAll(".whatsapp-connected-actions button")].some((b) => b.textContent?.includes("Enable desktop notifications")),
+        false,
+        "the enable button must disappear once permission is granted",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+      delete (globalThis as unknown as { Notification?: unknown }).Notification;
+    }
+  });
+});
+
+/**
+ * Companion to the test above: when the browser already denied notification
+ * permission (e.g. the user blocked it once before, outside this app),
+ * confirms the panel shows a real "blocked" message instead of a
+ * now-pointless enable button that would just trigger another silent
+ * denial -- browsers never re-prompt once a user has explicitly denied.
+ */
+test("WhatsAppPanel shows a blocked message, not an enable button, when notification permission is already denied", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    (globalThis as unknown as { Notification: unknown }).Notification = {
+      permission: "denied",
+      requestPermission: async () => "denied",
+    };
+    globalThis.fetch = mockConnectedStatusFetch();
+    try {
+      render(
+        React.createElement(
+          ThemeProvider,
+          null,
+          React.createElement(LanguageProvider, null, React.createElement(WhatsAppPanel, { projectId: "proj1", projectName: "Test Project", onClose: () => {}, onJumpToEntity: () => {}, onJumpToRecord: () => {} })),
+        ),
+      );
+      await waitForCondition(() => document.querySelector(".whatsapp-connected-box") !== null);
+
+      assert.equal(
+        document.querySelector(".whatsapp-notify-status")?.textContent,
+        "🔕 Notifications blocked in browser settings",
+        "an already-denied permission must show the blocked message",
+      );
+      assert.equal(
+        [...document.querySelectorAll(".whatsapp-connected-actions button")].some((b) => b.textContent?.includes("Enable desktop notifications")),
+        false,
+        "no enable button should render once permission is already denied",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+      delete (globalThis as unknown as { Notification?: unknown }).Notification;
+    }
+  });
+});
+
 /**
  * New in this round: the "To" field had no memory at all -- a real owner
  * testing their WhatsApp connection typically sends to the same 1-3

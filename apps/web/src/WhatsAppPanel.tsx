@@ -132,6 +132,14 @@ export function WhatsAppPanel({
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [copyStatus, setCopyStatus] = useState<"idle" | "copied" | "failed">("idle");
+  // "unsupported" covers both a browser with no Notification API at all and
+  // this component's own SSR-less test/build environments -- reading
+  // Notification.permission eagerly (rather than in an effect) means the
+  // enable button never has to flash in before immediately disappearing on
+  // an already-granted/denied browser.
+  const [notifyPermission, setNotifyPermission] = useState<NotificationPermission | "unsupported">(() =>
+    typeof Notification === "undefined" ? "unsupported" : Notification.permission,
+  );
   const dialogRef = useDialogFocusTrap<HTMLDivElement>(onClose);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const pollFailuresRef = useRef(0);
@@ -340,6 +348,17 @@ export function WhatsAppPanel({
     }
   }
 
+  // Must be called from a real user gesture (a click) -- browsers reject a
+  // permission request fired from anywhere else, so this can't just run in
+  // an effect on mount. App.tsx's own background unread-poll checks
+  // Notification.permission itself before ever calling `new Notification`,
+  // so this only needs to update the local UI state; nothing else reads it.
+  async function handleRequestNotifyPermission() {
+    if (typeof Notification === "undefined") return;
+    const result = await Notification.requestPermission();
+    setNotifyPermission(result);
+  }
+
   async function handleSendTest(e: React.FormEvent) {
     e.preventDefault();
     setSending(true);
@@ -526,9 +545,18 @@ export function WhatsAppPanel({
         {s === "connected" && (
           <div className="whatsapp-connected-box">
             <p className="whatsapp-connected-status">{t("whatsapp.connected.as", { phone: status?.phoneNumber ?? "" })}</p>
-            <button type="button" className="secondary small" onClick={handleDisconnect} disabled={disconnecting}>
-              {disconnecting ? t("whatsapp.connected.disconnecting") : t("whatsapp.connected.disconnect")}
-            </button>
+            <div className="whatsapp-connected-actions">
+              {notifyPermission === "default" && (
+                <button type="button" className="secondary small" onClick={handleRequestNotifyPermission}>
+                  {t("whatsapp.notify.enable")}
+                </button>
+              )}
+              {notifyPermission === "granted" && <p className="muted small whatsapp-notify-status">{t("whatsapp.notify.enabled")}</p>}
+              {notifyPermission === "denied" && <p className="muted small whatsapp-notify-status">{t("whatsapp.notify.denied")}</p>}
+              <button type="button" className="secondary small" onClick={handleDisconnect} disabled={disconnecting}>
+                {disconnecting ? t("whatsapp.connected.disconnecting") : t("whatsapp.connected.disconnect")}
+              </button>
+            </div>
           </div>
         )}
 

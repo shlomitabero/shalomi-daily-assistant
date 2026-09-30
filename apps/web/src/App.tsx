@@ -18,6 +18,7 @@ import {
   streamBuild,
   streamRefine,
   subscribeWakeStatus,
+  type WhatsAppMessageLogEntry,
 } from "./api.js";
 import { AuthScreen } from "./AuthScreen.js";
 import { BuildProgress } from "./BuildProgress.js";
@@ -45,6 +46,7 @@ import {
 import { clearIdeaDraft, getIdeaDraft, saveIdeaDraft } from "./ideaDraft.js";
 import { formatDocumentTitle } from "./documentTitle.js";
 import { countUnreadWhatsAppMessages, getWhatsAppLastSeenId } from "./whatsappUnread.js";
+import { findNewInboundMessages } from "./whatsappNotify.js";
 import { LanguageProvider, useTranslation } from "./i18n/LanguageContext.js";
 import { LanguageSwitcher } from "./i18n/LanguageSwitcher.js";
 import type { Lang } from "./i18n/language.js";
@@ -298,6 +300,40 @@ export function isEditableEventTarget(target: EventTarget | null): boolean {
   return el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.tagName === "SELECT";
 }
 
+/**
+ * A real OS-level alert for a WhatsApp message that arrives while the tab
+ * is backgrounded -- the topbar unread badge (round 288/289) is invisible
+ * then, which is exactly the moment a live WhatsApp channel most needs one.
+ * Pulled out of the unread-poll effect below as its own exported function
+ * (rather than inline in the effect) so its actual decision-and-fire logic
+ * -- not just findNewInboundMessages' own pure comparison -- has a real
+ * regression test, the same "extract the impure glue too, not just the
+ * pure helper underneath it" lesson round 292's commitPendingDelete fix
+ * established.
+ *
+ * `lastNotifiedIdRef` is always updated to the newest message's id,
+ * whether or not a notification actually fires -- once the tab is
+ * focused when new messages arrive, the topbar badge already shows them,
+ * so no notification should fire retroactively once the tab is later
+ * backgrounded for messages the user has already effectively seen arrive.
+ */
+export function maybeNotifyNewWhatsAppMessages(
+  messages: WhatsAppMessageLogEntry[],
+  lastNotifiedIdRef: { current: string | null },
+  isTabHidden: boolean,
+  t: (key: string, params?: Record<string, string>) => string,
+): void {
+  const newMessages = findNewInboundMessages(messages, lastNotifiedIdRef.current);
+  lastNotifiedIdRef.current = messages[0]?.id ?? lastNotifiedIdRef.current;
+  if (!newMessages || !isTabHidden) return;
+  if (typeof Notification === "undefined" || Notification.permission !== "granted") return;
+  const title =
+    newMessages.count === 1
+      ? t("whatsapp.notification.title.one", { from: newMessages.fromNumber })
+      : t("whatsapp.notification.title.many", { count: String(newMessages.count) });
+  new Notification(title, { body: newMessages.snippet });
+}
+
 export default function App() {
   return (
     <ThemeProvider>
@@ -337,6 +373,12 @@ function AppContent() {
   const [showTwin, setShowTwin] = useState(false);
   const [showWhatsApp, setShowWhatsApp] = useState(false);
   const [whatsappUnreadCount, setWhatsappUnreadCount] = useState(0);
+  // The newest inbound WhatsApp message id a desktop notification has
+  // already been shown for -- separate from the topbar badge's own "last
+  // seen" marker (whatsappUnread.ts), which only moves when the panel is
+  // actually opened and can stay stale for a long time. See the unread-poll
+  // effect below for why this needs its own tracking.
+  const lastNotifiedWhatsAppIdRef = useRef<string | null>(null);
   const [showCollaborators, setShowCollaborators] = useState(false);
   const [showChangePassword, setShowChangePassword] = useState(false);
   const [showDeleteAccount, setShowDeleteAccount] = useState(false);
@@ -471,6 +513,10 @@ function AppContent() {
     const projectId = project.id;
     let cancelled = false;
     let intervalId: ReturnType<typeof setInterval> | null = null;
+    // A fresh baseline per project/reconnect -- see findNewInboundMessages'
+    // own doc comment for why a null baseline must never fire a desktop
+    // notification for a customer's entire pre-existing message history.
+    lastNotifiedWhatsAppIdRef.current = null;
 
     async function checkUnread() {
       try {
@@ -483,6 +529,7 @@ function AppContent() {
         const { messages } = await listWhatsAppMessages(projectId);
         if (cancelled) return;
         setWhatsappUnreadCount(countUnreadWhatsAppMessages(messages, getWhatsAppLastSeenId(projectId)));
+        maybeNotifyNewWhatsAppMessages(messages, lastNotifiedWhatsAppIdRef, document.hidden, t);
       } catch {
         // A single failed background check isn't worth surfacing to the
         // user -- just skip this tick and try again on the next one.
