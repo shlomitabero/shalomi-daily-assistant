@@ -3610,6 +3610,90 @@ test("EntityPanel's table shows a totals row summing each numeric column over th
 });
 
 /**
+ * New in this round: grouping the table by an enum/boolean field (round
+ * ~286-ish) and the numeric totals row (round 297) each shipped
+ * independently and were never wired together -- grouping Orders by Status
+ * specifically to compare revenue across "Paid" vs "Pending" still only
+ * ever showed one grand total under the WHOLE table, forcing a business
+ * owner to re-add each group's rows by eye, defeating the point of
+ * grouping a numeric table at all. Confirms each group now gets its own
+ * subtotal row (summing only that group's own records), the grand total in
+ * the tfoot is unaffected, and reverting to "no grouping" removes the
+ * per-group subtotal rows again.
+ */
+test("EntityPanel's grouped table shows a numeric subtotal row per group, summing only that group's own records", async () => {
+  await withJsdom(async () => {
+    const orderEntity: Entity = {
+      name: "Order",
+      label: "Order",
+      fields: [
+        { name: "client", label: "Client", type: "text", required: true },
+        {
+          name: "status",
+          label: "Status",
+          type: "enum",
+          required: true,
+          enumValues: ["paid", "pending"],
+          enumLabels: { paid: "Paid", pending: "Pending" },
+        },
+        { name: "amount", label: "Amount", type: "number", required: true },
+      ],
+    };
+    const store: EntityRecord[] = [
+      { id: 1, createdAt: "x", client: "Acme Corp", status: "paid", amount: 1000 },
+      { id: 2, createdAt: "x", client: "Globex", status: "paid", amount: 500 },
+      { id: 3, createdAt: "x", client: "Initech", status: "pending", amount: 300 },
+    ];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string) => {
+      if (input === "/api/projects/proj1/entities/Order") {
+        return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${input}`);
+    }) as typeof fetch;
+    try {
+      renderEntityPanel({ entity: orderEntity, allEntities: [orderEntity] });
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 3);
+
+      const groupBySelect = document.querySelector(".entity-group-by") as HTMLSelectElement;
+      fireEvent.change(groupBySelect, { target: { value: "status" } });
+      await waitForCondition(() => document.querySelectorAll(".entity-group-header-row").length === 2);
+
+      const subtotalRows = Array.from(document.querySelectorAll(".entity-group-totals-row"));
+      assert.equal(subtotalRows.length, 2, "expected one subtotal row per group");
+      assert.match(
+        subtotalRows[0].textContent ?? "",
+        /1,500/,
+        "the Paid group's subtotal (1000 + 500) must be 1,500, not the whole table's total",
+      );
+      assert.doesNotMatch(subtotalRows[0].textContent ?? "", /300/, "the Paid group's subtotal must not include Pending's amount");
+      assert.match(
+        subtotalRows[1].textContent ?? "",
+        /(?<!,)300/,
+        "the Pending group's subtotal must be its own single record's amount (300), not 1,500 or 1,800",
+      );
+
+      assert.match(
+        document.querySelector("table tfoot tr")!.textContent ?? "",
+        /1,800/,
+        "the grand total in the tfoot must still sum all groups together (1000 + 500 + 300 = 1800), unaffected by per-group subtotals",
+      );
+
+      fireEvent.change(groupBySelect, { target: { value: "" } });
+      await waitForCondition(() => document.querySelectorAll(".entity-group-header-row").length === 0);
+      assert.equal(
+        document.querySelectorAll(".entity-group-totals-row").length,
+        0,
+        "reverting to 'no grouping' must remove the per-group subtotal rows",
+      );
+      assert.ok(document.querySelector("table tfoot tr"), "the grand-total tfoot must still be present with no grouping");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * New in this round: a real bug in FieldInput's number input, found by a
  * fresh Explore survey. `<input type="number">` with no `step` attribute
  * defaults to the HTML5 spec's `step="1"` -- typing a perfectly normal

@@ -1110,6 +1110,22 @@ export function EntityPanel({
     [groupField, visibleRecords, t],
   );
 
+  // Per-group numeric subtotals -- without this, grouping a table by e.g.
+  // Order Status still only ever showed one grand total under the whole
+  // table (numericFieldTotals above), defeating the point of grouping a
+  // numeric entity: a person groups Orders by Status specifically to
+  // compare revenue across "Paid" vs "Pending" vs "Cancelled", and had to
+  // manually re-add each group's rows by eye. Keyed by group.key so it's
+  // computed once per group rather than re-summed on every render.
+  const groupNumericTotals = useMemo(() => {
+    if (!hasNumericVisibleField || !recordGroups) return null;
+    const totals: Record<string, Record<string, number>> = {};
+    for (const group of recordGroups) {
+      totals[group.key] = sumNumericFields(group.records, visibleFields);
+    }
+    return totals;
+  }, [hasNumericVisibleField, recordGroups, visibleFields]);
+
   // Scrolls the just-highlighted row into view once it's actually in the
   // rendered table -- runs after visibleRecords updates (the same render
   // that picks up the filter-clearing above), not just after
@@ -2112,6 +2128,23 @@ export function EntityPanel({
                             </td>
                           </tr>
                           {group.records.map(renderRecordRow)}
+                          {hasNumericVisibleField && (
+                            <tr className="entity-group-totals-row">
+                              <td className="select-col" />
+                              {visibleFields.map((f) => (
+                                <td key={f.name}>
+                                  {f.type === "number" && (
+                                    <>
+                                      {t("entity.table.total")}:{" "}
+                                      {formatNumberValue(groupNumericTotals?.[group.key]?.[f.name] ?? 0, lang)}
+                                    </>
+                                  )}
+                                </td>
+                              ))}
+                              <td />
+                              <td />
+                            </tr>
+                          )}
                         </Fragment>
                       ))
                     : visibleRecords.map(renderRecordRow)}

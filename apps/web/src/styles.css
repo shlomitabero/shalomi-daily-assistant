@@ -1055,6 +1055,13 @@ tbody tr:hover {
   text-align: start;
 }
 
+.entity-group-totals-row td {
+  background: var(--surface-subtle);
+  border-bottom: 1px solid var(--border);
+  font-weight: 600;
+  text-align: start;
+}
+
 .view-toggle {
   display: flex;
   gap: 4px;
