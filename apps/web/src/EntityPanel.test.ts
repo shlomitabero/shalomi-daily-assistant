@@ -2148,6 +2148,74 @@ test("EntityPanel's pending delete actually calls the real delete API once the u
 });
 
 /**
+ * Regression test for a real gap found by round 292's Explore survey: the
+ * deferred delete's real DELETE call used to be a bare `.catch(() => {})`,
+ * silently discarding ANY failure -- concretely, deleting a record another
+ * record still references via a relation field fails a real foreign-key
+ * constraint (connection.ts's `PRAGMA foreign_keys = ON`) on the server,
+ * which the API now reports as a 409 (round 292). The row had already
+ * disappeared from view the instant Delete was confirmed, so a silently
+ * swallowed failure meant it stayed invisibly "deleted" in the UI while
+ * still existing on the server -- only reappearing, unexplained, on the
+ * next refetch. Confirms the row is restored and a real error is shown
+ * once the undo window elapses and the real DELETE call actually fails,
+ * exactly the sibling handleBulkDelete already does via Promise.allSettled
+ * (this is the single-delete path's own equivalent fix).
+ */
+test("EntityPanel restores the row and shows an error when the deferred real delete actually fails once the undo window elapses", async (t) => {
+  await withJsdom(async () => {
+    const store: EntityRecord[] = [{ id: 1, name: "Acme Corp", status: "new" }];
+    const originalFetch = globalThis.fetch;
+    const originalConfirm = globalThis.window.confirm;
+    globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/entities/Deal") {
+        return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      if (method === "DELETE" && input === "/api/projects/proj1/entities/Deal/1") {
+        return new Response(JSON.stringify({ error: "Cannot delete this record -- another record still references it through a relation field", code: "RECORD_HAS_DEPENDENT_RECORDS" }), {
+          status: 409,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+    globalThis.window.confirm = (() => true) as typeof window.confirm;
+    try {
+      renderEntityPanel();
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 1);
+
+      t.mock.timers.enable({ apis: ["setTimeout"] });
+
+      fireEvent.click(document.querySelector(".danger") as HTMLButtonElement);
+      assert.equal(document.querySelectorAll("table tbody tr").length, 0, "the row must disappear from view immediately, as before");
+
+      act(() => {
+        t.mock.timers.tick(5000);
+      });
+      // The undo timer firing only *starts* the real (async) DELETE request
+      // -- its eventual failure and the setRecords/setError it triggers land
+      // several real microtask hops later (fetch, res.json(), the thrown
+      // Error), and React's own jsdom-fallback scheduler needs a real
+      // setTimeout to flush that update. Reset back to real timers right
+      // here (rather than only in `finally`, as the sibling tests above do)
+      // so both of those can actually happen, then poll normally.
+      t.mock.timers.reset();
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 1);
+
+      assert.match(
+        document.querySelector(".error")?.textContent ?? "",
+        /another record still refers to it/,
+        "the real failure must be surfaced as a visible error, not silently swallowed",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+      globalThis.window.confirm = originalConfirm;
+    }
+  });
+});
+
+/**
  * Switching entity tabs remounts EntityPanel fresh (App.tsx keys it by
  * entity.name), so leaving one open with a delete still inside its undo
  * window and then navigating away must not silently keep the "deleted"

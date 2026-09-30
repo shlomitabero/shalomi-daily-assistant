@@ -94,6 +94,7 @@ export const translations: Record<Lang, Record<string, string>> = {
     "error.COLLABORATOR_CANNOT_REMOVE_OTHERS": "רק בעל הפרויקט יכול להסיר שותף אחר. אפשר להסיר רק את עצמכם.",
     "error.EXPORT_UNSAFE_IDENTIFIER":
       "לא ניתן לייצא: לאחת הישויות או השדות יש שם שאינו באותיות אנגליות. שנו את השם (השתמשו באותיות אנגליות, ספרות וקו תחתון בלבד) ונסו שוב -- אפשר להמשיך להשתמש באפליקציה בתצוגה החיה גם בלי לייצא.",
+    "error.RECORD_HAS_DEPENDENT_RECORDS": "אי אפשר למחוק את הרשומה הזו -- רשומה אחרת עדיין מקושרת אליה.",
     "lang.he": "עברית",
     "lang.en": "EN",
     "theme.switchToDark": "מעבר למצב כהה",
@@ -557,6 +558,7 @@ export const translations: Record<Lang, Record<string, string>> = {
     "error.COLLABORATOR_CANNOT_REMOVE_OTHERS": "Only the project owner can remove a different collaborator. You can only remove yourself.",
     "error.EXPORT_UNSAFE_IDENTIFIER":
       "Can't export: an entity or field name isn't in English. Rename it (English letters, digits, and underscores only) and try again -- you can keep using the app in the live preview without exporting.",
+    "error.RECORD_HAS_DEPENDENT_RECORDS": "Can't delete this record -- another record still refers to it.",
     "lang.he": "עברית",
     "lang.en": "EN",
     "theme.switchToDark": "Switch to dark mode",

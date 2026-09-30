@@ -4349,3 +4349,66 @@ test("deleting your account requires a valid session, the same as any other auth
     assert.equal(res.status, 401);
   });
 });
+
+/**
+ * Regression test for a real gap found by round 292's Explore survey:
+ * deleting a record another record still points to via a `relation` field
+ * fails a real foreign-key constraint (`PRAGMA foreign_keys = ON`,
+ * connection.ts) -- but that threw a bare "FOREIGN KEY constraint failed"
+ * Error node:sqlite raises, which app.ts's generic error handler turned
+ * into an unexplained 500. Worse, EntityPanel.tsx's own deferred-delete
+ * undo window (round 108-ish) discarded ANY failure silently (a bare
+ * `.catch(() => {})`, fixed the same round as this), so the row would
+ * disappear from view and only reappear, unexplained, on the next
+ * refetch -- the server-side half of that bug, confirmed here directly
+ * against the API rather than through the UI. Now translated into an
+ * actionable 409, the same route-level pattern as EXPORT_UNSAFE_IDENTIFIER
+ * (round 284): confirms the delete is rejected with
+ * RECORD_HAS_DEPENDENT_RECORDS, and -- the actual regression -- that the
+ * referenced record genuinely still exists afterward, not silently gone.
+ */
+test("deleting a record another record still references through a relation field is rejected with RECORD_HAS_DEPENDENT_RECORDS, and the record survives", async () => {
+  await withServer(async (baseUrl) => {
+    const token = await signup(baseUrl, "record-delete-dependent@example.com");
+    const createRes = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ description: "A small courier delivery business." }),
+    });
+    const { project } = (await createRes.json()) as { project: { id: string; spec: { entities: { name: string }[] } } };
+    assert.deepEqual(
+      project.spec.entities.map((e) => e.name).sort(),
+      ["Courier", "Order"],
+      "this description should match exactly Order (with a courierId relation) and Courier",
+    );
+
+    const buildRes = await fetch(`${baseUrl}/api/projects/${project.id}/build`, { method: "POST", headers: authHeaders(token) });
+    await collectSSE(buildRes);
+
+    const courierRes = await fetch(`${baseUrl}/api/projects/${project.id}/entities/Courier`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ name: "Dave", status: "Available" }),
+    });
+    assert.equal(courierRes.status, 201);
+    const { record: courier } = (await courierRes.json()) as { record: { id: number } };
+
+    const orderRes = await fetch(`${baseUrl}/api/projects/${project.id}/entities/Order`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ customerName: "Jane", total: 50, status: "Pending", courierId: courier.id }),
+    });
+    assert.equal(orderRes.status, 201, "the Order must actually be created referencing this courier for the test to mean anything");
+
+    const deleteRes = await fetch(`${baseUrl}/api/projects/${project.id}/entities/Courier/${courier.id}`, {
+      method: "DELETE",
+      headers: authHeaders(token),
+    });
+    assert.equal(deleteRes.status, 409, "deleting a courier a real order still references must be rejected, not 500 or silently succeed");
+    assert.equal(((await deleteRes.json()) as { code?: string }).code, "RECORD_HAS_DEPENDENT_RECORDS");
+
+    const listRes = await fetch(`${baseUrl}/api/projects/${project.id}/entities/Courier`, { headers: authHeaders(token) });
+    const { records: couriers } = (await listRes.json()) as { records: { id: number }[] };
+    assert.ok(couriers.some((c) => c.id === courier.id), "the referenced courier must genuinely still exist -- the rejected delete must not have partially applied");
+  });
+});

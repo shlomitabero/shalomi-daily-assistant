@@ -1256,7 +1256,30 @@ export function createProjectsRouter(db: ForgeDatabase, provider: SpecProvider |
       }
       const entity = findEntity(project, req.params.entityName);
       const recordId = parseRecordId(req.params.recordId);
-      deleteRecord(db, project.id, entity, recordId);
+      /**
+       * `PRAGMA foreign_keys = ON` (connection.ts) makes deleting a record
+       * another record still points to via a `relation` field throw a real
+       * "FOREIGN KEY constraint failed" error from node:sqlite -- app.ts's
+       * generic error handler turned that into an unexplained 500 before
+       * this, with EntityPanel.tsx's own deferred-delete undo window
+       * (round 108-ish) silently swallowing the failure entirely (its
+       * `.catch(() => {})`, fixed the same round as this), so the user saw
+       * the row vanish and then quietly reappear on next refresh with no
+       * error ever shown. Translated into an actionable 409 here instead,
+       * the same route-level pattern as EXPORT_UNSAFE_IDENTIFIER (round 284).
+       */
+      try {
+        deleteRecord(db, project.id, entity, recordId);
+      } catch (err) {
+        if (err instanceof Error && err.message === "FOREIGN KEY constraint failed") {
+          throw new HttpError(
+            409,
+            "Cannot delete this record -- another record still references it through a relation field",
+            "RECORD_HAS_DEPENDENT_RECORDS",
+          );
+        }
+        throw err;
+      }
       res.status(204).end();
     }),
   );

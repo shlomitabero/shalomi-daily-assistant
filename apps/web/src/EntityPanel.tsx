@@ -1147,11 +1147,25 @@ export function EntityPanel({
   }
 
   // Fires the real DELETE request for a record the undo window has already
-  // closed on (either the timer ran out, or a newer delete pre-empted it) --
-  // it was already removed from view the moment Delete was confirmed, so
-  // there's nothing left to roll the screen back to if this itself fails.
-  function commitPendingDelete(pending: PendingDelete) {
-    void deleteRecord(projectId, entity.name, pending.id).catch(() => {});
+  // closed on (either the timer ran out, or a newer delete pre-empted it).
+  // The row was already removed from view the moment Delete was confirmed,
+  // on the assumption the real delete would simply succeed later -- but a
+  // record another record still points to via a `relation` field genuinely
+  // can't be deleted (a real foreign-key constraint, see connection.ts's
+  // `PRAGMA foreign_keys = ON`). This used to be a bare `.catch(() => {})`,
+  // silently discarding that failure: the row stayed gone from view with no
+  // error shown at all, and would only reappear, unexplained, the next time
+  // the panel happened to refetch. Restores the row (same helper
+  // handleUndoDelete uses) and surfaces the real error instead -- setRecords/
+  // setError on an unmounted component (the unmount-flush caller below) are
+  // simply no-ops in React 18, so this is safe from every call site.
+  async function commitPendingDelete(pending: PendingDelete) {
+    try {
+      await deleteRecord(projectId, entity.name, pending.id);
+    } catch (err) {
+      setRecords((prev) => restoreRecordAt(prev, pending.record, pending.index));
+      setError((err as Error).message);
+    }
   }
 
   // Mirrors pendingDelete into a ref so the unmount-flush effect below (and
@@ -1171,7 +1185,7 @@ export function EntityPanel({
       const pending = pendingDeleteRef.current;
       if (pending) {
         clearTimeout(pending.timeoutId);
-        commitPendingDelete(pending);
+        void commitPendingDelete(pending);
       }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1196,7 +1210,7 @@ export function EntityPanel({
 
     if (pendingDeleteRef.current) {
       clearTimeout(pendingDeleteRef.current.timeoutId);
-      commitPendingDelete(pendingDeleteRef.current);
+      void commitPendingDelete(pendingDeleteRef.current);
     }
 
     setError(null);
@@ -1211,7 +1225,7 @@ export function EntityPanel({
     const timeoutId = setTimeout(() => {
       setPendingDelete((current) => {
         if (current?.id !== id) return current;
-        commitPendingDelete(current);
+        void commitPendingDelete(current);
         return null;
       });
     }, UNDO_WINDOW_MS);
