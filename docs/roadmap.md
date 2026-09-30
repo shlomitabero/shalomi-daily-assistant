@@ -17392,6 +17392,110 @@ not a single "make it perfect" claim.
   clean builds for both `@forge/web` (`tsc -b` + `vite build`, 85
   modules transformed) and `@forge/api` (`esbuild`).
 
+### Round 295 — Desktop notifications for new WhatsApp messages while the tab is backgrounded
+
+  Real, visible feature found by a fresh Explore survey (round 294's own
+  CalendarView fix closed that entire area across 4 rounds, so no
+  candidate was known going in). Round 288 made the WhatsApp message log
+  live-update while the panel was open; round 289 added a topbar unread
+  badge so a new message was visible even with the panel closed -- but
+  the badge itself is DOM, invisible the moment the browser tab is
+  backgrounded or minimized, which for a small-business owner using
+  WhatsApp as a live customer channel is exactly when a new message
+  matters most. Confirmed via a full-repo grep
+  (`Notification|requestPermission|serviceWorker`) that the browser
+  Notification API was used nowhere in the app before this round.
+
+  Three pieces:
+  1. **`apps/web/src/whatsappNotify.ts`** (new file) -- a pure
+     `findNewInboundMessages(messages, lastNotifiedId)`, deliberately
+     separate from `whatsappUnread.ts`'s own `countUnreadWhatsAppMessages`:
+     the badge's "last seen" marker only moves when the WhatsApp panel is
+     actually opened and can stay stale for a long time, so reusing it
+     here would re-fire a notification for the same already-notified
+     messages on every 20s poll tick. Walks the DESC-ordered message list
+     from newest, collecting inbound messages up to `lastNotifiedId`;
+     returns `null` when `lastNotifiedId` is `null` (no baseline yet),
+     the same "never notify for pre-existing history" convention
+     `countUnreadWhatsAppMessages` already established for its own null
+     case.
+  2. **`apps/web/src/App.tsx`** -- a new exported
+     `maybeNotifyNewWhatsAppMessages(messages, lastNotifiedIdRef,
+     isTabHidden, t)`, called from the existing unread-poll effect right
+     after it computes the badge count. Deliberately extracted to module
+     scope rather than left inline in the effect (round 292's own lesson:
+     a pure helper's unit tests don't cover the impure glue that actually
+     calls it and decides whether to fire). Always advances
+     `lastNotifiedIdRef` to the newest message id, whether or not a
+     notification actually fires -- if the tab was focused when new
+     messages arrived, the badge already showed them, so no notification
+     should fire retroactively once the tab is later backgrounded. Only
+     calls `new Notification(...)` when `document.hidden` is true, the
+     Notification API exists, and `Notification.permission === "granted"`.
+  3. **`apps/web/src/WhatsAppPanel.tsx`** -- a real permission-request
+     button in the connected-status box (`handleRequestNotifyPermission`,
+     must run from a genuine click since browsers reject a permission
+     prompt triggered any other way), reflecting the real
+     `Notification.permission` state: an "Enable desktop notifications"
+     button while `"default"`, a confirmation message once `"granted"`,
+     and a "blocked in browser settings" message (no pointless button --
+     browsers never re-prompt after an explicit denial) once `"denied"`.
+     Added `whatsapp.notify.*` and `whatsapp.notification.title.*` keys
+     to both Hebrew and English `language.ts` blocks, and
+     `.whatsapp-connected-actions`/`.whatsapp-notify-status` rules to
+     `styles.css` (the connected-box's existing `space-between` flex
+     layout needed a proper actions group once a third element joined the
+     status text and disconnect button).
+
+  Test: 6 new unit tests in `whatsappNotify.test.ts` for
+  `findNewInboundMessages` (null-baseline case, nothing new, a single new
+  message's own details, count+newest-details for several at once, never
+  counting an outbound message, capping at page size when the marker
+  isn't found at all). 5 new tests in `App.test.ts` for
+  `maybeNotifyNewWhatsAppMessages`, imported directly the same way this
+  file already imports other pure/near-pure helpers straight from
+  `App.tsx` (`filterAndSortProjects` etc.) -- a minimal constructible
+  `globalThis.Notification` stub (mirroring round 291's own `matchMedia`
+  stub for the same "jsdom doesn't implement this browser API at all"
+  gap) captures what would have been shown: fires with the correct
+  title/body when hidden+granted; never constructs a Notification when
+  the tab is focused (but still advances the ref); never constructs one
+  when permission is merely `"default"`; the "N messages" plural title
+  with a real count; and the null-baseline case notifies nothing while
+  still seeding the ref. 2 new render-based tests in
+  `WhatsAppPanel.test.ts` (a `globalThis.Notification` stub the same way)
+  confirm the enable button renders and calls the *real*
+  `Notification.requestPermission` on click, updating to the granted
+  message; and that an already-`"denied"` permission shows the blocked
+  message with no enable button at all.
+
+  Deliberate-break-and-restore, for both pieces independently: reverted
+  `findNewInboundMessages`'s real logic to an unconditional early
+  `return null` -- 4 of its own 6 unit tests failed with the exact
+  expected wrong values (the 2 "returns null" tests trivially still
+  passed). Removed the granted-permission/hidden-tab guards from
+  `maybeNotifyNewWhatsAppMessages` (left only the "has new messages"
+  check) -- 2 of its own 5 `App.test.ts` tests failed with `1 !== 0`
+  (a Notification was constructed when it must not have been). Also
+  broke `WhatsAppPanel.tsx`'s `handleRequestNotifyPermission` to never
+  call `setNotifyPermission` -- its own DOM test failed with a real
+  `waitForCondition` timeout, never seeing the UI update. Restored all
+  three from verified pre-fix backups with byte-identical `diff` against
+  each; re-ran everything and confirmed all tests passed again.
+
+  No live Playwright pass this round, for the same reason as rounds
+  288/289: a genuine WhatsApp QR pairing isn't reachable headlessly (no
+  real phone to scan the code), and this codebase's own established
+  substitute for that class of feature -- a render-based DOM test with a
+  stubbed `status: "connected"` fetch response -- is exactly what both
+  new `WhatsAppPanel.test.ts` tests already do.
+
+  Full suite green: **1113 tests** (up from 1108 -- `@forge/web` 614 →
+  627, `@forge/api` 304 unchanged; `@forge/shared` 13, `@forge/spec-engine`
+  84, `@forge/db` 93 unchanged) via `npm test` at the repo root, plus a
+  clean `npm run build --workspace=@forge/web` (86 modules transformed,
+  unchanged from round 294).
+
 ## Phase 4
 
 - Template/agent marketplace
