@@ -188,6 +188,44 @@ test("Order's keyword match does not spuriously trigger on unrelated words that 
   assert.ok(hyphenated.entities.some((e) => e.name === "Order"), "'order-management' must still match Order across the hyphen");
 });
 
+/**
+ * Regression test for the same bug class round 279 fixed for Order's
+ * "order" keyword, found by this round's Explore survey re-checking the
+ * REST of domainEntities.ts's keyword lists via real execution (not just
+ * inspection): Courier's bare "driver" keyword is a substring of
+ * "screwdriver(s)" (a hardware-store description) and "webdriver" (a
+ * QA/testing-tool description), and Product's bare "stock" keyword is a
+ * substring of "livestock" (a farm-management description). Confirmed by
+ * direct execution before the fix: a hardware-store description returned
+ * ["Courier"], a webdriver-testing description also returned ["Courier"],
+ * and a livestock-farm description returned ["Product"] -- none of those
+ * apps have anything to do with delivery couriers or retail inventory.
+ * Both fixed with the same `\b`-bounded RegExp keyword pattern (see
+ * Order's own fix/comment above) rather than a plain string.
+ */
+test("Courier's 'driver' and Product's 'stock' keywords don't spuriously trigger on 'screwdriver(s)'/'webdriver'/'livestock'", async () => {
+  const provider = new HeuristicSpecProvider();
+
+  const hardwareStore = await provider.generate(
+    "We run a hardware store selling screwdrivers, hammers, and drills to contractors.",
+  );
+  assert.ok(!hardwareStore.entities.some((e) => e.name === "Courier"), "a hardware store selling screwdrivers must not get a spurious Courier entity");
+
+  const webdriverApp = await provider.generate("An app to manage our webdriver test suite for QA engineers.");
+  assert.ok(!webdriverApp.entities.some((e) => e.name === "Courier"), "a webdriver test-suite app must not get a spurious Courier entity");
+
+  const farm = await provider.generate("A farm management app for tracking livestock and pasture rotation.");
+  assert.ok(!farm.entities.some((e) => e.name === "Product"), "a livestock farm app must not get a spurious Product entity");
+
+  // The fix must not lose real recall: whole-word "driver"/"drivers" and
+  // "stock"/"stocks" must still match.
+  const drivers = await provider.generate("Manage our fleet of delivery drivers.");
+  assert.ok(drivers.entities.some((e) => e.name === "Courier"), "a plain 'drivers' description must still get a Courier entity");
+
+  const stock = await provider.generate("Track warehouse stock levels for our shop.");
+  assert.ok(stock.entities.some((e) => e.name === "Product"), "a plain 'stock' description must still get a Product entity");
+});
+
 test("recognizes real-estate, education, healthcare, and project-management descriptions with tailored entities", async () => {
   const provider = new HeuristicSpecProvider();
 

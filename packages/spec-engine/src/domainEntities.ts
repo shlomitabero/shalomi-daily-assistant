@@ -235,7 +235,13 @@ export const DOMAIN_ENTITY_RULES: DomainEntityRule[] = [
     },
   },
   {
-    keywords: ["product", "inventory", "stock", "מוצר", "מוצרים", "מלאי"],
+    keywords: [
+      // Bare "stock" is a substring of "livestock" (a farm-management
+      // description has nothing to do with retail inventory) -- same
+      // collision class as Order's "order" fix above. \b-bounded so
+      // "stock"/"stocks" still matches as a real standalone word.
+      "product", "inventory", /\bstock(s)?\b/, "מוצר", "מוצרים", "מלאי",
+    ],
     labelHe: "מוצרים",
     descriptionHe: "פריט שהעסק מוכר או עוקב אחריו.",
     fieldLabelsHe: { name: "שם", sku: 'מק"ט', price: "מחיר", quantity: "כמות" },
@@ -317,7 +323,13 @@ export const DOMAIN_ENTITY_RULES: DomainEntityRule[] = [
     },
   },
   {
-    keywords: ["courier", "driver", "delivery person", "שליח", "שליחים", "נהג", "נהגים"],
+    keywords: [
+      // Bare "driver" is a substring of "screwdriver(s)" (a hardware-store
+      // description) and "webdriver" (a QA/testing-tool description) --
+      // same collision class as Order's "order" fix above. \b-bounded so
+      // "driver"/"drivers" still matches as a real standalone word.
+      "courier", /\bdriver(s)?\b/, "delivery person", "שליח", "שליחים", "נהג", "נהגים",
+    ],
     labelHe: "שליחים",
     descriptionHe: "מי שמבצע את המשלוח ללקוח.",
     fieldLabelsHe: { name: "שם", phone: "טלפון", vehicleType: "סוג רכב", status: "סטטוס" },
