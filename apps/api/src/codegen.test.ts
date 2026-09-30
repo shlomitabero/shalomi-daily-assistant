@@ -501,11 +501,13 @@ test("the exported EntityView's calendar has a real clickable day that pre-fills
 
   assert.match(entityViewJsx, /function startCreateForDate\(date, field\) \{\s*setEditingId\(null\);\s*setForm\(\{ \.\.\.emptyForm\(entity\), \[field\.name\]: formatDateForInput\(date\) \}\);\s*\}/);
   assert.match(entityViewJsx, /onDayClick=\{\(date\) => startCreateForDate\(date, dateField\)\}/);
-  // The day cell's className now also branches on a real drag-over state
-  // (round 242's own drag-to-reschedule) -- still lands on the exact same
-  // "calendar-day-clickable"/"calendar-day-outside" classes this test has
-  // always cared about, just via a slightly longer ternary.
-  assert.match(entityViewJsx, /"calendar-day calendar-day-clickable"\s*: "calendar-day calendar-day-outside"/);
+  // The day cell's className is now built from a dayClasses array (round
+  // 294's own today-highlight needed a third independent condition, which
+  // no longer fits cleanly as a single ternary) -- still lands on the exact
+  // same "calendar-day-clickable"/"calendar-day-outside" classes this test
+  // has always cared about.
+  assert.match(entityViewJsx, /dayClasses\.push\("calendar-day-clickable"\);/);
+  assert.match(entityViewJsx, /dayClasses\.push\("calendar-day-outside"\);/);
   assert.match(entityViewJsx, /onClick=\{day\.inCurrentMonth \? \(\) => onDayClick\(day\.date\) : undefined\}/);
 
   const stylesCss = files.find((f) => f.path === "web/src/styles.css")!.content;
@@ -573,10 +575,7 @@ test("the exported EntityView's calendar record chips are drag-and-drop-able ont
     /onDragLeave=\{\s*day\.inCurrentMonth \? \(\) => setDragOverDay\(\(prev\) => \(prev === dayKey \? null : prev\)\) : undefined\s*\}/,
   );
   assert.match(entityViewJsx, /isDragOver = day\.inCurrentMonth && dragOverDay === dayKey;/);
-  assert.match(
-    entityViewJsx,
-    /"calendar-day calendar-day-clickable calendar-day-drag-over"\s*: "calendar-day calendar-day-clickable"/,
-  );
+  assert.match(entityViewJsx, /if \(isDragOver\) dayClasses\.push\("calendar-day-drag-over"\);/);
   assert.match(entityViewJsx, /onReschedule=\{\(record, date\) => handleCalendarDrop\(record, dateField\.name, date\)\}/);
 
   // handleCalendarDrop must guard against a real no-op (dropping a chip back onto the day it's already on) before ever calling handleMove.
@@ -610,6 +609,35 @@ test("the exported EntityView's calendar record chips are drag-and-drop-able ont
   calls.length = 0;
   handleCalendarDrop({ id: 7, date: "2026-09-15" }, "date", new Date(2026, 8, 15)); // dropped back on the same day
   assert.deepEqual(calls, [], "dropping a chip back onto the day it's already on must never call handleMove");
+});
+
+/**
+ * New in this round: the exported CalendarView's day cells never
+ * distinguished "today" from any other day in the currently-viewed month --
+ * the same gap round 294 fixed in the live preview's own EntityPanel.tsx.
+ * Confirms the generated CalendarView computes isToday via the same
+ * isSameCalendarDay it already uses for record-matching (no duplicated
+ * comparison logic), wires it into a real calendar-day-today class, and
+ * that the exported stylesheet carries the matching highlight rule.
+ */
+test("the exported CalendarView marks today's day cell with calendar-day-today, computed via the same isSameCalendarDay it already uses for record-matching", () => {
+  const entityViewJsx = generateExportFiles(project).find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+
+  assert.match(entityViewJsx, /const isToday = day\.inCurrentMonth && isSameCalendarDay\(day\.date, new Date\(\)\);/);
+  assert.match(entityViewJsx, /if \(isToday\) dayClasses\.push\("calendar-day-today"\);/);
+
+  const stylesCss = generateExportFiles(project).find((f) => f.path === "web/src/styles.css")!.content;
+  assert.match(stylesCss, /\.calendar-day-today \{[^}]*border-color: var\(--accent\)/);
+  assert.match(stylesCss, /\.calendar-day-today \.calendar-day-number \{[^}]*color: var\(--accent\)/);
+
+  // Executes the real generated isSameCalendarDay (extracted from real
+  // codegen output, not reimplemented), the same "run the real generated
+  // code" standard this file's other pure-function tests use.
+  const sameDaySrc = entityViewJsx.match(/function isSameCalendarDay\(a, b\) \{[\s\S]*?\n\}\n/)?.[0];
+  assert.ok(sameDaySrc, "expected to find isSameCalendarDay in generated output");
+  const isSameCalendarDay = new Function(`${sameDaySrc}\nreturn isSameCalendarDay;`)();
+  assert.equal(isSameCalendarDay(new Date(2026, 8, 15), new Date(2026, 8, 15)), true);
+  assert.equal(isSameCalendarDay(new Date(2026, 8, 15), new Date(2026, 8, 16)), false);
 });
 
 // Regression test: `new Date("2026-09-15")` parses that date-only string

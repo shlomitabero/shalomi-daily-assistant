@@ -1589,16 +1589,19 @@ function CalendarView({ entity, dateField, records, month, onPrevMonth, onNextMo
         {days.map((day, i) => {
           const dayKey = formatDateForInput(day.date);
           const isDragOver = day.inCurrentMonth && dragOverDay === dayKey;
+          const isToday = day.inCurrentMonth && isSameCalendarDay(day.date, new Date());
+          const dayClasses = ["calendar-day"];
+          if (day.inCurrentMonth) {
+            dayClasses.push("calendar-day-clickable");
+            if (isDragOver) dayClasses.push("calendar-day-drag-over");
+          } else {
+            dayClasses.push("calendar-day-outside");
+          }
+          if (isToday) dayClasses.push("calendar-day-today");
           return (
           <div
             key={i}
-            className={
-              day.inCurrentMonth
-                ? isDragOver
-                  ? "calendar-day calendar-day-clickable calendar-day-drag-over"
-                  : "calendar-day calendar-day-clickable"
-                : "calendar-day calendar-day-outside"
-            }
+            className={dayClasses.join(" ")}
             onClick={day.inCurrentMonth ? () => onDayClick(day.date) : undefined}
             title={day.inCurrentMonth ? "Add a record on this day" : undefined}
             onDragOver={
@@ -3212,7 +3215,9 @@ th, td { text-align: start; padding: 8px 10px; border-bottom: 1px solid var(--bo
 .calendar-day-clickable { cursor: pointer; }
 .calendar-day-clickable:hover { border-color: var(--accent); background: var(--accent-soft); }
 .calendar-day-drag-over { border-color: var(--accent); background: var(--accent-soft); }
+.calendar-day-today { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
 .calendar-day-number { font-size: 12px; font-weight: 600; color: var(--muted); }
+.calendar-day-today .calendar-day-number { color: var(--accent); font-weight: 700; }
 .calendar-day-records { display: flex; flex-direction: column; gap: 3px; }
 .calendar-record-chip { background: var(--surface); border: 1px solid var(--border-soft); border-radius: 4px; padding: 2px 5px; font-size: 11.5px; text-align: start; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: grab; color: var(--text); }
 .calendar-record-chip:hover { background: var(--bg); }

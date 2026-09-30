@@ -19,6 +19,7 @@ import {
   groupRecordsByField,
   isGroupableField,
   isInlineEditableField,
+  isSameDay,
   isSameMonth,
   isTypingTarget,
   matchesSearch,
@@ -659,6 +660,20 @@ test("isSameMonth is false across a month boundary, even by a single day, and ac
   assert.equal(isSameMonth(new Date(2026, 8, 30), new Date(2026, 9, 1)), false, "Sep 30 and Oct 1 are different months");
   assert.equal(isSameMonth(new Date(2026, 0, 1), new Date(2026, 11, 31)), false, "January and December of the same year are different months");
   assert.equal(isSameMonth(new Date(2025, 8, 15), new Date(2026, 8, 15)), false, "same month/day but a different YEAR must not count as the same month");
+});
+
+/**
+ * New in this round: exporting isSameDay (previously a private helper used
+ * only inside buildCalendarMonth's own record-matching) so CalendarView can
+ * reuse the exact same comparison to mark today's cell in the grid, instead
+ * of duplicating a second date-equality check that could quietly drift out
+ * of sync with the one buildCalendarMonth already uses.
+ */
+test("isSameDay is true only for two dates sharing the same year, month, and day, regardless of time-of-day", () => {
+  assert.equal(isSameDay(new Date(2026, 8, 15, 0, 0), new Date(2026, 8, 15, 23, 59)), true);
+  assert.equal(isSameDay(new Date(2026, 8, 15), new Date(2026, 8, 16)), false, "different day, same month");
+  assert.equal(isSameDay(new Date(2026, 8, 15), new Date(2026, 9, 15)), false, "different month, same day");
+  assert.equal(isSameDay(new Date(2025, 8, 15), new Date(2026, 8, 15)), false, "same month/day but a different year");
 });
 
 test("recordsToCsv builds a header row from field labels and one row per record, with human-friendly values", () => {

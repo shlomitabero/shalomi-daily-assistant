@@ -1122,6 +1122,53 @@ test("EntityPanel's calendar view shows at most 3 record chips per day, with a '
 });
 
 /**
+ * New in this round: the calendar view's day cells never distinguished
+ * "today" from any other day in the currently-viewed month -- a user
+ * scanning the grid had to mentally compute which cell was "now". Confirms
+ * exactly one day cell in the current month's grid carries the
+ * calendar-day-today class (real today's date, by day number), and that no
+ * other in-month cell carries it.
+ */
+test("EntityPanel's calendar view marks exactly today's day cell with calendar-day-today, and no other day in the current month", async () => {
+  await withJsdom(async () => {
+    // The toolbar (and with it the view-mode toggle) only renders once
+    // records.length > 0 -- an entirely empty store falls into EntityPanel's
+    // own "no records yet" empty-state branch instead, per
+    // EntityPanel.tsx:1763. One unrelated record (on an arbitrary date) is
+    // enough to reach the real calendar grid without affecting which cell
+    // this test cares about, which is driven purely by the real system date.
+    const store: EntityRecord[] = [{ id: 1, title: "Unrelated", date: "2020-01-01" }];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = mockListRecordsFetch(store) as typeof fetch;
+    try {
+      renderAppointmentPanel();
+      await waitForCondition(() => document.querySelector(".entity-toolbar") !== null);
+
+      const calendarToggle = document.querySelectorAll(".view-toggle-btn")[1] as HTMLButtonElement;
+      fireEvent.click(calendarToggle);
+      await waitForCondition(() => document.querySelectorAll(".calendar-day").length > 0);
+
+      const todayDayNumber = String(new Date().getDate());
+      const inMonthCells = [...document.querySelectorAll(".calendar-day:not(.calendar-day-outside)")];
+      const todayCells = inMonthCells.filter((cell) => cell.classList.contains("calendar-day-today"));
+      assert.equal(todayCells.length, 1, "exactly one in-month cell must be marked as today");
+      assert.equal(
+        todayCells[0].querySelector(".calendar-day-number")?.textContent,
+        todayDayNumber,
+        "the marked cell must be the one showing today's real day-of-month number",
+      );
+
+      const otherMarked = inMonthCells.filter(
+        (cell) => cell !== todayCells[0] && cell.classList.contains("calendar-day-today"),
+      );
+      assert.equal(otherMarked.length, 0, "no other day cell may carry calendar-day-today");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * Regression test for a real bug found by this round's Explore survey: the
  * "+N more" overflow label above was rendered as an inert <span> with no
  * click handler of its own. Since the day cell it sits inside is itself

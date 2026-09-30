@@ -28,6 +28,7 @@ import {
   groupRecordsByField,
   isGroupableField,
   isInlineEditableField,
+  isSameDay,
   isSameMonth,
   isTypingTarget,
   LOCALE,
@@ -482,16 +483,19 @@ function CalendarView({
         {days.map((day, i) => {
           const dayKey = formatDateForInput(day.date);
           const isDragOver = day.inCurrentMonth && dragOverDay === dayKey;
+          const isToday = day.inCurrentMonth && isSameDay(day.date, new Date());
+          const dayClasses = ["calendar-day"];
+          if (day.inCurrentMonth) {
+            dayClasses.push("calendar-day-clickable");
+            if (isDragOver) dayClasses.push("calendar-day-drag-over");
+          } else {
+            dayClasses.push("calendar-day-outside");
+          }
+          if (isToday) dayClasses.push("calendar-day-today");
           return (
           <div
             key={i}
-            className={
-              day.inCurrentMonth
-                ? isDragOver
-                  ? "calendar-day calendar-day-clickable calendar-day-drag-over"
-                  : "calendar-day calendar-day-clickable"
-                : "calendar-day calendar-day-outside"
-            }
+            className={dayClasses.join(" ")}
             onClick={day.inCurrentMonth ? () => onDayClick(day.date) : undefined}
             title={day.inCurrentMonth ? t("entity.calendar.addOnDay") : undefined}
             onDragOver={
