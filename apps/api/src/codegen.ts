@@ -1289,13 +1289,22 @@ function buildImportRecords(fields, rows) {
   return { records, errors };
 }
 
+// Every enum field with a workable, human-scannable number of distinct
+// values (2-8) -- used both by findBoardField below (which picks just one,
+// for Kanban grouping) and by the entity table's own per-field filter
+// dropdowns (which use every qualifying field at once, since an entity can
+// have more than one, e.g. both "Status" and "Priority").
+function findFilterableEnumFields(fields) {
+  return fields.filter((f) => f.type === "enum" && f.enumValues && f.enumValues.length >= 2 && f.enumValues.length <= 8);
+}
+
 // Picks the enum field an entity's records should be grouped into board
 // columns by, if any -- prefers a field literally named status/stage, falls
 // back to the first workable enum field (2-8 values), and returns null for
 // a flat entity like "Customer" with no enum field.
 const BOARD_FIELD_NAME_HINTS = ["status", "stage"];
 function findBoardField(fields) {
-  const enumFields = fields.filter((f) => f.type === "enum" && f.enumValues && f.enumValues.length >= 2 && f.enumValues.length <= 8);
+  const enumFields = findFilterableEnumFields(fields);
   if (enumFields.length === 0) return null;
   const named = enumFields.find((f) => BOARD_FIELD_NAME_HINTS.includes(f.name.toLowerCase()));
   return named || enumFields[0];
@@ -1709,6 +1718,7 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
   const [form, setForm] = useState(() => emptyForm(entity));
   const [editingId, setEditingId] = useState(null);
   const [search, setSearch] = useState("");
+  const [fieldFilters, setFieldFilters] = useState({});
   const [highlightedRecordId, setHighlightedRecordId] = useState(null);
   const [sortKeys, setSortKeys] = useState([]);
   const [viewMode, setViewMode] = useState("table");
@@ -1747,6 +1757,7 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
   // still-correct records already on screen.
   const refreshRequestId = useRef(0);
   const boardField = useMemo(() => findBoardField(entity.fields), [entity.fields]);
+  const filterableEnumFields = useMemo(() => findFilterableEnumFields(entity.fields), [entity.fields]);
   const dateField = useMemo(() => findDateField(entity.fields), [entity.fields]);
   const relationTargets = useMemo(() => {
     const names = entity.fields.filter((f) => f.type === "relation" && f.relationTo).map((f) => f.relationTo);
@@ -1797,6 +1808,7 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
     setForm(emptyForm(entity));
     setEditingId(null);
     setSearch("");
+    setFieldFilters({});
     setSortKeys([]);
     setViewMode("table");
     setCalendarMonth(new Date());
@@ -1822,6 +1834,7 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
   useEffect(() => {
     if (highlightRecordId == null || loading) return;
     setSearch("");
+    setFieldFilters({});
     setViewMode("table");
     setHighlightedRecordId(highlightRecordId);
     onHighlightHandled?.();
@@ -1954,9 +1967,12 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
   }
 
   const visibleRecords = useMemo(() => {
-    const filtered = records.filter((r) => matchesSearch(r, entity.fields, search, relatedRecords));
+    const matched = records.filter((r) => matchesSearch(r, entity.fields, search, relatedRecords));
+    const filtered = matched.filter((r) =>
+      Object.entries(fieldFilters).every(([fieldName, value]) => !value || String(r[fieldName] ?? "") === value),
+    );
     return sortRecordsMulti(filtered, sortKeys, entity.fields, relatedRecords);
-  }, [records, entity.fields, search, sortKeys, relatedRecords]);
+  }, [records, entity.fields, search, fieldFilters, sortKeys, relatedRecords]);
 
   // Exactly the records the calendar grid's current month is showing -- lets
   // the ICS export button disable itself when the visible month is
@@ -2356,6 +2372,22 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
               value={search}
               onChange={(e) => setSearch(e.target.value)}
             />
+            {filterableEnumFields.map((f) => (
+              <select
+                key={f.name}
+                className="entity-status-filter"
+                aria-label={"Filter by " + (f.label || f.name)}
+                value={fieldFilters[f.name] || ""}
+                onChange={(e) => setFieldFilters((prev) => ({ ...prev, [f.name]: e.target.value }))}
+              >
+                <option value="">{"All " + (f.label || f.name)}</option>
+                {(f.enumValues || []).map((v) => (
+                  <option key={v} value={v}>
+                    {(f.enumLabels && f.enumLabels[v]) || v}
+                  </option>
+                ))}
+              </select>
+            ))}
             {(boardField || dateField) && (
               <div className="view-toggle" role="group">
                 <button
@@ -3083,6 +3115,7 @@ th, td { text-align: start; padding: 8px 10px; border-bottom: 1px solid var(--bo
 .empty-state { padding: 32px 16px; text-align: center; color: var(--muted); background: var(--surface-subtle); border: 1px dashed var(--border); border-radius: 10px; }
 .entity-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 14px; }
 .entity-toolbar .entity-search { margin-bottom: 0; flex: 1; }
+.entity-status-filter { max-width: 200px; margin-bottom: 0; flex-shrink: 0; }
 .view-toggle { display: flex; gap: 4px; padding: 3px; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; flex-shrink: 0; }
 .view-toggle-btn { padding: 6px 12px; border-radius: 6px; border: none; background: transparent; color: var(--muted); font-size: 13px; font-weight: 600; cursor: pointer; }
 .view-toggle-btn-active { background: var(--accent); color: var(--accent-contrast); }

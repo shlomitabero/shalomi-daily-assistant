@@ -683,6 +683,106 @@ test("EntityPanel's status filter dropdown narrows the table to matching records
   });
 });
 
+const TASK_ENTITY: Entity = {
+  name: "Task",
+  label: "Task",
+  fields: [
+    { name: "name", label: "Name", type: "text", required: true },
+    {
+      name: "status",
+      label: "Status",
+      type: "enum",
+      required: true,
+      enumValues: ["todo", "done"],
+      enumLabels: { todo: "To do", done: "Done" },
+    },
+    {
+      name: "priority",
+      label: "Priority",
+      type: "enum",
+      required: true,
+      enumValues: ["low", "high"],
+      enumLabels: { low: "Low", high: "High" },
+    },
+  ],
+};
+
+function mockTaskRecordsFetch(store: EntityRecord[]) {
+  return async (input: string): Promise<Response> => {
+    if (input === "/api/projects/proj1/entities/Task") {
+      return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    throw new Error(`mockTaskRecordsFetch: unexpected request ${input}`);
+  };
+}
+
+/**
+ * Regression test for a real bug found by round 286's Explore survey:
+ * findBoardField (and, before this round, the toolbar's status filter that
+ * reused it) only ever picks ONE enum field per entity -- so an entity with
+ * two or more enum fields (here, both "Status" and "Priority") only ever
+ * got a filter dropdown for whichever one field findBoardField happened to
+ * pick, with no way to narrow the table by the other. The free-text search
+ * box can't substitute: it matches every field as a substring (including
+ * relations), so it can't target one specific field's exact value.
+ * Confirms two independent filter dropdowns now render (one per qualifying
+ * enum field), that each narrows the table on its own, and that both
+ * active at once combine with AND (not just replace each other).
+ */
+test("EntityPanel renders one filter dropdown per qualifying enum field, not just one, and multiple active filters combine with AND", async () => {
+  await withJsdom(async () => {
+    const store: EntityRecord[] = [
+      { id: 1, name: "Write report", status: "todo", priority: "low" },
+      { id: 2, name: "Fix outage", status: "todo", priority: "high" },
+      { id: 3, name: "Ship release", status: "done", priority: "high" },
+    ];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = mockTaskRecordsFetch(store) as typeof fetch;
+    try {
+      render(
+        React.createElement(
+          ThemeProvider,
+          null,
+          React.createElement(
+            LanguageProvider,
+            null,
+            React.createElement(EntityPanel, {
+              projectId: "proj1",
+              entity: TASK_ENTITY,
+              allEntities: [TASK_ENTITY],
+              onEntityRenamed: () => {},
+            }),
+          ),
+        ),
+      );
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 3);
+
+      const filterSelects = document.querySelectorAll(".entity-status-filter") as NodeListOf<HTMLSelectElement>;
+      assert.equal(filterSelects.length, 2, "expected one filter dropdown for each of Status and Priority, not just one");
+      const [statusSelect, prioritySelect] = filterSelects;
+
+      fireEvent.change(prioritySelect, { target: { value: "high" } });
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 2);
+      assert.match(document.querySelector("table tbody")!.textContent ?? "", /Fix outage/);
+      assert.match(document.querySelector("table tbody")!.textContent ?? "", /Ship release/);
+
+      fireEvent.change(statusSelect, { target: { value: "done" } });
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 1);
+      assert.match(
+        document.querySelector("table tbody")!.textContent ?? "",
+        /Ship release/,
+        "with both filters active, only the row matching BOTH priority=high AND status=done must remain",
+      );
+
+      fireEvent.change(statusSelect, { target: { value: "" } });
+      fireEvent.change(prioritySelect, { target: { value: "" } });
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 3);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
 /**
  * New in this round: the toolbar's real record count (visibleRecords.length
  * vs records.length -- both already computed, neither ever shown) had no

@@ -318,19 +318,36 @@ export function sortRecordsMulti(
 const BOARD_FIELD_NAME_HINTS = ["status", "stage"];
 
 /**
+ * Every enum field with a workable, human-scannable number of distinct
+ * values (2-8) -- the same predicate findBoardField below uses to pick its
+ * single Kanban-grouping field, but here returning *all* of them, not just
+ * one. Used by EntityPanel's own per-field filter dropdowns: an entity with
+ * two or more such fields (e.g. a Task with both "Status" and "Priority")
+ * previously only ever got a filter for whichever one findBoardField
+ * happened to pick, with no way to narrow the table by any other enum
+ * field -- the free-text search box matches every field as a substring
+ * (including relations), so it can't target one specific field's exact
+ * value the way this dropdown does.
+ */
+export function findFilterableEnumFields(fields: Field[]): Field[] {
+  return fields.filter((f) => f.type === "enum" && f.enumValues && f.enumValues.length >= 2 && f.enumValues.length <= 8);
+}
+
+/**
  * Picks the enum field an entity's records should be grouped into columns
  * by, if any -- this is what turns a "Deal" or "Order" entity into a real
  * Kanban board instead of the same table shape every entity gets. Prefers
  * a field literally named "status"/"stage" (the domain library's own
  * convention, see spec-engine/domainEntities.ts), then falls back to the
- * first enum field with a workable number of columns (2-8); returns null
+ * first qualifying enum field (see findFilterableEnumFields); returns null
  * when nothing fits, so a plain entity (like "Customer" with only a text
- * "name" field) never gets forced into a board it doesn't suit.
+ * "name" field) never gets forced into a board it doesn't suit. A board
+ * still groups by exactly one field -- that's inherent to what a Kanban
+ * board is -- unlike the filter dropdowns above, which cover every
+ * qualifying field at once.
  */
 export function findBoardField(fields: Field[]): Field | null {
-  const enumFields = fields.filter(
-    (f) => f.type === "enum" && f.enumValues && f.enumValues.length >= 2 && f.enumValues.length <= 8,
-  );
+  const enumFields = findFilterableEnumFields(fields);
   if (enumFields.length === 0) return null;
   const named = enumFields.find((f) => BOARD_FIELD_NAME_HINTS.includes(f.name.toLowerCase()));
   return named ?? enumFields[0];

@@ -364,6 +364,53 @@ test("the exported EntityView renders a real Kanban board for entities with a st
 });
 
 /**
+ * Regression test for a real bug found by round 286's Explore survey and
+ * fixed the same round in both the live preview (EntityPanel.tsx) and here:
+ * findBoardField only ever picks ONE enum field per entity, for Kanban
+ * grouping -- but the exported app never had ANY filter-by-enum-field
+ * capability at all before this round (only the live preview's table view
+ * did, since round 130, itself limited to that same single board field).
+ * An entity with two qualifying enum fields (here, both "Status" and
+ * "Priority") now gets one filter dropdown per field in the exported app
+ * too, matching the live preview's own newly-generalized behavior.
+ */
+test("the exported EntityView's table toolbar has one filter dropdown per qualifying enum field, not just the single board field", () => {
+  const twoEnumProject: Project = {
+    ...project,
+    spec: {
+      ...project.spec,
+      entities: [
+        {
+          name: "Task",
+          label: "Task",
+          fields: [
+            { name: "name", label: "Name", type: "text", required: true },
+            { name: "status", label: "Status", type: "enum", required: true, enumValues: ["todo", "done"] },
+            { name: "priority", label: "Priority", type: "enum", required: true, enumValues: ["low", "high"] },
+          ],
+        },
+      ],
+    },
+  };
+  const files = generateExportFiles(twoEnumProject);
+  const entityViewJsx = files.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+
+  assert.match(entityViewJsx, /function findFilterableEnumFields\(fields\) \{/);
+  assert.match(entityViewJsx, /const filterableEnumFields = useMemo\(\(\) => findFilterableEnumFields\(entity\.fields\), \[entity\.fields\]\);/);
+  assert.match(entityViewJsx, /const \[fieldFilters, setFieldFilters\] = useState\(\{\}\);/);
+  assert.match(entityViewJsx, /\{filterableEnumFields\.map\(\(f\) => \(/);
+  assert.match(entityViewJsx, /className="entity-status-filter"/);
+  // The filter must actually apply to visibleRecords, not just render inert dropdowns
+  assert.match(
+    entityViewJsx,
+    /Object\.entries\(fieldFilters\)\.every\(\(\[fieldName, value\]\) => !value \|\| String\(r\[fieldName\] \?\? ""\) === value\)/,
+  );
+  // The exported CSS carries the matching filter-dropdown styling too
+  const stylesCss = files.find((f) => f.path === "web/src/styles.css")!.content;
+  assert.match(stylesCss, /\.entity-status-filter/);
+});
+
+/**
  * New in this round: the live-preview Kanban board's own "+" add-card
  * button (startCreateForColumn, round 233) was never ported here -- the
  * exported app's generated board-column-header only rendered a badge +

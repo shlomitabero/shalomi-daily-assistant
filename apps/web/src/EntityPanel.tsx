@@ -18,6 +18,7 @@ import {
   computeNextFocusedRowId,
   findBoardField,
   findDateField,
+  findFilterableEnumFields,
   formatDateForInput,
   formatDateValue,
   formatEntityRecordCount,
@@ -703,7 +704,7 @@ export function EntityPanel({
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
-  const [statusFilter, setStatusFilter] = useState("");
+  const [fieldFilters, setFieldFilters] = useState<Record<string, string>>({});
   const [groupFieldName, setGroupFieldName] = useState("");
   const [sortKeys, setSortKeys] = useState<SortKey[]>([]);
   const [viewMode, setViewMode] = useState<ViewMode>("table");
@@ -744,6 +745,7 @@ export function EntityPanel({
   const formRef = useRef<HTMLFormElement>(null);
   const tableScrollRef = useRef<HTMLDivElement>(null);
   const boardField = useMemo(() => findBoardField(entity.fields), [entity.fields]);
+  const filterableEnumFields = useMemo(() => findFilterableEnumFields(entity.fields), [entity.fields]);
   const dateField = useMemo(() => findDateField(entity.fields), [entity.fields]);
   const relationTargets = useMemo(() => {
     const names = entity.fields
@@ -796,7 +798,7 @@ export function EntityPanel({
     setForm(emptyForm(entity));
     setEditingId(null);
     setSearch("");
-    setStatusFilter("");
+    setFieldFilters({});
     setCalendarMonth(new Date());
     setSelectedIds(new Set());
     setImportMessage(null);
@@ -940,7 +942,7 @@ export function EntityPanel({
   useEffect(() => {
     if (highlightRecordId == null || loading) return;
     setSearch("");
-    setStatusFilter("");
+    setFieldFilters({});
     setViewMode("table");
     setHighlightedRecordId(highlightRecordId);
     onHighlightHandled?.();
@@ -1019,10 +1021,11 @@ export function EntityPanel({
 
   const visibleRecords = useMemo(() => {
     const matched = records.filter((r) => matchesSearch(r, entity.fields, search, allEntities, relatedRecords));
-    const filtered =
-      boardField && statusFilter ? matched.filter((r) => String(r[boardField.name] ?? "") === statusFilter) : matched;
+    const filtered = matched.filter((r) =>
+      Object.entries(fieldFilters).every(([fieldName, value]) => !value || String(r[fieldName] ?? "") === value),
+    );
     return sortRecordsMulti(filtered, sortKeys, entity.fields, allEntities, relatedRecords);
-  }, [records, entity.fields, search, statusFilter, boardField, sortKeys, allEntities, relatedRecords]);
+  }, [records, entity.fields, search, fieldFilters, sortKeys, allEntities, relatedRecords]);
 
   /** Exactly the records the calendar grid's current month is showing -- the same computation handleExportIcs uses, kept separate so the export button can disable itself when the visible month is genuinely empty, not just when the whole entity has no records. */
   const icsMonthRecords = useMemo(() => {
@@ -1729,21 +1732,22 @@ export function EntityPanel({
             <span className="muted small entity-record-count">
               {formatEntityRecordCount(visibleRecords.length, records.length, t)}
             </span>
-            {boardField && (
+            {filterableEnumFields.map((f) => (
               <select
+                key={f.name}
                 className="entity-status-filter"
-                aria-label={t("entity.filter.byField", { field: boardField.label ?? boardField.name })}
-                value={statusFilter}
-                onChange={(e) => setStatusFilter(e.target.value)}
+                aria-label={t("entity.filter.byField", { field: f.label ?? f.name })}
+                value={fieldFilters[f.name] ?? ""}
+                onChange={(e) => setFieldFilters((prev) => ({ ...prev, [f.name]: e.target.value }))}
               >
-                <option value="">{t("entity.filter.allValues", { field: boardField.label ?? boardField.name })}</option>
-                {(boardField.enumValues ?? []).map((v) => (
+                <option value="">{t("entity.filter.allValues", { field: f.label ?? f.name })}</option>
+                {(f.enumValues ?? []).map((v) => (
                   <option key={v} value={v}>
-                    {boardField.enumLabels?.[v] ?? v}
+                    {f.enumLabels?.[v] ?? v}
                   </option>
                 ))}
               </select>
-            )}
+            ))}
             {viewMode === "table" && groupableFields.length > 0 && (
               <select
                 className="entity-group-by"
