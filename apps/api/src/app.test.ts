@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import type { AgentStepEvent } from "@forge/shared";
+import type { AgentStepEvent, ProductSpec } from "@forge/shared";
 import { insertWhatsAppMessage, type ForgeDatabase } from "@forge/db";
 import { HeuristicSpecProvider, type SpecProvider } from "@forge/spec-engine";
 import { createApp } from "./app.js";
@@ -3292,6 +3292,61 @@ test("export refuses before build, and returns a real zip file after", async () 
     assert.equal(buffer.readUInt32LE(0), 0x04034b50); // real ZIP local-file-header magic
     assert.ok(buffer.length > 500);
   });
+});
+
+/**
+ * Regression test for a real bug found by round 284's Explore survey (a
+ * follow-up to round 283's entity-name-collision fix): a single, non-
+ * colliding non-ASCII entity name (e.g. Hebrew) is a real, reachable case
+ * -- it builds and runs fine in the live preview, since packages/db/src/
+ * identifiers.ts's tableNameFor silently sanitizes it -- but codegen.ts's
+ * much stricter assertSafe has always rejected it outright at export time
+ * with a bare Error, which app.ts's generic error handler turned into an
+ * unexplained 500 with zero indication of what went wrong. This spec
+ * provider stands in for the real Anthropic provider (which occasionally
+ * doesn't perfectly follow its own "ASCII names only" prompt instruction,
+ * especially for a Hebrew business idea) without needing a live API key.
+ */
+function createNonAsciiEntityProvider(): SpecProvider {
+  const spec: ProductSpec = {
+    summary: "test",
+    personas: [],
+    roles: ["Admin"],
+    entities: [{ name: "לקוח", fields: [{ name: "name", type: "text", required: true }] }],
+    screens: [],
+    assumptions: [],
+    openQuestions: [],
+  };
+  return { name: "non-ascii-entity-test-provider", async generate() { return spec; } };
+}
+
+test("exporting a project whose spec has a lone non-ASCII entity name (not a collision) returns a clear, translated 422 instead of a generic 500", async () => {
+  await withServer(
+    async (baseUrl) => {
+      const token = await signup(baseUrl);
+      const createRes = await fetch(`${baseUrl}/api/projects`, {
+        method: "POST",
+        headers: authHeaders(token),
+        body: JSON.stringify({ description: "A business with customers." }),
+      });
+      const { project } = (await createRes.json()) as { project: { id: string } };
+
+      const buildRes = await fetch(`${baseUrl}/api/projects/${project.id}/build`, {
+        method: "POST",
+        headers: authHeaders(token),
+      });
+      const events = await collectSSE(buildRes);
+      const forge = events.find((e) => e.agent === "Forge");
+      assert.equal(forge?.status, "success", "the build must genuinely succeed with the lone non-ASCII name -- this is not a rejected spec, just an unexportable one");
+
+      const exportRes = await fetch(`${baseUrl}/api/projects/${project.id}/export`, { headers: authHeaders(token) });
+      assert.equal(exportRes.status, 422, "must be a clear, actionable error, not a generic 500");
+      const body = (await exportRes.json()) as { error: string; code: string };
+      assert.equal(body.code, "EXPORT_UNSAFE_IDENTIFIER");
+      assert.match(body.error, /unsafe entity identifier "לקוח"/);
+    },
+    { provider: createNonAsciiEntityProvider() },
+  );
 });
 
 test("backup refuses before build, and returns a real zip with one CSV per entity after", async () => {

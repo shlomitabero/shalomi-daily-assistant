@@ -92,6 +92,8 @@ export const translations: Record<Lang, Record<string, string>> = {
     "error.COLLABORATOR_USER_NOT_FOUND": "לא נמצא חשבון עם כתובת האימייל הזו. צריך שהם יפתחו קודם חשבון ב-Forge AI.",
     "error.CANNOT_ADD_OWNER_AS_COLLABORATOR": "יש כבר גישה מלאה לבעל הפרויקט.",
     "error.COLLABORATOR_CANNOT_REMOVE_OTHERS": "רק בעל הפרויקט יכול להסיר שותף אחר. אפשר להסיר רק את עצמכם.",
+    "error.EXPORT_UNSAFE_IDENTIFIER":
+      "לא ניתן לייצא: לאחת הישויות או השדות יש שם שאינו באותיות אנגליות. שנו את השם (השתמשו באותיות אנגליות, ספרות וקו תחתון בלבד) ונסו שוב -- אפשר להמשיך להשתמש באפליקציה בתצוגה החיה גם בלי לייצא.",
     "lang.he": "עברית",
     "lang.en": "EN",
     "theme.switchToDark": "מעבר למצב כהה",
@@ -552,6 +554,8 @@ export const translations: Record<Lang, Record<string, string>> = {
     "error.COLLABORATOR_USER_NOT_FOUND": "No account found with that email. They'll need to sign up for Forge AI first.",
     "error.CANNOT_ADD_OWNER_AS_COLLABORATOR": "The project owner already has full access.",
     "error.COLLABORATOR_CANNOT_REMOVE_OTHERS": "Only the project owner can remove a different collaborator. You can only remove yourself.",
+    "error.EXPORT_UNSAFE_IDENTIFIER":
+      "Can't export: an entity or field name isn't in English. Rename it (English letters, digits, and underscores only) and try again -- you can keep using the app in the live preview without exporting.",
     "lang.he": "עברית",
     "lang.en": "EN",
     "theme.switchToDark": "Switch to dark mode",

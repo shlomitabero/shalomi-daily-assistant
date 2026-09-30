@@ -689,7 +689,34 @@ export function createProjectsRouter(db: ForgeDatabase, provider: SpecProvider |
       if (project.status !== "built") {
         throw new HttpError(409, "Build the project before exporting its code", "BUILD_REQUIRED");
       }
-      const files = generateExportFiles(project);
+      /**
+       * codegen.ts's assertSafe rejects any entity/field name that isn't a
+       * plain ASCII identifier -- unlike the live preview's own table-name
+       * sanitization (packages/db/src/identifiers.ts's tableNameFor), which
+       * never throws. A spec with a single, non-colliding non-ASCII name
+       * (e.g. Hebrew) is therefore a real, reachable case that builds and
+       * runs fine in the live preview but has always thrown here as a bare
+       * Error -- which app.ts's generic error handler turned into an
+       * unexplained 500, with zero indication of what went wrong or how to
+       * fix it. Caught here and translated into an actionable 422 instead;
+       * the underlying schema-level fix (round 283) intentionally didn't
+       * reject this case outright, since a lone non-colliding non-ASCII
+       * name doesn't corrupt any data -- it just can't be exported.
+       */
+      let files: ReturnType<typeof generateExportFiles>;
+      try {
+        files = generateExportFiles(project);
+      } catch (err) {
+        const match = err instanceof Error && /^Refusing to export: unsafe (entity|field) identifier "(.+)"$/.exec(err.message);
+        if (match) {
+          throw new HttpError(
+            422,
+            `Refusing to export: unsafe ${match[1]} identifier "${match[2]}" -- rename it to use only English letters, digits, and underscores, then try exporting again`,
+            "EXPORT_UNSAFE_IDENTIFIER",
+          );
+        }
+        throw err;
+      }
       const zip = buildZip(files);
       const safeName = project.name.replace(/[^A-Za-z0-9 _-]/g, "").trim() || "forge-app";
       res.setHeader("content-type", "application/zip");
