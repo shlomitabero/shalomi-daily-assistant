@@ -1222,7 +1222,15 @@ function buildImportRecords(fields, rows) {
   }
 
   const [header, ...dataRows] = rows;
-  const columnFields = header.map((cell) => fields.find((f) => matchesImportHeader(cell, f)) || null);
+  // See entityFormatting.ts's buildImportRecords for why: a field is
+  // claimed by at most one column, in header order, so two fields sharing
+  // a label don't both resolve to the same first-matching field.
+  const claimedFieldNames = new Set();
+  const columnFields = header.map((cell) => {
+    const match = fields.find((f) => !claimedFieldNames.has(f.name) && matchesImportHeader(cell, f));
+    if (match) claimedFieldNames.add(match.name);
+    return match || null;
+  });
 
   const records = [];
   const errors = [];

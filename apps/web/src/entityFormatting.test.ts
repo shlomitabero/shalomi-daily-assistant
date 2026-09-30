@@ -944,6 +944,36 @@ test("buildImportRecords ignores an unmatched CSV column instead of erroring on 
   assert.deepEqual(result.records, [{ name: "Dana" }]);
 });
 
+/**
+ * Regression test for a real bug found by round 287's Explore survey:
+ * FieldLabelEditor enforces no uniqueness on a field's label (confirmed by
+ * reading both it and its server route, RenameFieldLabelSchema in
+ * projects.ts -- no collision check anywhere), so two fields on the same
+ * entity can genuinely end up sharing a label (e.g. both renamed to
+ * "Status"). Before this fix, `columnFields` matched every header cell
+ * independently against the full field list, so both CSV columns named
+ * "Status" resolved to whichever field `fields.find` hit first -- the
+ * second field's real column was silently ignored, and the loop that
+ * later reads each field's value from `columnFields.findIndex` would
+ * find that same first column for both fields, duplicating one field's
+ * data into the other. Confirms each header column now claims a distinct
+ * field, so two same-labeled columns correctly map to two different
+ * fields instead of collapsing onto one.
+ */
+test("buildImportRecords maps each column to a distinct field even when two fields share the same label, instead of collapsing both onto the first match", () => {
+  const fields: Field[] = [
+    { name: "stage", label: "Status", type: "text", required: false },
+    { name: "shippingStatus", label: "Status", type: "text", required: false },
+  ];
+  const rows = [
+    ["Status", "Status"],
+    ["In Progress", "Shipped"],
+  ];
+  const result = buildImportRecords(fields, rows);
+  assert.deepEqual(result.errors, []);
+  assert.deepEqual(result.records, [{ stage: "In Progress", shippingStatus: "Shipped" }]);
+});
+
 test("groupByField groups records into one column per declared enum value, in declared order, including empty columns", () => {
   const field: Field = {
     name: "stage",

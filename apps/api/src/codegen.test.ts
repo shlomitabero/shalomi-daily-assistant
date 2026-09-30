@@ -1731,6 +1731,53 @@ test("the exported EntityView's CSV import rejects a date field value that isn't
   assert.match(errors[1], /Row 3: "not-a-date" isn't a valid date/);
 });
 
+/**
+ * Regression test for a real bug found by round 287's Explore survey and
+ * fixed the same round in both entityFormatting.ts (live preview) and here:
+ * two fields on the same entity can share a label (FieldLabelEditor enforces
+ * no uniqueness), so two CSV columns with that same header text used to both
+ * resolve to whichever field matched first, silently dropping the other
+ * field's real data. Confirms the exported app's own buildImportRecords
+ * (executed from real generated output, not reimplemented here) now claims
+ * each column for a distinct field.
+ */
+test("the exported EntityView's CSV import maps each column to a distinct field even when two fields share the same label", () => {
+  const twoStatusProject: Project = {
+    ...project,
+    spec: {
+      ...project.spec,
+      entities: [
+        {
+          name: "Task",
+          label: "Task",
+          fields: [
+            { name: "stage", label: "Status", type: "text", required: false },
+            { name: "shippingStatus", label: "Status", type: "text", required: false },
+          ],
+        },
+      ],
+    },
+  };
+  const entityViewJsx = generateExportFiles(twoStatusProject).find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+
+  const isValidDateSrc = entityViewJsx.match(/const DATE_FORMAT[\s\S]*?\nfunction isValidDate\(value\) \{[\s\S]*?\n\}\n/)?.[0];
+  const headerSrc = entityViewJsx.match(/function matchesImportHeader\(header, field\) \{[\s\S]*?\n\}\n/)?.[0];
+  const importSrc = entityViewJsx.match(/function buildImportRecords\(fields, rows\) \{[\s\S]*?\n\}\n/)?.[0];
+  assert.ok(isValidDateSrc && headerSrc && importSrc, "expected to find isValidDate/matchesImportHeader/buildImportRecords in generated output");
+
+  const buildImportRecords = new Function(`${isValidDateSrc}\n${headerSrc}\n${importSrc}\nreturn buildImportRecords;`)();
+
+  const fields = twoStatusProject.spec.entities[0].fields;
+  const rows = [
+    ["Status", "Status"],
+    ["In Progress", "Shipped"],
+  ];
+  const { records, errors } = buildImportRecords(fields, rows);
+
+  assert.deepEqual(errors, []);
+  assert.deepEqual(records, [{ stage: "In Progress", shippingStatus: "Shipped" }]);
+});
+
 test("the exported app includes a real cross-entity global search, ported from the Forge AI live preview", () => {
   const files = generateExportFiles(project);
   const globalSearchJsx = files.find((f) => f.path === "web/src/components/GlobalSearch.jsx")!.content;

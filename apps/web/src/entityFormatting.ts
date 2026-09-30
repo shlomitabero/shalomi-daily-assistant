@@ -721,7 +721,18 @@ export function buildImportRecords(fields: Field[], rows: string[][]): ImportRes
   }
 
   const [header, ...dataRows] = rows;
-  const columnFields: (Field | null)[] = header.map((cell) => fields.find((f) => matchesHeader(cell, f)) ?? null);
+  // A field is claimed by at most one column, in header order -- otherwise
+  // two fields that share a label (e.g. both renamed to "Status" via
+  // FieldLabelEditor, which enforces no uniqueness) would both resolve to
+  // whichever field `fields.find` hits first for every matching header
+  // cell, silently duplicating that field's data into the other and
+  // dropping the other's real column entirely.
+  const claimedFieldNames = new Set<string>();
+  const columnFields: (Field | null)[] = header.map((cell) => {
+    const match = fields.find((f) => !claimedFieldNames.has(f.name) && matchesHeader(cell, f));
+    if (match) claimedFieldNames.add(match.name);
+    return match ?? null;
+  });
 
   const records: Record<string, unknown>[] = [];
   const errors: string[] = [];
