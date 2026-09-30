@@ -17760,6 +17760,84 @@ not a single "make it perfect" claim.
   (`tsc -b` + `vite build`, 86 modules transformed; `@forge/api` untouched
   this round, so not rebuilt).
 
+### Round 299 — A decimal value (a normal price) could silently fail to submit in a number field
+
+  Real bug, not a feature, found by a fresh Explore survey -- and
+  justified as this round's pick under the standing direction that a
+  well-justified bug fix is acceptable when no equally-real feature gap
+  is open. `<input type="number">` with no `step` attribute defaults to
+  the HTML5 spec's `step="1"`: confirmed via `grep -n "step="
+  EntityPanel.tsx` returning zero matches anywhere in the file, despite
+  `FieldInput`'s single number/relation branch (`EntityPanel.tsx:676-687`)
+  being reused by all three number-entry surfaces -- the main add/edit
+  record form, the inline table-cell editor, and the bulk-edit-field
+  control. Typing a perfectly normal decimal like `49.90` into a
+  price/amount field failed native browser constraint validation on
+  submit, silently blocking the form's own `onSubmit` handler from ever
+  firing -- no request sent, no error shown anywhere in the app, just an
+  unexplained no-op on the Add/Save button. This is a Hebrew-first
+  CRM/ops builder where "number" fields are overwhelmingly money (price,
+  amount, budget, monthlyPrice, claimAmount -- dozens of instances across
+  `packages/spec-engine/src/domainEntities.ts`), so this hit the primary
+  create/edit flow for essentially any business dealing in decimal
+  currency. The identical bug existed in the exported codegen app's own
+  `FieldInput` (`apps/api/src/codegen.ts:1803-1804`).
+
+  Added `step={field.type === "number" ? "any" : undefined}` to the
+  shared number/relation input in both `EntityPanel.tsx` and
+  `codegen.ts`. Deliberately scoped to only the real `number` field type,
+  not the same branch's relation-field fallback (a raw number input used
+  when a relation's related-entity records aren't loaded): a relation's
+  value is always an integer foreign-key id, where the browser's default
+  step of 1 is correct, not a bug -- widening the fix to both types would
+  have silently allowed a non-integer relation id through instead of
+  fixing anything real there.
+
+  Test: 1 new `EntityPanel.test.ts` DOM test renders an Invoice-shaped
+  entity with both a real `number` field and a `relation` field whose
+  related entity isn't in `allEntities` (forcing the same fallback
+  number-input path), and asserts the real rendered `step` attribute on
+  each -- `"any"` for the number field, absent (native default) for the
+  relation fallback. Discovered empirically that jsdom (this test
+  harness) doesn't implement `stepMismatch` constraint validation at all
+  -- `input.validity.stepMismatch` stayed `false` regardless of `step` in
+  a standalone check -- so this DOM test can only assert the real
+  rendered attribute, not reproduce the actual blocked-submit behavior;
+  that gap is why this round's live Playwright pass matters more than
+  usual. 1 new `codegen.test.ts` test extracts the real generated
+  `FieldInput` source and regex-confirms the same conditional `step`
+  wiring is present in the exported app's output.
+
+  Deliberate-break-and-restore, done independently on both files: reset
+  the real conditional back to an unconditional `step={undefined}` in
+  each -- the new DOM test failed with the exact expected
+  `null !== 'any'` mismatch, and the new codegen test failed on its regex
+  match. Restored both from verified pre-fix backups with byte-identical
+  `diff` against each; re-ran everything and confirmed all tests passed
+  again.
+
+  Live Playwright verification (real Chromium, real dev servers) -- the
+  genuine behavioral proof jsdom couldn't provide: signed up, built a
+  real invoicing project, discovered the AI-generated entity/field names
+  via the project's own spec (non-deterministic by design), filled the
+  real add-record form's number field with `49.9`, filled the other
+  required fields (including selecting a required enum option the script
+  initially missed -- the first attempt failed for an unrelated reason,
+  a required `status` field left at its disabled placeholder option, not
+  this round's bug), and clicked the real Submit button. Confirmed a new
+  row actually appeared in the real table showing the exact decimal value
+  `49.9` intact -- proof the form's real submit event fired and the
+  record was genuinely created, which is exactly what native constraint
+  validation silently blocked before this fix.
+
+  Full suite green: **1141 tests** (`@forge/shared` 13, `@forge/spec-engine`
+  84, `@forge/db` 93 unchanged; `@forge/api` 306 → 307; `@forge/web` 643 →
+  644) via `npm test` at the repo root (one run showed a 1-test failure in
+  `@forge/api` that vanished on an immediate re-run of that workspace
+  alone -- a known flaky timing-dependent test, not a regression from this
+  round's change), plus clean builds for both `@forge/web` (`tsc -b` +
+  `vite build`, 86 modules transformed) and `@forge/api` (`esbuild`).
+
 ## Phase 4
 
 - Template/agent marketplace
