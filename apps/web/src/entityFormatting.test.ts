@@ -31,6 +31,7 @@ import {
   sortRecords,
   sortRecordsMulti,
   splitHighlightSegments,
+  splitLinkSegments,
 } from "./entityFormatting.js";
 
 test("badgeTone recognizes common positive and negative status words, case-insensitively", () => {
@@ -205,6 +206,68 @@ test("splitHighlightSegments escapes regex-special characters in the query inste
   ]);
   // Without escaping, "." would match any character (e.g. "3X5"), not just a literal dot.
   assert.deepEqual(splitHighlightSegments("3X5 (kg)", "3.5"), [{ text: "3X5 (kg)", matched: false }]);
+});
+
+/**
+ * New in this round: a plain text/longtext field's value (e.g. a
+ * "Website" or "Email" field on a Customer/Vendor/Lead-shaped entity) used
+ * to render as completely inert text everywhere -- table, board card,
+ * print sheet -- with no way to click through. splitLinkSegments is the
+ * pure logic behind the new clickable rendering: a URL or email address
+ * embedded in the text becomes its own segment with a real href, the rest
+ * stays plain.
+ */
+test("splitLinkSegments finds a URL and gives it its own href, leaving the surrounding text plain", () => {
+  assert.deepEqual(splitLinkSegments("Visit https://example.com for details"), [
+    { text: "Visit ", href: null },
+    { text: "https://example.com", href: "https://example.com" },
+    { text: " for details", href: null },
+  ]);
+});
+
+test("splitLinkSegments finds an email address and gives it a mailto: href", () => {
+  assert.deepEqual(splitLinkSegments("Contact dana@example.com anytime"), [
+    { text: "Contact ", href: null },
+    { text: "dana@example.com", href: "mailto:dana@example.com" },
+    { text: " anytime", href: null },
+  ]);
+});
+
+test("splitLinkSegments returns the whole text as a single plain segment when nothing matches", () => {
+  assert.deepEqual(splitLinkSegments("Just a plain note, nothing to link."), [
+    { text: "Just a plain note, nothing to link.", href: null },
+  ]);
+  assert.deepEqual(splitLinkSegments(""), [{ text: "", href: null }]);
+});
+
+test("splitLinkSegments trims trailing sentence punctuation off a matched URL/email into its own plain segment", () => {
+  assert.deepEqual(splitLinkSegments("See https://example.com/path."), [
+    { text: "See ", href: null },
+    { text: "https://example.com/path", href: "https://example.com/path" },
+    { text: ".", href: null },
+  ]);
+  assert.deepEqual(splitLinkSegments("Email dana@example.com, thanks!"), [
+    { text: "Email ", href: null },
+    { text: "dana@example.com", href: "mailto:dana@example.com" },
+    { text: ", thanks!", href: null },
+  ]);
+});
+
+test("splitLinkSegments handles multiple links in one text, and a bare URL/email with nothing around it", () => {
+  assert.deepEqual(splitLinkSegments("https://a.com and dana@b.com"), [
+    { text: "https://a.com", href: "https://a.com" },
+    { text: " and ", href: null },
+    { text: "dana@b.com", href: "mailto:dana@b.com" },
+  ]);
+  assert.deepEqual(splitLinkSegments("https://example.com"), [{ text: "https://example.com", href: "https://example.com" }]);
+});
+
+test("splitLinkSegments doesn't double-match an email-like address inside a URL's own path/query as a second, overlapping link", () => {
+  // A URL with an "@" in it (e.g. a mailto-style share link) must not also
+  // spuriously match as a second, nested email segment starting mid-URL.
+  const segments = splitLinkSegments("https://example.com/share?to=dana@example.com");
+  assert.equal(segments.length, 1, "the whole URL must be claimed by a single segment, not split around the embedded @");
+  assert.equal(segments[0].href, "https://example.com/share?to=dana@example.com");
 });
 
 test("searchEntityRecords finds matches, caps the sample, and reports the real total match count", () => {

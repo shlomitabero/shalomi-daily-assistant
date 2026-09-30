@@ -1456,6 +1456,55 @@ test("the exported EntityView's Cell renders a longtext field with a native hove
   // asserting BoardCard's own <Cell .../> call site exists.
 });
 
+/**
+ * New in this round: a text/longtext field's value used to render as
+ * completely inert text everywhere (table, board card, print sheet) --
+ * mirrors the live preview's own new splitLinkSegments
+ * (entityFormatting.ts). Executes the real generated splitLinkSegments
+ * (extracted from real codegen output, not reimplemented), same technique
+ * round 118 introduced for this file (see recordsToCsv/restoreRecordAt
+ * tests above).
+ */
+test("the exported EntityView's splitLinkSegments finds a URL and an email address and gives each its own real href", () => {
+  const entityViewJsx = generateExportFiles(project).find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+  const splitSrc = entityViewJsx.match(/function splitLinkSegments\(text\) \{[\s\S]*?\n\}\n/)?.[0];
+  assert.ok(splitSrc, "expected to find the real generated splitLinkSegments");
+
+  const splitLinkSegments = new Function(`${splitSrc}\nreturn splitLinkSegments;`)() as (
+    text: string,
+  ) => { text: string; href: string | null }[];
+
+  assert.deepEqual(splitLinkSegments("Visit https://example.com for details"), [
+    { text: "Visit ", href: null },
+    { text: "https://example.com", href: "https://example.com" },
+    { text: " for details", href: null },
+  ]);
+  assert.deepEqual(splitLinkSegments("Contact dana@example.com anytime"), [
+    { text: "Contact ", href: null },
+    { text: "dana@example.com", href: "mailto:dana@example.com" },
+    { text: " anytime", href: null },
+  ]);
+  assert.deepEqual(splitLinkSegments("Just a plain note, nothing to link."), [
+    { text: "Just a plain note, nothing to link.", href: null },
+  ]);
+  // Trailing sentence punctuation must not become part of the link.
+  assert.deepEqual(splitLinkSegments("See https://example.com/path."), [
+    { text: "See ", href: null },
+    { text: "https://example.com/path", href: "https://example.com/path" },
+    { text: ".", href: null },
+  ]);
+});
+
+test("the exported EntityView's Cell renders a real clickable <a> for a URL/email embedded in a text or longtext field", () => {
+  const entityViewJsx = generateExportFiles(project).find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+  const cellSrc = entityViewJsx.match(/function Cell\(\{ field, value, relationLabel, onJumpToRecord \}\) \{[\s\S]*?\n\}\n/)?.[0];
+  assert.ok(cellSrc, "expected to find the real generated Cell component");
+  assert.match(cellSrc!, /<LinkifiedText text=\{String\(value\)\} \/>/, "both the longtext and plain-text branches must route through LinkifiedText");
+  assert.match(entityViewJsx, /function LinkifiedText\(\{ text \}\) \{/, "expected the real generated LinkifiedText component");
+  assert.match(entityViewJsx, /className="cell-link"/);
+  assert.match(entityViewJsx, /target="_blank"/);
+});
+
 test("generateExportFiles includes a real render.yaml matching this repo's own proven Render Blueprint structure", () => {
   const files = generateExportFiles(project);
   const renderYaml = files.find((f) => f.path === "render.yaml")!.content;

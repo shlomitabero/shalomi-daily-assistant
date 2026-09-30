@@ -1567,6 +1567,15 @@ button.sort-header:hover:not(:disabled) {
   font: inherit;
 }
 
+.cell-link {
+  color: var(--accent-deep);
+  text-decoration: underline;
+}
+
+.cell-link:hover {
+  color: var(--accent);
+}
+
 .preview-header {
   display: flex;
   align-items: center;

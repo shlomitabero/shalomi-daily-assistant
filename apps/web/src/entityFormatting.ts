@@ -156,6 +156,83 @@ export function matchesSearch(
   });
 }
 
+export interface LinkSegment {
+  text: string;
+  /** null for plain text; otherwise the real href to render (a URL as-is, or `mailto:<address>` for an email match). */
+  href: string | null;
+}
+
+// Deliberately excludes ) and ' and " (common sentence-closing punctuation
+// right after a URL, e.g. "(see https://example.com)" or a quoted link)
+// -- what those exclude, TRAILING_PUNCTUATION_RE below still has to trim
+// off characters like a bare trailing "." or "," that this class doesn't
+// exclude, since a URL can legitimately end mid-sentence next to one.
+const URL_RE = /https?:\/\/[^\s<>"')]+/g;
+// A deliberately simple, practical email match (not the full RFC 5322
+// grammar) -- good enough for the overwhelmingly common case of a plain
+// address typed into a Customer/Vendor "email" field, which is what this
+// is actually for.
+const EMAIL_RE = /[\w.+-]+@[\w-]+(?:\.[\w-]+)+/g;
+const TRAILING_PUNCTUATION_RE = /[.,;:!?]+$/;
+
+interface RawLinkMatch {
+  index: number;
+  text: string;
+  isEmail: boolean;
+}
+
+/**
+ * Splits `text` into segments so a table cell can render a real, clickable
+ * link for any URL or email address embedded in a plain text/longtext
+ * field's value (a "Website" or "Email" field on a Customer/Vendor/Lead-
+ * shaped entity is extremely common), while leaving the rest as plain
+ * text -- mirrors splitHighlightSegments' own "always returns at least one
+ * segment, so callers never need a separate no-match branch" contract.
+ * Trims common trailing sentence punctuation (".", ",", etc.) off of a
+ * matched URL/email into its own plain segment, so "see https://x.com."
+ * doesn't turn the sentence's own trailing period into part of the link.
+ */
+export function splitLinkSegments(text: string): LinkSegment[] {
+  const raw: RawLinkMatch[] = [];
+  for (const re of [URL_RE, EMAIL_RE]) {
+    re.lastIndex = 0;
+    let match: RegExpExecArray | null;
+    while ((match = re.exec(text)) !== null) {
+      raw.push({ index: match.index, text: match[0], isEmail: re === EMAIL_RE });
+      if (match[0].length === 0) re.lastIndex++;
+    }
+  }
+  // A URL match can fully contain what would otherwise also look like an
+  // email match to EMAIL_RE (e.g. a mailto: link's own address, or a URL
+  // with an "@" in its path) -- sort by position, then drop any match that
+  // starts inside a still-open, already-accepted one, so each character of
+  // `text` is claimed by at most one segment.
+  raw.sort((a, b) => a.index - b.index || b.text.length - a.text.length);
+  const accepted: RawLinkMatch[] = [];
+  let claimedUntil = -1;
+  for (const m of raw) {
+    if (m.index < claimedUntil) continue;
+    accepted.push(m);
+    claimedUntil = m.index + m.text.length;
+  }
+
+  const segments: LinkSegment[] = [];
+  let lastIndex = 0;
+  for (const m of accepted) {
+    if (m.index > lastIndex) segments.push({ text: text.slice(lastIndex, m.index), href: null });
+    const trailingMatch = TRAILING_PUNCTUATION_RE.exec(m.text);
+    const trailing = trailingMatch ? trailingMatch[0] : "";
+    const core = trailing ? m.text.slice(0, m.text.length - trailing.length) : m.text;
+    if (core) {
+      segments.push({ text: core, href: m.isEmail ? `mailto:${core}` : core });
+    }
+    if (trailing) segments.push({ text: trailing, href: null });
+    lastIndex = m.index + m.text.length;
+  }
+  if (lastIndex < text.length) segments.push({ text: text.slice(lastIndex), href: null });
+  return segments.length > 0 ? segments : [{ text, href: null }];
+}
+
 export interface HighlightSegment {
   text: string;
   matched: boolean;

@@ -977,6 +977,67 @@ export function isInlineEditableField(field) {
   return field.type !== "relation";
 }
 
+// Splits text into plain-vs-link segments so a table cell can render a real,
+// clickable link for a URL or email address embedded in a text/longtext
+// field's value (a "Website" or "Email" field on a Customer/Vendor/Lead-
+// shaped entity is extremely common), instead of the previously-inert
+// plain text. Mirrors the live preview's own entityFormatting.ts
+// splitLinkSegments verbatim, including trimming common trailing sentence
+// punctuation (".", ",", ...) off of a matched URL/email into its own
+// plain segment, and not double-matching an "@" inside a URL's own path as
+// a second, overlapping email match.
+function splitLinkSegments(text) {
+  const URL_RE = /https?:\\/\\/[^\\s<>"')]+/g;
+  const EMAIL_RE = /[\\w.+-]+@[\\w-]+(?:\\.[\\w-]+)+/g;
+  const TRAILING_PUNCTUATION_RE = /[.,;:!?]+$/;
+  const raw = [];
+  for (const re of [URL_RE, EMAIL_RE]) {
+    re.lastIndex = 0;
+    let match;
+    while ((match = re.exec(text)) !== null) {
+      raw.push({ index: match.index, text: match[0], isEmail: re === EMAIL_RE });
+      if (match[0].length === 0) re.lastIndex++;
+    }
+  }
+  raw.sort((a, b) => a.index - b.index || b.text.length - a.text.length);
+  const accepted = [];
+  let claimedUntil = -1;
+  for (const m of raw) {
+    if (m.index < claimedUntil) continue;
+    accepted.push(m);
+    claimedUntil = m.index + m.text.length;
+  }
+  const segments = [];
+  let lastIndex = 0;
+  for (const m of accepted) {
+    if (m.index > lastIndex) segments.push({ text: text.slice(lastIndex, m.index), href: null });
+    const trailingMatch = TRAILING_PUNCTUATION_RE.exec(m.text);
+    const trailing = trailingMatch ? trailingMatch[0] : "";
+    const core = trailing ? m.text.slice(0, m.text.length - trailing.length) : m.text;
+    if (core) segments.push({ text: core, href: m.isEmail ? \`mailto:\${core}\` : core });
+    if (trailing) segments.push({ text: trailing, href: null });
+    lastIndex = m.index + m.text.length;
+  }
+  if (lastIndex < text.length) segments.push({ text: text.slice(lastIndex), href: null });
+  return segments.length > 0 ? segments : [{ text, href: null }];
+}
+
+function LinkifiedText({ text }) {
+  return (
+    <>
+      {splitLinkSegments(text).map((seg, i) =>
+        seg.href ? (
+          <a key={i} href={seg.href} target="_blank" rel="noopener noreferrer" className="cell-link">
+            {seg.text}
+          </a>
+        ) : (
+          <span key={i}>{seg.text}</span>
+        ),
+      )}
+    </>
+  );
+}
+
 function Cell({ field, value, relationLabel, onJumpToRecord }) {
   if (value === null || value === undefined || value === "") return <span className="muted">—</span>;
   if (field.type === "relation") {
@@ -1010,11 +1071,11 @@ function Cell({ field, value, relationLabel, onJumpToRecord }) {
   if (field.type === "longtext") {
     return (
       <span className="longtext-cell" title={String(value)}>
-        {String(value)}
+        <LinkifiedText text={String(value)} />
       </span>
     );
   }
-  return <>{String(value)}</>;
+  return <LinkifiedText text={String(value)} />;
 }
 
 // A relation field is matched against its resolved display label (e.g.
@@ -3102,6 +3163,7 @@ th, td { text-align: start; padding: 8px 10px; border-bottom: 1px solid var(--bo
 .error { color: var(--danger); }
 .entity-undo-toast { display: flex; align-items: center; gap: 10px; background: var(--accent-soft); border: 1px solid var(--accent); color: var(--text); padding: 8px 14px; border-radius: 8px; margin: 0 0 16px; }
 .link-button { background: none; border: none; color: var(--accent); padding: 0; text-decoration: underline; font: inherit; font-weight: 600; cursor: pointer; }
+.cell-link { color: var(--accent); text-decoration: underline; }
 .link-button:hover { opacity: 0.85; }
 .entity-search { max-width: 280px; margin-bottom: 14px; }
 .sort-header { background: none; border: none; padding: 0; margin: 0; color: inherit; font: inherit; cursor: pointer; }

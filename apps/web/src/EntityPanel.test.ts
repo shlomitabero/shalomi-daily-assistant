@@ -565,6 +565,45 @@ function renderEntityPanel(extraProps: Record<string, unknown> = {}) {
 }
 
 /**
+ * New in this round: a text field's value used to render as completely
+ * inert text everywhere -- a "Website" or contact-email value on a
+ * Customer/Vendor/Lead-shaped entity had to be manually selected and
+ * copied to actually visit or email it. Confirms the table cell now
+ * renders a real, clickable `<a>` for both a URL and an email address
+ * embedded in the value, with the correct href (a plain URL as-is, an
+ * email as `mailto:`), while the rest of the text stays plain -- not just
+ * splitLinkSegments' own pure-function coverage in
+ * entityFormatting.test.ts, but the actual wired-up rendering through a
+ * real component tree and DOM.
+ */
+test("EntityPanel's table cell renders a real clickable link for a URL and an email address embedded in a text field's value", async () => {
+  await withJsdom(async () => {
+    const store: EntityRecord[] = [
+      { id: 1, name: "See https://acme.example.com or email dana@acme.example.com", status: "new" },
+    ];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = mockRecordsFetch(store) as typeof fetch;
+    try {
+      renderEntityPanel();
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 1);
+
+      const links = Array.from(document.querySelectorAll("table tbody a.cell-link")) as HTMLAnchorElement[];
+      assert.equal(links.length, 2, "expected exactly one link for the URL and one for the email address");
+      assert.equal(links[0].getAttribute("href"), "https://acme.example.com");
+      assert.equal(links[0].textContent, "https://acme.example.com");
+      assert.equal(links[1].getAttribute("href"), "mailto:dana@acme.example.com");
+      assert.equal(links[1].textContent, "dana@acme.example.com");
+      assert.equal(links[0].getAttribute("target"), "_blank");
+
+      const cell = links[0].closest("td")!;
+      assert.match(cell.textContent ?? "", /^See .*or email/, "the plain text around the links must still render as ordinary text");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * Regression-style coverage for a real-DOM contract the existing
  * handleBulkDelete extraction tests above can't reach: groupByField's own
  * doc comment says an enum value with zero matching records "still shows as

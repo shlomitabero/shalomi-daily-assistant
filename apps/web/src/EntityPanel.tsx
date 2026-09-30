@@ -39,6 +39,7 @@ import {
   restoreRecordAt,
   sortRecordsMulti,
   splitHighlightSegments,
+  splitLinkSegments,
   type RelatedRecordsByEntity,
   type SortKey,
 } from "./entityFormatting.js";
@@ -91,6 +92,33 @@ function Highlighted({ text, query }: { text: string; query: string | undefined 
           </mark>
         ) : (
           <span key={i}>{seg.text}</span>
+        ),
+      )}
+    </>
+  );
+}
+
+/**
+ * Renders a text/longtext value via splitLinkSegments -- a URL or email
+ * address embedded in the value (e.g. a "Website" or "Email" field) becomes
+ * a real, clickable link instead of inert text a person had to manually
+ * select and copy. Each plain (non-link) segment still goes through
+ * Highlighted, so search highlighting and linkification compose instead of
+ * one silently disabling the other. A link's own matched text isn't
+ * separately highlighted -- the link itself is already the visible
+ * "found this" signal, and highlighting *inside* an <a> muddies its click
+ * target with an unrelated <mark> background.
+ */
+function Linkified({ text, query }: { text: string; query: string | undefined }) {
+  return (
+    <>
+      {splitLinkSegments(text).map((seg, i) =>
+        seg.href ? (
+          <a key={i} href={seg.href} target="_blank" rel="noopener noreferrer" className="cell-link">
+            {seg.text}
+          </a>
+        ) : (
+          <Highlighted key={i} text={seg.text} query={query} />
         ),
       )}
     </>
@@ -169,11 +197,11 @@ function Cell({
   if (field.type === "longtext") {
     return (
       <span className="longtext-cell" title={String(value)}>
-        <Highlighted text={String(value)} query={highlightQuery} />
+        <Linkified text={String(value)} query={highlightQuery} />
       </span>
     );
   }
-  return <Highlighted text={String(value)} query={highlightQuery} />;
+  return <Linkified text={String(value)} query={highlightQuery} />;
 }
 
 /**
