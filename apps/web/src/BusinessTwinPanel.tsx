@@ -63,7 +63,7 @@ export function BusinessTwinPanel({
   const [twin, setTwin] = useState<BusinessTwin | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [copyStatus, setCopyStatus] = useState<"idle" | "copied" | "failed">("idle");
-  const dialogRef = useDialogFocusTrap<HTMLDivElement>();
+  const dialogRef = useDialogFocusTrap<HTMLDivElement>(onClose);
 
   function handleDownload() {
     if (!twin) return;

@@ -37,7 +37,7 @@ export function CollaboratorsPanel({
   const [inviteBusy, setInviteBusy] = useState(false);
   const [inviteInfo, setInviteInfo] = useState<string | null>(null);
   const [removingUserId, setRemovingUserId] = useState<string | null>(null);
-  const dialogRef = useDialogFocusTrap<HTMLDivElement>();
+  const dialogRef = useDialogFocusTrap<HTMLDivElement>(onClose);
 
   useEffect(() => {
     listCollaborators(projectId)

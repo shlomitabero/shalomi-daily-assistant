@@ -17,9 +17,24 @@ const FOCUSABLE_SELECTOR =
  * only blocks sequential keyboard navigation, not a screen reader's own
  * swipe/arrow-key browsing of the page, which ignores tabindex entirely),
  * and returns focus to whatever triggered the panel once it closes.
+ *
+ * Also closes on Escape when `onClose` is given (round 290): this used to
+ * be App.tsx's own job, via a single window-level keydown handler that
+ * enumerated six of this app's eight dialogs by hand (History, Business
+ * Twin, WhatsApp, Collaborators, Global Search, Shortcuts) -- ChangePassword
+ * and DeleteAccount were simply missing from that list, AND that handler
+ * only ran while `view === "preview"`, while both of those two panels are
+ * reachable from every view via the topbar. Centralizing Escape here means
+ * every dialog built on this hook gets it uniformly, with no separate list
+ * to keep in sync. `onClose` is read through a ref (not a `useEffect`
+ * dependency) so a caller passing a fresh inline arrow function on every
+ * render -- the norm here, e.g. `onClose={() => setShowX(false)}` --
+ * doesn't force the Tab-trap/inert-background setup below to re-run.
  */
-export function useDialogFocusTrap<T extends HTMLElement>() {
+export function useDialogFocusTrap<T extends HTMLElement>(onClose?: () => void) {
   const containerRef = useRef<T>(null);
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
   // Captured during render, not inside the effect below: an effect runs
   // as a passive effect *after* React has already committed the DOM for
   // this render, which includes applying any autoFocus inside the dialog
@@ -56,6 +71,10 @@ export function useDialogFocusTrap<T extends HTMLElement>() {
     }
 
     function handleKeyDown(e: KeyboardEvent) {
+      if (e.key === "Escape") {
+        onCloseRef.current?.();
+        return;
+      }
       if (e.key !== "Tab") return;
       const focusable = getFocusable();
       if (focusable.length === 0) {

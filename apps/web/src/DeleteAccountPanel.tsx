@@ -28,7 +28,7 @@ export function DeleteAccountPanel({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [projectSummary, setProjectSummary] = useState<{ owned: number; shared: number } | null>(null);
-  const dialogRef = useDialogFocusTrap<HTMLDivElement>();
+  const dialogRef = useDialogFocusTrap<HTMLDivElement>(onClose);
 
   // Fetches the real project list itself (rather than trusting App.tsx's own
   // myProjects, which is only ever populated while `view === "home"` -- this

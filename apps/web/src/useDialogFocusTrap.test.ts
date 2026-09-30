@@ -78,6 +78,16 @@ function TestDialog() {
   );
 }
 
+function TestDialogWithOnClose({ onClose }: { onClose: () => void }) {
+  const containerRef = useDialogFocusTrap<HTMLDivElement>(onClose);
+  return React.createElement(
+    "div",
+    { ref: containerRef, tabIndex: -1 },
+    React.createElement("button", { id: "first" }, "First"),
+    React.createElement("button", { id: "last" }, "Last"),
+  );
+}
+
 test("useDialogFocusTrap moves focus into the dialog when it mounts, keeps Tab cycling within it, and restores focus on unmount", async () => {
   await withJsdom(() => {
     const trigger = document.createElement("button");
@@ -129,5 +139,39 @@ test("useDialogFocusTrap hides real sibling content from assistive tech while th
 
     assert.equal(restOfApp.hasAttribute("aria-hidden"), false, "aria-hidden must be lifted once the dialog closes");
     assert.equal(restOfApp.hasAttribute("inert"), false, "inert must be lifted once the dialog closes");
+  });
+});
+
+/**
+ * Regression test for a real gap found by round 290's Explore survey:
+ * Escape closing an open overlay panel used to be App.tsx's own job, via
+ * a single window-level handler that enumerated six of this app's eight
+ * dialogs by hand -- ChangePassword and DeleteAccount were missing from
+ * that list entirely (and that handler only ran while `view === "preview"`,
+ * while both of those two panels are reachable from every view). Moved
+ * Escape-to-close into this shared hook instead, so every dialog built on
+ * it -- all eight, App.tsx's own wiring confirmed separately in
+ * App.test.ts -- gets it uniformly. Confirms Escape calls the real onClose
+ * passed in, and that a dialog given no onClose at all (none of today's
+ * callers omit it, but the parameter is optional) doesn't throw.
+ */
+test("useDialogFocusTrap calls onClose when Escape is pressed inside the dialog", async () => {
+  await withJsdom(() => {
+    let closeCalls = 0;
+    render(React.createElement(TestDialogWithOnClose, { onClose: () => (closeCalls += 1) }));
+
+    const first = document.getElementById("first")!;
+    assert.equal(document.activeElement, first, "sanity check: focus must already be inside the dialog");
+
+    fireEvent.keyDown(first, { key: "Escape" });
+    assert.equal(closeCalls, 1, "Escape while focus is inside the dialog must call the real onClose exactly once");
+  });
+});
+
+test("useDialogFocusTrap does not throw on Escape when no onClose was given", async () => {
+  await withJsdom(() => {
+    render(React.createElement(TestDialog));
+    const first = document.getElementById("first")!;
+    assert.doesNotThrow(() => fireEvent.keyDown(first, { key: "Escape" }));
   });
 });

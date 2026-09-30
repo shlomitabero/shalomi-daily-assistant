@@ -1077,17 +1077,25 @@ test("App's preview keydown handler opens global search on '/' only when the eve
 });
 
 /**
- * New in this round: "?" opens a real cheat-sheet of every keyboard
- * shortcut in the app (round 200), reusing the same isEditableEventTarget
- * guard "/" already established (round 199) -- a bare "?" is just as
- * ordinary a character to type into a text field as "/". Also confirms
- * openPanel's own six-way exclusivity actually includes "shortcuts" (a
- * seventh panel accidentally left able to stack alongside the other five
- * would defeat the entire point of routing every open through one place,
- * per this file's own round-68 doc comment on openPanel), and that Escape
- * resets it too.
+ * "?" opens a real cheat-sheet of every keyboard shortcut in the app
+ * (round 200), reusing the same isEditableEventTarget guard "/" already
+ * established (round 199) -- a bare "?" is just as ordinary a character
+ * to type into a text field as "/". Also confirms openPanel's own
+ * six-way exclusivity actually includes "shortcuts" (a seventh panel
+ * accidentally left able to stack alongside the other five would defeat
+ * the entire point of routing every open through one place, per this
+ * file's own round-68 doc comment on openPanel).
+ *
+ * Escape-to-close used to be asserted here too (a window-level branch in
+ * this same handler, enumerating six of the app's eight dialogs by hand).
+ * Round 290 moved it into useDialogFocusTrap.ts instead -- every dialog
+ * built on that shared hook gets it uniformly now, including
+ * ChangePassword/DeleteAccount, which this old branch never covered and
+ * which are reachable outside `view === "preview"` (where this whole
+ * handler is scoped) in the first place. See useDialogFocusTrap.test.ts
+ * for Escape's own coverage now.
  */
-test("App's preview keydown handler opens the shortcuts cheat-sheet on '?' (guarded like '/'), and openPanel/Escape both include it", () => {
+test("App's preview keydown handler opens the shortcuts cheat-sheet on '?' (guarded like '/'), and openPanel's exclusivity includes it", () => {
   const appSrc = readFileSync(new URL("./App.tsx", import.meta.url), "utf8");
   assert.match(
     appSrc,
@@ -1098,10 +1106,43 @@ test("App's preview keydown handler opens the shortcuts cheat-sheet on '?' (guar
   const openPanelMatch = appSrc.match(/function openPanel\(panel: "history" \| "twin" \| "whatsapp" \| "collaborators" \| "search" \| "shortcuts"\) \{[\s\S]*?\n {2}\}\n/);
   assert.ok(openPanelMatch, "expected openPanel's own type union to include 'shortcuts'");
   assert.match(openPanelMatch![0], /setShowShortcuts\(panel === "shortcuts"\);/);
+});
 
-  const escapeBranch = appSrc.match(/if \(e\.key === "Escape"\) \{[\s\S]*?\n {6}\}/)?.[0];
-  assert.ok(escapeBranch, "expected to find the Escape branch");
-  assert.match(escapeBranch!, /setShowShortcuts\(false\);/, "Escape must also close the shortcuts panel, not just the original five");
+/**
+ * Regression test for a real gap found by round 290's Explore survey:
+ * the app's window-level Escape handler (removed this round, see above)
+ * enumerated six of the app's eight `useDialogFocusTrap`-based dialogs by
+ * hand -- ChangePassword and DeleteAccount were simply missing from that
+ * list, and the handler only ran while `view === "preview"` in the first
+ * place, while both of those two panels are reachable from every view via
+ * the topbar (`{showChangePassword && <ChangePasswordPanel ... />}` sits
+ * above the per-view blocks). ShortcutsPanel.tsx's own cheat-sheet
+ * explicitly documents "Esc -> close" as a general app convention, which
+ * was simply false for these two. Confirms every one of the app's 8
+ * dialog-opening call sites now passes its own `onClose` through to
+ * `useDialogFocusTrap`, so Escape closes all of them uniformly (the
+ * hook's own new Escape-to-close behavior itself is tested directly in
+ * useDialogFocusTrap.test.ts).
+ */
+test("App.tsx wires onClose into useDialogFocusTrap for every one of its 8 dialogs, including ChangePassword and DeleteAccount", () => {
+  const dialogFiles = [
+    "BusinessTwinPanel.tsx",
+    "ChangePasswordPanel.tsx",
+    "CollaboratorsPanel.tsx",
+    "DeleteAccountPanel.tsx",
+    "GlobalSearchPanel.tsx",
+    "HistoryPanel.tsx",
+    "ShortcutsPanel.tsx",
+    "WhatsAppPanel.tsx",
+  ];
+  for (const file of dialogFiles) {
+    const src = readFileSync(new URL(`./${file}`, import.meta.url), "utf8");
+    assert.match(
+      src,
+      /useDialogFocusTrap<HTMLDivElement>\(onClose\)/,
+      `expected ${file} to pass its own onClose into useDialogFocusTrap so Escape closes it`,
+    );
+  }
 });
 
 /**

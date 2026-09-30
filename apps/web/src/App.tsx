@@ -499,10 +499,9 @@ function AppContent() {
 
   /**
    * Ctrl/Cmd+K opens global search from anywhere in the preview screen (a
-   * command-palette convention users already know from other tools), and
-   * Escape closes whichever overlay panel is currently open. Only active
-   * in the preview view so it can't fire while filling in the home-screen
-   * idea textarea or the spec-review form.
+   * command-palette convention users already know from other tools). Only
+   * active in the preview view so it can't fire while filling in the
+   * home-screen idea textarea or the spec-review form.
    *
    * "/" is a second, even more familiar way to open the same search (the
    * convention GitHub, Slack, and others already use), guarded by
@@ -516,6 +515,15 @@ function AppContent() {
    * read a changelog would know most of them existed. Same
    * isEditableEventTarget guard as "/", since "?" is just as ordinary a
    * character to type into a text field.
+   *
+   * Escape-to-close used to live here too, enumerating six of this app's
+   * eight overlay dialogs by hand (History, Business Twin, WhatsApp,
+   * Collaborators, Global Search, Shortcuts) -- ChangePassword and
+   * DeleteAccount were missing from that list entirely, and this whole
+   * handler only runs while `view === "preview"`, while both of those two
+   * are reachable from every view via the topbar. Moved into
+   * useDialogFocusTrap.ts (round 290) so every dialog built on that shared
+   * hook gets Escape uniformly, with no separate list to keep in sync here.
    */
   useEffect(() => {
     if (view !== "preview") return;
@@ -534,14 +542,6 @@ function AppContent() {
         e.preventDefault();
         openPanel("shortcuts");
         return;
-      }
-      if (e.key === "Escape") {
-        setShowHistory(false);
-        setShowTwin(false);
-        setShowSearch(false);
-        setShowWhatsApp(false);
-        setShowCollaborators(false);
-        setShowShortcuts(false);
       }
     }
     window.addEventListener("keydown", handleKeyDown);

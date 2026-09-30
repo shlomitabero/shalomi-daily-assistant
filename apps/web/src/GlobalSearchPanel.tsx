@@ -87,7 +87,7 @@ export function GlobalSearchPanel({
   const [expandedSamples, setExpandedSamples] = useState<Record<string, EntityRecord[]>>({});
   const [showAllLoading, setShowAllLoading] = useState<Set<string>>(new Set());
   const [copyStatus, setCopyStatus] = useState<"idle" | "copied" | "failed">("idle");
-  const dialogRef = useDialogFocusTrap<HTMLDivElement>();
+  const dialogRef = useDialogFocusTrap<HTMLDivElement>(onClose);
   // Bumped once per runSearch call, so a stale search whose network round
   // trip just happens to take longer than a newer one's can recognize
   // itself as superseded (see the guard right after the await below)

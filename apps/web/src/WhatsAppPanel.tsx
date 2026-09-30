@@ -132,7 +132,7 @@ export function WhatsAppPanel({
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [copyStatus, setCopyStatus] = useState<"idle" | "copied" | "failed">("idle");
-  const dialogRef = useDialogFocusTrap<HTMLDivElement>();
+  const dialogRef = useDialogFocusTrap<HTMLDivElement>(onClose);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const pollFailuresRef = useRef(0);
   const connectedPollRef = useRef<ReturnType<typeof setInterval> | null>(null);

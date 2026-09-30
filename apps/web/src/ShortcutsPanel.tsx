@@ -23,7 +23,7 @@ const SHORTCUTS: { keys: string[]; descriptionKey: string }[] = [
 
 export function ShortcutsPanel({ onClose }: { onClose: () => void }) {
   const { t } = useTranslation();
-  const dialogRef = useDialogFocusTrap<HTMLDivElement>();
+  const dialogRef = useDialogFocusTrap<HTMLDivElement>(onClose);
 
   return (
     <div className="history-overlay">
