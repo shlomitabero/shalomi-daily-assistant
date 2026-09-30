@@ -16725,6 +16725,69 @@ not a single "make it perfect" claim.
   `npm run build --workspace=@forge/web` (full `tsc -b` type-check gate)
   and `npm run build --workspace=@forge/api` (esbuild bundle).
 
+- **Round 287 -- fixed the codebase's own previously-flagged, low-priority
+  open candidate: CSV import could silently misassign data between two
+  fields sharing the same label.** Confirmed reachability by reading both
+  `FieldLabelEditor.tsx` and its server route (`RenameFieldLabelSchema` in
+  `apps/api/src/routes/projects.ts`, PATCH `/projects/:id/entities/
+  :entityName/fields/:fieldName/label`) -- neither enforces any uniqueness
+  on a field's display label, so a real user can freely rename two
+  different fields on the same entity to the same label (e.g. both to
+  "Status") via a fully supported, already-shipped feature. `apps/web/src/
+  entityFormatting.ts`'s `buildImportRecords` then matched each CSV header
+  cell against the *entire* field list independently
+  (`header.map((cell) => fields.find((f) => matchesHeader(cell, f)) ??
+  null)`), so two columns both named "Status" both resolved to whichever
+  field `fields.find` hit first -- the second field's real column was
+  never read at all. The row-building loop right below it
+  (`columnFields.findIndex((f) => f?.name === field.name)`) would then
+  find that same first column for *both* fields: the first field's data
+  got silently duplicated into the second, and the second field's actual
+  CSV column was dropped entirely -- with no error shown to the user;
+  `entity.import.success` reported normally. Reachable end-to-end via a
+  fully real flow: rename two fields to share a label, export a CSV
+  (labels become the header), re-import it (or any CSV using those
+  labels) -- one field's data silently vanishes or gets copied into the
+  wrong field.
+
+  Also confirmed, per this codebase's established discipline, that
+  `apps/api/src/codegen.ts` carries an independent plain-JS copy of this
+  exact logic (`matchesImportHeader`/`buildImportRecords`, embedded in the
+  exported app's generated source) with the identical bug -- both needed
+  the same fix.
+
+  Fix: each header column now claims at most one field, in header order,
+  via a `claimedFieldNames` set that a field is added to once matched and
+  checked before any later column can match it again -- so a second
+  column with the same header text correctly falls through to a *different*,
+  still-unclaimed field sharing that label, instead of re-matching the
+  same first field. Applied identically to `entityFormatting.ts`'s
+  `buildImportRecords` and `codegen.ts`'s plain-JS copy (no template-
+  literal backticks needed for this fix, so no nested-literal build
+  hazard like round 286's).
+
+  Test: 1 new test in `apps/web/src/entityFormatting.test.ts` (two text
+  fields, `stage` and `shippingStatus`, both labeled "Status") confirms a
+  2-column CSV with both columns headed "Status" now maps to two distinct
+  fields with their own correct values, not one field's value duplicated
+  into both. 1 new test in `apps/api/src/codegen.test.ts` follows this
+  file's own established pattern (round 62) of extracting and executing
+  the *actual* generated `buildImportRecords`/`matchesImportHeader`
+  source via regex + `new Function` (not reimplementing the logic in the
+  test), confirming the exported app's independent copy has the identical
+  fix. Deliberate-break-and-restore: reverted both files' column-claiming
+  logic back to the original unconditional `fields.find(...)` match,
+  re-ran both new tests standalone, confirmed both failed with exactly
+  the expected `shippingStatus: null` (instead of `"Shipped"`) diff, then
+  restored both from verified backups with byte-identical `diff` against
+  each; re-ran both tests and confirmed they passed again.
+
+  Full suite green: 1078 tests (up from 1076 -- `@forge/api` 299 → 300;
+  `@forge/web` 587 → 588; `@forge/shared` 13, `@forge/spec-engine` 84,
+  `@forge/db` 93 unchanged) via `npm test` at the repo root, plus clean
+  `npm run build --workspace=@forge/web` (full `tsc -b` type-check gate)
+  and `npm run build --workspace=@forge/api` (esbuild bundle).
+
 ## Phase 4
 
 - Template/agent marketplace
