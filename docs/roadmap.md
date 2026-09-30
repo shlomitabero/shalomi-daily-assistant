@@ -16628,6 +16628,103 @@ not a single "make it perfect" claim.
   586 unchanged) via `npm test` at the repo root, plus a clean
   `npm run build --workspace=@forge/web` (full `tsc -b` type-check gate).
 
+- **Round 286 -- a real, visible feature (per שלומי's standing direction
+  to favor these over bug-hunting after several consecutive bug-fix
+  rounds): an entity's table toolbar only ever got ONE filter dropdown,
+  for whichever single enum field `findBoardField` happened to pick for
+  Kanban grouping, even when an entity has two or more qualifying enum
+  fields.** Confirmed by reading `apps/web/src/entityFormatting.ts`'s
+  `findBoardField` and `apps/web/src/EntityPanel.tsx`'s toolbar: the
+  filter dropdown reused `findBoardField`'s single pick verbatim, so an
+  entity like `Ticket` (real domain entity, `packages/spec-engine/src/
+  domainEntities.ts`, triggered by "support ticket"/"customer support"),
+  with both a `priority` and a `status` enum field, could only ever be
+  filtered by whichever one `findBoardField` chose -- there was no way to
+  narrow the table by the other field at all. The free-text search box
+  can't substitute: it matches every field as a substring (including
+  relation labels), so it can't target one specific field's exact value.
+
+  Also discovered, while researching this: round 130's original
+  single-field status filter was never ported to the exported/standalone
+  codegen app at all -- confirmed via `grep -n "statusFilter\|entity-
+  status-filter" apps/api/src/codegen.ts` returning zero matches before
+  this round, and via round 130's own roadmap entry describing only the
+  live-preview implementation. This was a genuine, previously-unnoticed
+  exception to this codebase's otherwise-consistent "port every
+  live-preview feature to codegen.ts" discipline. Folded closing this gap
+  into this round, since it's a direct, natural extension of the same
+  fix rather than a separate future round.
+
+  Fix: extracted `findFilterableEnumFields(fields)` out of `findBoardField`
+  in both `apps/web/src/entityFormatting.ts` (TypeScript) and
+  `apps/api/src/codegen.ts` (the plain-JS copy embedded in its generated-
+  app template literal) -- the same "enum field with 2-8 values" predicate
+  as before, but returning every qualifying field, not just the one
+  `findBoardField` picks for Kanban grouping (which still groups by
+  exactly one field, unchanged, since that's inherent to what a board is).
+  Replaced the single `statusFilter`/`boardField`-only state with a
+  `fieldFilters` map keyed by field name in both `EntityPanel.tsx` and
+  `codegen.ts`, applied as `Object.entries(fieldFilters).every(([fieldName,
+  value]) => !value || String(r[fieldName] ?? "") === value)` -- every
+  active filter ANDs together with zero extra branching, and an
+  all-empty map trivially passes every record through `.every()`. The
+  toolbar now renders one `<select className="entity-status-filter">`
+  per qualifying enum field instead of at most one. Hit and fixed one
+  build error in `codegen.ts`: writing the new dropdown's label with a
+  nested template-literal backtick (`` `Filter by ${f.label || f.name}` ``)
+  broke esbuild (`Expected ";" but found "Filter"`) because this code
+  lives inside `codegen.ts`'s own single giant outer template literal
+  that generates the exported app's entire source -- a nested backtick
+  terminates the outer one early. Fixed with string concatenation instead
+  (`"Filter by " + (f.label || f.name)`); rebuilt clean afterward.
+
+  Test: 1 new test in `apps/web/src/EntityPanel.test.ts` (a `Task` fixture
+  with both `status` and `priority` enum fields) confirms exactly 2 filter
+  dropdowns render, that each narrows the table independently, and that
+  both active at once combine with AND (only the row matching both
+  survives). 1 new test in `apps/api/src/codegen.test.ts` confirms the
+  exported `EntityView.jsx` contains `findFilterableEnumFields`, the
+  `fieldFilters` state, the per-field `.map()` toolbar rendering, and that
+  the filter logic actually reaches `visibleRecords` (not just inert
+  dropdowns) -- plus that the exported `styles.css` carries the matching
+  `.entity-status-filter` rule. The pre-existing single-enum-field test
+  (`DEAL_ENTITY`, one `status` field) was confirmed to still pass
+  unmodified: a single-enum-field entity still gets exactly one filter
+  select, behaving identically to before.
+
+  Live end-to-end verification (beyond unit/DOM tests, matching the
+  rigor round 130's own original feature required): started a real,
+  isolated dev-server pair (API on port 4000, Vite on port 5286) and ran
+  a real-browser Playwright pass (Chromium via the environment's
+  pre-installed `/opt/pw-browsers/chromium`) through the actual heuristic
+  (no `ANTHROPIC_API_KEY` in this environment) build pipeline: signup,
+  idea text "A support ticket system for customer support requests."
+  (which triggers the real `Ticket` domain entity via its own keyword
+  list), Build click, navigate to the Ticket tab, and interact with the
+  filter dropdowns. Result: `FILTER_SELECT_COUNT=2` (one per qualifying
+  enum field, confirming the live UI genuinely renders both, not just
+  one), `ROWS_BEFORE=2`, `ROWS_AFTER_FIRST_FILTER=1` (selecting a real
+  value narrowed the table), `ROWS_RESTORED=2` (clearing it back
+  restored the original rows), zero page/console errors, `RESULT=PASS`.
+
+  Deliberate-break-and-restore: took verified backup copies of all three
+  changed source files, then reverted both `EntityPanel.tsx`'s and
+  `codegen.ts`'s toolbar/`visibleRecords` logic back to the single-
+  `boardField`-only filter. Re-ran both new regression tests standalone:
+  the `EntityPanel.test.ts` test failed with exactly `1 !== 2` ("expected
+  one filter dropdown for each of Status and Priority, not just one");
+  the `codegen.test.ts` test failed with exactly the expected regex
+  mismatch (`/{filterableEnumFields\.map\(\(f\) => \(/` not found in the
+  reverted output). Restored both files from the verified backups and
+  confirmed byte-identical `diff` against each; re-ran both tests and
+  confirmed they passed again.
+
+  Full suite green: 1076 tests (up from 1074 -- `@forge/api` 298 → 299;
+  `@forge/web` 586 → 587; `@forge/shared` 13, `@forge/spec-engine` 84,
+  `@forge/db` 93 unchanged) via `npm test` at the repo root, plus clean
+  `npm run build --workspace=@forge/web` (full `tsc -b` type-check gate)
+  and `npm run build --workspace=@forge/api` (esbuild bundle).
+
 ## Phase 4
 
 - Template/agent marketplace
