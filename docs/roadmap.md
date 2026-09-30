@@ -16983,6 +16983,84 @@ not a single "make it perfect" claim.
   `npm run build --workspace=@forge/web` (full `tsc -b` type-check gate,
   85 modules transformed, up from 84 -- the new `whatsappUnread.ts`).
 
+### Round 290 — Escape now actually closes every one of the app's 8 dialogs
+
+  Real gap found via an Explore-subagent survey, independently re-verified
+  against the source before writing any code: `App.tsx`'s window-level
+  Escape handler enumerated six of the app's eight `useDialogFocusTrap`-
+  based overlay dialogs by hand (History, Business Twin, WhatsApp,
+  Collaborators, Global Search, Shortcuts). `ChangePasswordPanel` and
+  `DeleteAccountPanel` were simply missing from that list -- pressing
+  Escape while either was open did nothing. Worse, that handler only ran
+  while `view === "preview"` in the first place, while both of those two
+  panels are reachable from every view via the topbar
+  (`{showChangePassword && <ChangePasswordPanel ... />}` sits above the
+  per-view blocks), so even adding them to the list wouldn't have been a
+  complete fix on its own. `ShortcutsPanel.tsx`'s own cheat-sheet
+  explicitly documents "Esc -> close" as a general app convention, which
+  was simply false for these two -- a real, user-facing gap between
+  documented and actual behavior.
+
+  Fix: rather than patching the list (which would still leave the
+  `view === "preview"` scoping bug and a second hand-maintained list to
+  keep in sync as new dialogs get added), centralized Escape-to-close
+  inside the shared `useDialogFocusTrap` hook itself:
+
+  1. **`useDialogFocusTrap.ts`** -- the hook now takes an optional
+     `onClose?: () => void` parameter, stored in a `useRef` (updated on
+     every render, outside any effect) rather than added to the
+     Tab-trap/inert-background effect's dependency array. Every real
+     caller passes a fresh inline arrow function as `onClose` on each
+     render (the norm here, e.g. `onClose={() => setShowX(false)}`) --
+     putting it directly in the dependency array would re-run that
+     effect's focus-move/inert-background setup on every single render,
+     not just on mount. Reading it through a ref sidesteps that while
+     still always calling the current callback. `handleKeyDown` (already
+     attached for Tab-trapping) now checks for `"Escape"` first and calls
+     `onCloseRef.current?.()`.
+  2. **All 8 dialog components** (`BusinessTwinPanel`,
+     `ChangePasswordPanel`, `CollaboratorsPanel`, `DeleteAccountPanel`,
+     `GlobalSearchPanel`, `HistoryPanel`, `ShortcutsPanel`,
+     `WhatsAppPanel`) -- one-line change each: pass their own already-
+     in-scope `onClose` prop into `useDialogFocusTrap`.
+  3. **`App.tsx`** -- the old hand-enumerated Escape branch inside the
+     preview-only keydown handler is removed entirely; that handler now
+     only handles Ctrl/Cmd+K, `/`, and `?`.
+
+  Test: 2 new unit tests in `useDialogFocusTrap.test.ts` (a
+  `TestDialogWithOnClose` helper backed by a real jsdom render) confirm
+  Escape calls the real `onClose` exactly once while focus is inside the
+  dialog, and that a dialog given no `onClose` at all doesn't throw. The
+  pre-existing `App.test.ts` test that had asserted directly on the old
+  Escape branch's source text was renamed and rewritten to match the new
+  architecture, and a new test was added confirming all 8 dialog files'
+  source now contains `useDialogFocusTrap<HTMLDivElement>(onClose)`.
+
+  Deliberate-break-and-restore, done twice: reverted
+  `useDialogFocusTrap.ts`'s Escape branch to a no-op -- both new tests in
+  `useDialogFocusTrap.test.ts` failed as expected (`closeCalls` stayed
+  `0` instead of `1`); separately reverted `DeleteAccountPanel.tsx`'s
+  `useDialogFocusTrap<HTMLDivElement>(onClose)` back to the no-argument
+  call -- the new `App.test.ts` regression test failed on exactly that
+  file's line. Restored both from verified pre-fix backups with
+  byte-identical `diff` against each; re-ran everything and confirmed all
+  tests passed again, plus the full 88-test battery across all 8 dialog
+  components' own existing test files (zero regressions from the
+  `useDialogFocusTrap` signature change).
+
+  Live Playwright verification (real Chromium, real dev servers on
+  isolated ports): signed up a fresh test user, opened Change Password
+  from the topbar, confirmed a `[role="dialog"]` was present, pressed
+  Escape, confirmed the dialog count dropped to 0; repeated the same
+  sequence for Delete Account. Both passed in an actual browser, not just
+  jsdom.
+
+  Full suite green: **1091 tests** (up from 1088 -- `@forge/web` 598 →
+  601; `@forge/api` 300, `@forge/shared` 13, `@forge/spec-engine` 84,
+  `@forge/db` 93 unchanged) via `npm test` at the repo root, plus a clean
+  `npm run build --workspace=@forge/web` (full `tsc -b` type-check gate,
+  85 modules transformed, unchanged from round 289).
+
 ## Phase 4
 
 - Template/agent marketplace
