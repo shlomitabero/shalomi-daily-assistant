@@ -16409,6 +16409,82 @@ not a single "make it perfect" claim.
   clean `npm run build --workspace=@forge/web` (full `tsc -b` type-check
   gate).
 
+- **Round 283 -- implemented round 282's own concrete flagged candidate:
+  a silent, real-data-corruption bug where two entities with different
+  non-ASCII names could collapse onto the exact same underlying SQL
+  table.** `packages/db/src/identifiers.ts`'s `tableNameFor` (used by the
+  live preview's own migration layer) sanitizes an entity name into a
+  table name by replacing every non-ASCII-alphanumeric character with
+  `"_"` -- and, unlike `ProductSpecSchema`'s existing case-insensitive-
+  duplicate-name check, this sanitization never throws; it just silently
+  produces a string. Verified directly with a standalone script before
+  touching any file: `tableNameFor("p", "לקוח")` and
+  `tableNameFor("p", "מוצר")` -- two completely different, equally
+  plausible Hebrew entity names ("Customer" and "Product") -- both
+  produce `"entity_p_____"`. Whichever entity migrates second has its
+  `CREATE TABLE IF NOT EXISTS` silently no-op against the first entity's
+  already-created table, and every read/write for the "losing" entity
+  then runs against the "winning" entity's columns instead -- real,
+  silent cross-entity data corruption, the exact same failure mode the
+  existing case-insensitive check already guards against, just reached
+  through a different transformation (sanitization instead of casing).
+
+  Considered, and deliberately did NOT also make, the wider fix of
+  requiring every entity name to be a valid ASCII identifier outright
+  (matching `apps/api/src/codegen.ts`'s much stricter `assertSafe`,
+  which throws on any non-ASCII name at export time, collision or not):
+  `ProductSpecSchema`'s own doc comment explicitly warns that a stricter
+  validator is an append-only schema's one-way door -- it would make
+  every already-stored project with a lone, non-colliding non-ASCII
+  entity name (which works fine in the live preview today, via this
+  same silent sanitization) fail to parse forever, a real regression for
+  real existing users, not a fix. The narrower, collision-only check
+  below is the same category of exception the existing case-insensitive
+  check already relies on ("closing a real data-corruption hole"), so it
+  was the one implemented.
+
+  Fix: added `findSanitizedIdentifierCollisions` to
+  `packages/shared/src/index.ts`, using the identical sanitization rule
+  as `tableNameFor` (`.replace(/[^A-Za-z0-9]/g, "_")`, then
+  case-folded) -- intentionally duplicated rather than imported, since
+  `@forge/shared` has no dependency on `@forge/db` (the dependency runs
+  the other way); a code comment cross-references `tableNameFor` and
+  flags the two to keep in sync. Wired in as a second `.refine()` on
+  `ProductSpecSchema`, right alongside the existing case-insensitive
+  check, with its own explanatory message. Confirmed this is genuinely
+  wired into the real spec-generation flow (not just a schema unit
+  test): `ProductSpecSchema.safeParse`/`.parse()` already gates every
+  path a spec can be produced through --
+  `packages/spec-engine/src/anthropic.ts` (the real LLM provider),
+  `packages/spec-engine/src/debug.ts` (its repair path), and
+  `packages/spec-engine/src/heuristic.ts` (the fallback) -- so a
+  colliding spec now fails validation and falls back the same way an
+  exact case-insensitive duplicate already does, before ever reaching
+  either database layer.
+
+  Tests: `packages/shared/src/index.test.ts` gained 2 tests reusing the
+  file's existing `baseSpec` helper -- one asserting `לקוח`/`מוצר`
+  (which do collide once sanitized) are rejected with the new message,
+  one asserting `לקוח`/`הזמנה` (different lengths, so they don't
+  collide) are accepted, proving the check doesn't over-reject non-ASCII
+  names in general. Deliberate-break-and-restore: reverted the new
+  `.refine()` back out, re-ran the collision test standalone, confirmed
+  it failed with exactly the expected "must be rejected" assertion
+  message, then restored from a verified pre-fix backup copy with a
+  byte-identical `diff`. Checked `apps/api/src/codegen.ts` for a
+  duplicate copy of this validation logic (established discipline) --
+  found none: `codegen.ts` uses its own, separate, much stricter
+  `assertSafe` allowlist (see above), so no port was needed here; this
+  fix instead closes the gap upstream of both the live-preview DB layer
+  and the export codegen, at the one point every spec is already
+  validated.
+
+  Full suite green: 1072 tests (up from 1070 -- `@forge/shared` 11 → 13;
+  `@forge/spec-engine` 84, `@forge/db` 93, `@forge/api` 296, `@forge/web`
+  586 unchanged) via `npm test` at the repo root, plus a clean
+  `npm run build --workspace=@forge/web` (full `tsc -b` type-check
+  gate).
+
 ## Phase 4
 
 - Template/agent marketplace
