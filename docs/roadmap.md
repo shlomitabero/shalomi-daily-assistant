@@ -17229,6 +17229,93 @@ not a single "make it perfect" claim.
   modules transformed) and `@forge/api` (`esbuild`, unchanged from
   round 291).
 
+### Round 293 — Text fields now auto-linkify real URLs and email addresses
+
+  Real, visible feature found by a fresh Explore survey biased toward a
+  genuine feature (rounds 290 and 292 were bug fixes; this round's
+  standing direction explicitly asked for a lean back toward a real,
+  visible feature). A text or longtext field's value -- a "Website" field
+  on a Vendor, an "Email" field on a Customer, a URL mentioned inside a
+  Notes field -- rendered as completely inert text everywhere: table
+  cell, board card, print sheet, and the exported standalone app's own
+  table. Confirmed with a full-repo grep (`linkify|isUrl|mailto`) turning
+  up zero matches anywhere before this round -- a user had to manually
+  select and copy the text just to visit a link or email an address.
+
+  Added `splitLinkSegments` to `entityFormatting.ts`: splits a string
+  into plain-vs-link segments, matching both a URL (`https?://...`) and
+  a plain email address, and:
+  - trims common trailing sentence punctuation (`.`, `,`, `;`, `:`, `!`,
+    `?`) off a matched URL/email into its own plain segment, so "see
+    https://x.com." doesn't turn the sentence's own trailing period into
+    part of the link;
+  - resolves a URL that happens to contain an `@` in its own path/query
+    (e.g. `?to=dana@example.com`) to a single URL segment rather than
+    spuriously splitting a second, overlapping email match out of the
+    middle of it (matches sorted by position, a later match dropped if
+    it starts inside an already-accepted one's span).
+
+  `EntityPanel.tsx`'s `Cell` now renders text/longtext values through a
+  new `Linkified` component: each link segment becomes a real
+  `<a target="_blank" rel="noopener noreferrer" className="cell-link">`,
+  each plain segment still goes through the existing `Highlighted`
+  component, so linkification composes with search highlighting instead
+  of one silently disabling the other (a link's own matched text isn't
+  separately marked, since the link itself is already the "found this"
+  signal, and a `<mark>` inside an `<a>` would muddy its click target).
+  Since `RecordPrintSheet` and `RecordListPrintSheet` both already reuse
+  the same `Cell`, they pick this up automatically -- though a link is
+  naturally inert on a printed page.
+
+  Ported the identical logic to `codegen.ts`'s exported `EntityView.jsx`
+  (a plain-JS `splitLinkSegments` inside the giant template literal --
+  every backslash doubled per that file's own escaping convention -- plus
+  a new `LinkifiedText` component and a `.cell-link` CSS rule), so the
+  standalone exported app gets the same real, clickable links, not just
+  the live preview.
+
+  Test: 6 new unit tests for `splitLinkSegments` covering a URL, an
+  email, no match, trailing-punctuation trimming, multiple links in one
+  string, and the URL-containing-an-`@`-in-its-path case. A new
+  `EntityPanel.test.ts` DOM test renders a real record whose text field
+  holds both a URL and an email, and confirms two real `<a class="cell-
+  link">` elements render with the correct `href`s (a URL as-is, an
+  email as `mailto:`), with the surrounding plain text still rendering
+  as ordinary text. 2 new `codegen.test.ts` tests: one extracts and
+  *executes* the real generated `splitLinkSegments` via `new Function`
+  (not a reimplementation) and asserts the same behavior as the live
+  unit tests; the other confirms `Cell`'s text/longtext branches route
+  through the real generated `LinkifiedText`.
+
+  Deliberate-break-and-restore, done on both the live and exported
+  implementations independently: reverted each `splitLinkSegments` to a
+  no-op returning the whole string as one plain segment -- 5 of 6 live
+  unit tests failed with the exact expected diffs (only the "no match"
+  test trivially still passed), the live `EntityPanel.test.ts` DOM test
+  failed with `0 !== 2` (no links rendered at all), and the codegen unit
+  test failed with the exact expected segment mismatch. Restored both
+  from verified pre-fix backups with byte-identical `diff` against each;
+  re-ran everything and confirmed all tests passed again.
+
+  Live Playwright verification (real Chromium, real dev servers): signed
+  up, built a real CRM project ("A CRM with customers and deals."),
+  created a real Customer record via the API (using the page's own
+  stored token -- not fighting the create form's own field layout, since
+  the actual UI behavior under test is the table's rendering of an
+  already-stored value) with a URL in its notes and a real email address
+  in its email field, reloaded and reopened the project, and confirmed:
+  exactly two real `<a class="cell-link">` elements in that record's own
+  table row (scoped past the build pipeline's own auto-seeded sample
+  Customer rows), with the correct `mailto:`/`https://` hrefs, and a
+  genuine click on the URL link opened a real new browser tab navigating
+  to it.
+
+  Full suite green: **1105 tests** (up from 1096 -- `@forge/web` 605 →
+  612, `@forge/api` 301 → 303; `@forge/shared` 13, `@forge/spec-engine`
+  84, `@forge/db` 93 unchanged) via `npm test` at the repo root, plus
+  clean builds for both `@forge/web` (`tsc -b` + `vite build`, 85
+  modules transformed) and `@forge/api` (`esbuild`).
+
 ## Phase 4
 
 - Template/agent marketplace
