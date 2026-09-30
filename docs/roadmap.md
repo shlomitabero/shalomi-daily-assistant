@@ -16552,6 +16552,82 @@ not a single "make it perfect" claim.
   the repo root, plus a clean `npm run build --workspace=@forge/web` (full
   `tsc -b` type-check gate).
 
+- **Round 285 -- fixed a real bug found in a genuinely fresh area (not
+  entity-name validation itself, but a downstream consumer of an
+  unvalidated entity name nobody had audited): "Backup all data" could
+  produce a corrupted or path-traversing ZIP file for a project whose
+  entity name contained a path separator.** Directed the Explore survey
+  explicitly away from the whole entity-name/identifier-validation family
+  closed out across rounds 279-284; it found `apps/api/src/backup.ts`'s
+  `generateBackupZipEntries`, which builds each ZIP entry as
+  `` `${entity.name}.csv` `` and hands it straight to `apps/api/src/
+  zip.ts`'s `buildZip`, which writes `entry.path` into the archive
+  verbatim with zero validation (confirmed by reading `buildZip` itself:
+  `Buffer.from(entry.path, "utf8")`, no sanitization step at all). Traced
+  exactly how an unsafe name reaches this point: `packages/db/src/
+  identifiers.ts`'s `tableNameFor` *sanitizes* an unsafe entity name for
+  the SQL table (never throws), so a project with such a name builds and
+  runs completely normally in the live preview -- by the time a real user
+  clicks "Backup all data" on it, `entity.name` reaches this ZIP-path
+  construction with no guard at all, unlike every other place an entity
+  name reaches something dangerous (SQL identifiers via `tableNameFor`/
+  `assertSafeIdentifier`, or the exported app's own generated source
+  files via `codegen.ts`'s `assertSafe`, which outright rejects rather
+  than sanitizes -- see rounds 283/284). A "/" in an entity name would
+  create an unintended nested folder inside the downloaded archive
+  instead of a flat "\<EntityName\>.csv", breaking this feature's own
+  documented promise; a name containing "../" could in principle invite
+  path traversal on a naive unzip tool.
+
+  Also verified, and deliberately did NOT touch: the exported standalone
+  app's own `/api/backup` route (`codegen.ts` line ~594, the exact same
+  `` `${entity.name}.csv` `` pattern, duplicated per this codebase's own
+  established "duplicate small formatting helpers per surface" practice)
+  needs no equivalent fix -- `generateExportFiles` calls `assertSafe(entity.name,
+  "entity")` on every entity (line 3166) *before* any file, including the
+  generated `server.js` that embeds this exact route, is ever produced;
+  since `assertSafe` throws on any non-ASCII-identifier name, an entity
+  that could reach the exported app's own backup route has, by
+  construction, already passed a strictly safer check than anything this
+  round needed to add. Also checked `apps/web/src/EntityPanel.tsx`'s
+  per-entity CSV download (`a.download = \`${entity.name}.csv\``) -- a
+  browser `download` attribute is not a zip archive path and browsers
+  already treat it as an opaque suggested filename, not a multi-segment
+  path, so it isn't the same vulnerability class and was left alone.
+
+  Fix: added `sanitizeZipEntryName` to `apps/api/src/backup.ts`, which
+  replaces only the characters that are actually unsafe in a zip/
+  filesystem path (`\ / : * ? " < > |` plus control characters) --
+  deliberately narrower than `tableNameFor`'s full ASCII-only
+  sanitization, so a real Hebrew entity name stays human-readable in the
+  backup archive's own file listing, which is the entire point of the
+  feature. Replacing every path separator is sufficient on its own to
+  also rule out path traversal: a naive unzip tool only interprets
+  "../" as a directory-escaping component when an actual "/" is present
+  to split the path into segments, so a flat filename with no separators
+  at all -- even one that still contains literal dots -- can never
+  produce a multi-segment, directory-escaping path. (An earlier draft of
+  this fix also special-cased a leading "..", but that turned out to add
+  no real safety once every separator is already gone, and only made the
+  sanitized output harder to predict -- dropped before committing.)
+
+  Test: 1 new test in `apps/api/src/backup.test.ts` builds a project with
+  two intentionally adversarial entity names ("Reports/2024" and
+  "../../etc") through the file's own existing `createTestDb` helper,
+  calls the real `generateBackupZipEntries`, and asserts both the exact
+  sanitized paths ("Reports_2024.csv", "..\_.._etc.csv") and, more
+  generally, that no resulting path contains "/" or "\\" at all.
+  Deliberate-break-and-restore: reverted `sanitizeZipEntryName`'s call
+  site back to the raw `` `${entity.name}.csv` ``, re-ran the new test
+  standalone, confirmed it failed with exactly the expected raw,
+  un-sanitized paths in its diff, then restored from a verified pre-fix
+  backup copy with a byte-identical `diff`.
+
+  Full suite green: 1074 tests (up from 1073 -- `@forge/api` 297 → 298;
+  `@forge/shared` 13, `@forge/spec-engine` 84, `@forge/db` 93, `@forge/web`
+  586 unchanged) via `npm test` at the repo root, plus a clean
+  `npm run build --workspace=@forge/web` (full `tsc -b` type-check gate).
+
 ## Phase 4
 
 - Template/agent marketplace
