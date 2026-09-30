@@ -16485,6 +16485,73 @@ not a single "make it perfect" claim.
   `npm run build --workspace=@forge/web` (full `tsc -b` type-check
   gate).
 
+- **Round 284 -- implemented round 283's own concrete flagged follow-up
+  candidate: "Export Code" gave a generic, unexplained 500 whenever a
+  single (non-colliding) entity/field name wasn't ASCII, instead of a
+  clear, actionable error.** Round 283 deliberately left this case open
+  (fixing it at the schema level would have broken real, already-working
+  projects with a lone non-ASCII name -- see that round's own entry).
+  Confirmed the exact mechanics by reading both layers: `packages/db/src/
+  identifiers.ts`'s `tableNameFor` silently sanitizes a non-ASCII entity
+  name (never throws), so such a spec builds and runs fine in the live
+  preview, but `apps/api/src/codegen.ts`'s much stricter `assertSafe`
+  throws a bare `Error` on any non-ASCII name at export time with no
+  sanitization step at all -- and `apps/api/src/app.ts`'s generic error
+  handler (`app.use((err, ...) => ...)`) turns any non-`HttpError`,
+  non-`ValidationError`, non-`NotFoundError` into an unexplained
+  `{ error: "Internal server error", code: "INTERNAL_ERROR" }` 500.
+
+  Fix: `apps/api/src/routes/projects.ts`'s `GET /projects/:id/export`
+  route now wraps the `generateExportFiles(project)` call in a try/catch.
+  A regex (`/^Refusing to export: unsafe (entity|field) identifier
+  "(.+)"$/`) matches codegen.ts's exact thrown message; on a match, it's
+  re-thrown as `HttpError(422, ..., "EXPORT_UNSAFE_IDENTIFIER")` instead
+  of falling through to the generic handler -- any other error still
+  propagates unchanged. Added `error.EXPORT_UNSAFE_IDENTIFIER` to both
+  the Hebrew and English blocks of `apps/web/src/i18n/language.ts`,
+  following the exact `error.<CODE>` convention `resolveErrorMessage`
+  already uses for every other server error code (e.g. `BUILD_REQUIRED`)
+  -- a static, actionable message ("rename it to use only English
+  letters... you can keep using the app in the live preview without
+  exporting") rather than trying to interpolate the specific unsafe name,
+  matching how every other error code in this dictionary is already
+  static. Confirmed the whole path was already wired for this: `App.tsx`'s
+  `handleExport` already does `catch (err) { setError((err as
+  Error).message) }`, and `api.ts`'s `downloadBlob` (shared by both export
+  and backup) already runs every non-2xx response body through
+  `resolveErrorMessage` before throwing -- so no web-side change beyond
+  the two translation strings was needed for this to actually reach the
+  screen.
+
+  Test: 1 new end-to-end API test in `apps/api/src/app.test.ts`, following
+  the existing `createGatedProvider`-style custom-`SpecProvider` pattern
+  (there is no live `ANTHROPIC_API_KEY` in this environment, and the
+  heuristic provider only ever produces ASCII entity names, so a stub
+  provider is the correct, real way to reach this case through the actual
+  HTTP flow rather than poking the database directly): a
+  `createNonAsciiEntityProvider()` returns a fixed spec with a single
+  Hebrew entity name (`"לקוח"`, no collision with anything, so round 283's
+  own check doesn't reject it), wired into `withServer`'s `provider`
+  option. The test signs up, creates a project, builds it through the
+  real `/build` SSE endpoint (asserting `Forge`'s event is a genuine
+  `success`, not a rejected spec), then calls `GET .../export` and asserts
+  `422` with `code: "EXPORT_UNSAFE_IDENTIFIER"` and the underlying English
+  message actually naming the unsafe identifier. Deliberate-break-and-
+  restore: removed the try/catch back out, re-ran the new test standalone,
+  confirmed it failed with exactly the expected `500 !== 422` assertion
+  message, then restored from a verified pre-fix backup copy with a
+  byte-identical `diff`. Checked `apps/api/src/codegen.ts` for a duplicate
+  copy of this route-level error-translation logic (established
+  discipline) -- none applicable: `codegen.ts` is the source of the
+  original thrown error, not a second call site needing the same fix.
+
+  Full suite green: 1073 tests (up from 1072 -- `@forge/api` 296 → 297;
+  `@forge/shared` 13, `@forge/spec-engine` 84, `@forge/db` 93, `@forge/web`
+  586 unchanged, its own translation-completeness test already covering
+  the two new `error.EXPORT_UNSAFE_IDENTIFIER` strings) via `npm test` at
+  the repo root, plus a clean `npm run build --workspace=@forge/web` (full
+  `tsc -b` type-check gate).
+
 ## Phase 4
 
 - Template/agent marketplace
