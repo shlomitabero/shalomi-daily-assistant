@@ -17678,6 +17678,88 @@ not a single "make it perfect" claim.
   `@forge/web` (`tsc -b` + `vite build`, 86 modules transformed) and
   `@forge/api` (`esbuild`).
 
+### Round 298 — A "Send WhatsApp" row action on any record with a phone number
+
+  Real, visible feature found by a fresh Explore survey (no candidate was
+  known going in). The WhatsApp panel and CRM records were only ever
+  wired in one direction: `apps/api/src/whatsapp.ts`'s `findMatchingRecord`
+  already resolves an *inbound* WhatsApp message to a matched Customer/
+  Lead record via `PHONE_FIELD_NAME_HINTS`, but nothing existed for the
+  reverse direction -- messaging a customer *from* their own record
+  meant manually copying the phone number out of the table, switching to
+  the separate WhatsApp panel, and pasting it into the test-send box.
+  Confirmed via grep that no client-side phone-hint matching, `wa.me`
+  link, or prefill mechanism existed anywhere in `apps/web/src`.
+
+  Added `findPhoneField(fields)` to `entityFormatting.ts`, a deliberate
+  client-side mirror of `whatsapp.ts`'s own `PHONE_FIELD_NAME_HINTS` list
+  and matching logic (name-hint based, not field-type based -- phone
+  fields are plain `text` fields with no dedicated type). Wired a new
+  "💬 WhatsApp" row action into `EntityPanel.tsx`'s existing row-actions
+  block (alongside Edit/Duplicate/Print/Delete), rendered only when the
+  entity has a phone-like field *and* the specific record's value for it
+  is a real non-empty string. Added an `onSendWhatsApp` callback prop
+  (the mirror-image of the existing `onJumpToRecord`, which already
+  handles the opposite inbound-message-to-record direction), wired in
+  `App.tsx` to a new `whatsappPrefillTo` state that opens the WhatsApp
+  panel and clears once it closes (via `onClose`/`onJumpToEntity`/
+  `onJumpToRecord`, all three exit paths). `WhatsAppPanel.tsx` gained a
+  `prefillTo` prop that seeds its existing `testTo` state via a lazy
+  `useState` initializer -- no effect needed, since App.tsx only ever
+  mounts the panel fresh (conditional render, not persistent) each time
+  it opens. Not ported to `codegen.ts`: WhatsApp has never been part of
+  the exported app at all (an established fact from rounds 288/289/295).
+
+  Test: 3 new unit tests for `findPhoneField` in `entityFormatting.test.ts`
+  (recognizes the domain library's own "phone" convention; recognizes
+  every other hint variant case-insensitively, matching `whatsapp.ts`'s
+  own list; returns null for an entity with no phone-like field at all).
+  2 new `EntityPanel.test.ts` DOM tests: one renders a real two-record
+  table (one with a real phone value, one with an empty one) and confirms
+  the button appears and fires `onSendWhatsApp` with the real value for
+  the first, and does not render at all for the second; the other
+  confirms a text-only entity with no phone-like field never gets the
+  button even when `onSendWhatsApp` is given. 1 new `WhatsAppPanel.test.ts`
+  test confirms the real rendered "to" input starts pre-filled from
+  `prefillTo`, and that submitting the form *without touching it* sends
+  exactly that number -- proving it's genuine component state, not a
+  placeholder.
+
+  Deliberate-break-and-restore, done independently on the two files with
+  real logic (`entityFormatting.ts`, `WhatsAppPanel.tsx`): collapsed
+  `findPhoneField` to always return `null` -- both new unit tests for it
+  failed with the exact expected wrong value, and the EntityPanel DOM
+  test asserting the button's presence failed too (a real cross-file
+  regression catch, not just the unit's own). Restored it, byte-identical
+  `diff` against the pre-break backup. Then reverted `WhatsAppPanel.tsx`'s
+  `useState` initializer back to a plain `""` -- the new prefill test
+  failed on the exact expected mismatch (confirmed via an isolated
+  `--test-name-pattern` run after the same break, run together with the
+  rest of the file, caused an unrelated pre-existing test in that file to
+  hang past the background time limit; isolating the one test avoided
+  the wait without weakening the proof). Restored, byte-identical `diff`
+  against its own backup. Re-ran the full web suite clean afterward.
+
+  Live Playwright verification (real Chromium, real dev servers): signed
+  up, built a real CRM project, deleted the AI-seeded demo Customer rows
+  via the API and created one real Customer with a real phone value,
+  then in the real UI: confirmed exactly one real "Send WhatsApp" button
+  exists on that row, clicked it, and confirmed the real WhatsApp panel
+  actually opened (this dev environment has no live WhatsApp/baileys
+  connection, so it opened to the real "connect" flow rather than the
+  test-send form -- matching the established precedent from rounds
+  288/289/295 that a genuine QR pairing isn't reachable headlessly; the
+  DOM test above already covers the prefilled-input behavior with a
+  stubbed connected status). This still proves the real end-to-end wiring
+  up through the actual button click and panel-open transition, not just
+  the isolated component logic.
+
+  Full suite green: **1139 tests** (`@forge/shared` 13, `@forge/spec-engine`
+  84, `@forge/db` 93, `@forge/api` 306 unchanged; `@forge/web` 637 → 643)
+  via `npm test` at the repo root, plus a clean `@forge/web` build
+  (`tsc -b` + `vite build`, 86 modules transformed; `@forge/api` untouched
+  this round, so not rebuilt).
+
 ## Phase 4
 
 - Template/agent marketplace
