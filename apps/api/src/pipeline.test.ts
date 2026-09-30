@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { AgentStepEvent, Project, ProductSpec } from "@forge/shared";
 import { applyMigrations, countRecords, ensureCheckpointsTable, ensureProjectsTable, insertProject, listRecords, openDatabase } from "@forge/db";
-import { runBuildPipeline, runQaChecks } from "./pipeline.js";
+import { runBuildPipeline, runQaChecks, runSecurityScan } from "./pipeline.js";
 
 const brokenSpec: ProductSpec = {
   summary: "test",
@@ -399,6 +399,129 @@ test("runQaChecks validates every required field of an entity, not just the firs
     countRecords(db, "proj1", spec.entities[0]),
     0,
     "every per-field QA insert is expected to be rejected, so none of them should leave a real row behind",
+  );
+});
+
+/**
+ * Regression test for a real bug found by this round's Explore survey: the
+ * Security step's SENSITIVE_FIELD_HINTS list flagged fields via a plain
+ * substring check (`lowerName.includes("secret")`), so an entirely ordinary
+ * field named "secretary" (a real, plausible field for an office/school/
+ * clinic-admin entity) tripped a false "looks sensitive" warning and
+ * silently docked 10 points from the build's displayed Security score --
+ * both the warning text and the score are rendered directly on the AI
+ * Team build screen's Security step (see BuildProgress.tsx). Same
+ * substring-collision class already fixed in domainEntities.ts's keyword
+ * matching (rounds 279-280), but field names are camelCase/snake_case
+ * identifiers rather than prose, so the same \b-bounded-regex-on-lowercased-
+ * text trick doesn't transfer directly: `\bsecret\b` would also reject the
+ * legitimate "secretKey"/"apiSecret" field names this scan is actually
+ * meant to catch, since lowercasing erases the capitalization that marks a
+ * fresh word start in an identifier. Fixed with a regex that runs against
+ * the field's original, un-lowercased name instead.
+ */
+test("Security scan's 'secret' hint doesn't spuriously flag 'secretary', but still catches secretKey/apiSecret/secret_key", () => {
+  const spec: ProductSpec = {
+    summary: "test",
+    personas: [],
+    roles: ["Admin"],
+    screens: [],
+    assumptions: [],
+    openQuestions: [],
+    entities: [
+      {
+        name: "Employee",
+        fields: [
+          { name: "name", type: "text", required: true },
+          { name: "secretary", type: "text", required: false },
+          { name: "secretKey", type: "text", required: false },
+          { name: "apiSecret", type: "text", required: false },
+          { name: "secret_key", type: "text", required: false },
+        ],
+      },
+    ],
+  };
+
+  const security = runSecurityScan("proj1", spec);
+
+  assert.ok(
+    !security.warnings.some((w) => w.includes('"Employee.secretary"')),
+    "an ordinary 'secretary' field must not be flagged as looking sensitive",
+  );
+  assert.ok(
+    security.warnings.some((w) => w.includes('"Employee.secretKey"')),
+    "'secretKey' must still be flagged -- it's a genuinely sensitive-sounding field name",
+  );
+  assert.ok(
+    security.warnings.some((w) => w.includes('"Employee.apiSecret"')),
+    "'apiSecret' must still be flagged",
+  );
+  assert.ok(
+    security.warnings.some((w) => w.includes('"Employee.secret_key"')),
+    "'secret_key' must still be flagged",
+  );
+  assert.equal(security.warnings.length, 3, "exactly the 3 genuinely sensitive-sounding fields should be flagged, not 'secretary' too");
+});
+
+/**
+ * Real end-to-end proof of the same fix, run through the actual
+ * runBuildPipeline a real build/refine uses (real migrations, real seed
+ * data, every real agent step) rather than calling runSecurityScan in
+ * isolation. A live browser click-through was deliberately not used for
+ * this one: BuildProgress.tsx's own comment (search "never actually
+ * reachable") documents that a SUCCESSFUL build's UI navigates away in the
+ * very same tick the Forge step succeeds, right after Security -- so there
+ * is no real moment a person could ever click "show details" on the
+ * Security step of a build that succeeds. This test instead drains the
+ * pipeline's own real event stream (exactly what the UI consumes) and reads
+ * the Security event's `detail` directly, which is the only way to
+ * genuinely observe it.
+ */
+test("a real build's Security step event never flags an ordinary 'secretary' field, and still flags 'secretKey'", async () => {
+  const spec: ProductSpec = {
+    summary: "test",
+    personas: [],
+    roles: ["Admin"],
+    screens: [],
+    assumptions: [],
+    openQuestions: [],
+    entities: [
+      {
+        name: "Employee",
+        fields: [
+          { name: "name", type: "text", required: true },
+          { name: "secretary", type: "text", required: false },
+          { name: "secretKey", type: "text", required: false },
+        ],
+      },
+    ],
+  };
+  const db = openDatabase(":memory:");
+  ensureProjectsTable(db);
+  ensureCheckpointsTable(db);
+  const project = insertProject(db, {
+    id: "proj1",
+    ownerId: "user1",
+    name: "test",
+    description: "test",
+    spec,
+  });
+
+  const events = await collect(runBuildPipeline(db, project, { nextSpec: spec, changeLabel: "Initial build" }));
+  const forge = events.find((e) => e.agent === "Forge");
+  assert.ok(forge && forge.status === "success", "the build must genuinely succeed for this to be a meaningful check");
+
+  const securityEvent = events.find((e) => e.agent === "Security" && e.status === "success");
+  assert.ok(securityEvent, "the real pipeline must emit a completed Security step");
+  const warnings = securityEvent!.detail as string[];
+
+  assert.ok(
+    !warnings.some((w) => w.includes('"Employee.secretary"')),
+    "a real build must not flag the ordinary 'secretary' field as sensitive",
+  );
+  assert.ok(
+    warnings.some((w) => w.includes('"Employee.secretKey"')),
+    "a real build must still flag the genuinely sensitive-sounding 'secretKey' field",
   );
 });
 

@@ -24,7 +24,28 @@ const RESERVED_SQL_WORDS = new Set([
   "ALTER", "UNIQUE", "CHECK", "CONSTRAINT", "TRANSACTION", "COMMIT", "ROLLBACK",
 ]);
 
-const SENSITIVE_FIELD_HINTS = ["password", "secret", "apikey", "api_key", "token", "ssn", "creditcard"];
+const SENSITIVE_FIELD_HINTS: (string | RegExp)[] = [
+  "password",
+  // Plain "secret" would also match "secretary"/"secretive" as a plain
+  // substring (same collision class fixed in domainEntities.ts's keyword
+  // matching). That fix used a \b-bounded regex against lowercased prose,
+  // but field names are camelCase/snake_case identifiers, not prose --
+  // lowercasing first erases the very capitalization that marks a fresh
+  // word start (`\bsecret\b` would reject "secretKey" too). This regex
+  // instead runs against the field's ORIGINAL, un-lowercased name: an
+  // uppercase "Secret" is always a valid word start wherever it appears
+  // ("mySecretKey", "apiSecret"), while a lowercase "secret" only counts at
+  // the very start of the name or right after a non-letter separator
+  // ("secret", "secret_key", "api_secret") -- and either form is rejected
+  // when immediately followed by a lowercase letter, which is exactly what
+  // rules out "secretary"/"secretive".
+  /(?:(?<![a-zA-Z])secret|Secret)(?![a-z])/,
+  "apikey",
+  "api_key",
+  "token",
+  "ssn",
+  "creditcard",
+];
 
 interface ImpactSummary {
   newEntityNames: string[];
@@ -117,7 +138,7 @@ export function runQaChecks(
   return { allPassed, results };
 }
 
-function runSecurityScan(projectId: string, spec: ProductSpec): { score: number; warnings: string[] } {
+export function runSecurityScan(projectId: string, spec: ProductSpec): { score: number; warnings: string[] } {
   const warnings: string[] = [];
   for (const entity of spec.entities) {
     if (RESERVED_SQL_WORDS.has(entity.name.toUpperCase())) {
@@ -130,7 +151,9 @@ function runSecurityScan(projectId: string, spec: ProductSpec): { score: number;
       const lowerName = field.name.toLowerCase();
       if (
         (field.type === "text" || field.type === "longtext") &&
-        SENSITIVE_FIELD_HINTS.some((hint) => lowerName.includes(hint))
+        SENSITIVE_FIELD_HINTS.some((hint) =>
+          typeof hint === "string" ? lowerName.includes(hint) : hint.test(field.name),
+        )
       ) {
         warnings.push(`Field "${entity.name}.${field.name}" looks sensitive but is stored as plain text — do not put real secrets in it.`);
       }
