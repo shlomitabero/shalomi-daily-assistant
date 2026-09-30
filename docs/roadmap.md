@@ -17987,6 +17987,75 @@ Full suite green: **1145 tests** (`@forge/shared` 13, `@forge/spec-engine`
 646) via `npm test` at the repo root, plus a clean `@forge/web` build
 (`tsc -b` + `vite build`, 86 modules transformed).
 
+### Round 302 — Grouping the table by status now shows a numeric subtotal per group, not just one grand total
+
+An Explore survey first re-verified round 300/301's backup candidate
+(`EntityPanel.tsx`'s `commitInlineEdit`, still at lines 1596-1607): the
+generic-error-banner-with-no-refresh gap was confirmed still real, and a
+new finding showed the identical shape in `handleMove` (lines 1534-1542),
+the shared PATCH+refresh used by both Kanban and Calendar drag-and-drop --
+so a proper fix would need one shared row-scoped feedback mechanism across
+three interaction surfaces, not a one-line change. That raised its scope
+above a single round, so it was set aside again in favor of a more
+clearly-bounded, more clearly user-visible gap the same survey found.
+
+Two independently-shipped features had never been wired together:
+grouping the plain table by an enum/boolean field (`recordGroups` /
+`groupRecordsByField`), and the numeric totals row (`sumNumericFields`,
+round 297). Grouping Orders by Status specifically to compare revenue
+across "Paid" vs "Pending" vs "Cancelled" still only ever showed one grand
+total under the *whole* table -- exactly defeating the reason someone
+groups a numeric table in the first place, forcing them to re-add each
+group's own rows by eye. Verified via `grep` that no group-aware total
+existed anywhere (`sumNumericFields` was only ever called on the full
+`visibleRecords` array).
+
+Added a `groupNumericTotals` `useMemo` in `EntityPanel.tsx` that computes
+`sumNumericFields(group.records, visibleFields)` once per group (keyed by
+`group.key`), and renders a new `.entity-group-totals-row` immediately
+after each group's own record rows in the `<tbody>` -- visually matching
+the existing grand-total `<tfoot>` row's styling, but scoped to just that
+group. The grand-total row itself is untouched and keeps summing
+everything, so both a "how much in total" and a "how much per status"
+question are answerable at a glance. **Live-preview only**: `grep` across
+`codegen.ts` confirmed the exported app has no table-grouping feature at
+all (`recordGroups`/`groupField`/`isGroupableField` don't exist there,
+even though `sumNumericFields` itself does) -- a separate, larger
+live/export parity gap worth a future round of its own, not something
+this round's narrower fix could reasonably absorb.
+
+Test: 1 new `EntityPanel.test.ts` DOM test builds an Invoice-shaped entity
+(a required text field, a `status` enum with two values, and an `amount`
+number field), seeds 3 records (1000+500 under one status, 300 under the
+other), groups by status, and confirms each group's own subtotal row shows
+only that group's sum (1,500 and 300 respectively, never leaking into each
+other or matching the grand total), that the grand-total `<tfoot>` row
+still shows the correct unaffected 1,800, and that reverting to "no
+grouping" removes the per-group subtotal rows while the grand total stays.
+
+Deliberate-break-and-restore: forced the per-group total computation to
+sum `visibleRecords` (the whole table) instead of `group.records` -- the
+new test failed with the exact expected mismatch (`"Total: 1,800"` where
+`"Total: 1,500"` was expected). Restored from a verified pre-fix backup
+with byte-identical `diff`; re-ran and confirmed the test passed again.
+
+Live Playwright verification (real Chromium, a real dev server): built a
+real Invoice project via free-text prompt, discovered the real generated
+entity/fields via the project's own spec (a `status` enum + `amount`
+number field), deleted seed rows, created 3 real records split across two
+status values via the API, confirmed the real ungrouped grand total was
+1,800, grouped by the real Status dropdown, confirmed the two real
+per-group subtotal rows showed 1,500 and 300 (and the grand total stayed
+1,800), then reverted grouping and confirmed the subtotal rows genuinely
+disappeared from the DOM.
+
+Full suite green: **1146 tests** (`@forge/shared` 13, `@forge/spec-engine`
+84, `@forge/db` 93, `@forge/api` 309 unchanged; `@forge/web` 646 → 647)
+via `npm test` at the repo root, plus a clean `@forge/web` build (`tsc -b`
++ `vite build`, 86 modules transformed). No `@forge/api`/`codegen.ts`
+changes this round (nothing to port -- table grouping doesn't exist in
+the exported app).
+
 ## Phase 4
 
 - Template/agent marketplace
