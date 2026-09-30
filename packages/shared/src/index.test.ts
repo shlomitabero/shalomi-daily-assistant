@@ -101,6 +101,40 @@ test("ProductSpecSchema accepts entities with genuinely distinct names", () => {
   assert.ok(result.success);
 });
 
+/**
+ * Regression test for a real bug found by round 282's Explore survey and
+ * fixed in round 283: packages/db/src/identifiers.ts's tableNameFor
+ * silently sanitizes a non-ASCII entity name (replacing every non-ASCII-
+ * alphanumeric character with "_") rather than rejecting it, so two
+ * entities with completely different non-ASCII names -- a real,
+ * everyday case for a Hebrew business idea whose AI-generated spec
+ * doesn't perfectly follow its own "ASCII names only" prompt instruction
+ * -- can silently collapse onto the exact same underlying SQL table,
+ * corrupting one entity's data into the other's. This is the same
+ * failure class the case-insensitive-duplicate check above already
+ * guards against, just reached through sanitization instead of casing.
+ */
+test("ProductSpecSchema rejects two entities whose non-ASCII names collapse to the same sanitized table name", () => {
+  const result = ProductSpecSchema.safeParse(
+    baseSpec([
+      { name: "לקוח", fields: [{ name: "name", type: "text", required: true }] },
+      { name: "מוצר", fields: [{ name: "price", type: "number", required: true }] },
+    ]),
+  );
+  assert.ok(!result.success, "two different non-ASCII names that sanitize to the same table name must be rejected");
+  assert.match(result.error.issues[0].message, /collapse to the same underlying SQL table name/);
+});
+
+test("ProductSpecSchema still accepts non-ASCII entity names that don't actually collide with each other", () => {
+  const result = ProductSpecSchema.safeParse(
+    baseSpec([
+      { name: "לקוח", fields: [{ name: "name", type: "text", required: true }] },
+      { name: "הזמנה", fields: [{ name: "total", type: "number", required: true }] },
+    ]),
+  );
+  assert.ok(result.success, "distinct non-ASCII names that don't collide must not be penalized by this check");
+});
+
 test("EntitySchema rejects an entity with zero fields", () => {
   const result = EntitySchema.safeParse({ name: "Empty", fields: [] });
   assert.ok(!result.success);

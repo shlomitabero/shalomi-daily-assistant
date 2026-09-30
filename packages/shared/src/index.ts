@@ -55,6 +55,40 @@ function findCaseInsensitiveDuplicateEntityNames(entities: { name: string }[]): 
   return dupes;
 }
 
+/**
+ * The live preview's table names (packages/db/src/identifiers.ts's
+ * tableNameFor) are built by sanitizing an entity name -- replacing every
+ * non-ASCII-alphanumeric character with "_" -- and, unlike the
+ * case-insensitive check above, that sanitization never throws on an
+ * unreconcilable name; it just silently produces a string. Two entities
+ * with completely different names can sanitize down to the exact same
+ * table name, most plausibly when both names are non-ASCII (e.g. Hebrew):
+ * confirmed directly, `tableNameFor("p", "לקוח")` and
+ * `tableNameFor("p", "מוצר")` are both `"entity_p_____"`. Whichever entity
+ * is migrated second then has its `CREATE TABLE IF NOT EXISTS` silently
+ * no-op against the first entity's already-created table, and every
+ * read/write for the "losing" entity runs against the "winning" entity's
+ * columns instead -- the exact same real-data-corruption failure mode
+ * findCaseInsensitiveDuplicateEntityNames already guards against, just
+ * reached through a different transformation. This sanitization rule is
+ * intentionally duplicated here (not imported) rather than shared, since
+ * @forge/shared has no dependency on @forge/db (the dependency runs the
+ * other way) -- keep this in sync with tableNameFor if either changes.
+ */
+function findSanitizedIdentifierCollisions(entities: { name: string }[]): string[] {
+  const seen = new Set<string>();
+  const dupes: string[] = [];
+  for (const entity of entities) {
+    const key = entity.name.replace(/[^A-Za-z0-9]/g, "_").toLowerCase();
+    if (seen.has(key)) {
+      dupes.push(entity.name);
+    } else {
+      seen.add(key);
+    }
+  }
+  return dupes;
+}
+
 export const FieldSchema = z
   .object({
     name: z.string().min(1),
@@ -136,6 +170,9 @@ export const ProductSpecSchema = z
   })
   .refine((spec) => findCaseInsensitiveDuplicateEntityNames(spec.entities).length === 0, (spec) => ({
     message: `Entity name(s) collide when compared case-insensitively, which SQLite table names cannot distinguish: ${findCaseInsensitiveDuplicateEntityNames(spec.entities).join(", ")} -- choose distinct names`,
+  }))
+  .refine((spec) => findSanitizedIdentifierCollisions(spec.entities).length === 0, (spec) => ({
+    message: `Entity name(s) collapse to the same underlying SQL table name once sanitized to a safe identifier: ${findSanitizedIdentifierCollisions(spec.entities).join(", ")} -- choose names that differ in their ASCII letters/digits, not just punctuation or non-ASCII characters`,
   }));
 
 export type ProductSpec = z.infer<typeof ProductSpecSchema>;
