@@ -3088,3 +3088,41 @@ test("the exported EntityView's FieldInput wires field.required into the real re
   const textBranch = fieldInputSrc!.match(/return <input id=\{id\} type="text"[\s\S]{0,100}/)?.[0];
   assert.match(textBranch ?? "", /required=\{field\.required\}/, "the plain text input fallback branch must be required-wired");
 });
+
+/**
+ * New in this round: the exported app's own GlobalSearch.jsx had the
+ * identical gap the live preview's own GlobalSearchPanel.tsx did --
+ * ArrowDown/ArrowUp moved the highlighted result group's CSS class, but
+ * nothing ever scrolled that group into view. With more result groups than
+ * fit on screen, keyboard navigation could move the highlight below the
+ * fold with zero visual cue, so Enter would jump to a group the user
+ * couldn't see was even selected. Confirms the generated GlobalSearch.jsx
+ * wires a ref onto the results container, tags each group with its own
+ * index, and scrolls the selected one into view whenever selectedIndex
+ * changes.
+ */
+test("the exported GlobalSearch scrolls the newly-highlighted result group into view", () => {
+  const files = generateExportFiles(project);
+  const globalSearchJsx = files.find((f) => f.path === "web/src/components/GlobalSearch.jsx")!.content;
+
+  assert.match(
+    globalSearchJsx,
+    /resultsContainerRef\.current[\s\S]{0,120}querySelector\(`\[data-group-index="\$\{selectedIndex\}"\]`\)/,
+    "expected a useEffect that looks up the selected group by its data-group-index inside resultsContainerRef",
+  );
+  assert.match(
+    globalSearchJsx,
+    /group\.scrollIntoView\(\{ behavior: "smooth", block: "nearest" \}\)/,
+    "expected the found group to actually be scrolled into view",
+  );
+  assert.match(
+    globalSearchJsx,
+    /<div className="global-search-results" ref=\{resultsContainerRef\}>/,
+    "expected the results container div to carry resultsContainerRef",
+  );
+  assert.match(
+    globalSearchJsx,
+    /<div key=\{result\.entityName\} data-group-index=\{i\}/,
+    "expected each result group div to carry its own data-group-index",
+  );
+});

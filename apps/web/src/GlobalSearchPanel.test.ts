@@ -385,6 +385,53 @@ test("GlobalSearchPanel's arrow keys move the highlighted result group and Enter
 });
 
 /**
+ * jsdom's own HTMLElement doesn't implement scrollIntoView at all (confirmed
+ * empirically: `typeof el.scrollIntoView === "undefined"` under this jsdom
+ * version), so this test installs a minimal stub -- mirroring the
+ * WhatsAppPanel Notification-API stub pattern -- to prove arrow-key
+ * navigation actually scrolls the newly-highlighted group into view, not
+ * just toggles its CSS class. Before this fix, a result list taller than
+ * the panel's own scrollable height could move the highlight below the
+ * fold with zero visual cue, so Enter would jump to a group the user
+ * couldn't see was even selected.
+ */
+test("GlobalSearchPanel's arrow keys scroll the newly-highlighted result group into view", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = mockGlobalSearchFetch() as typeof fetch;
+    const calls: Element[] = [];
+    const proto = window.HTMLElement.prototype as unknown as { scrollIntoView?: (...args: unknown[]) => void };
+    proto.scrollIntoView = function (this: Element) {
+      calls.push(this);
+    };
+    try {
+      renderGlobalSearchPanel(() => {});
+
+      const input = document.querySelector(".global-search-input") as HTMLInputElement;
+      fireEvent.change(input, { target: { value: "widget" } });
+      const form = document.querySelector("form.global-search-form")!;
+      fireEvent.submit(form);
+
+      await waitForCondition(() => document.querySelectorAll(".global-search-group").length === 2);
+      assert.equal(calls.length, 0, "no scroll should happen before any arrow key is pressed");
+
+      fireEvent.keyDown(input, { key: "ArrowDown" });
+      let groups = document.querySelectorAll(".global-search-group");
+      assert.equal(calls.length, 1, "the first ArrowDown must trigger exactly one scroll");
+      assert.equal(calls[0], groups[0], "the first ArrowDown must scroll the first (now-highlighted) group into view");
+
+      fireEvent.keyDown(input, { key: "ArrowDown" });
+      groups = document.querySelectorAll(".global-search-group");
+      assert.equal(calls.length, 2, "a second ArrowDown must trigger a second scroll");
+      assert.equal(calls[1], groups[1], "a second ArrowDown must scroll the second (now-highlighted) group into view, not the first");
+    } finally {
+      globalThis.fetch = originalFetch;
+      delete proto.scrollIntoView;
+    }
+  });
+});
+
+/**
  * New in this round: each individual matched row is now its own clickable
  * button (onJumpToRecord), not just the group header's "jump to" button
  * (onJumpToEntity, which only ever switched tabs and threw away which

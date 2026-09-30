@@ -88,6 +88,7 @@ export function GlobalSearchPanel({
   const [showAllLoading, setShowAllLoading] = useState<Set<string>>(new Set());
   const [copyStatus, setCopyStatus] = useState<"idle" | "copied" | "failed">("idle");
   const dialogRef = useDialogFocusTrap<HTMLDivElement>(onClose);
+  const resultsContainerRef = useRef<HTMLDivElement>(null);
   // Bumped once per runSearch call, so a stale search whose network round
   // trip just happens to take longer than a newer one's can recognize
   // itself as superseded (see the guard right after the await below)
@@ -253,6 +254,17 @@ export function GlobalSearchPanel({
     return recordDisplayLabel(entity, record);
   }
 
+  // Mirrors EntityPanel.tsx's own focusedRowId scroll effect (round 260):
+  // with more result groups than fit in the panel's own scrollable height,
+  // arrow-key navigation could move the highlight below the fold with zero
+  // visual cue, and Enter would then jump to a group the user couldn't see
+  // was even selected.
+  useEffect(() => {
+    if (selectedIndex == null) return;
+    const group = resultsContainerRef.current?.querySelector(`[data-group-index="${selectedIndex}"]`);
+    group?.scrollIntoView?.({ behavior: "smooth", block: "nearest" });
+  }, [selectedIndex]);
+
   /**
    * Down/Up move a highlight across the result groups (not individual
    * records -- "jump" always lands on an entity tab, so the group is the
@@ -359,13 +371,14 @@ export function GlobalSearchPanel({
         {!loading && results.length > 0 && <p className="muted small">{t("search.keyboardHint")}</p>}
 
         {!loading && results.length > 0 && (
-          <div className="global-search-results">
+          <div className="global-search-results" ref={resultsContainerRef}>
             {results.map((result, i) => {
               const displayed = expandedSamples[result.entityName] ?? result.sample;
               const remaining = result.totalMatches - displayed.length;
               return (
                 <div
                   key={result.entityName}
+                  data-group-index={i}
                   className={
                     i === selectedIndex ? "global-search-group global-search-group-selected" : "global-search-group"
                   }

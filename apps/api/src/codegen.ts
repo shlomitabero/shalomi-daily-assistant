@@ -2837,6 +2837,16 @@ export function GlobalSearch({ entities, onClose, onJumpToEntity, onJumpToRecord
   // trip just happens to take longer than a newer one's can recognize
   // itself as superseded and skip applying its now-outdated results.
   const searchRequestId = useRef(0);
+  const resultsContainerRef = useRef(null);
+
+  // Mirrors EntityView's own focusedRowId scroll effect: with more result
+  // groups than fit on screen, arrow-key navigation could move the
+  // highlight out of view with zero visual cue.
+  useEffect(() => {
+    if (selectedIndex == null) return;
+    const group = resultsContainerRef.current && resultsContainerRef.current.querySelector(\`[data-group-index="\${selectedIndex}"]\`);
+    if (group && group.scrollIntoView) group.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  }, [selectedIndex]);
 
   async function runSearch(q) {
     if (!q.trim()) {
@@ -2911,9 +2921,9 @@ export function GlobalSearch({ entities, onClose, onJumpToEntity, onJumpToRecord
         {!loading && results.length > 0 && <p className="muted small">↑↓ to navigate results, Enter to jump to a tab</p>}
 
         {!loading && results.length > 0 && (
-          <div className="global-search-results">
+          <div className="global-search-results" ref={resultsContainerRef}>
             {results.map((result, i) => (
-              <div key={result.entityName} className={i === selectedIndex ? "global-search-group global-search-group-selected" : "global-search-group"}>
+              <div key={result.entityName} data-group-index={i} className={i === selectedIndex ? "global-search-group global-search-group-selected" : "global-search-group"}>
                 <div className="global-search-group-header">
                   <span className="global-search-entity-label">{result.entityLabel}</span>
                   <span className="muted small">{result.totalMatches} results</span>
