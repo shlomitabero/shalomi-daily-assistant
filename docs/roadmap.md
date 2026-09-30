@@ -16885,6 +16885,104 @@ not a single "make it perfect" claim.
   which used Playwright either) is exactly the real-source-extraction
   technique used here instead.
 
+- **Round 289 -- a real, visible feature (per שלומי's standing direction;
+  round 287 was a bug-fix, round 288 a feature, keeping the "favor a
+  visible feature" default this round too): the WhatsApp topbar button
+  gave no signal at all that a new message had arrived while the panel
+  was closed.** Round 288's own live-update fix only helps while the
+  panel is open; since `WhatsAppPanel` unmounts entirely when closed (see
+  `{showWhatsApp && <WhatsAppPanel .../>}` in `App.tsx`), a message
+  arriving while the owner was working elsewhere in the app stayed
+  completely invisible until she happened to open the panel and look --
+  round 288's own roadmap entry flagged this exact follow-up as the
+  natural next round rather than bundling it in.
+
+  Fix, three pieces:
+  1. **`apps/web/src/whatsappUnread.ts`** (new file) -- a pure
+     `countUnreadWhatsAppMessages(messages, lastSeenId)` that walks the
+     DESC-ordered message list from newest, stopping the moment it hits
+     `lastSeenId`, counting only inbound (`direction === "in"`) messages
+     along the way (a message the project itself sent was never
+     "unread"). A `lastSeenId` not found at all in the fetched page (more
+     unread than one page holds) caps the count at what's visible, same
+     "N+" convention this codebase already uses elsewhere rather than
+     guessing a larger exact number. `getWhatsAppLastSeenId`/
+     `setWhatsAppLastSeenId` persist the marker in localStorage, same
+     per-project-key shape as `whatsappLogFilter.ts`.
+  2. **`WhatsAppPanel.tsx`** -- one new `useEffect` keyed on `[projectId,
+     messages]` that writes `messages[0].id` (the newest loaded message)
+     as the "last seen" marker whenever `messages` changes, from every
+     source that updates it: the mount fetch, round 288's own
+     connected-poll live-refresh, sending/retrying a test message. A
+     message removed via per-message delete or "clear history" does NOT
+     move the marker backward (deliberately keyed on `messages` itself,
+     not just its length, and gated on `messages.length > 0`) -- deleting
+     something never un-reads it.
+  3. **`App.tsx`** -- a new lightweight top-level poll (20s interval,
+     lighter than `WhatsAppPanel`'s own 10s `CONNECTED_POLL_INTERVAL_MS`
+     since this one runs for every built project, not just while its
+     panel happens to be open), independent of `WhatsAppPanel` so it
+     keeps working with the panel closed. Checks `getWhatsAppStatus`
+     first and only fetches the message list -- and only keeps polling --
+     while actually connected, so a project that never connected
+     WhatsApp (the common case) costs one cheap status check and nothing
+     more. A real `<span className="whatsapp-unread-badge">` renders on
+     the topbar's WhatsApp button only when the count is above zero.
+     `openPanel("whatsapp")` also zeroes the count immediately on click
+     (rather than waiting up to 20s for the next poll tick) since opening
+     the panel is itself "marking read" -- `WhatsAppPanel`'s own effect
+     above then keeps the real persisted marker in sync as it loads.
+     Added `whatsapp.unreadBadge` to both Hebrew and English
+     `language.ts` blocks (aria-label, `{count}` interpolation) and a
+     `.whatsapp-unread-badge` rule to `styles.css` (reusing the existing
+     `--danger` color token, same red used elsewhere for destructive/
+     alert states).
+
+  Test: 8 new unit tests in `apps/web/src/whatsappUnread.test.ts` cover
+  `countUnreadWhatsAppMessages` directly (null lastSeenId -> 0, not
+  everything; counts only inbound messages newer than lastSeenId;
+  returns 0 once lastSeenId is already the newest; never counts an
+  outbound message; caps at page size when lastSeenId isn't found) and
+  `getWhatsAppLastSeenId`/`setWhatsAppLastSeenId`'s real localStorage
+  round-trip, scoped per project. 1 new render-based test in
+  `WhatsAppPanel.test.ts` confirms a real render, connected with two
+  already-loaded messages, ends with the newest one's id (not the older
+  one, not left empty) persisted as the seen-marker -- initially flaky
+  because it asserted against the DOM's own `.whatsapp-log-list li`
+  count as a proxy for "the effect must already have run," when in fact
+  the DOM-affecting render and this second, independent `useEffect`
+  (same `messages` dependency, different hook) can flush on separate
+  scheduler ticks; fixed by polling the actual thing under test (the
+  storage write itself) instead of a DOM proxy for it. The pre-existing
+  `openPanel` test in `App.test.ts` was extended (not just left passing)
+  to also assert the badge-reset call happens exactly once, only for
+  `"whatsapp"`, never for any other panel.
+
+  Deliberate-break-and-restore, for all three pieces independently:
+  reverted `countUnreadWhatsAppMessages` to a stub returning
+  `messages.length` outright -- 4 of the 8 `whatsappUnread.test.ts` tests
+  failed with exactly the expected wrong counts; removed the
+  `whatsappUnreadCount` reset from `openPanel` -- the extended
+  `App.test.ts` test failed with `whatsappUnreadResetCalls: 0` instead of
+  `1`; and reverted `WhatsAppPanel.tsx`'s sync effect to a no-op -- its
+  own new test failed with a real timeout (`waitForCondition: condition
+  never became true`), never seeing the marker appear. Restored all
+  three from verified pre-fix backups with byte-identical `diff` against
+  each; re-ran everything and confirmed all 69 tests across
+  `WhatsAppPanel.test.ts`/`whatsappUnread.test.ts`/`App.test.ts` passed
+  again.
+
+  No live Playwright pass this round either, for the same reason as
+  round 288 (no real phone available to complete a genuine WhatsApp QR
+  pairing headlessly) -- the render-based DOM test above is this
+  codebase's own established substitute for that class of feature.
+
+  Full suite green: 1088 tests (up from 1079 -- `@forge/web` 589 → 598;
+  `@forge/api` 300, `@forge/shared` 13, `@forge/spec-engine` 84,
+  `@forge/db` 93 unchanged) via `npm test` at the repo root, plus a clean
+  `npm run build --workspace=@forge/web` (full `tsc -b` type-check gate,
+  85 modules transformed, up from 84 -- the new `whatsappUnread.ts`).
+
 ## Phase 4
 
 - Template/agent marketplace
