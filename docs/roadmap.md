@@ -17061,6 +17061,84 @@ not a single "make it perfect" claim.
   `npm run build --workspace=@forge/web` (full `tsc -b` type-check gate,
   85 modules transformed, unchanged from round 289).
 
+### Round 291 — Dark/light theme now actually follows a live OS preference change
+
+  Real gap found by directly reading `theme.ts`'s own JSDoc contract
+  against `ThemeContext.tsx`'s actual behavior (a candidate the trigger's
+  own round-290 Explore survey had already flagged but left unverified):
+  `theme.ts` documents "an explicit stored choice always wins; otherwise
+  falls back to the system's prefers-color-scheme." But `ThemeProvider`'s
+  effect wrote *every* theme to `localStorage` on mount -- including one
+  it had only just derived from the system, never actually chosen by
+  anyone. That silently turned "no explicit choice yet" into "an explicit
+  choice" on a person's very first visit to the app. From then on, on
+  that device, neither a live OS light/dark switch (many operating
+  systems auto-switch at sunset/sunrise, or the person changes it by
+  hand) nor even a fresh page reload could ever follow the system
+  preference again -- the app would be silently stuck on whatever theme
+  the OS happened to be in on that first visit, forever, with no
+  indication why.
+
+  Fix, in `ThemeContext.tsx`:
+  1. A `hasExplicitChoiceRef` now tracks whether a *real* explicit choice
+     exists -- found in `localStorage` at mount, or made later via
+     `toggleTheme` -- as opposed to a theme merely derived from the
+     system default. Only an explicit choice gets persisted or blocks the
+     listener below; a system-derived theme is held only in React state,
+     never written to storage.
+  2. A new effect subscribes to `window.matchMedia("(prefers-color-scheme:
+     dark)")`'s own `change` event and live-updates the theme whenever
+     `hasExplicitChoiceRef.current` is still false at the moment the event
+     fires -- checked at fire-time, not just once at effect setup, so a
+     `toggleTheme` call made *after* the listener was already attached
+     still correctly blocks it (otherwise an explicit choice made
+     mid-session could still be silently overwritten by the next OS-level
+     switch).
+  3. `toggleTheme` now persists to `localStorage` and sets
+     `hasExplicitChoiceRef.current = true` directly in the click handler,
+     rather than relying on the old always-run effect.
+
+  Test: 3 new unit tests in `ThemeContext.test.ts`, using a small
+  hand-built `matchMedia` stand-in (jsdom doesn't implement `matchMedia`
+  at all -- the first test file in this project that needed a real,
+  event-dispatching one) that supports `addEventListener("change", ...)`
+  and a `fireSystemChange()` helper to dispatch it. Confirms: (1) with no
+  stored choice, the theme live-follows the system through both
+  directions, and nothing gets written to `localStorage` while only
+  following the system; (2) with an explicit stored choice already
+  present, a later system change is ignored; (3) after an explicit
+  mid-session `toggleTheme` click, a later system change is still
+  ignored (this specifically exercises the fire-time re-check from point
+  2 above, not just the mount-time one).
+
+  Deliberate-break-and-restore, done twice: first, a full revert to the
+  old always-persist-on-mount behavior with no listener at all -- the new
+  "follows a live system change" test failed with the exact expected
+  message (`'light' !== null`, i.e. a system-derived theme got persisted
+  when it shouldn't have); second, a narrower break keeping the new
+  structure but removing only the `if (hasExplicitChoiceRef.current)
+  return;` guard inside the listener -- both of the "ignores a system
+  change" tests failed with the exact expected messages (`'dark' !==
+  'light'` and `'light' !== 'dark'`), proving they weren't passing
+  vacuously. Restored from a verified pre-fix backup with byte-identical
+  `diff` both times; re-ran and confirmed all tests passed again.
+
+  Live Playwright verification (real Chromium, real dev server, using
+  Playwright's actual `page.emulateMedia({ colorScheme })` -- genuine
+  `prefers-color-scheme` emulation, not a mock): with no theme ever
+  chosen, switching the emulated OS scheme from light to dark to light
+  again flipped `<html data-theme>` live both times, with nothing written
+  to `localStorage`. Clicking the real theme-switch button set an
+  explicit dark theme and persisted it to `localStorage`; switching the
+  emulated OS scheme back to light afterward left the theme on dark,
+  confirming the explicit choice held.
+
+  Full suite green: **1094 tests** (up from 1091 -- `@forge/web` 601 →
+  604; `@forge/api` 300, `@forge/shared` 13, `@forge/spec-engine` 84,
+  `@forge/db` 93 unchanged) via `npm test` at the repo root, plus a clean
+  `npm run build --workspace=@forge/web` (full `tsc -b` type-check gate,
+  85 modules transformed, unchanged from round 290).
+
 ## Phase 4
 
 - Template/agent marketplace
