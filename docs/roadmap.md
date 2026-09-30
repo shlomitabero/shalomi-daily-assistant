@@ -17838,6 +17838,79 @@ not a single "make it perfect" claim.
   round's change), plus clean builds for both `@forge/web` (`tsc -b` +
   `vite build`, 86 modules transformed) and `@forge/api` (`esbuild`).
 
+### Round 300 — The record form now natively blocks a missing required field, instead of a generic post-submit error
+
+  Real bug, not a feature -- a corrected, narrower version of a candidate
+  round 299's own Explore survey had flagged and described inaccurately.
+  Round 300's fresh Explore survey checked the original claim ("no
+  asterisk on any required field") directly and found it false: a
+  required field's label already shows a real `*` via
+  `FieldLabelEditor.tsx:85`, tested since an earlier round. But verifying
+  that surfaced the real, still-open gap underneath it: the `*` is
+  decorative label text only -- `FieldInput`'s own `<input>`/`<select>`/
+  `<textarea>` elements (`EntityPanel.tsx`) never read `field.required`
+  at all, confirmed via grep returning zero `required`/`aria-required`
+  occurrences in the file outside a comment. Nothing stopped a click on
+  Add/Save with a required field left empty from reaching the server.
+  Worse, the server's own precise error (`Field "phone" is required`,
+  from `repository.ts:33-34`) can never reach the user either way:
+  `resolveErrorMessage`'s `VALIDATION_ERROR` handling unconditionally
+  swaps any recognized error code for a generic localized banner
+  ("the submitted data isn't valid, check the form") and discards the
+  specific field name -- a deliberate, tested design (server messages are
+  English-only and can't be shown raw in a Hebrew UI), not a bug to fix
+  there. Client-side blocking before submit was therefore the only place
+  this gap could actually be closed.
+
+  Wired `required={field.required}` into every `FieldInput` branch in
+  `EntityPanel.tsx` except boolean: an unchecked checkbox is already a
+  complete, real value (`false`), not an "empty" state to require away,
+  so forcing `required` there would wrongly force every boolean field to
+  always be checked. `PasswordInput.tsx:59` already established this
+  exact `required={required}` pattern elsewhere in the app (auth/change-
+  password forms) -- this closes the one place it had never been applied.
+  Ported identically to `codegen.ts`'s own `FieldInput`, which had the
+  same gap on both live and exported sides equally (not a live/export
+  parity issue, the same underlying oversight in both).
+
+  Test: 1 new `EntityPanel.test.ts` DOM test builds a Lead-shaped entity
+  with a required text/enum/number field and an optional longtext/date
+  field plus a *required* boolean field, and asserts the real rendered
+  `.required` DOM property on each control matches expectation --
+  including that the boolean checkbox stays `required: false` even
+  though its own field is declared required. 1 new `codegen.test.ts`
+  test extracts the real generated `FieldInput` source and regex-confirms
+  `required={field.required}` appears on every branch except the boolean
+  one.
+
+  Deliberate-break-and-restore, done independently on both files: forced
+  every `required={field.required}` down to `required={false}` (via
+  `sed`, six occurrences in each file) -- the new DOM test failed with
+  the exact expected `false !== true` mismatch, and the new codegen test
+  failed on its first regex match (the relation `<select>` branch).
+  Restored both from verified pre-fix backups with byte-identical `diff`
+  against each; re-ran everything and confirmed all tests passed again.
+
+  Live Playwright verification (real Chromium, real dev servers) -- the
+  genuine proof of native browser blocking, not just an attribute check:
+  signed up, built a real CRM project, discovered the real required text
+  field via the project's own spec (Customer's `name`), confirmed the
+  real rendered input carries `required: true`, clicked the real Submit
+  button with the field left empty, and confirmed both that **no row was
+  created** and that the browser's own `checkValidity()` reported the
+  field invalid -- proving the native block, not just the attribute's
+  presence. Then filled the required text field and the entity's other
+  required field (a `status` enum, selecting a real option) and clicked
+  Submit again, confirming a real record was genuinely created this
+  time -- proving the fix blocks only a truly-empty required field, not
+  submission in general.
+
+  Full suite green: **1143 tests** (`@forge/shared` 13, `@forge/spec-engine`
+  84, `@forge/db` 93 unchanged; `@forge/api` 307 → 308; `@forge/web` 644 →
+  645) via `npm test` at the repo root, plus clean builds for both
+  `@forge/web` (`tsc -b` + `vite build`, 86 modules transformed) and
+  `@forge/api` (`esbuild`).
+
 ## Phase 4
 
 - Template/agent marketplace
