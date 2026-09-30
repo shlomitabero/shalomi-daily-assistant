@@ -16273,6 +16273,85 @@ not a single "make it perfect" claim.
   83 → 84; `@forge/shared` 11, `@forge/db` 93, `@forge/api` 293,
   `@forge/web` 586 unchanged) via `npm test` at the repo root.
 
+- **Round 281 -- fixed the same substring-collision bug class one round
+  280's trigger note explicitly steered away from re-hunting in
+  domainEntities.ts, found instead in a completely different file: the
+  build pipeline's Security scan flagged an entirely ordinary "secretary"
+  field as sensitive.** Directed the Explore survey away from
+  domainEntities.ts (closed out across rounds 279-280) toward fresh
+  files; it found `apps/api/src/pipeline.ts`'s `SENSITIVE_FIELD_HINTS`
+  list, whose bare `"secret"` hint is matched via plain substring
+  (`lowerName.includes(hint)` in `runSecurityScan`). Confirmed by direct
+  execution: a spec with an `Employee` entity and an ordinary `secretary`
+  text field (a real, plausible field for an office/school/clinic-admin
+  app) produces the false warning `Field "Employee.secretary" looks
+  sensitive but is stored as plain text — do not put real secrets in it.`
+  and silently docks 10 points off the build's Security score
+  (`100 - warnings.length * 10`) -- both the warning text and the score
+  are rendered directly on the AI Team build screen's own Security step
+  (see `BuildProgress.tsx`'s `AgentDetail` for the `Security` agent).
+
+  Unlike the domainEntities.ts fix, the same `\b`-bounded-regex-on-
+  lowercased-text trick does NOT transfer here: field names are
+  camelCase/snake_case *identifiers*, not prose. `\bsecret\b` against a
+  pre-lowercased name would also reject `secretKey`/`apiSecret` --
+  exactly the field names this scan is *supposed* to catch -- because
+  lowercasing erases the very capitalization that marks a fresh word
+  start in an identifier. The fix instead runs a purpose-built regex,
+  `/(?:(?<![a-zA-Z])secret|Secret)(?![a-z])/`, against the field's
+  ORIGINAL (un-lowercased) name: an uppercase "Secret" is always a valid
+  word start wherever it appears (`mySecretKey`, `apiSecret`), while a
+  lowercase "secret" only counts at the very start of the name or right
+  after a non-letter separator (`secret`, `secret_key`, `api_secret`) --
+  and either form is rejected when immediately followed by a lowercase
+  letter, which is exactly what rules out `secretary`/`secretive`.
+  Verified the regex against 10 hand-picked cases (accept: `secret`,
+  `Secret`, `secretKey`, `apiSecret`, `api_secret`, `secret_key`; reject:
+  `secretary`, `Secretary`, `mysecret`, `nonsecretive`) before wiring it
+  in. `runSecurityScan` was exported (matching round 276's precedent of
+  exporting `runQaChecks` for direct testing) so it can be unit-tested
+  without going through the full pipeline.
+
+  Tests: 1 direct unit test calling the now-exported `runSecurityScan`
+  with an Employee entity carrying `secretary`, `secretKey`, `apiSecret`,
+  and `secret_key` fields, confirming exactly the 3 genuinely
+  sensitive-sounding ones are flagged and `secretary` is not; plus 1 real
+  end-to-end test that drains the actual `runBuildPipeline` async
+  generator (real migrations, real seed data, every real agent step) and
+  reads the real streamed `Security` event's `detail` array directly.
+  Deliberate-break-and-restore: reverted both the hint list and the
+  matching logic back to the original plain-substring version, confirmed
+  BOTH new tests failed with the expected "must not flag the ordinary
+  'secretary' field" assertion messages, then restored from a pre-fix
+  backup copy with a byte-identical `diff` in each case. Checked
+  `apps/api/src/codegen.ts` for a duplicate copy of this matching logic
+  (established discipline) -- found none: the Security scan is
+  Forge-platform-only, like rounds 275/276's checkpointDiff.ts/
+  pipeline.ts fixes, never ported into exported apps.
+
+  A real live-browser Playwright pass was attempted first (sign up,
+  submit a CRM idea, add a real `secretary` field and a real `secretKey`
+  field to the Customer entity via the genuine `AddFieldForm` on the Spec
+  Review screen -- the same round-267 UI real users use -- then click
+  Build and try to expand the Security step's own "show details"
+  toggle). It could not observe the fix this way: `BuildProgress.tsx`'s
+  own existing comment says outright that a *successful* build's UI
+  "is never actually reachable" in this state -- the same effect that
+  marks the build finished also calls `onComplete` in the same tick,
+  which immediately navigates the whole screen away the instant the
+  Forge step succeeds (right after Security in `AGENT_ORDER`), before a
+  real person could ever click anything. This is a genuine, pre-existing
+  UX fact about the app, not a workaround invented for this test -- so
+  the honest "real end-to-end" proof for this specific fix is the
+  `runBuildPipeline` test above (the exact same event stream a real
+  build produces, read directly instead of racing a browser against a
+  screen transition that outpaces human and Playwright interaction
+  alike).
+
+  Full suite green: 1069 tests (up from 1067 -- `@forge/api` 293 → 295;
+  `@forge/shared` 11, `@forge/spec-engine` 84, `@forge/db` 93,
+  `@forge/web` 586 unchanged) via `npm test` at the repo root.
+
 ## Phase 4
 
 - Template/agent marketplace
