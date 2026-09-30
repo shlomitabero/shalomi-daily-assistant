@@ -17911,6 +17911,82 @@ not a single "make it perfect" claim.
   `@forge/web` (`tsc -b` + `vite build`, 86 modules transformed) and
   `@forge/api` (`esbuild`).
 
+### Round 301 — Global Search's arrow-key navigation now scrolls the highlighted result group into view
+
+An Explore survey independently re-verified round 300's flagged backup
+candidate first (`EntityPanel.tsx`'s `commitInlineEdit`): the claim that a
+failed inline-cell-edit PATCH left a stale value in the cell was refuted
+(the cell correctly reverts to the untouched original value), but the
+narrower claim -- the only feedback is a generic error banner far from the
+edited row, with no `refresh()` after failure -- was confirmed real. It
+was set aside as a smaller polish item in favor of a fresh, more clearly
+user-visible gap the same survey found in `GlobalSearchPanel.tsx`.
+
+`GlobalSearchPanel.tsx`'s `handleInputKeyDown` (ArrowDown/ArrowUp/Enter)
+moved a `selectedIndex` state and toggled a `global-search-group-selected`
+CSS class on the highlighted result group, but nothing ever scrolled that
+group into view. The panel that holds it (`.search-panel`, sharing
+`.history-panel`'s own `max-height: 80vh; overflow-y: auto`) genuinely
+scrolls once there are enough result groups -- with more groups than fit
+on screen, arrow-key navigation could silently move the highlight below
+the fold, and Enter would then jump to whichever entity's tab was
+highlighted with no way for the user to have seen that it was selected.
+`EntityPanel.tsx` already had the identical fix for its own keyboard-
+focused table row (`focusedRowId`, round 260): a `useEffect` keyed on the
+focused id that looks the element up by a DOM attribute and calls
+`scrollIntoView({ behavior: "smooth", block: "nearest" })`.
+
+Added a `resultsContainerRef` around `.global-search-results`, tagged each
+result group with `data-group-index={i}`, and added the mirrored
+`useEffect` keyed on `selectedIndex`. Ported identically to the exported
+app's own `GlobalSearch.jsx` in `codegen.ts` (confirmed via `grep` to be a
+genuine duplicate of the live panel's own search UI, same as every other
+Global Search feature to date) -- required writing the nested template-
+literal carefully (an inner backtick-and-`${...}` block, matching the
+already-existing escaping pattern used a few lines above it for the
+partial-search-failure message, per the standing "nested template literal
+in codegen.ts" lesson).
+
+Test: confirmed empirically first that jsdom's own `HTMLElement` does not
+implement `scrollIntoView` at all (`typeof el.scrollIntoView ===
+"undefined"`) -- consistent with the codebase's own defensive
+`row?.scrollIntoView?.(...)` optional-chaining everywhere it's called.
+The new `GlobalSearchPanel.test.ts` DOM test installs a minimal
+`scrollIntoView` stub on `window.HTMLElement.prototype` (mirroring the
+round 295 Notification-API stub pattern, deleted in `finally`), then
+confirms real ArrowDown/ArrowUp keydowns each call it exactly once, on
+exactly the newly-highlighted group element -- not just that the CSS
+class moved. The new `codegen.test.ts` test regex-extracts the real
+generated `GlobalSearch.jsx` source and confirms the `resultsContainerRef`
+wiring, the `data-group-index` attribute, and the `scrollIntoView` call
+are all genuinely present.
+
+Deliberate-break-and-restore, done independently on both files: replaced
+the real `scrollIntoView` call with a no-op comment in each -- the new DOM
+test failed with the exact expected `0 !== 1` call-count mismatch, and the
+new codegen test failed its `scrollIntoView` regex match. Restored both
+from verified pre-fix backups with byte-identical `diff` against each;
+re-ran both tests and confirmed they passed again.
+
+Live Playwright verification (real Chromium, a real dev server, a real
+900×500 viewport small enough to force genuine overflow): built a real
+multi-entity project (a business spanning customers, appointments,
+employees, invoices, services, deals, students, courses, patients,
+projects and tasks), seeded one record per successfully-created entity
+with a shared marker word, opened Global Search with Ctrl+K, searched the
+marker, and confirmed 4 real result groups made `.search-panel` genuinely
+overflow (398px visible vs. 598px of content). Pressed ArrowDown enough
+times to reach the last group (which started below the fold) and
+confirmed via `getBoundingClientRect()` that it was now **fully visible**
+inside the panel and carried the `-selected` class, then pressed ArrowUp
+back to the first group and confirmed it scrolled fully back into view
+too -- proving the fix works in both directions, not just one.
+
+Full suite green: **1145 tests** (`@forge/shared` 13, `@forge/spec-engine`
+84, `@forge/db` 93 unchanged; `@forge/api` 308 → 309; `@forge/web` 645 →
+646) via `npm test` at the repo root, plus a clean `@forge/web` build
+(`tsc -b` + `vite build`, 86 modules transformed).
+
 ## Phase 4
 
 - Template/agent marketplace
