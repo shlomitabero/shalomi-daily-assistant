@@ -16352,6 +16352,63 @@ not a single "make it perfect" claim.
   `@forge/shared` 11, `@forge/spec-engine` 84, `@forge/db` 93,
   `@forge/web` 586 unchanged) via `npm test` at the repo root.
 
+- **Round 282 -- fixed a real, everyday collaborator-invite bug found in a
+  completely fresh area (auth/collaborators, not pipeline.ts or
+  domainEntities.ts): inviting an existing account by email failed with a
+  false "No account found" 404 whenever the typed capitalization didn't
+  exactly match how the account's email is stored.** Directed the Explore
+  survey away from the two now-closed keyword-list files toward fresh
+  ground; it compared `apps/api/src/routes/auth.ts`'s `CredentialsSchema`
+  (which explicitly lowercases every signup/login email via
+  `.transform((email) => email.toLowerCase())`, with a comment noting
+  emails are case-insensitive in practice) against
+  `apps/api/src/routes/projects.ts`'s `AddCollaboratorSchema`, which never
+  did the same before calling `findUserByEmail` -- and `packages/db/src/
+  users.ts`'s `findUserByEmail`/`createUser` both do a plain
+  `WHERE email = ?` (case-sensitive SQLite, no `COLLATE NOCASE`). Net
+  effect: every stored email is lowercase, but typing an existing
+  account's address with any different capitalization -- mobile
+  auto-capitalize, pasting from a signature, "John.Doe@Company.com" --
+  made a real, existing account invisible to the lookup. Confirmed by
+  reading the full request path (`CollaboratorsPanel.tsx` only trims the
+  typed email, `api.ts`'s `addCollaborator` sends it raw) and by direct
+  `grep` of both schemas before touching any file. Telling sign this was
+  a genuine oversight, not intentional: `CollaboratorsPanel.tsx` already
+  does `c.email.toLowerCase() === trimmed.toLowerCase()` for its own
+  client-side "already a collaborator" check, so the case-insensitivity
+  requirement was understood, just never applied to the actual server
+  round trip.
+
+  Fix: added the identical `.transform((email) => email.toLowerCase())`
+  already used by `CredentialsSchema` to `AddCollaboratorSchema`, with a
+  comment cross-referencing why (matches the existing normalization
+  point, doesn't touch `findUserByEmail`/`users.ts` at all since every
+  stored email is already lowercase by construction). No client-side
+  change was needed -- `CollaboratorsPanel.tsx`'s own no-op check already
+  handles case-insensitivity, and the server response now always returns
+  the real, lowercase stored email regardless of what was typed.
+
+  Test: 1 new API test in `apps/api/src/app.test.ts` -- signs up an
+  owner and a `collab-case@example.com` account, then POSTs an invite
+  using `Collab-Case@Example.com` (deliberately different capitalization)
+  and asserts a 201 (not 404) with the collaborator list returning the
+  real lowercase email. Deliberate-break-and-restore: reverted
+  `AddCollaboratorSchema` back to the pre-fix version (no `.transform`),
+  re-ran the new test standalone, confirmed it failed with exactly
+  `404 !== 201` on the expected assertion, then restored from a verified
+  pre-fix backup copy with a byte-identical `diff`. Checked
+  `apps/api/src/codegen.ts` for a duplicate collaborator-invite code path
+  (established discipline) -- found none: collaborators are a
+  Forge-platform-only feature (project sharing on Forge's own accounts
+  system), never ported into exported standalone apps, same category as
+  the Security scan (275/276/281).
+
+  Full suite green: 1070 tests (up from 1069 -- `@forge/api` 295 → 296;
+  `@forge/shared` 11, `@forge/spec-engine` 84, `@forge/db` 93,
+  `@forge/web` 586 unchanged) via `npm test` at the repo root, plus a
+  clean `npm run build --workspace=@forge/web` (full `tsc -b` type-check
+  gate).
+
 ## Phase 4
 
 - Template/agent marketplace
