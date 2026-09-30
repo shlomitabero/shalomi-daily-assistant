@@ -3608,3 +3608,55 @@ test("EntityPanel's table shows a totals row summing each numeric column over th
     }
   });
 });
+
+/**
+ * New in this round: a real bug in FieldInput's number input, found by a
+ * fresh Explore survey. `<input type="number">` with no `step` attribute
+ * defaults to the HTML5 spec's `step="1"` -- typing a perfectly normal
+ * decimal value into a price/amount field (this is a Hebrew CRM/ops tool;
+ * "number" fields are overwhelmingly money) fails native browser
+ * constraint validation on submit, silently blocking the form's own
+ * `onSubmit` from ever firing, with zero error shown anywhere in the app.
+ * jsdom (this test harness) doesn't actually implement stepMismatch
+ * validation at all (confirmed empirically -- `validity.stepMismatch` is
+ * always `false` here regardless of `step`), so this can only assert the
+ * real rendered attribute, not the blocked-submit behavior itself; the
+ * true behavioral proof is the live Playwright pass for this round. A
+ * relation field's raw fallback number input (no related entity loaded)
+ * must NOT get `step="any"` -- a foreign-key id is always an integer, and
+ * the default step of 1 there is correct, not a bug.
+ */
+test("EntityPanel's number field input has step=\"any\" so a decimal value like a price won't fail native browser validation, but a relation field's fallback number input keeps the default integer step", async () => {
+  await withJsdom(async () => {
+    const invoiceEntity: Entity = {
+      name: "Invoice",
+      label: "Invoice",
+      fields: [
+        { name: "client", label: "Client", type: "text", required: true },
+        { name: "amount", label: "Amount", type: "number", required: true },
+        { name: "courierId", label: "Courier", type: "relation", relationTo: "Courier", required: false },
+      ],
+    };
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string) => {
+      if (input === "/api/projects/proj1/entities/Invoice") {
+        return new Response(JSON.stringify({ records: [] }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${input}`);
+    }) as typeof fetch;
+    try {
+      // allEntities intentionally omits "Courier" -- relatedEntity stays
+      // undefined, so the relation field falls back to the raw number
+      // input path (the same one the "number" type itself uses).
+      renderEntityPanel({ entity: invoiceEntity, allEntities: [invoiceEntity] });
+      await waitForCondition(() => document.querySelectorAll(".record-form input").length > 0);
+
+      const numberInputs = document.querySelectorAll('.record-form input[type="number"]');
+      assert.equal(numberInputs.length, 2, "expected exactly one number input (amount) and one relation-fallback number input (courierId)");
+      assert.equal(numberInputs[0].getAttribute("step"), "any", "the real 'number' field's input must carry step=\"any\" so a decimal like a price doesn't fail native validation");
+      assert.equal(numberInputs[1].getAttribute("step"), null, "a relation field's fallback number input must NOT get step=\"any\" -- a foreign-key id is always an integer");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});

@@ -3026,3 +3026,26 @@ test("the exported EntityView supports double-click inline cell editing, ported 
   assert.match(stylesCss, /\.cell-inline-editable/);
   assert.match(stylesCss, /\.cell-editing input, \.cell-editing select, \.cell-editing textarea/);
 });
+
+/**
+ * New in this round: the exported app's FieldInput had the identical bug
+ * the live preview did -- a "number" field's <input type="number"> carried
+ * no `step`, defaulting to the HTML5 spec's step="1" and silently
+ * rejecting a normal decimal price/amount on submit, with no error shown
+ * anywhere. Confirms the generated FieldInput's number/relation branch
+ * conditionally sets step="any" only for a real "number" field, leaving a
+ * relation field's raw fallback number input (an always-integer foreign
+ * key) at the correct default step of 1.
+ */
+test("the exported EntityView's number field input has step=\"any\" (a real decimal price no longer fails native browser validation), but a relation field's fallback number input keeps the default integer step", () => {
+  const files = generateExportFiles(project);
+  const entityViewJsx = files.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+
+  const fieldInputSrc = entityViewJsx.match(/function FieldInput\(\{[\s\S]*?\n\}\n/)?.[0];
+  assert.ok(fieldInputSrc, "expected to find FieldInput in generated output");
+  assert.match(
+    fieldInputSrc!,
+    /field\.type === "number" \|\| field\.type === "relation"[\s\S]{0,400}step=\{field\.type === "number" \? "any" : undefined\}/,
+    'the number/relation input branch must set step="any" only when field.type === "number"',
+  );
+});

@@ -1801,7 +1801,18 @@ function FieldInput({ entity, field, value, onChange, relatedEntity, relatedEnti
     return <input id={id} type="date" value={value ?? ""} onChange={(e) => onChange(e.target.value)} autoFocus={autoFocus} onBlur={onBlur} onKeyDown={onKeyDown} />;
   }
   if (field.type === "number" || field.type === "relation") {
-    return <input id={id} type="number" value={value ?? ""} onChange={(e) => onChange(e.target.value)} autoFocus={autoFocus} onBlur={onBlur} onKeyDown={onKeyDown} />;
+    return (
+      <input
+        id={id}
+        type="number"
+        step={field.type === "number" ? "any" : undefined}
+        value={value ?? ""}
+        onChange={(e) => onChange(e.target.value)}
+        autoFocus={autoFocus}
+        onBlur={onBlur}
+        onKeyDown={onKeyDown}
+      />
+    );
   }
   return <input id={id} type="text" value={value ?? ""} onChange={(e) => onChange(e.target.value)} autoFocus={autoFocus} onBlur={onBlur} onKeyDown={onKeyDown} />;
 }

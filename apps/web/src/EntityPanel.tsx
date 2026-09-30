@@ -677,6 +677,14 @@ function FieldInput({
     return (
       <input
         type="number"
+        // A relation field's raw value is always an integer foreign-key id
+        // (the default browser step of 1 is correct there), but a real
+        // "number" business field -- price, amount, rating -- is routinely
+        // a decimal. With no step at all, <input type="number"> defaults to
+        // step="1": typing a perfectly normal "49.90" fails native HTML5
+        // constraint validation and silently blocks the form's submit
+        // event from ever firing, with no error shown anywhere in the app.
+        step={field.type === "number" ? "any" : undefined}
         value={value === "" || value === null || value === undefined ? "" : Number(value)}
         onChange={(e) => onChange(e.target.value === "" ? "" : Number(e.target.value))}
         placeholder={field.type === "relation" ? t("entity.relation.placeholder") : undefined}
