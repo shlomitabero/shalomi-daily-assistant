@@ -55,11 +55,15 @@ function withLabels(entity: Entity, labels: HebrewLabels): Entity {
   };
 }
 
+function matchesKeyword(lower: string, kw: string | RegExp): boolean {
+  return typeof kw === "string" ? lower.includes(kw) : kw.test(lower);
+}
+
 export function matchEntities(text: string, isHebrew: boolean): Entity[] {
   const lower = text.toLowerCase();
   const matched: Entity[] = [];
   for (const rule of DOMAIN_ENTITY_RULES) {
-    if (rule.keywords.some((kw) => lower.includes(kw))) {
+    if (rule.keywords.some((kw) => matchesKeyword(lower, kw))) {
       matched.push(isHebrew ? withLabels(rule.entity, rule) : rule.entity);
     }
   }

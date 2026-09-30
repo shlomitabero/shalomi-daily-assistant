@@ -149,6 +149,45 @@ test("Order gets an optional courierId relation field pointing to Courier, not a
   assert.ok(plainOrder.fields.some((f) => f.name === "courierId"));
 });
 
+/**
+ * Regression test for a real bug found by this round's Explore survey:
+ * Order's own keyword list had a bare "order" string, matched via plain
+ * substring (`lower.includes("order")`). "disorder(s)", "recorder(s)", and
+ * "border(s)" all contain "order" as a substring too, so an app that has
+ * nothing to do with e-commerce -- a clinic tracking sleep disorders, a
+ * rental business tracking video recorders -- spuriously got a whole spare
+ * "Order" entity/table (with customerName/total/status/items/courierId
+ * fields) injected into its generated spec and, if unnoticed, its built
+ * schema. This is the exact same collision class already fixed once for
+ * "deal" (see domainEntities.ts's own comment on that entity), but unlike
+ * "deal" -> "deals", no alternate spelling of "order" avoids the collision
+ * here, since every colliding word itself ends in "order(s)" -- the fix
+ * needed a `\b`-bounded RegExp keyword instead of a plain string.
+ */
+test("Order's keyword match does not spuriously trigger on unrelated words that merely contain 'order' as a substring", async () => {
+  const provider = new HeuristicSpecProvider();
+
+  const clinic = await provider.generate(
+    "A clinic app for tracking patients with sleep disorders and their therapy sessions.",
+  );
+  assert.ok(!clinic.entities.some((e) => e.name === "Order"), "a sleep-disorder clinic app must not get a spurious Order entity");
+
+  const rentals = await provider.generate("Track our video recorders and equipment rentals.");
+  assert.ok(!rentals.entities.some((e) => e.name === "Order"), "a video-recorder rental app must not get a spurious Order entity");
+
+  const border = await provider.generate("Manage border crossing logs for our trucking fleet.");
+  assert.ok(!border.entities.some((e) => e.name === "Order"), "a border-crossing description must not get a spurious Order entity");
+
+  // The fix must not lose real recall for legitimate order-related wording:
+  // whole-word "order"/"orders", including inside a hyphenated phrase, must
+  // still match.
+  const singleOrder = await provider.generate("Place an order for pickup.");
+  assert.ok(singleOrder.entities.some((e) => e.name === "Order"), "a plain 'order' description must still get an Order entity");
+
+  const hyphenated = await provider.generate("An order-management app for tracking sales.");
+  assert.ok(hyphenated.entities.some((e) => e.name === "Order"), "'order-management' must still match Order across the hyphen");
+});
+
 test("recognizes real-estate, education, healthcare, and project-management descriptions with tailored entities", async () => {
   const provider = new HeuristicSpecProvider();
 

@@ -18,7 +18,15 @@ import type { Entity } from "@forge/shared";
  * writing a real regression test, not by inspection):
  * 1. English substring collisions with a short/common word inside an
  *    unrelated word (e.g. "events" ⊂ "prevents", "pipeline" ⊂ "hiring
- *    pipeline" colliding with Deal's own "pipeline" keyword).
+ *    pipeline" colliding with Deal's own "pipeline" keyword). Usually fixed
+ *    by picking a different, collision-free keyword string (see "deal" vs.
+ *    "deals" below) — but when EVERY spelling of the real word is itself a
+ *    substring of the colliding word(s), as with "order" (contained inside
+ *    "disorder(s)", "recorder(s)", "border(s)", no matter singular/plural),
+ *    no plain string keyword can win: use a `RegExp` keyword instead (see
+ *    Order's own entry below), matched with `\b` word boundaries so
+ *    "orders" matches but "disorders" doesn't (a letter immediately before
+ *    "order" blocks the boundary).
  * 2. Hebrew construct-state (סמיכות) and other suffix inflection: a keyword
  *    like "תמיכה" does NOT match "תמיכת לקוחות" ("customer support") as a
  *    substring, since the word's ending changes. Prefixes (ה/ו/ב/כ/ל/מ)
@@ -28,7 +36,8 @@ import type { Entity } from "@forge/shared";
  *    all of them.
  */
 export interface DomainEntityRule {
-  keywords: string[];
+  /** A plain string matches as a substring (`lower.includes(kw)`); a RegExp is tested directly (`kw.test(lower)`) against the same lowercased text — see pitfall 1 above for when a RegExp is required. */
+  keywords: (string | RegExp)[];
   entity: Entity;
   labelHe: string;
   descriptionHe: string;
@@ -161,7 +170,18 @@ export const DOMAIN_ENTITY_RULES: DomainEntityRule[] = [
   },
   {
     keywords: [
-      "order", "purchase", "checkout", "delivery", "deliveries", "wolt",
+      // Bare "order"/"orders" as a plain substring would also match
+      // "disorder(s)", "recorder(s)", "border(s)" -- real words in real
+      // descriptions (e.g. a clinic tracking "sleep disorders", a rental
+      // business tracking "video recorders"). Unlike the "deal"/"deals" fix
+      // above, no alternate spelling avoids this: every one of those
+      // colliding words itself ends in "order(s)". A `\b`-bounded regex is
+      // the only fix -- it requires a non-letter immediately before "order",
+      // which rejects all three colliding words (each has a letter right
+      // before "order") while still matching "order"/"orders" as a real
+      // standalone word, including inside a hyphenated phrase like
+      // "order-management".
+      /\border(s)?\b/, "purchase", "checkout", "delivery", "deliveries", "wolt",
       "הזמנה", "הזמנות", "רכישה", "רכישות", "משלוח", "משלוחים", "וולט",
     ],
     labelHe: "הזמנות",
