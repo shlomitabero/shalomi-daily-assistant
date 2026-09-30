@@ -29,6 +29,7 @@ import {
   recordsToCsv,
   restoreRecordAt,
   searchEntityRecords,
+  selectedOrAllRecords,
   sortRecords,
   sortRecordsMulti,
   splitHighlightSegments,
@@ -674,6 +675,42 @@ test("isSameDay is true only for two dates sharing the same year, month, and day
   assert.equal(isSameDay(new Date(2026, 8, 15), new Date(2026, 8, 16)), false, "different day, same month");
   assert.equal(isSameDay(new Date(2026, 8, 15), new Date(2026, 9, 15)), false, "different month, same day");
   assert.equal(isSameDay(new Date(2025, 8, 15), new Date(2026, 8, 15)), false, "same month/day but a different year");
+});
+
+/**
+ * New in this round: "Export CSV"/"Print List" used to always operate on
+ * `visibleRecords` (the current filtered/sorted table), silently discarding
+ * whatever the user had already checked via the table's own bulk-select
+ * checkboxes. selectedOrAllRecords is the pure decision behind the fix --
+ * when nothing is selected it must behave exactly as before (whatever the
+ * current view is showing); when something is selected it must return
+ * EXACTLY those records pulled from the full, unfiltered entity, matching
+ * handleBulkDelete/handleBulkDuplicate's own existing "selection survives a
+ * changed search box" behavior, not a narrower intersection with whatever
+ * happens to be visible right now.
+ */
+test("selectedOrAllRecords returns visibleRecords unchanged when nothing is selected", () => {
+  const all = [{ id: 1 }, { id: 2 }, { id: 3 }];
+  const visible = [{ id: 2 }];
+  const result = selectedOrAllRecords(all, visible, new Set());
+  assert.equal(result, visible, "must be the exact same array reference when there is no selection");
+});
+
+test("selectedOrAllRecords returns exactly the selected records pulled from the FULL entity, not the currently-visible subset", () => {
+  const all = [{ id: 1, name: "A" }, { id: 2, name: "B" }, { id: 3, name: "C" }];
+  // A record (id 3) is selected but no longer visible (e.g. the search box
+  // was changed after selecting it) -- it must still be included, matching
+  // how handleBulkDelete/handleBulkDuplicate already read the full `records`
+  // array by id rather than being constrained by the current visible view.
+  const visible = [{ id: 1, name: "A" }];
+  const result = selectedOrAllRecords(all, visible, new Set([1, 3]));
+  assert.deepEqual(result, [{ id: 1, name: "A" }, { id: 3, name: "C" }]);
+});
+
+test("selectedOrAllRecords preserves the full entity's own order, not the selection Set's insertion order", () => {
+  const all = [{ id: 1 }, { id: 2 }, { id: 3 }];
+  const result = selectedOrAllRecords(all, [], new Set([3, 1]));
+  assert.deepEqual(result, [{ id: 1 }, { id: 3 }]);
 });
 
 test("recordsToCsv builds a header row from field labels and one row per record, with human-friendly values", () => {

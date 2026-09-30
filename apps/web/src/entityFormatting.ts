@@ -660,6 +660,31 @@ function fieldDisplayValue(
 }
 
 /**
+ * A business owner who's already checked a handful of specific rows (this
+ * week's unpaid invoices, leads to hand to a courier) via the table's own
+ * bulk-select checkboxes expects "Export CSV"/"Print List" to act on just
+ * that selection, not silently discard it and dump the entire filtered
+ * table every time -- the exact gap bulk delete/duplicate/update don't
+ * have, since they already read `selectedIds`. When anything is selected,
+ * returns exactly those records pulled from `allRecords` (the full,
+ * unfiltered entity), matching handleBulkDelete/handleBulkDuplicate's own
+ * existing behavior of acting on the raw selection regardless of whatever
+ * the current search/filter happens to be showing right now -- clearing or
+ * changing the search box after selecting rows must not silently drop them
+ * from the export. When nothing is selected, returns `visibleRecords`
+ * unchanged, preserving today's "export what the table is currently
+ * showing" behavior exactly.
+ */
+export function selectedOrAllRecords(
+  allRecords: EntityRecord[],
+  visibleRecords: EntityRecord[],
+  selectedIds: Set<number>,
+): EntityRecord[] {
+  if (selectedIds.size === 0) return visibleRecords;
+  return allRecords.filter((r) => selectedIds.has(r.id as number));
+}
+
+/**
  * Builds a real, Excel-friendly CSV (CRLF line endings, quoted fields where
  * needed) from an entity's records -- so "download my data" means an
  * actual spreadsheet a business owner can open, not a JSON dump. A relation

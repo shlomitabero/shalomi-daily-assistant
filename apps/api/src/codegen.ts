@@ -1180,6 +1180,19 @@ function fieldDisplayValue(field, value, relatedRecords) {
   return String(value);
 }
 
+// When a bulk-select checkbox selection exists, "Export CSV" should act on
+// exactly those records (pulled from the full, unfiltered entity, matching
+// handleBulkDelete/handleBulkDuplicate's own existing behavior of acting on
+// the raw selection regardless of the current search/filter) instead of
+// silently discarding it and exporting whatever the table happens to be
+// showing right now. With nothing selected, returns visibleRecords
+// unchanged -- today's "export what the table is currently showing" stays
+// exactly as it was.
+function selectedOrAllRecords(allRecords, visibleRecords, selectedIds) {
+  if (selectedIds.size === 0) return visibleRecords;
+  return allRecords.filter((r) => selectedIds.has(r.id));
+}
+
 // Builds a real, Excel-friendly CSV (CRLF line endings, quoted fields
 // where needed) from an entity's records -- so "download my data" means
 // an actual spreadsheet, not a JSON dump.
@@ -2287,7 +2300,7 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
   }
 
   function handleExportCsv() {
-    const csv = recordsToCsv(entity.fields, visibleRecords, relatedRecords);
+    const csv = recordsToCsv(entity.fields, selectedOrAllRecords(records, visibleRecords, selectedIds), relatedRecords);
     const blob = new Blob(["\\uFEFF" + csv], { type: "text/csv;charset=utf-8;" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
@@ -2494,8 +2507,13 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
                 📅 Export to Calendar (ICS)
               </button>
             )}
-            <button type="button" className="csv-export-btn" onClick={handleExportCsv} disabled={visibleRecords.length === 0}>
-              ⬇️ Export CSV
+            <button
+              type="button"
+              className="csv-export-btn"
+              onClick={handleExportCsv}
+              disabled={selectedIds.size === 0 && visibleRecords.length === 0}
+            >
+              {selectedIds.size > 0 ? <>⬇️ Export {selectedIds.size} selected</> : "⬇️ Export CSV"}
             </button>
             <div className="columns-menu-wrapper">
               <button type="button" className="columns-menu-btn" onClick={() => setColumnsMenuOpen((v) => !v)} aria-expanded={columnsMenuOpen}>

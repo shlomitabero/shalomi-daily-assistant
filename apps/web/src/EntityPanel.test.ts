@@ -1929,6 +1929,108 @@ test("EntityPanel's Print list action fills the print sheet with only the curren
 });
 
 /**
+ * New in this round: "Print list" and "Export CSV" used to always operate
+ * on whatever the table's current search/filter was showing, silently
+ * discarding a real bulk-select checkbox selection the user had already
+ * made -- the exact gap bulk delete/duplicate/update don't have. Selects
+ * two of three rows, then narrows the search box to a term that hides BOTH
+ * selected rows (matching only the third, unselected one) -- proving the
+ * selected rows still print even though they're no longer visible in the
+ * current filtered view, the same "selection survives a changed search box"
+ * behavior handleBulkDelete/handleBulkDuplicate already have.
+ */
+test("EntityPanel's Print list button prints exactly the selected rows when a selection exists, even ones hidden by the current search filter", async () => {
+  await withJsdom(async () => {
+    const store: EntityRecord[] = [
+      { id: 1, name: "Dana", email: "dana@example.com" },
+      { id: 2, name: "Noa", email: "noa@example.com" },
+      { id: 3, name: "Omer", email: "omer@example.com" },
+    ];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = mockCustomerListFetch(store) as typeof fetch;
+    const originalPrint = window.print;
+    let printCalls = 0;
+    window.print = () => {
+      printCalls += 1;
+    };
+    try {
+      renderCustomerPanel();
+      await waitForCondition(() => document.querySelectorAll("tbody .select-col input").length === 3);
+
+      const rowCheckboxes = [...document.querySelectorAll("tbody .select-col input")] as HTMLInputElement[];
+      fireEvent.click(rowCheckboxes[0]); // Dana
+      fireEvent.click(rowCheckboxes[2]); // Omer
+
+      fireEvent.change(document.querySelector(".entity-search")!, { target: { value: "Noa" } });
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 1);
+
+      const printListBtn = Array.from(document.querySelectorAll("button")).find((b) => b.textContent?.includes("Print"))!;
+      assert.match(printListBtn.textContent ?? "", /2/, "the button label must reflect the real selected count (2), not the filtered visible count (1)");
+      fireEvent.click(printListBtn);
+
+      await waitForCondition(() => printCalls === 1);
+
+      const sheetText = document.querySelector(".print-list-sheet")!.textContent ?? "";
+      assert.match(sheetText, /Dana/, "a selected record must print even though the current search hides it");
+      assert.match(sheetText, /Omer/, "a selected record must print even though the current search hides it");
+      assert.doesNotMatch(sheetText, /Noa/, "the one unselected (but search-visible) record must NOT print");
+      assert.match(sheetText, /2 records/, "the footer must report the real selected count (2), not the search-filtered count (1)");
+    } finally {
+      globalThis.fetch = originalFetch;
+      window.print = originalPrint;
+    }
+  });
+});
+
+/**
+ * CSV sibling of the print-list test above: stubs URL.createObjectURL the
+ * same way BuildProgress.test.ts's own download test does (jsdom has no
+ * real Blob-URL machinery) to read back the actual generated CSV content,
+ * not just assume the click did something.
+ */
+test("EntityPanel's Export CSV button downloads exactly the selected rows' CSV when a selection exists", async () => {
+  await withJsdom(async () => {
+    const store: EntityRecord[] = [
+      { id: 1, name: "Dana", email: "dana@example.com" },
+      { id: 2, name: "Noa", email: "noa@example.com" },
+      { id: 3, name: "Omer", email: "omer@example.com" },
+    ];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = mockCustomerListFetch(store) as typeof fetch;
+    const originalCreateObjectURL = (URL as unknown as { createObjectURL?: (b: Blob) => string }).createObjectURL;
+    const originalRevokeObjectURL = (URL as unknown as { revokeObjectURL?: (u: string) => void }).revokeObjectURL;
+    let capturedBlob: Blob | null = null;
+    (URL as unknown as { createObjectURL: (b: Blob) => string }).createObjectURL = (b: Blob) => {
+      capturedBlob = b;
+      return "blob:mock-url";
+    };
+    (URL as unknown as { revokeObjectURL: (u: string) => void }).revokeObjectURL = () => {};
+    try {
+      renderCustomerPanel();
+      await waitForCondition(() => document.querySelectorAll("tbody .select-col input").length === 3);
+
+      const rowCheckboxes = [...document.querySelectorAll("tbody .select-col input")] as HTMLInputElement[];
+      fireEvent.click(rowCheckboxes[0]); // Dana
+      fireEvent.click(rowCheckboxes[2]); // Omer
+
+      const exportBtn = document.querySelector(".csv-export-btn") as HTMLButtonElement;
+      assert.match(exportBtn.textContent ?? "", /2/, "the button label must reflect the real selected count (2)");
+      fireEvent.click(exportBtn);
+
+      await waitForCondition(() => capturedBlob !== null);
+      const csvText = await (capturedBlob as unknown as Blob).text();
+      assert.match(csvText, /Dana/, "the exported CSV must include the selected record Dana");
+      assert.match(csvText, /Omer/, "the exported CSV must include the selected record Omer");
+      assert.doesNotMatch(csvText, /Noa/, "the exported CSV must NOT include the unselected record Noa");
+    } finally {
+      globalThis.fetch = originalFetch;
+      if (originalCreateObjectURL) (URL as unknown as { createObjectURL: (b: Blob) => string }).createObjectURL = originalCreateObjectURL;
+      if (originalRevokeObjectURL) (URL as unknown as { revokeObjectURL: (u: string) => void }).revokeObjectURL = originalRevokeObjectURL;
+    }
+  });
+});
+
+/**
  * New in this round: a "Columns" menu in the toolbar lets a wide entity's
  * table drop columns you don't need on screen right now. Hides the
  * "Status" column via its checkbox, confirms the header and every row's

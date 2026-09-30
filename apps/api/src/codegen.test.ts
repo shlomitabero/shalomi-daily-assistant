@@ -1586,6 +1586,50 @@ test("the exported EntityView's own CSV-export formatting renders booleans as TR
   assert.equal(lines[2], "Task B,FALSE,New");
 });
 
+/**
+ * New in this round: the exported app's "Export CSV" button had the same
+ * gap the live preview did -- it always exported `visibleRecords` (the
+ * current filtered/sorted table), silently discarding a real bulk-select
+ * checkbox selection instead of exporting just those rows. Confirms
+ * handleExportCsv now routes through the new selectedOrAllRecords, and
+ * separately extracts and *executes* the real generated
+ * selectedOrAllRecords (not a reimplementation) to prove its own behavior:
+ * nothing selected -> the exact visibleRecords reference unchanged;
+ * something selected -> exactly those records pulled from the FULL
+ * (unfiltered) entity, matching handleBulkDelete/handleBulkDuplicate's own
+ * existing "selection survives a changed search box" behavior.
+ */
+test("the exported EntityView's Export CSV routes through selectedOrAllRecords, which itself returns exactly the selection pulled from the full entity", () => {
+  const files = generateExportFiles(project);
+  const entityViewJsx = files.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+
+  const handleExportCsvSrc = entityViewJsx.match(/function handleExportCsv\(\) \{[\s\S]*?\n {2}\}\n/)?.[0];
+  assert.ok(handleExportCsvSrc, "expected to find handleExportCsv in generated output");
+  assert.match(
+    handleExportCsvSrc!,
+    /recordsToCsv\(entity\.fields, selectedOrAllRecords\(records, visibleRecords, selectedIds\), relatedRecords\)/,
+    "handleExportCsv must route through selectedOrAllRecords instead of always exporting visibleRecords directly",
+  );
+
+  const selectedOrAllRecordsSrc = entityViewJsx.match(/function selectedOrAllRecords\(allRecords, visibleRecords, selectedIds\) \{[\s\S]*?\n\}\n/)?.[0];
+  assert.ok(selectedOrAllRecordsSrc, "expected to find selectedOrAllRecords in generated output");
+  const selectedOrAllRecords = new Function(`${selectedOrAllRecordsSrc}\nreturn selectedOrAllRecords;`)();
+
+  const all = [{ id: 1, name: "A" }, { id: 2, name: "B" }, { id: 3, name: "C" }];
+  const visible = [{ id: 1, name: "A" }];
+  assert.equal(selectedOrAllRecords(all, visible, new Set()), visible, "with nothing selected, must return visibleRecords unchanged");
+  assert.deepEqual(
+    selectedOrAllRecords(all, visible, new Set([1, 3])),
+    [{ id: 1, name: "A" }, { id: 3, name: "C" }],
+    "with a selection, must return exactly those records from the FULL entity, even one (id 3) no longer in the current visibleRecords",
+  );
+
+  const exportBtnSrc = entityViewJsx.match(/<button\s+type="button"\s+className="csv-export-btn"[\s\S]*?<\/button>/)?.[0];
+  assert.ok(exportBtnSrc, "expected to find the csv-export-btn button in generated output");
+  assert.match(exportBtnSrc!, /disabled=\{selectedIds\.size === 0 && visibleRecords\.length === 0\}/);
+  assert.match(exportBtnSrc!, /selectedIds\.size > 0/, "the button label must reflect a real selection count");
+});
+
 test("the exported EntityView asks for confirmation before deleting a single record, naming it by its own display label, not just count", () => {
   const files = generateExportFiles(project);
   const entityViewJsx = files.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;

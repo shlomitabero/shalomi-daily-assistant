@@ -38,6 +38,7 @@ import {
   relationDisplayLabel,
   recordsToCsv,
   restoreRecordAt,
+  selectedOrAllRecords,
   sortRecordsMulti,
   splitHighlightSegments,
   splitLinkSegments,
@@ -1417,7 +1418,7 @@ export function EntityPanel({
   }
 
   function handleExportCsv() {
-    const csv = recordsToCsv(entity.fields, visibleRecords, lang, allEntities, relatedRecords);
+    const csv = recordsToCsv(entity.fields, selectedOrAllRecords(records, visibleRecords, selectedIds), lang, allEntities, relatedRecords);
     const blob = new Blob(["﻿" + csv], { type: "text/csv;charset=utf-8;" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
@@ -1852,17 +1853,17 @@ export function EntityPanel({
               type="button"
               className="secondary csv-export-btn"
               onClick={handleExportCsv}
-              disabled={visibleRecords.length === 0}
+              disabled={selectedIds.size === 0 && visibleRecords.length === 0}
             >
-              {t("entity.exportCsv")}
+              {selectedIds.size > 0 ? t("entity.exportCsv.selected", { count: selectedIds.size }) : t("entity.exportCsv")}
             </button>
             <button
               type="button"
               className="secondary"
               onClick={() => setShowPrintList(true)}
-              disabled={visibleRecords.length === 0}
+              disabled={selectedIds.size === 0 && visibleRecords.length === 0}
             >
-              {t("entity.printList")}
+              {selectedIds.size > 0 ? t("entity.printList.selected", { count: selectedIds.size }) : t("entity.printList")}
             </button>
             <div className="columns-menu-wrapper">
               <button
@@ -2095,7 +2096,7 @@ export function EntityPanel({
       <RecordListPrintSheet
         entity={entity}
         fields={visibleFields}
-        records={visibleRecords}
+        records={selectedOrAllRecords(records, visibleRecords, selectedIds)}
         show={showPrintList}
         lang={lang}
         t={t}
