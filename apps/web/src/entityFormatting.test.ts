@@ -10,6 +10,7 @@ import {
   computeNextFocusedRowId,
   findBoardField,
   findDateField,
+  findPhoneField,
   formatDateForInput,
   formatDateValue,
   formatEntityRecordCount,
@@ -540,6 +541,29 @@ test("findDateField falls back to the first date field when nothing is named dat
     { name: "scheduledFor", type: "date", required: true },
   ];
   assert.equal(findDateField(fields)?.name, "scheduledFor");
+});
+
+test("findPhoneField recognizes the domain library's own 'phone' convention", () => {
+  const fields: Field[] = [
+    { name: "name", type: "text", required: true },
+    { name: "phone", type: "text", required: false },
+  ];
+  assert.equal(findPhoneField(fields)?.name, "phone");
+});
+
+test("findPhoneField recognizes common phone-field name variants, case-insensitively, matching whatsapp.ts's own server-side hint list", () => {
+  for (const name of ["Mobile", "phoneNumber", "MobileNumber", "cellPhone", "cell", "Telephone", "tel"]) {
+    const fields: Field[] = [{ name, type: "text", required: false }];
+    assert.equal(findPhoneField(fields)?.name, name, `expected "${name}" to be recognized as a phone field`);
+  }
+});
+
+test("findPhoneField returns null when the entity has no phone-like field", () => {
+  const fields: Field[] = [
+    { name: "name", type: "text", required: true },
+    { name: "email", type: "text", required: false },
+  ];
+  assert.equal(findPhoneField(fields), null);
 });
 
 /**

@@ -19,6 +19,7 @@ import {
   findBoardField,
   findDateField,
   findFilterableEnumFields,
+  findPhoneField,
   formatDateForInput,
   formatDateValue,
   formatEntityRecordCount,
@@ -717,6 +718,7 @@ export function EntityPanel({
   highlightRecordId,
   onHighlightHandled,
   onJumpToRecord,
+  onSendWhatsApp,
 }: {
   projectId: string;
   entity: Entity;
@@ -728,6 +730,8 @@ export function EntityPanel({
   onHighlightHandled?: () => void;
   /** Called when a relation cell's value (in the table or a board card) is clicked, so the caller can switch to the target entity's own tab and highlight that record there -- the same "jump to record" mechanism Global Search, WhatsApp log, and Business Twin already trigger from their own panels. */
   onJumpToRecord?: (targetEntity: string, recordId: number) => void;
+  /** Called with a record's raw phone-field value when the row's "Send WhatsApp" action is clicked, so the caller can open the WhatsApp panel with that number prefilled -- the reverse direction of onJumpToRecord, which already exists for an inbound WhatsApp message resolving to a record. */
+  onSendWhatsApp?: (phoneNumber: string) => void;
 }) {
   const { t, lang } = useTranslation();
   const [records, setRecords] = useState<EntityRecord[]>([]);
@@ -781,6 +785,7 @@ export function EntityPanel({
   const boardField = useMemo(() => findBoardField(entity.fields), [entity.fields]);
   const filterableEnumFields = useMemo(() => findFilterableEnumFields(entity.fields), [entity.fields]);
   const dateField = useMemo(() => findDateField(entity.fields), [entity.fields]);
+  const phoneField = useMemo(() => findPhoneField(entity.fields), [entity.fields]);
   const relationTargets = useMemo(() => {
     const names = entity.fields
       .filter((f) => f.type === "relation" && f.relationTo)
@@ -1686,6 +1691,11 @@ export function EntityPanel({
           <button type="button" onClick={() => handleDuplicate(record.id as number)}>
             {t("entity.duplicate")}
           </button>
+          {phoneField && onSendWhatsApp && typeof record[phoneField.name] === "string" && record[phoneField.name] && (
+            <button type="button" onClick={() => onSendWhatsApp(record[phoneField.name] as string)}>
+              {t("entity.sendWhatsApp")}
+            </button>
+          )}
           <button type="button" onClick={() => setRecordToPrint(record)}>
             {t("entity.print")}
           </button>

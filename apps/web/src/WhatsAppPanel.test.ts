@@ -456,6 +456,72 @@ test("WhatsAppPanel sends the exact typed recipient/message and refreshes the me
 });
 
 /**
+ * New in this round: a `prefillTo` prop lets a caller (EntityPanel's
+ * "Send WhatsApp" row action, via App.tsx) open this panel with the
+ * test-send "to" box already filled in, instead of forcing the user to
+ * copy the phone number out of the record and paste it in by hand.
+ * Confirms the real rendered input starts with that value, and that
+ * submitting the form without touching the field sends exactly that
+ * number, proving it's real component state (not just a placeholder).
+ */
+test("WhatsAppPanel's prefillTo prop pre-fills the real test-send 'to' input, which sends as-is without being touched", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    let capturedSendBody: string | undefined;
+    globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/integrations/whatsapp/status") {
+        return new Response(
+          JSON.stringify({ status: "connected", phoneNumber: "972501234567", qrDataUrl: null, error: null }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      if (method === "GET" && input === "/api/projects/proj1/integrations/whatsapp/messages") {
+        return new Response(JSON.stringify({ messages: [] }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      if (method === "POST" && input === "/api/projects/proj1/integrations/whatsapp/send") {
+        capturedSendBody = init!.body as string;
+        return new Response(JSON.stringify({ ok: true }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+    try {
+      render(
+        React.createElement(
+          ThemeProvider,
+          null,
+          React.createElement(
+            LanguageProvider,
+            null,
+            React.createElement(WhatsAppPanel, {
+              projectId: "proj1",
+              projectName: "Test Project",
+              onClose: () => {},
+              onJumpToEntity: () => {},
+              onJumpToRecord: () => {},
+              prefillTo: "0501234567",
+            }),
+          ),
+        ),
+      );
+      await waitForCondition(() => document.querySelector(".whatsapp-test-form") !== null);
+
+      const toInput = document.querySelector('.whatsapp-test-form input[type="text"]') as HTMLInputElement;
+      assert.equal(toInput.value, "0501234567", "the real 'to' input must start pre-filled with the given phone number");
+
+      const messageInput = document.querySelectorAll('.whatsapp-test-form input[type="text"]')[1] as HTMLInputElement;
+      fireEvent.change(messageInput, { target: { value: "Hi from the record row" } });
+      fireEvent.submit(document.querySelector("form.whatsapp-test-form")!);
+
+      await waitForCondition(() => typeof capturedSendBody === "string");
+      assert.equal(JSON.parse(capturedSendBody!).to, "0501234567", "submitting without touching the prefilled field must send the exact prefilled number");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * Regression test for round 289's WhatsApp unread-badge feature
  * (whatsappUnread.ts + App.tsx's topbar poll): the badge reads its "last
  * seen" marker purely from localStorage, written by this panel -- if the

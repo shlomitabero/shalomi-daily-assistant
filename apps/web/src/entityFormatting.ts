@@ -491,6 +491,25 @@ export function findDateField(fields: Field[]): Field | null {
   return named ?? dateFields[0];
 }
 
+// Mirrors apps/api/src/whatsapp.ts's own PHONE_FIELD_NAME_HINTS exactly (a
+// duplicated constant, not a shared import -- the same live/exported-app
+// duplication convention DATE_FIELD_NAME_HINTS above already follows).
+// Matches by field name only, not type: the domain library's own phone
+// fields are plain "text" fields, and an AI-generated spec has no
+// dedicated "phone" field type to check against.
+const PHONE_FIELD_NAME_HINTS = ["phone", "mobile", "phonenumber", "mobilenumber", "cellphone", "cell", "telephone", "tel"];
+
+/**
+ * Picks the field a "Send WhatsApp" row action should read a record's
+ * number from, if the entity has one -- the client-side counterpart to
+ * whatsapp.ts's own findMatchingRecord, which already does this same
+ * name-hint match server-side for the opposite (inbound message ->
+ * record) direction.
+ */
+export function findPhoneField(fields: Field[]): Field | null {
+  return fields.find((f) => PHONE_FIELD_NAME_HINTS.includes(f.name.toLowerCase())) ?? null;
+}
+
 /**
  * Picks the field the calendar view's day-chip should show as a record's
  * label -- reuses `pickDisplayField`'s own "name"/"title", then first text

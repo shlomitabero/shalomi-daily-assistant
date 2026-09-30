@@ -372,6 +372,10 @@ function AppContent() {
   const [backupDone, setBackupDone] = useState(false);
   const [showTwin, setShowTwin] = useState(false);
   const [showWhatsApp, setShowWhatsApp] = useState(false);
+  // Set alongside setShowWhatsApp(true) by EntityPanel's "Send WhatsApp" row
+  // action, so the panel opens with that record's number already in the
+  // test-send box instead of the user having to copy/paste it themselves.
+  const [whatsappPrefillTo, setWhatsappPrefillTo] = useState<string | null>(null);
   const [whatsappUnreadCount, setWhatsappUnreadCount] = useState(0);
   // The newest inbound WhatsApp message id a desktop notification has
   // already been shown for -- separate from the topbar badge's own "last
@@ -1571,6 +1575,10 @@ function AppContent() {
                       setActiveEntity(targetEntity);
                       setHighlightRecordId(recordId);
                     }}
+                    onSendWhatsApp={(phoneNumber) => {
+                      setWhatsappPrefillTo(phoneNumber);
+                      setShowWhatsApp(true);
+                    }}
                   />
                 ))}
             </div>
@@ -1611,16 +1619,22 @@ function AppContent() {
             <WhatsAppPanel
               projectId={project.id}
               projectName={project.name}
-              onClose={() => setShowWhatsApp(false)}
+              onClose={() => {
+                setShowWhatsApp(false);
+                setWhatsappPrefillTo(null);
+              }}
               onJumpToEntity={(entityName) => {
                 setActiveEntity(entityName);
                 setShowWhatsApp(false);
+                setWhatsappPrefillTo(null);
               }}
               onJumpToRecord={(entityName, recordId) => {
                 setActiveEntity(entityName);
                 setHighlightRecordId(recordId);
                 setShowWhatsApp(false);
+                setWhatsappPrefillTo(null);
               }}
+              prefillTo={whatsappPrefillTo}
             />
           )}
 

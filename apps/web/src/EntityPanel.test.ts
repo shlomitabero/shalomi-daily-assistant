@@ -3137,6 +3137,87 @@ test("EntityPanel's relation cell jumps to the related record when onJumpToRecor
 });
 
 /**
+ * New in this round: a "Send WhatsApp" row action on any entity with a
+ * recognized phone-like field (findPhoneField), wired to onSendWhatsApp --
+ * the reverse direction of onJumpToRecord above. Before this, messaging a
+ * Customer/Lead from their record meant copying the phone number out of
+ * the table and pasting it into the separate WhatsApp panel's test-send
+ * box by hand. Confirms: the button renders and fires the callback with
+ * the record's real phone value for a phone-bearing entity; it does NOT
+ * render at all for an entity with no phone-like field, nor for a record
+ * whose phone field happens to be empty, even when onSendWhatsApp is
+ * given in both cases.
+ */
+test("EntityPanel's row-level 'Send WhatsApp' action appears only for a phone-bearing record and fires onSendWhatsApp with its real number", async () => {
+  await withJsdom(async () => {
+    const leadEntity: Entity = {
+      name: "Lead",
+      label: "Lead",
+      fields: [
+        { name: "name", label: "Name", type: "text", required: true },
+        { name: "mobile", label: "Mobile", type: "text", required: false },
+      ],
+    };
+    const store: EntityRecord[] = [
+      { id: 1, createdAt: "x", name: "Dana", mobile: "0501234567" },
+      { id: 2, createdAt: "x", name: "Noa", mobile: "" },
+    ];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string) => {
+      if (input === "/api/projects/proj1/entities/Lead") {
+        return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${input}`);
+    }) as typeof fetch;
+    let sentTo: string | null = null;
+    try {
+      renderEntityPanel({
+        entity: leadEntity,
+        allEntities: [leadEntity],
+        onSendWhatsApp: (phoneNumber: string) => {
+          sentTo = phoneNumber;
+        },
+      });
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 2);
+
+      const rows = document.querySelectorAll("table tbody tr");
+      const danaWhatsAppBtn = Array.from(rows[0].querySelectorAll("button")).find((b) => b.textContent?.includes("WhatsApp"));
+      assert.ok(danaWhatsAppBtn, "expected a Send WhatsApp button on the row for a record with a real phone value");
+      fireEvent.click(danaWhatsAppBtn!);
+      assert.equal(sentTo, "0501234567", "clicking must call onSendWhatsApp with the record's own real phone value");
+
+      const noaWhatsAppBtn = Array.from(rows[1].querySelectorAll("button")).find((b) => b.textContent?.includes("WhatsApp"));
+      assert.equal(noaWhatsAppBtn, undefined, "a record whose phone field is empty must not get a Send WhatsApp button at all");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+test("EntityPanel's row-level 'Send WhatsApp' action does not render at all for an entity with no phone-like field", async () => {
+  await withJsdom(async () => {
+    const noteEntity: Entity = { name: "Note", label: "Note", fields: [{ name: "name", label: "Name", type: "text", required: true }] };
+    const store: EntityRecord[] = [{ id: 1, createdAt: "x", name: "Reminder" }];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string) => {
+      if (input === "/api/projects/proj1/entities/Note") {
+        return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${input}`);
+    }) as typeof fetch;
+    try {
+      renderEntityPanel({ entity: noteEntity, allEntities: [noteEntity], onSendWhatsApp: () => {} });
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 1);
+      const row = document.querySelectorAll("table tbody tr")[0];
+      const whatsAppBtn = Array.from(row.querySelectorAll("button")).find((b) => b.textContent?.includes("WhatsApp"));
+      assert.equal(whatsAppBtn, undefined, "an entity with no phone-like field must never show a Send WhatsApp row action");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * New in this round: a longtext cell (a "Notes"/"Description" field) now
  * carries its full, untruncated value in a native `title` attribute --
  * before this, the only way to read a longtext value once the column was

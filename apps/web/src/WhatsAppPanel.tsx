@@ -86,6 +86,7 @@ export function WhatsAppPanel({
   onClose,
   onJumpToEntity,
   onJumpToRecord,
+  prefillTo,
 }: {
   projectId: string;
   projectName: string;
@@ -102,13 +103,15 @@ export function WhatsAppPanel({
    * deleted (matchedRecordId null, matchedEntityName not).
    */
   onJumpToRecord: (entityName: string, recordId: number) => void;
+  /** A phone number to open the test-send form pre-filled with, e.g. from an EntityPanel row's "Send WhatsApp" action -- the reverse direction of onJumpToRecord above. App.tsx only ever mounts this panel fresh (conditional render, not a persistent one), so a plain lazy useState initializer is enough; no effect is needed to react to a later change while already mounted. */
+  prefillTo?: string | null;
 }) {
   const { t, lang } = useTranslation();
   const [status, setStatus] = useState<WhatsAppStatusView | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [connecting, setConnecting] = useState(false);
   const [disconnecting, setDisconnecting] = useState(false);
-  const [testTo, setTestTo] = useState("");
+  const [testTo, setTestTo] = useState(() => prefillTo ?? "");
   const [testMessage, setTestMessage] = useState("");
   const [recentNumbers, setRecentNumbers] = useState<string[]>(() => getRecentWhatsAppNumbers(projectId));
   const [sending, setSending] = useState(false);
