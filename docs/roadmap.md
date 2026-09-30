@@ -17588,6 +17588,96 @@ not a single "make it perfect" claim.
   clean builds for both `@forge/web` (`tsc -b` + `vite build`, 86 modules
   transformed) and `@forge/api` (`esbuild`).
 
+### Round 297 — The record table now shows a totals row for numeric columns
+
+  Real, visible feature found by a fresh Explore survey. For any entity
+  with one or more number-type fields (invoice amounts, quantities,
+  prices -- exactly what a Hebrew-first small-business CRM/ops tool
+  tracks), the table had no footer total: confirmed via grep that neither
+  `EntityPanel.tsx` nor `codegen.ts` had a `<tfoot>` anywhere in their
+  table markup. A user had to manually add up a column by eye or a
+  separate calculator.
+
+  Added `sumNumericFields(records, fields)` to `entityFormatting.ts`: for
+  each `number`-type field, reduces over the given records, treating a
+  missing or non-numeric value as 0 rather than letting it poison the
+  whole column's total with `NaN`. Wired it into `EntityPanel.tsx` via a
+  `hasNumericVisibleField` check and a `numericFieldTotals` memo computed
+  over `visibleRecords`/`visibleFields` -- the same already-filtered/
+  sorted set the table body itself renders, so narrowing the search box
+  updates the totals along with the rows, and hiding a numeric column
+  (via the existing Columns menu) drops its total too. Renders a
+  conditional `<tfoot>` row after `</tbody>`, formatted with the existing
+  `formatNumberValue` for locale-correct thousands separators, with the
+  new `entity.table.total` i18n key (עברית: "סה״כ") in the select-col
+  position and blank cells for non-numeric columns. Styled with a
+  `.entity-totals-row` rule (subtle background, bold, a top border
+  separating it from the body).
+
+  Ported an identical `sumNumericFields` and `<tfoot>` to `codegen.ts`'s
+  generated `EntityView.jsx` (JSX child composition -- `<>Total:
+  {...}</>` -- rather than a template-literal interpolation, since a
+  nested backtick template literal inside codegen.ts's own giant outer
+  template literal breaks esbuild, a durable lesson from earlier rounds).
+  The exported app has no `formatNumberValue` helper of its own (numbers
+  there are formatted inline with plain `.toLocaleString()`), so the
+  ported total uses that same convention rather than introducing a new
+  shared helper the rest of the exported table doesn't use.
+
+  Test: 4 new unit tests for `sumNumericFields` in
+  `entityFormatting.test.ts` (sums multiple number fields and ignores a
+  text field entirely; treats a missing/non-numeric value as 0 instead of
+  producing `NaN`; returns an empty object for an entity with no number
+  fields; returns a 0 total for a number field when there are no records
+  at all). 1 new `EntityPanel.test.ts` DOM test renders a real Invoice-
+  shaped table, confirms the `<tfoot>` sums the unfiltered total
+  correctly with real locale formatting, confirms narrowing the search
+  box updates the total (not the full unfiltered sum), and confirms a
+  text-only entity renders no `<tfoot>` at all. 1 new `codegen.test.ts`
+  test extracts and *executes* the real generated `sumNumericFields` (via
+  `new Function`, not a reimplementation), and regex-confirms the
+  generated table's conditional `<tfoot>`/`hasNumericVisibleField` wiring
+  is present regardless of which entities the project has.
+
+  Deliberate-break-and-restore, done independently on all three modified
+  implementation files (`entityFormatting.ts`, `EntityPanel.tsx`,
+  `codegen.ts`): first collapsed `sumNumericFields`'s real reduction down
+  to an unconditional `totals[field.name] = 0` in `entityFormatting.ts`
+  alone -- both new unit tests asserting a nonzero sum failed with the
+  exact expected wrong value. Restored it, then broke
+  `hasNumericVisibleField` in `EntityPanel.tsx` to always be `false` --
+  the new DOM test failed with "expected a tfoot totals row when the
+  entity has a number field". Restored it. Then broke
+  `sumNumericFields` the same way in `codegen.ts` alone -- the new
+  codegen unit test failed on its `deepEqual` sum assertion. Restored all
+  three from verified pre-fix backups with byte-identical `diff` against
+  each; re-ran everything and confirmed all tests passed again.
+
+  Also caught a real `tsc -b` type error the test suite itself doesn't
+  run (`npm test` uses `tsx --test`, which skips type-checking): the new
+  "missing value" unit test's inline record array inferred a union type
+  incompatible with `EntityRecord`'s index signature. Fixed by
+  explicitly typing it `EntityRecord[]` and importing the type -- a
+  reminder that `npm run build` (which this round also ran) catches
+  categories of bug `npm test` alone does not.
+
+  Live Playwright verification (real Chromium, real dev servers): signed
+  up, built a real invoicing project from a free-text prompt, discovered
+  which entity/field the AI actually generated a number field on
+  (non-deterministic by design, so the script queries the built
+  project's own spec rather than assuming names), deleted the app's
+  AI-seeded example rows via the API so the expected total would be
+  deterministic, created 3 real records with known amounts (1500, 2500,
+  700), and confirmed: the table's `<tfoot>` showed the correct
+  locale-formatted total (4,700) unfiltered, and updated correctly
+  (1,500) once the search box was narrowed to a single matching row.
+
+  Full suite green: **1133 tests** (`@forge/shared` 13, `@forge/spec-engine`
+  84, `@forge/db` 93 unchanged; `@forge/api` 305 → 306; `@forge/web` 632 →
+  637) via `npm test` at the repo root, plus clean builds for both
+  `@forge/web` (`tsc -b` + `vite build`, 86 modules transformed) and
+  `@forge/api` (`esbuild`).
+
 ## Phase 4
 
 - Template/agent marketplace
