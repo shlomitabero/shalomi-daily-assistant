@@ -1752,6 +1752,7 @@ function FieldInput({ entity, field, value, onChange, relatedEntity, relatedEnti
     return (
       <select
         id={id}
+        required={field.required}
         value={value === "" || value === null || value === undefined ? "" : String(value)}
         onChange={(e) => onChange(e.target.value === "" ? "" : Number(e.target.value))}
         autoFocus={autoFocus}
@@ -1782,7 +1783,7 @@ function FieldInput({ entity, field, value, onChange, relatedEntity, relatedEnti
   }
   if (field.type === "enum") {
     return (
-      <select id={id} value={value ?? ""} onChange={(e) => onChange(e.target.value)} autoFocus={autoFocus} onBlur={onBlur} onKeyDown={onKeyDown}>
+      <select id={id} required={field.required} value={value ?? ""} onChange={(e) => onChange(e.target.value)} autoFocus={autoFocus} onBlur={onBlur} onKeyDown={onKeyDown}>
         <option value="" disabled>
           …
         </option>
@@ -1795,10 +1796,10 @@ function FieldInput({ entity, field, value, onChange, relatedEntity, relatedEnti
     );
   }
   if (field.type === "longtext") {
-    return <textarea id={id} rows={2} value={value ?? ""} onChange={(e) => onChange(e.target.value)} autoFocus={autoFocus} onBlur={onBlur} onKeyDown={onKeyDown} />;
+    return <textarea id={id} required={field.required} rows={2} value={value ?? ""} onChange={(e) => onChange(e.target.value)} autoFocus={autoFocus} onBlur={onBlur} onKeyDown={onKeyDown} />;
   }
   if (field.type === "date") {
-    return <input id={id} type="date" value={value ?? ""} onChange={(e) => onChange(e.target.value)} autoFocus={autoFocus} onBlur={onBlur} onKeyDown={onKeyDown} />;
+    return <input id={id} type="date" required={field.required} value={value ?? ""} onChange={(e) => onChange(e.target.value)} autoFocus={autoFocus} onBlur={onBlur} onKeyDown={onKeyDown} />;
   }
   if (field.type === "number" || field.type === "relation") {
     return (
@@ -1806,6 +1807,7 @@ function FieldInput({ entity, field, value, onChange, relatedEntity, relatedEnti
         id={id}
         type="number"
         step={field.type === "number" ? "any" : undefined}
+        required={field.required}
         value={value ?? ""}
         onChange={(e) => onChange(e.target.value)}
         autoFocus={autoFocus}
@@ -1814,7 +1816,7 @@ function FieldInput({ entity, field, value, onChange, relatedEntity, relatedEnti
       />
     );
   }
-  return <input id={id} type="text" value={value ?? ""} onChange={(e) => onChange(e.target.value)} autoFocus={autoFocus} onBlur={onBlur} onKeyDown={onKeyDown} />;
+  return <input id={id} type="text" required={field.required} value={value ?? ""} onChange={(e) => onChange(e.target.value)} autoFocus={autoFocus} onBlur={onBlur} onKeyDown={onKeyDown} />;
 }
 
 // How long a deleted record stays undoable before the delete actually

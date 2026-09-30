@@ -3049,3 +3049,42 @@ test("the exported EntityView's number field input has step=\"any\" (a real deci
     'the number/relation input branch must set step="any" only when field.type === "number"',
   );
 });
+
+/**
+ * New in this round: the exported app's FieldInput had the identical gap
+ * the live preview's own EntityPanel.tsx did -- none of the form controls
+ * ever wired field.required into the real HTML `required` attribute, so
+ * a required field could be left empty and submitted without any native
+ * browser blocking. Confirms every non-boolean branch of the generated
+ * FieldInput carries `required={field.required}`, and the boolean
+ * (checkbox) branch deliberately does NOT -- an unchecked checkbox is
+ * already a complete, real value, not an "empty" state to require away.
+ */
+test("the exported EntityView's FieldInput wires field.required into the real required attribute on every branch except boolean", () => {
+  const files = generateExportFiles(project);
+  const entityViewJsx = files.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+
+  const fieldInputSrc = entityViewJsx.match(/function FieldInput\(\{[\s\S]*?\n\}\n/)?.[0];
+  assert.ok(fieldInputSrc, "expected to find FieldInput in generated output");
+
+  const relationSelectBranch = fieldInputSrc!.match(/field\.type === "relation" && relatedEntity && relatedEntityRecords[\s\S]{0,150}/)?.[0];
+  assert.match(relationSelectBranch ?? "", /required=\{field\.required\}/, "the relation <select> branch must be required-wired");
+
+  const booleanBranch = fieldInputSrc!.match(/field\.type === "boolean"[\s\S]{0,200}\}\n\s*\}/)?.[0];
+  assert.doesNotMatch(booleanBranch ?? "", /required=\{field\.required\}/, "the boolean checkbox branch must NOT be required-wired");
+
+  const enumBranch = fieldInputSrc!.match(/field\.type === "enum"[\s\S]{0,200}/)?.[0];
+  assert.match(enumBranch ?? "", /required=\{field\.required\}/, "the enum <select> branch must be required-wired");
+
+  const longtextBranch = fieldInputSrc!.match(/field\.type === "longtext"[\s\S]{0,150}/)?.[0];
+  assert.match(longtextBranch ?? "", /required=\{field\.required\}/, "the longtext <textarea> branch must be required-wired");
+
+  const dateBranch = fieldInputSrc!.match(/field\.type === "date"[\s\S]{0,150}/)?.[0];
+  assert.match(dateBranch ?? "", /required=\{field\.required\}/, "the date input branch must be required-wired");
+
+  const numberBranch = fieldInputSrc!.match(/field\.type === "number" \|\| field\.type === "relation"[\s\S]{0,400}/)?.[0];
+  assert.match(numberBranch ?? "", /required=\{field\.required\}/, "the number/relation-fallback input branch must be required-wired");
+
+  const textBranch = fieldInputSrc!.match(/return <input id=\{id\} type="text"[\s\S]{0,100}/)?.[0];
+  assert.match(textBranch ?? "", /required=\{field\.required\}/, "the plain text input fallback branch must be required-wired");
+});

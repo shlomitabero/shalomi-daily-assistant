@@ -3660,3 +3660,73 @@ test("EntityPanel's number field input has step=\"any\" so a decimal value like 
     }
   });
 });
+
+/**
+ * New in this round: the manual add/edit record form's own inputs never
+ * carried the native `required` attribute, even for a field the entity
+ * itself declares required=true -- found by a fresh Explore survey. The
+ * visual "*" next to a required field's label (FieldLabelEditor.tsx) was
+ * always there, but it's decorative text only; nothing stopped a click on
+ * Add/Save with a required field left empty from reaching the server,
+ * which then only ever surfaces a generic, non-field-specific error
+ * banner (the exact field name is discarded by resolveErrorMessage's
+ * VALIDATION_ERROR handling, by design -- server messages are English-only
+ * and can't be shown raw in a Hebrew UI). This wires `field.required`
+ * straight into the real rendered `required` attribute on every FieldInput
+ * branch except boolean (a checkbox's unchecked state is a real, complete
+ * value -- there is no "empty" state to require away, unlike every other
+ * field type). PasswordInput.tsx already established this exact
+ * `required={required}` pattern elsewhere in the app; this closes the one
+ * place it had never been applied.
+ */
+test("EntityPanel's add/edit form wires field.required into the real required attribute on every input type except boolean", async () => {
+  await withJsdom(async () => {
+    const leadEntity: Entity = {
+      name: "Lead",
+      label: "Lead",
+      fields: [
+        { name: "name", label: "Name", type: "text", required: true },
+        { name: "notes", label: "Notes", type: "longtext", required: false },
+        { name: "status", label: "Status", type: "enum", required: true, enumValues: ["New", "Won"] },
+        { name: "followUpDate", label: "Follow-up", type: "date", required: false },
+        { name: "isVip", label: "VIP", type: "boolean", required: true },
+        { name: "score", label: "Score", type: "number", required: true },
+      ],
+    };
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string) => {
+      if (input === "/api/projects/proj1/entities/Lead") {
+        return new Response(JSON.stringify({ records: [] }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${input}`);
+    }) as typeof fetch;
+    try {
+      renderEntityPanel({ entity: leadEntity, allEntities: [leadEntity] });
+      await waitForCondition(() => document.querySelector(".record-form") !== null);
+
+      const nameInput = document.querySelector('.record-form input[type="text"]') as HTMLInputElement;
+      assert.equal(nameInput.required, true, "a required text field's real input must carry the required attribute");
+
+      const notesTextarea = document.querySelector(".record-form textarea") as HTMLTextAreaElement;
+      assert.equal(notesTextarea.required, false, "an optional longtext field's textarea must NOT be required");
+
+      const statusSelect = document.querySelector(".record-form select") as HTMLSelectElement;
+      assert.equal(statusSelect.required, true, "a required enum field's real <select> must carry the required attribute");
+
+      const dateInput = document.querySelector('.record-form input[type="date"]') as HTMLInputElement;
+      assert.equal(dateInput.required, false, "an optional date field's input must NOT be required");
+
+      const checkbox = document.querySelector('.record-form input[type="checkbox"]') as HTMLInputElement;
+      assert.equal(
+        checkbox.required,
+        false,
+        "a boolean field must never get the required attribute even when field.required is true -- unchecked is already a complete, real value",
+      );
+
+      const numberInput = document.querySelector('.record-form input[type="number"]') as HTMLInputElement;
+      assert.equal(numberInput.required, true, "a required number field's real input must carry the required attribute");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});

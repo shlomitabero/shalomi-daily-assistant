@@ -614,6 +614,7 @@ function FieldInput({
   if (field.type === "relation" && relatedEntity && relatedEntityRecords) {
     return (
       <select
+        required={field.required}
         value={value === "" || value === null || value === undefined ? "" : String(value)}
         onChange={(e) => onChange(e.target.value === "" ? "" : Number(e.target.value))}
         autoFocus={autoFocus}
@@ -644,6 +645,7 @@ function FieldInput({
   if (field.type === "enum") {
     return (
       <select
+        required={field.required}
         value={String(value ?? "")}
         onChange={(e) => onChange(e.target.value)}
         autoFocus={autoFocus}
@@ -664,6 +666,7 @@ function FieldInput({
   if (field.type === "longtext") {
     return (
       <textarea
+        required={field.required}
         value={String(value ?? "")}
         onChange={(e) => onChange(e.target.value)}
         rows={2}
@@ -677,6 +680,7 @@ function FieldInput({
     return (
       <input
         type="number"
+        required={field.required}
         // A relation field's raw value is always an integer foreign-key id
         // (the default browser step of 1 is correct there), but a real
         // "number" business field -- price, amount, rating -- is routinely
@@ -698,6 +702,7 @@ function FieldInput({
     return (
       <input
         type="date"
+        required={field.required}
         value={String(value ?? "")}
         onChange={(e) => onChange(e.target.value)}
         autoFocus={autoFocus}
@@ -709,6 +714,7 @@ function FieldInput({
   return (
     <input
       type="text"
+      required={field.required}
       value={String(value ?? "")}
       onChange={(e) => onChange(e.target.value)}
       autoFocus={autoFocus}
