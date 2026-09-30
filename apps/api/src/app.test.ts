@@ -731,6 +731,43 @@ test("the project owner can invite an existing user as a collaborator, and the c
   });
 });
 
+/**
+ * Regression test for a real bug found by this round's Explore survey:
+ * every stored account email is lowercased at signup (see auth.ts's
+ * CredentialsSchema), but the collaborator-invite lookup never applied the
+ * same normalization before its exact-case SQL match -- so typing an
+ * existing account's email with any different capitalization (mobile
+ * auto-capitalize, pasting from an email signature, "John.Doe@Company.com")
+ * made a real, existing account invisible to this endpoint and threw a
+ * false "No account found" 404, even though the account genuinely exists.
+ */
+test("inviting a collaborator by email works regardless of the typed capitalization, since account emails are stored lowercase", async () => {
+  await withServer(async (baseUrl) => {
+    const ownerToken = await signup(baseUrl, "owner-collab-case@example.com");
+    await signup(baseUrl, "collab-case@example.com");
+
+    const createRes = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: authHeaders(ownerToken),
+      body: JSON.stringify({ description: "A CRM with customers and deals." }),
+    });
+    const { project } = (await createRes.json()) as { project: { id: string } };
+
+    const inviteRes = await fetch(`${baseUrl}/api/projects/${project.id}/collaborators`, {
+      method: "POST",
+      headers: authHeaders(ownerToken),
+      body: JSON.stringify({ email: "Collab-Case@Example.com" }),
+    });
+    assert.equal(inviteRes.status, 201, "a real, existing account must be found regardless of typed capitalization");
+    const { collaborators } = (await inviteRes.json()) as { collaborators: { email: string }[] };
+    assert.deepEqual(
+      collaborators.map((c) => c.email),
+      ["collab-case@example.com"],
+      "the collaborator's email should be stored/returned in its real, lowercase form -- not the differently-cased typed input",
+    );
+  });
+});
+
 test("the owner can remove a collaborator, which revokes their access again", async () => {
   await withServer(async (baseUrl) => {
     const ownerToken = await signup(baseUrl, "owner-collab2@example.com");

@@ -66,7 +66,13 @@ const WhatsAppSendSchema = z.object({
 });
 
 const AddCollaboratorSchema = z.object({
-  email: z.string().email("a valid email is required"),
+  // Every stored account email is lowercased at signup (see auth.ts's
+  // CredentialsSchema) so this lookup has to normalize the same way, or a
+  // real, existing account becomes invisible to it the moment the typed
+  // email's capitalization differs at all (mobile auto-capitalize, pasting
+  // from a signature, "John.Doe@Company.com") -- findUserByEmail's `WHERE
+  // email = ?` is a plain case-sensitive SQLite comparison.
+  email: z.string().email("a valid email is required").transform((email) => email.toLowerCase()),
 });
 
 const RenameProjectSchema = z.object({
