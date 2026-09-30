@@ -17139,6 +17139,96 @@ not a single "make it perfect" claim.
   `npm run build --workspace=@forge/web` (full `tsc -b` type-check gate,
   85 modules transformed, unchanged from round 290).
 
+### Round 292 — Deleting a record another record still points to now fails loudly, not silently
+
+  Real gap found by a fresh Explore survey (the trigger's own round-291
+  note flagged that no concrete candidate was known going in) and
+  independently re-verified before writing any code: `EntityPanel.tsx`'s
+  deferred single-record delete (round ~108: the row vanishes from view
+  the instant Delete is confirmed, the real `DELETE` request only fires
+  later, behind a real undo-window toast) called that real request
+  through a bare `commitPendingDelete`... `.catch(() => {})`, discarding
+  *any* failure completely. Deleting a record another record still
+  references via a `relation` field is a real, reachable failure: the
+  database genuinely enforces it (`PRAGMA foreign_keys = ON`,
+  `connection.ts`), and `packages/db/src/migrate.ts` adds a real
+  `REFERENCES` clause to every relation column at first build. Concrete
+  scenario: a "Courier" record referenced by an "Order"'s `courierId`
+  field gets deleted -- the row disappears from the table immediately,
+  the undo toast expires a few seconds later, and the user believes it's
+  gone. The real `DELETE` actually failed on the server; the record
+  silently reappears, unexplained, the next time the panel happens to
+  refetch. No error was ever shown at any point.
+
+  This was also a real inconsistency the codebase itself already
+  demonstrated: the sibling `handleBulkDelete` deliberately uses
+  `Promise.allSettled` and surfaces `setError(...)` for any record that
+  failed to delete -- proving the single-delete path's silent catch was
+  an oversight, not a design choice.
+
+  Two independent layers needed fixing:
+  1. **`apps/api/src/routes/projects.ts`** (the DELETE record route) --
+     `deleteRecord` now runs inside a `try/catch`; a real
+     `"FOREIGN KEY constraint failed"` Error from `node:sqlite` (confirmed
+     directly: `err.code === "ERR_SQLITE_ERROR"`, `err.errcode === 787`,
+     `err.message === "FOREIGN KEY constraint failed"`) is translated into
+     a `409` with a new `RECORD_HAS_DEPENDENT_RECORDS` code, translated
+     he+en in `language.ts` -- the same route-level catch-and-translate
+     pattern as `EXPORT_UNSAFE_IDENTIFIER` (round 284), rather than
+     touching `app.ts`'s generic handler or `deleteRecord` itself.
+  2. **`apps/web/src/EntityPanel.tsx`** -- `commitPendingDelete` is now
+     `async` and awaits the real delete; on failure it restores the row
+     (reusing `restoreRecordAt`, the same helper `handleUndoDelete`
+     already uses) and calls `setError` with the real, already-translated
+     message. All three call sites (a newer delete preempting an older
+     still-pending one, the undo-window timeout firing, and the
+     unmount-flush effect when the entity tab is switched mid-window) now
+     go through this same path -- `setRecords`/`setError` on an unmounted
+     component are simple no-ops in React 18, so this is safe everywhere,
+     including from the unmount cleanup.
+
+  Test: a new backend test in `app.test.ts` builds a real "A small courier
+  delivery business." project (Order + Courier, `courierId` relation),
+  creates a real Courier and a real Order referencing it, deletes the
+  Courier, and confirms both the `409`/`RECORD_HAS_DEPENDENT_RECORDS`
+  response *and* that the Courier record genuinely still exists
+  afterward (a `GET` still lists it) -- not just that the request was
+  rejected. A new frontend test in `EntityPanel.test.ts` mocks a `409`
+  response from the real DELETE call, triggers the deferred delete via a
+  real click + fake-timer undo-window elapse, and confirms the row
+  reappears in the table and the real error text is shown -- not silently
+  swallowed as before.
+
+  Deliberate-break-and-restore, done on both fixes independently: reverted
+  the API route to call `deleteRecord` with no try/catch -- the new
+  backend test failed with exactly `500 !== 409`; reverted
+  `commitPendingDelete` to the old bare `.catch(() => {})` -- the new
+  frontend test failed with `waitForCondition: condition never became
+  true` (the row never came back, exactly the silently-swallowed bug this
+  round fixes). Restored both from verified pre-fix backups with
+  byte-identical `diff` against each; re-ran everything and confirmed all
+  51 tests in `EntityPanel.test.ts` (up from 50) and the new backend test
+  passed again.
+
+  Live Playwright verification (real Chromium, real dev servers): signed
+  up, built a real courier-delivery project, created a real Courier and
+  Order referencing it via the API (using the page's own stored auth
+  token -- fighting the record-creation forms' select dropdowns wasn't
+  the point of this round; the real UI interaction under test is what
+  happens after), switched to the Courier tab, clicked Delete on the
+  actual referenced courier ("Dave") and confirmed: the row disappears
+  immediately, stays gone through the undo window, then reappears once
+  the real (failing) delete actually resolves, with the real
+  "Can't delete this record -- another record still refers to it."
+  error visible on the page.
+
+  Full suite green: **1096 tests** (up from 1094 -- `@forge/web` 604 →
+  605, `@forge/api` 300 → 301; `@forge/shared` 13, `@forge/spec-engine`
+  84, `@forge/db` 93 unchanged) via `npm test` at the repo root, plus
+  clean builds for both `@forge/web` (`tsc -b` + `vite build`, 85
+  modules transformed) and `@forge/api` (`esbuild`, unchanged from
+  round 291).
+
 ## Phase 4
 
 - Template/agent marketplace
