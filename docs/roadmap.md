@@ -17496,6 +17496,98 @@ not a single "make it perfect" claim.
   clean `npm run build --workspace=@forge/web` (86 modules transformed,
   unchanged from round 294).
 
+### Round 296 — "Export CSV" and "Print list" now honor the existing bulk-select checkboxes
+
+  Real, visible feature found by a fresh Explore survey (round 295's own
+  WhatsApp desktop notifications closed the entire "WhatsApp log
+  visibility" area across 3 rounds, so no candidate was known going in).
+  `EntityPanel.tsx` already has a full bulk-select system -- a checkbox per
+  row, a header select-all checkbox with real indeterminate state, and a
+  bulk-actions bar offering delete/duplicate/update -- but "Export CSV"
+  (`handleExportCsv`) and "Print list" (feeding `RecordListPrintSheet`)
+  always operated on `visibleRecords` (the current filtered/sorted table),
+  never reading `selectedIds`. Confirmed via a full-repo grep of every
+  `selectedIds` usage (both `apps/web` and `apps/api/src/codegen.ts`) that
+  no code path ever intersected it with CSV/print output before this
+  round -- selection only ever drove delete/duplicate/update. A business
+  owner who checks 5-10 specific rows (this week's unpaid invoices, leads
+  to hand to a courier) expects "Export CSV"/"Print list" to act on just
+  that selection, not silently discard it and dump the entire table every
+  time.
+
+  Added `selectedOrAllRecords(allRecords, visibleRecords, selectedIds)` to
+  `entityFormatting.ts`: with nothing selected, returns `visibleRecords`
+  unchanged (today's "export/print what the table is currently showing"
+  behavior, byte-for-byte). With a selection, returns exactly those
+  records pulled from `allRecords` (the full, unfiltered entity) --
+  deliberately matching `handleBulkDelete`/`handleBulkDuplicate`'s own
+  existing behavior of reading the raw `selectedIds` against the full
+  `records` state, not intersected with whatever the current search box
+  happens to be showing. This means clearing or changing the search after
+  selecting rows does not silently drop them from the export, the same
+  guarantee the existing bulk actions already give. `handleExportCsv` and
+  the `RecordListPrintSheet` records prop now both route through it; both
+  toolbar buttons show a "N selected" label (`entity.exportCsv.selected`/
+  `entity.printList.selected`, new he+en `language.ts` keys) once a
+  selection exists, and stay enabled even when the current filter has
+  hidden every visible row, as long as something is selected.
+
+  Ported identically to `codegen.ts`'s exported `EntityView.jsx` --
+  `selectedOrAllRecords` plus `handleExportCsv`'s new call site and the
+  export button's label/disabled logic -- but CSV export only: confirmed
+  via grep that the print-list feature was never part of the exported app
+  at all (an earlier round explicitly rejected porting print to codegen.ts
+  as out of scope), so there was nothing to port there.
+
+  Test: 3 new unit tests for `selectedOrAllRecords` in
+  `entityFormatting.test.ts` (unchanged-reference return with no
+  selection; exact selected records pulled from the full entity including
+  one no longer in the current visible view; the full entity's own order
+  preserved rather than the selection `Set`'s insertion order). 2 new
+  render-based tests in `EntityPanel.test.ts`: one selects 2 of 3 rows,
+  narrows the search box to hide both selected rows, clicks "Print list",
+  and confirms the print sheet contains both selected records (not the
+  unselected-but-visible one) with the real selected count in both the
+  button label and the footer; the other stubs `URL.createObjectURL` the
+  same way `BuildProgress.test.ts`'s own download test does (jsdom has no
+  real Blob-URL machinery) to read back the *actual* generated CSV content
+  after clicking "Export CSV" with a selection active, confirming it
+  contains exactly the selected rows. 1 new `codegen.test.ts` test
+  confirms `handleExportCsv`'s real generated source routes through
+  `selectedOrAllRecords`, extracts and *executes* the real generated
+  `selectedOrAllRecords` (via `new Function`, not a reimplementation) to
+  prove its own behavior, and regex-confirms the export button's real
+  generated label/disabled-state wiring.
+
+  Deliberate-break-and-restore, done on both the live and exported
+  implementations independently: reverted `selectedOrAllRecords` to an
+  unconditional `return visibleRecords` in both files -- 2 of the 3 live
+  unit tests failed with the exact expected wrong values, both live
+  render-based tests failed (the print sheet included the unselected
+  record; the downloaded CSV included it too), and the codegen unit test
+  failed with the exact expected `deepStrictEqual` mismatch. Restored all
+  from verified pre-fix backups with byte-identical `diff` against each;
+  re-ran everything and confirmed all tests passed again.
+
+  Live Playwright verification (real Chromium, real dev servers): signed
+  up, built a real CRM project, created 3 real Customer records via the
+  API (RoundDana/RoundNoa/RoundOmer), selected RoundDana and RoundOmer via
+  their real row checkboxes (leaving RoundNoa unselected, and the table
+  otherwise unfiltered -- all 3 rows still visible on screen), and
+  confirmed: both toolbar buttons showed "2 selected" in their real
+  label; clicking "Print list" (with a stubbed `window.print` to avoid
+  hanging headless Chromium on a real print dialog) filled the print
+  sheet with exactly RoundDana and RoundOmer's data, never RoundNoa's;
+  and clicking "Export CSV" triggered a genuine file download (intercepted
+  via Playwright's own download event, then read from disk) whose content
+  contained exactly the two selected records and not the third.
+
+  Full suite green: **1118 tests** (up from 1113 -- `@forge/web` 627 →
+  632, `@forge/api` 304 → 305; `@forge/shared` 13, `@forge/spec-engine`
+  84, `@forge/db` 93 unchanged) via `npm test` at the repo root, plus
+  clean builds for both `@forge/web` (`tsc -b` + `vite build`, 86 modules
+  transformed) and `@forge/api` (`esbuild`).
+
 ## Phase 4
 
 - Template/agent marketplace
