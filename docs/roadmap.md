@@ -16123,6 +16123,89 @@ not a single "make it perfect" claim.
   `@forge/web` 585 → 586; `@forge/shared` 11, `@forge/spec-engine` 82,
   `@forge/db` 93 unchanged) via `npm test` at the repo root.
 
+- **Round 279 -- fixed a real spec-generation bug: an app with nothing
+  to do with e-commerce could get a spurious "Order" entity/table
+  injected into its generated spec.** An Explore survey, directed away
+  from CalendarView (closed out across rounds 264/265/278) and toward
+  logic files not recently reviewed, found that the Order domain-entity
+  rule's own keyword list (`domainEntities.ts`) contains a bare `"order"`
+  string, matched via plain substring (`lower.includes("order")` in
+  `heuristic.ts`'s `matchEntities`). Confirmed by direct execution
+  (`matchEntities(...)`, not just reading the code): a description like
+  "A clinic app for tracking patients with sleep disorders and their
+  therapy sessions" returns `["Order", "Patient"]` -- "disorders"
+  contains "order" as a substring. Also confirmed for "Track our video
+  recorders and equipment rentals" (→ spurious `Order` alongside
+  `Rental`) and "Manage border crossing logs for our trucking fleet" (→
+  spurious `Order` alone). This is the exact same collision class the
+  codebase had already hit and fixed once before for "deal" (see that
+  entity's own comment: bare "deal" is a substring of "ideal" and
+  "dealership") and once for Hebrew "מנה"/"מנהלים" -- but this specific
+  instance had never been caught, and it's directly user-visible: the
+  spurious Order entity/table shows up on the Spec Review screen (with
+  its own customerName/total/status/items/courierId fields and
+  Pending/Shipped/Delivered/Cancelled status enum) and, if the user
+  doesn't notice and remove it before building, ships as a real, wrong
+  table in their app's schema and UI.
+
+  Unlike "deal" → "deals", no alternate spelling of "order" fixes this:
+  every one of the colliding words ("disorder(s)", "recorder(s)",
+  "border(s)") itself ends in "order(s)", so any substring choice that
+  still matches "order"/"orders" as a real word necessarily also matches
+  inside all three -- confirmed this isn't fixable by word choice alone
+  by checking that `"orders"` (the natural plural swap) is *itself* a
+  substring of "disorders" and "recorders" too. This finally required
+  going beyond the "just pick a collision-free keyword string" pattern
+  every prior round in this class used: extended `DomainEntityRule`'s
+  `keywords` field from `string[]` to `(string | RegExp)[]`, and
+  `matchEntities` to test a `RegExp` keyword via `.test(lower)` instead
+  of `.includes()`. Only the one problematic Order keyword was converted
+  to `/\border(s)?\b/` (word-boundary-bounded, allowing an optional
+  trailing "s"); every other rule's plain-string keywords are untouched,
+  which matters because `\b` word-boundary matching would have broken
+  many *other* rules' deliberate reliance on substring matching to catch
+  a keyword's own plural too (e.g. "product" matching "products") --
+  `\bproduct\b` would NOT match "products" (no boundary between "t" and
+  "s"), so making this change global instead of scoped to just the one
+  broken keyword would have been a large, silent regression across the
+  whole domain-entity library. Added a paragraph to `domainEntities.ts`'s
+  own top-of-file pitfalls doc explaining when a `RegExp` keyword is
+  required instead of a plain string.
+
+  Tests: 1 new test in `heuristic.test.ts`'s existing "Order gets an
+  optional courierId..." block's neighborhood, covering all 3 confirmed
+  false-positive descriptions (sleep disorders, video recorders, border
+  crossing) via the real `HeuristicSpecProvider.generate()` (not just
+  `matchEntities` directly), plus 2 recall-preserving assertions: a plain
+  "Place an order for pickup" must still match, and "An order-management
+  app..." must still match across the hyphen (this second case also
+  matches the pre-existing "restaurant-with-delivery" test's exact
+  wording pattern, confirming no regression there). Deliberate-break-and-
+  restore: reverted the RegExp keyword back to the original bare
+  `"order"` string, confirmed the new test failed with the expected
+  "sleep-disorder clinic app must not get a spurious Order entity"
+  assertion message, then restored from a pre-fix backup copy with a
+  byte-identical `diff`. Checked `apps/api/src/codegen.ts` for a
+  duplicate copy of this matching logic per the established discipline
+  (grep for `domainEntities`/`matchEntities`/`"order"`) -- found none:
+  codegen.ts only ever consumes an already-generated `Entity[]` spec, it
+  never re-runs keyword matching itself, so there was nothing to port.
+
+  Real end-to-end verification against a genuinely running server + real
+  headless Chromium (not a mock): signed up and submitted "A clinic app
+  for tracking patients with sleep disorders and their therapy sessions"
+  as a real idea through the genuine idea-submission form, and confirmed
+  the word "Order" appears nowhere on the resulting Spec Review page's
+  real rendered text -- no spurious entity, no spurious screen heading.
+  In a second real signup/session, submitted "An order-management app
+  for tracking customer orders and sales" and confirmed "Order" *does*
+  appear, proving the fix didn't just silence the keyword outright.
+  Both: `RESULT: PASS`.
+
+  Full suite green: 1066 tests (up from 1065 -- `@forge/spec-engine`
+  82 → 83; `@forge/shared` 11, `@forge/db` 93, `@forge/api` 293,
+  `@forge/web` 586 unchanged) via `npm test` at the repo root.
+
 ## Phase 4
 
 - Template/agent marketplace
