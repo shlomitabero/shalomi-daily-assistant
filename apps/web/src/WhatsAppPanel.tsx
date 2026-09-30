@@ -173,7 +173,12 @@ export function WhatsAppPanel({
    * itself drops the link later (phone loses signal, gets unlinked, ...)
    * instead of trusting a status that could be stale indefinitely -- this
    * is what was missing when a stale "connected" status let the Retry
-   * button silently do nothing (see docs/roadmap.md).
+   * button silently do nothing (see docs/roadmap.md). Also re-fetches the
+   * newest page of messages on the same tick, so an inbound WhatsApp
+   * message shows up in the open log within CONNECTED_POLL_INTERVAL_MS
+   * instead of only appearing after closing and reopening the panel --
+   * before this, the message log was the one part of this screen that
+   * silently went stale while you were actively watching it (round 288).
    */
   function startConnectedPolling() {
     stopConnectedPolling();
@@ -191,6 +196,21 @@ export function WhatsAppPanel({
         if (next.status !== "connected") {
           stopConnectedPolling();
           if (next.status === "connecting" || next.status === "qr") startPolling();
+          return;
+        }
+        try {
+          const { messages: freshPage } = await listWhatsAppMessages(projectId);
+          if (cancelled) return;
+          setMessages((prev) => {
+            const existingIds = new Set(prev.map((m) => m.id));
+            const newOnes = freshPage.filter((m) => !existingIds.has(m.id));
+            return newOnes.length === 0 ? prev : [...newOnes, ...prev];
+          });
+        } catch {
+          // A single failed message-refresh isn't worth surfacing an error
+          // for -- the connection-status check above already covers real
+          // failures. Just skip this tick's message update and try again
+          // on the next one.
         }
       } catch (err) {
         if (cancelled) return;

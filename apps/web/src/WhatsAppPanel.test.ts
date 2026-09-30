@@ -227,6 +227,107 @@ test("WhatsAppPanel's startPolling discards a getWhatsAppStatus response that re
   assert.deepEqual(capturedStatuses, [], "a status that resolves after stopPolling() must never reach setStatus");
 });
 
+/**
+ * Regression test for a real gap found by round 288's Explore survey: while
+ * the panel was open and connected, startConnectedPolling only re-checked
+ * whether the WhatsApp link itself was still alive -- it never re-fetched
+ * the message log, so an inbound message never appeared until the user
+ * closed and reopened the panel (the one thing a live chat/inbox log is
+ * expected to do on its own). Confirms each connected-poll tick now also
+ * fetches the newest page and merges it into state: a genuinely new
+ * message (by id) is prepended, an already-loaded message is not
+ * duplicated, and the relative order of previously-loaded messages (and
+ * any pagination reached via "load older") is left untouched. Uses the
+ * same fake-setInterval/new-Function extraction technique as the
+ * startPolling test just above.
+ */
+test("WhatsAppPanel's startConnectedPolling also refreshes the message log each tick, prepending newly arrived messages without duplicating already-loaded ones", async () => {
+  const stopMatch = whatsAppPanelSrc.match(/ {2}function stopConnectedPolling\(\) \{[\s\S]*?\n {2}\}\n/);
+  const startMatch = whatsAppPanelSrc.match(/ {2}function startConnectedPolling\(\) \{[\s\S]*?\n {2}\}\n/);
+  assert.ok(stopMatch, "expected to find stopConnectedPolling in WhatsAppPanel.tsx");
+  assert.ok(startMatch, "expected to find startConnectedPolling in WhatsAppPanel.tsx");
+  const { code } = transformSync(`${stopMatch![0]}\n${startMatch![0]}`, { loader: "ts" });
+
+  let tickFn: (() => Promise<void>) | undefined;
+  const fakeSetInterval = ((fn: () => Promise<void>) => {
+    tickFn = fn;
+    return 1 as unknown as ReturnType<typeof setInterval>;
+  }) as typeof setInterval;
+  const fakeClearInterval = (() => {
+    tickFn = undefined;
+  }) as typeof clearInterval;
+
+  const connectedPollRef = { current: null as unknown };
+  const cancelInFlightConnectedCheckRef = { current: null as (() => void) | null };
+  const connectedPollFailuresRef = { current: 0 };
+
+  function makeMsg(id: string): WhatsAppMessageLogEntry {
+    return {
+      id,
+      direction: "in",
+      fromNumber: "+1000",
+      toNumber: "+2000",
+      body: id,
+      matchedLabel: null,
+      matchedEntityName: null,
+      matchedRecordId: null,
+      status: "received",
+      createdAt: "2024-01-01T00:00:00.000Z",
+    };
+  }
+  const existingBeforeThisTick = [makeMsg("m2"), makeMsg("m1")]; // newest first, as the real log is
+  // The server's own newest-page fetch: one brand-new message ("m3") plus
+  // the newest already-loaded one ("m2") still in range -- a real fetch
+  // would include both, not just the delta.
+  const freshPage = [makeMsg("m3"), makeMsg("m2")];
+  let capturedMessages: WhatsAppMessageLogEntry[] | undefined;
+
+  const { stopConnectedPolling, startConnectedPolling } = new Function(
+    "connectedPollRef",
+    "cancelInFlightConnectedCheckRef",
+    "connectedPollFailuresRef",
+    "setInterval",
+    "clearInterval",
+    "getWhatsAppStatus",
+    "setStatus",
+    "startPolling",
+    "listWhatsAppMessages",
+    "setMessages",
+    "setLoadError",
+    "MAX_CONSECUTIVE_CONNECTED_POLL_FAILURES",
+    "CONNECTED_POLL_INTERVAL_MS",
+    "projectId",
+    `${code}\nreturn { stopConnectedPolling, startConnectedPolling };`,
+  )(
+    connectedPollRef,
+    cancelInFlightConnectedCheckRef,
+    connectedPollFailuresRef,
+    fakeSetInterval,
+    fakeClearInterval,
+    async () => ({ status: "connected" }),
+    () => {},
+    () => {},
+    async () => ({ messages: freshPage, hasMore: false }),
+    (updater: (prev: WhatsAppMessageLogEntry[]) => WhatsAppMessageLogEntry[]) => {
+      capturedMessages = updater(existingBeforeThisTick);
+    },
+    () => {},
+    5,
+    10000,
+    "proj1",
+  ) as { stopConnectedPolling: () => void; startConnectedPolling: () => void };
+
+  startConnectedPolling();
+  assert.ok(tickFn, "expected startConnectedPolling to register an interval callback");
+  await tickFn!();
+
+  assert.deepEqual(
+    capturedMessages?.map((m) => m.id),
+    ["m3", "m2", "m1"],
+    "the new message (m3) is prepended, the already-loaded one (m2) is not duplicated, and m1 is preserved",
+  );
+});
+
 /** Same jsdom-swap technique as useDialogFocusTrap.test.ts/EntityPanel.test.ts. */
 async function withJsdom<T>(fn: () => Promise<T> | T): Promise<T> {
   const dom = new JSDOM("<!doctype html><html><body></body></html>", { url: "http://localhost/" });
