@@ -71,6 +71,46 @@ const project: Project = {
   },
 };
 
+/**
+ * Regression test for a real bug found by round 285's Explore survey:
+ * zip.ts's buildZip writes an entry's `path` into the archive verbatim,
+ * with no validation -- unlike SQL table names (tableNameFor sanitizes)
+ * or the exported app's own generated source files (codegen.ts's
+ * assertSafe rejects outright, see round 283/284), a live preview's
+ * entity.name reaches this ZIP-path construction completely unguarded,
+ * because tableNameFor SANITIZES an unsafe name rather than rejecting it
+ * -- so a project with such a name is a real, already-built, live
+ * project by the time "Backup all data" is clicked. A "/" would create
+ * an unintended nested folder in the downloaded archive instead of a
+ * flat "<EntityName>.csv", and could invite path traversal on a naive
+ * unzip tool for a name containing "../" -- replacing every path
+ * separator rules both out, since a flat filename with no "/" at all
+ * (even one still containing literal dots) can never be interpreted as
+ * a multi-segment, directory-escaping path.
+ */
+test("an entity name containing a path separator never produces a nested or path-traversing ZIP entry", () => {
+  const trickyProject: Project = {
+    ...project,
+    spec: {
+      ...project.spec,
+      entities: [
+        { name: "Reports/2024", fields: [{ name: "title", type: "text", required: true }] },
+        { name: "../../etc", fields: [{ name: "value", type: "text", required: true }] },
+      ],
+    },
+  };
+  const db = createTestDb(trickyProject);
+  const entries = generateBackupZipEntries(db, trickyProject);
+  assert.deepEqual(
+    entries.map((e) => e.path),
+    ["Reports_2024.csv", ".._.._etc.csv"],
+  );
+  assert.ok(
+    entries.every((e) => !e.path.includes("/") && !e.path.includes("\\")),
+    "no ZIP entry path may contain a path separator",
+  );
+});
+
 test("generateBackupZipEntries produces one CSV entry per entity, named after it", () => {
   const db = createTestDb(project);
   const entries = generateBackupZipEntries(db, project);

@@ -20,6 +20,33 @@ import { recordDisplayLabel } from "./displayField.js";
  */
 
 /**
+ * zip.ts's buildZip writes an entry's `path` into the archive verbatim,
+ * with no validation at all (unlike packages/db/src/identifiers.ts's
+ * tableNameFor, which sanitizes an entity name before it becomes a SQL
+ * table, or codegen.ts's assertSafe, which outright rejects an unsafe
+ * entity/field name before the exported app is even generated -- see
+ * round 283/284's roadmap entries). tableNameFor SANITIZES rather than
+ * rejects, so a project with an entity name containing "/" or similar
+ * builds and runs live in this app perfectly normally; by the time a real
+ * user clicks "Backup all data" on it, entity.name reaches this ZIP-path
+ * construction completely unguarded. A "/" would create an unintended
+ * nested folder inside the downloaded archive, breaking this feature's
+ * own "one flat CSV per entity" promise -- and replacing every path
+ * separator also rules out path traversal (a naive unzip tool interprets
+ * "../" as a directory-escaping component only when "/" is actually
+ * present to split the path into segments; a flat filename with no
+ * separators at all, even one containing literal dots, can never do
+ * that). Deliberately narrower than tableNameFor's full ASCII-only
+ * sanitization: only the characters that are actually unsafe in a zip/
+ * filesystem path are replaced, so a real Hebrew entity name stays
+ * human-readable in the archive's own file listing -- the entire point
+ * of this feature.
+ */
+function sanitizeZipEntryName(name: string): string {
+  return name.replace(/[\\/:*?"<>|\u0000-\u001f]/g, "_");
+}
+
+/**
  * A value starting with =, +, -, @, or a tab/CR is prefixed with a leading
  * single quote before the usual comma/quote/newline wrapping -- see the
  * matching comment on entityFormatting.ts's own csvEscape (CSV/formula
@@ -138,7 +165,7 @@ export function generateBackupZipEntries(db: ForgeDatabase, project: Project): {
   }
 
   const entries = allEntities.map((entity) => ({
-    path: `${entity.name}.csv`,
+    path: `${sanitizeZipEntryName(entity.name)}.csv`,
     content: "﻿" + entityToCsv(entity, recordsByEntity[entity.name], allEntities, recordsByEntity),
   }));
 
