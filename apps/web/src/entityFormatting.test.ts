@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import type { Entity, Field } from "@forge/shared";
+import type { Entity, EntityRecord, Field } from "@forge/shared";
 import { translate } from "./i18n/language.js";
 import {
   badgeTone,
@@ -34,6 +34,7 @@ import {
   sortRecordsMulti,
   splitHighlightSegments,
   splitLinkSegments,
+  sumNumericFields,
 } from "./entityFormatting.js";
 
 test("badgeTone recognizes common positive and negative status words, case-insensitively", () => {
@@ -1317,4 +1318,34 @@ test("groupRecordsByField groups by a boolean field into exactly true then false
     ["true"],
     "an empty side (no false records at all) must be omitted, not rendered as an empty group",
   );
+});
+
+test("sumNumericFields sums each number-type field across the given records, ignoring non-number fields entirely", () => {
+  const fields: Field[] = [
+    { name: "amount", type: "number", required: true },
+    { name: "quantity", type: "number", required: false },
+    { name: "name", type: "text", required: true },
+  ];
+  const records = [
+    { id: 1, amount: 100, quantity: 2, name: "a" },
+    { id: 2, amount: 250, quantity: 3, name: "b" },
+    { id: 3, amount: 50, quantity: 1, name: "c" },
+  ];
+  assert.deepEqual(sumNumericFields(records, fields), { amount: 400, quantity: 6 });
+});
+
+test("sumNumericFields treats a missing or non-numeric value on a number field as 0 rather than producing NaN", () => {
+  const fields: Field[] = [{ name: "amount", type: "number", required: false }];
+  const records: EntityRecord[] = [{ id: 1, amount: 100 }, { id: 2 }, { id: 3, amount: "not a number" as unknown as number }];
+  assert.deepEqual(sumNumericFields(records, fields), { amount: 100 });
+});
+
+test("sumNumericFields returns an empty object when there are no number fields", () => {
+  const fields: Field[] = [{ name: "name", type: "text", required: true }];
+  assert.deepEqual(sumNumericFields([{ id: 1, name: "a" }], fields), {});
+});
+
+test("sumNumericFields returns 0 totals for number fields when there are no records at all", () => {
+  const fields: Field[] = [{ name: "amount", type: "number", required: false }];
+  assert.deepEqual(sumNumericFields([], fields), { amount: 0 });
 });

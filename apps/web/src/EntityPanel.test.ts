@@ -3454,3 +3454,76 @@ test("EntityPanel's multi-column sort survives an unmount+remount of the same en
     }
   });
 });
+
+/**
+ * New in this round: the table had no footer totals for a numeric column --
+ * for an entity like Invoice, a business owner had to add up the amounts by
+ * eye. Confirms the totals row sums only the currently-visible (searched)
+ * records, matches the real formatNumberValue thousands-separator
+ * formatting, leaves non-numeric columns blank, and disappears entirely for
+ * an entity with no number field at all (a text-only table must not grow an
+ * empty totals row for nothing).
+ */
+test("EntityPanel's table shows a totals row summing each numeric column over the currently-visible (searched) records, and omits it when there's no number field", async () => {
+  await withJsdom(async () => {
+    const invoiceEntity: Entity = {
+      name: "Invoice",
+      label: "Invoice",
+      fields: [
+        { name: "client", label: "Client", type: "text", required: true },
+        { name: "amount", label: "Amount", type: "number", required: true },
+      ],
+    };
+    const store: EntityRecord[] = [
+      { id: 1, createdAt: "x", client: "Acme Corp", amount: 1500 },
+      { id: 2, createdAt: "x", client: "Globex", amount: 2500 },
+      { id: 3, createdAt: "x", client: "Acme Branch", amount: 700 },
+    ];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string) => {
+      if (input === "/api/projects/proj1/entities/Invoice") {
+        return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${input}`);
+    }) as typeof fetch;
+    try {
+      renderEntityPanel({ entity: invoiceEntity, allEntities: [invoiceEntity] });
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 3);
+
+      const footerRow = document.querySelector("table tfoot tr")!;
+      assert.ok(footerRow, "expected a tfoot totals row when the entity has a number field");
+      assert.match(footerRow.textContent ?? "", /4,700/, "the unfiltered total (1500 + 2500 + 700 = 4700) must render with real locale thousands separators");
+      assert.doesNotMatch(footerRow.textContent ?? "", /Acme|Globex/, "the totals row must not echo any client name text");
+
+      fireEvent.change(document.querySelector(".entity-search")!, { target: { value: "Acme" } });
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 2);
+
+      assert.match(
+        document.querySelector("table tfoot tr")!.textContent ?? "",
+        /2,200/,
+        "narrowing the search to the two Acme rows (1500 + 700 = 2200) must update the total, not keep summing the full unfiltered store",
+      );
+
+      cleanup();
+      const textOnlyEntity: Entity = { name: "Note", fields: [{ name: "name", type: "text", required: true }] };
+      globalThis.fetch = (async (input: string) => {
+        if (input === "/api/projects/proj1/entities/Note") {
+          return new Response(JSON.stringify({ records: [{ id: 1, createdAt: "x", name: "Reminder" }] }), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          });
+        }
+        throw new Error(`unexpected request ${input}`);
+      }) as typeof fetch;
+      renderEntityPanel({ entity: textOnlyEntity, allEntities: [textOnlyEntity] });
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 1);
+      assert.equal(
+        document.querySelector("table tfoot"),
+        null,
+        "an entity with no number field at all must render no tfoot, not an empty totals row",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});

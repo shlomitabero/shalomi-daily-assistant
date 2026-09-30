@@ -1630,6 +1630,74 @@ test("the exported EntityView's Export CSV routes through selectedOrAllRecords, 
   assert.match(exportBtnSrc!, /selectedIds\.size > 0/, "the button label must reflect a real selection count");
 });
 
+/**
+ * New in this round: the exported app's table had no footer totals row for
+ * a numeric column, the same gap the live preview had. Extracts and
+ * *executes* the real generated sumNumericFields (not a reimplementation)
+ * to prove its own summing behavior, then confirms the generated
+ * EntityView.jsx actually wires a conditional <tfoot> into the table using
+ * it -- an entity with a number field must render the totals row; an
+ * entity with none (Service, text-only) must not grow an empty one.
+ */
+test("the exported EntityView's table has a conditional totals-row <tfoot> backed by the real generated sumNumericFields", () => {
+  const numberProject: Project = {
+    ...project,
+    spec: {
+      ...project.spec,
+      entities: [
+        {
+          name: "Invoice",
+          label: "חשבוניות",
+          fields: [
+            { name: "client", label: "לקוח", type: "text", required: true },
+            { name: "amount", label: "סכום", type: "number", required: true },
+          ],
+        },
+      ],
+    },
+  };
+  const files = generateExportFiles(numberProject);
+  const entityViewJsx = files.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+
+  const sumNumericFieldsSrc = entityViewJsx.match(/function sumNumericFields\(records, fields\) \{[\s\S]*?\n\}\n/)?.[0];
+  assert.ok(sumNumericFieldsSrc, "expected to find sumNumericFields in generated output");
+  const sumNumericFields = new Function(`${sumNumericFieldsSrc}\nreturn sumNumericFields;`)();
+
+  const fields = [
+    { name: "client", type: "text" },
+    { name: "amount", type: "number" },
+  ];
+  const records = [{ id: 1, amount: 1500 }, { id: 2, amount: 2500 }, { id: 3 }];
+  assert.deepEqual(
+    sumNumericFields(records, fields),
+    { amount: 4000 },
+    "must sum the number field across records and treat a missing value as 0, ignoring the text field entirely",
+  );
+
+  assert.match(
+    entityViewJsx,
+    /\{hasNumericVisibleField && \(\s*<tfoot>/,
+    "the generated table must conditionally render a <tfoot> only when a visible field is numeric",
+  );
+  assert.match(
+    entityViewJsx,
+    /const hasNumericVisibleField = useMemo\(\(\) => visibleFields\.some\(\(f\) => f\.type === "number"\)/,
+    "hasNumericVisibleField must be derived from visibleFields, not the full unfiltered field list",
+  );
+
+  const serviceProject: Project = {
+    ...project,
+    spec: { ...project.spec, entities: [{ name: "Service", label: "שירותים", fields: [{ name: "title", label: "כותרת", type: "text", required: true }] }] },
+  };
+  const serviceFiles = generateExportFiles(serviceProject);
+  const serviceEntityViewJsx = serviceFiles.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+  assert.match(
+    serviceEntityViewJsx,
+    /\{hasNumericVisibleField && \(\s*<tfoot>/,
+    "the conditional guard must still be present in source even for a text-only entity -- it's evaluated at runtime, not per generated file",
+  );
+});
+
 test("the exported EntityView asks for confirmation before deleting a single record, naming it by its own display label, not just count", () => {
   const files = generateExportFiles(project);
   const entityViewJsx = files.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;

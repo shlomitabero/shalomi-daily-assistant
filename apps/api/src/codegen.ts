@@ -1193,6 +1193,24 @@ function selectedOrAllRecords(allRecords, visibleRecords, selectedIds) {
   return allRecords.filter((r) => selectedIds.has(r.id));
 }
 
+// Sums every number-type field across a set of records, for the table's
+// own totals row -- driven off whatever is passed in (the already-
+// filtered/sorted visibleRecords the table itself renders), so the totals
+// always reflect the current search/filter. A missing or non-numeric value
+// on an otherwise-numeric field contributes 0 rather than poisoning the
+// whole column's total with NaN.
+function sumNumericFields(records, fields) {
+  const totals = {};
+  for (const field of fields) {
+    if (field.type !== "number") continue;
+    totals[field.name] = records.reduce((sum, record) => {
+      const value = record[field.name];
+      return sum + (typeof value === "number" && !Number.isNaN(value) ? value : 0);
+    }, 0);
+  }
+  return totals;
+}
+
 // Builds a real, Excel-friendly CSV (CRLF line endings, quoted fields
 // where needed) from an entity's records -- so "download my data" means
 // an actual spreadsheet, not a JSON dump.
@@ -2059,6 +2077,12 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
     return sortRecordsMulti(filtered, sortKeys, entity.fields, relatedRecords);
   }, [records, entity.fields, search, fieldFilters, sortKeys, relatedRecords]);
 
+  const hasNumericVisibleField = useMemo(() => visibleFields.some((f) => f.type === "number"), [visibleFields]);
+  const numericFieldTotals = useMemo(
+    () => (hasNumericVisibleField ? sumNumericFields(visibleRecords, visibleFields) : {}),
+    [hasNumericVisibleField, visibleRecords, visibleFields],
+  );
+
   // Exactly the records the calendar grid's current month is showing -- lets
   // the ICS export button disable itself when the visible month is
   // genuinely empty, not just when the whole entity has no records.
@@ -2708,6 +2732,23 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
                     </tr>
                   ))}
                 </tbody>
+                {hasNumericVisibleField && (
+                  <tfoot>
+                    <tr className="entity-totals-row">
+                      <th className="select-col"></th>
+                      {visibleFields.map((f) => (
+                        <th key={f.name}>
+                          {f.type === "number" && (
+                            <>
+                              Total: {(numericFieldTotals[f.name] ?? 0).toLocaleString()}
+                            </>
+                          )}
+                        </th>
+                      ))}
+                      <th></th>
+                    </tr>
+                  </tfoot>
+                )}
               </table>
             </div>
           )}
@@ -3259,6 +3300,7 @@ th, td { text-align: start; padding: 8px 10px; border-bottom: 1px solid var(--bo
 .csv-import-errors { margin: -6px 0 14px; padding-inline-start: 20px; color: var(--danger); font-size: 13px; display: flex; flex-direction: column; gap: 3px; }
 .bulk-actions-bar { display: flex; align-items: center; gap: 12px; padding: 8px 12px; margin-bottom: 8px; background: var(--surface-muted); border: 1px solid var(--border-soft); border-radius: 8px; font-size: 13.5px; }
 .select-col { width: 1%; white-space: nowrap; }
+.entity-totals-row th { background: var(--surface-subtle); border-top: 2px solid var(--border); font-weight: 700; text-align: start; }
 .app-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 20px; }
 .app-header h1 { margin: 0; }
 .app-header-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }

@@ -1048,6 +1048,13 @@ tbody tr:hover {
   padding: 6px 10px;
 }
 
+.entity-totals-row th {
+  background: var(--surface-subtle);
+  border-top: 2px solid var(--border);
+  font-weight: 700;
+  text-align: start;
+}
+
 .view-toggle {
   display: flex;
   gap: 4px;

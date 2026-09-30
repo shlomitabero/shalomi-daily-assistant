@@ -125,6 +125,29 @@ export function formatNumberValue(value: number, lang: Lang): string {
 }
 
 /**
+ * Sums every `number`-type field across a set of records -- the table
+ * view's own totals row, so an invoice-amount or quantity column doesn't
+ * require a business owner to manually add it up by eye or a separate
+ * calculator. Driven off whatever `records` is passed in (typically the
+ * already-filtered/sorted `visibleRecords` the table itself renders), so
+ * the totals always reflect the current search/filter, not the whole
+ * entity. A missing/non-numeric value on an otherwise-numeric field (an
+ * unset field, or bad data) contributes 0 rather than producing `NaN` and
+ * silently poisoning the whole column's total.
+ */
+export function sumNumericFields(records: EntityRecord[], fields: Field[]): Record<string, number> {
+  const totals: Record<string, number> = {};
+  for (const field of fields) {
+    if (field.type !== "number") continue;
+    totals[field.name] = records.reduce((sum, record) => {
+      const value = record[field.name];
+      return sum + (typeof value === "number" && !Number.isNaN(value) ? value : 0);
+    }, 0);
+  }
+  return totals;
+}
+
+/**
  * True if any of the entity's fields on this record contain the search
  * query (case-insensitive). A relation field is matched against its
  * resolved display label (e.g. "Dana Levi"), the same text a table cell

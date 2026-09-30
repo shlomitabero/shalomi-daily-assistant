@@ -42,6 +42,7 @@ import {
   sortRecordsMulti,
   splitHighlightSegments,
   splitLinkSegments,
+  sumNumericFields,
   type RelatedRecordsByEntity,
   type SortKey,
 } from "./entityFormatting.js";
@@ -1059,6 +1060,17 @@ export function EntityPanel({
     );
     return sortRecordsMulti(filtered, sortKeys, entity.fields, allEntities, relatedRecords);
   }, [records, entity.fields, search, fieldFilters, sortKeys, allEntities, relatedRecords]);
+
+  // Totals row under the table -- sums each visible number-type column over
+  // visibleRecords (the same already-filtered/sorted set the body renders),
+  // so narrowing the search updates the totals along with the rows, and a
+  // hidden numeric column's total disappears along with its column. Only
+  // relevant, and only rendered, when at least one visible field is numeric.
+  const hasNumericVisibleField = useMemo(() => visibleFields.some((f) => f.type === "number"), [visibleFields]);
+  const numericFieldTotals = useMemo(
+    () => (hasNumericVisibleField ? sumNumericFields(visibleRecords, visibleFields) : {}),
+    [hasNumericVisibleField, visibleRecords, visibleFields],
+  );
 
   /** Exactly the records the calendar grid's current month is showing -- the same computation handleExportIcs uses, kept separate so the export button can disable itself when the visible month is genuinely empty, not just when the whole entity has no records. */
   const icsMonthRecords = useMemo(() => {
@@ -2080,6 +2092,24 @@ export function EntityPanel({
                       ))
                     : visibleRecords.map(renderRecordRow)}
                 </tbody>
+                {hasNumericVisibleField && (
+                  <tfoot>
+                    <tr className="entity-totals-row">
+                      <th className="select-col" />
+                      {visibleFields.map((f) => (
+                        <th key={f.name}>
+                          {f.type === "number" && (
+                            <>
+                              {t("entity.table.total")}: {formatNumberValue(numericFieldTotals[f.name] ?? 0, lang)}
+                            </>
+                          )}
+                        </th>
+                      ))}
+                      <th />
+                      <th />
+                    </tr>
+                  </tfoot>
+                )}
               </table>
             </div>
           )}
