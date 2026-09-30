@@ -16788,6 +16788,103 @@ not a single "make it perfect" claim.
   `npm run build --workspace=@forge/web` (full `tsc -b` type-check gate)
   and `npm run build --workspace=@forge/api` (esbuild bundle).
 
+- **Round 288 -- a real, visible feature (per שלומי's standing direction
+  to favor these; round 287 had been a bug-fix, closing the project's
+  last known open bug candidate): the WhatsApp message log went silently
+  stale while the panel was open and actively being watched.** Directed
+  round 288's Explore survey specifically toward a fresh, visible feature
+  rather than another bug, since almost every other screen's obvious
+  affordances were already closed patterns (see the trigger's own
+  "דפוסים סגורים סופית" list). Confirmed the gap by reading
+  `apps/web/src/WhatsAppPanel.tsx` in full: `listWhatsAppMessages` is only
+  ever called from four places -- the initial mount effect, right after
+  `handleConnect`'s polling reaches "connected", after sending/retrying a
+  test message, and on "load older" clicks. Once connected,
+  `startConnectedPolling` (line ~178) already runs every
+  `CONNECTED_POLL_INTERVAL_MS` (10s) via `setInterval`, but it only ever
+  called `getWhatsAppStatus` -- checking whether the WhatsApp *link*
+  itself was still alive -- and never re-fetched the message list. Yet
+  `apps/api/src/whatsappWeb.ts` registers a live `messages.upsert`
+  listener that stores an inbound message the moment WhatsApp delivers
+  it, entirely independent of whether anyone has the panel open. So: a
+  customer texts the connected number while the project owner is sitting
+  in the WhatsApp panel watching the log -- nothing appears. She had to
+  close and reopen the panel (re-triggering the mount effect) to see it.
+  For a screen whose entire value proposition is "watch your WhatsApp
+  activity," a log that silently goes stale while you're staring at it
+  is the kind of gap real chat/inbox UIs never have -- every one of them
+  auto-updates. Confirmed via `grep` that `codegen.ts` has zero WhatsApp
+  references at all (`grep -n "whatsapp\|WhatsApp" apps/api/src/codegen.ts`
+  returns nothing) -- the WhatsApp integration was never part of the
+  exported/standalone app to begin with (it needs a live server-side
+  WhatsApp Web session), so this round needed no codegen.ts counterpart,
+  matching the established "not every feature has an exported copy"
+  precedent.
+
+  Fix: extended `startConnectedPolling`'s existing 10s tick to also call
+  `listWhatsAppMessages(projectId)` (the same no-offset call the mount
+  effect already uses, which returns the newest page) right after
+  confirming the link is still connected, and merge the result into state
+  with `setMessages((prev) => { const existingIds = new
+  Set(prev.map((m) => m.id)); const newOnes = freshPage.filter((m) =>
+  !existingIds.has(m.id)); return newOnes.length === 0 ? prev :
+  [...newOnes, ...prev]; })`. Only messages not already present (by id)
+  are prepended -- the log is DESC-ordered (newest first, confirmed via
+  `handleLoadMore`'s own doc comment), so any id in the freshly-fetched
+  newest page that isn't already loaded must be strictly newer than
+  everything already shown, making a plain prepend correct without
+  needing to re-sort. A message-refresh failure on one tick is caught
+  separately from the status-check failure and silently skipped (retried
+  next tick) rather than surfacing an error -- the existing
+  connection-status check already covers real connectivity failures, and
+  transient failures of the extra fetch shouldn't interrupt the user.
+  Deliberately left untouched: `hasMoreMessages`/pagination reached via
+  "load older" (the merge only ever touches the newest end, never
+  replaces or reorders what "load older" appended), any in-flight
+  `retryingId`/`deletingId` action, and the `search`/`directionFilter`
+  client-side view filters (they run over whatever `messages` currently
+  holds, so newly-merged messages flow through them automatically with
+  no extra wiring).
+
+  Test: 1 new test in `apps/web/src/WhatsAppPanel.test.ts`, using the same
+  extraction technique the file's own pre-existing `startPolling` race
+  test already established (`transformSync` the real
+  `stopConnectedPolling`/`startConnectedPolling` source out of
+  `WhatsAppPanel.tsx`, strip TypeScript with esbuild, run it via `new
+  Function` with every free variable -- refs, `setInterval`/
+  `clearInterval`, `getWhatsAppStatus`, `listWhatsAppMessages`,
+  `setMessages`, etc. -- injected as mocks, and a fake `setInterval` that
+  captures the tick callback for manual, synchronous control instead of
+  waiting on real 10s timers). Seeds two already-loaded messages
+  (`m2`, `m1`, newest first) and a mock `listWhatsAppMessages` that
+  returns a fresh page of `[m3, m2]` (one genuinely new message plus one
+  already-loaded one still in range, matching what a real fetch would
+  return); fires the captured tick callback once and asserts the merged
+  result is exactly `[m3, m2, m1]` -- the new message prepended, the
+  already-loaded one not duplicated, and the older one preserved.
+  Deliberate-break-and-restore: reverted `startConnectedPolling` back to
+  its pre-round-288 status-only version (removed the message-refresh
+  block entirely), re-ran the new test standalone, confirmed it failed
+  with exactly the expected `capturedMessages` being `undefined` (since
+  `setMessages` was never called at all in the reverted version) instead
+  of `["m3", "m2", "m1"]`, then restored from a verified pre-fix backup
+  copy with a byte-identical `diff`; re-ran the full 20-test
+  `WhatsAppPanel.test.ts` suite and confirmed all 20 passed (no
+  regressions in the file's existing polling/disconnect/pagination/filter
+  coverage).
+
+  Full suite green: 1079 tests (up from 1078 -- `@forge/web` 588 → 589;
+  `@forge/api` 300, `@forge/shared` 13, `@forge/spec-engine` 84,
+  `@forge/db` 93 unchanged) via `npm test` at the repo root, plus a clean
+  `npm run build --workspace=@forge/web` (full `tsc -b` type-check gate).
+  No live Playwright pass this round: driving a genuine WhatsApp Web QR
+  pairing isn't reachable headlessly in this environment (no real phone
+  to scan the code), and this file's own established precedent for
+  internal polling/timing logic (see the pre-existing `startPolling`
+  race test and the `handleDisconnect` resume-polling test, neither of
+  which used Playwright either) is exactly the real-source-extraction
+  technique used here instead.
+
 ## Phase 4
 
 - Template/agent marketplace
