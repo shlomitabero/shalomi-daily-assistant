@@ -4478,3 +4478,144 @@ test("the exported EntityView's view-mode choice actually survives an unmount+re
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+/**
+ * New in this round: the exported app's per-entity table search box had
+ * zero memory of recent queries, the same gap the live preview's own
+ * EntityPanel.tsx had before entityRecentSearches.ts (round 318) -- and
+ * the more impactful of the two remaining recent-searches gaps (the other,
+ * Global Search's own recent-searches, is a less-used box than the
+ * per-entity table every tab opens into). Extracts and *executes* the real
+ * generated store functions (not a reimplementation): capped at 5, most
+ * recent first, case-insensitive dedup/removal, and scoped per entity name
+ * only (this single-tenant exported app has no project id to scope by,
+ * unlike the live preview's own two-key (projectId, entityName) scoping).
+ */
+test("the exported EntityView's recent-searches store caps at 5, dedupes case-insensitively, and is scoped per entity name", () => {
+  const files = generateExportFiles(project);
+  const entityViewJsx = files.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+
+  const storeSrc = entityViewJsx.match(
+    /const ENTITY_RECENT_SEARCHES_STORAGE_KEY[\s\S]*?\nfunction clearEntityRecentSearches\(entityName\) \{[\s\S]*?\n\}\n/,
+  )?.[0];
+  assert.ok(storeSrc, "expected to find the entity recent-searches store functions in generated output");
+
+  const fakeStorage: Record<string, string> = {};
+  const { getEntityRecentSearches, addEntityRecentSearch, removeEntityRecentSearch, clearEntityRecentSearches } = new Function(
+    "localStorage",
+    `${storeSrc}\nreturn { getEntityRecentSearches, addEntityRecentSearch, removeEntityRecentSearch, clearEntityRecentSearches };`,
+  )({
+    getItem: (k: string) => fakeStorage[k] ?? null,
+    setItem: (k: string, v: string) => {
+      fakeStorage[k] = v;
+    },
+  }) as {
+    getEntityRecentSearches: (entityName: string) => string[];
+    addEntityRecentSearch: (entityName: string, query: string) => string[];
+    removeEntityRecentSearch: (entityName: string, query: string) => string[];
+    clearEntityRecentSearches: (entityName: string) => void;
+  };
+
+  assert.deepEqual(getEntityRecentSearches("Customer"), [], "no stored searches yet must default to an empty array");
+
+  addEntityRecentSearch("Customer", "acme");
+  addEntityRecentSearch("Customer", "globex");
+  assert.deepEqual(addEntityRecentSearch("Customer", "ACME"), ["ACME", "globex"], "re-adding case-insensitively must move it to the front (with the newly typed casing), not duplicate it");
+
+  for (const q of ["a", "b", "c", "d", "e"]) addEntityRecentSearch("Customer", q);
+  assert.deepEqual(
+    getEntityRecentSearches("Customer"),
+    ["e", "d", "c", "b", "a"],
+    "the list must cap at 5 entries, dropping the oldest",
+  );
+
+  assert.deepEqual(removeEntityRecentSearch("Customer", "C"), ["e", "d", "b", "a"], "removal must be case-insensitive");
+
+  assert.deepEqual(getEntityRecentSearches("Service"), [], "a different entity must not inherit Customer's own recent searches");
+
+  clearEntityRecentSearches("Customer");
+  assert.deepEqual(getEntityRecentSearches("Customer"), [], "clearing must wipe the entity's own list entirely");
+});
+
+/**
+ * Real-DOM companion: renders the actual generated EntityView, types a
+ * query, presses Enter (the commit signal for a filter-as-you-type box
+ * with no submit button -- same convention as handleProjectSearchKeyDown),
+ * confirms a real recent-search chip appears, clicking it refills the
+ * search box, and removing it drops just that one chip.
+ */
+test("the exported EntityView's search box remembers a query on Enter and shows it as a clickable, removable chip", async () => {
+  const files = generateExportFiles(project);
+  const dir = writeGeneratedWebComponent(files);
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async () => ({
+    ok: true,
+    status: 200,
+    json: async () => ({ records: [{ id: 1, name: "Alice", status: "New" }] }),
+  })) as typeof fetch;
+
+  try {
+    await withRealLocalStorage(async () => {
+      const { EntityView } = await import(path.join(dir, "web", "src", "components", "EntityView.jsx"));
+      const customerEntity = project.spec.entities.find((e) => e.name === "Customer")!;
+      const props = {
+        entity: customerEntity,
+        highlightRecordId: null,
+        onHighlightHandled: () => {},
+        onJumpToRecord: () => {},
+        onRecordCountChange: () => {},
+      };
+
+      const { container } = render(React.createElement(EntityView, props));
+      for (let i = 0; i < 40; i++) {
+        if (container.querySelectorAll("tbody tr").length === 1) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+      assert.equal(container.querySelectorAll("tbody tr").length, 1, "expected the record to have loaded");
+
+      const searchInput = container.querySelector(".entity-search") as HTMLInputElement;
+      assert.equal(container.querySelector(".entity-search-recent"), null, "no recent-searches row before any query is committed");
+
+      await act(async () => {
+        fireEvent.change(searchInput, { target: { value: "alice" } });
+        fireEvent.keyDown(searchInput, { key: "Enter" });
+      });
+      // The recent-searches row only shows once the search box itself is
+      // empty again (same as the live preview: it's "what you searched for
+      // before", not shown while a search is actively filtering the table).
+      assert.equal(
+        container.querySelector(".entity-search-recent"),
+        null,
+        "the recent-searches row must stay hidden while the search box still has the just-typed query in it",
+      );
+
+      await act(async () => {
+        fireEvent.change(searchInput, { target: { value: "" } });
+      });
+      assert.equal(searchInput.value, "", "search box must be clearable independently of the remembered chip");
+
+      const chip = container.querySelector(".entity-search-recent .chip-text");
+      assert.ok(chip, "expected a real recent-search chip once the search box is cleared");
+      assert.equal(chip!.textContent, "alice", "the chip must show the real committed query");
+
+      await act(async () => {
+        fireEvent.click(chip!);
+      });
+      assert.equal(searchInput.value, "alice", "clicking the chip must refill the search box with the real remembered query");
+
+      await act(async () => {
+        fireEvent.change(searchInput, { target: { value: "" } });
+      });
+      await act(async () => {
+        fireEvent.click(container.querySelector(".entity-search-recent .chip-remove")!);
+      });
+      assert.equal(container.querySelector(".entity-search-recent"), null, "removing the only chip must hide the whole recent-searches row");
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    cleanup();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});

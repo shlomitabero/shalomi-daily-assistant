@@ -837,6 +837,60 @@ function toggleColumnVisibility(entityName, fieldName) {
   return hidden;
 }
 
+// Recent queries typed into an entity's own filter-as-you-type search box,
+// persisted per entity (same single-tenant scoping as the hidden-columns
+// store above -- this exported app has no project id to scope by, unlike
+// the live preview's own entityRecentSearches.ts) so a query typed last
+// week doesn't have to be retyped from scratch.
+const ENTITY_RECENT_SEARCHES_STORAGE_KEY = "forge_entity_recent_searches";
+const MAX_RECENT_SEARCHES = 5;
+function readEntityRecentSearchesStore() {
+  try {
+    const raw = localStorage.getItem(ENTITY_RECENT_SEARCHES_STORAGE_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) return {};
+    return parsed;
+  } catch {
+    return {};
+  }
+}
+function writeEntityRecentSearchesStore(store) {
+  try {
+    localStorage.setItem(ENTITY_RECENT_SEARCHES_STORAGE_KEY, JSON.stringify(store));
+  } catch {
+    // localStorage can be unavailable (private mode) -- the history just won't survive a reload.
+  }
+}
+function getEntityRecentSearches(entityName) {
+  const store = readEntityRecentSearchesStore();
+  return Array.isArray(store[entityName]) ? store[entityName] : [];
+}
+function addEntityRecentSearch(entityName, query) {
+  const trimmed = query.trim();
+  const store = readEntityRecentSearchesStore();
+  if (!trimmed) return Array.isArray(store[entityName]) ? store[entityName] : [];
+  const existing = Array.isArray(store[entityName]) ? store[entityName] : [];
+  const deduped = existing.filter((q) => q.toLowerCase() !== trimmed.toLowerCase());
+  const next = [trimmed, ...deduped].slice(0, MAX_RECENT_SEARCHES);
+  store[entityName] = next;
+  writeEntityRecentSearchesStore(store);
+  return next;
+}
+function removeEntityRecentSearch(entityName, query) {
+  const store = readEntityRecentSearchesStore();
+  const existing = Array.isArray(store[entityName]) ? store[entityName] : [];
+  const next = existing.filter((q) => q.toLowerCase() !== query.toLowerCase());
+  store[entityName] = next;
+  writeEntityRecentSearchesStore(store);
+  return next;
+}
+function clearEntityRecentSearches(entityName) {
+  const store = readEntityRecentSearchesStore();
+  delete store[entityName];
+  writeEntityRecentSearchesStore(store);
+}
+
 // A column's own drag-resized width, persisted per entity (same
 // single-tenant scoping as the hidden-columns store above) so it survives
 // a reload. Mirrors the live preview's own columnWidths.ts.
@@ -2013,6 +2067,7 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
   const [form, setForm] = useState(() => emptyForm(entity));
   const [editingId, setEditingId] = useState(null);
   const [search, setSearch] = useState("");
+  const [recentSearches, setRecentSearches] = useState(() => getEntityRecentSearches(entity.name));
   const [fieldFilters, setFieldFilters] = useState({});
   const [groupFieldName, setGroupFieldName] = useState(() => getPersistedGroupField(entity.name));
   const [highlightedRecordId, setHighlightedRecordId] = useState(null);
@@ -2118,6 +2173,7 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
     setForm(emptyForm(entity));
     setEditingId(null);
     setSearch("");
+    setRecentSearches(getEntityRecentSearches(entity.name));
     setFieldFilters({});
     setGroupFieldName(getPersistedGroupField(entity.name));
     setSortKeys(getPersistedSortKeys(entity.name));
@@ -2662,6 +2718,26 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
     void handleMove(record.id, dateFieldName, value);
   }
 
+  // Persists the current search box value to this entity's recent list once
+  // the user signals they're "done" by pressing Enter -- there's no submit
+  // button on a live filter-as-you-type box, so Enter is the commit signal,
+  // mirroring the live preview's own EntityPanel.tsx handleSearchKeyDown.
+  function handleSearchKeyDown(e) {
+    if (e.key === "Enter" && search.trim()) {
+      setRecentSearches(addEntityRecentSearch(entity.name, search));
+    }
+  }
+  function handleRecentSearchClick(query) {
+    setSearch(query);
+  }
+  function handleRemoveRecentSearch(query) {
+    setRecentSearches(removeEntityRecentSearch(entity.name, query));
+  }
+  function handleClearRecentSearches() {
+    clearEntityRecentSearches(entity.name);
+    setRecentSearches([]);
+  }
+
   function handleExportCsv() {
     const csv = recordsToCsv(entity.fields, selectedOrAllRecords(records, visibleRecords, selectedIds), relatedRecords);
     const blob = new Blob(["\\uFEFF" + csv], { type: "text/csv;charset=utf-8;" });
@@ -2894,6 +2970,7 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
               placeholder="🔍 Search…"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
+              onKeyDown={handleSearchKeyDown}
             />
             {filterableEnumFields.map((f) => (
               <select
@@ -2998,6 +3075,34 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
               )}
             </div>
           </div>
+          {!search.trim() && recentSearches.length > 0 && (
+            <div className="entity-search-recent">
+              <div className="entity-search-recent-header">
+                <span className="muted small">Recent searches</span>
+                <button type="button" className="link-button small" onClick={handleClearRecentSearches}>
+                  Clear
+                </button>
+              </div>
+              <div className="chips">
+                {recentSearches.map((q) => (
+                  <span className="chip chip-removable" key={q}>
+                    <button type="button" className="chip-text" onClick={() => handleRecentSearchClick(q)}>
+                      {q}
+                    </button>
+                    <button
+                      type="button"
+                      className="chip-remove"
+                      title={\`Remove "\${q}"\`}
+                      aria-label={\`Remove "\${q}"\`}
+                      onClick={() => handleRemoveRecentSearch(q)}
+                    >
+                      ×
+                    </button>
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
           {visibleRecords.length === 0 ? (
             <div className="empty-state">
               <p>No results match your search.</p>
@@ -3868,6 +3973,15 @@ th, td { text-align: start; padding: 8px 10px; border-bottom: 1px solid var(--bo
 .empty-state { padding: 32px 16px; text-align: center; color: var(--muted); background: var(--surface-subtle); border: 1px dashed var(--border); border-radius: 10px; }
 .entity-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 14px; }
 .entity-toolbar .entity-search { margin-bottom: 0; flex: 1; }
+.entity-search-recent { margin-top: -6px; margin-bottom: 14px; }
+.entity-search-recent-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; }
+.chips { display: flex; flex-wrap: wrap; gap: 8px; }
+.chip { display: inline-block; padding: 5px 14px; border-radius: 999px; background: var(--surface-muted); color: var(--text); border: 1px solid var(--border); font-size: 13.5px; font-weight: 500; }
+.chip-removable { display: inline-flex; align-items: center; gap: 6px; }
+.chip-text { cursor: pointer; border-radius: 4px; transition: opacity 0.12s ease; }
+.chip-text:hover { opacity: 0.7; }
+.chip-remove { display: inline-flex; align-items: center; justify-content: center; width: 16px; height: 16px; padding: 0; border: none; border-radius: 999px; background: transparent; color: var(--muted); font-size: 14px; line-height: 1; cursor: pointer; }
+.chip-remove:hover { background: var(--surface-muted); color: var(--text); }
 .entity-status-filter, .entity-group-by { max-width: 200px; margin-bottom: 0; flex-shrink: 0; }
 .entity-group-header-row td { background: var(--surface-subtle); font-weight: 600; padding: 6px 10px; }
 .entity-group-totals-row td { background: var(--surface-subtle); border-bottom: 1px solid var(--border); font-weight: 600; }
