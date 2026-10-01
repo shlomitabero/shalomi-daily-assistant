@@ -19672,6 +19672,67 @@ Full suite green: **1218 tests** (`@forge/shared` 13, `@forge/spec-engine`
 via `npm test` at the repo root, plus a clean full monorepo
 `npm run build`.
 
+### Round 325 — Global Search's own recent-searches reaches the exported app, closing the entire family
+
+Round 324's own named candidate: the exported app's generated
+`GlobalSearch` component had never gained the recent-searches feature at
+all, even though the live preview's `GlobalSearchPanel.tsx` has had it
+since round 180. Grep confirmed `recentSearch` appeared nowhere in
+`codegen.ts`'s `renderGlobalSearchJsx` generation code.
+
+Fix: ported the same localStorage-backed recent-list pattern (capped at
+5, most-recent-first, case-insensitive dedup/removal) into the generated
+`GlobalSearch` template string -- a new
+`GLOBAL_SEARCH_RECENT_SEARCHES_STORAGE_KEY` store
+(`getGlobalSearchRecentSearches`/`addGlobalSearchRecentSearch`/
+`removeGlobalSearchRecentSearch`/`clearGlobalSearchRecentSearches`), but
+as a **single flat list** rather than EntityView's own per-entity-name
+keying from round 324 -- there's only one Global Search in the whole
+exported app, so no additional scoping key was needed at all. Added
+`handleRecentSearchClick`/`handleRemoveRecentSearch`/
+`handleClearRecentSearches`, wired `handleSubmit` to commit the query on
+every real search submission (matching the live preview's own
+submit-driven commit, unlike EntityView's Enter-driven commit -- Global
+Search has an actual submit button, not a live-filter box), and added a
+recent-searches chip row that shows only before a search has run or
+after clearing (`!loading && !searched`), matching the live preview's own
+request/response-driven visibility rather than EntityView's
+empty-search-box-driven visibility. Reused the `.chip`/`.chip-removable`/
+`.chip-text`/`.chip-remove` CSS classes round 324 already added to
+`codegen.ts`'s generated stylesheet, plus two new small rules
+(`.global-search-recent`/`.global-search-recent-header`).
+
+Tests: one new pure-function test extracting and *executing* the real
+generated store functions (cap-at-5, case-insensitive dedup keeping the
+newly-typed casing, clearing), and one new real-DOM test mirroring the
+live preview's own `GlobalSearchPanel.test.ts` pattern exactly: submits a
+real search (genuine fetch + form submit), unmounts and remounts the
+component fresh (simulating closing and reopening the panel), and
+confirms the submitted query now shows as a real, clickable
+recent-search chip that genuinely re-runs the search when clicked.
+
+Deliberate-break-and-restore: backed up both changed files, reverted
+`codegen.ts` to its pre-round HEAD state, confirmed both new tests failed
+with the exact expected mismatches ("expected to find the Global Search
+recent-searches store functions in generated output"; "expected the
+reopened panel to show 'widget' as a real recent-search chip"). Restored
+from the verified backup with a confirmed byte-identical `diff` against
+both files, then re-ran every workspace: `@forge/shared` 13/13,
+`@forge/spec-engine` 85/85, `@forge/db` 96/96, `@forge/api` 331 → 333,
+`@forge/web` 693 unchanged, plus a clean full monorepo `npm run build`.
+
+With this round, the recent-searches feature-family -- live preview's 6/6
+search boxes (316-319), plus both of the exported app's own search boxes
+(EntityView in 324, Global Search in 325) -- is now **fully closed**,
+joining copy-to-clipboard and undo-toast as fully-closed families. No
+explicit ready candidate remains open; round 326 needs a fresh Explore
+survey for an entirely new feature-family.
+
+Full suite green: **1220 tests** (`@forge/shared` 13, `@forge/spec-engine`
+85, `@forge/db` 96, `@forge/api` 331 → 333; `@forge/web` 693 unchanged)
+via `npm test` at the repo root, plus a clean full monorepo
+`npm run build`.
+
 ## Phase 4
 
 - Template/agent marketplace
