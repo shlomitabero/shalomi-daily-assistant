@@ -18591,6 +18591,93 @@ Full suite green: **1157 tests** (`@forge/shared` 13, `@forge/spec-engine`
 via `npm test` at the repo root, plus a clean
 `npm run build --workspace=@forge/api` (esbuild).
 
+### Round 310 — The exported app's bulk-actions bar now also supports duplicating and bulk-updating selected records, not just deleting them
+
+An Explore survey, asked to look past the known view-preference-persistence
+backup candidate, found a systematic gap in `codegen.ts`'s EntityPanel
+feature parity rather than a single isolated bug: the exported app's
+bulk-actions bar (`EntityView`'s table toolbar) only ever rendered one
+action, "Delete selected", while the live preview's own bar
+(`EntityPanel.tsx`, rounds 89/258) offers three -- "Duplicate selected",
+a "Set field: ... Apply to N" bulk update, and "Delete selected". The
+survey found a smoking-gun comment already sitting in `codegen.ts` itself
+(`selectedOrAllRecords`'s own doc comment, round 296) that referenced
+*"matching handleBulkDelete/handleBulkDuplicate's own existing behavior"*
+-- except `handleBulkDuplicate` never actually existed in this file.
+`docs/roadmap.md`'s own timeline explains why: round 257 closed the
+original bulk-select/delete porting pass as done, and round 258 then added
+`handleBulkUpdate` to the *live* preview only, one round *after* that
+porting pass had already closed -- so neither bulk action it was paired
+with (duplicate or update) ever made it into the exported app's own copy.
+
+Real failure scenario before this round: שלומי selects 15 orders in the
+live preview, tests "mark all Shipped" or "duplicate these 5 templates"
+in one click, exports the app, and the identical selection in the
+downloaded version only offers "Delete selected" -- the two most useful
+bulk actions silently vanish.
+
+Added `bulkEditField`/`bulkEditValue` state and three functions to
+`codegen.ts`'s generated `EntityView` (right after the existing
+`handleBulkDelete`): `handleBulkDuplicate` (same per-record field-copy
+logic as the existing single-record `handleDuplicate`, same
+`Promise.allSettled` partial-failure resilience as `handleBulkDelete`, no
+confirmation since duplicating creates rather than destroys), `handleBulkUpdate`
+(applies one field's value to every selected record, same
+`Promise.allSettled` resilience, a real no-op when no field is chosen),
+and `handleBulkEditFieldChange` (resets `bulkEditValue` to a type-appropriate
+empty value -- `false` for boolean, `""` otherwise -- so switching the field
+picker from an enum to a boolean never renders a stale string value).
+Wired a field picker (filtered through the existing `isInlineEditableField`
+helper so a relation field, whose "value" is another record's id, can never
+be chosen), the existing `FieldInput` component, and "Apply to N"/"📋 Duplicate
+selected" buttons into the bulk-actions bar, reusing components and helpers
+already in `codegen.ts` for inline cell editing rather than duplicating them.
+Added the matching `.bulk-edit-field-label` CSS rule (flex row, small gap)
+right after the existing `.bulk-actions-bar` rule, also adding `flex-wrap:
+wrap` to the bar itself so the extra controls don't overflow on narrow screens.
+
+Test: two new `codegen.test.ts` tests. The first regex-confirms the new
+state, all three functions' signatures, the field-picker/FieldInput/button
+JSX, and the new CSS rule against the real generated `EntityView.jsx`/
+`styles.css`, then runs the real generated `handleBulkEditFieldChange` via
+`new Function` to prove the boolean-vs-other type-appropriate reset. The
+second runs the real generated `handleBulkDuplicate`/`handleBulkUpdate` via
+`new Function` against a stubbed `createRecord`/`updateRecord` that fails
+for one of three records, confirming (mirroring the existing
+`handleBulkDelete` regression test's exact pattern): every selected record
+is attempted regardless of an earlier failure, only the one that actually
+failed stays selected, a partial failure still triggers `refresh()`, and a
+bulk update with no field chosen makes zero calls at all. All 90
+pre-existing `codegen.test.ts` tests passed unchanged after one confirmed
+test-runner flake (a single transient failure that vanished on two
+consecutive clean re-runs, not a real regression -- the known class of
+isolated-run flakiness this routine has hit before, re-verified per its own
+standing rule to re-run before assuming a regression).
+
+Deliberate-break-and-restore: removed the entire `handleBulkDuplicate`
+function from the generated source via a targeted Python regex delete --
+the new partial-failure test failed exactly as expected ("expected to find
+handleBulkDuplicate in generated output"). Restored from a verified
+pre-break backup with a confirmed byte-identical `diff`; re-ran the full
+suite twice and confirmed everything passed cleanly both times.
+
+Live verification (same real `vite build` + real `server.js` + real
+Chromium pattern as rounds 306-309): built a real "Order" project with a
+Status enum field, created 3 real records through the real form, selected
+all 3 via the header checkbox, confirmed the real bulk-actions bar showed
+"3 selected" alongside the new field picker and both new buttons, clicked
+"📋 Duplicate selected" and confirmed the table grew to 6 real rows (3
+genuine new records created through the real API, not a UI illusion),
+re-selected all 6, picked the Status field, chose "Shipped", clicked
+"Apply to 6", **reloaded the page**, and confirmed every one of the 6
+real rows' Status cell genuinely read "Shipped" -- the real proof the bulk
+update persisted through the server and database, not just in-memory state.
+
+Full suite green: **1159 tests** (`@forge/shared` 13, `@forge/spec-engine`
+85, `@forge/db` 93, `@forge/web` 651 unchanged; `@forge/api` 315 → 317)
+via `npm test` at the repo root, plus a clean
+`npm run build --workspace=@forge/api` (esbuild).
+
 ## Phase 4
 
 - Template/agent marketplace
