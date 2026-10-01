@@ -2178,12 +2178,16 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
   // shown at all. Restores the row (same helper handleUndoDelete uses) and
   // surfaces the real error instead.
   async function commitPendingDelete(pending) {
-    try {
-      await deleteRecord(entity.name, pending.id);
-    } catch (err) {
-      setRecords((prev) => restoreRecordAt(prev, pending.record, pending.index));
-      setError(err.message);
-    }
+    const results = await Promise.allSettled(pending.entries.map((e) => deleteRecord(entity.name, e.id)));
+    const failed = pending.entries.filter((_, i) => results[i].status === "rejected");
+    if (failed.length === 0) return;
+    setRecords((prev) => failed.reduce((acc, e) => restoreRecordAt(acc, e.record, e.index), prev));
+    const firstFailure = results.find((r) => r.status === "rejected");
+    setError(
+      failed.length === pending.entries.length
+        ? firstFailure.reason.message
+        : \`\${failed.length} of \${pending.entries.length} records could not be deleted.\`,
+    );
   }
 
   useEffect(() => {
@@ -2424,20 +2428,20 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
 
     const timeoutId = setTimeout(() => {
       setPendingDelete((current) => {
-        if (current?.id !== id) return current;
+        if (current?.timeoutId !== timeoutId) return current;
         commitPendingDelete(current);
         return null;
       });
     }, UNDO_WINDOW_MS);
 
-    setPendingDelete({ id, record, index, label, timeoutId });
+    setPendingDelete({ entries: [{ id, record, index }], message: \`Deleted "\${label}". \`, timeoutId });
   }
 
   function handleUndoDelete() {
     const pending = pendingDeleteRef.current;
     if (!pending) return;
     clearTimeout(pending.timeoutId);
-    setRecords((prev) => restoreRecordAt(prev, pending.record, pending.index));
+    setRecords((prev) => pending.entries.reduce((acc, e) => restoreRecordAt(acc, e.record, e.index), prev));
     setPendingDelete(null);
   }
 
@@ -2484,20 +2488,31 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
   async function handleBulkDelete() {
     const ids = [...selectedIds];
     if (ids.length === 0) return;
-    if (!window.confirm(\`Delete \${ids.length} records? This can't be undone.\`)) return;
-    setError(null);
-    const results = await Promise.allSettled(ids.map((id) => deleteRecord(entity.name, id)));
-    const failedIds = ids.filter((_, i) => results[i].status === "rejected");
-    setSelectedIds(new Set(failedIds));
-    if (failedIds.length > 0) {
-      const firstFailure = results.find((r) => r.status === "rejected");
-      setError(
-        failedIds.length === ids.length
-          ? firstFailure.reason.message
-          : \`\${failedIds.length} of \${ids.length} records could not be deleted.\`,
-      );
+    if (!window.confirm(\`Delete \${ids.length} records? You can undo this for a few seconds after deleting.\`)) return;
+
+    if (pendingDeleteRef.current) {
+      clearTimeout(pendingDeleteRef.current.timeoutId);
+      commitPendingDelete(pendingDeleteRef.current);
     }
-    await refresh();
+
+    setError(null);
+    const idSet = new Set(ids);
+    const entries = [];
+    records.forEach((r, index) => {
+      if (idSet.has(r.id)) entries.push({ id: r.id, record: r, index });
+    });
+    setRecords((prev) => prev.filter((r) => !idSet.has(r.id)));
+    setSelectedIds(new Set());
+
+    const timeoutId = setTimeout(() => {
+      setPendingDelete((current) => {
+        if (current?.timeoutId !== timeoutId) return current;
+        commitPendingDelete(current);
+        return null;
+      });
+    }, UNDO_WINDOW_MS);
+
+    setPendingDelete({ entries, message: \`Deleted \${entries.length} records. \`, timeoutId });
   }
 
   // Same Promise.allSettled resilience as handleBulkDelete above, and the
@@ -2820,7 +2835,7 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
 
       {pendingDelete && (
         <p className="entity-undo-toast" role="status">
-          {\`Deleted "\${pendingDelete.label}". \`}
+          {pendingDelete.message}
           <button type="button" className="link-button" onClick={handleUndoDelete}>
             Undo
           </button>

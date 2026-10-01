@@ -532,7 +532,7 @@ test("the exported EntityView's commitPendingDelete restores the row and surface
     },
   );
 
-  await fn({ id: 7, record: "B", index: 1 });
+  await fn({ entries: [{ id: 7, record: "B", index: 1 }] });
 
   assert.deepEqual(capturedRecords, ["A", "B", "C"], "the deleted record must be restored at its original index on failure");
   assert.equal(capturedError, "Cannot delete this record -- another record still references it through a relation field");
@@ -1686,35 +1686,35 @@ test("the exported EntityView renders a real Duplicate action (table and board v
   assert.match(entityViewJsx, /<button onClick=\{onDuplicate\}>Duplicate<\/button>/);
 });
 
-// Regression test: handleDuplicate/handleBulkDelete/handleMove each awaited
-// a real network call (createRecord/deleteRecord/updateRecord) with no
-// try/catch at all, unlike handleSubmit and handleImportFile right next to
-// them in this same file, and unlike the live-preview app's own
-// EntityPanel.tsx, where all three of these already wrap the same calls in
-// try/catch + setError. A rejected request here (a dropped connection, an
-// unexpected server error, a record already deleted by someone else)
-// became an unhandled promise rejection with zero visible feedback -- the
-// user's click just silently did nothing. Executes the real generated
-// handler functions (extracted from real codegen output, not
-// reimplemented) with a rejecting mock of the underlying API call and
-// asserts setError actually gets called with the rejection's message.
-// (handleDelete itself is deliberately NOT covered here: since round 194
-// it's an optimistic delete behind an undo window -- see the dedicated
-// undo-toast test below -- and the real deleteRecord call it eventually
-// makes, once the window closes, has no UI left to report a failure to,
+// Regression test: handleDuplicate/handleMove each awaited a real network
+// call (createRecord/updateRecord) with no try/catch at all, unlike
+// handleSubmit and handleImportFile right next to them in this same file,
+// and unlike the live-preview app's own EntityPanel.tsx, where both of
+// these already wrap the same calls in try/catch + setError. A rejected
+// request here (a dropped connection, an unexpected server error, a record
+// already deleted by someone else) became an unhandled promise rejection
+// with zero visible feedback -- the user's click just silently did
+// nothing. Executes the real generated handler functions (extracted from
+// real codegen output, not reimplemented) with a rejecting mock of the
+// underlying API call and asserts setError actually gets called with the
+// rejection's message.
+// (handleDelete/handleBulkDelete are deliberately NOT covered here: since
+// round 194/round 321 they're both optimistic deletes behind a shared undo
+// window -- see the dedicated undo-toast tests below -- and the real
+// deleteRecord call(s) they eventually make, once the window closes, have
+// no UI left to report a failure to directly from the handler itself,
 // exactly like the live preview's own commitPendingDelete.)
-test("the exported EntityView's handleDuplicate/handleBulkDelete/handleMove surface a failed request instead of silently swallowing it", async () => {
+test("the exported EntityView's handleDuplicate/handleMove surface a failed request instead of silently swallowing it", async () => {
   const entityViewJsx = generateExportFiles(project).find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
 
   const displayFieldHintsSrc = entityViewJsx.match(/const DISPLAY_FIELD_NAME_HINTS = \[[^\]]*\];\n/)?.[0];
   const pickDisplayFieldSrc = entityViewJsx.match(/export function pickDisplayField\(entity\) \{[\s\S]*?\n\}\n/)?.[0]?.replace("export ", "");
   const recordDisplayLabelSrc = entityViewJsx.match(/export function recordDisplayLabel\(entity, record\) \{[\s\S]*?\n\}\n/)?.[0]?.replace("export ", "");
   const handleDuplicateSrc = entityViewJsx.match(/async function handleDuplicate\(id\) \{[\s\S]*?\n  \}\n/)?.[0];
-  const handleBulkDeleteSrc = entityViewJsx.match(/async function handleBulkDelete\(\) \{[\s\S]*?\n  \}\n/)?.[0];
   const handleMoveSrc = entityViewJsx.match(/async function handleMove\(id, fieldName, value\) \{[\s\S]*?\n  \}\n/)?.[0];
   assert.ok(
-    displayFieldHintsSrc && pickDisplayFieldSrc && recordDisplayLabelSrc && handleDuplicateSrc && handleBulkDeleteSrc && handleMoveSrc,
-    "expected to find DISPLAY_FIELD_NAME_HINTS/pickDisplayField/recordDisplayLabel/handleDuplicate/handleBulkDelete/handleMove in generated output",
+    displayFieldHintsSrc && pickDisplayFieldSrc && recordDisplayLabelSrc && handleDuplicateSrc && handleMoveSrc,
+    "expected to find DISPLAY_FIELD_NAME_HINTS/pickDisplayField/recordDisplayLabel/handleDuplicate/handleMove in generated output",
   );
 
   const entity = project.spec.entities[0];
@@ -1762,74 +1762,219 @@ test("the exported EntityView's handleDuplicate/handleBulkDelete/handleMove surf
   }
 
   assert.equal(await runHandler(handleDuplicateSrc, (fn) => fn(1)), rejection.message, "handleDuplicate must call setError on failure");
-  assert.equal(await runHandler(handleBulkDeleteSrc, (fn) => fn()), rejection.message, "handleBulkDelete must call setError on failure");
   assert.equal(await runHandler(handleMoveSrc, (fn) => fn(1, "status", "Won")), rejection.message, "handleMove must call setError on failure");
 });
 
-// Regression test, separate from the one above: even after round 71 wrapped
-// handleBulkDelete in a try/catch, it still awaited a bare
-// Promise.all(ids.map(deleteRecord)) inside that try -- a single rejected
-// delete (a dropped connection, a record another tab already removed)
-// rejected the whole Promise.all immediately, so setSelectedIds(new Set())
-// and refresh() right after it never ran. Any records that DID delete
-// successfully stayed listed, and selected, in a now-stale table. Runs the
-// real generated handleBulkDelete with a mock deleteRecord that fails for
-// exactly one of three selected ids.
-test("the exported EntityView's handleBulkDelete refreshes and keeps only the ids that actually failed selected, instead of Promise.all's all-or-nothing hiding the deletes that succeeded", async () => {
-  const entityViewJsx = generateExportFiles(project).find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
-  const handleBulkDeleteSrc = entityViewJsx.match(/async function handleBulkDelete\(\) \{[\s\S]*?\n  \}\n/)?.[0];
-  assert.ok(handleBulkDeleteSrc, "expected to find handleBulkDelete in generated output");
+/**
+ * New in this round: bulk delete in the exported app had exactly the same
+ * gap round 320 fixed in the live preview -- window.confirm then every
+ * real DELETE fired immediately with zero recovery, while single-record
+ * delete (round 194's port of the live preview's own round-184 fix)
+ * already had a 5-second undo window right next to it. Mirrors
+ * apps/web/src/EntityPanel.test.ts's own real-DOM bulk-delete-undo tests
+ * exactly, against the real generated EntityView component (not a regex
+ * proxy): renders it, selects every row via the real checkboxes, clicks
+ * the real "Delete selected" button, and confirms every row disappears
+ * immediately with no real DELETE request fired while the undo window is
+ * open, one shared toast names the real count, and clicking Undo restores
+ * every row in its original order while genuinely cancelling every
+ * pending DELETE.
+ */
+test("the exported EntityView's bulk delete removes every selected row immediately and shows one Undo toast for the batch, and clicking Undo restores all of them without ever calling the real delete API", async (t) => {
+  const files = generateExportFiles(project);
+  const dir = writeGeneratedWebComponent(files);
+  const store = [
+    { id: 1, name: "Acme Corp", email: "a@acme.example", status: "New" },
+    { id: 2, name: "Globex", email: "b@globex.example", status: "Won" },
+    { id: 3, name: "Initech", email: "c@initech.example", status: "Lost" },
+  ];
+  const deletedIds: number[] = [];
+  const originalFetch = globalThis.fetch;
+  const originalConfirm = globalThis.window?.confirm;
+  globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
+    const method = init?.method ?? "GET";
+    if (method === "GET" && input === "/api/Customer") {
+      return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    const deleteMatch = /^\/api\/Customer\/(\d+)$/.exec(input);
+    if (method === "DELETE" && deleteMatch) {
+      deletedIds.push(Number(deleteMatch[1]));
+      return new Response(null, { status: 204 });
+    }
+    throw new Error(`unexpected request ${method} ${input}`);
+  }) as typeof fetch;
+  (globalThis.window as unknown as { confirm: () => boolean }).confirm = () => true;
 
-  let capturedError: string | undefined;
-  let capturedSelectedIds: Set<number> | undefined;
-  let refreshCalled = 0;
-  const attemptedIds: number[] = [];
+  try {
+    await withRealLocalStorage(async () => {
+      const { EntityView } = await import(path.join(dir, "web", "src", "components", "EntityView.jsx"));
+      const customerEntity = project.spec.entities.find((e) => e.name === "Customer")!;
+      const props = {
+        entity: customerEntity,
+        highlightRecordId: null,
+        onHighlightHandled: () => {},
+        onJumpToRecord: () => {},
+        onRecordCountChange: () => {},
+      };
 
-  const fn = new Function(
-    "window",
-    "entity",
-    "selectedIds",
-    "setSelectedIds",
-    "setError",
-    "deleteRecord",
-    "refresh",
-    `${handleBulkDeleteSrc}\nreturn handleBulkDelete;`,
-  )(
-    { confirm: () => true },
-    { name: "Customer" },
-    new Set([1, 2, 3]),
-    (next: Set<number>) => {
-      capturedSelectedIds = next;
-    },
-    (msg: string) => {
-      capturedError = msg;
-    },
-    async (_entityName: string, id: number) => {
-      attemptedIds.push(id);
-      if (id === 2) throw new Error("record 2 network error");
-    },
-    async () => {
-      refreshCalled += 1;
-    },
-  );
-  await fn();
+      const { container } = render(React.createElement(EntityView, props));
+      for (let i = 0; i < 40; i++) {
+        if (container.querySelectorAll("tbody tr").length === 3) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+      assert.equal(container.querySelectorAll("tbody tr").length, 3, "expected all 3 records to have loaded");
 
-  assert.deepEqual(
-    attemptedIds.slice().sort(),
-    [1, 2, 3],
-    "must attempt every selected id, not stop at the first failure",
-  );
-  assert.deepEqual(
-    [...capturedSelectedIds!].sort(),
-    [2],
-    "only the id that actually failed should remain selected -- the two that succeeded must be cleared",
-  );
-  assert.equal(capturedError, "1 of 3 records could not be deleted.");
-  assert.equal(
-    refreshCalled,
-    1,
-    "refresh() must still run so the table reflects the records that WERE successfully deleted, even on a partial failure",
-  );
+      // Enabled only now, AFTER the initial render/fetch has already
+      // settled -- mocking it any earlier stalls the very first render
+      // before this test gets anywhere near its own delete flow (same
+      // lesson as apps/web/src/EntityPanel.test.ts's own delete-undo tests).
+      t.mock.timers.enable({ apis: ["setTimeout"] });
+
+      for (const checkbox of container.querySelectorAll('td.select-col input[type="checkbox"]')) {
+        await act(async () => {
+          fireEvent.click(checkbox);
+        });
+      }
+      const bulkDeleteButton = Array.from(container.querySelectorAll("button")).find((b) => b.textContent?.includes("Delete selected"));
+      assert.ok(bulkDeleteButton, "expected a real 'Delete selected' button once rows are selected");
+
+      await act(async () => {
+        fireEvent.click(bulkDeleteButton!);
+      });
+
+      assert.equal(container.querySelectorAll("tbody tr").length, 0, "all 3 selected rows must disappear immediately");
+      assert.equal(deletedIds.length, 0, "no real DELETE request must have fired yet -- still inside the undo window");
+
+      const toast = container.querySelector(".entity-undo-toast");
+      assert.ok(toast, "expected one Undo toast for the whole batch");
+      assert.match(toast!.textContent ?? "", /3/, "the toast must name the real number of deleted records");
+
+      await act(async () => {
+        fireEvent.click(toast!.querySelector("button") as HTMLButtonElement);
+      });
+
+      assert.equal(container.querySelectorAll("tbody tr").length, 3, "all 3 rows must come back once undone");
+      assert.equal(container.querySelector(".entity-undo-toast"), null, "the toast must disappear once undone");
+      const namesAfterUndo = Array.from(container.querySelectorAll("tbody tr")).map((r) => r.textContent ?? "");
+      assert.ok(
+        /Acme/.test(namesAfterUndo[0]) && /Globex/.test(namesAfterUndo[1]) && /Initech/.test(namesAfterUndo[2]),
+        "all 3 rows must come back in their original order",
+      );
+
+      await act(async () => {
+        t.mock.timers.tick(10_000);
+      });
+      assert.equal(deletedIds.length, 0, "even long after the undo window would have elapsed, undoing must have cancelled every pending delete");
+    });
+  } finally {
+    t.mock.timers.reset();
+    globalThis.fetch = originalFetch;
+    if (originalConfirm) (globalThis.window as unknown as { confirm: () => boolean }).confirm = originalConfirm;
+    cleanup();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
+ * The other half, mirroring the live preview's own equivalent test: NOT
+ * clicking Undo must commit every real DELETE in the batch once the undo
+ * window actually elapses, including a partial failure restoring only the
+ * record whose real delete actually failed and surfacing the translated
+ * partial-failure message -- the same Promise.allSettled resilience
+ * handleBulkDelete used to have on its own, now living inside the shared
+ * commitPendingDelete instead.
+ */
+test("the exported EntityView's pending bulk delete commits every real delete once the undo window elapses, restoring only the one whose delete actually failed", async (t) => {
+  const files = generateExportFiles(project);
+  const dir = writeGeneratedWebComponent(files);
+  const store = [
+    { id: 1, name: "Acme Corp", email: "a@acme.example", status: "New" },
+    { id: 2, name: "Globex", email: "b@globex.example", status: "Won" },
+  ];
+  const deletedIds: number[] = [];
+  const originalFetch = globalThis.fetch;
+  const originalConfirm = globalThis.window?.confirm;
+  globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
+    const method = init?.method ?? "GET";
+    if (method === "GET" && input === "/api/Customer") {
+      return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    if (method === "DELETE" && input === "/api/Customer/1") {
+      deletedIds.push(1);
+      return new Response(null, { status: 204 });
+    }
+    if (method === "DELETE" && input === "/api/Customer/2") {
+      return new Response(JSON.stringify({ error: "another record still refers to it" }), {
+        status: 409,
+        headers: { "content-type": "application/json" },
+      });
+    }
+    throw new Error(`unexpected request ${method} ${input}`);
+  }) as typeof fetch;
+  (globalThis.window as unknown as { confirm: () => boolean }).confirm = () => true;
+
+  try {
+    await withRealLocalStorage(async () => {
+      const { EntityView } = await import(path.join(dir, "web", "src", "components", "EntityView.jsx"));
+      const customerEntity = project.spec.entities.find((e) => e.name === "Customer")!;
+      const props = {
+        entity: customerEntity,
+        highlightRecordId: null,
+        onHighlightHandled: () => {},
+        onJumpToRecord: () => {},
+        onRecordCountChange: () => {},
+      };
+
+      const { container } = render(React.createElement(EntityView, props));
+      for (let i = 0; i < 40; i++) {
+        if (container.querySelectorAll("tbody tr").length === 2) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+      assert.equal(container.querySelectorAll("tbody tr").length, 2, "expected both records to have loaded");
+
+      t.mock.timers.enable({ apis: ["setTimeout"] });
+
+      for (const checkbox of container.querySelectorAll('td.select-col input[type="checkbox"]')) {
+        await act(async () => {
+          fireEvent.click(checkbox);
+        });
+      }
+      const bulkDeleteButton = Array.from(container.querySelectorAll("button")).find((b) => b.textContent?.includes("Delete selected"));
+      await act(async () => {
+        fireEvent.click(bulkDeleteButton!);
+      });
+
+      await act(async () => {
+        t.mock.timers.tick(5000);
+      });
+      t.mock.timers.reset();
+
+      for (let i = 0; i < 40; i++) {
+        if (container.querySelectorAll("tbody tr").length === 1) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+
+      assert.deepEqual(deletedIds, [1], "the record that succeeded must have been deleted for real");
+      assert.equal(container.querySelectorAll("tbody tr").length, 1, "only the record whose real delete failed must be restored");
+      assert.match(container.querySelector("tbody tr")?.textContent ?? "", /Globex/, "the restored row must be the one that actually failed");
+      assert.match(
+        container.querySelector(".error")?.textContent ?? "",
+        /1 of 2 records could not be deleted/,
+        "a partial failure must surface the translated partial-failure message naming the real counts",
+      );
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (originalConfirm) (globalThis.window as unknown as { confirm: () => boolean }).confirm = originalConfirm;
+    cleanup();
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 /**
@@ -2312,7 +2457,11 @@ test("the exported EntityView renders a real Undo toast after a single-record de
 
   assert.match(entityViewJsx, /const UNDO_WINDOW_MS = 5000;/);
   assert.match(entityViewJsx, /const \[pendingDelete, setPendingDelete\] = useState\(null\);/);
-  assert.match(entityViewJsx, /async function commitPendingDelete\(pending\) \{\s*try \{\s*await deleteRecord\(entity\.name, pending\.id\);/);
+  // commitPendingDelete now runs every pending entry's delete through
+  // Promise.allSettled -- round 321's generalization to a shared batch
+  // shape with handleBulkDelete, mirroring the live preview's own round
+  // 320 change exactly.
+  assert.match(entityViewJsx, /async function commitPendingDelete\(pending\) \{\s*const results = await Promise\.allSettled\(pending\.entries\.map\(\(e\) => deleteRecord\(entity\.name, e\.id\)\)\);/);
   assert.match(entityViewJsx, /function handleUndoDelete\(\) \{/);
   assert.match(entityViewJsx, /className="entity-undo-toast"/);
   assert.match(entityViewJsx, /onClick=\{handleUndoDelete\}/);
@@ -2324,13 +2473,51 @@ test("the exported EntityView renders a real Undo toast after a single-record de
   assert.match(entityViewJsx, /if \(pendingDeleteRef\.current\) \{\s*clearTimeout\(pendingDeleteRef\.current\.timeoutId\);\s*commitPendingDelete\(pendingDeleteRef\.current\);/);
   // The delete must actually go through the delayed-commit setTimeout, not
   // be committed for real immediately -- otherwise there'd be no undo
-  // window at all despite the toast being shown.
-  assert.match(entityViewJsx, /const timeoutId = setTimeout\(\(\) => \{\s*setPendingDelete\(\(current\) => \{\s*if \(current\?\.id !== id\) return current;\s*commitPendingDelete\(current\);\s*return null;\s*\}\);\s*\}, UNDO_WINDOW_MS\);/);
-  assert.match(entityViewJsx, /setPendingDelete\(\{ id, record, index, label, timeoutId \}\);/);
+  // window at all despite the toast being shown. The identity check now
+  // compares timeoutId (unique per call) rather than id, so it works
+  // uniformly for both the single-record and batch shapes.
+  assert.match(entityViewJsx, /const timeoutId = setTimeout\(\(\) => \{\s*setPendingDelete\(\(current\) => \{\s*if \(current\?\.timeoutId !== timeoutId\) return current;\s*commitPendingDelete\(current\);\s*return null;\s*\}\);\s*\}, UNDO_WINDOW_MS\);/);
+  assert.match(entityViewJsx, /setPendingDelete\(\{ entries: \[\{ id, record, index \}\], message: `Deleted "\$\{label\}"\. `, timeoutId \}\);/);
 
   const stylesCss = files.find((f) => f.path === "web/src/styles.css")!.content;
   assert.match(stylesCss, /\.entity-undo-toast/);
   assert.match(stylesCss, /\.link-button/);
+});
+
+/**
+ * New in this round: bulk delete now shares the exact same
+ * pendingDelete/commitPendingDelete machinery as single-record delete --
+ * confirms the generated source actually wires handleBulkDelete into the
+ * same batch shape (an array of entries, one shared toast message) rather
+ * than its old inline Promise.allSettled-plus-refresh() shape.
+ */
+test("the exported EntityView's handleBulkDelete is wired into the same batch pendingDelete machinery as handleDelete", () => {
+  const entityViewJsx = generateExportFiles(project).find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+
+  assert.match(entityViewJsx, /async function handleBulkDelete\(\) \{/);
+  assert.match(
+    entityViewJsx,
+    /if \(pendingDeleteRef\.current\) \{\s*clearTimeout\(pendingDeleteRef\.current\.timeoutId\);\s*commitPendingDelete\(pendingDeleteRef\.current\);\s*\}\s*\n\s*setError\(null\);\s*const idSet = new Set\(ids\);/,
+    "handleBulkDelete must commit any still-pending delete for real first, same as handleDelete",
+  );
+  assert.match(
+    entityViewJsx,
+    /setRecords\(\(prev\) => prev\.filter\(\(r\) => !idSet\.has\(r\.id\)\)\);\s*setSelectedIds\(new Set\(\)\);/,
+    "every selected row must be removed from view optimistically, all at once",
+  );
+  assert.match(
+    entityViewJsx,
+    /setPendingDelete\(\{ entries, message: `Deleted \$\{entries\.length\} records\. `, timeoutId \}\);/,
+    "the batch toast message must name the real entry count",
+  );
+
+  const handleBulkDeleteSrc = entityViewJsx.match(/async function handleBulkDelete\(\) \{[\s\S]*?\n  \}\n/)?.[0];
+  assert.ok(handleBulkDeleteSrc, "expected to find handleBulkDelete in generated output");
+  assert.doesNotMatch(
+    handleBulkDeleteSrc!,
+    /refresh\(\)/,
+    "handleBulkDelete must no longer call refresh() directly -- it's now optimistic, same as handleDelete, and relies on the shared undo-window machinery instead",
+  );
 });
 
 /**
