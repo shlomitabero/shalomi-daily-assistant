@@ -18843,6 +18843,78 @@ Full suite green: **1163 tests** (`@forge/shared` 13, `@forge/spec-engine`
 via `npm test` at the repo root, plus a clean
 `npm run build --workspace=@forge/api` (esbuild).
 
+### Round 313 — updateRecord/PATCH no longer re-validates every field on every partial update (third real data-integrity bug fix in a row)
+
+An Explore survey, again steered toward the same data-integrity family as
+rounds 311/312, found a third and structurally broader bug: `updateRecord`
+(the live backend, `packages/db/src/repository.ts`) and the exported app's
+generated PATCH route (`apps/api/src/codegen.ts`) both built
+`{ ...existing, ...data }` and then ran full validation (`coerceValue` /
+`coerce`) over **every** field on the entity, not just the ones the caller
+actually supplied in the request body.
+
+Real failure scenario: any refine that narrows an enum field's allowed
+values, or tightens a field from optional to required, left existing rows
+whose stored value for that field no longer satisfies the new definition.
+Before this fix, any future update to such a row -- even one touching a
+completely unrelated field, like an inline cell edit, a bulk field update,
+or a Kanban drag -- would re-validate the untouched, stale field too, throw,
+and fail the whole update, forever, with no way to fix it except editing
+the stale field itself through the full form. Unlike rounds 311/312 (which
+were specific to relation fields and foreign keys), this one applies to
+enum and required constraints on any field type, and it affects both the
+live backend and the exported standalone app -- the latter reachable via a
+hand-edited `data.sqlite` or a restored-from-backup file, both explicitly
+invited by the generated README's own text ("yours: read it, edit it,
+deploy it anywhere Node runs"). Verified first that the live app's primary
+full-edit-form path (`EntityPanel.tsx`'s `handleSubmit`) always sends the
+complete form state, confirming this fix only changes behavior for
+partial-update call sites and never weakens validation for a real user
+editing a record through the main form.
+
+Fix: both `updateRecord` and the generated PATCH handler now only
+re-coerce/validate a field when `Object.prototype.hasOwnProperty.call(data,
+field.name)` is true for that field; an untouched field keeps its
+already-stored raw value exactly as-is, never re-derived or re-validated
+against the entity's current definition.
+
+Tests: three new tests. Two in `repository.test.ts` -- the first inserts a
+`Customer` with `status: "New"`, narrows the entity's `status` enum to only
+allow `"Won"`, updates a different field (`name`) and confirms the stale
+`status` value survives untouched while an explicit attempt to set
+`status` to the still-invalid `"New"` still throws; the second tightens a
+`notes` field from optional to required after a row was created with it
+unset, and confirms updating an unrelated field doesn't re-require it. (The
+second test originally reused the module-level `Customer` fixture's `vip:
+boolean` field, but failed on the first run with `false !== null` --
+`rowToRecord`'s `Boolean(value)` coercion makes an unset boolean round-trip
+as `false`, not `null`, which never triggers `coerceValue`'s empty-check in
+the first place; fixed by switching the fixture to a plain `text` field,
+whose unset value genuinely reads back as `null`.) The third, in
+`codegen.test.ts`, boots a real `server.js`, creates a `Customer` through
+the real API, then opens a **second, concurrent `node:sqlite` connection**
+directly against the same `data.sqlite` file to simulate hand-edited or
+restored data (`UPDATE "Customer" SET status = 'Stale' WHERE id = ?`), and
+confirms a real PATCH of only the `name` field returns `200` and preserves
+`status: "Stale"`, while an explicit PATCH setting `status` to an invalid
+value still returns `400`.
+
+Deliberate-break-and-restore, done for both files: reverted both fixes
+back to the old `merged`-object code. The `repository.test.ts` test failed
+exactly as expected; the `codegen.test.ts` server-boot test failed with the
+precise, telling assertion `400 !== 200` ("updating an unrelated field must
+not fail because of a different, untouched field's stale value"). Restored
+both from verified pre-break backups with confirmed byte-identical `diff`s,
+then re-ran every affected suite in full: `@forge/db` 96/96, `@forge/api`
+321/321, plus `@forge/shared` 13/13, `@forge/spec-engine` 85/85, and
+`@forge/web` 651/651 (unchanged, confirmed anyway per the established
+process), and a clean `npm run build --workspace=@forge/api`.
+
+Full suite green: **1167 tests** (`@forge/shared` 13, `@forge/spec-engine`
+85, `@forge/web` 651 unchanged; `@forge/db` 94 → 96, `@forge/api` 320 →
+321) via `npm test` at the repo root, plus a clean
+`npm run build --workspace=@forge/api` (esbuild).
+
 ## Phase 4
 
 - Template/agent marketplace
