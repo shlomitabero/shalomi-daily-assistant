@@ -1128,6 +1128,55 @@ test("EntityPanel marks the specific board card with a move-error indicator when
   });
 });
 
+/**
+ * New in this round: onRecordCountChange exists so the entity-tabs strip
+ * (App.tsx) can show a live record-count badge without threading a
+ * callback through every individual mutation handler -- it's driven by a
+ * single effect keyed on `records.length`, so it should fire once for the
+ * initial empty state, once more once the real records load, and again
+ * whenever a mutation (here, a delete) actually changes that count.
+ */
+test("EntityPanel's onRecordCountChange reports the real record count on load and again after a delete changes it", async () => {
+  await withJsdom(async () => {
+    const store: EntityRecord[] = [
+      { id: 1, name: "Acme Corp", status: "new" },
+      { id: 2, name: "Globex", status: "won" },
+    ];
+    const originalFetch = globalThis.fetch;
+    const originalConfirm = globalThis.window.confirm;
+    globalThis.fetch = mockRecordsFetch(store) as typeof fetch;
+    globalThis.window.confirm = (() => true) as typeof window.confirm;
+    const calls: [string, number][] = [];
+    try {
+      renderEntityPanel({ onRecordCountChange: (entityName: string, count: number) => calls.push([entityName, count]) });
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 2);
+      // The passive effect driving this callback runs on the next tick after
+      // the records-loaded render commits (it fires outside any user-event
+      // act() wrapper, unlike the click below) -- wait on the callback's own
+      // output, not just the DOM, so this isn't racing that one extra tick.
+      await waitForCondition(() => calls.at(-1)?.[1] === 2);
+
+      assert.deepEqual(
+        calls.at(-1),
+        ["Deal", 2],
+        "once the real records have loaded, the callback must report the actual count -- not the initial empty state",
+      );
+
+      fireEvent.click(document.querySelectorAll(".danger")[0] as HTMLButtonElement);
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 1);
+
+      assert.deepEqual(
+        calls.at(-1),
+        ["Deal", 1],
+        "deleting a record must report the new, decremented count -- this is the same `records` state every mutation already funnels through",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+      globalThis.window.confirm = originalConfirm;
+    }
+  });
+});
+
 const APPOINTMENT_ENTITY: Entity = {
   name: "Appointment",
   label: "Appointment",

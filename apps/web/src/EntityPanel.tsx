@@ -741,6 +741,7 @@ export function EntityPanel({
   onHighlightHandled,
   onJumpToRecord,
   onSendWhatsApp,
+  onRecordCountChange,
 }: {
   projectId: string;
   entity: Entity;
@@ -754,6 +755,8 @@ export function EntityPanel({
   onJumpToRecord?: (targetEntity: string, recordId: number) => void;
   /** Called with a record's raw phone-field value when the row's "Send WhatsApp" action is clicked, so the caller can open the WhatsApp panel with that number prefilled -- the reverse direction of onJumpToRecord, which already exists for an inbound WhatsApp message resolving to a record. */
   onSendWhatsApp?: (phoneNumber: string) => void;
+  /** Called whenever this entity's own record count changes (initial load, create, delete, bulk-delete, duplicate, import, undo...), so the caller can keep an entity-tab record-count badge in sync without threading a callback through every individual mutation handler -- `records` is already the one state array every mutation funnels through. */
+  onRecordCountChange?: (entityName: string, count: number) => void;
 }) {
   const { t, lang } = useTranslation();
   const [records, setRecords] = useState<EntityRecord[]>([]);
@@ -845,6 +848,21 @@ export function EntityPanel({
       cancelled = true;
     };
   }, [projectId, relationTargets]);
+
+  /**
+   * Reports this entity's own record count back to the caller whenever
+   * `records` changes -- every mutation (create/delete/bulk-delete/
+   * duplicate/import/undo) already funnels through `setRecords`, so this
+   * one effect covers all of them without a separate call site per
+   * mutation. Same "report back via an optional callback, deliberately
+   * left out of the deps array since it may be a fresh inline arrow
+   * function on every parent render" idiom as onHighlightHandled's own
+   * effect further down.
+   */
+  useEffect(() => {
+    onRecordCountChange?.(entity.name, records.length);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [entity.name, records.length]);
 
   async function refresh() {
     const requestId = ++refreshRequestId.current;

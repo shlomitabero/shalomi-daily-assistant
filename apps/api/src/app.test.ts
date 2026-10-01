@@ -3168,6 +3168,44 @@ test("business twin reports real counts and updates as records are added", async
   });
 });
 
+test("entity-counts reports a real per-entity count for every entity, and updates as records are added", async () => {
+  await withServer(async (baseUrl) => {
+    const token = await signup(baseUrl);
+    const createRes = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ description: "A CRM with customers and deals." }),
+    });
+    const { project } = (await createRes.json()) as { project: { id: string } };
+
+    const tooEarly = await fetch(`${baseUrl}/api/projects/${project.id}/entity-counts`, { headers: authHeaders(token) });
+    assert.equal(tooEarly.status, 409);
+    assert.equal(((await tooEarly.json()) as { code?: string }).code, "BUILD_REQUIRED");
+
+    const buildRes = await fetch(`${baseUrl}/api/projects/${project.id}/build`, {
+      method: "POST",
+      headers: authHeaders(token),
+    });
+    await collectSSE(buildRes);
+
+    const countsRes = await fetch(`${baseUrl}/api/projects/${project.id}/entity-counts`, { headers: authHeaders(token) });
+    assert.equal(countsRes.status, 200);
+    const { counts } = (await countsRes.json()) as { counts: Record<string, number> };
+    // Seed Data agent already populated the new tables during build.
+    assert.ok(counts.Customer > 0);
+
+    await fetch(`${baseUrl}/api/projects/${project.id}/entities/Customer`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ name: "Extra Customer", status: "New" }),
+    });
+
+    const countsRes2 = await fetch(`${baseUrl}/api/projects/${project.id}/entity-counts`, { headers: authHeaders(token) });
+    const { counts: counts2 } = (await countsRes2.json()) as { counts: Record<string, number> };
+    assert.equal(counts2.Customer, counts.Customer + 1);
+  });
+});
+
 test("answering an open question (free text, not just a suggested option) actually changes the spec used to build", async () => {
   await withServer(async (baseUrl) => {
     const token = await signup(baseUrl);

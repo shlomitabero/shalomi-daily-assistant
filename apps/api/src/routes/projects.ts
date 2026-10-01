@@ -28,6 +28,7 @@ import {
   listCollaborators,
   findUserByEmail,
   findUserById,
+  countRecords,
   type ForgeDatabase,
 } from "@forge/db";
 import type { SpecProvider } from "@forge/spec-engine";
@@ -850,6 +851,28 @@ export function createProjectsRouter(db: ForgeDatabase, provider: SpecProvider |
         throw new HttpError(409, "Build the project before viewing its Business Twin", "BUILD_REQUIRED");
       }
       res.json({ twin: computeBusinessTwin(db, project) });
+    }),
+  );
+
+  /**
+   * One cheap COUNT(*) per entity, so the entity-tabs strip can show how
+   * much data lives in each tab without the user clicking into every one --
+   * the only other place this information already existed (Business Twin)
+   * sits an extra click away behind its own panel, not at a glance where
+   * attention already is.
+   */
+  router.get(
+    "/projects/:id/entity-counts",
+    asyncRoute(async (req, res) => {
+      const project = requireProjectAccess(db, req.params.id, req.userId!);
+      if (project.status !== "built") {
+        throw new HttpError(409, "Build the project before viewing entity counts", "BUILD_REQUIRED");
+      }
+      const counts: Record<string, number> = {};
+      for (const entity of project.spec.entities) {
+        counts[entity.name] = countRecords(db, project.id, entity);
+      }
+      res.json({ counts });
     }),
   );
 

@@ -838,6 +838,23 @@ button.danger:hover:not(:disabled) {
   background: var(--accent-soft);
 }
 
+.tab-count {
+  display: inline-block;
+  margin-inline-start: 6px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  font-size: 11.5px;
+  font-weight: 700;
+  line-height: 1.5;
+  background: var(--steel-soft);
+  color: var(--steel);
+}
+
+.tab-active .tab-count {
+  background: rgba(255, 255, 255, 0.25);
+  color: inherit;
+}
+
 .entity-panel {
   background: var(--surface-raised);
   border: 1px solid var(--border);

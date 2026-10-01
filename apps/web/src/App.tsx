@@ -9,6 +9,7 @@ import {
   deleteProject,
   enhanceIdea,
   exportProject,
+  getEntityCounts,
   getToken,
   getWhatsAppStatus,
   listProjects,
@@ -361,6 +362,12 @@ function AppContent() {
   const [enhanceBusy, setEnhanceBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [activeEntity, setActiveEntity] = useState<string | null>(null);
+  // One cheap COUNT(*) per entity, shown as a badge on each entity tab --
+  // keyed by entity name so switching tabs never needs to re-fetch. Fetched
+  // once per built project; the active tab's own count is then kept live
+  // via EntityPanel's onRecordCountChange (every mutation it makes already
+  // funnels through its own `records` state).
+  const [entityCounts, setEntityCounts] = useState<Record<string, number>>({});
   const [selectedAnswers, setSelectedAnswers] = useState<Record<string, string>>({});
   const [additionalRequest, setAdditionalRequest] = useState("");
   const [refineText, setRefineText] = useState("");
@@ -666,6 +673,28 @@ function AppContent() {
   useEffect(() => {
     document.title = formatDocumentTitle(project?.name ?? null);
   }, [project]);
+
+  /**
+   * Fetches every entity's record count once per built project, for the
+   * entity-tabs badges -- a single cheap request instead of one per tab.
+   * Reset to empty first so a just-opened project never briefly shows the
+   * PREVIOUS project's stale counts while this request is in flight.
+   */
+  useEffect(() => {
+    setEntityCounts({});
+    if (project?.status !== "built") return;
+    let cancelled = false;
+    getEntityCounts(project.id)
+      .then(({ counts }) => {
+        if (!cancelled) setEntityCounts(counts);
+      })
+      .catch(() => {
+        /* Tab badges are a nice-to-have -- a failed fetch here shouldn't surface its own error banner. */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [project?.id, project?.status]);
 
   function openExistingProject(p: Project) {
     setProject(p);
@@ -1557,6 +1586,11 @@ function AppContent() {
                     onClick={() => setActiveEntity(entity.name)}
                   >
                     {entity.label ?? entity.name}
+                    {entityCounts[entity.name] != null && (
+                      <span className="tab-count" aria-label={t("entity.tab.recordCount", { count: String(entityCounts[entity.name]) })}>
+                        {entityCounts[entity.name]}
+                      </span>
+                    )}
                   </button>
                 ))}
               </nav>
@@ -1579,6 +1613,9 @@ function AppContent() {
                       setWhatsappPrefillTo(phoneNumber);
                       setShowWhatsApp(true);
                     }}
+                    onRecordCountChange={(entityName, count) =>
+                      setEntityCounts((prev) => (prev[entityName] === count ? prev : { ...prev, [entityName]: count }))
+                    }
                   />
                 ))}
             </div>

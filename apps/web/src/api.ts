@@ -449,6 +449,10 @@ export function getBusinessTwin(projectId: string): Promise<{ twin: BusinessTwin
   return request(`/projects/${projectId}/twin`);
 }
 
+export function getEntityCounts(projectId: string): Promise<{ counts: Record<string, number> }> {
+  return request(`/projects/${projectId}/entity-counts`);
+}
+
 export function listCheckpoints(projectId: string): Promise<{ checkpoints: Checkpoint[] }> {
   return request(`/projects/${projectId}/checkpoints`);
 }
