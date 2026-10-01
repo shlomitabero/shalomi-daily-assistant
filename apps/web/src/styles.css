@@ -2197,6 +2197,17 @@ button.sort-header:hover:not(:disabled) {
   margin: 12px 0 0;
 }
 
+.whatsapp-log-search-recent {
+  margin-top: 8px;
+}
+
+.whatsapp-log-search-recent-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 6px;
+}
+
 .whatsapp-log-filters .whatsapp-log-search,
 .history-filters .history-search {
   margin: 0;

@@ -834,6 +834,92 @@ test("WhatsAppPanel's recent-number chip has a working per-number remove button"
 });
 
 /**
+ * New in this round: the message log's own search box (shown once a
+ * project has more than 5 messages) was the last live-filter-as-you-type
+ * search box in the app with zero memory of past queries -- Global
+ * Search, Time Machine, the home screen's project search (round 316),
+ * and the per-entity table search (round 318) all already remember
+ * recent queries the same way. Exercises the full real wiring: typing a
+ * query and pressing Enter persists it, the chip row only shows while
+ * the box is empty, clicking a chip refills the search box, and the
+ * per-chip remove button drops just that one entry.
+ */
+test("WhatsAppPanel's log search box remembers a query on Enter, shows it as a chip once the box is empty, and a chip click refills the search", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    const messages: WhatsAppMessageLogEntry[] = Array.from({ length: 6 }, (_, i) => ({
+      id: `m${i}`,
+      direction: "in",
+      fromNumber: "972521112233",
+      toNumber: "972501234567",
+      body: `Message number ${i}`,
+      matchedLabel: null,
+      matchedEntityName: null,
+      matchedRecordId: null,
+      status: "received",
+      createdAt: new Date().toISOString(),
+    }));
+    globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/integrations/whatsapp/status") {
+        return new Response(
+          JSON.stringify({ status: "connected", phoneNumber: "972501234567", qrDataUrl: null, error: null }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      if (method === "GET" && input === "/api/projects/proj1/integrations/whatsapp/messages") {
+        return new Response(JSON.stringify({ messages }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+    try {
+      render(
+        React.createElement(
+          ThemeProvider,
+          null,
+          React.createElement(LanguageProvider, null, React.createElement(WhatsAppPanel, { projectId: "proj1", projectName: "Test Project", onClose: () => {}, onJumpToEntity: () => {}, onJumpToRecord: () => {} })),
+        ),
+      );
+      await waitForCondition(() => document.querySelector(".whatsapp-log-search") !== null);
+
+      const searchInput = document.querySelector(".whatsapp-log-search") as HTMLInputElement;
+      assert.equal(document.querySelector(".whatsapp-log-search-recent"), null, "no recent-searches row before anything's ever been searched");
+
+      fireEvent.change(searchInput, { target: { value: "number 3" } });
+      assert.equal(
+        document.querySelector(".whatsapp-log-search-recent"),
+        null,
+        "the chip row must stay hidden while the box still has text in it",
+      );
+
+      fireEvent.keyDown(searchInput, { key: "Enter" });
+      fireEvent.change(searchInput, { target: { value: "" } });
+      await waitForCondition(() => document.querySelector(".whatsapp-log-search-recent") !== null);
+
+      let chips = Array.from(document.querySelectorAll(".whatsapp-log-search-recent .chip-text")) as HTMLButtonElement[];
+      assert.deepEqual(
+        chips.map((c) => c.textContent),
+        ["number 3"],
+        "the committed query must appear as a chip once the box is empty again",
+      );
+
+      fireEvent.click(chips[0]);
+      assert.equal(searchInput.value, "number 3", "clicking the chip must refill the search box with that query");
+
+      fireEvent.change(searchInput, { target: { value: "" } });
+      await waitForCondition(() => document.querySelector(".whatsapp-log-search-recent .chip-remove") !== null);
+      fireEvent.click(document.querySelector(".whatsapp-log-search-recent .chip-remove") as HTMLButtonElement);
+      await waitForCondition(() => document.querySelector(".whatsapp-log-search-recent") === null);
+
+      chips = Array.from(document.querySelectorAll(".whatsapp-log-search-recent .chip-text")) as HTMLButtonElement[];
+      assert.equal(chips.length, 0, "removing the only chip must clear the whole recent-searches row");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * New in this round: each message log row shows the real `createdAt` the
  * server actually recorded for it -- the type has always carried this
  * field (see api.ts's WhatsAppMessageLogEntry), but the row markup never

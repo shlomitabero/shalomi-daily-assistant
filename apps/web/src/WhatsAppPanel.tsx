@@ -28,6 +28,12 @@ import {
   removeRecentWhatsAppNumber,
 } from "./whatsappRecentNumbers.js";
 import { getWhatsAppLogFilter, setWhatsAppLogFilter as persistWhatsAppLogFilter } from "./whatsappLogFilter.js";
+import {
+  addWhatsAppLogRecentSearch,
+  clearWhatsAppLogRecentSearches,
+  getWhatsAppLogRecentSearches,
+  removeWhatsAppLogRecentSearch,
+} from "./whatsappLogRecentSearches.js";
 import { setWhatsAppLastSeenId } from "./whatsappUnread.js";
 
 /**
@@ -124,6 +130,12 @@ export function WhatsAppPanel({
   const [hasMoreMessages, setHasMoreMessages] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
   const [search, setSearch] = useState("");
+  // Lazy initializer, same shape as recentNumbers/directionFilter below --
+  // this panel unmounts entirely on close (see App.tsx's
+  // `{showWhatsApp && <WhatsAppPanel .../>}`), so a fresh mount always
+  // re-reads the real persisted list for this project rather than needing
+  // a separate load effect.
+  const [logRecentSearches, setLogRecentSearches] = useState<string[]>(() => getWhatsAppLogRecentSearches(projectId));
   // Lazy initializer, same shape as recentNumbers just above -- this panel
   // unmounts entirely on close (see App.tsx's `{showWhatsApp && <WhatsAppPanel .../>}`),
   // so a fresh mount always re-reads the real persisted choice for this
@@ -395,6 +407,29 @@ export function WhatsAppPanel({
     setRecentNumbers([]);
   }
 
+  /**
+   * Persists the log search box's current value once the user signals
+   * they're "done" by pressing Enter -- same reasoning as App.tsx's own
+   * handleProjectSearchKeyDown (round 316) and EntityPanel.tsx's own
+   * handleSearchKeyDown (round 318): a live filter-as-you-type box has no
+   * submit button, so Enter is the closest thing to a commit signal.
+   */
+  function handleLogSearchKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
+    if (e.key === "Enter" && search.trim()) {
+      setLogRecentSearches(addWhatsAppLogRecentSearch(projectId, search));
+    }
+  }
+  function handleRecentLogSearchClick(query: string) {
+    setSearch(query);
+  }
+  function handleRemoveRecentLogSearch(query: string) {
+    setLogRecentSearches(removeWhatsAppLogRecentSearch(projectId, query));
+  }
+  function handleClearRecentLogSearches() {
+    clearWhatsAppLogRecentSearches(projectId);
+    setLogRecentSearches([]);
+  }
+
   async function handleRetry(m: WhatsAppMessageLogEntry) {
     setRetryingId(m.id);
     setRetryError(null);
@@ -657,6 +692,7 @@ export function WhatsAppPanel({
                 aria-label={t("whatsapp.log.search.placeholder")}
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
+                onKeyDown={handleLogSearchKeyDown}
               />
               <select
                 className="whatsapp-log-direction-filter"
@@ -669,6 +705,34 @@ export function WhatsAppPanel({
                 <option value="out">{t("whatsapp.log.filter.outgoing")}</option>
                 <option value="failed">{t("whatsapp.log.filter.failed")}</option>
               </select>
+            </div>
+          )}
+          {messages.length > SEARCH_THRESHOLD && !search.trim() && logRecentSearches.length > 0 && (
+            <div className="whatsapp-log-search-recent">
+              <div className="whatsapp-log-search-recent-header">
+                <span className="muted small">{t("whatsapp.log.search.recent.heading")}</span>
+                <button type="button" className="link-button small" onClick={handleClearRecentLogSearches}>
+                  {t("whatsapp.log.search.recent.clear")}
+                </button>
+              </div>
+              <div className="chips">
+                {logRecentSearches.map((q) => (
+                  <span className="chip chip-removable" key={q}>
+                    <button type="button" className="chip-text" onClick={() => handleRecentLogSearchClick(q)}>
+                      {q}
+                    </button>
+                    <button
+                      type="button"
+                      className="chip-remove"
+                      title={t("whatsapp.log.search.recent.remove", { query: q })}
+                      aria-label={t("whatsapp.log.search.recent.remove", { query: q })}
+                      onClick={() => handleRemoveRecentLogSearch(q)}
+                    >
+                      ×
+                    </button>
+                  </span>
+                ))}
+              </div>
             </div>
           )}
           {messages.length === 0 ? (
