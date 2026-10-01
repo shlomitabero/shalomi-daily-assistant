@@ -18915,6 +18915,93 @@ Full suite green: **1167 tests** (`@forge/shared` 13, `@forge/spec-engine`
 321) via `npm test` at the repo root, plus a clean
 `npm run build --workspace=@forge/api` (esbuild).
 
+### Round 314 — Exported app's Global Search was crashing on every single open since round 301 (critical bug fix), plus Copy/Download results
+
+An Explore survey, steered toward a real visible feature after three
+bug-fix rounds in a row (311-313), recommended porting the live preview's
+Global Search Copy/Download buttons to the exported app's own GlobalSearch
+component (`apps/api/src/codegen.ts`'s `renderGlobalSearchJsx`) as a
+genuine parity gap. While reading that component to implement it, found
+something far more serious sitting right next to it: round 301 had added a
+`useEffect` call (to scroll a keyboard-highlighted result group into view)
+but never added `useEffect` to the component's own `import { useRef,
+useState } from "react"` line. Since that `useEffect` call is
+**unconditional** in the component body -- it runs on every render, not
+only when a result is selected -- this meant the exported app's entire
+Global Search feature has crashed with `ReferenceError: useEffect is not
+defined` the instant it was ever opened, in every single exported app,
+every time, since round 301. Every prior test of this component either
+regex-matched the generated source text or drove it through a real spawned
+HTTP server -- none of them ever actually executed the component's own
+React code in a real renderer, so nothing caught it. Confirmed
+independently with a standalone script before touching any code:
+reverting just the import line reproduces the exact crash, with React's
+own stack trace pointing straight at the `GlobalSearch` function.
+
+Fix: added `useEffect` to the import line -- a one-word change. Verified
+with a brand-new testing technique for this codebase: a real `jsdom` +
+`@testing-library/react` render of the *actual* generated `GlobalSearch.jsx`
+(dynamically imported from a temp directory with the repo's real
+`node_modules` symlinked in, matching the file layout `web/src/
+components/GlobalSearch.jsx` expects for its own `../api.js` and
+`./EntityView.jsx` imports) -- not a regex proxy, not an HTTP-only check,
+an actual React render of the exact generated component. This required a
+new `apps/api/src/jsdomWarmup.ts` (copied from `apps/web/src/
+jsdomWarmup.ts`, which apps/api has no cross-package import path to reuse
+directly) that primes `react-dom`'s one-time `isInputEventSupported` check
+before `react-dom`'s first module evaluation -- and, non-obviously, this
+had to be its own separately-imported file rather than inline code written
+between two `import` statements in `codegen.test.ts`, since ES module
+semantics resolve and fully evaluate *every* static import in a file
+before *any* of that file's own top-level body code runs, regardless of
+where such inline code is textually positioned relative to those imports.
+(First attempt at the warmup, written inline, silently didn't work for
+exactly this reason -- caught only because the Copy/Download test that
+needed real typed input started failing with jsdom's known
+`activeElement.attachEvent is not a function` IE-polyfill-path symptom,
+which `apps/web/src/jsdomWarmup.ts`'s own doc comment already documents as
+the signature of this exact ordering mistake.)
+
+While already inside this component for the crash fix, also added the
+Copy/Download feature Explore recommended: a new `formatGlobalSearchReport`
+pure function (the same plain-text report shape the live preview's own
+`searchReport.ts` produces) plus `copyStatus` state and `handleCopy`/
+`handleDownload` handlers, with two new buttons in the search header
+(`.search-header-actions`) that only render once real results exist --
+mirroring `apps/web/src/GlobalSearchPanel.tsx`'s own Copy/Download feature
+exactly, including the 2-second "Copied!" confirmation that reverts via a
+`useEffect`+`setTimeout`.
+
+Tests: two new real-DOM tests in `codegen.test.ts`, both against the
+literal generated `GlobalSearch.jsx` (not a `new Function` extraction or a
+regex check): one mounts the component with a mocked empty-records `fetch`
+and asserts it renders its heading instead of throwing; the other performs
+a real search (mocked `fetch` returning one matching record), asserts the
+Copy/Download buttons are absent before any search and present once real
+results exist, clicks Copy with a stubbed `navigator.clipboard`, and
+confirms the clipboard received the real formatted report (containing both
+the query and the actual matched record) rather than a placeholder, with
+the button label reverting to "Copy" after the real 2-second delay (driven
+via `node:test`'s own mock timers, same technique
+`GlobalSearchPanel.test.ts` already uses for the identical live-app test).
+
+Deliberate-break-and-restore, done twice (one break per fix, since they're
+independently revertible within the same function): reverting just the
+`useEffect` import reproduced the exact `ReferenceError: useEffect is not
+defined` crash in the new mount test; separately, removing the two new
+buttons failed the Copy/Download test with the precise `expected a Copy
+button once real results exist` assertion. Restored from a verified
+pre-break backup with a confirmed byte-identical `diff` both times, then
+re-ran every workspace: `@forge/shared` 13/13, `@forge/spec-engine` 85/85,
+`@forge/db` 96/96, `@forge/api` 321 → 323, `@forge/web` 651/651 (last
+three unchanged or already covered, confirmed anyway per the established
+process), plus a clean `npm run build --workspace=@forge/api`.
+
+Full suite green: **1168 tests** (`@forge/shared` 13, `@forge/spec-engine`
+85, `@forge/db` 96, `@forge/web` 651 unchanged; `@forge/api` 321 → 323)
+via `npm test` at the repo root, plus a clean
+`npm run build --workspace=@forge/api` (esbuild).
+
 ## Phase 4
 
 - Template/agent marketplace
