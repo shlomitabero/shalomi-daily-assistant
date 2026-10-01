@@ -411,6 +411,42 @@ test("the exported EntityView's table toolbar has one filter dropdown per qualif
 });
 
 /**
+ * New in this round: table-grouping (isGroupableField/groupRecordsByField)
+ * existed in the live preview since round 219 but was never ported here --
+ * confirmed absent via grep before this round. A real user who downloads
+ * their app loses the ability to cluster the table by an enum/boolean
+ * field the moment they leave the live preview. Ported as a scoped base
+ * feature (the group-by dropdown + grouped table rendering); per-group
+ * numeric subtotals and persisted group-by preference are deliberately
+ * left for a follow-up round, matching how the live preview itself phased
+ * this same feature across several rounds.
+ */
+test("the exported EntityView's table can be grouped by an enum/boolean field, not just filtered", () => {
+  const files = generateExportFiles(project);
+  const entityViewJsx = files.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+
+  assert.match(entityViewJsx, /function isGroupableField\(field\) \{/);
+  assert.match(entityViewJsx, /function groupRecordsByField\(records, field\) \{/);
+  assert.match(entityViewJsx, /const \[groupFieldName, setGroupFieldName\] = useState\(""\);/);
+  assert.match(entityViewJsx, /const groupableFields = useMemo\(\(\) => entity\.fields\.filter\(isGroupableField\), \[entity\.fields\]\);/);
+  assert.match(entityViewJsx, /const recordGroups = useMemo\(/);
+  // The group-by dropdown itself, gated to table view only
+  assert.match(entityViewJsx, /viewMode === "table" && groupableFields\.length > 0 &&/);
+  assert.match(entityViewJsx, /className="entity-group-by"/);
+  // Row rendering was extracted so both the flat and grouped tbody branches reuse it verbatim
+  assert.match(entityViewJsx, /const renderRow = \(r\) => \(/);
+  assert.match(entityViewJsx, /recordGroups\s*\n\s*\? recordGroups\.map\(\(group\) => \(/);
+  assert.match(entityViewJsx, /className="entity-group-header-row"/);
+  assert.match(entityViewJsx, /group\.records\.map\(renderRow\)/);
+  assert.match(entityViewJsx, /: visibleRecords\.map\(renderRow\)/);
+
+  // The exported CSS carries the matching group-by + group-header styling too
+  const stylesCss = files.find((f) => f.path === "web/src/styles.css")!.content;
+  assert.match(stylesCss, /\.entity-group-by/);
+  assert.match(stylesCss, /\.entity-group-header-row/);
+});
+
+/**
  * New in this round: the live-preview Kanban board's own "+" add-card
  * button (startCreateForColumn, round 233) was never ported here -- the
  * exported app's generated board-column-header only rendered a badge +

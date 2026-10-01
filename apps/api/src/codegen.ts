@@ -744,7 +744,7 @@ function renderEntityViewJsx(project: Project): string {
     2,
   );
 
-  return `import { useEffect, useMemo, useRef, useState } from "react";
+  return `import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { createRecord, deleteRecord, listRecords, updateRecord } from "../api.js";
 
 // See the comment on generateExportFiles' allEntitiesJson for why this
@@ -1422,6 +1422,40 @@ function groupByField(records, field) {
   }));
 }
 
+// Whether a field's own value space is small and fixed enough to group the
+// plain table by -- distinct from groupByField above (Kanban board columns
+// only, enum-only, always includes empty columns). Mirrors the live
+// preview's own entityFormatting.ts isGroupableField (round 219).
+function isGroupableField(field) {
+  return field.type === "enum" || field.type === "boolean";
+}
+
+// Partitions records into ordered groups by one groupable field's value,
+// omitting any group with zero matching records. For an enum field, groups
+// follow the field's own declared enumValues order, with a final "(other)"
+// bucket for any legacy value no longer in enumValues. For a boolean
+// field there are only ever the two fixed groups, true then false.
+// Mirrors the live preview's own entityFormatting.ts groupRecordsByField.
+function groupRecordsByField(records, field) {
+  if (field.type === "boolean") {
+    const groups = [];
+    const truthy = records.filter((r) => Boolean(r[field.name]));
+    const falsy = records.filter((r) => !r[field.name]);
+    if (truthy.length > 0) groups.push({ key: "true", label: "Yes", records: truthy });
+    if (falsy.length > 0) groups.push({ key: "false", label: "No", records: falsy });
+    return groups;
+  }
+  const groups = [];
+  const known = new Set(field.enumValues || []);
+  for (const value of field.enumValues || []) {
+    const matched = records.filter((r) => String(r[field.name] || "") === value);
+    if (matched.length > 0) groups.push({ key: value, label: (field.enumLabels && field.enumLabels[value]) || value, records: matched });
+  }
+  const other = records.filter((r) => !known.has(String(r[field.name] || "")));
+  if (other.length > 0) groups.push({ key: "__other__", label: "Other", records: other });
+  return groups;
+}
+
 // Picks the date field an entity's records should be plotted on a calendar
 // by, if any -- prefers a field literally named "date" or a few other
 // common date-ish names, then falls back to the first date field; returns
@@ -1835,6 +1869,7 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
   const [editingId, setEditingId] = useState(null);
   const [search, setSearch] = useState("");
   const [fieldFilters, setFieldFilters] = useState({});
+  const [groupFieldName, setGroupFieldName] = useState("");
   const [highlightedRecordId, setHighlightedRecordId] = useState(null);
   const [moveErrorId, setMoveErrorId] = useState(null);
   const [sortKeys, setSortKeys] = useState([]);
@@ -2103,6 +2138,19 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
   const numericFieldTotals = useMemo(
     () => (hasNumericVisibleField ? sumNumericFields(visibleRecords, visibleFields) : {}),
     [hasNumericVisibleField, visibleRecords, visibleFields],
+  );
+
+  // Grouping the plain table by a small-value-space field (enum/boolean) --
+  // distinct from the Kanban board view (always exactly one auto-picked
+  // field, always its own separate view), this lets a person cluster the
+  // ordinary table by ANY such field while staying in table view, with
+  // search/sort/columns all still applying underneath. Mirrors the live
+  // preview's own EntityPanel.tsx (round 219).
+  const groupableFields = useMemo(() => entity.fields.filter(isGroupableField), [entity.fields]);
+  const groupField = groupableFields.find((f) => f.name === groupFieldName) || null;
+  const recordGroups = useMemo(
+    () => (groupField ? groupRecordsByField(visibleRecords, groupField) : null),
+    [groupField, visibleRecords],
   );
 
   // Exactly the records the calendar grid's current month is showing -- lets
@@ -2421,6 +2469,65 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
     }
   }
 
+  // Extracted so both the flat table and the grouped table (see
+  // recordGroups above) can render the identical row -- grouping only
+  // changes which records a given <tbody> section lists, never how a
+  // single row itself looks.
+  const renderRow = (r) => (
+    <tr key={r.id} data-record-id={r.id} className={[r.id === highlightedRecordId ? "record-row-highlighted" : null, r.id === moveErrorId ? "record-row-move-error" : null].filter(Boolean).join(" ") || undefined}>
+      <td className="select-col">
+        <input type="checkbox" checked={selectedIds.has(r.id)} onChange={() => toggleSelected(r.id)} />
+      </td>
+      {visibleFields.map((f) => {
+        const isEditingThisCell = editingCell != null && editingCell.recordId === r.id && editingCell.field === f.name;
+        const editable = isInlineEditableField(f);
+        return (
+          <td
+            key={f.name}
+            style={columnWidths[f.name] ? { width: columnWidths[f.name] } : undefined}
+            className={isEditingThisCell ? "cell-editing" : editable ? "cell-inline-editable" : undefined}
+            onDoubleClick={editable && !isEditingThisCell ? () => startInlineEdit(r, f) : undefined}
+            title={editable && !isEditingThisCell ? "Double-click to edit quickly" : undefined}
+          >
+            {isEditingThisCell ? (
+              <FieldInput
+                entity={entity}
+                field={f}
+                value={cellDraft}
+                onChange={setCellDraft}
+                relatedEntity={f.relationTo ? ALL_ENTITIES.find((e) => e.name === f.relationTo) : undefined}
+                relatedEntityRecords={f.relationTo ? relatedRecords[f.relationTo] : undefined}
+                autoFocus
+                onBlur={handleCellBlur}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    void commitInlineEdit();
+                  } else if (e.key === "Escape") {
+                    e.preventDefault();
+                    cancelInlineEdit();
+                  }
+                }}
+              />
+            ) : (
+              <Cell
+                field={f}
+                value={r[f.name]}
+                relationLabel={f.type === "relation" ? relationDisplayLabel(f, r[f.name], relatedRecords) : undefined}
+                onJumpToRecord={onJumpToRecord}
+              />
+            )}
+          </td>
+        );
+      })}
+      <td className="row-actions">
+        <button onClick={() => startEdit(r)}>Edit</button>
+        <button onClick={() => handleDuplicate(r.id)}>Duplicate</button>
+        <button onClick={() => handleDelete(r.id)}>Delete</button>
+      </td>
+    </tr>
+  );
+
   return (
     <div className="panel">
       <h3>{entity.label}</h3>
@@ -2521,6 +2628,21 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
                 ))}
               </select>
             ))}
+            {viewMode === "table" && groupableFields.length > 0 && (
+              <select
+                className="entity-group-by"
+                aria-label="Group by"
+                value={groupFieldName}
+                onChange={(e) => setGroupFieldName(e.target.value)}
+              >
+                <option value="">No grouping</option>
+                {groupableFields.map((f) => (
+                  <option key={f.name} value={f.name}>
+                    {f.label || f.name}
+                  </option>
+                ))}
+              </select>
+            )}
             {(boardField || dateField) && (
               <div className="view-toggle" role="group">
                 <button
@@ -2703,60 +2825,18 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
                   </tr>
                 </thead>
                 <tbody>
-                  {visibleRecords.map((r) => (
-                    <tr key={r.id} data-record-id={r.id} className={[r.id === highlightedRecordId ? "record-row-highlighted" : null, r.id === moveErrorId ? "record-row-move-error" : null].filter(Boolean).join(" ") || undefined}>
-                      <td className="select-col">
-                        <input type="checkbox" checked={selectedIds.has(r.id)} onChange={() => toggleSelected(r.id)} />
-                      </td>
-                      {visibleFields.map((f) => {
-                        const isEditingThisCell = editingCell != null && editingCell.recordId === r.id && editingCell.field === f.name;
-                        const editable = isInlineEditableField(f);
-                        return (
-                          <td
-                            key={f.name}
-                            style={columnWidths[f.name] ? { width: columnWidths[f.name] } : undefined}
-                            className={isEditingThisCell ? "cell-editing" : editable ? "cell-inline-editable" : undefined}
-                            onDoubleClick={editable && !isEditingThisCell ? () => startInlineEdit(r, f) : undefined}
-                            title={editable && !isEditingThisCell ? "Double-click to edit quickly" : undefined}
-                          >
-                            {isEditingThisCell ? (
-                              <FieldInput
-                                entity={entity}
-                                field={f}
-                                value={cellDraft}
-                                onChange={setCellDraft}
-                                relatedEntity={f.relationTo ? ALL_ENTITIES.find((e) => e.name === f.relationTo) : undefined}
-                                relatedEntityRecords={f.relationTo ? relatedRecords[f.relationTo] : undefined}
-                                autoFocus
-                                onBlur={handleCellBlur}
-                                onKeyDown={(e) => {
-                                  if (e.key === "Enter") {
-                                    e.preventDefault();
-                                    void commitInlineEdit();
-                                  } else if (e.key === "Escape") {
-                                    e.preventDefault();
-                                    cancelInlineEdit();
-                                  }
-                                }}
-                              />
-                            ) : (
-                              <Cell
-                                field={f}
-                                value={r[f.name]}
-                                relationLabel={f.type === "relation" ? relationDisplayLabel(f, r[f.name], relatedRecords) : undefined}
-                                onJumpToRecord={onJumpToRecord}
-                              />
-                            )}
-                          </td>
-                        );
-                      })}
-                      <td className="row-actions">
-                        <button onClick={() => startEdit(r)}>Edit</button>
-                        <button onClick={() => handleDuplicate(r.id)}>Duplicate</button>
-                        <button onClick={() => handleDelete(r.id)}>Delete</button>
-                      </td>
-                    </tr>
-                  ))}
+                  {recordGroups
+                    ? recordGroups.map((group) => (
+                        <Fragment key={group.key}>
+                          <tr className="entity-group-header-row">
+                            <td colSpan={visibleFields.length + 2}>
+                              {group.label} <span className="muted small">({group.records.length})</span>
+                            </td>
+                          </tr>
+                          {group.records.map(renderRow)}
+                        </Fragment>
+                      ))
+                    : visibleRecords.map(renderRow)}
                 </tbody>
                 {hasNumericVisibleField && (
                   <tfoot>
@@ -3283,7 +3363,8 @@ th, td { text-align: start; padding: 8px 10px; border-bottom: 1px solid var(--bo
 .empty-state { padding: 32px 16px; text-align: center; color: var(--muted); background: var(--surface-subtle); border: 1px dashed var(--border); border-radius: 10px; }
 .entity-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 14px; }
 .entity-toolbar .entity-search { margin-bottom: 0; flex: 1; }
-.entity-status-filter { max-width: 200px; margin-bottom: 0; flex-shrink: 0; }
+.entity-status-filter, .entity-group-by { max-width: 200px; margin-bottom: 0; flex-shrink: 0; }
+.entity-group-header-row td { background: var(--surface-subtle); font-weight: 600; padding: 6px 10px; }
 .view-toggle { display: flex; gap: 4px; padding: 3px; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; flex-shrink: 0; }
 .view-toggle-btn { padding: 6px 12px; border-radius: 6px; border: none; background: transparent; color: var(--muted); font-size: 13px; font-weight: 600; cursor: pointer; }
 .view-toggle-btn-active { background: var(--accent); color: var(--accent-contrast); }
