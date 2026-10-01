@@ -499,6 +499,31 @@ test("the exported app's entity-tabs nav shows a live record-count badge per tab
 });
 
 /**
+ * New in this round: round 306 ported the BASE table-grouping feature to
+ * codegen.ts (the group-by dropdown + grouped tbody with group-header
+ * rows), but deliberately deferred per-group numeric subtotals -- the
+ * live preview's own EntityPanel.tsx (round 302) already shows a subtotal
+ * row per group when the table is grouped AND has a numeric field, so a
+ * business owner who downloads their app and groups an Orders/Deals
+ * table by Status loses the ability to compare revenue across groups the
+ * moment they leave the live preview. Confirmed absent from codegen.ts
+ * via grep before this round (only the flat grand-total <tfoot> existed
+ * there).
+ */
+test("the exported EntityView's grouped table shows a per-group numeric subtotal row, not just the grand total", () => {
+  const files = generateExportFiles(project);
+  const entityViewJsx = files.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+
+  assert.match(entityViewJsx, /const groupNumericTotals = useMemo\(\(\) => \{/);
+  assert.match(entityViewJsx, /totals\[group\.key\] = sumNumericFields\(group\.records, visibleFields\);/);
+  assert.match(entityViewJsx, /className="entity-group-totals-row"/);
+  assert.match(entityViewJsx, /Total: \{\(groupNumericTotals\[group\.key\]\[f\.name\] \?\? 0\)\.toLocaleString\(\)\}/);
+
+  const stylesCss = files.find((f) => f.path === "web/src/styles.css")!.content;
+  assert.match(stylesCss, /\.entity-group-totals-row/);
+});
+
+/**
  * New in this round: the live-preview Kanban board's own "+" add-card
  * button (startCreateForColumn, round 233) was never ported here -- the
  * exported app's generated board-column-header only rendered a badge +

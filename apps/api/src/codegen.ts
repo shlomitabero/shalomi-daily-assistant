@@ -2178,6 +2178,21 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
     [groupField, visibleRecords],
   );
 
+  // Per-group numeric subtotals -- without this, grouping a table by e.g.
+  // Order Status still only ever showed one grand total under the whole
+  // table (numericFieldTotals above), defeating the point of grouping a
+  // numeric entity: a person groups Orders by Status specifically to
+  // compare revenue across "Paid" vs "Pending" vs "Cancelled". Mirrors the
+  // live preview's own EntityPanel.tsx (round 302).
+  const groupNumericTotals = useMemo(() => {
+    if (!hasNumericVisibleField || !recordGroups) return null;
+    const totals = {};
+    for (const group of recordGroups) {
+      totals[group.key] = sumNumericFields(group.records, visibleFields);
+    }
+    return totals;
+  }, [hasNumericVisibleField, recordGroups, visibleFields]);
+
   // Exactly the records the calendar grid's current month is showing -- lets
   // the ICS export button disable itself when the visible month is
   // genuinely empty, not just when the whole entity has no records.
@@ -2859,6 +2874,21 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
                             </td>
                           </tr>
                           {group.records.map(renderRow)}
+                          {hasNumericVisibleField && (
+                            <tr className="entity-group-totals-row">
+                              <td className="select-col"></td>
+                              {visibleFields.map((f) => (
+                                <td key={f.name}>
+                                  {f.type === "number" && (
+                                    <>
+                                      Total: {(groupNumericTotals[group.key][f.name] ?? 0).toLocaleString()}
+                                    </>
+                                  )}
+                                </td>
+                              ))}
+                              <td></td>
+                            </tr>
+                          )}
                         </Fragment>
                       ))
                     : visibleRecords.map(renderRow)}
@@ -3407,6 +3437,7 @@ th, td { text-align: start; padding: 8px 10px; border-bottom: 1px solid var(--bo
 .entity-toolbar .entity-search { margin-bottom: 0; flex: 1; }
 .entity-status-filter, .entity-group-by { max-width: 200px; margin-bottom: 0; flex-shrink: 0; }
 .entity-group-header-row td { background: var(--surface-subtle); font-weight: 600; padding: 6px 10px; }
+.entity-group-totals-row td { background: var(--surface-subtle); border-bottom: 1px solid var(--border); font-weight: 600; }
 .tab-count { display: inline-block; margin-inline-start: 6px; padding: 1px 7px; border-radius: 999px; font-size: 11.5px; font-weight: 700; line-height: 1.5; background: var(--steel-soft); color: var(--steel); }
 nav button.active .tab-count { background: rgba(255, 255, 255, 0.25); color: inherit; }
 .view-toggle { display: flex; gap: 4px; padding: 3px; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; flex-shrink: 0; }
