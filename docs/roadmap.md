@@ -18300,6 +18300,84 @@ Full suite green: **1153 tests** (`@forge/shared` 13, `@forge/spec-engine`
 `@forge/web` (`tsc -b` + `vite build`, 86 modules transformed) and
 `@forge/api` (`esbuild`).
 
+### Round 306 — Table-grouping, standing live-preview-only since round 219, is now ported to the exported/downloaded app
+
+An Explore survey gave a fresh, concrete verdict on the standing
+table-grouping-port-to-codegen backup candidate (flagged since round 302,
+re-estimated round 304): reading the actual current `codegen.ts` showed
+round 304's "more invasive than typical" caveat was overstated. Extracting
+the inline row-rendering into a named function is not a cross-file
+refactor here -- the entire generated app lives inside one big template-
+literal string (`renderEntityViewJsx`), so it's a same-string, mechanical
+move of ~50 lines into a local `const renderRow = (r) => (...)`. The
+exported app also has no i18n layer at all (confirmed via `grep` -- every
+string in `codegen.ts` is hardcoded English), so none of the translation-
+key work the live version's own `t("entity.groupBy.*")` calls needed was
+required here. Scoped to the base feature only (group-by dropdown +
+grouped rendering), with per-group numeric subtotals and a persisted
+group-by preference deferred to a follow-up round -- the same phasing the
+live preview itself used (round 219 base, round 231 persistence, round
+302 subtotals).
+
+Ported `isGroupableField`/`groupRecordsByField` from
+`entityFormatting.ts` into `codegen.ts` as plain JS functions (no
+TypeScript types, matching every other codegen.ts helper's style),
+placed next to the existing Kanban-only `groupByField` they're
+thematically adjacent to but functionally distinct from (that one is
+enum-only and always includes empty columns; the new pair also handles
+boolean fields, omits empty groups, and adds an "(other)" bucket for a
+legacy value no longer in `enumValues`). Added a `groupFieldName` state
+hook, `groupableFields`/`groupField`/`recordGroups` derived values
+alongside the existing `hasNumericVisibleField`/`numericFieldTotals`
+block, and a `.entity-group-by` `<select>` in the toolbar (gated to
+`viewMode === "table"`, matching the live preview). The previously-inline
+`visibleRecords.map((r) => (<tr>...</tr>))` row JSX was extracted
+verbatim into a `renderRow(r)` function (declared just before the
+component's `return (`, since it's referenced from both the flat and
+grouped `<tbody>` branches below it) -- required adding `Fragment` to the
+component's React import line, which codegen.ts didn't need before this
+round. `<tbody>` now branches: `recordGroups ? recordGroups.map(...)` (a
+`.entity-group-header-row` `<tr>` with the group's label + count, then
+`group.records.map(renderRow)`) `: visibleRecords.map(renderRow)` for the
+flat case. Matching `.entity-group-by`/`.entity-group-header-row` CSS
+rules were added to `renderStylesCss()` (one-line format, reusing the
+existing `var(--surface-subtle)`/`var(--border)` variables already used
+by `.entity-totals-row`).
+
+Test: one new `codegen.test.ts` test regex-confirms every piece of the
+port (both helper functions, the state hook, the derived values, the
+gated `<select>`, the extracted `renderRow`, both `<tbody>` branches, and
+both new CSS rules) against the real generated `EntityView.jsx` and
+`styles.css`. All 87 pre-existing `codegen.test.ts` tests still passed
+unchanged -- the inline-row extraction didn't touch any literal string
+an existing `assert.match` depended on.
+
+Deliberate-break-and-restore: collapsed the `<tbody>`'s grouped/flat
+ternary back down to always `visibleRecords.map(renderRow)` (removing the
+grouping branch entirely) -- the new test failed exactly as expected
+(no match for the grouped-rendering regex). Restored from a verified
+pre-break backup with a confirmed byte-identical `diff`; re-ran the full
+`codegen.test.ts` suite and confirmed all 87 passed again.
+
+Live verification went a step further than regex-matching the generated
+source: actually ran `generateExportFiles` on a real two-status "Deal"
+project, wrote the output to a temp directory, symlinked `node_modules`,
+and ran a genuine `vite build` (not just esbuild-bundling `codegen.ts`
+itself, which never type-checks the JSX *inside* the template string) --
+confirming the newly-generated JSX is syntactically and semantically
+valid React. Then spawned the real `server.js` and drove it with
+Playwright: created 3 real records through the real add-record form (2
+"New", 1 "Won"), selected "Status" from the real `.entity-group-by`
+dropdown, and confirmed two real `.entity-group-header-row` elements
+rendered with the correct labels and counts ("New (2)", "Won (1)"), all 3
+records still present underneath them, and switching back to "No
+grouping" correctly restored the flat 3-row table.
+
+Full suite green: **1154 tests** (`@forge/shared` 13, `@forge/spec-engine`
+85, `@forge/db` 93 unchanged; `@forge/api` 311 → 312; `@forge/web` 651
+unchanged) via `npm test` at the repo root, plus a clean
+`npm run build --workspace=@forge/api` (esbuild).
+
 ## Phase 4
 
 - Template/agent marketplace
