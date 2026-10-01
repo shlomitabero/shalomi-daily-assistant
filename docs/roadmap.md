@@ -19597,6 +19597,81 @@ Full suite green: **1216 tests** (`@forge/shared` 13, `@forge/spec-engine`
 via `npm test` at the repo root, plus a clean full monorepo
 `npm run build`.
 
+### Round 324 — Recent-searches finally reaches the exported app's own per-entity table search box
+
+With round 323's own named candidate (Copy button) already closed and
+every known feature-family fully shut, this round needed a fresh Explore
+survey. It confirmed the long-standing backup candidate (Global Search's
+own recent-searches in `codegen.ts`) is still open, but surfaced a more
+impactful sibling gap: the exported app's generated `EntityView` -- the
+single most-used search box in any exported app, opened on every entity
+tab -- also had zero memory of recent queries, even though the live
+preview's `EntityPanel.tsx` has had `entityRecentSearches.ts` since round
+318. Grep confirmed `recentSearch` appeared nowhere in `codegen.ts`'s
+`EntityView` generation code at all.
+
+Fix: ported the exact same localStorage-backed recent-list pattern
+(capped at 5, most-recent-first, case-insensitive dedup/removal) into the
+generated `EntityView` template string -- a new
+`ENTITY_RECENT_SEARCHES_STORAGE_KEY` store (`getEntityRecentSearches`/
+`addEntityRecentSearch`/`removeEntityRecentSearch`/
+`clearEntityRecentSearches`), scoped **per entity name only** rather than
+the live preview's two-key `(projectId, entityName)` scoping, since this
+single-tenant exported app has no project id to scope by at all (the same
+scoping difference every other codegen.ts persistence store -- hidden
+columns, column widths, group field, view mode, sort keys -- already
+has). Added a `handleSearchKeyDown` (Enter commits the current query,
+since there's no submit button on a filter-as-you-type box -- same
+convention as the live preview's own handler), `handleRecentSearchClick`,
+`handleRemoveRecentSearch`, `handleClearRecentSearches`, and a
+recent-searches chip row (reusing the existing `.chip`/`.chip-removable`/
+`.chip-text`/`.chip-remove` classes the live preview already has, newly
+added to `codegen.ts`'s own generated CSS since nothing in the exported
+app had ever used chips before) that only shows once the search box
+itself is cleared again -- matching the live preview's own "this is what
+you searched for before, not what's filtering the table right now"
+behavior.
+
+Pitfall hit and fixed: the first draft used literal `` `Remove "${q}"` ``
+template-literal syntax directly in the generated JSX, forgetting that
+this whole block lives inside codegen.ts's own OUTER template literal --
+the un-escaped backtick and `${q}` were interpreted by the outer literal
+at codegen.ts-compile-time instead of surviving into the generated
+source, breaking esbuild's parse of the emitted file entirely. Fixed by
+escaping to `` \`Remove "\${q}"\` ``, per the established "nested
+backtick/\${/backslash" lesson.
+
+Tests: one new pure-function test extracting and *executing* the real
+generated store functions (cap-at-5, case-insensitive dedup keeping the
+newly-typed casing, per-entity-name scoping, clearing), and one new
+real-DOM test rendering the actual generated `EntityView.jsx`: types a
+query, presses Enter, confirms the recent-searches row stays hidden while
+the query is still in the box (an assumption this round's own test
+authoring got wrong on the first pass and had to fix), clears the box to
+reveal the chip, clicks it to refill the search box, then removes it and
+confirms the whole row disappears.
+
+Deliberate-break-and-restore: backed up both changed files, reverted
+`codegen.ts` to its pre-round HEAD state, confirmed both new tests failed
+with the exact expected mismatches ("expected to find the entity
+recent-searches store functions in generated output"; "expected a real
+recent-search chip once the search box is cleared"). Restored from the
+verified backup with a confirmed byte-identical `diff` against both
+files, then re-ran every workspace: `@forge/shared` 13/13,
+`@forge/spec-engine` 85/85, `@forge/db` 96/96, `@forge/api` 329 → 331,
+`@forge/web` 693 unchanged, plus a clean full monorepo `npm run build`.
+
+Scope note: only `EntityView`'s own search box got ported this round.
+Global Search's own recent-searches in `codegen.ts`'s generated
+`GlobalSearch` component is still open (confirmed still missing via grep
+during this round's own survey) and is now the sole remaining item in
+the recent-searches family, a natural candidate for round 325.
+
+Full suite green: **1218 tests** (`@forge/shared` 13, `@forge/spec-engine`
+85, `@forge/db` 96, `@forge/api` 329 → 331; `@forge/web` 693 unchanged)
+via `npm test` at the repo root, plus a clean full monorepo
+`npm run build`.
+
 ## Phase 4
 
 - Template/agent marketplace
