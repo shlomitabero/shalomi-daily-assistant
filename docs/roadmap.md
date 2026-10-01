@@ -19192,6 +19192,78 @@ Full suite green: **1185 tests** (`@forge/shared` 13, `@forge/spec-engine`
 via `npm test` at the repo root, plus a clean
 `npm run build --workspace=@forge/web` (tsc + vite).
 
+### Round 318 — The per-entity table's own live search box finally remembers recent searches, the last search box in the app without that memory
+
+An Explore survey, explicitly asked to hunt for pairs of already-complete
+features that were never wired together (the exact shape round 317
+found), came back with the per-entity table's own filter-as-you-type
+search box in `EntityPanel.tsx` as the strongest fit: it was the single
+most-used search field in the whole app (live on every entity tab, in
+every project) and the one search box left with zero memory. Four
+sibling features already solve this exact shape -- `recentSearches.ts`
+(Global Search, round 180), `historyRecentSearches.ts` (Time Machine),
+`whatsappRecentNumbers.ts` (the WhatsApp test-number field), and
+`recentProjectSearches.ts` (the home screen's own project search, round
+316) -- each a thin localStorage-backed list capped at 5 entries with
+case-insensitive dedup. Switch entity tabs and back, or reload, and a
+search typed into this box (e.g. "unpaid" on an Invoices table) was gone
+every time, exactly the annoyance round 316 had just fixed one screen
+over.
+
+Added `entityRecentSearches.ts`, matching the four existing modules'
+add/remove/clear/cap-at-5 behavior, but scoped per project+entity (a
+`Record<string, string[]>` keyed by `${projectId}:${entityName}`),
+mirroring `columnOrder.ts`/`columnWidths.ts`'s own keying rather than
+`recentSearches.ts`'s single-project-key or
+`recentProjectSearches.ts`'s flat single-key scoping -- a recent search
+on one project's Invoices table is meaningless noise on another
+project's Invoices table, or on the same project's different entity.
+
+Wired into `EntityPanel.tsx`: a new `recentSearches` state lazily
+initialized from the store and kept in sync via a `useEffect` keyed on
+`[projectId, entity.name]`, mirroring the existing
+`hiddenFields`/`columnOrderState`/`groupFieldName` resync effects'
+exact pattern in this same file. Since this box filters live on every
+keystroke with no submit button, Enter is the commit signal (identical
+reasoning to round 316's `handleProjectSearchKeyDown`) via a new
+`handleSearchKeyDown`. A recent-searches chip row renders directly
+below the toolbar, reusing the app's existing `.chips`/`.chip`/
+`.chip-removable` CSS, visible only once the box is empty and at least
+one recent search exists -- clicking a chip refills the search
+instantly, with a `Clear`-all button and a per-chip remove button, the
+same UX every sibling search box already has.
+
+Tests: a full pure-function suite for `entityRecentSearches.ts`
+mirroring `columnOrder.test.ts`'s own project+entity-scoping coverage
+(defaults, round-tripping, capping at 5, case-insensitive dedup,
+scoping isolation across both project AND entity, per-query removal,
+clearing one entity without touching a sibling entity's own list, and
+tolerating corrupted localStorage content) in `entityRecentSearches.test.ts`,
+plus a real-DOM wiring test added to the existing `EntityPanel.test.ts`
+(which already renders the real component with `@testing-library/react`,
+unlike `codegen.ts`'s generated output, so no temp-file reconstruction
+was needed here): typing a query and pressing Enter persists it, the
+chip row stays hidden while the box still has text, clicking a chip
+refills the search box, and the per-chip remove button clears the row.
+
+Deliberate-break-and-restore: reverted `EntityPanel.tsx` to its
+pre-round state (the new `entityRecentSearches.ts` module and its own
+test file left in place, exactly the "feature built but never wired"
+shape this round targets) and confirmed the new real-DOM wiring test
+failed with `waitForCondition: condition never became true` (the chip
+row never appeared) -- the exact expected failure. Restored from a
+verified pre-break backup with a confirmed byte-identical `diff`, then
+re-ran every workspace: `@forge/shared` 13/13, `@forge/spec-engine`
+85/85, `@forge/db` 96/96, `@forge/api` 325/325 (unchanged, confirmed
+anyway per the established process), `@forge/web` 666 → 678, plus a
+clean `npm run build --workspace=@forge/web` and a clean
+`npm run build --workspace=@forge/api`.
+
+Full suite green: **1197 tests** (`@forge/shared` 13, `@forge/spec-engine`
+85, `@forge/db` 96, `@forge/api` 325 unchanged; `@forge/web` 666 → 678)
+via `npm test` at the repo root, plus a clean full monorepo
+`npm run build`.
+
 ## Phase 4
 
 - Template/agent marketplace
