@@ -278,6 +278,166 @@ test("generated server.js rejects a date field value that isn't a real, well-for
   }
 });
 
+/**
+ * New in this round: the exported standalone app's own server.js never
+ * enabled PRAGMA foreign_keys and never emitted a REFERENCES clause for a
+ * relation field, unlike the live Forge AI backend's connection.ts +
+ * migrate.ts (round 108-ish). The real-world effect: deleting a Courier
+ * that an Order still points at via `courierId` silently succeeded in the
+ * exported app, leaving every such Order's relation cell pointing at a
+ * now-deleted row forever (relationDisplayLabel degrades that to a bare
+ * "#<id>" with no indication anything went wrong) -- a real, silent
+ * data-integrity break, the opposite failure mode from "the delete throws
+ * and gets swallowed": here nothing ever throws at all. Reproduced here
+ * against a real spawned server (not just regex on the generated source),
+ * the same standard the keyword/date-field tests above already use.
+ */
+test("generated server.js actually enforces foreign keys: deleting a record another record still references via a relation field is blocked with a real 409, not silently allowed", async () => {
+  const relationProject: Project = {
+    ...project,
+    spec: {
+      ...project.spec,
+      entities: [
+        { name: "Courier", fields: [{ name: "name", type: "text", required: true }] },
+        {
+          name: "Order",
+          fields: [
+            { name: "item", type: "text", required: true },
+            { name: "courierId", type: "relation", required: false, relationTo: "Courier" },
+          ],
+        },
+      ],
+    },
+  };
+  const files = generateExportFiles(relationProject);
+  const serverJs = files.find((f) => f.path === "server.js")!.content;
+  assert.match(serverJs, /db\.exec\("PRAGMA foreign_keys = ON;"\);/);
+  assert.match(
+    serverJs,
+    /const references = field\.type === "relation" && field\.relationTo \? ` REFERENCES \$\{q\(field\.relationTo\)\}\(id\)` : "";\n {4}columns\.push\(`\$\{q\(field\.name\)\} \$\{sqlType\(field\.type\)\}\$\{field\.required \? " NOT NULL" : ""\}\$\{references\}`\);/,
+  );
+
+  const dir = mkdtempSync(path.join(tmpdir(), "codegen-fk-test-"));
+  const repoRoot = path.resolve(import.meta.dirname, "../../..");
+  symlinkSync(path.join(repoRoot, "node_modules"), path.join(dir, "node_modules"));
+  writeFileSync(path.join(dir, "server.js"), serverJs);
+
+  const port = 54000 + Math.floor(Math.random() * 5000);
+  const child = spawn(process.execPath, ["--experimental-sqlite", "server.js"], {
+    cwd: dir,
+    env: { ...process.env, PORT: String(port) },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  let stderr = "";
+  child.stderr.on("data", (chunk) => {
+    stderr += chunk.toString();
+  });
+
+  try {
+    const deadline = Date.now() + 5000;
+    let lastErr: unknown;
+    while (Date.now() < deadline) {
+      if (child.exitCode !== null) throw new Error(`server.js exited early (code ${child.exitCode}):\n${stderr}`);
+      try {
+        await fetch(`http://localhost:${port}/api/entities`);
+        break;
+      } catch (err) {
+        lastErr = err;
+        await new Promise((r) => setTimeout(r, 100));
+      }
+    }
+    if (child.exitCode !== null) throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
+
+    const courierRes = await fetch(`http://localhost:${port}/api/Courier`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ name: "Bob" }),
+    });
+    assert.equal(courierRes.status, 201);
+    const courier = (await courierRes.json()).record;
+
+    const orderRes = await fetch(`http://localhost:${port}/api/Order`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ item: "Package", courierId: courier.id }),
+    });
+    assert.equal(orderRes.status, 201);
+
+    // The real proof: deleting the still-referenced Courier must be blocked
+    // with a clean, actionable 409 -- not a generic 500, and definitely not
+    // a silent 204 that leaves the Order's courierId dangling.
+    const deleteRes = await fetch(`http://localhost:${port}/api/Courier/${courier.id}`, { method: "DELETE" });
+    assert.equal(deleteRes.status, 409);
+    const deleteBody = await deleteRes.json();
+    assert.match(deleteBody.error, /still references it/);
+
+    // And the real proof the row genuinely survived the blocked delete.
+    const stillThereRes = await fetch(`http://localhost:${port}/api/Courier`);
+    const stillThere = (await stillThereRes.json()).records;
+    assert.equal(stillThere.length, 1, "the referenced Courier must still exist after the blocked delete");
+
+    // A Courier nothing references must still delete normally -- the fix
+    // must not have broken the ordinary, unreferenced-record case.
+    const secondCourierRes = await fetch(`http://localhost:${port}/api/Courier`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ name: "Ana" }),
+    });
+    const secondCourier = (await secondCourierRes.json()).record;
+    const okDeleteRes = await fetch(`http://localhost:${port}/api/Courier/${secondCourier.id}`, { method: "DELETE" });
+    assert.equal(okDeleteRes.status, 204, "an unreferenced record must still delete normally");
+  } finally {
+    child.kill();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
+ * Regression test, same "real generated code via new Function" standard as
+ * the existing handleBulkDelete test in this file: commitPendingDelete used
+ * to be a bare `.catch(() => {})`, silently discarding a failed deferred
+ * delete -- the row stayed gone from view with no error shown at all. It
+ * must now restore the row and surface the real error, exactly like
+ * handleUndoDelete does for a user-initiated undo.
+ */
+test("the exported EntityView's commitPendingDelete restores the row and surfaces the real error when the deferred delete fails, instead of silently discarding it", async () => {
+  const entityViewJsx = generateExportFiles(project).find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+  const commitPendingDeleteSrc = entityViewJsx.match(/async function commitPendingDelete\(pending\) \{[\s\S]*?\n  \}\n/)?.[0];
+  assert.ok(commitPendingDeleteSrc, "expected to find an async commitPendingDelete in generated output");
+
+  let capturedRecords: unknown;
+  let capturedError: string | undefined;
+  const fn = new Function(
+    "entity",
+    "restoreRecordAt",
+    "setRecords",
+    "setError",
+    "deleteRecord",
+    `${commitPendingDeleteSrc}\nreturn commitPendingDelete;`,
+  )(
+    { name: "Courier" },
+    (records: unknown[], record: unknown, index: number) => {
+      const copy = records.slice();
+      copy.splice(index, 0, record);
+      return copy;
+    },
+    (updater: (prev: unknown[]) => unknown[]) => {
+      capturedRecords = updater(["A", "C"]);
+    },
+    (msg: string) => {
+      capturedError = msg;
+    },
+    async () => {
+      throw new Error("Cannot delete this record -- another record still references it through a relation field");
+    },
+  );
+
+  await fn({ id: 7, record: "B", index: 1 });
+
+  assert.deepEqual(capturedRecords, ["A", "B", "C"], "the deleted record must be restored at its original index on failure");
+  assert.equal(capturedError, "Cannot delete this record -- another record still references it through a relation field");
+});
+
 test("every generated .jsx/.js file is syntactically valid, checked with a real parser (esbuild)", async () => {
   const esbuild = await import("esbuild");
   const files = generateExportFiles(project);
@@ -2052,7 +2212,7 @@ test("the exported EntityView renders a real Undo toast after a single-record de
 
   assert.match(entityViewJsx, /const UNDO_WINDOW_MS = 5000;/);
   assert.match(entityViewJsx, /const \[pendingDelete, setPendingDelete\] = useState\(null\);/);
-  assert.match(entityViewJsx, /function commitPendingDelete\(pending\) \{\s*deleteRecord\(entity\.name, pending\.id\)\.catch/);
+  assert.match(entityViewJsx, /async function commitPendingDelete\(pending\) \{\s*try \{\s*await deleteRecord\(entity\.name, pending\.id\);/);
   assert.match(entityViewJsx, /function handleUndoDelete\(\) \{/);
   assert.match(entityViewJsx, /className="entity-undo-toast"/);
   assert.match(entityViewJsx, /onClick=\{handleUndoDelete\}/);

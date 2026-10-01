@@ -292,6 +292,11 @@ import { DatabaseSync } from "node:sqlite";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const db = new DatabaseSync(path.join(__dirname, "data.sqlite"));
+// Without this, a relation field's REFERENCES clause below is pure
+// decoration -- SQLite never actually enforces foreign keys unless this
+// pragma is turned on for the connection. Mirrors the live Forge AI
+// backend's own connection.ts.
+db.exec("PRAGMA foreign_keys = ON;");
 
 const ENTITIES = ${entitiesJson};
 
@@ -322,7 +327,14 @@ for (const entity of ENTITIES) {
   const columns = ["id INTEGER PRIMARY KEY AUTOINCREMENT", "createdAt TEXT NOT NULL"];
   for (const field of entity.fields) {
     assertSafe(field.name);
-    columns.push(\`\${q(field.name)} \${sqlType(field.type)}\${field.required ? " NOT NULL" : ""}\`);
+    // A relation field's REFERENCES clause is what lets PRAGMA foreign_keys
+    // above actually block deleting a record another record still points
+    // to -- without it, the column is just a plain integer with no real
+    // link to the target table. SQLite allows this to forward-reference a
+    // table that's declared later in ENTITIES; the constraint is only
+    // checked when a row is actually written, not at CREATE TABLE time.
+    const references = field.type === "relation" && field.relationTo ? \` REFERENCES \${q(field.relationTo)}(id)\` : "";
+    columns.push(\`\${q(field.name)} \${sqlType(field.type)}\${field.required ? " NOT NULL" : ""}\${references}\`);
   }
   db.exec(\`CREATE TABLE IF NOT EXISTS \${q(entity.name)} (\${columns.join(", ")})\`);
 }
@@ -434,9 +446,20 @@ for (const entity of ENTITIES) {
   });
 
   app.delete(\`\${base}/:id\`, (req, res) => {
-    const result = db.prepare(\`DELETE FROM \${q(entity.name)} WHERE id = ?\`).run(req.params.id);
-    if (result.changes === 0) return res.status(404).json({ error: "Not found" });
-    res.status(204).end();
+    try {
+      const result = db.prepare(\`DELETE FROM \${q(entity.name)} WHERE id = ?\`).run(req.params.id);
+      if (result.changes === 0) return res.status(404).json({ error: "Not found" });
+      res.status(204).end();
+    } catch (err) {
+      // PRAGMA foreign_keys (above) throws this exact message when another
+      // record's relation field still points at the row being deleted --
+      // translated into a real, actionable 409 instead of a generic 500, the
+      // same route-level pattern the live Forge AI backend uses.
+      if (err.message === "FOREIGN KEY constraint failed") {
+        return res.status(409).json({ error: "Cannot delete this record -- another record still references it through a relation field" });
+      }
+      res.status(400).json({ error: err.message });
+    }
   });
 }
 
@@ -2037,11 +2060,22 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
   }, [moveErrorId]);
 
   // Fires the real DELETE request for a record the undo window has already
-  // closed on (either the timer ran out, or a newer delete pre-empted it) --
-  // it was already removed from view the moment Delete was confirmed, so
-  // there's nothing left to roll the screen back to if this itself fails.
-  function commitPendingDelete(pending) {
-    deleteRecord(entity.name, pending.id).catch(() => {});
+  // closed on (either the timer ran out, or a newer delete pre-empted it).
+  // The row was already removed from view the moment Delete was confirmed,
+  // on the assumption the real delete would simply succeed later -- but a
+  // record another record still points to via a relation field genuinely
+  // can't be deleted (a real foreign-key constraint, see server.js's own
+  // PRAGMA foreign_keys). This used to be a bare .catch(() => {}), silently
+  // discarding that failure: the row stayed gone from view with no error
+  // shown at all. Restores the row (same helper handleUndoDelete uses) and
+  // surfaces the real error instead.
+  async function commitPendingDelete(pending) {
+    try {
+      await deleteRecord(entity.name, pending.id);
+    } catch (err) {
+      setRecords((prev) => restoreRecordAt(prev, pending.record, pending.index));
+      setError(err.message);
+    }
   }
 
   useEffect(() => {
