@@ -67,11 +67,15 @@ type ViewMode = "table" | "board" | "calendar";
  */
 const UNDO_WINDOW_MS = 5000;
 
-interface PendingDelete {
+interface PendingDeleteEntry {
   id: number;
   record: EntityRecord;
   index: number;
-  label: string;
+}
+
+interface PendingDelete {
+  entries: PendingDeleteEntry[];
+  message: string;
   timeoutId: ReturnType<typeof setTimeout>;
 }
 
@@ -1316,12 +1320,16 @@ export function EntityPanel({
   // setError on an unmounted component (the unmount-flush caller below) are
   // simply no-ops in React 18, so this is safe from every call site.
   async function commitPendingDelete(pending: PendingDelete) {
-    try {
-      await deleteRecord(projectId, entity.name, pending.id);
-    } catch (err) {
-      setRecords((prev) => restoreRecordAt(prev, pending.record, pending.index));
-      setError((err as Error).message);
-    }
+    const results = await Promise.allSettled(pending.entries.map((e) => deleteRecord(projectId, entity.name, e.id)));
+    const failed = pending.entries.filter((_, i) => results[i].status === "rejected");
+    if (failed.length === 0) return;
+    setRecords((prev) => failed.reduce((acc, e) => restoreRecordAt(acc, e.record, e.index), prev));
+    const firstFailure = results.find((r): r is PromiseRejectedResult => r.status === "rejected")!;
+    setError(
+      failed.length === pending.entries.length
+        ? (firstFailure.reason as Error).message
+        : t("entity.bulk.partialFailure", { failed: failed.length, total: pending.entries.length }),
+    );
   }
 
   // Mirrors pendingDelete into a ref so the unmount-flush effect below (and
@@ -1380,20 +1388,20 @@ export function EntityPanel({
 
     const timeoutId = setTimeout(() => {
       setPendingDelete((current) => {
-        if (current?.id !== id) return current;
+        if (current?.timeoutId !== timeoutId) return current;
         void commitPendingDelete(current);
         return null;
       });
     }, UNDO_WINDOW_MS);
 
-    setPendingDelete({ id, record, index, label, timeoutId });
+    setPendingDelete({ entries: [{ id, record, index }], message: t("entity.delete.undoToast", { label }), timeoutId });
   }
 
   function handleUndoDelete() {
     const pending = pendingDeleteRef.current;
     if (!pending) return;
     clearTimeout(pending.timeoutId);
-    setRecords((prev) => restoreRecordAt(prev, pending.record, pending.index));
+    setRecords((prev) => pending.entries.reduce((acc, e) => restoreRecordAt(acc, e.record, e.index), prev));
     setPendingDelete(null);
   }
 
@@ -1471,29 +1479,49 @@ export function EntityPanel({
     await refresh();
   }
 
-  // Promise.allSettled rather than Promise.all: a single rejected delete
-  // (a dropped connection, a record another tab already removed) must not
-  // hide the ones that *did* succeed -- Promise.all would reject on the
-  // first failure and skip both the refresh() and the selectedIds cleanup
-  // below it, leaving already-deleted rows still shown as selected in a
-  // now-stale table until the user manually reloads the page.
+  /**
+   * Bulk delete used to call the real DELETE endpoint for every selected
+   * record the instant the confirm dialog closed -- window.confirm (round
+   * 73-equivalent for the bulk path) was the only safety net, with zero
+   * recovery once confirmed, unlike single-record delete's own undo window
+   * (round 184). Selecting the wrong rows (an easy mistake with checkboxes
+   * and a stale filter) meant real, permanent data loss. Now reuses the
+   * exact same pendingDelete/commitPendingDelete machinery as handleDelete
+   * -- all selected rows disappear from view immediately, but every real
+   * DELETE call is delayed behind the same UNDO_WINDOW_MS window, with one
+   * shared toast and Undo button for the whole batch. commitPendingDelete's
+   * own Promise.allSettled still protects a partial failure (a dropped
+   * connection, a record another tab already removed) from hiding the
+   * deletes that DID succeed.
+   */
   async function handleBulkDelete() {
     const ids = [...selectedIds];
     if (ids.length === 0) return;
     if (!window.confirm(t("entity.bulk.confirmDelete", { count: ids.length }))) return;
-    setError(null);
-    const results = await Promise.allSettled(ids.map((id) => deleteRecord(projectId, entity.name, id)));
-    const failedIds = ids.filter((_, i) => results[i].status === "rejected");
-    setSelectedIds(new Set(failedIds));
-    if (failedIds.length > 0) {
-      const firstFailure = results.find((r): r is PromiseRejectedResult => r.status === "rejected")!;
-      setError(
-        failedIds.length === ids.length
-          ? (firstFailure.reason as Error).message
-          : t("entity.bulk.partialFailure", { failed: failedIds.length, total: ids.length }),
-      );
+
+    if (pendingDeleteRef.current) {
+      clearTimeout(pendingDeleteRef.current.timeoutId);
+      void commitPendingDelete(pendingDeleteRef.current);
     }
-    await refresh();
+
+    setError(null);
+    const idSet = new Set(ids);
+    const entries: PendingDeleteEntry[] = [];
+    records.forEach((r, index) => {
+      if (idSet.has(r.id as number)) entries.push({ id: r.id as number, record: r, index });
+    });
+    setRecords((prev) => prev.filter((r) => !idSet.has(r.id as number)));
+    setSelectedIds(new Set());
+
+    const timeoutId = setTimeout(() => {
+      setPendingDelete((current) => {
+        if (current?.timeoutId !== timeoutId) return current;
+        void commitPendingDelete(current);
+        return null;
+      });
+    }, UNDO_WINDOW_MS);
+
+    setPendingDelete({ entries, message: t("entity.bulk.deleteUndoToast", { count: entries.length }), timeoutId });
   }
 
   /**
@@ -1859,7 +1887,7 @@ export function EntityPanel({
 
       {pendingDelete && (
         <p className="entity-undo-toast" role="status">
-          {t("entity.delete.undoToast", { label: pendingDelete.label })}
+          {pendingDelete.message}
           <button type="button" className="link-button" onClick={handleUndoDelete}>
             {t("entity.delete.undo")}
           </button>

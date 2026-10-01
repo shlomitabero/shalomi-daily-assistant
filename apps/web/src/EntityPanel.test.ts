@@ -146,108 +146,184 @@ test("EntityPanel's handleBulkDuplicate still surfaces the raw error message whe
   assert.equal(capturedError, rejection.message);
 });
 
-test("EntityPanel's handleBulkDelete refreshes and keeps only the ids that actually failed selected, instead of Promise.all's all-or-nothing hiding the deletes that succeeded", async () => {
-  const handlerMatch = entityPanelSrc.match(/ {2}async function handleBulkDelete\(\) \{[\s\S]*?\n {2}\}\n/);
-  assert.ok(handlerMatch, "expected to find handleBulkDelete in EntityPanel.tsx");
-  const { code } = transformSync(handlerMatch![0], { loader: "ts" });
+/**
+ * New in this round: bulk delete used to call the real DELETE endpoint for
+ * every selected record the instant window.confirm closed, with zero
+ * recovery -- the single highest-stakes action in the app (deleting many
+ * records at once) had less of a safety net than single-record delete's
+ * own undo window (round 184). Now reuses that exact same pendingDelete
+ * machinery for the whole batch: all selected rows disappear immediately,
+ * but every real DELETE call is delayed behind the same undo window, with
+ * one shared toast for the batch. Confirms every selected row vanishes at
+ * once, the real DELETE requests never fire while the window is open, the
+ * toast names the real count, and clicking Undo restores every row (in
+ * its original order) while genuinely cancelling every pending DELETE.
+ */
+test("EntityPanel's bulk delete removes every selected row immediately and shows one Undo toast for the batch, and clicking Undo restores all of them without ever calling the real delete API", async (t) => {
+  await withJsdom(async () => {
+    const store: EntityRecord[] = [
+      { id: 1, name: "Acme Corp", status: "new" },
+      { id: 2, name: "Globex", status: "won" },
+      { id: 3, name: "Initech", status: "lost" },
+    ];
+    const deletedIds: number[] = [];
+    const originalFetch = globalThis.fetch;
+    const originalConfirm = globalThis.window.confirm;
+    globalThis.fetch = mockRecordsFetch(store, (id) => deletedIds.push(id)) as typeof fetch;
+    globalThis.window.confirm = (() => true) as typeof window.confirm;
+    try {
+      renderEntityPanel();
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 3);
 
-  let capturedError: string | undefined;
-  let capturedSelectedIds: Set<number> | undefined;
-  let refreshCalled = 0;
-  const attemptedIds: number[] = [];
+      for (const checkbox of document.querySelectorAll('td.select-col input[type="checkbox"]')) {
+        fireEvent.click(checkbox);
+      }
+      await waitForCondition(() => document.querySelector(".bulk-actions-bar") !== null);
 
-  const fn = new Function(
-    "window",
-    "t",
-    "projectId",
-    "entity",
-    "selectedIds",
-    "setError",
-    "deleteRecord",
-    "setSelectedIds",
-    "refresh",
-    `${code}\nreturn handleBulkDelete;`,
-  )(
-    { confirm: () => true },
-    (key: string, params?: Record<string, unknown>) => (params ? `${key}:${JSON.stringify(params)}` : key),
-    "proj1",
-    { name: "Customer" },
-    new Set([1, 2, 3]),
-    (msg: string | null) => {
-      capturedError = msg ?? undefined;
-    },
-    async (_projectId: string, _entityName: string, id: number) => {
-      attemptedIds.push(id);
-      if (id === 2) throw new Error("record 2 network error");
-    },
-    (next: Set<number>) => {
-      capturedSelectedIds = next;
-    },
-    async () => {
-      refreshCalled += 1;
-    },
-  ) as () => Promise<void>;
+      t.mock.timers.enable({ apis: ["setTimeout"] });
 
-  await fn();
+      fireEvent.click(document.querySelector(".bulk-actions-bar .danger") as HTMLButtonElement);
 
-  assert.deepEqual(
-    attemptedIds.slice().sort(),
-    [1, 2, 3],
-    "must attempt every selected id, not stop at the first failure",
-  );
-  assert.deepEqual(
-    [...capturedSelectedIds!].sort(),
-    [2],
-    "only the id that actually failed should remain selected -- the two that succeeded must be cleared",
-  );
-  assert.match(
-    capturedError!,
-    /entity\.bulk\.partialFailure/,
-    "a partial failure must surface the translated partial-failure message, not the raw single-record rejection",
-  );
-  assert.equal(
-    refreshCalled,
-    1,
-    "refresh() must still run so the table reflects the records that WERE successfully deleted, even on a partial failure",
-  );
+      assert.equal(document.querySelectorAll("table tbody tr").length, 0, "all 3 selected rows must disappear immediately");
+      assert.equal(deletedIds.length, 0, "no real DELETE request must have fired yet -- still inside the undo window");
+
+      const toast = document.querySelector(".entity-undo-toast");
+      assert.ok(toast, "expected one Undo toast for the whole batch");
+      assert.match(toast!.textContent ?? "", /3/, "the toast must name the real number of deleted records");
+
+      fireEvent.click(toast!.querySelector("button") as HTMLButtonElement);
+
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 3);
+      assert.equal(document.querySelector(".entity-undo-toast"), null, "the toast must disappear once undone");
+      const namesAfterUndo = Array.from(document.querySelectorAll("table tbody tr")).map((r) => r.textContent ?? "");
+      assert.ok(
+        /Acme/.test(namesAfterUndo[0]) && /Globex/.test(namesAfterUndo[1]) && /Initech/.test(namesAfterUndo[2]),
+        "all 3 rows must come back in their original order, not just restored in some arbitrary order",
+      );
+
+      act(() => {
+        t.mock.timers.tick(10_000);
+      });
+      assert.equal(deletedIds.length, 0, "even long after the undo window would have elapsed, undoing must have cancelled every pending delete");
+    } finally {
+      t.mock.timers.reset();
+      globalThis.fetch = originalFetch;
+      globalThis.window.confirm = originalConfirm;
+    }
+  });
 });
 
-test("EntityPanel's handleBulkDelete still surfaces the raw error message when every delete in the batch fails", async () => {
-  const handlerMatch = entityPanelSrc.match(/ {2}async function handleBulkDelete\(\) \{[\s\S]*?\n {2}\}\n/);
-  const { code } = transformSync(handlerMatch![0], { loader: "ts" });
+/**
+ * The other half: NOT clicking Undo must commit every real delete in the
+ * batch once the undo window actually elapses, mirroring single-delete's
+ * own equivalent test -- the whole point is a temporary reprieve for the
+ * whole selection, not silently keeping deleted records around forever.
+ */
+test("EntityPanel's pending bulk delete actually calls the real delete API for every selected record once the undo window elapses without Undo being clicked", async (t) => {
+  await withJsdom(async () => {
+    const store: EntityRecord[] = [
+      { id: 1, name: "Acme Corp", status: "new" },
+      { id: 2, name: "Globex", status: "won" },
+    ];
+    const deletedIds: number[] = [];
+    const originalFetch = globalThis.fetch;
+    const originalConfirm = globalThis.window.confirm;
+    globalThis.fetch = mockRecordsFetch(store, (id) => deletedIds.push(id)) as typeof fetch;
+    globalThis.window.confirm = (() => true) as typeof window.confirm;
+    try {
+      renderEntityPanel();
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 2);
 
-  let capturedError: string | undefined;
-  const rejection = new Error("network error");
-  const fn = new Function(
-    "window",
-    "t",
-    "projectId",
-    "entity",
-    "selectedIds",
-    "setError",
-    "deleteRecord",
-    "setSelectedIds",
-    "refresh",
-    `${code}\nreturn handleBulkDelete;`,
-  )(
-    { confirm: () => true },
-    (key: string) => key,
-    "proj1",
-    { name: "Customer" },
-    new Set([1]),
-    (msg: string | null) => {
-      capturedError = msg ?? undefined;
-    },
-    async () => {
-      throw rejection;
-    },
-    () => {},
-    async () => {},
-  ) as () => Promise<void>;
+      for (const checkbox of document.querySelectorAll('td.select-col input[type="checkbox"]')) {
+        fireEvent.click(checkbox);
+      }
+      await waitForCondition(() => document.querySelector(".bulk-actions-bar") !== null);
 
-  await fn();
+      t.mock.timers.enable({ apis: ["setTimeout"] });
+      fireEvent.click(document.querySelector(".bulk-actions-bar .danger") as HTMLButtonElement);
+      assert.equal(deletedIds.length, 0, "must not have deleted for real yet");
 
-  assert.equal(capturedError, rejection.message);
+      act(() => {
+        t.mock.timers.tick(5000);
+      });
+      await new Promise((resolve) => setImmediate(resolve));
+
+      assert.deepEqual(deletedIds.slice().sort(), [1, 2], "once the undo window elapses with no Undo click, every real delete must actually fire");
+      assert.equal(document.querySelector(".entity-undo-toast"), null, "the toast must clear itself once the batch delete actually commits");
+    } finally {
+      t.mock.timers.reset();
+      globalThis.fetch = originalFetch;
+      globalThis.window.confirm = originalConfirm;
+    }
+  });
+});
+
+/**
+ * A partial failure within a committed bulk delete (one record another
+ * tab already deleted, a real foreign-key constraint) must restore only
+ * the record(s) that actually failed -- not the whole batch, and not
+ * silently swallow the failure -- mirroring the exact Promise.allSettled
+ * resilience handleBulkDelete already had before this round, now living
+ * inside the shared commitPendingDelete instead.
+ */
+test("EntityPanel restores only the records whose real delete actually failed once a pending bulk delete's undo window elapses, and surfaces the partial-failure message", async (t) => {
+  await withJsdom(async () => {
+    const store: EntityRecord[] = [
+      { id: 1, name: "Acme Corp", status: "new" },
+      { id: 2, name: "Globex", status: "won" },
+    ];
+    const deletedIds: number[] = [];
+    const originalFetch = globalThis.fetch;
+    const originalConfirm = globalThis.window.confirm;
+    globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/entities/Deal") {
+        return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      if (method === "DELETE" && input === "/api/projects/proj1/entities/Deal/1") {
+        deletedIds.push(1);
+        return new Response(null, { status: 204 });
+      }
+      if (method === "DELETE" && input === "/api/projects/proj1/entities/Deal/2") {
+        return new Response(
+          JSON.stringify({ error: "another record still refers to it", code: "RECORD_HAS_DEPENDENT_RECORDS" }),
+          { status: 409, headers: { "content-type": "application/json" } },
+        );
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+    globalThis.window.confirm = (() => true) as typeof window.confirm;
+    try {
+      renderEntityPanel();
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 2);
+
+      for (const checkbox of document.querySelectorAll('td.select-col input[type="checkbox"]')) {
+        fireEvent.click(checkbox);
+      }
+      await waitForCondition(() => document.querySelector(".bulk-actions-bar") !== null);
+
+      t.mock.timers.enable({ apis: ["setTimeout"] });
+      fireEvent.click(document.querySelector(".bulk-actions-bar .danger") as HTMLButtonElement);
+
+      act(() => {
+        t.mock.timers.tick(5000);
+      });
+      t.mock.timers.reset();
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 1);
+
+      assert.deepEqual(deletedIds, [1], "the record that succeeded must have been deleted for real");
+      const remainingRow = document.querySelector("table tbody tr");
+      assert.match(remainingRow!.textContent ?? "", /Globex/, "only the record whose real delete failed must be restored");
+      assert.match(
+        document.querySelector(".error")?.textContent ?? "",
+        /1 of 2 records could not be deleted/,
+        "a partial failure must surface the translated partial-failure message naming the real counts",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+      globalThis.window.confirm = originalConfirm;
+    }
+  });
 });
 
 /**
