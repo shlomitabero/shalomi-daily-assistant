@@ -19733,6 +19733,75 @@ Full suite green: **1220 tests** (`@forge/shared` 13, `@forge/spec-engine`
 via `npm test` at the repo root, plus a clean full monorepo
 `npm run build`.
 
+### Round 326 — Global Search's "Show all" expand finally reaches the exported app
+
+No ready candidate was left for this round (recentSearches, copy-to-clipboard,
+and undo-toast are all fully closed), so an Explore agent ran a fresh,
+broad survey. It read `apps/api/src/pipeline.ts`, `packages/db/src/repository.ts`,
+`packages/db/src/checkpoints.ts`, and `packages/spec-engine/src/debug.ts`
+in full and found them unusually mature with no fresh bug. It also noted
+every copy-status button across 5 live-preview panels lacks an
+`aria-live`/`role="status"` announcement (a real but minor a11y gap,
+flagged for a future round rather than pursued now). The clear winner was
+the familiar "feature exists in live, missing in its exported sibling"
+pattern: the live preview's `GlobalSearchPanel.tsx` fixed its own "+N
+more" dead end long ago (a group's sample capped at 5 rows with no way to
+reach the rest, even though `totalMatches` said they existed) via a real
+`handleShowAll` + "Show all" button, but the exported app's generated
+`GlobalSearch` still printed a static, unreachable `+{N} more` string --
+grep confirmed zero occurrences of `handleShowAll`/`expandedSamples`/
+`showAllLoading` anywhere in `codegen.ts`.
+
+Fix: ported the exact same pattern into `renderGlobalSearchJsx`'s
+generated `GlobalSearch` component -- new `expandedSamples`/
+`showAllLoading` state, a `handleShowAll(entityName)` that re-fetches
+just that one entity's records (a cheap, idempotent GET -- the same
+request `runSearch` already made) and re-filters them with the real
+generated `matchesSearch` and no sample cap, keyed per entity so a
+still-collapsed group elsewhere is untouched. `searchAllEntities` now
+also returns its own `recordsByEntity` map, stashed in a new
+`lastRecordsByEntityRef` so `handleShowAll`'s own relation-field matches
+resolve to their real display label (mirroring the live preview's own
+ref) rather than a raw foreign-key id. `handleSubmit`/
+`handleRecentSearchClick` now reset `expandedSamples` before each new
+search, matching the live preview's own reset-on-resubmit behavior. The
+static `+{N} more` text was replaced with a real `.global-search-show-all`
+button, reusing the CSS class the live preview already has (just newly
+added to `codegen.ts`'s own generated stylesheet).
+
+Pitfall hit and fixed, the same lesson round 324 already wrote down but
+worth re-confirming: a raw backtick inside a *comment* inside the
+generated template string still terminates the OUTER template literal at
+codegen.ts-compile-time -- esbuild's parse error pointed at a completely
+unrelated-looking line number until the stray `` ` `` in a doc comment
+was found and removed.
+
+Tests: two of the three existing `runSearch` pure-function extraction
+tests needed a new `lastRecordsByEntityRef` mock parameter added to their
+`new Function(...)` harness (an additive signature change, not a
+behavioral one -- same "pure addition doesn't usually break tests, but a
+changed function *signature* can" lesson as always), and one new real-DOM
+test mirroring the live preview's own `GlobalSearchPanel.test.ts` "Show
+all" test exactly: 7 real matching records, confirms the sample caps at
+5, clicking "Show all" reveals all 7, and the button itself disappears
+once nothing is left to expand.
+
+Deliberate-break-and-restore: backed up both changed files, reverted
+`codegen.ts` to its pre-round HEAD state, confirmed the two pre-existing
+extraction tests still passed unaffected (the added mock parameter is
+harmless against the old generated code, which never references it) while
+the new "Show all" test failed with the exact expected mismatch ("expected
+a real 'Show all' button when more matches exist than the sample shows").
+Restored from the verified backup with a confirmed byte-identical `diff`
+against both files, then re-ran every workspace: `@forge/shared` 13/13,
+`@forge/spec-engine` 85/85, `@forge/db` 96/96, `@forge/api` 333 → 334,
+`@forge/web` 693 unchanged, plus a clean full monorepo `npm run build`.
+
+Full suite green: **1221 tests** (`@forge/shared` 13, `@forge/spec-engine`
+85, `@forge/db` 96, `@forge/api` 333 → 334; `@forge/web` 693 unchanged)
+via `npm test` at the repo root, plus a clean full monorepo
+`npm run build`.
+
 ## Phase 4
 
 - Template/agent marketplace
