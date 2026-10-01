@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { test } from "node:test";
 import { transformSync } from "esbuild";
+import { JSDOM } from "jsdom";
 import React from "react";
 import { act, cleanup, fireEvent, render } from "@testing-library/react";
 import type { Project } from "@forge/shared";
@@ -686,7 +687,7 @@ test("the exported EntityView's table can be grouped by an enum/boolean field, n
 
   assert.match(entityViewJsx, /function isGroupableField\(field\) \{/);
   assert.match(entityViewJsx, /function groupRecordsByField\(records, field\) \{/);
-  assert.match(entityViewJsx, /const \[groupFieldName, setGroupFieldName\] = useState\(""\);/);
+  assert.match(entityViewJsx, /const \[groupFieldName, setGroupFieldName\] = useState\(\(\) => getPersistedGroupField\(entity\.name\)\);/);
   assert.match(entityViewJsx, /const groupableFields = useMemo\(\(\) => entity\.fields\.filter\(isGroupableField\), \[entity\.fields\]\);/);
   assert.match(entityViewJsx, /const recordGroups = useMemo\(/);
   // The group-by dropdown itself, gated to table view only
@@ -2389,13 +2390,14 @@ test("the exported EntityView's table headers support shift-click multi-column s
   const files = generateExportFiles(project);
   const entityViewJsx = files.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
 
-  assert.match(entityViewJsx, /const \[sortKeys, setSortKeys\] = useState\(\[\]\);/);
+  assert.match(entityViewJsx, /const \[sortKeys, setSortKeys\] = useState\(\(\) => getPersistedSortKeys\(entity\.name\)\);/);
   // Plain click replaces the whole key list (or toggles direction in place
   // when the clicked field is already the sole key); shift-click appends a
   // tiebreaker or toggles an existing key's direction without moving it.
+  // Each outcome is also persisted via setPersistedSortKeys (round 315).
   assert.match(
     entityViewJsx,
-    /function toggleSort\(fieldName, additive\) \{\s*setSortKeys\(\(prev\) => \{\s*const existingIndex = prev\.findIndex\(\(k\) => k\.field === fieldName\);\s*if \(!additive\) \{\s*if \(prev\.length === 1 && existingIndex === 0\) \{\s*return \[\{ field: fieldName, direction: prev\[0\]\.direction === "asc" \? "desc" : "asc" \}\];\s*\}\s*return \[\{ field: fieldName, direction: "asc" \}\];\s*\}\s*if \(existingIndex === -1\) \{\s*return \[\.\.\.prev, \{ field: fieldName, direction: "asc" \}\];\s*\}\s*return prev\.map\(\(k, i\) => \(i === existingIndex \? \{ \.\.\.k, direction: k\.direction === "asc" \? "desc" : "asc" \} : k\)\);\s*\}\);\s*\}/,
+    /function toggleSort\(fieldName, additive\) \{\s*setSortKeys\(\(prev\) => \{\s*const existingIndex = prev\.findIndex\(\(k\) => k\.field === fieldName\);\s*let next;\s*if \(!additive\) \{\s*next =\s*prev\.length === 1 && existingIndex === 0\s*\? \[\{ field: fieldName, direction: prev\[0\]\.direction === "asc" \? "desc" : "asc" \}\]\s*: \[\{ field: fieldName, direction: "asc" \}\];\s*\} else if \(existingIndex === -1\) \{\s*next = \[\.\.\.prev, \{ field: fieldName, direction: "asc" \}\];\s*\} else \{\s*next = prev\.map\(\(k, i\) => \(i === existingIndex \? \{ \.\.\.k, direction: k\.direction === "asc" \? "desc" : "asc" \} : k\)\);\s*\}\s*setPersistedSortKeys\(entity\.name, next\);\s*return next;\s*\}\);\s*\}/,
   );
   // The header must pass the real shiftKey through, not just always additive/replace.
   assert.match(entityViewJsx, /onClick=\{\(e\) => toggleSort\(f\.name, e\.shiftKey\)\}/);
@@ -2408,7 +2410,10 @@ test("the exported EntityView's table headers support shift-click multi-column s
   // implementation (a real bug this exact port introduced and Playwright
   // caught: setSortField is not defined, since the state variable no longer exists).
   assert.doesNotMatch(entityViewJsx, /setSortField/);
-  assert.match(entityViewJsx, /setSortKeys\(\[\]\);/);
+  // Round 315: switching entities now re-reads the NEW entity's own
+  // persisted sort (not a hardcoded reset to []), the same persistence
+  // every other per-entity view preference here already gets.
+  assert.match(entityViewJsx, /setSortKeys\(getPersistedSortKeys\(entity\.name\)\);/);
 
   const stylesCss = files.find((f) => f.path === "web/src/styles.css")!.content;
   assert.match(stylesCss, /\.sort-priority/);
@@ -3831,21 +3836,21 @@ test("the exported App's entity tabs are drag-and-drop reorderable, persisting v
 });
 
 /**
- * Writes the real generated GlobalSearch.jsx (plus the EntityView.jsx and
- * api.js files it imports from) to a temp directory shaped exactly like the
- * real export (web/src/components/GlobalSearch.jsx importing "../api.js"
- * and "./EntityView.jsx"), symlinks the repo's real node_modules so react/
- * react-dom/@testing-library resolve, and dynamically imports the real
- * GlobalSearch component -- not a regex proxy for it. A plain `import
- * React from "react";` is prepended only to each written .jsx file (never
- * to the actual generated content under test) so tsx's esbuild loader,
- * which has no tsconfig "jsx": "react-jsx" to pick up for an arbitrary temp
- * path the way the real `vite build` config does, falls back to the
- * classic React.createElement transform instead of throwing "React is not
- * defined" -- a test-harness concession that doesn't change the behavior
- * of the code under test.
+ * Writes every real generated web/src/** file (components and api.js alike)
+ * to a temp directory shaped exactly like the real export (e.g.
+ * web/src/components/GlobalSearch.jsx importing "../api.js" and
+ * "./EntityView.jsx"), symlinks the repo's real node_modules so react/
+ * react-dom/@testing-library resolve, so a caller can dynamically import any
+ * one real generated component from it afterward -- not a regex proxy for
+ * it. A plain `import React from "react";` is prepended only to each
+ * written .jsx file (never to the actual generated content under test) so
+ * tsx's esbuild loader, which has no tsconfig "jsx": "react-jsx" to pick up
+ * for an arbitrary temp path the way the real `vite build` config does,
+ * falls back to the classic React.createElement transform instead of
+ * throwing "React is not defined" -- a test-harness concession that
+ * doesn't change the behavior of the code under test.
  */
-function writeGeneratedGlobalSearch(files: { path: string; content: string }[]): string {
+function writeGeneratedWebComponent(files: { path: string; content: string }[]): string {
   const repoRoot = path.resolve(import.meta.dirname, "../../..");
   const dir = mkdtempSync(path.join(tmpdir(), "forge-global-search-dom-"));
   symlinkSync(path.join(repoRoot, "node_modules"), path.join(dir, "node_modules"));
@@ -3857,6 +3862,39 @@ function writeGeneratedGlobalSearch(files: { path: string; content: string }[]):
     writeFileSync(full, content);
   }
   return dir;
+}
+
+/**
+ * Installs a real jsdom `localStorage` as `globalThis.localStorage` for the
+ * duration of `fn`, then restores whatever was there before. The generated
+ * components under test call the bare `localStorage` global directly (the
+ * same way they'd run in a real browser, where it's always global) -- but
+ * in this Node test process it is NOT a global at all (jsdom's own
+ * `localStorage` lives on `window.localStorage`, a different realm from
+ * Node's bare global scope, the same window-vs-bare-global gap
+ * jsdomWarmup.ts papers over for `window`/`document`/etc). Without this,
+ * every `localStorage.getItem`/`setItem` call inside the generated code's
+ * try/catch silently no-ops (caught as a bare ReferenceError), so
+ * persistence looks broken even though the real generated code is correct
+ * -- confirmed by debugging exactly this symptom while writing round 315's
+ * EntityView reload-survival test. A fresh JSDOM per call keeps this
+ * isolated from any other test's localStorage state.
+ */
+async function withRealLocalStorage<T>(fn: () => Promise<T> | T): Promise<T> {
+  const dom = new JSDOM("<!doctype html><html><body></body></html>", { url: "http://localhost/" });
+  const original = Object.getOwnPropertyDescriptor(globalThis, "localStorage");
+  Object.defineProperty(globalThis, "localStorage", {
+    value: dom.window.localStorage,
+    writable: true,
+    configurable: true,
+    enumerable: true,
+  });
+  try {
+    return await fn();
+  } finally {
+    if (original) Object.defineProperty(globalThis, "localStorage", original);
+    else delete (globalThis as { localStorage?: unknown }).localStorage;
+  }
 }
 
 /**
@@ -3877,7 +3915,7 @@ function writeGeneratedGlobalSearch(files: { path: string; content: string }[]):
  */
 test("the exported GlobalSearch component actually renders instead of crashing with 'useEffect is not defined'", async () => {
   const files = generateExportFiles(project);
-  const dir = writeGeneratedGlobalSearch(files);
+  const dir = writeGeneratedWebComponent(files);
   const originalFetch = globalThis.fetch;
   globalThis.fetch = (async () => ({ ok: true, status: 200, json: async () => ({ records: [] }) })) as typeof fetch;
 
@@ -3918,7 +3956,7 @@ test("the exported GlobalSearch component actually renders instead of crashing w
  */
 test("the exported GlobalSearch's Copy/Download buttons only appear once real results exist, and Copy writes the real formatted results to the clipboard", async (t) => {
   const files = generateExportFiles(project);
-  const dir = writeGeneratedGlobalSearch(files);
+  const dir = writeGeneratedWebComponent(files);
   const originalFetch = globalThis.fetch;
   globalThis.fetch = (async (input: string) => {
     if (String(input).endsWith("/Customer")) {
@@ -3985,6 +4023,157 @@ test("the exported GlobalSearch's Copy/Download buttons only appear once real re
     t.mock.timers.reset();
     globalThis.fetch = originalFetch;
     delete (navigator as { clipboard?: unknown }).clipboard;
+    cleanup();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
+ * Regression test for a real gap found while porting -- see round 314's
+ * trigger-prompt note that this was the last known gap in the
+ * port-to-exported-codegen family: the exported app's own groupFieldName/
+ * sortKeys/viewMode were always plain `useState` with no persistence at
+ * all, unlike every other per-entity view preference this exported app
+ * already remembers (hidden columns, column widths, column order, entity
+ * tab order), and unlike the live preview's own groupByPreference.ts/
+ * viewModePreference.ts/sortKeysPreference.ts. Extracts and runs the three
+ * real generated store functions directly (not a regex proxy for their
+ * logic) against a fake localStorage, mirroring this file's own
+ * entity-tab-order persistence test.
+ */
+test("the exported EntityView's group-by/view-mode/sort-key choices are each persisted per entity via real localStorage-backed stores", () => {
+  const files = generateExportFiles(project);
+  const entityViewJsx = files.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+
+  const storeSrc = entityViewJsx.match(
+    /const GROUP_FIELD_STORAGE_KEY[\s\S]*?\nfunction setPersistedSortKeys\(entityName, keys\) \{[\s\S]*?\n\}\n/,
+  )?.[0];
+  assert.ok(storeSrc, "expected to find the group-field/view-mode/sort-keys store functions in generated output");
+
+  const fakeStorage: Record<string, string> = {};
+  const {
+    getPersistedGroupField,
+    setPersistedGroupField,
+    getPersistedViewMode,
+    setPersistedViewMode,
+    getPersistedSortKeys,
+    setPersistedSortKeys,
+  } = new Function(
+    "localStorage",
+    `${storeSrc}\nreturn { getPersistedGroupField, setPersistedGroupField, getPersistedViewMode, setPersistedViewMode, getPersistedSortKeys, setPersistedSortKeys };`,
+  )({
+    getItem: (k: string) => fakeStorage[k] ?? null,
+    setItem: (k: string, v: string) => {
+      fakeStorage[k] = v;
+    },
+  }) as {
+    getPersistedGroupField: (entityName: string) => string;
+    setPersistedGroupField: (entityName: string, fieldName: string) => string;
+    getPersistedViewMode: (entityName: string) => string;
+    setPersistedViewMode: (entityName: string, mode: string) => string;
+    getPersistedSortKeys: (entityName: string) => { field: string; direction: string }[];
+    setPersistedSortKeys: (entityName: string, keys: { field: string; direction: string }[]) => { field: string; direction: string }[];
+  };
+
+  // Defaults, matching the live app's own "" / "table" / [] defaults.
+  assert.equal(getPersistedGroupField("Customer"), "", "no stored group field yet must default to empty (no grouping)");
+  assert.equal(getPersistedViewMode("Customer"), "table", "no stored view mode yet must default to table");
+  assert.deepEqual(getPersistedSortKeys("Customer"), [], "no stored sort keys yet must default to an empty array");
+
+  // Round-trip each store, scoped by entity name.
+  setPersistedGroupField("Customer", "status");
+  assert.equal(getPersistedGroupField("Customer"), "status", "a stored group field must round-trip");
+  setPersistedViewMode("Customer", "board");
+  assert.equal(getPersistedViewMode("Customer"), "board", "a stored view mode must round-trip");
+  const keys = [{ field: "name", direction: "asc" }];
+  setPersistedSortKeys("Customer", keys);
+  assert.deepEqual(getPersistedSortKeys("Customer"), keys, "stored sort keys must round-trip");
+
+  // A different entity must not see Customer's own stored choices.
+  assert.equal(getPersistedGroupField("Service"), "", "a different entity must not inherit another entity's group field");
+  assert.equal(getPersistedViewMode("Service"), "table", "a different entity must not inherit another entity's view mode");
+  assert.deepEqual(getPersistedSortKeys("Service"), [], "a different entity must not inherit another entity's sort keys");
+
+  // Clearing back to the default value removes the stored entry entirely
+  // (mirroring the live app's own "" / "table" / [] clearing semantics),
+  // rather than leaving a stale, now-meaningless entry behind forever.
+  setPersistedGroupField("Customer", "");
+  assert.equal(getPersistedGroupField("Customer"), "", "clearing the group field must round-trip back to empty");
+  setPersistedViewMode("Customer", "table");
+  assert.equal(getPersistedViewMode("Customer"), "table", "switching back to table view must round-trip");
+  setPersistedSortKeys("Customer", []);
+  assert.deepEqual(getPersistedSortKeys("Customer"), [], "clearing all sort keys must round-trip back to empty");
+});
+
+/**
+ * Real-DOM companion to the pure-function test above: proves the actual
+ * generated EntityView component -- not just its store helpers in
+ * isolation -- genuinely survives a reload. Renders EntityView, switches
+ * to Board view (the entity fixture's Service entity has no groupable/date
+ * field, so Table is the only view *without* a status-like field; this
+ * reuses the suite's own Customer entity, whose "status" enum field makes
+ * a real Board view available), unmounts (simulating navigating away),
+ * then mounts a fresh instance of the exact same component (simulating a
+ * page reload) and confirms it comes back up already on Board view instead
+ * of resetting to Table.
+ */
+test("the exported EntityView's view-mode choice actually survives an unmount+remount (simulated reload), not just its store function in isolation", async () => {
+  const files = generateExportFiles(project);
+  const dir = writeGeneratedWebComponent(files);
+  const originalFetch = globalThis.fetch;
+  // A record with a real status value is required: EntityView's own
+  // empty-state branch (records.length === 0) suppresses the entire
+  // toolbar, including the view-toggle buttons this test clicks.
+  globalThis.fetch = (async () => ({
+    ok: true,
+    status: 200,
+    json: async () => ({ records: [{ id: 1, name: "Alice", status: "New" }] }),
+  })) as typeof fetch;
+
+  async function waitForBoardButton(container: HTMLElement): Promise<HTMLButtonElement> {
+    for (let i = 0; i < 40; i++) {
+      const found = Array.from(container.querySelectorAll("button")).find((b) => b.textContent?.includes("Board"));
+      if (found) return found as HTMLButtonElement;
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      });
+    }
+    throw new Error("waitForBoardButton: Board view-toggle button never appeared");
+  }
+
+  try {
+    await withRealLocalStorage(async () => {
+      const { EntityView } = await import(path.join(dir, "web", "src", "components", "EntityView.jsx"));
+      const customerEntity = project.spec.entities.find((e) => e.name === "Customer")!;
+      const props = {
+        entity: customerEntity,
+        highlightRecordId: null,
+        onHighlightHandled: () => {},
+        onJumpToRecord: () => {},
+        onRecordCountChange: () => {},
+      };
+
+      const firstMount = render(React.createElement(EntityView, props));
+      const boardButton = await waitForBoardButton(firstMount.container);
+      await act(async () => {
+        fireEvent.click(boardButton);
+      });
+      assert.ok(
+        firstMount.container.querySelector(".view-toggle-btn-active")?.textContent?.includes("Board"),
+        "Board must actually become the active view after clicking it",
+      );
+      firstMount.unmount();
+
+      const secondMount = render(React.createElement(EntityView, props));
+      await waitForBoardButton(secondMount.container);
+      assert.ok(
+        secondMount.container.querySelector(".view-toggle-btn-active")?.textContent?.includes("Board"),
+        "a freshly mounted EntityView for the same entity must come back up already on Board view, not reset to Table",
+      );
+      secondMount.unmount();
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
     cleanup();
     rmSync(dir, { recursive: true, force: true });
   }

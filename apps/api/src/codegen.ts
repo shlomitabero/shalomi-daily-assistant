@@ -915,6 +915,109 @@ function setColumnOrder(entityName, order) {
   return order;
 }
 
+// The table's own "Group by" field, "Table/Board/Calendar" view choice, and
+// multi-column sort, each persisted per entity (same single-tenant scoping
+// as the hidden-columns/column-widths/column-order stores above) so they
+// survive a reload -- mirrors the live preview's own groupByPreference.ts,
+// viewModePreference.ts, and sortKeysPreference.ts. Previously all three
+// were plain useState with no persistence at all: switching to Board view,
+// grouping by a field, or sorting a column was silently lost on every
+// reload, unlike every other per-entity view preference this exported app
+// already remembers.
+const GROUP_FIELD_STORAGE_KEY = "forge_group_field";
+function readGroupFieldStore() {
+  try {
+    const raw = localStorage.getItem(GROUP_FIELD_STORAGE_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) return {};
+    return parsed;
+  } catch {
+    return {};
+  }
+}
+function writeGroupFieldStore(store) {
+  try {
+    localStorage.setItem(GROUP_FIELD_STORAGE_KEY, JSON.stringify(store));
+  } catch {
+    // localStorage can be unavailable (private mode) -- the choice just won't survive a reload.
+  }
+}
+function getPersistedGroupField(entityName) {
+  const store = readGroupFieldStore();
+  return typeof store[entityName] === "string" ? store[entityName] : "";
+}
+function setPersistedGroupField(entityName, fieldName) {
+  const store = readGroupFieldStore();
+  if (fieldName) store[entityName] = fieldName;
+  else delete store[entityName];
+  writeGroupFieldStore(store);
+  return fieldName;
+}
+
+const VIEW_MODE_STORAGE_KEY = "forge_view_mode";
+function readViewModeStore() {
+  try {
+    const raw = localStorage.getItem(VIEW_MODE_STORAGE_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) return {};
+    return parsed;
+  } catch {
+    return {};
+  }
+}
+function writeViewModeStore(store) {
+  try {
+    localStorage.setItem(VIEW_MODE_STORAGE_KEY, JSON.stringify(store));
+  } catch {
+    // localStorage can be unavailable (private mode) -- the choice just won't survive a reload.
+  }
+}
+function getPersistedViewMode(entityName) {
+  const store = readViewModeStore();
+  const mode = store[entityName];
+  return mode === "table" || mode === "board" || mode === "calendar" ? mode : "table";
+}
+function setPersistedViewMode(entityName, mode) {
+  const store = readViewModeStore();
+  if (mode === "table") delete store[entityName];
+  else store[entityName] = mode;
+  writeViewModeStore(store);
+  return mode;
+}
+
+const SORT_KEYS_STORAGE_KEY = "forge_sort_keys";
+function readSortKeysStore() {
+  try {
+    const raw = localStorage.getItem(SORT_KEYS_STORAGE_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) return {};
+    return parsed;
+  } catch {
+    return {};
+  }
+}
+function writeSortKeysStore(store) {
+  try {
+    localStorage.setItem(SORT_KEYS_STORAGE_KEY, JSON.stringify(store));
+  } catch {
+    // localStorage can be unavailable (private mode) -- the choice just won't survive a reload.
+  }
+}
+function getPersistedSortKeys(entityName) {
+  const store = readSortKeysStore();
+  return Array.isArray(store[entityName]) ? store[entityName] : [];
+}
+function setPersistedSortKeys(entityName, keys) {
+  const store = readSortKeysStore();
+  if (keys.length === 0) delete store[entityName];
+  else store[entityName] = keys;
+  writeSortKeysStore(store);
+  return keys;
+}
+
 // Applies a persisted (possibly stale) column order to the entity's current
 // real field list: a field the order mentions keeps its persisted relative
 // position, and any field the order doesn't mention (a newly added field,
@@ -1911,11 +2014,11 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
   const [editingId, setEditingId] = useState(null);
   const [search, setSearch] = useState("");
   const [fieldFilters, setFieldFilters] = useState({});
-  const [groupFieldName, setGroupFieldName] = useState("");
+  const [groupFieldName, setGroupFieldName] = useState(() => getPersistedGroupField(entity.name));
   const [highlightedRecordId, setHighlightedRecordId] = useState(null);
   const [moveErrorId, setMoveErrorId] = useState(null);
-  const [sortKeys, setSortKeys] = useState([]);
-  const [viewMode, setViewMode] = useState("table");
+  const [sortKeys, setSortKeys] = useState(() => getPersistedSortKeys(entity.name));
+  const [viewMode, setViewMode] = useState(() => getPersistedViewMode(entity.name));
   const [calendarMonth, setCalendarMonth] = useState(() => new Date());
   const [selectedIds, setSelectedIds] = useState(() => new Set());
   const [bulkEditField, setBulkEditField] = useState("");
@@ -2015,8 +2118,9 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
     setEditingId(null);
     setSearch("");
     setFieldFilters({});
-    setSortKeys([]);
-    setViewMode("table");
+    setGroupFieldName(getPersistedGroupField(entity.name));
+    setSortKeys(getPersistedSortKeys(entity.name));
+    setViewMode(getPersistedViewMode(entity.name));
     setCalendarMonth(new Date());
     setSelectedIds(new Set());
     setImportMessage(null);
@@ -2111,16 +2215,19 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
   function toggleSort(fieldName, additive) {
     setSortKeys((prev) => {
       const existingIndex = prev.findIndex((k) => k.field === fieldName);
+      let next;
       if (!additive) {
-        if (prev.length === 1 && existingIndex === 0) {
-          return [{ field: fieldName, direction: prev[0].direction === "asc" ? "desc" : "asc" }];
-        }
-        return [{ field: fieldName, direction: "asc" }];
+        next =
+          prev.length === 1 && existingIndex === 0
+            ? [{ field: fieldName, direction: prev[0].direction === "asc" ? "desc" : "asc" }]
+            : [{ field: fieldName, direction: "asc" }];
+      } else if (existingIndex === -1) {
+        next = [...prev, { field: fieldName, direction: "asc" }];
+      } else {
+        next = prev.map((k, i) => (i === existingIndex ? { ...k, direction: k.direction === "asc" ? "desc" : "asc" } : k));
       }
-      if (existingIndex === -1) {
-        return [...prev, { field: fieldName, direction: "asc" }];
-      }
-      return prev.map((k, i) => (i === existingIndex ? { ...k, direction: k.direction === "asc" ? "desc" : "asc" } : k));
+      setPersistedSortKeys(entity.name, next);
+      return next;
     });
   }
 
@@ -2777,7 +2884,7 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
                 className="entity-group-by"
                 aria-label="Group by"
                 value={groupFieldName}
-                onChange={(e) => setGroupFieldName(e.target.value)}
+                onChange={(e) => setGroupFieldName(setPersistedGroupField(entity.name, e.target.value))}
               >
                 <option value="">No grouping</option>
                 {groupableFields.map((f) => (
@@ -2792,7 +2899,7 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
                 <button
                   type="button"
                   className={viewMode === "table" ? "view-toggle-btn view-toggle-btn-active" : "view-toggle-btn"}
-                  onClick={() => setViewMode("table")}
+                  onClick={() => setViewMode(setPersistedViewMode(entity.name, "table"))}
                 >
                   📋 Table
                 </button>
@@ -2800,7 +2907,7 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
                   <button
                     type="button"
                     className={viewMode === "board" ? "view-toggle-btn view-toggle-btn-active" : "view-toggle-btn"}
-                    onClick={() => setViewMode("board")}
+                    onClick={() => setViewMode(setPersistedViewMode(entity.name, "board"))}
                   >
                     🗂️ Board
                   </button>
@@ -2809,7 +2916,7 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
                   <button
                     type="button"
                     className={viewMode === "calendar" ? "view-toggle-btn view-toggle-btn-active" : "view-toggle-btn"}
-                    onClick={() => setViewMode("calendar")}
+                    onClick={() => setViewMode(setPersistedViewMode(entity.name, "calendar"))}
                   >
                     📅 Calendar
                   </button>
