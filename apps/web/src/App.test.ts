@@ -1376,6 +1376,51 @@ test("App's handleSetProjectStatusFilter updates both the in-memory state and th
 });
 
 /**
+ * New in this round: the home screen's own "Your projects" search box had
+ * the same gap Global Search's query box had before recentSearches.ts --
+ * no memory of past searches at all. Since this box filters live on every
+ * keystroke (no submit button, unlike Global Search's form), Enter is the
+ * natural "I'm done typing this" signal to persist it, mirroring how a
+ * submit-driven search commits a query. Extracts the real
+ * handleProjectSearchKeyDown the same way handleSetProjectStatusFilter
+ * above does.
+ */
+test("App's handleProjectSearchKeyDown adds the current search to recent-searches on Enter, but never on another key or an empty/whitespace-only search", () => {
+  const appSrc = readFileSync(new URL("./App.tsx", import.meta.url), "utf8");
+  const handlerMatch = appSrc.match(/ {2}function handleProjectSearchKeyDown\([\s\S]*?\n {2}\}\n/);
+  assert.ok(handlerMatch, "expected to find handleProjectSearchKeyDown in App.tsx");
+  const { code } = transformSync(handlerMatch![0], { loader: "ts" });
+
+  function run(projectSearch: string, key: string): string[] {
+    const added: string[] = [];
+    const fn = new Function(
+      "projectSearch",
+      "setRecentProjectSearches",
+      "addRecentProjectSearch",
+      `${code}\nreturn handleProjectSearchKeyDown;`,
+    ) as (
+      projectSearch: string,
+      setRecentProjectSearches: (v: string[]) => void,
+      addRecentProjectSearch: (q: string) => string[],
+    ) => (e: { key: string }) => void;
+    const handler = fn(
+      projectSearch,
+      () => {},
+      (q: string) => {
+        added.push(q);
+        return [q];
+      },
+    );
+    handler({ key });
+    return added;
+  }
+
+  assert.deepEqual(run("acme", "Enter"), ["acme"], "Enter with a real query must add it to recent searches");
+  assert.deepEqual(run("acme", "a"), [], "a non-Enter key must never add to recent searches");
+  assert.deepEqual(run("   ", "Enter"), [], "Enter with only whitespace must never add an empty entry");
+});
+
+/**
  * New in this round: the live preview's entity-tab bar always mirrored
  * spec.entities' fixed generation order, with no way to put the screen
  * used most often first. Extracts the real handleReorderEntityTab the same

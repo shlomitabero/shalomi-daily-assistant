@@ -2414,6 +2414,18 @@ button.sort-header:hover:not(:disabled) {
   margin-bottom: 8px;
 }
 
+.my-projects-search-recent {
+  margin-top: -4px;
+  margin-bottom: 10px;
+}
+
+.my-projects-search-recent-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 6px;
+}
+
 .whatsapp-recent-numbers {
   margin-top: -4px;
   margin-bottom: 10px;

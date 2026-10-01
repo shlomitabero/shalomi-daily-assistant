@@ -37,6 +37,12 @@ import { AddAssumptionForm, AddEntityForm, AddRoleForm, AssumptionItem, EntitySu
 import { applyColumnOrder, reorderColumns } from "./columnOrder.js";
 import { getEntityTabOrder, setEntityTabOrder } from "./entityTabOrder.js";
 import { getPinnedIds, sortByPinned, togglePinned } from "./pinnedProjects.js";
+import {
+  addRecentProjectSearch,
+  clearRecentProjectSearches,
+  getRecentProjectSearches,
+  removeRecentProjectSearch,
+} from "./recentProjectSearches.js";
 import { visibleSelectedIds } from "./projectSelection.js";
 import { getProjectSortMode, setProjectSortMode, type ProjectSortMode } from "./projectSortMode.js";
 import {
@@ -398,6 +404,7 @@ function AppContent() {
   const [pinnedIds, setPinnedIds] = useState<Set<string>>(() => getPinnedIds());
   const [projectSortMode, setProjectSortModeState] = useState<ProjectSortMode>(() => getProjectSortMode());
   const [projectSearch, setProjectSearch] = useState("");
+  const [recentProjectSearches, setRecentProjectSearches] = useState<string[]>(() => getRecentProjectSearches());
   const [projectStatusFilter, setProjectStatusFilterState] = useState<ProjectStatusFilter>(() => getProjectStatusFilter());
   const [cloningId, setCloningId] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
@@ -469,6 +476,21 @@ function AppContent() {
   function handleSetProjectStatusFilter(filter: ProjectStatusFilter) {
     setProjectStatusFilterState(filter);
     persistProjectStatusFilter(filter);
+  }
+  function handleProjectSearchKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
+    if (e.key === "Enter" && projectSearch.trim()) {
+      setRecentProjectSearches(addRecentProjectSearch(projectSearch));
+    }
+  }
+  function handleRecentProjectSearchClick(query: string) {
+    setProjectSearch(query);
+  }
+  function handleRemoveRecentProjectSearch(query: string) {
+    setRecentProjectSearches(removeRecentProjectSearch(query));
+  }
+  function handleClearRecentProjectSearches() {
+    clearRecentProjectSearches();
+    setRecentProjectSearches([]);
   }
   const visibleRefineHistory = useMemo(
     () => filterRefineHistory(refineHistory, refineHistorySearch),
@@ -1139,7 +1161,36 @@ function AppContent() {
                   aria-label={t("home.myProjects.search.placeholder")}
                   value={projectSearch}
                   onChange={(e) => setProjectSearch(e.target.value)}
+                  onKeyDown={handleProjectSearchKeyDown}
                 />
+              )}
+              {myProjects.length > 5 && !projectSearch.trim() && recentProjectSearches.length > 0 && (
+                <div className="my-projects-search-recent">
+                  <div className="my-projects-search-recent-header">
+                    <span className="muted small">{t("home.myProjects.search.recent.heading")}</span>
+                    <button type="button" className="link-button small" onClick={handleClearRecentProjectSearches}>
+                      {t("home.myProjects.search.recent.clear")}
+                    </button>
+                  </div>
+                  <div className="chips">
+                    {recentProjectSearches.map((q) => (
+                      <span className="chip chip-removable" key={q}>
+                        <button type="button" className="chip-text" onClick={() => handleRecentProjectSearchClick(q)}>
+                          {q}
+                        </button>
+                        <button
+                          type="button"
+                          className="chip-remove"
+                          title={t("home.myProjects.search.recent.remove", { query: q })}
+                          aria-label={t("home.myProjects.search.recent.remove", { query: q })}
+                          onClick={() => handleRemoveRecentProjectSearch(q)}
+                        >
+                          ×
+                        </button>
+                      </span>
+                    ))}
+                  </div>
+                </div>
               )}
               {myProjects.length > 1 && (
                 <div className="my-projects-sort view-toggle">
