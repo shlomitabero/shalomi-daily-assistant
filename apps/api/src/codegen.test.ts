@@ -4619,3 +4619,128 @@ test("the exported EntityView's search box remembers a query on Enter and shows 
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+/**
+ * New in this round: the exported app's Global Search had the same
+ * recent-searches gap EntityView's own table search box had before round
+ * 324 -- the last remaining item in the recent-searches family. Extracts
+ * and *executes* the real generated store functions (not a
+ * reimplementation): capped at 5, most recent first, case-insensitive
+ * dedup/removal. Unlike EntityView's own store (scoped per entity name),
+ * this one is a single flat list, since this single-tenant exported app
+ * has only one Global Search in the whole app to begin with.
+ */
+test("the exported GlobalSearch's recent-searches store caps at 5 and dedupes case-insensitively, as a single flat list", () => {
+  const files = generateExportFiles(project);
+  const globalSearchJsx = files.find((f) => f.path === "web/src/components/GlobalSearch.jsx")!.content;
+
+  const storeSrc = globalSearchJsx.match(
+    /const GLOBAL_SEARCH_RECENT_SEARCHES_STORAGE_KEY[\s\S]*?\nfunction clearGlobalSearchRecentSearches\(\) \{[\s\S]*?\n\}\n/,
+  )?.[0];
+  assert.ok(storeSrc, "expected to find the Global Search recent-searches store functions in generated output");
+
+  const fakeStorage: Record<string, string> = {};
+  const { getGlobalSearchRecentSearches, addGlobalSearchRecentSearch, removeGlobalSearchRecentSearch, clearGlobalSearchRecentSearches } =
+    new Function(
+      "localStorage",
+      `${storeSrc}\nreturn { getGlobalSearchRecentSearches, addGlobalSearchRecentSearch, removeGlobalSearchRecentSearch, clearGlobalSearchRecentSearches };`,
+    )({
+      getItem: (k: string) => fakeStorage[k] ?? null,
+      setItem: (k: string, v: string) => {
+        fakeStorage[k] = v;
+      },
+    }) as {
+      getGlobalSearchRecentSearches: () => string[];
+      addGlobalSearchRecentSearch: (query: string) => string[];
+      removeGlobalSearchRecentSearch: (query: string) => string[];
+      clearGlobalSearchRecentSearches: () => void;
+    };
+
+  assert.deepEqual(getGlobalSearchRecentSearches(), [], "no stored searches yet must default to an empty array");
+
+  addGlobalSearchRecentSearch("acme");
+  addGlobalSearchRecentSearch("globex");
+  assert.deepEqual(
+    addGlobalSearchRecentSearch("ACME"),
+    ["ACME", "globex"],
+    "re-adding case-insensitively must move it to the front (with the newly typed casing), not duplicate it",
+  );
+
+  for (const q of ["a", "b", "c", "d", "e"]) addGlobalSearchRecentSearch(q);
+  assert.deepEqual(getGlobalSearchRecentSearches(), ["e", "d", "c", "b", "a"], "the list must cap at 5 entries, dropping the oldest");
+
+  assert.deepEqual(removeGlobalSearchRecentSearch("C"), ["e", "d", "b", "a"], "removal must be case-insensitive");
+
+  clearGlobalSearchRecentSearches();
+  assert.deepEqual(getGlobalSearchRecentSearches(), [], "clearing must wipe the list entirely");
+});
+
+/**
+ * Real-DOM companion, mirroring the live preview's own
+ * GlobalSearchPanel.test.ts pattern exactly: submits a real search (a
+ * genuine fetch + form submit, not a direct store call), unmounts and
+ * remounts the component fresh (simulating closing and reopening the
+ * panel), and confirms the submitted query now shows as a real,
+ * clickable, removable recent-search chip -- a real persistence round
+ * trip through the actual component, not just the store helpers in
+ * isolation.
+ */
+test("the exported GlobalSearch remembers a submitted search and shows it as a recent-search chip after being closed and reopened", async () => {
+  const files = generateExportFiles(project);
+  const dir = writeGeneratedWebComponent(files);
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async (input: string) => {
+    if (String(input).endsWith("/Customer")) {
+      return { ok: true, status: 200, json: async () => ({ records: [{ id: 1, name: "Acme widget order" }] }) };
+    }
+    return { ok: true, status: 200, json: async () => ({ records: [] }) };
+  }) as typeof fetch;
+
+  try {
+    await withRealLocalStorage(async () => {
+      const { GlobalSearch } = await import(path.join(dir, "web", "src", "components", "GlobalSearch.jsx"));
+      const props = { entities: project.spec.entities, onClose: () => {}, onJumpToEntity: () => {}, onJumpToRecord: () => {} };
+
+      const firstMount = render(React.createElement(GlobalSearch, props));
+      const input = firstMount.container.querySelector(".global-search-input") as HTMLInputElement;
+      await act(async () => {
+        fireEvent.change(input, { target: { value: "widget" } });
+        fireEvent.submit(firstMount.container.querySelector("form.global-search-form")!);
+        await Promise.resolve();
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+      assert.equal(
+        firstMount.container.querySelector(".global-search-recent"),
+        null,
+        "the recent-searches row must stay hidden while real results are showing",
+      );
+      firstMount.unmount();
+
+      const secondMount = render(React.createElement(GlobalSearch, props));
+      const chip = Array.from(secondMount.container.querySelectorAll(".global-search-recent .chip-text")).find(
+        (el) => el.textContent === "widget",
+      );
+      assert.ok(chip, "expected the reopened panel to show 'widget' as a real recent-search chip, from real persisted state");
+
+      await act(async () => {
+        fireEvent.click(chip!);
+        await Promise.resolve();
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+      assert.match(
+        secondMount.container.textContent ?? "",
+        /Acme widget order/,
+        "clicking the chip must genuinely re-run the search, not just refill the input",
+      );
+
+      const removeButton = secondMount.container.querySelector(".global-search-recent .chip-remove") as HTMLButtonElement | null;
+      assert.equal(removeButton, null, "the recent-searches row (and its remove button) must stay hidden once results are showing again");
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    cleanup();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});

@@ -3374,6 +3374,48 @@ function formatGlobalSearchReport(results, entities, query) {
   return lines.join("\\n").trimEnd();
 }
 
+// Recent queries submitted to Global Search, persisted across reloads. This
+// single-tenant exported app has no project id to scope by (unlike the live
+// preview's own recentSearches.ts, keyed per project) and there's only one
+// Global Search in the whole app, so this is a single flat list rather than
+// a store keyed by entity name like EntityView's own recent-searches store.
+const GLOBAL_SEARCH_RECENT_SEARCHES_STORAGE_KEY = "forge_global_search_recent_searches";
+const GLOBAL_SEARCH_MAX_RECENT_SEARCHES = 5;
+function getGlobalSearchRecentSearches() {
+  try {
+    const raw = localStorage.getItem(GLOBAL_SEARCH_RECENT_SEARCHES_STORAGE_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed.filter((v) => typeof v === "string") : [];
+  } catch {
+    return [];
+  }
+}
+function writeGlobalSearchRecentSearches(list) {
+  try {
+    localStorage.setItem(GLOBAL_SEARCH_RECENT_SEARCHES_STORAGE_KEY, JSON.stringify(list));
+  } catch {
+    // localStorage can be unavailable (private mode) -- the history just won't survive a reload.
+  }
+}
+function addGlobalSearchRecentSearch(query) {
+  const trimmed = query.trim();
+  const existing = getGlobalSearchRecentSearches();
+  if (!trimmed) return existing;
+  const deduped = existing.filter((q) => q.toLowerCase() !== trimmed.toLowerCase());
+  const next = [trimmed, ...deduped].slice(0, GLOBAL_SEARCH_MAX_RECENT_SEARCHES);
+  writeGlobalSearchRecentSearches(next);
+  return next;
+}
+function removeGlobalSearchRecentSearch(query) {
+  const next = getGlobalSearchRecentSearches().filter((q) => q.toLowerCase() !== query.toLowerCase());
+  writeGlobalSearchRecentSearches(next);
+  return next;
+}
+function clearGlobalSearchRecentSearches() {
+  writeGlobalSearchRecentSearches([]);
+}
+
 /**
  * Down/Up move a highlight across the result groups (not individual
  * records -- jumping always lands on an entity tab), clamped at the
@@ -3389,6 +3431,7 @@ export function GlobalSearch({ entities, onClose, onJumpToEntity, onJumpToRecord
   const [searched, setSearched] = useState(false);
   const [selectedIndex, setSelectedIndex] = useState(null);
   const [copyStatus, setCopyStatus] = useState("idle");
+  const [recentSearches, setRecentSearches] = useState(() => getGlobalSearchRecentSearches());
   // Bumped once per runSearch call, so a stale search whose network round
   // trip just happens to take longer than a newer one's can recognize
   // itself as superseded and skip applying its now-outdated results.
@@ -3437,7 +3480,23 @@ export function GlobalSearch({ entities, onClose, onJumpToEntity, onJumpToRecord
 
   async function handleSubmit(e) {
     e.preventDefault();
+    setRecentSearches(addGlobalSearchRecentSearch(query));
     await runSearch(query);
+  }
+
+  async function handleRecentSearchClick(q) {
+    setQuery(q);
+    setRecentSearches(addGlobalSearchRecentSearch(q));
+    await runSearch(q);
+  }
+
+  function handleRemoveRecentSearch(q) {
+    setRecentSearches(removeGlobalSearchRecentSearch(q));
+  }
+
+  function handleClearRecentSearches() {
+    clearGlobalSearchRecentSearches();
+    setRecentSearches([]);
   }
 
   async function handleCopy() {
@@ -3510,7 +3569,39 @@ export function GlobalSearch({ entities, onClose, onJumpToEntity, onJumpToRecord
 
         {error && <p className="error">{error}</p>}
         {loading && <p className="muted">Loading…</p>}
-        {!loading && !searched && !error && <p className="muted">Start typing to search.</p>}
+        {!loading && !searched && !error && (
+          <>
+            <p className="muted">Start typing to search.</p>
+            {recentSearches.length > 0 && (
+              <div className="global-search-recent">
+                <div className="global-search-recent-header">
+                  <span className="muted small">Recent searches</span>
+                  <button type="button" className="link-button small" onClick={handleClearRecentSearches}>
+                    Clear
+                  </button>
+                </div>
+                <div className="chips">
+                  {recentSearches.map((q) => (
+                    <span className="chip chip-removable" key={q}>
+                      <button type="button" className="chip-text" onClick={() => handleRecentSearchClick(q)}>
+                        {q}
+                      </button>
+                      <button
+                        type="button"
+                        className="chip-remove"
+                        title={\`Remove "\${q}"\`}
+                        aria-label={\`Remove "\${q}"\`}
+                        onClick={() => handleRemoveRecentSearch(q)}
+                      >
+                        ×
+                      </button>
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
+          </>
+        )}
         {!loading && searched && results.length === 0 && !error && <p className="muted">No matching results in any entity.</p>}
         {!loading && results.length > 0 && <p className="muted small">↑↓ to navigate results, Enter to jump to a tab</p>}
 
@@ -4060,6 +4151,8 @@ nav button.active .tab-count { background: rgba(255, 255, 255, 0.25); color: inh
 .search-header-actions { display: flex; align-items: center; gap: 8px; }
 .global-search-form { display: flex; gap: 8px; margin: 12px 0; }
 .global-search-input { flex: 1; }
+.global-search-recent { margin-top: 10px; }
+.global-search-recent-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; }
 .global-search-results { display: flex; flex-direction: column; gap: 16px; }
 .global-search-group { border-top: 1px solid var(--border-soft); padding-top: 12px; border-inline-start: 3px solid transparent; padding-inline-start: 9px; margin-inline-start: -12px; }
 .global-search-group-selected { border-inline-start-color: var(--accent); background: var(--accent-soft); border-radius: 0 8px 8px 0; }
