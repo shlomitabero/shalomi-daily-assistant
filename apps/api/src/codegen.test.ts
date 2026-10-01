@@ -1,3 +1,4 @@
+import "./jsdomWarmup.js";
 import assert from "node:assert/strict";
 import { execFileSync, spawn } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
@@ -5,6 +6,8 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { test } from "node:test";
 import { transformSync } from "esbuild";
+import React from "react";
+import { act, cleanup, fireEvent, render } from "@testing-library/react";
 import type { Project } from "@forge/shared";
 import { generateExportFiles } from "./codegen.js";
 
@@ -3825,4 +3828,164 @@ test("the exported App's entity tabs are drag-and-drop reorderable, persisting v
   const updated = setEntityTabOrder(["Service", "Customer"]);
   assert.deepEqual(updated, ["Service", "Customer"]);
   assert.deepEqual(getEntityTabOrder(), ["Service", "Customer"], "must round-trip through the real localStorage-backed store");
+});
+
+/**
+ * Writes the real generated GlobalSearch.jsx (plus the EntityView.jsx and
+ * api.js files it imports from) to a temp directory shaped exactly like the
+ * real export (web/src/components/GlobalSearch.jsx importing "../api.js"
+ * and "./EntityView.jsx"), symlinks the repo's real node_modules so react/
+ * react-dom/@testing-library resolve, and dynamically imports the real
+ * GlobalSearch component -- not a regex proxy for it. A plain `import
+ * React from "react";` is prepended only to each written .jsx file (never
+ * to the actual generated content under test) so tsx's esbuild loader,
+ * which has no tsconfig "jsx": "react-jsx" to pick up for an arbitrary temp
+ * path the way the real `vite build` config does, falls back to the
+ * classic React.createElement transform instead of throwing "React is not
+ * defined" -- a test-harness concession that doesn't change the behavior
+ * of the code under test.
+ */
+function writeGeneratedGlobalSearch(files: { path: string; content: string }[]): string {
+  const repoRoot = path.resolve(import.meta.dirname, "../../..");
+  const dir = mkdtempSync(path.join(tmpdir(), "forge-global-search-dom-"));
+  symlinkSync(path.join(repoRoot, "node_modules"), path.join(dir, "node_modules"));
+  for (const f of files) {
+    if (!f.path.startsWith("web/src/")) continue;
+    const full = path.join(dir, f.path);
+    mkdirSync(path.dirname(full), { recursive: true });
+    const content = f.path.endsWith(".jsx") ? `import React from "react";\n${f.content}` : f.content;
+    writeFileSync(full, content);
+  }
+  return dir;
+}
+
+/**
+ * Regression test for a real, severe bug the round 313 Explore survey's
+ * parity check surfaced while investigating a *different* gap (missing
+ * Copy/Download buttons): round 301 added a useEffect call to the exported
+ * GlobalSearch.jsx (scrolling the highlighted result group into view) but
+ * never added useEffect to its own `import { useRef, useState } from
+ * "react"` line. Since this file's other tests of GlobalSearch.jsx only
+ * ever regex-matched the generated source text or drove it through a real
+ * HTTP server (never actually executing the component's own React code in
+ * a real renderer), nothing caught that useEffect is called unconditionally
+ * in the component body on every render, not just when a result is
+ * selected -- meaning the exported GlobalSearch crashed with "useEffect is
+ * not defined" the instant it was ever opened, in every exported app, ever
+ * since round 301. Confirmed independently with a standalone script before
+ * touching any code: reverting just the import line reproduces the crash.
+ */
+test("the exported GlobalSearch component actually renders instead of crashing with 'useEffect is not defined'", async () => {
+  const files = generateExportFiles(project);
+  const dir = writeGeneratedGlobalSearch(files);
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async () => ({ ok: true, status: 200, json: async () => ({ records: [] }) })) as typeof fetch;
+
+  try {
+    const { GlobalSearch } = await import(path.join(dir, "web", "src", "components", "GlobalSearch.jsx"));
+    let renderResult: ReturnType<typeof render> | undefined;
+    await act(async () => {
+      renderResult = render(
+        React.createElement(GlobalSearch, {
+          entities: project.spec.entities,
+          onClose: () => {},
+          onJumpToEntity: () => {},
+          onJumpToRecord: () => {},
+        }),
+      );
+    });
+    assert.match(
+      renderResult!.container.textContent ?? "",
+      /Search everything/,
+      "expected the GlobalSearch panel to actually render its heading instead of throwing during mount",
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+    cleanup();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
+ * New in this round: the exported app's own GlobalSearch had the identical
+ * gap the live preview's own GlobalSearchPanel.tsx did before it gained
+ * Copy/Download buttons -- a cross-entity result set only ever existed on
+ * screen, with no way to take it anywhere once the panel closed. Mirrors
+ * apps/web/src/GlobalSearchPanel.test.ts's own real-DOM Copy/Download test:
+ * confirms neither button renders before a real search has run, both
+ * appear once real results exist, and clicking Copy writes the real
+ * formatted results (not a placeholder) to the clipboard.
+ */
+test("the exported GlobalSearch's Copy/Download buttons only appear once real results exist, and Copy writes the real formatted results to the clipboard", async (t) => {
+  const files = generateExportFiles(project);
+  const dir = writeGeneratedGlobalSearch(files);
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async (input: string) => {
+    if (String(input).endsWith("/Customer")) {
+      return { ok: true, status: 200, json: async () => ({ records: [{ id: 1, name: "Acme widget order" }] }) };
+    }
+    return { ok: true, status: 200, json: async () => ({ records: [] }) };
+  }) as typeof fetch;
+
+  let writtenText: string | undefined;
+  Object.defineProperty(navigator, "clipboard", {
+    value: { writeText: async (text: string) => void (writtenText = text) },
+    configurable: true,
+  });
+
+  try {
+    const { GlobalSearch } = await import(path.join(dir, "web", "src", "components", "GlobalSearch.jsx"));
+    render(
+      React.createElement(GlobalSearch, {
+        entities: project.spec.entities,
+        onClose: () => {},
+        onJumpToEntity: () => {},
+        onJumpToRecord: () => {},
+      }),
+    );
+
+    assert.equal(
+      Array.from(document.querySelectorAll("button")).some((b) => b.textContent === "Copy"),
+      false,
+      "no Copy button should render before any search has run",
+    );
+
+    const input = document.querySelector(".global-search-input") as HTMLInputElement;
+    await act(async () => {
+      fireEvent.change(input, { target: { value: "widget" } });
+      fireEvent.submit(document.querySelector("form.global-search-form")!);
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    const copyButton = Array.from(document.querySelectorAll("button")).find((b) => b.textContent === "Copy");
+    const downloadButton = Array.from(document.querySelectorAll("button")).find((b) => b.textContent === "Download");
+    assert.ok(copyButton, "expected a Copy button once real results exist");
+    assert.ok(downloadButton, "expected a Download button once real results exist");
+
+    t.mock.timers.enable({ apis: ["setTimeout"] });
+
+    await act(async () => {
+      fireEvent.click(copyButton!);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    assert.equal(typeof writtenText, "string", "clicking Copy must actually call navigator.clipboard.writeText");
+    assert.match(writtenText!, /widget/, "the copied text must include the real search query");
+    assert.match(writtenText!, /Acme widget order/, "the copied text must be the real formatted results, not a placeholder");
+    assert.equal(copyButton!.textContent, "Copied!", "must show the real Copied confirmation");
+
+    act(() => {
+      t.mock.timers.tick(2000);
+    });
+    assert.equal(copyButton!.textContent, "Copy", "must revert to the normal label once the delay elapses");
+  } finally {
+    t.mock.timers.reset();
+    globalThis.fetch = originalFetch;
+    delete (navigator as { clipboard?: unknown }).clipboard;
+    cleanup();
+    rmSync(dir, { recursive: true, force: true });
+  }
 });

@@ -3057,7 +3057,7 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
  * too, by construction.
  */
 function renderGlobalSearchJsx(): string {
-  return `import { useRef, useState } from "react";
+  return `import { useEffect, useRef, useState } from "react";
 import { listRecords } from "../api.js";
 import { matchesSearch, recordDisplayLabel } from "./EntityView.jsx";
 
@@ -3093,6 +3093,29 @@ async function searchAllEntities(entities, query) {
   return { results, failures };
 }
 
+// Renders the already-fetched results as a plain, shareable text snapshot --
+// same "plain text, not a PDF" reasoning the live preview's own
+// searchReport.ts uses for its Copy/Download buttons, which the exported
+// app's own GlobalSearch never had at all.
+function formatGlobalSearchReport(results, entities, query) {
+  const lines = [\`Search everything — "\${query}"\`, \`Generated \${new Date().toLocaleString()}\`, ""];
+  if (results.length === 0) {
+    lines.push("No matching results in any entity.");
+    return lines.join("\\n").trimEnd();
+  }
+  for (const result of results) {
+    const entity = entities.find((e) => e.name === result.entityName);
+    lines.push(\`\${result.entityLabel} — \${result.totalMatches} results\`);
+    for (const record of result.sample) {
+      lines.push(\`- \${entity ? recordDisplayLabel(entity, record) : "#" + record.id}\`);
+    }
+    const remaining = result.totalMatches - result.sample.length;
+    if (remaining > 0) lines.push(\`…and \${remaining} more\`);
+    lines.push("");
+  }
+  return lines.join("\\n").trimEnd();
+}
+
 /**
  * Down/Up move a highlight across the result groups (not individual
  * records -- jumping always lands on an entity tab), clamped at the
@@ -3107,11 +3130,18 @@ export function GlobalSearch({ entities, onClose, onJumpToEntity, onJumpToRecord
   const [error, setError] = useState(null);
   const [searched, setSearched] = useState(false);
   const [selectedIndex, setSelectedIndex] = useState(null);
+  const [copyStatus, setCopyStatus] = useState("idle");
   // Bumped once per runSearch call, so a stale search whose network round
   // trip just happens to take longer than a newer one's can recognize
   // itself as superseded and skip applying its now-outdated results.
   const searchRequestId = useRef(0);
   const resultsContainerRef = useRef(null);
+
+  useEffect(() => {
+    if (copyStatus === "idle") return;
+    const timer = setTimeout(() => setCopyStatus("idle"), 2000);
+    return () => clearTimeout(timer);
+  }, [copyStatus]);
 
   // Mirrors EntityView's own focusedRowId scroll effect: with more result
   // groups than fit on screen, arrow-key navigation could move the
@@ -3152,6 +3182,28 @@ export function GlobalSearch({ entities, onClose, onJumpToEntity, onJumpToRecord
     await runSearch(query);
   }
 
+  async function handleCopy() {
+    try {
+      await navigator.clipboard.writeText(formatGlobalSearchReport(results, entities, query));
+      setCopyStatus("copied");
+    } catch {
+      setCopyStatus("failed");
+    }
+  }
+
+  function handleDownload() {
+    const text = formatGlobalSearchReport(results, entities, query);
+    const blob = new Blob([text], { type: "text/plain;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "search-results.txt";
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  }
+
   function handleInputKeyDown(e) {
     if (results.length === 0) return;
     if (e.key === "ArrowDown") {
@@ -3171,7 +3223,17 @@ export function GlobalSearch({ entities, onClose, onJumpToEntity, onJumpToRecord
       <div className="search-panel">
         <div className="search-header">
           <h2>🔍 Search everything</h2>
-          <button type="button" onClick={onClose}>Close</button>
+          <div className="search-header-actions">
+            {!loading && results.length > 0 && (
+              <button type="button" className="small" onClick={handleCopy}>
+                {copyStatus === "copied" ? "Copied!" : copyStatus === "failed" ? "Copy failed" : "Copy"}
+              </button>
+            )}
+            {!loading && results.length > 0 && (
+              <button type="button" className="small" onClick={handleDownload}>Download</button>
+            )}
+            <button type="button" onClick={onClose}>Close</button>
+          </div>
         </div>
         <p className="muted small">Searches across every entity at once, not just the open tab.</p>
 
@@ -3728,6 +3790,7 @@ nav button.active .tab-count { background: rgba(255, 255, 255, 0.25); color: inh
 .search-panel { background: var(--surface); border-radius: 14px; padding: 20px; width: 100%; max-width: 560px; max-height: 80vh; overflow-y: auto; box-shadow: var(--shadow-xl); }
 .search-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 8px; }
 .search-header h2 { margin: 0; font-size: 20px; }
+.search-header-actions { display: flex; align-items: center; gap: 8px; }
 .global-search-form { display: flex; gap: 8px; margin: 12px 0; }
 .global-search-input { flex: 1; }
 .global-search-results { display: flex; flex-direction: column; gap: 16px; }
