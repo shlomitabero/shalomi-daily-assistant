@@ -447,6 +447,58 @@ test("the exported EntityView's table can be grouped by an enum/boolean field, n
 });
 
 /**
+ * New in this round: round 305's entity-tab record-count badges (GET
+ * /projects/:id/entity-counts in the live Forge AI API, the .tab-count
+ * badge in App.tsx) existed only in the live preview -- confirmed absent
+ * from codegen.ts via grep. A real user who downloads their app saw a
+ * bare label-only nav strip, with no way to tell how much data lives in
+ * each tab, even though the live preview they built it in already shows
+ * that at a glance. Ported as a real GET /api/entity-counts route in the
+ * exported server, fetched once on load, with the ACTIVE tab's own badge
+ * kept live via the same onRecordCountChange effect round 305 used in the
+ * live preview's EntityPanel.tsx.
+ */
+test("the exported app's entity-tabs nav shows a live record-count badge per tab, not just a bare label", () => {
+  const files = generateExportFiles(project);
+
+  const serverJs = files.find((f) => f.path === "server.js")!.content;
+  assert.match(serverJs, /app\.get\("\/api\/entity-counts", \(_req, res\) => \{/);
+  assert.match(serverJs, /counts\[entity\.name\] = db\.prepare\(/);
+
+  const apiJs = files.find((f) => f.path === "web/src/api.js")!.content;
+  assert.match(apiJs, /export function listEntityCounts\(\) \{/);
+  assert.match(apiJs, /return request\("\/entity-counts"\);/);
+
+  const appJsx = files.find((f) => f.path === "web/src/App.jsx")!.content;
+  assert.match(appJsx, /import \{ listEntityCounts \} from "\.\/api\.js";/);
+  assert.match(appJsx, /const \[entityCounts, setEntityCounts\] = useState\(\{\}\);/);
+  assert.match(appJsx, /listEntityCounts\(\)\s*\n\s*\.then\(\(\{ counts \}\) => setEntityCounts\(counts\)\)/);
+  assert.match(appJsx, /entityCounts\[e\.name\] != null && <span className="tab-count">\{entityCounts\[e\.name\]\}<\/span>/);
+  assert.match(appJsx, /onRecordCountChange=\{\(name, count\) =>/);
+
+  const entityViewJsx = files.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+  assert.match(
+    entityViewJsx,
+    /export function EntityView\(\{ entity, highlightRecordId, onHighlightHandled, onJumpToRecord, onRecordCountChange \}\)/,
+  );
+  assert.match(entityViewJsx, /if \(onRecordCountChange\) onRecordCountChange\(entity\.name, records\.length\);/);
+
+  // The per-entity wrapper (entities/<Name>.jsx) must actually forward the
+  // new prop through to EntityView -- a regression here would silently
+  // break the active tab's live badge update without ever showing up in
+  // EntityView.jsx's own source, which still looks correct on its own.
+  const customerEntityJsx = files.find((f) => f.path === "web/src/entities/Customer.jsx")!.content;
+  assert.match(
+    customerEntityJsx,
+    /export default function View\(\{ highlightRecordId, onHighlightHandled, onJumpToRecord, onRecordCountChange \}\)/,
+  );
+  assert.match(customerEntityJsx, /onRecordCountChange=\{onRecordCountChange\}/);
+
+  const stylesCss = files.find((f) => f.path === "web/src/styles.css")!.content;
+  assert.match(stylesCss, /\.tab-count/);
+});
+
+/**
  * New in this round: the live-preview Kanban board's own "+" add-card
  * button (startCreateForColumn, round 233) was never ported here -- the
  * exported app's generated board-column-header only rendered a badge +
@@ -1475,10 +1527,10 @@ test("the exported EntityView's relation cells jump to the related record via th
   // and App's own activeEntity.View call -- not just the leaf component.
   assert.match(entityViewJsx, /function BoardCard\(\{ entity, boardField, record, relatedRecords, hasMoveError, onMove, onEdit, onDuplicate, onDelete, onJumpToRecord \}\)/);
   assert.match(entityViewJsx, /<Cell\s+field=\{f\}\s+value=\{record\[f\.name\]\}\s+relationLabel=\{[^}]+\}\s+onJumpToRecord=\{onJumpToRecord\}/);
-  assert.match(entityViewJsx, /export function EntityView\(\{ entity, highlightRecordId, onHighlightHandled, onJumpToRecord \}\)/);
+  assert.match(entityViewJsx, /export function EntityView\(\{ entity, highlightRecordId, onHighlightHandled, onJumpToRecord, onRecordCountChange \}\)/);
 
   const orderJsx = files.find((f) => f.path === "web/src/entities/Order.jsx")!.content;
-  assert.match(orderJsx, /export default function View\(\{ highlightRecordId, onHighlightHandled, onJumpToRecord \}\)/);
+  assert.match(orderJsx, /export default function View\(\{ highlightRecordId, onHighlightHandled, onJumpToRecord, onRecordCountChange \}\)/);
   assert.match(orderJsx, /onJumpToRecord=\{onJumpToRecord\}/);
 
   const appJsx = files.find((f) => f.path === "web/src/App.jsx")!.content;
@@ -2063,7 +2115,7 @@ test("the exported app's Global Search can jump to an individual matched record,
   // it (clearing search, switching to table view) once records have
   // loaded, fades it out after a few seconds, and marks + scrolls to the
   // real highlighted row via a real data-record-id attribute.
-  assert.match(entityViewJsx, /export function EntityView\(\{ entity, highlightRecordId, onHighlightHandled, onJumpToRecord \}\)/);
+  assert.match(entityViewJsx, /export function EntityView\(\{ entity, highlightRecordId, onHighlightHandled, onJumpToRecord, onRecordCountChange \}\)/);
   assert.match(entityViewJsx, /if \(highlightRecordId == null \|\| loading\) return;/);
   assert.match(entityViewJsx, /setHighlightedRecordId\(highlightRecordId\);/);
   assert.match(entityViewJsx, /onHighlightHandled\?\.\(\);/);
@@ -2085,7 +2137,7 @@ test("the exported app's Global Search can jump to an individual matched record,
   // entities/Customer.jsx's own View forwards the new props through to
   // EntityView rather than swallowing them.
   const customerJsx = files.find((f) => f.path === "web/src/entities/Customer.jsx")!.content;
-  assert.match(customerJsx, /export default function View\(\{ highlightRecordId, onHighlightHandled, onJumpToRecord \}\)/);
+  assert.match(customerJsx, /export default function View\(\{ highlightRecordId, onHighlightHandled, onJumpToRecord, onRecordCountChange \}\)/);
   assert.match(customerJsx, /highlightRecordId=\{highlightRecordId\}\s+onHighlightHandled=\{onHighlightHandled\}/);
 
   assert.match(stylesCss, /\.record-row-highlighted, \.record-row-highlighted:hover \{ background: var\(--accent-soft\)/);

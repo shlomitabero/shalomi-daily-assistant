@@ -385,6 +385,17 @@ app.use(express.static(path.join(__dirname, "dist")));
 
 app.get("/api/entities", (_req, res) => res.json({ entities: ENTITIES }));
 
+// One cheap COUNT(*) per entity, for the entity-tabs nav's own record-count
+// badge -- mirrors the live Forge AI preview's own GET /entity-counts route
+// (round 305).
+app.get("/api/entity-counts", (_req, res) => {
+  const counts = {};
+  for (const entity of ENTITIES) {
+    counts[entity.name] = db.prepare(\`SELECT COUNT(*) as count FROM \${q(entity.name)}\`).get().count;
+  }
+  res.json({ counts });
+});
+
 for (const entity of ENTITIES) {
   const base = \`/api/\${entity.name}\`;
   const columns = entity.fields.map((f) => f.name);
@@ -725,6 +736,10 @@ export function updateRecord(entityName, id, data) {
 
 export function deleteRecord(entityName, id) {
   return request(\`/\${entityName}/\${id}\`, { method: "DELETE" });
+}
+
+export function listEntityCounts() {
+  return request("/entity-counts");
 }
 `;
 }
@@ -1861,7 +1876,7 @@ function FieldInput({ entity, field, value, onChange, relatedEntity, relatedEnti
 const UNDO_WINDOW_MS = 5000;
 
 /** Shared list + form UI used by every entity's own component file. */
-export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJumpToRecord }) {
+export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJumpToRecord, onRecordCountChange }) {
   const [records, setRecords] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -1940,6 +1955,16 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
       cancelled = true;
     };
   }, [relationTargets]);
+
+  // Reports this entity's own record count back to the caller whenever
+  // records changes -- every mutation already funnels through setRecords,
+  // so this one effect keeps the active tab's own nav badge live without a
+  // separate call site per mutation. Mirrors the live Forge AI preview's
+  // own EntityPanel.tsx (round 305).
+  useEffect(() => {
+    if (onRecordCountChange) onRecordCountChange(entity.name, records.length);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [entity.name, records.length]);
 
   async function refresh() {
     const requestId = ++refreshRequestId.current;
@@ -3075,13 +3100,14 @@ export const entity = {
   fields: ${fieldsJson},
 };
 
-export default function View({ highlightRecordId, onHighlightHandled, onJumpToRecord }) {
+export default function View({ highlightRecordId, onHighlightHandled, onJumpToRecord, onRecordCountChange }) {
   return (
     <EntityView
       entity={entity}
       highlightRecordId={highlightRecordId}
       onHighlightHandled={onHighlightHandled}
       onJumpToRecord={onJumpToRecord}
+      onRecordCountChange={onRecordCountChange}
     />
   );
 }
@@ -3117,6 +3143,7 @@ function renderAppJsx(project: Project): string {
     .join("\n");
 
   return `import { useEffect, useState } from "react";
+import { listEntityCounts } from "./api.js";
 import { GlobalSearch } from "./components/GlobalSearch.jsx";
 import { THEME_STORAGE_KEY, detectInitialTheme } from "./theme.js";
 ${imports}
@@ -3147,7 +3174,18 @@ export default function App() {
   const [showSearch, setShowSearch] = useState(false);
   const [highlightRecordId, setHighlightRecordId] = useState(null);
   const [theme, setTheme] = useState(() => detectInitialTheme(readStoredTheme(), prefersDarkFromSystem()));
+  const [entityCounts, setEntityCounts] = useState({});
   const activeEntity = ENTITIES.find((e) => e.name === active);
+
+  // One cheap COUNT(*) per entity, fetched once on load, so the nav's own
+  // record-count badges match the live Forge AI preview's own entity-tabs
+  // badges (round 305). A failed fetch here is swallowed -- the badge is a
+  // nice-to-have, not worth its own error state.
+  useEffect(() => {
+    listEntityCounts()
+      .then(({ counts }) => setEntityCounts(counts))
+      .catch(() => {});
+  }, []);
 
   // Ctrl/Cmd+K opens global search from anywhere in the app (the same
   // command-palette convention Forge AI's own live preview uses), and
@@ -3205,6 +3243,7 @@ export default function App() {
         {ENTITIES.map((e) => (
           <button key={e.name} className={e.name === active ? "active" : ""} onClick={() => setActive(e.name)}>
             {e.label}
+            {entityCounts[e.name] != null && <span className="tab-count">{entityCounts[e.name]}</span>}
           </button>
         ))}
       </nav>
@@ -3216,6 +3255,9 @@ export default function App() {
             setActive(name);
             setHighlightRecordId(recordId);
           }}
+          onRecordCountChange={(name, count) =>
+            setEntityCounts((prev) => (prev[name] === count ? prev : { ...prev, [name]: count }))
+          }
         />
       )}
       {showSearch && (
@@ -3365,6 +3407,8 @@ th, td { text-align: start; padding: 8px 10px; border-bottom: 1px solid var(--bo
 .entity-toolbar .entity-search { margin-bottom: 0; flex: 1; }
 .entity-status-filter, .entity-group-by { max-width: 200px; margin-bottom: 0; flex-shrink: 0; }
 .entity-group-header-row td { background: var(--surface-subtle); font-weight: 600; padding: 6px 10px; }
+.tab-count { display: inline-block; margin-inline-start: 6px; padding: 1px 7px; border-radius: 999px; font-size: 11.5px; font-weight: 700; line-height: 1.5; background: var(--steel-soft); color: var(--steel); }
+nav button.active .tab-count { background: rgba(255, 255, 255, 0.25); color: inherit; }
 .view-toggle { display: flex; gap: 4px; padding: 3px; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; flex-shrink: 0; }
 .view-toggle-btn { padding: 6px 12px; border-radius: 6px; border: none; background: transparent; color: var(--muted); font-size: 13px; font-weight: 600; cursor: pointer; }
 .view-toggle-btn-active { background: var(--accent); color: var(--accent-contrast); }
