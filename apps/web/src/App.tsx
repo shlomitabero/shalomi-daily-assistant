@@ -691,10 +691,17 @@ function AppContent() {
    * `if (!user) return <AuthScreen />` early return below like every other
    * hook in this component (see the comment above the exportDone/backupDone
    * effects for why that placement is required).
+   *
+   * Also prefixes a real unread-WhatsApp count (whatsappUnreadCount, the
+   * same state the in-page whatsapp-unread-badge already renders) -- that
+   * in-page badge only ever caught someone's eye while this tab was
+   * already focused; a count in the tab's own title/favicon-adjacent text
+   * is visible from the tab bar or alt-tab switcher while working in a
+   * completely different tab, the same Gmail/Slack convention.
    */
   useEffect(() => {
-    document.title = formatDocumentTitle(project?.name ?? null);
-  }, [project]);
+    document.title = formatDocumentTitle(project?.name ?? null, whatsappUnreadCount);
+  }, [project, whatsappUnreadCount]);
 
   /**
    * Fetches every entity's record count once per built project, for the
