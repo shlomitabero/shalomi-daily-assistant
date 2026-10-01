@@ -18056,6 +18056,98 @@ via `npm test` at the repo root, plus a clean `@forge/web` build (`tsc -b`
 changes this round (nothing to port -- table grouping doesn't exist in
 the exported app).
 
+### Round 303 — A failed inline edit, Kanban move, or calendar reschedule now marks the specific row/card/chip, not just a far-away banner
+
+An Explore survey resolved the two backup candidates standing since round
+300-302. `EntityPanel.tsx`'s `commitInlineEdit`/`handleMove` error-feedback
+gap (flagged in 300, extended in 302 once `handleMove`'s identical shape
+was found) was judged now cleanly scoped for one round: a single shared
+`moveErrorId` marker, mirroring the existing `highlightedRecordId` pattern
+exactly, touching the three call sites `handleMove` already serves
+(inline-cell edit, Kanban drag, calendar drag) without needing to redesign
+anything. The other backup candidate -- porting live-preview-only table
+grouping into `codegen.ts` -- was confirmed via a fresh `EntityView`
+read to still require UI, state, and conditional-rendering work equivalent
+to several original rounds compressed into one, so it was deferred again
+and flagged more concretely for whoever picks it up next (a base group-by
+port, subtotals as a likely follow-up).
+
+Before this round, `handleMove` and `commitInlineEdit` (`EntityPanel.tsx`,
+currently lines 1550-1558 and 1627-1639) each only called a generic
+`setError(...)` on a failed PATCH, rendered as a single banner near the
+top of the panel (`:1775`-ish), nowhere near the actual table row, board
+card, or calendar chip that failed -- and `commitInlineEdit` clears
+`editingCell` *before* its own `await`, so the cell had already reverted
+to its old value by the time the catch block ran, leaving literally zero
+in-place indication anything had gone wrong. A business owner editing a
+cell, dragging a Kanban card, or dragging a calendar appointment onto a
+new day, with the request failing for any reason (a stale/removed related
+record, a flaky connection), saw only a banner that could easily be
+scrolled out of view, with no way to tell which of possibly many visible
+records the failure was even about.
+
+Added a `moveErrorId` state (auto-fading after 5s via the exact same
+`useEffect`+`setTimeout` pattern `highlightedRecordId` already uses,
+rather than inventing a new convention), set in both `handleMove`'s and
+`commitInlineEdit`'s catch blocks alongside the existing `setError` call
+(additive, not a replacement). The marker is threaded to all three
+rendering surfaces: `renderRecordRow`'s `<tr>` gets a new
+`record-row-move-error` class (joined into its existing class-list
+array), `BoardCard` gets a new `hasMoveError` prop controlling a
+`board-card-move-error` class, and `CalendarView`'s record-chip `<button>`
+gets a new `moveErrorId` prop controlling a `calendar-record-chip-move-error`
+class. Ported identically into `codegen.ts`'s own `handleMove`,
+`commitInlineEdit`, `<tr>`, `BoardCard`, and `CalendarView` -- all five
+already existed there (this interaction isn't live-only), confirmed via
+`grep` before touching anything.
+
+Porting into codegen.ts broke 5 pre-existing tests whose regexes had
+hard-coded the OLD static markup this round deliberately changed (a
+static `className="board-card"` with no conditional, `BoardCard`'s exact
+old parameter list with no `hasMoveError`, the `<tr>`'s old single-
+condition ternary, and a `new Function(...)` harness for `handleMove`
+with no `setMoveErrorId` parameter to receive the new call). This is the
+expected, correct consequence of a deliberate markup/signature change
+touching code those tests pin down literally -- all 5 were updated to
+assert the new, intentional shape rather than reverted or weakened.
+
+Test: 3 new `EntityPanel.test.ts` DOM tests -- one per interaction
+surface -- each forces a real 500 response from a mocked PATCH endpoint
+and confirms the specific row/card/chip (and only that one) picks up its
+new marker class, that the existing top error banner still appears
+unchanged, and that the record's own data is left genuinely untouched by
+the failed request. 1 new `codegen.test.ts` test regex-confirms the
+generated `EntityView.jsx` wires `setMoveErrorId` into both catch blocks
+and the marker class into all three render sites.
+
+Deliberate-break-and-restore, done independently on both files: `sed`-
+removed every `setMoveErrorId(...)` call site in each -- the three new
+web tests failed with the exact expected `false !== true` mismatches, and
+the new codegen test failed on its `setMoveErrorId` regex match (visibly,
+by printing the real unmodified `handleMove` source back in the failure
+output). Restored both from verified pre-fix backups with byte-identical
+`diff` against each; re-ran everything and confirmed all tests passed
+again.
+
+Live Playwright verification (real Chromium, real dev servers, genuine
+server-side failures -- not mocks): built a real Customer project,
+discovered the real required text + enum fields via the project's own
+spec, created a real record, then deleted it directly via the API out
+from under the already-rendered page (so the UI's own stale client state
+still showed it) before performing the real inline-edit-and-Enter through
+the UI -- the real PATCH genuinely 404'd, the existing error banner
+appeared, and the specific row picked up `record-row-move-error`.
+Repeated the identical pattern in board view: created a fresh record,
+switched to Kanban, deleted it server-side, then changed its real
+`<select>` move control -- the genuinely-failing PATCH left the specific
+card (and only that card) carrying `board-card-move-error`.
+
+Full suite green: **1150 tests** (`@forge/shared` 13, `@forge/spec-engine`
+84, `@forge/db` 93 unchanged; `@forge/api` 309 → 310; `@forge/web` 647 →
+650) via `npm test` at the repo root, plus clean builds for both
+`@forge/web` (`tsc -b` + `vite build`, 86 modules transformed) and
+`@forge/api` (`esbuild`).
+
 ## Phase 4
 
 - Template/agent marketplace
