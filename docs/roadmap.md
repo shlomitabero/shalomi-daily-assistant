@@ -18148,6 +18148,69 @@ Full suite green: **1150 tests** (`@forge/shared` 13, `@forge/spec-engine`
 `@forge/web` (`tsc -b` + `vite build`, 86 modules transformed) and
 `@forge/api` (`esbuild`).
 
+### Round 304 — Generated specs no longer claim multi-user support doesn't exist, when real auth + collaborator sharing both already ship
+
+An Explore survey re-estimated the standing table-grouping-port-to-codegen
+backup candidate directly against current code: roughly 75-100 lines once
+scoped down to a base group-by port with subtotals left for a follow-up --
+"right-sized" for a single round, but still more architecturally invasive
+than this round's alternative (it would first require pulling codegen.ts's
+inline row-rendering into a named function before the port itself could
+start). Deferred once more in favor of a smaller, zero-ambiguity,
+directly-false bug fix found in the same survey, and flagged concretely
+for round 305.
+
+`heuristic.ts`'s `buildAssumptions()` -- the deterministic, offline
+spec-generation fallback used whenever no `ANTHROPIC_API_KEY` is configured
+(true of this dev environment) -- told every single generated product spec,
+in both English and Hebrew, that "multi-user authentication is not
+implemented" / no sharing between multiple users exists. That claim was
+flatly false: `apps/api/src/routes/auth.ts` has real signup/login,
+`packages/db/src/collaborators.ts` has a real collaborators table with
+`addCollaborator`/`removeCollaborator`/`isCollaborator`/`listCollaborators`,
+`apps/web/src/CollaboratorsPanel.tsx` is a real shipped UI for inviting
+collaborators, and `apps/api/src/routes/projects.ts` already enforces a
+real owner-vs-collaborator distinction (general project access checks
+`ownerId !== userId && !isCollaborator(...)`, while invite/remove actions
+use a stricter owner-only check). Every business owner using Forge AI's
+free offline path was being told, in their own generated spec, that a
+feature they could see working in the same app's UI didn't exist --
+confirmed via `grep` that this stale claim had exactly one source location.
+
+Replaced the false bullet (both languages) with an accurate, still-useful
+narrower limitation: real signup/login and collaborator-invite both exist,
+but there's no granular permission tier yet -- every collaborator gets
+full data access, and only the owner can manage who else is invited. This
+preserves `buildAssumptions()`'s actual purpose (telling the project owner
+what's *not* yet fully built) while making the claim true, rather than
+simply deleting it.
+
+Test: a new `heuristic.test.ts` test generates both an English and a
+Hebrew spec from `HeuristicSpecProvider` directly, asserting the stale
+"multi-user authentication is not implemented" / Hebrew-equivalent claim
+no longer appears in `assumptions`, and that a real claim mentioning both
+"collaborator" and "owner" (English) / "שותפים" and "בעלים" (Hebrew) does.
+
+Deliberate-break-and-restore: reverted both the English and Hebrew bullet
+strings back to their old false wording via a scripted string replacement
+-- the new test failed exactly as expected (old claim present, new claim
+absent) -- then restored from a verified pre-fix backup with a confirmed
+byte-identical `diff`; re-ran the full `spec-engine` suite and confirmed
+it passed again.
+
+Live Playwright verification (real Chromium, real dev server, no mocking):
+signed up a fresh real account, submitted "A CRM with customers and
+deals." with no `ANTHROPIC_API_KEY` set in the environment (confirmed via
+an env check first, so this genuinely exercised `HeuristicSpecProvider`,
+not an LLM-backed provider), landed on the real spec-review screen, and
+read the actual rendered `<li>` assumption text from the DOM. Confirmed
+the stale claim was absent and the real collaborator/owner claim was
+present in the live rendered output -- not just in the unit test.
+
+Full suite green: **1151 tests** (`@forge/shared` 13, `@forge/db` 93,
+`@forge/api` 310, `@forge/web` 650 unchanged; `@forge/spec-engine` 84 →
+85) via `npm test` at the repo root.
+
 ## Phase 4
 
 - Template/agent marketplace
