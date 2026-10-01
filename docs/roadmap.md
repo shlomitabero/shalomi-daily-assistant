@@ -19407,6 +19407,76 @@ Full suite green: **1210 tests** (`@forge/shared` 13, `@forge/spec-engine`
 via `npm test` at the repo root, plus a clean full monorepo
 `npm run build`.
 
+### Round 321 — Bulk-delete's undo window ported to the exported app, closing round 320's own deliberate scope split
+
+Round 320's trigger update named this round's candidate explicitly, so
+no fresh Explore survey was needed: `codegen.ts`'s generated
+`EntityView`'s own `handleBulkDelete` had the exact same gap the live
+preview's `EntityPanel.tsx` had before round 320 -- `window.confirm`
+then every real `DELETE` fired immediately, while the generated
+`handleDelete` right next to it already had the full undo-window
+machinery (round 194's own port of the live preview's round-184 fix).
+Anyone who exports/self-hosts their Forge AI app inherited the exact
+same unprotected bulk-delete the live preview just fixed.
+
+Fix: mirrored round 320's live-preview change line-for-line into
+`codegen.ts`'s generated source string -- `PendingDelete` generalized
+from `{ id, record, index, label, timeoutId }` to
+`{ entries: [...], message, timeoutId }`, `commitPendingDelete` now
+runs every entry's real `deleteRecord` through `Promise.allSettled`
+(previously a bare single-record `try/catch`), `handleUndoDelete`
+restores every entry via `restoreRecordAt` in original-index order,
+and `handleBulkDelete` now builds the batch and shares the same
+`pendingDeleteRef`/`setTimeout`/toast machinery `handleDelete` already
+had, instead of its own inline `Promise.allSettled` + `refresh()` +
+`setSelectedIds(failedIds)` retry shape. The bulk confirm dialog's text
+was also updated to mention the undo window, matching round 320's live
+text.
+
+Tests: four changes in `codegen.test.ts`. Replaced two now-obsolete
+regex-extraction tests (which exercised the old inline-await,
+refresh()-calling shape, now gone) with two real-DOM tests rendering
+the actual generated `EntityView.jsx` via the existing
+`writeGeneratedWebComponent`/`withRealLocalStorage` harness (the
+established technique for genuinely executing codegen output, not
+regex-proxying it) with `t.mock.timers`: bulk delete removes every
+selected row immediately with one toast naming the real count, Undo
+restores all of them while genuinely cancelling every pending
+`DELETE`; and not clicking Undo commits every real delete once the
+window elapses, with a partial failure (one record's delete succeeds,
+another's fails with a 409) restoring only the one that actually
+failed and surfacing the translated partial-failure message. Also
+trimmed `handleBulkDelete` out of an existing shared "surfaces a failed
+request" extraction test (its premise -- a synchronous awaited
+`deleteRecord` call -- no longer holds, since the real call is now
+deferred behind the undo window, exactly like `handleDelete` already
+was exempted from that same test for the same reason since round 194),
+and updated the structural single-delete-undo source-shape assertion
+test's regexes to match the new generalized shape, plus a new
+structural test confirming `handleBulkDelete` is wired into the shared
+batch machinery and no longer calls `refresh()` directly.
+
+Deliberate-break-and-restore: reverted `codegen.ts` to its pre-round
+state and confirmed all 4 new/updated tests failed -- the two real-DOM
+tests with the exact expected DOM-state mismatches, the two structural
+tests with regex mismatches against the old generated source. Restored
+from a verified pre-break backup with a confirmed byte-identical
+`diff`, then re-ran every workspace: `@forge/shared` 13/13,
+`@forge/spec-engine` 85/85, `@forge/db` 96/96, `@forge/api` 325 → 327
+(net: -2 stale tests, +4 new/updated ones), `@forge/web` 691 unchanged
+(confirmed anyway per the established process), plus a clean full
+monorepo `npm run build`.
+
+This closes round 320's own deliberately-split scope note -- bulk
+delete now has the same undo-window safety net in both the live
+preview and every exported app, matching this project's repeated
+live/export parity pattern (53→54, 67→70, 51→52, and now 320→321).
+
+Full suite green: **1212 tests** (`@forge/shared` 13, `@forge/spec-engine`
+85, `@forge/db` 96, `@forge/api` 325 → 327; `@forge/web` 691 unchanged)
+via `npm test` at the repo root, plus a clean full monorepo
+`npm run build`.
+
 ## Phase 4
 
 - Template/agent marketplace
