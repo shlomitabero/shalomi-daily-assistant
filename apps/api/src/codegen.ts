@@ -3172,7 +3172,7 @@ function renderAppJsx(project: Project): string {
     )
     .join("\n");
 
-  return `import { useEffect, useState } from "react";
+  return `import { useEffect, useMemo, useState } from "react";
 import { listEntityCounts } from "./api.js";
 import { GlobalSearch } from "./components/GlobalSearch.jsx";
 import { THEME_STORAGE_KEY, detectInitialTheme } from "./theme.js";
@@ -3185,6 +3185,65 @@ ${entries}
 // The app title is a plain JS string rendered through a JSX expression
 // (not embedded as literal JSX text) so it's safe however it's spelled.
 const TITLE = ${JSON.stringify(project.name)};
+
+// The entity-tab bar's own drag-reordered position, persisted so it
+// survives a reload -- mirrors the live Forge AI preview's own
+// entityTabOrder.ts, but keyed as one flat array since an exported app only
+// ever has the one project baked in (no per-project scoping needed here).
+const ENTITY_TAB_ORDER_STORAGE_KEY = "forge_entity_tab_order";
+function getEntityTabOrder() {
+  try {
+    const raw = localStorage.getItem(ENTITY_TAB_ORDER_STORAGE_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed.filter((v) => typeof v === "string") : [];
+  } catch {
+    return [];
+  }
+}
+function setEntityTabOrder(order) {
+  try {
+    localStorage.setItem(ENTITY_TAB_ORDER_STORAGE_KEY, JSON.stringify(order));
+  } catch {
+    // localStorage can be unavailable (private mode) -- the choice just won't survive a reload.
+  }
+  return order;
+}
+
+// Applies a persisted (possibly stale) tab order to ENTITIES' current real
+// list: an entity the order mentions keeps its persisted relative position,
+// and any entity the order doesn't mention (a newly added entity, or an
+// order saved before it existed) is appended at the end in ENTITIES' own
+// original order. Mirrors the live preview's own applyColumnOrder
+// (columnOrder.ts) -- an entity has a name field just like a table field does.
+function applyEntityTabOrder(entities, order) {
+  const byName = new Map(entities.map((e) => [e.name, e]));
+  const ordered = [];
+  for (const name of order) {
+    const entity = byName.get(name);
+    if (entity) {
+      ordered.push(entity);
+      byName.delete(name);
+    }
+  }
+  for (const entity of entities) {
+    if (byName.has(entity.name)) ordered.push(entity);
+  }
+  return ordered;
+}
+
+// Computes the new full entity-name order after dragging sourceName's tab to
+// just before targetName's. Mirrors the live preview's own reorderColumns
+// (columnOrder.ts) verbatim.
+function reorderEntityTabs(order, sourceName, targetName) {
+  if (sourceName === targetName) return order;
+  if (!order.includes(sourceName) || !order.includes(targetName)) return order;
+  const withoutSource = order.filter((name) => name !== sourceName);
+  const targetIndex = withoutSource.indexOf(targetName);
+  const result = [...withoutSource];
+  result.splice(targetIndex, 0, sourceName);
+  return result;
+}
 
 function readStoredTheme() {
   try {
@@ -3205,7 +3264,24 @@ export default function App() {
   const [highlightRecordId, setHighlightRecordId] = useState(null);
   const [theme, setTheme] = useState(() => detectInitialTheme(readStoredTheme(), prefersDarkFromSystem()));
   const [entityCounts, setEntityCounts] = useState({});
+  const [entityTabOrder, setEntityTabOrderState] = useState(() => getEntityTabOrder());
+  const [draggedEntityTab, setDraggedEntityTab] = useState(null);
+  const [dragOverEntityTab, setDragOverEntityTab] = useState(null);
   const activeEntity = ENTITIES.find((e) => e.name === active);
+  const orderedEntities = useMemo(() => applyEntityTabOrder(ENTITIES, entityTabOrder), [entityTabOrder]);
+
+  // Dragging a tab to just before another one's -- without this, the
+  // exported app's nav always mirrored spec.entities' fixed generation
+  // order with no way to put the screen you actually use most first, unlike
+  // the live preview's own draggable tab bar. Mirrors App.tsx's own
+  // handleReorderEntityTab.
+  function handleReorderEntityTab(targetName) {
+    setDragOverEntityTab(null);
+    if (!draggedEntityTab || draggedEntityTab === targetName) return;
+    const fullOrder = orderedEntities.map((e) => e.name);
+    setEntityTabOrderState(setEntityTabOrder(reorderEntityTabs(fullOrder, draggedEntityTab, targetName)));
+    setDraggedEntityTab(null);
+  }
 
   // One cheap COUNT(*) per entity, fetched once on load, so the nav's own
   // record-count badges match the live Forge AI preview's own entity-tabs
@@ -3270,8 +3346,23 @@ export default function App() {
         </div>
       </div>
       <nav>
-        {ENTITIES.map((e) => (
-          <button key={e.name} className={e.name === active ? "active" : ""} onClick={() => setActive(e.name)}>
+        {orderedEntities.map((e) => (
+          <button
+            key={e.name}
+            className={e.name === active ? "active" : dragOverEntityTab === e.name ? "drag-over" : ""}
+            draggable
+            onDragStart={() => setDraggedEntityTab(e.name)}
+            onDragOver={(ev) => {
+              ev.preventDefault();
+              setDragOverEntityTab(e.name);
+            }}
+            onDragLeave={() => setDragOverEntityTab((prev) => (prev === e.name ? null : prev))}
+            onDrop={(ev) => {
+              ev.preventDefault();
+              handleReorderEntityTab(e.name);
+            }}
+            onClick={() => setActive(e.name)}
+          >
             {e.label}
             {entityCounts[e.name] != null && <span className="tab-count">{entityCounts[e.name]}</span>}
           </button>
@@ -3399,6 +3490,7 @@ h1 { font-size: 26px; margin: 0 0 20px; }
 nav { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 20px; }
 nav button { padding: 8px 16px; border-radius: 8px; border: 1px solid var(--border); background: var(--surface); color: var(--text); cursor: pointer; font: inherit; }
 nav button.active { background: var(--accent); color: var(--accent-contrast); border-color: var(--accent); }
+nav button.drag-over { border-color: var(--accent); border-style: dashed; }
 .panel { background: var(--surface); border: 1px solid var(--border); border-radius: 14px; padding: 20px; box-shadow: var(--shadow-md); }
 form.record-form { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 12px; margin-bottom: 16px; padding-bottom: 16px; border-bottom: 1px solid var(--border-soft); }
 .field { display: flex; flex-direction: column; gap: 4px; font-size: 12.5px; color: var(--muted); min-width: 0; }

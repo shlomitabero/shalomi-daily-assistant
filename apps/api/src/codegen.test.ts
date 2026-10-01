@@ -3301,3 +3301,85 @@ test("the exported EntityView marks the specific row/card/chip with a move-error
     "the CalendarView call site must pass moveErrorId through",
   );
 });
+
+/**
+ * New in this round: the exported standalone app's entity-tab bar (App.jsx's
+ * <nav>) was always plain, non-draggable buttons in spec.entities' fixed
+ * generation order, unlike the live Forge AI preview's own draggable,
+ * order-persisting tab bar (entityTabOrder.ts). Ports the identical reorder
+ * mechanics -- draggable tabs, a drop target that highlights while dragged
+ * over, and a real localStorage-backed order that survives a reload.
+ */
+test("the exported App's entity tabs are drag-and-drop reorderable, persisting via a real localStorage round trip", () => {
+  const files = generateExportFiles(project);
+  const appJsx = files.find((f) => f.path === "web/src/App.jsx")!.content;
+
+  assert.match(appJsx, /const \[entityTabOrder, setEntityTabOrderState\] = useState\(\(\) => getEntityTabOrder\(\)\);/);
+  assert.match(appJsx, /const \[draggedEntityTab, setDraggedEntityTab\] = useState\(null\);/);
+  assert.match(
+    appJsx,
+    /const orderedEntities = useMemo\(\(\) => applyEntityTabOrder\(ENTITIES, entityTabOrder\), \[entityTabOrder\]\);/,
+  );
+  assert.match(
+    appJsx,
+    /function handleReorderEntityTab\(targetName\) \{\s*setDragOverEntityTab\(null\);\s*if \(!draggedEntityTab \|\| draggedEntityTab === targetName\) return;\s*const fullOrder = orderedEntities\.map\(\(e\) => e\.name\);\s*setEntityTabOrderState\(setEntityTabOrder\(reorderEntityTabs\(fullOrder, draggedEntityTab, targetName\)\)\);\s*setDraggedEntityTab\(null\);\s*\}/,
+  );
+  assert.match(appJsx, /\{orderedEntities\.map\(\(e\) => \(/, "the nav must render orderedEntities, not the fixed ENTITIES order");
+  assert.match(appJsx, /onDragStart=\{\(\) => setDraggedEntityTab\(e\.name\)\}/);
+  assert.match(
+    appJsx,
+    /onDrop=\{\(ev\) => \{\s*ev\.preventDefault\(\);\s*handleReorderEntityTab\(e\.name\);\s*\}\}/,
+  );
+
+  const stylesCss = files.find((f) => f.path === "web/src/styles.css")!.content;
+  assert.match(stylesCss, /nav button\.drag-over/);
+
+  // Executes the real generated applyEntityTabOrder/reorderEntityTabs
+  // against plain arrays, and the real generated getEntityTabOrder/
+  // setEntityTabOrder against a fake localStorage -- the same "run the real
+  // generated code" standard this file's other persistence-backed tests use.
+  const pureFnSrc = appJsx.match(
+    /function applyEntityTabOrder\(entities, order\) \{[\s\S]*?\nfunction reorderEntityTabs\(order, sourceName, targetName\) \{[\s\S]*?\n\}\n/,
+  )?.[0];
+  assert.ok(pureFnSrc, "expected to find applyEntityTabOrder/reorderEntityTabs in generated output");
+  const { applyEntityTabOrder, reorderEntityTabs } = new Function(
+    `${pureFnSrc}\nreturn { applyEntityTabOrder, reorderEntityTabs };`,
+  )() as {
+    applyEntityTabOrder: (entities: { name: string }[], order: string[]) => { name: string }[];
+    reorderEntityTabs: (order: string[], source: string, target: string) => string[];
+  };
+  assert.deepEqual(
+    applyEntityTabOrder([{ name: "Customer" }, { name: "Service" }], ["Service", "Customer"]).map((e) => e.name),
+    ["Service", "Customer"],
+  );
+  assert.deepEqual(
+    applyEntityTabOrder([{ name: "Customer" }, { name: "Service" }], []).map((e) => e.name),
+    ["Customer", "Service"],
+    "an empty persisted order must fall back to the natural entity order",
+  );
+  assert.deepEqual(reorderEntityTabs(["Customer", "Service"], "Service", "Customer"), ["Service", "Customer"]);
+  const unchanged = ["Customer", "Service"];
+  assert.equal(
+    reorderEntityTabs(unchanged, "Customer", "Customer"),
+    unchanged,
+    "dropping a tab back onto itself must be a real no-op",
+  );
+
+  const storeSrc = appJsx.match(/const ENTITY_TAB_ORDER_STORAGE_KEY[\s\S]*?\nfunction setEntityTabOrder\(order\) \{[\s\S]*?\n\}\n/)?.[0];
+  assert.ok(storeSrc, "expected to find the entity-tab-order store functions in generated output");
+  const fakeStorage: Record<string, string> = {};
+  const { getEntityTabOrder, setEntityTabOrder } = new Function(
+    "localStorage",
+    `${storeSrc}\nreturn { getEntityTabOrder, setEntityTabOrder };`,
+  )({
+    getItem: (k: string) => fakeStorage[k] ?? null,
+    setItem: (k: string, v: string) => {
+      fakeStorage[k] = v;
+    },
+  }) as { getEntityTabOrder: () => string[]; setEntityTabOrder: (order: string[]) => string[] };
+
+  assert.deepEqual(getEntityTabOrder(), [], "tabs must start with no persisted order");
+  const updated = setEntityTabOrder(["Service", "Customer"]);
+  assert.deepEqual(updated, ["Service", "Customer"]);
+  assert.deepEqual(getEntityTabOrder(), ["Service", "Customer"], "must round-trip through the real localStorage-backed store");
+});
