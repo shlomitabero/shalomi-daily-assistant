@@ -18678,6 +18678,95 @@ Full suite green: **1159 tests** (`@forge/shared` 13, `@forge/spec-engine`
 via `npm test` at the repo root, plus a clean
 `npm run build --workspace=@forge/api` (esbuild).
 
+### Round 311 — The exported app now actually enforces foreign keys, matching the live backend (real data-integrity bug fix)
+
+With the known bulk-actions and entity-tab-reorder families fully closed,
+an Explore survey went looking for something genuinely new rather than the
+small view-preference-persistence backup candidate, and found a real,
+silent data-integrity bug rather than a missing feature: `codegen.ts`'s
+generated `server.js` never enabled `PRAGMA foreign_keys` and never emitted
+a `REFERENCES` clause for a relation column, unlike the live backend's
+`connection.ts`/`migrate.ts` (fixed back around round 108). Confirmed via
+direct reading of both the live and exported code paths, plus a standalone
+`node:sqlite` script proving SQLite correctly allows a `REFERENCES` clause
+to forward-reference a table declared later in the same `CREATE TABLE`
+loop (the constraint is only checked when a row is actually written, not
+at table-creation time) -- ruling out a concern that entity declaration
+order could matter.
+
+Real failure scenario before this round: build an "order tracking" app
+(Order + Courier, a `courierId` relation field), export it, delete a
+Courier that an Order still points at. In the live preview this is
+blocked with a translated error. In the exported app it just silently
+succeeded -- the DELETE had no FK constraint to violate at all, so nothing
+ever threw, which is a different and sneakier failure mode than "the
+error gets swallowed": every Order that used to show the courier's name
+now shows a bare `#3` forever, with zero indication anything went wrong
+(`relationDisplayLabel`'s own fallback for a lookup miss).
+
+Four fixes, all inside `codegen.ts`'s generated `server.js`/`EntityView.jsx`
+template strings: (1) `db.exec("PRAGMA foreign_keys = ON;")` right after
+the connection is opened; (2) the `CREATE TABLE` column-builder now emits
+` REFERENCES "<TargetEntity>"(id)` for a `relation` field with a
+`relationTo`, computed at the generated server's own runtime from
+`field.relationTo` (already present in the baked-in `ENTITIES` array);
+(3) the generated `DELETE` route, which previously had no try/catch at
+all (unlike the `POST`/`PATCH` routes right above it), now catches the
+resulting `"FOREIGN KEY constraint failed"` error and responds `409` with
+an actionable message, mirroring the live backend's own route-level
+pattern; (4) `EntityView`'s `commitPendingDelete` (the deferred-delete
+undo-window commit) -- previously a bare `.catch(() => {})` that silently
+discarded a failed delete, the exact bug class round 292 fixed in the live
+preview's own `EntityPanel.tsx` -- is now `async`, awaits the real delete,
+and on failure restores the row (`restoreRecordAt`, the same helper
+`handleUndoDelete` already uses) and calls `setError`.
+
+Tests: two new `codegen.test.ts` tests. The first spins up a real,
+spawned, generated `server.js` (the same pattern the existing
+keyword-entity and invalid-date tests in this file already use) with a
+real Courier+Order fixture: creates a Courier, creates an Order
+referencing it, confirms `DELETE /api/Courier/:id` now returns a real
+`409` with the referenced Courier still present afterward via a follow-up
+`GET`, and confirms a *different*, unreferenced Courier still deletes
+normally with a `204` -- proving the fix didn't break the ordinary case.
+The second runs the real generated `commitPendingDelete` via `new
+Function` against a stubbed failing `deleteRecord`, confirming it restores
+the record at its original index and surfaces the real error message
+rather than discarding it. One pre-existing test (the Undo-toast test)
+pinned `commitPendingDelete`'s exact old synchronous signature and needed
+its regex updated to the new `async`/`try`/`await` shape -- a deliberate
+signature change, not a regression, per the durable pattern this routine
+has hit before on rounds 306/307. All other pre-existing tests passed
+unchanged. One transient test-runner flake was hit and re-confirmed as a
+flake (not a regression) by two clean re-runs, both in `codegen.test.ts`
+isolation and at the full `@forge/api` workspace level -- the same known
+flakiness class documented after round 310.
+
+Deliberate-break-and-restore: removed the `PRAGMA foreign_keys` line --
+the new server-boot test failed exactly as expected (its own `assert.match`
+against the generated source no longer found the PRAGMA line). Restored
+from a verified pre-break backup with a confirmed byte-identical `diff`;
+re-ran the full suite twice at both the `codegen.test.ts` and workspace
+level and confirmed everything passed cleanly both times.
+
+Live verification (same real `vite build` + real `server.js` + real
+Chromium pattern as rounds 306-310, but exercising the full React UI this
+time rather than the backend alone): built a real Courier+Order app,
+created a real Courier through the real form, created a real Order
+referencing it, switched back to the Courier tab and clicked Delete
+(confirming the real `window.confirm` dialog) -- the row optimistically
+vanished immediately, then, once the real 5-second undo window elapsed,
+the deferred delete hit the real FK constraint, the row **reappeared**,
+and a real error ("Cannot delete this record -- another record still
+references it through a relation field") appeared on screen. Reloaded the
+page afterward and confirmed the Courier row was still genuinely there --
+proof the fix holds at the real database level, not just in React state.
+
+Full suite green: **1161 tests** (`@forge/shared` 13, `@forge/spec-engine`
+85, `@forge/db` 93, `@forge/web` 651 unchanged; `@forge/api` 317 → 319)
+via `npm test` at the repo root, plus a clean
+`npm run build --workspace=@forge/api` (esbuild).
+
 ## Phase 4
 
 - Template/agent marketplace
