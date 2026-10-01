@@ -3348,7 +3348,7 @@ async function searchAllEntities(entities, query) {
     })
     .filter((r) => r !== null);
   const failures = settled.filter((r) => r.status === "rejected");
-  return { results, failures };
+  return { results, failures, recordsByEntity };
 }
 
 // Renders the already-fetched results as a plain, shareable text snapshot --
@@ -3432,11 +3432,23 @@ export function GlobalSearch({ entities, onClose, onJumpToEntity, onJumpToRecord
   const [selectedIndex, setSelectedIndex] = useState(null);
   const [copyStatus, setCopyStatus] = useState("idle");
   const [recentSearches, setRecentSearches] = useState(() => getGlobalSearchRecentSearches());
+  // A group's "and N more" text used to be a dead end -- the extra matches
+  // were real (totalMatches said so) but nothing on screen could reach them
+  // short of switching tabs and re-filtering the same query by hand. Keyed
+  // by entityName so expanding one group's "Show all" never affects
+  // another's, mirroring the live preview's own GlobalSearchPanel.tsx.
+  const [expandedSamples, setExpandedSamples] = useState({});
+  const [showAllLoading, setShowAllLoading] = useState(() => new Set());
   // Bumped once per runSearch call, so a stale search whose network round
   // trip just happens to take longer than a newer one's can recognize
   // itself as superseded and skip applying its now-outdated results.
   const searchRequestId = useRef(0);
   const resultsContainerRef = useRef(null);
+  // Every entity's own records from the most recently *completed* search,
+  // keyed by entity name -- reused as matchesSearch's relatedRecords so
+  // handleShowAll's own relation-field matches resolve to the real display
+  // label, not a raw foreign-key id, with zero extra network calls.
+  const lastRecordsByEntityRef = useRef({});
 
   useEffect(() => {
     if (copyStatus === "idle") return;
@@ -3463,8 +3475,9 @@ export function GlobalSearch({ entities, onClose, onJumpToEntity, onJumpToRecord
     const requestId = ++searchRequestId.current;
     setLoading(true);
     setError(null);
-    const { results: succeeded, failures } = await searchAllEntities(entities, q);
+    const { results: succeeded, failures, recordsByEntity } = await searchAllEntities(entities, q);
     if (searchRequestId.current !== requestId) return;
+    lastRecordsByEntityRef.current = recordsByEntity;
     setResults(succeeded);
     setSearched(true);
     setSelectedIndex(null);
@@ -3480,14 +3493,38 @@ export function GlobalSearch({ entities, onClose, onJumpToEntity, onJumpToRecord
 
   async function handleSubmit(e) {
     e.preventDefault();
+    setExpandedSamples({});
     setRecentSearches(addGlobalSearchRecentSearch(query));
     await runSearch(query);
   }
 
   async function handleRecentSearchClick(q) {
     setQuery(q);
+    setExpandedSamples({});
     setRecentSearches(addGlobalSearchRecentSearch(q));
     await runSearch(q);
+  }
+
+  // Fetches this one entity's records again (a cheap, idempotent GET -- the
+  // same request runSearch already made) and re-filters them with no
+  // sample cap, so "Show all" reveals every real match instead of just the
+  // first 5. Keyed per entity in expandedSamples rather than reusing
+  // results in place, so a still-collapsed group elsewhere is untouched.
+  async function handleShowAll(entityName) {
+    const entity = entities.find((e) => e.name === entityName);
+    if (!entity) return;
+    setShowAllLoading((prev) => new Set(prev).add(entityName));
+    try {
+      const { records } = await listRecords(entityName);
+      const full = records.filter((r) => matchesSearch(r, entity.fields, query, lastRecordsByEntityRef.current));
+      setExpandedSamples((prev) => ({ ...prev, [entityName]: full }));
+    } finally {
+      setShowAllLoading((prev) => {
+        const next = new Set(prev);
+        next.delete(entityName);
+        return next;
+      });
+    }
   }
 
   function handleRemoveRecentSearch(q) {
@@ -3607,31 +3644,42 @@ export function GlobalSearch({ entities, onClose, onJumpToEntity, onJumpToRecord
 
         {!loading && results.length > 0 && (
           <div className="global-search-results" ref={resultsContainerRef}>
-            {results.map((result, i) => (
-              <div key={result.entityName} data-group-index={i} className={i === selectedIndex ? "global-search-group global-search-group-selected" : "global-search-group"}>
-                <div className="global-search-group-header">
-                  <span className="global-search-entity-label">{result.entityLabel}</span>
-                  <span className="muted small">{result.totalMatches} results</span>
-                  <button type="button" className="small" onClick={() => onJumpToEntity(result.entityName)}>Go to tab</button>
+            {results.map((result, i) => {
+              const displayed = expandedSamples[result.entityName] ?? result.sample;
+              const remaining = result.totalMatches - displayed.length;
+              return (
+                <div key={result.entityName} data-group-index={i} className={i === selectedIndex ? "global-search-group global-search-group-selected" : "global-search-group"}>
+                  <div className="global-search-group-header">
+                    <span className="global-search-entity-label">{result.entityLabel}</span>
+                    <span className="muted small">{result.totalMatches} results</span>
+                    <button type="button" className="small" onClick={() => onJumpToEntity(result.entityName)}>Go to tab</button>
+                  </div>
+                  <ul className="global-search-hits">
+                    {displayed.map((record) => (
+                      <li key={record.id}>
+                        <button
+                          type="button"
+                          className="link-button global-search-hit-button"
+                          onClick={() => onJumpToRecord(result.entityName, record.id)}
+                        >
+                          {recordDisplayLabel(entities.find((e) => e.name === result.entityName), record)}
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                  {remaining > 0 && (
+                    <button
+                      type="button"
+                      className="link-button small global-search-show-all"
+                      disabled={showAllLoading.has(result.entityName)}
+                      onClick={() => handleShowAll(result.entityName)}
+                    >
+                      {showAllLoading.has(result.entityName) ? "Loading…" : \`Show all \${remaining} more\`}
+                    </button>
+                  )}
                 </div>
-                <ul className="global-search-hits">
-                  {result.sample.map((record) => (
-                    <li key={record.id}>
-                      <button
-                        type="button"
-                        className="link-button global-search-hit-button"
-                        onClick={() => onJumpToRecord(result.entityName, record.id)}
-                      >
-                        {recordDisplayLabel(entities.find((e) => e.name === result.entityName), record)}
-                      </button>
-                    </li>
-                  ))}
-                </ul>
-                {result.totalMatches > result.sample.length && (
-                  <p className="muted small">+{result.totalMatches - result.sample.length} more</p>
-                )}
-              </div>
-            ))}
+              );
+            })}
           </div>
         )}
       </div>
@@ -4160,6 +4208,7 @@ nav button.active .tab-count { background: rgba(255, 255, 255, 0.25); color: inh
 .global-search-entity-label { font-weight: 700; }
 .global-search-group-header button.small { margin-inline-start: auto; padding: 4px 10px; font-size: 13px; }
 .global-search-hits { margin: 10px 0 0; padding-inline-start: 20px; display: flex; flex-direction: column; gap: 6px; font-size: 14.5px; }
+.global-search-show-all { margin-top: 6px; font-size: 13px; }
 .global-search-hit-button { display: block; width: 100%; text-align: start; white-space: normal; }
 .record-row-highlighted, .record-row-highlighted:hover { background: var(--accent-soft); transition: background 1.5s ease; }
 .record-row-move-error, .record-row-move-error:hover { background: var(--danger-soft); transition: background 2s ease; }

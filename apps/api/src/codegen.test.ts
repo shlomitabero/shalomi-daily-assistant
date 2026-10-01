@@ -2958,6 +2958,7 @@ test("the exported GlobalSearch's runSearch shows results from every entity that
     "setSearched",
     "setSelectedIndex",
     "searchRequestId",
+    "lastRecordsByEntityRef",
     `${matchesSearchSrc}\n${searchAllEntitiesSrc}\n${runSearchSrc}\nreturn runSearch;`,
   )(
     [entityA, entityB, entityC],
@@ -2975,6 +2976,7 @@ test("the exported GlobalSearch's runSearch shows results from every entity that
     () => {},
     () => {},
     { current: 0 },
+    { current: {} },
   ) as (q: string) => Promise<void>;
 
   await fn("match");
@@ -3038,6 +3040,7 @@ test("the exported GlobalSearch's runSearch ignores a stale, still-in-flight sea
     "setSearched",
     "setSelectedIndex",
     "searchRequestId",
+    "lastRecordsByEntityRef",
     `${matchesSearchSrc}\n${searchAllEntitiesSrc}\n${runSearchSrc}\nreturn runSearch;`,
   )(
     [entityA],
@@ -3057,6 +3060,7 @@ test("the exported GlobalSearch's runSearch ignores a stale, still-in-flight sea
     () => {},
     () => {},
     searchRequestId,
+    { current: {} },
   ) as (q: string) => Promise<void>;
 
   const stalePromise = fn("target");
@@ -4738,6 +4742,74 @@ test("the exported GlobalSearch remembers a submitted search and shows it as a r
       const removeButton = secondMount.container.querySelector(".global-search-recent .chip-remove") as HTMLButtonElement | null;
       assert.equal(removeButton, null, "the recent-searches row (and its remove button) must stay hidden once results are showing again");
     });
+  } finally {
+    globalThis.fetch = originalFetch;
+    cleanup();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
+ * New in this round: the exported app's GlobalSearch had the identical
+ * dead end the live preview's own GlobalSearchPanel.tsx did before its own
+ * "Show all" button -- a group capped its rows at 5 and printed a static
+ * "+N more" text for the rest, real matches the panel already knew the
+ * count of but gave no way to ever reach. Mirrors the live preview's own
+ * GlobalSearchPanel.test.ts pattern: confirms a real "Show all" button
+ * appears exactly when more matches exist, that clicking it genuinely
+ * reveals every one of them (not just relabels the same 5, and via a real
+ * re-fetch + re-filter, not a reimplementation), and that the button
+ * itself disappears once nothing is left to expand.
+ */
+test("the exported GlobalSearch's 'Show all' button reveals every match beyond the default 5-row sample, and disappears once everything is shown", async () => {
+  const files = generateExportFiles(project);
+  const dir = writeGeneratedWebComponent(files);
+  const customerRecords = Array.from({ length: 7 }, (_, i) => ({ id: i + 1, name: `Widget item ${i + 1}` }));
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async (input: string) => {
+    if (String(input).endsWith("/Customer")) {
+      return { ok: true, status: 200, json: async () => ({ records: customerRecords }) };
+    }
+    return { ok: true, status: 200, json: async () => ({ records: [] }) };
+  }) as typeof fetch;
+
+  try {
+    const { GlobalSearch } = await import(path.join(dir, "web", "src", "components", "GlobalSearch.jsx"));
+    const { container } = render(
+      React.createElement(GlobalSearch, {
+        entities: project.spec.entities,
+        onClose: () => {},
+        onJumpToEntity: () => {},
+        onJumpToRecord: () => {},
+      }),
+    );
+
+    const input = container.querySelector(".global-search-input") as HTMLInputElement;
+    await act(async () => {
+      fireEvent.change(input, { target: { value: "widget" } });
+      fireEvent.submit(container.querySelector("form.global-search-form")!);
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    assert.equal(container.querySelectorAll(".global-search-hit-button").length, 5, "expected the default 5-row sample");
+
+    const showAllButton = container.querySelector(".global-search-show-all") as HTMLButtonElement | null;
+    assert.ok(showAllButton, "expected a real 'Show all' button when more matches exist than the sample shows");
+
+    await act(async () => {
+      fireEvent.click(showAllButton!);
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    assert.equal(container.querySelectorAll(".global-search-hit-button").length, 7, "clicking 'Show all' must reveal every real match, not just the same 5");
+    assert.equal(
+      container.querySelector(".global-search-show-all"),
+      null,
+      "the 'Show all' button must disappear once every match is already shown",
+    );
   } finally {
     globalThis.fetch = originalFetch;
     cleanup();
