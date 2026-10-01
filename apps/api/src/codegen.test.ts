@@ -393,6 +393,102 @@ test("generated server.js actually enforces foreign keys: deleting a record anot
 });
 
 /**
+ * Regression test for a sibling of round 311's FK bug, found by round 313's
+ * Explore survey in the live Forge AI backend's own repository.ts and
+ * ported here for consistency: the generated PATCH route re-validated
+ * EVERY field against the entity's current definition on every update
+ * (`{ ...existing, ...req.body }` then coerce() on every field), not just
+ * the field(s) actually being changed. In the live backend that's reachable
+ * via a refine that narrows an enum after records already exist; the
+ * exported app's own schema is frozen after export so that specific path
+ * can't occur here -- but a row can still end up holding a value outside
+ * its own field's declared enumValues if someone edits data.sqlite
+ * directly (the generated README explicitly invites this: "yours: read it,
+ * edit it, deploy it anywhere Node runs"), or restores an older backup.
+ * Before this fix, updating any OTHER field on such a row would fail with
+ * a confusing "Field status must be one of: ..." error even though status
+ * was never touched.
+ */
+test("generated server.js's PATCH route only validates fields actually present in the request body, not every field's already-stored value", async () => {
+  const files = generateExportFiles(project);
+  const serverJs = files.find((f) => f.path === "server.js")!.content;
+
+  const dir = mkdtempSync(path.join(tmpdir(), "codegen-partial-patch-test-"));
+  const repoRoot = path.resolve(import.meta.dirname, "../../..");
+  symlinkSync(path.join(repoRoot, "node_modules"), path.join(dir, "node_modules"));
+  writeFileSync(path.join(dir, "server.js"), serverJs);
+
+  const port = 59000 + Math.floor(Math.random() * 5000);
+  const child = spawn(process.execPath, ["--experimental-sqlite", "server.js"], {
+    cwd: dir,
+    env: { ...process.env, PORT: String(port) },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  let stderr = "";
+  child.stderr.on("data", (chunk) => {
+    stderr += chunk.toString();
+  });
+
+  try {
+    const deadline = Date.now() + 5000;
+    let lastErr: unknown;
+    while (Date.now() < deadline) {
+      if (child.exitCode !== null) throw new Error(`server.js exited early (code ${child.exitCode}):\n${stderr}`);
+      try {
+        await fetch(`http://localhost:${port}/api/entities`);
+        break;
+      } catch (err) {
+        lastErr = err;
+        await new Promise((r) => setTimeout(r, 100));
+      }
+    }
+    if (child.exitCode !== null) throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
+
+    const createRes = await fetch(`http://localhost:${port}/api/Customer`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ name: "Alice", status: "New" }),
+    });
+    assert.equal(createRes.status, 201);
+    const customer = (await createRes.json()).record;
+
+    // Simulate a hand-edited (or restored-from-an-older-backup) row holding
+    // a value this field's current enumValues no longer allows -- a second
+    // real sqlite connection, writing directly while the server is idle,
+    // the same real-world action the generated README itself invites.
+    const { DatabaseSync } = await import("node:sqlite");
+    const directDb = new DatabaseSync(path.join(dir, "data.sqlite"));
+    directDb.prepare(`UPDATE "Customer" SET status = ? WHERE id = ?`).run("Stale", customer.id);
+    directDb.close();
+
+    // Updating a completely different field (name) must succeed, not throw
+    // "Field status must be one of: New, Won" -- status was never touched.
+    const patchRes = await fetch(`http://localhost:${port}/api/Customer/${customer.id}`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ name: "Alice Cohen" }),
+    });
+    assert.equal(patchRes.status, 200, "updating an unrelated field must not fail because of a different, untouched field's stale value");
+    const patched = (await patchRes.json()).record;
+    assert.equal(patched.name, "Alice Cohen");
+    assert.equal(patched.status, "Stale", "the untouched field must keep its stored value exactly as-is, not be reset or dropped");
+
+    // Explicitly setting the field to an invalid value must still be
+    // rejected -- the fix must not weaken validation of a field actually
+    // touched by the request.
+    const badPatchRes = await fetch(`http://localhost:${port}/api/Customer/${customer.id}`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ status: "AlsoStale" }),
+    });
+    assert.equal(badPatchRes.status, 400);
+  } finally {
+    child.kill();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
  * Regression test, same "real generated code via new Function" standard as
  * the existing handleBulkDelete test in this file: commitPendingDelete used
  * to be a bare `.catch(() => {})`, silently discarding a failed deferred

@@ -129,14 +129,28 @@ export function updateRecord(
   id: number,
   data: Record<string, unknown>,
 ): EntityRecord {
-  const existing = getRecord(db, projectId, entity, id);
-  if (!existing) {
+  const table = tableNameFor(projectId, entity.name);
+  const existingRow = db.prepare(`SELECT * FROM ${quoteIdentifier(table)} WHERE id = ?`).get(id) as
+    | Record<string, unknown>
+    | undefined;
+  if (!existingRow) {
     throw new NotFoundError(`Record ${id} not found in ${entity.name}`);
   }
-  const table = tableNameFor(projectId, entity.name);
   const columns = fieldColumns(entity);
-  const merged = { ...existing, ...data };
-  const values = entity.fields.map((field) => coerceValue(field, merged[field.name]));
+  // Only a field the caller actually supplied is re-coerced/validated
+  // against the entity's *current* definition -- an untouched field keeps
+  // its already-stored raw value exactly as-is. The previous behavior
+  // (`{ ...existing, ...data }` then coerceValue on every field) re-derived
+  // and re-validated every field on every update, including ones the
+  // caller never mentioned. That meant a refine that later tightens an
+  // unrelated field on the same entity -- narrows its enumValues, or flips
+  // required false->true -- would permanently fail every future update to
+  // any pre-existing row whose stored value for that field no longer
+  // satisfies the new definition, even an update (inline cell edit, bulk
+  // field update, a Kanban drag) that never touches that field at all.
+  const values = entity.fields.map((field) =>
+    Object.prototype.hasOwnProperty.call(data, field.name) ? coerceValue(field, data[field.name]) : existingRow[field.name],
+  );
 
   const setClause = columns.map((c) => `${quoteIdentifier(c)} = ?`).join(", ");
   db.prepare(`UPDATE ${quoteIdentifier(table)} SET ${setClause} WHERE id = ?`).run(...values, id);

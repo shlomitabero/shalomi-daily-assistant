@@ -435,8 +435,12 @@ for (const entity of ENTITIES) {
     try {
       const existing = db.prepare(\`SELECT * FROM \${q(entity.name)} WHERE id = ?\`).get(req.params.id);
       if (!existing) return res.status(404).json({ error: "Not found" });
-      const merged = { ...existing, ...req.body };
-      const values = entity.fields.map((f) => coerce(f, merged[f.name]));
+      // Only a field actually present in the request body is re-coerced --
+      // an untouched field keeps its already-stored raw value as-is, the
+      // same fix as the live Forge AI backend's own repository.ts.
+      const values = entity.fields.map((f) =>
+        req.body && Object.prototype.hasOwnProperty.call(req.body, f.name) ? coerce(f, req.body[f.name]) : existing[f.name],
+      );
       db.prepare(\`UPDATE \${q(entity.name)} SET \${columns.map((c) => \`\${q(c)} = ?\`).join(", ")} WHERE id = ?\`).run(...values, req.params.id);
       const row = db.prepare(\`SELECT * FROM \${q(entity.name)} WHERE id = ?\`).get(req.params.id);
       res.json({ record: rowToRecord(entity, row) });
