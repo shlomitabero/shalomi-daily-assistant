@@ -19002,6 +19002,82 @@ Full suite green: **1168 tests** (`@forge/shared` 13, `@forge/spec-engine`
 via `npm test` at the repo root, plus a clean
 `npm run build --workspace=@forge/api` (esbuild).
 
+### Round 315 — The exported app's Group-by/view-mode/sort-key choices are finally persisted, closing the last known port-to-codegen gap
+
+An Explore survey, this time steered toward a visible feature after round
+314 combined a critical bug fix with one, first ran a systematic
+hook-import audit across every generated React component (EntityView.jsx,
+GlobalSearch.jsx, App.jsx) to rule out any other "hook called without being
+imported" crash in the same family as round 314's -- found none; that bug
+class is now fully closed everywhere. It then confirmed the long-standing
+known gap: the exported app's own `groupFieldName`/`sortKeys`/`viewMode`
+state (apps/api/src/codegen.ts's `EntityView` component) were always plain
+`useState` with zero persistence, unlike every other per-entity view
+preference this same component already remembers (hidden columns, column
+widths, column order, entity tab order all already survive a reload), and
+unlike the live preview's own `groupByPreference.ts`/
+`viewModePreference.ts`/`sortKeysPreference.ts`. Switching to Board view,
+grouping a table by a field, or setting up a multi-column sort was
+silently lost on every page reload, or even just switching to another
+entity tab and back -- a real, reproducible, visible annoyance on every
+entity screen of every exported app.
+
+Fix: added three new localStorage-backed stores -- `getPersistedGroupField`
+/`setPersistedGroupField`, `getPersistedViewMode`/`setPersistedViewMode`,
+`getPersistedSortKeys`/`setPersistedSortKeys` -- mirroring the exact
+pattern the existing hidden-columns/column-widths/column-order stores
+already use (a single storage key holding an object keyed by entity name,
+read/write wrapped in try/catch for private-mode safety). Wired into: the
+three state variables' lazy initializers, the entity-switch reset effect
+(which now re-reads the new entity's own persisted values instead of
+hard-resetting to defaults -- incidentally also fixing a related
+oversight where `groupFieldName` was never reset on entity switch at all,
+silently carrying over a field name from a completely different entity),
+the group-by dropdown's `onChange`, the three view-toggle buttons'
+`onClick` handlers, and `toggleSort`'s functional state update.
+
+Tests: a pure-function test extracting and running the three real
+generated store functions directly (not a regex proxy) against a fake
+`localStorage`, covering defaults, round-tripping, per-entity isolation,
+and clearing back to the default value -- mirroring this file's own
+entity-tab-order persistence test. A second, real-DOM test (the
+jsdom + `@testing-library/react` technique round 314 introduced) renders
+the *actual* generated `EntityView.jsx`, clicks into Board view, unmounts
+(simulating navigating away), mounts a fresh instance of the same
+component (simulating a page reload), and confirms it comes back up
+already on Board view instead of resetting to Table. Writing that test
+surfaced a second, smaller gotcha worth recording: the generated
+component's bare `localStorage` global (which works naturally in a real
+browser) isn't a global at all in this Node test process -- jsdom's own
+`localStorage` lives on `window.localStorage`, a different realm from
+Node's bare global scope, the same gap `jsdomWarmup.ts` already papers
+over for `window`/`document`. Fixed with a small `withRealLocalStorage`
+test helper, scoped per-call via a fresh JSDOM instance so it never leaks
+state across tests (deliberately NOT added to the shared one-time
+warmup, which would have caused cross-test localStorage contamination).
+
+Two pre-existing regex tests needed updating for the new lazy-initializer
+and reset-effect signatures (the same "signature change breaks existing
+regex tests" pattern rounds 306/307 already hit) -- confirming, once
+again, that purely additive new JSX never breaks existing tests but a
+changed `useState` initializer or reset-effect body always does.
+
+Deliberate-break-and-restore: reverted the entire diff back to round
+314's `codegen.ts` and confirmed both new tests failed with precise
+errors (the pure-function test couldn't even find the new store
+functions in the generated source; the real-DOM test's Board-view
+assertion failed with the exact expected `false !== true`). Restored
+from a verified pre-break backup with a confirmed byte-identical `diff`,
+then re-ran every workspace: `@forge/shared` 13/13, `@forge/spec-engine`
+85/85, `@forge/db` 96/96, `@forge/api` 323 → 325, `@forge/web` 651/651
+(last three unchanged, confirmed anyway per the established process),
+plus a clean `npm run build --workspace=@forge/api`.
+
+Full suite green: **1170 tests** (`@forge/shared` 13, `@forge/spec-engine`
+85, `@forge/db` 96, `@forge/web` 651 unchanged; `@forge/api` 323 → 325)
+via `npm test` at the repo root, plus a clean
+`npm run build --workspace=@forge/api` (esbuild).
+
 ## Phase 4
 
 - Template/agent marketplace
