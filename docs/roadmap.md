@@ -18767,6 +18767,82 @@ Full suite green: **1161 tests** (`@forge/shared` 13, `@forge/spec-engine`
 via `npm test` at the repo root, plus a clean
 `npm run build --workspace=@forge/api` (esbuild).
 
+### Round 312 — A relation field added via refine to an already-existing entity now gets real FK protection too (second real data-integrity bug fix in a row)
+
+An Explore survey, explicitly steered toward data-integrity concerns in the
+same family as round 311's exported-app fix, found a parallel bug in the
+**live backend's own** incremental-migration path -- `packages/db/src/
+migrate.ts`'s `diffAndMigrate`, in the branch that runs `ALTER TABLE ADD
+COLUMN` for a field newly added to an entity that already existed (as
+opposed to `generateCreateTableStatements`, used only for a brand-new
+table, which already adds a `REFERENCES` clause correctly). The existing
+code had a comment claiming the omission was deliberate -- "SQLite can't
+retroactively satisfy either [NOT NULL or FK] constraint" -- but that's
+only true for `NOT NULL`. A `REFERENCES` clause on a nullable column is
+trivially satisfiable by every existing row (they just get `NULL`), and
+`ALTER TABLE ADD COLUMN ... REFERENCES` genuinely works in SQLite. Verified
+this directly against the repo's own `node:sqlite` dependency before
+touching any code: created two tables, added a referencing column via
+`ALTER TABLE ADD COLUMN ... REFERENCES`, and confirmed a delete of the
+referenced row threw `"FOREIGN KEY constraint failed"` exactly as a
+from-the-start relation field would.
+
+Real failure scenario: Forge AI's whole workflow is build-then-refine, and
+"add a relation field to an entity that already exists" -- e.g. an
+initial build has unrelated `Customer` and `Order` entities, and a later
+refine says "also link orders to a customer" -- is an entirely ordinary
+refine, hitting exactly this code path. Before this fix, that produced a
+relation column with **zero** FK protection, so deleting a `Customer` an
+`Order` still referenced through it silently succeeded. The irony: the
+error-handling machinery for this exact case already existed and was
+proven correct (round 292's fix, `routes/projects.ts`'s DELETE route
+already translates a `"FOREIGN KEY constraint failed"` into a clean 409
+`RECORD_HAS_DEPENDENT_RECORDS`) -- it was simply never reachable for a
+relation column created this way, because the database itself never threw
+the constraint error in the first place.
+
+Fix: `diffAndMigrate` now builds the same entity-name set
+`generateCreateTableStatements` already uses, and for a `relation` field
+in the `ALTER TABLE` branch, appends the identical ` REFERENCES
+"<table>"(id)` clause that a from-the-start relation field already gets.
+Split the stale comment in two: the `NOT NULL` rationale (genuinely can't
+be retrofitted against existing rows) stays, with a new paragraph
+explaining why the same reasoning doesn't apply to `REFERENCES`.
+
+Tests: two new tests. The first, in `migrate.test.ts`, builds an initial
+spec with `Customer`+`Order` unrelated, calls `diffAndMigrate` to add a
+`customerId` relation field to the already-existing `Order` entity,
+inserts a real `Customer` and a real `Order` referencing it, and confirms
+`DELETE FROM "entity_proj1_Customer"` on the referenced row now throws
+`FOREIGN KEY constraint failed` -- and that the row still exists
+afterward. The second, in `app.test.ts`, exercises the exact real-world
+scenario end to end through the real HTTP API: a custom `SpecProvider`
+test double returns an unrelated `Customer`+`Order` spec for the initial
+`/build`, then an `Order` with a new `customerId` relation for a real
+`/refine` call; creates a real `Customer` and a real `Order` referencing
+it through the real API, and confirms `DELETE /api/.../Customer/:id` now
+returns a real `409` with code `RECORD_HAS_DEPENDENT_RECORDS` instead of
+the `204` it returned before the fix -- and that the customer genuinely
+still exists afterward. All 93 pre-existing `@forge/db` tests and all 319
+pre-existing `@forge/api` tests passed unchanged -- a purely additive fix
+(one new clause inside an existing branch, no signature or shape changed),
+so no collateral test updates were needed.
+
+Deliberate-break-and-restore, done twice (once per new test, since they
+live in different files and packages): removed the new `fk`
+clause/`REFERENCES` logic from `diffAndMigrate` -- the `migrate.test.ts`
+test failed exactly as expected ("Missing expected exception"), and,
+separately, the `app.test.ts` end-to-end test failed with the precise,
+telling assertion `204 !== 409` -- the real proof the delete had gone back
+to silently succeeding. Restored from a verified pre-break backup with a
+confirmed byte-identical `diff` both times; re-ran the full `@forge/db`
+and `@forge/api` suites afterward and confirmed everything passed cleanly.
+
+Full suite green: **1163 tests** (`@forge/shared` 13, `@forge/spec-engine`
+85, `@forge/db` 94, `@forge/web` 651 unchanged; `@forge/api` 319 → 320)
+via `npm test` at the repo root, plus a clean
+`npm run build --workspace=@forge/api` (esbuild).
+
 ## Phase 4
 
 - Template/agent marketplace
