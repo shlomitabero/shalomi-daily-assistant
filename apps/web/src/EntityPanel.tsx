@@ -786,6 +786,7 @@ export function EntityPanel({
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
   const [bulkEditField, setBulkEditField] = useState("");
   const [bulkEditValue, setBulkEditValue] = useState<unknown>("");
+  const [copyStatus, setCopyStatus] = useState<"idle" | "copied" | "failed">("idle");
   const [relatedRecords, setRelatedRecords] = useState<RelatedRecordsByEntity>({});
   const [importBusy, setImportBusy] = useState(false);
   const [importMessage, setImportMessage] = useState<string | null>(null);
@@ -1582,6 +1583,32 @@ export function EntityPanel({
   }
 
   /**
+   * The same "Copy" companion action BusinessTwinPanel/HistoryPanel/
+   * GlobalSearchPanel/WhatsAppPanel's own log already have next to their
+   * Download button -- EntityPanel, the single most-used screen in the
+   * app, only ever had a real file download (handleExportCsv), with no
+   * way to paste a handful of rows straight into Slack/email/a doc
+   * without downloading a CSV and opening it elsewhere first. Reuses the
+   * exact same CSV text handleExportCsv already builds, just written to
+   * the clipboard instead of a downloaded file.
+   */
+  async function handleCopy() {
+    try {
+      const csv = recordsToCsv(entity.fields, selectedOrAllRecords(records, visibleRecords, selectedIds), lang, allEntities, relatedRecords);
+      await navigator.clipboard.writeText(csv);
+      setCopyStatus("copied");
+    } catch {
+      setCopyStatus("failed");
+    }
+  }
+
+  useEffect(() => {
+    if (copyStatus === "idle") return;
+    const timer = setTimeout(() => setCopyStatus("idle"), 2000);
+    return () => clearTimeout(timer);
+  }, [copyStatus]);
+
+  /**
    * The calendar view's own "take it with you" action -- CSV export dumps
    * the whole raw table, but a month of appointments/bookings is exactly
    * what a real business owner wants to drop straight into their phone's
@@ -2009,6 +2036,20 @@ export function EntityPanel({
                 {t("entity.exportIcs")}
               </button>
             )}
+            <button
+              type="button"
+              className="secondary copy-records-btn"
+              onClick={handleCopy}
+              disabled={selectedIds.size === 0 && visibleRecords.length === 0}
+            >
+              {copyStatus === "copied"
+                ? t("entity.copy.copied")
+                : copyStatus === "failed"
+                  ? t("entity.copy.failed")
+                  : selectedIds.size > 0
+                    ? t("entity.copy.selected", { count: selectedIds.size })
+                    : t("entity.copy")}
+            </button>
             <button
               type="button"
               className="secondary csv-export-btn"

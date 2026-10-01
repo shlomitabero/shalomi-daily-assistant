@@ -2324,6 +2324,107 @@ test("EntityPanel's Export CSV button downloads exactly the selected rows' CSV w
 });
 
 /**
+ * New in this round: EntityPanel -- the single most-used screen in the
+ * app -- was the one data-bearing panel left with no "Copy" action next
+ * to its Download/Export button, unlike BusinessTwinPanel/HistoryPanel/
+ * GlobalSearchPanel/WhatsAppPanel, all of which already let you copy a
+ * shareable report straight to the clipboard instead of downloading a
+ * file first. Mirrors HistoryPanel.test.ts's own copy-button test exactly:
+ * confirms the real navigator.clipboard.writeText receives the exact same
+ * CSV text handleExportCsv would have downloaded, the button shows a real
+ * "Copied!" confirmation, and (via a real mocked setTimeout tick, not a
+ * hardcoded wait) fades back to normal 2 seconds later.
+ */
+test("EntityPanel's copy button writes the real CSV text to the clipboard, shows Copied, then reverts", async (t) => {
+  await withJsdom(async () => {
+    const store: EntityRecord[] = [{ id: 1, name: "Dana", email: "dana@example.com" }];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = mockCustomerListFetch(store) as typeof fetch;
+
+    let writtenText: string | undefined;
+    Object.defineProperty(navigator, "clipboard", {
+      value: { writeText: async (text: string) => void (writtenText = text) },
+      configurable: true,
+    });
+
+    try {
+      renderCustomerPanel();
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 1);
+
+      t.mock.timers.enable({ apis: ["setTimeout"] });
+
+      const copyButton = document.querySelector(".copy-records-btn") as HTMLButtonElement;
+      assert.ok(copyButton, "expected a real Copy button in the toolbar");
+      assert.equal(copyButton.textContent, "📋 Copy");
+
+      await act(async () => {
+        fireEvent.click(copyButton);
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+
+      assert.equal(typeof writtenText, "string", "clicking Copy must actually call navigator.clipboard.writeText");
+      assert.match(writtenText!, /Dana/, "the copied text must be the real CSV, not a placeholder");
+      assert.match(writtenText!, /dana@example\.com/, "the copied text must include every real field, not just the name");
+      assert.equal(copyButton.textContent, "✅ Copied!", "must show the real Copied confirmation, not silently do nothing");
+
+      act(() => {
+        t.mock.timers.tick(2000);
+      });
+      assert.equal(copyButton.textContent, "📋 Copy", "must revert to the normal label once the delay elapses");
+    } finally {
+      t.mock.timers.reset();
+      globalThis.fetch = originalFetch;
+      delete (navigator as { clipboard?: unknown }).clipboard;
+    }
+  });
+});
+
+/** The other half: a real rejection (denied permission, insecure context) must show a real failure label, not fail silently or crash. */
+test("EntityPanel's copy button shows a failure label when navigator.clipboard.writeText rejects", async (t) => {
+  await withJsdom(async () => {
+    const store: EntityRecord[] = [{ id: 1, name: "Dana", email: "dana@example.com" }];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = mockCustomerListFetch(store) as typeof fetch;
+
+    Object.defineProperty(navigator, "clipboard", {
+      value: {
+        writeText: async () => {
+          throw new Error("denied");
+        },
+      },
+      configurable: true,
+    });
+
+    try {
+      renderCustomerPanel();
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 1);
+
+      t.mock.timers.enable({ apis: ["setTimeout"] });
+
+      const copyButton = document.querySelector(".copy-records-btn") as HTMLButtonElement;
+
+      await act(async () => {
+        fireEvent.click(copyButton);
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+
+      assert.equal(copyButton.textContent, "Copy failed", "a real clipboard rejection must show a real failure label");
+
+      act(() => {
+        t.mock.timers.tick(2000);
+      });
+      assert.equal(copyButton.textContent, "📋 Copy", "must revert to the normal label even after a failure");
+    } finally {
+      t.mock.timers.reset();
+      globalThis.fetch = originalFetch;
+      delete (navigator as { clipboard?: unknown }).clipboard;
+    }
+  });
+});
+
+/**
  * New in this round: a "Columns" menu in the toolbar lets a wide entity's
  * table drop columns you don't need on screen right now. Hides the
  * "Status" column via its checkbox, confirms the header and every row's
