@@ -4450,3 +4450,107 @@ test("deleting a record another record still references through a relation field
     assert.ok(couriers.some((c) => c.id === courier.id), "the referenced courier must genuinely still exist -- the rejected delete must not have partially applied");
   });
 });
+
+/**
+ * Regression test for a real gap round 312's Explore survey found in
+ * `diffAndMigrate`'s "new_column" branch (migrate.ts): a relation field
+ * added to an *entity that already existed* -- the ordinary shape of a
+ * real refine, e.g. "also link Orders to a Customer" on a project that
+ * already had both entities -- got no REFERENCES clause at all, unlike a
+ * relation field present from the entity's very first build
+ * (generateCreateTableStatements already handled that case correctly, as
+ * the test above confirms). The DELETE route's own FOREIGN KEY constraint
+ * translation (RECORD_HAS_DEPENDENT_RECORDS, same as above) was never
+ * actually reachable for a column added this way, because the database
+ * itself never raised the constraint in the first place -- the delete
+ * just silently succeeded. Exercises the exact real-world scenario end to
+ * end through the real HTTP API: initial build with Customer+Order
+ * unrelated, a real /refine call that adds the relation, then the same
+ * delete-a-still-referenced-record check as the test above.
+ */
+test("a relation field added via refine to an already-existing entity gets the same FK protection as one present from the first build", async () => {
+  const buildSpec: ProductSpec = {
+    summary: "test",
+    personas: [],
+    roles: ["Admin"],
+    entities: [
+      { name: "Customer", fields: [{ name: "name", type: "text", required: true }] },
+      { name: "Order", fields: [{ name: "total", type: "number", required: true }] },
+    ],
+    screens: [],
+    assumptions: [],
+    openQuestions: [],
+  };
+  const refinedSpec: ProductSpec = {
+    ...buildSpec,
+    entities: [
+      buildSpec.entities[0],
+      {
+        ...buildSpec.entities[1],
+        fields: [...buildSpec.entities[1].fields, { name: "customerId", type: "relation", required: false, relationTo: "Customer" }],
+      },
+    ],
+  };
+  let callCount = 0;
+  const provider: SpecProvider = {
+    name: "test-fixture",
+    async generate() {
+      callCount += 1;
+      return callCount === 1 ? buildSpec : refinedSpec;
+    },
+  };
+
+  await withServer(
+    async (baseUrl) => {
+      const token = await signup(baseUrl, "refine-relation-fk@example.com");
+      const createRes = await fetch(`${baseUrl}/api/projects`, {
+        method: "POST",
+        headers: authHeaders(token),
+        body: JSON.stringify({ description: "A small ordering app." }),
+      });
+      const { project } = (await createRes.json()) as { project: { id: string } };
+
+      const buildRes = await fetch(`${baseUrl}/api/projects/${project.id}/build`, { method: "POST", headers: authHeaders(token) });
+      await collectSSE(buildRes);
+
+      const refineRes = await fetch(`${baseUrl}/api/projects/${project.id}/refine`, {
+        method: "POST",
+        headers: authHeaders(token),
+        body: JSON.stringify({ instruction: "Also link each order to a customer." }),
+      });
+      const refineEvents = await collectSSE(refineRes);
+      assert.ok(refineEvents.every((e) => e.status !== "failed"), "refine should succeed");
+
+      const customerRes = await fetch(`${baseUrl}/api/projects/${project.id}/entities/Customer`, {
+        method: "POST",
+        headers: authHeaders(token),
+        body: JSON.stringify({ name: "Jane" }),
+      });
+      assert.equal(customerRes.status, 201);
+      const { record: customer } = (await customerRes.json()) as { record: { id: number } };
+
+      const orderRes = await fetch(`${baseUrl}/api/projects/${project.id}/entities/Order`, {
+        method: "POST",
+        headers: authHeaders(token),
+        body: JSON.stringify({ total: 50, customerId: customer.id }),
+      });
+      assert.equal(orderRes.status, 201, "the Order must actually be created referencing this customer for the test to mean anything");
+
+      const deleteRes = await fetch(`${baseUrl}/api/projects/${project.id}/entities/Customer/${customer.id}`, {
+        method: "DELETE",
+        headers: authHeaders(token),
+      });
+      assert.equal(
+        deleteRes.status,
+        409,
+        "deleting a customer an order still references via a refine-added relation field must be rejected, not silently succeed",
+      );
+      assert.equal(((await deleteRes.json()) as { code?: string }).code, "RECORD_HAS_DEPENDENT_RECORDS");
+
+      const listRes = await fetch(`${baseUrl}/api/projects/${project.id}/entities/Customer`, { headers: authHeaders(token) });
+      const { records: customers } = (await listRes.json()) as { records: { id: number }[] };
+      assert.ok(customers.some((c) => c.id === customer.id), "the referenced customer must genuinely still exist");
+    },
+    { provider },
+  );
+});

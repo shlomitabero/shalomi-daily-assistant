@@ -103,6 +103,7 @@ export function diffAndMigrate(
 
   const statements = generateCreateTableStatements(projectId, nextSpec);
   const previousEntities = new Map(previousSpec.entities.map((e) => [e.name, e]));
+  const entityNames = new Set(nextSpec.entities.map((e) => e.name));
   const changes: MigrationChange[] = [];
 
   nextSpec.entities.forEach((entity, index) => {
@@ -143,11 +144,26 @@ export function diffAndMigrate(
       // what a prior, partially-failed call already applied.
       if (!currentColumns.has(columnName)) {
         const sqlType = sqlTypeFor(field);
-        // NOT NULL / FK deliberately omitted: SQLite can't retroactively
-        // satisfy either constraint against a table's existing rows. The
-        // column is added nullable; required-ness is still enforced by the
-        // API for every write going forward.
-        db.exec(`ALTER TABLE ${quoteIdentifier(table)} ADD COLUMN ${quoteIdentifier(columnName)} ${sqlType}`);
+        // NOT NULL deliberately omitted: SQLite can't retroactively satisfy
+        // it against a table's existing rows (they'd all violate it with
+        // their current NULL). The column is added nullable;
+        // required-ness is still enforced by the API for every write going
+        // forward. A REFERENCES clause has no such problem -- existing rows
+        // just get NULL in the new column, which trivially satisfies a
+        // foreign key -- so it's added here exactly like
+        // generateCreateTableStatements already does for a brand-new table.
+        // Without this, a relation field added to an *existing* entity via
+        // refine got no FK protection at all: deleting a record another
+        // record's new relation field pointed at would silently succeed
+        // instead of being blocked with the 409 routes/projects.ts already
+        // returns for this exact case on a relation field that existed from
+        // the start.
+        let fk = "";
+        if (field.type === "relation" && field.relationTo && entityNames.has(field.relationTo)) {
+          const relatedTable = tableNameFor(projectId, field.relationTo);
+          fk = ` REFERENCES ${quoteIdentifier(relatedTable)}(id)`;
+        }
+        db.exec(`ALTER TABLE ${quoteIdentifier(table)} ADD COLUMN ${quoteIdentifier(columnName)} ${sqlType}${fk}`);
       }
       changes.push({ type: "new_column", table, column: columnName });
     }

@@ -134,6 +134,57 @@ test("diffAndMigrate adds a nullable column for a new field on an existing entit
   assert.equal(customers[0].loyaltyPoints, null);
 });
 
+/**
+ * Regression test: a relation field added to an *existing* entity via
+ * refine (the "new_column" branch, not "new_table") got no REFERENCES
+ * clause at all, unlike a relation field present from the entity's very
+ * first build (generateCreateTableStatements already handles that case
+ * correctly, confirmed by the "generates one CREATE TABLE" test above).
+ * Without the fix, deleting a Customer another entity's brand-new relation
+ * field still pointed at would silently succeed -- a real, user-visible
+ * gap in the exact same FK-protection family round 311 fixed for the
+ * exported codegen app, except this one is in the live backend's own
+ * incremental migration path.
+ */
+test("diffAndMigrate's new relation column on an existing entity gets real FK protection, not just a plain nullable column", () => {
+  const db = openDatabase(":memory:");
+  const baseSpec: ProductSpec = {
+    ...spec,
+    entities: [spec.entities[0], { name: "Order", fields: [{ name: "total", type: "number", required: true }] }],
+  };
+  applyMigrations(db, "proj1", baseSpec);
+  const customerEntity = baseSpec.entities[0];
+  const customer = insertRecord(db, "proj1", customerEntity, { name: "Alice", status: "New" });
+
+  const nextSpec: ProductSpec = {
+    ...baseSpec,
+    entities: [
+      baseSpec.entities[0],
+      {
+        ...baseSpec.entities[1],
+        fields: [...baseSpec.entities[1].fields, { name: "customerId", type: "relation", required: false, relationTo: "Customer" }],
+      },
+    ],
+  };
+  const changes = diffAndMigrate(db, "proj1", baseSpec, nextSpec);
+  assert.deepEqual(changes, [{ type: "new_column", table: "entity_proj1_Order", column: "customerId" }]);
+
+  const orderEntity = nextSpec.entities[1];
+  insertRecord(db, "proj1", orderEntity, { total: 100, customerId: customer.id });
+
+  // The real proof: deleting the still-referenced Customer must now throw a
+  // real FOREIGN KEY constraint failure, exactly like a relation field
+  // present from the start already does -- not succeed silently.
+  assert.throws(
+    () => db.prepare(`DELETE FROM "entity_proj1_Customer" WHERE id = ?`).run(customer.id),
+    /FOREIGN KEY constraint failed/,
+  );
+
+  // The referenced row must still genuinely exist after the blocked delete.
+  const customers = listRecords(db, "proj1", customerEntity);
+  assert.equal(customers.length, 1);
+});
+
 // Regression test: if a refine changes an *existing* field's type (same
 // name, e.g. "status" going from enum to text), diffAndMigrate's own
 // prevFieldNames check used to just see the name already existed and
