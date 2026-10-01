@@ -18211,6 +18211,95 @@ Full suite green: **1151 tests** (`@forge/shared` 13, `@forge/db` 93,
 `@forge/api` 310, `@forge/web` 650 unchanged; `@forge/spec-engine` 84 →
 85) via `npm test` at the repo root.
 
+### Round 305 — Each entity tab now shows a live record-count badge, instead of requiring a click into every tab to see what has data
+
+An Explore survey found that `App.tsx`'s `.entity-tabs` strip (currently
+lines 1535-1561) renders one button per entity -- `{entity.label ?? entity.name}`,
+drag-to-reorder, nothing else -- with zero indication of how much data lives
+in each one. A business owner with several tabs (Customers, Orders,
+Invoices, Vendors...) had no way to tell which sections actually have data
+without clicking into every single one; the only existing answer to this
+(Business Twin's per-entity stats) sits an extra click away behind its own
+panel, not at a glance where attention already is on the tab strip itself.
+Confirmed via `grep` that no `tabCount`/`recordCount`/entity-count badge
+existed anywhere, live or exported. The standing table-grouping-port-to-
+codegen backup candidate (re-estimated in round 304 at ~75-100 lines,
+"right-sized") was deferred again in favor of this smaller, equally
+visible, less architecturally invasive option.
+
+Added a new read-only route, `GET /projects/:id/entity-counts`
+(`apps/api/src/routes/projects.ts`, right after the existing `/twin`
+route), looping `project.spec.entities` and calling the already-existing
+`countRecords(db, projectId, entity)` helper (`packages/db/src/repository.ts:106`,
+already used by `twin.ts`) once per entity -- one cheap `COUNT(*)` request
+instead of one per tab. Requires `project.status === "built"` just like
+`/twin`, since the per-entity tables only exist once built.
+
+On the web side: `App.tsx` gained an `entityCounts` state
+(`Record<string, number>`), fetched once via a new `useEffect` keyed on
+`[project?.id, project?.status]` (reset to `{}` first so a freshly opened
+project never briefly shows the PREVIOUS project's stale counts while the
+request is in flight; a failed fetch is swallowed since the badge is a
+nice-to-have, not worth its own error banner). Each tab button now renders
+a `.tab-count` badge span next to its label, with a real translated
+`aria-label` (new `entity.tab.recordCount` key, he+en) rather than a bare
+number with no accessible context.
+
+The ACTIVE tab's own count is kept live without a full re-fetch: `EntityPanel`
+gained an optional `onRecordCountChange?: (entityName, count) => void` prop
+and one new `useEffect` keyed on `[entity.name, records.length]` (same
+"report back via an optional callback, deliberately left out of the deps
+array since it may be a fresh inline arrow function on every parent
+render" idiom `onHighlightHandled`'s own effect already uses) -- since
+`records` is already the single state array every mutation (create,
+delete, bulk-delete, duplicate, import, undo) funnels through via
+`setRecords`, this needed no new call site per mutation. `App.tsx`'s own
+callback only updates `entityCounts` when the count actually changed, to
+avoid redundant re-renders. Non-active tabs' counts go stale only until
+next visited -- stated explicitly rather than over-engineering a
+cross-component live-sync for a count badge.
+
+Live-preview only this round, matching the precedent set by Kanban board,
+calendar view, and global search each having their own live-preview-first,
+exported-port-later rounds; porting this same badge into `codegen.ts`'s
+own entity-tabs markup is a natural, small round-306-or-later follow-up
+(flagged in the trigger's own backup-candidate list).
+
+Test: one new API test (`entity-counts reports a real per-entity count for
+every entity, and updates as records are added`) confirms a 409
+`BUILD_REQUIRED` before building, a real positive count for the seeded
+`Customer` entity after building, and the count incrementing by exactly 1
+after a real record is created through the API -- mirroring the existing
+business-twin test's own structure. One new `EntityPanel.test.ts` DOM test
+confirms `onRecordCountChange` fires with the real count once records have
+actually loaded (not the initial empty-array render) and again with the
+correct decremented count after a real delete.
+
+Deliberate-break-and-restore, done independently on both sides: removed
+the `onRecordCountChange?.(...)` call site from `EntityPanel.tsx` (the new
+DOM test failed exactly as expected -- `waitForCondition` never saw the
+real count) and hard-coded the API route's per-entity count to `0`
+(the new API test failed its `counts.Customer > 0` assertion exactly as
+expected). Restored both files, plus `App.tsx` (untouched by either break
+but backed up alongside them), from pre-break backups with confirmed
+byte-identical `diff`s; re-ran both full suites and confirmed everything
+passed again.
+
+Live Playwright verification (real Chromium, real dev servers, no
+mocking): built a real CRM project ("A CRM with customers and deals."),
+confirmed every entity tab rendered a real numeric badge from actual seed
+data (`Customer2`, `Deal2`), confirmed the badge's `aria-label` was the
+real translated string ("2 records"), not a raw/untranslated key, then
+created one real record through the actual add-record form and confirmed
+the ACTIVE tab's own badge incremented live from 2 to 3 with no tab switch
+or reload involved.
+
+Full suite green: **1153 tests** (`@forge/shared` 13, `@forge/spec-engine`
+85, `@forge/db` 93 unchanged; `@forge/api` 310 → 311; `@forge/web` 650 →
+651) via `npm test` at the repo root, plus clean builds for both
+`@forge/web` (`tsc -b` + `vite build`, 86 modules transformed) and
+`@forge/api` (`esbuild`).
+
 ## Phase 4
 
 - Template/agent marketplace
