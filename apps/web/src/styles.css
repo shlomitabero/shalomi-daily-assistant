@@ -1047,6 +1047,18 @@ tbody tr:hover {
   flex: 1;
 }
 
+.entity-search-recent {
+  margin-top: -6px;
+  margin-bottom: 14px;
+}
+
+.entity-search-recent-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 6px;
+}
+
 .entity-record-count {
   white-space: nowrap;
 }

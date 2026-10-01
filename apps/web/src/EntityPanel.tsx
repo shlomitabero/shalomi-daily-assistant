@@ -5,6 +5,12 @@ import { buildCalendarIcs, downloadCalendarIcs } from "./calendarIcs.js";
 import { getHiddenFields, toggleFieldVisibility } from "./columnVisibility.js";
 import { computeResizedWidth, getColumnWidths, setColumnWidth } from "./columnWidths.js";
 import { applyColumnOrder, getColumnOrder, reorderColumns, setColumnOrder } from "./columnOrder.js";
+import {
+  addEntityRecentSearch,
+  clearEntityRecentSearches,
+  getEntityRecentSearches,
+  removeEntityRecentSearch,
+} from "./entityRecentSearches.js";
 import { getGroupByField, setGroupByField } from "./groupByPreference.js";
 import { getViewMode as getViewModePreference, setViewMode as setViewModePreference } from "./viewModePreference.js";
 import { getSortKeys as getSortKeysPreference, setSortKeys as setSortKeysPreference } from "./sortKeysPreference.js";
@@ -767,6 +773,7 @@ export function EntityPanel({
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
+  const [recentSearches, setRecentSearches] = useState<string[]>(() => getEntityRecentSearches(projectId, entity.name));
   const [fieldFilters, setFieldFilters] = useState<Record<string, string>>({});
   const [groupFieldName, setGroupFieldName] = useState("");
   const [sortKeys, setSortKeys] = useState<SortKey[]>([]);
@@ -900,6 +907,12 @@ export function EntityPanel({
   // just per entity.
   useEffect(() => {
     setHiddenFields(getHiddenFields(projectId, entity.name));
+  }, [projectId, entity.name]);
+
+  // Same reasoning as hiddenFields' own effect just above -- this entity's
+  // recent search history is scoped per project+entity too.
+  useEffect(() => {
+    setRecentSearches(getEntityRecentSearches(projectId, entity.name));
   }, [projectId, entity.name]);
 
   // Same reasoning as hiddenFields' own effect just above -- a reordered
@@ -1050,6 +1063,29 @@ export function EntityPanel({
     const timer = setTimeout(() => setMoveErrorId(null), 5000);
     return () => clearTimeout(timer);
   }, [moveErrorId]);
+
+  /**
+   * Persists the current search box value to this project+entity's recent
+   * list once the user signals they're "done" by pressing Enter -- there's
+   * no submit button on a live filter-as-you-type box, so Enter is the same
+   * commit signal App.tsx's own handleProjectSearchKeyDown (round 316) uses
+   * for the home screen's search box.
+   */
+  function handleSearchKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
+    if (e.key === "Enter" && search.trim()) {
+      setRecentSearches(addEntityRecentSearch(projectId, entity.name, search));
+    }
+  }
+  function handleRecentSearchClick(query: string) {
+    setSearch(query);
+  }
+  function handleRemoveRecentSearch(query: string) {
+    setRecentSearches(removeEntityRecentSearch(projectId, entity.name, query));
+  }
+  function handleClearRecentSearches() {
+    clearEntityRecentSearches(projectId, entity.name);
+    setRecentSearches([]);
+  }
 
   /**
    * A plain click always sorts by just this one column (replacing
@@ -1870,6 +1906,7 @@ export function EntityPanel({
               aria-label={t("entity.search.placeholder")}
               value={search}
               onChange={(e) => setSearch(e.target.value)}
+              onKeyDown={handleSearchKeyDown}
             />
             <span className="muted small entity-record-count">
               {formatEntityRecordCount(visibleRecords.length, records.length, t)}
@@ -1985,6 +2022,34 @@ export function EntityPanel({
               )}
             </div>
           </div>
+          {!search.trim() && recentSearches.length > 0 && (
+            <div className="entity-search-recent">
+              <div className="entity-search-recent-header">
+                <span className="muted small">{t("entity.search.recent.heading")}</span>
+                <button type="button" className="link-button small" onClick={handleClearRecentSearches}>
+                  {t("entity.search.recent.clear")}
+                </button>
+              </div>
+              <div className="chips">
+                {recentSearches.map((q) => (
+                  <span className="chip chip-removable" key={q}>
+                    <button type="button" className="chip-text" onClick={() => handleRecentSearchClick(q)}>
+                      {q}
+                    </button>
+                    <button
+                      type="button"
+                      className="chip-remove"
+                      title={t("entity.search.recent.remove", { query: q })}
+                      aria-label={t("entity.search.recent.remove", { query: q })}
+                      onClick={() => handleRemoveRecentSearch(q)}
+                    >
+                      ×
+                    </button>
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
           {visibleRecords.length === 0 ? (
             <div className="empty-state">
               <p>{t("entity.noResults")}</p>

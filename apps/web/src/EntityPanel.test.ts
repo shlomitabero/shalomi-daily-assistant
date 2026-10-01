@@ -4031,3 +4031,63 @@ test("EntityPanel's add/edit form wires field.required into the real required at
     }
   });
 });
+
+/**
+ * New in this round: the per-entity table search box (the live filter-as-
+ * you-type field in the toolbar) now remembers recent queries the same way
+ * Global Search/Time Machine/WhatsApp/the home screen's own project search
+ * already do -- it was the one search box in the app with zero memory.
+ * Exercises the full real wiring (not just entityRecentSearches.ts's own
+ * pure-function coverage): typing a query and pressing Enter persists it,
+ * the recent-searches chip row only shows while the box is empty, clicking
+ * a chip refills the search box, and the per-chip remove button drops just
+ * that one entry.
+ */
+test("EntityPanel's search box remembers a query on Enter, shows it as a chip once the box is empty, and a chip click refills the search", async () => {
+  await withJsdom(async () => {
+    const store: EntityRecord[] = [
+      { id: 1, name: "Acme Corp", status: "new" },
+      { id: 2, name: "Globex", status: "won" },
+    ];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = mockRecordsFetch(store) as typeof fetch;
+    try {
+      renderEntityPanel();
+      await waitForCondition(() => document.querySelector(".entity-toolbar") !== null);
+
+      const searchInput = document.querySelector(".entity-search") as HTMLInputElement;
+      assert.equal(document.querySelector(".entity-search-recent"), null, "no recent-searches row before anything's ever been searched");
+
+      fireEvent.change(searchInput, { target: { value: "acme" } });
+      assert.equal(
+        document.querySelector(".entity-search-recent"),
+        null,
+        "the chip row must stay hidden while the box still has text in it",
+      );
+
+      fireEvent.keyDown(searchInput, { key: "Enter" });
+      fireEvent.change(searchInput, { target: { value: "" } });
+      await waitForCondition(() => document.querySelector(".entity-search-recent") !== null);
+
+      let chips = Array.from(document.querySelectorAll(".entity-search-recent .chip-text")) as HTMLButtonElement[];
+      assert.deepEqual(
+        chips.map((c) => c.textContent),
+        ["acme"],
+        "the committed query must appear as a chip once the box is empty again",
+      );
+
+      fireEvent.click(chips[0]);
+      assert.equal(searchInput.value, "acme", "clicking the chip must refill the search box with that query");
+
+      fireEvent.change(searchInput, { target: { value: "" } });
+      await waitForCondition(() => document.querySelector(".entity-search-recent .chip-remove") !== null);
+      fireEvent.click(document.querySelector(".entity-search-recent .chip-remove") as HTMLButtonElement);
+      await waitForCondition(() => document.querySelector(".entity-search-recent") === null);
+
+      chips = Array.from(document.querySelectorAll(".entity-search-recent .chip-text")) as HTMLButtonElement[];
+      assert.equal(chips.length, 0, "removing the only chip must clear the whole recent-searches row");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
