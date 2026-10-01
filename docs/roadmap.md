@@ -19534,6 +19534,69 @@ Full suite green: **1214 tests** (`@forge/shared` 13, `@forge/spec-engine`
 via `npm test` at the repo root, plus a clean full monorepo
 `npm run build`.
 
+### Round 323 — Copy button ported to the exported app's EntityView, closing the whole copy-to-clipboard feature-family
+
+Round 322's own named candidate, so this round skipped a fresh Explore
+survey and went straight to `apps/api/src/codegen.ts`'s generated
+`EntityView` template string, confirmed (via round 322's own grep) to
+have `handleExportCsv` but zero `handleCopy` anywhere in the file --
+the exact same live/export parity gap the project has closed
+repeatedly before (bulk-select+delete rounds 53→54, global search
+67→70, CSV export 51→52, bulk-delete-undo 320→321).
+
+Fix: added a `copyStatus` state (plain `useState("idle")`, no TS
+types since the generated output is `.jsx`) and an `async function
+handleCopy` right after the existing `handleExportCsv`, reusing the
+exact same `recordsToCsv(entity.fields,
+selectedOrAllRecords(records, visibleRecords, selectedIds),
+relatedRecords)` call `handleExportCsv` already makes -- but, unlike
+the live preview's 5-argument `recordsToCsv(fields, records, lang,
+allEntities, relatedRecords)`, the exported app's own 3-argument
+signature has no `lang`/`allEntities`, since generated apps carry no
+i18n machinery at all. Added the matching 2-second auto-reset
+`useEffect`, a new `.copy-records-btn` button placed immediately
+before the existing `.csv-export-btn` button in the toolbar (plain
+English strings for all four status variants -- idle/selected
+count/copied/failed -- since generated code has no `t()`), and a CSS
+rule mirroring the existing `.csv-export-btn, .ics-export-btn` block.
+
+Tests: one new structural test in `codegen.test.ts` confirming the
+generated source actually contains `handleCopy` routed through the
+same `selectedOrAllRecords` call as `handleExportCsv`, with no `lang`
+argument anywhere in it, plus the `copy-records-btn` button and its
+`copyStatus` branches; and one new real-DOM test rendering the actual
+generated `EntityView.jsx` end to end (via the established
+`writeGeneratedWebComponent`/`withRealLocalStorage` harness), clicking
+the real Copy button and confirming the exact CSV text handed to a
+stubbed `navigator.clipboard.writeText`, the label flipping to "✅
+Copied!", and reverting to "📋 Copy" after a real mocked 2-second
+`setTimeout` tick (mock timers enabled only after the initial
+fetch-and-render had already settled -- the same durable lesson hit in
+rounds 320 and 321).
+
+Deliberate-break-and-restore: backed up both changed files, reverted
+`codegen.ts` to its pre-round HEAD state, and confirmed both new tests
+failed with the exact expected mismatches ("expected to find
+handleCopy in generated output"; "expected a real Copy button").
+Restored from the verified backup with a confirmed byte-identical
+`diff` against both files, then re-ran every workspace:
+`@forge/shared` 13/13, `@forge/spec-engine` 85/85, `@forge/db` 96/96,
+`@forge/api` 327 → 329, `@forge/web` 693 unchanged, plus a clean full
+monorepo `npm run build`.
+
+With this round, the copy-to-clipboard feature-family (live preview +
+exported app, matching every other data-bearing panel) is now **fully
+closed**, joining recentSearches and undo-toast as fully-closed
+families. The sole remaining long-standing backup candidate is Global
+Search's own recent-searches port to `codegen.ts` (open since round
+180/315); round 324 should run a fresh Explore survey for an entirely
+new feature-family before falling back to it.
+
+Full suite green: **1216 tests** (`@forge/shared` 13, `@forge/spec-engine`
+85, `@forge/db` 96, `@forge/api` 327 → 329; `@forge/web` 693 unchanged)
+via `npm test` at the repo root, plus a clean full monorepo
+`npm run build`.
+
 ## Phase 4
 
 - Template/agent marketplace
