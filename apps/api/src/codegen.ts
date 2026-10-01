@@ -2023,6 +2023,7 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
   const [selectedIds, setSelectedIds] = useState(() => new Set());
   const [bulkEditField, setBulkEditField] = useState("");
   const [bulkEditValue, setBulkEditValue] = useState("");
+  const [copyStatus, setCopyStatus] = useState("idle");
   const [pendingDelete, setPendingDelete] = useState(null);
   // Mirrors pendingDelete so the unmount-flush effect and a second delete
   // arriving mid-undo-window can read the latest pending delete without
@@ -2674,6 +2675,22 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
     URL.revokeObjectURL(url);
   }
 
+  async function handleCopy() {
+    try {
+      const csv = recordsToCsv(entity.fields, selectedOrAllRecords(records, visibleRecords, selectedIds), relatedRecords);
+      await navigator.clipboard.writeText(csv);
+      setCopyStatus("copied");
+    } catch {
+      setCopyStatus("failed");
+    }
+  }
+
+  useEffect(() => {
+    if (copyStatus === "idle") return;
+    const timer = setTimeout(() => setCopyStatus("idle"), 2000);
+    return () => clearTimeout(timer);
+  }, [copyStatus]);
+
   // The calendar view's own "take it with you" action -- exports exactly
   // the records the calendar grid's current month is showing as a real
   // RFC 5545 .ics calendar.
@@ -2943,6 +2960,20 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
                 📅 Export to Calendar (ICS)
               </button>
             )}
+            <button
+              type="button"
+              className="copy-records-btn"
+              onClick={handleCopy}
+              disabled={selectedIds.size === 0 && visibleRecords.length === 0}
+            >
+              {copyStatus === "copied"
+                ? "✅ Copied!"
+                : copyStatus === "failed"
+                  ? "Copy failed"
+                  : selectedIds.size > 0
+                    ? \`📋 Copy \${selectedIds.size} selected\`
+                    : "📋 Copy"}
+            </button>
             <button
               type="button"
               className="csv-export-btn"
@@ -3879,9 +3910,9 @@ nav button.active .tab-count { background: rgba(255, 255, 255, 0.25); color: inh
 .calendar-record-chip-move-error { background: var(--danger-soft); border-color: var(--danger); }
 .calendar-record-more { font-size: 11px; color: var(--muted); padding: 2px 5px; background: none; border: none; text-align: start; cursor: pointer; font: inherit; }
 .calendar-record-more:hover { color: var(--text); text-decoration: underline; }
-.csv-export-btn, .ics-export-btn { flex-shrink: 0; padding: 8px 14px; font-size: 13px; border-radius: 8px; border: 1px solid var(--border); background: var(--surface); color: var(--text); cursor: pointer; font: inherit; }
-.csv-export-btn:hover:not(:disabled), .ics-export-btn:hover:not(:disabled) { background: var(--bg); }
-.csv-export-btn:disabled, .ics-export-btn:disabled { opacity: 0.55; cursor: default; }
+.csv-export-btn, .ics-export-btn, .copy-records-btn { flex-shrink: 0; padding: 8px 14px; font-size: 13px; border-radius: 8px; border: 1px solid var(--border); background: var(--surface); color: var(--text); cursor: pointer; font: inherit; }
+.csv-export-btn:hover:not(:disabled), .ics-export-btn:hover:not(:disabled), .copy-records-btn:hover:not(:disabled) { background: var(--bg); }
+.csv-export-btn:disabled, .ics-export-btn:disabled, .copy-records-btn:disabled { opacity: 0.55; cursor: default; }
 .columns-menu-wrapper { position: relative; flex-shrink: 0; }
 .columns-menu-btn { padding: 8px 14px; font-size: 13px; border-radius: 8px; border: 1px solid var(--border); background: var(--surface); color: var(--text); cursor: pointer; font: inherit; }
 .columns-menu-btn:hover { background: var(--bg); }

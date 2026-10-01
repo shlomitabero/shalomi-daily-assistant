@@ -2341,6 +2341,119 @@ test("the exported EntityView's Export CSV routes through selectedOrAllRecords, 
 });
 
 /**
+ * New in this round: the live preview's EntityPanel got a "Copy" button
+ * (round 322) that writes the table's own CSV straight to the clipboard,
+ * matching the copy-to-clipboard pattern already present on every other
+ * data-bearing panel (History, Business Twin, WhatsApp log). The exported
+ * codegen app's EntityView had handleExportCsv but no handleCopy at all --
+ * confirms the port exists, reuses the exact same selectedOrAllRecords
+ * selection logic as the CSV export (not a reimplementation), and -- unlike
+ * the live preview -- calls the 3-argument recordsToCsv (no lang/allEntities,
+ * since the exported app has no i18n machinery at all).
+ */
+test("the exported EntityView renders a real Copy button that writes the selection's CSV to the clipboard, mirroring handleExportCsv's own selection logic", () => {
+  const files = generateExportFiles(project);
+  const entityViewJsx = files.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+
+  const handleCopySrc = entityViewJsx.match(/async function handleCopy\(\) \{[\s\S]*?\n {2}\}\n/)?.[0];
+  assert.ok(handleCopySrc, "expected to find handleCopy in generated output");
+  assert.match(
+    handleCopySrc!,
+    /recordsToCsv\(entity\.fields, selectedOrAllRecords\(records, visibleRecords, selectedIds\), relatedRecords\)/,
+    "handleCopy must reuse the exact same selection logic as handleExportCsv",
+  );
+  assert.match(handleCopySrc!, /navigator\.clipboard\.writeText\(csv\)/, "handleCopy must actually write to the clipboard");
+  assert.doesNotMatch(handleCopySrc!, /\blang\b/, "the exported app's recordsToCsv call must not pass a lang argument -- it has no i18n");
+
+  const copyBtnSrc = entityViewJsx.match(/<button\s+type="button"\s+className="copy-records-btn"[\s\S]*?<\/button>/)?.[0];
+  assert.ok(copyBtnSrc, "expected to find the copy-records-btn button in generated output");
+  assert.match(copyBtnSrc!, /disabled=\{selectedIds\.size === 0 && visibleRecords\.length === 0\}/);
+  assert.match(copyBtnSrc!, /copyStatus === "copied"/);
+  assert.match(copyBtnSrc!, /copyStatus === "failed"/);
+
+  const stylesCss = files.find((f) => f.path === "web/src/styles.css")!.content;
+  assert.match(stylesCss, /\.copy-records-btn/);
+});
+
+/**
+ * Same feature as above, but rendering the real generated EntityView.jsx
+ * end to end: clicks the real Copy button and confirms the exact CSV text
+ * handed to a stubbed navigator.clipboard.writeText, then confirms the
+ * button's label actually flips to "Copied!" and back to "Copy" after the
+ * real 2s timer elapses -- not just that the source text looks right.
+ */
+test("the exported EntityView's Copy button writes the real CSV to the clipboard and reverts its label after 2s", async (t) => {
+  const files = generateExportFiles(project);
+  const dir = writeGeneratedWebComponent(files);
+  const store = [{ id: 1, name: "Acme Corp", email: "a@acme.example", status: "New" }];
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async (input: string) => {
+    if (input === "/api/Customer") {
+      return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    throw new Error(`unexpected request ${input}`);
+  }) as typeof fetch;
+
+  let writtenText: string | undefined;
+  Object.defineProperty(navigator, "clipboard", {
+    value: { writeText: async (text: string) => void (writtenText = text) },
+    configurable: true,
+  });
+
+  try {
+    await withRealLocalStorage(async () => {
+      const { EntityView } = await import(path.join(dir, "web", "src", "components", "EntityView.jsx"));
+      const customerEntity = project.spec.entities.find((e) => e.name === "Customer")!;
+      const props = {
+        entity: customerEntity,
+        highlightRecordId: null,
+        onHighlightHandled: () => {},
+        onJumpToRecord: () => {},
+        onRecordCountChange: () => {},
+      };
+
+      const { container } = render(React.createElement(EntityView, props));
+      for (let i = 0; i < 40; i++) {
+        if (container.querySelectorAll("tbody tr").length === 1) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+      assert.equal(container.querySelectorAll("tbody tr").length, 1, "expected the record to have loaded");
+
+      // Enabled only after the initial load has already settled -- see the
+      // bulk-delete test above (and the live preview's own lesson) for why
+      // enabling mock timers any earlier stalls this very wait loop.
+      t.mock.timers.enable({ apis: ["setTimeout"] });
+
+      const copyButton = Array.from(container.querySelectorAll("button")).find((b) => b.className === "copy-records-btn");
+      assert.ok(copyButton, "expected a real Copy button");
+
+      await act(async () => {
+        fireEvent.click(copyButton!);
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+
+      assert.equal(typeof writtenText, "string", "clicking Copy must actually call navigator.clipboard.writeText");
+      assert.match(writtenText!, /Acme Corp/, "the copied text must be the real CSV, not a placeholder");
+      assert.equal(copyButton!.textContent, "✅ Copied!", "must show the real Copied confirmation");
+
+      act(() => {
+        t.mock.timers.tick(2000);
+      });
+      assert.equal(copyButton!.textContent, "📋 Copy", "must revert to the normal label once the delay elapses");
+    });
+  } finally {
+    t.mock.timers.reset();
+    globalThis.fetch = originalFetch;
+    delete (navigator as { clipboard?: unknown }).clipboard;
+    cleanup();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
  * New in this round: the exported app's table had no footer totals row for
  * a numeric column, the same gap the live preview had. Extracts and
  * *executes* the real generated sumNumericFields (not a reimplementation)
