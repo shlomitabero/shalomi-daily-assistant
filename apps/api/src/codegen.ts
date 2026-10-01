@@ -1891,6 +1891,8 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
   const [viewMode, setViewMode] = useState("table");
   const [calendarMonth, setCalendarMonth] = useState(() => new Date());
   const [selectedIds, setSelectedIds] = useState(() => new Set());
+  const [bulkEditField, setBulkEditField] = useState("");
+  const [bulkEditValue, setBulkEditValue] = useState("");
   const [pendingDelete, setPendingDelete] = useState(null);
   // Mirrors pendingDelete so the unmount-flush effect and a second delete
   // arriving mid-undo-window can read the latest pending delete without
@@ -2353,6 +2355,70 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
     await refresh();
   }
 
+  // Same Promise.allSettled resilience as handleBulkDelete above, and the
+  // same per-record copy logic as the single-record handleDuplicate above
+  // -- a quick way to create several similar entries at once without
+  // repeating single duplicates one at a time. No confirmation, for the
+  // same reason handleDuplicate has none: duplicating creates rather than
+  // destroys.
+  async function handleBulkDuplicate() {
+    const ids = [...selectedIds];
+    if (ids.length === 0) return;
+    setError(null);
+    const results = await Promise.allSettled(
+      ids.map((id) => {
+        const record = records.find((r) => r.id === id);
+        const copy = {};
+        if (record) for (const f of entity.fields) copy[f.name] = record[f.name];
+        return createRecord(entity.name, copy);
+      }),
+    );
+    const failedIds = ids.filter((_, i) => results[i].status === "rejected");
+    setSelectedIds(new Set(failedIds));
+    if (failedIds.length > 0) {
+      const firstFailure = results.find((r) => r.status === "rejected");
+      setError(
+        failedIds.length === ids.length
+          ? firstFailure.reason.message
+          : \`\${failedIds.length} of \${ids.length} records could not be duplicated.\`,
+      );
+    }
+    await refresh();
+  }
+
+  // Changing a single shared field's value across several selected records
+  // (e.g. marking 15 selected orders "Shipped") still meant editing each
+  // row one at a time without this -- same Promise.allSettled resilience as
+  // handleBulkDelete/handleBulkDuplicate above. Restricted to
+  // isInlineEditableField fields (excludes relation), same reason the
+  // inline cell editor itself is.
+  async function handleBulkUpdate() {
+    const ids = [...selectedIds];
+    if (ids.length === 0 || !bulkEditField) return;
+    setError(null);
+    const results = await Promise.allSettled(ids.map((id) => updateRecord(entity.name, id, { [bulkEditField]: bulkEditValue })));
+    const failedIds = ids.filter((_, i) => results[i].status === "rejected");
+    setSelectedIds(new Set(failedIds));
+    if (failedIds.length > 0) {
+      const firstFailure = results.find((r) => r.status === "rejected");
+      setError(
+        failedIds.length === ids.length
+          ? firstFailure.reason.message
+          : \`\${failedIds.length} of \${ids.length} records could not be updated.\`,
+      );
+    }
+    await refresh();
+  }
+
+  // A field's "empty" starting value depends on its type -- switching the
+  // bulk-edit field picker from, say, an enum to a boolean must not leave a
+  // stale string value FieldInput would render nonsensically.
+  function handleBulkEditFieldChange(fieldName) {
+    setBulkEditField(fieldName);
+    const field = entity.fields.find((f) => f.name === fieldName);
+    setBulkEditValue(field && field.type === "boolean" ? false : "");
+  }
+
   async function handleMove(id, fieldName, value) {
     setError(null);
     try {
@@ -2810,6 +2876,28 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
               {selectedIds.size > 0 && (
                 <div className="bulk-actions-bar">
                   <span>{selectedIds.size} selected</span>
+                  <label className="bulk-edit-field-label">
+                    Set field:
+                    <select value={bulkEditField} onChange={(e) => handleBulkEditFieldChange(e.target.value)}>
+                      <option value="">Choose field…</option>
+                      {entity.fields.filter(isInlineEditableField).map((f) => (
+                        <option key={f.name} value={f.name}>
+                          {f.label ?? f.name}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  {bulkEditField && (
+                    <FieldInput entity={entity} field={entity.fields.find((f) => f.name === bulkEditField)} value={bulkEditValue} onChange={setBulkEditValue} />
+                  )}
+                  {bulkEditField && (
+                    <button type="button" onClick={handleBulkUpdate}>
+                      Apply to {selectedIds.size}
+                    </button>
+                  )}
+                  <button type="button" onClick={handleBulkDuplicate}>
+                    📋 Duplicate selected
+                  </button>
                   <button type="button" onClick={handleBulkDelete}>
                     🗑️ Delete selected
                   </button>
@@ -3584,7 +3672,8 @@ nav button.active .tab-count { background: rgba(255, 255, 255, 0.25); color: inh
 .import-errors-toggle { padding: 8px 14px; font-size: 13px; border-radius: 8px; border: 1px solid var(--border); background: var(--surface); color: var(--text); cursor: pointer; font: inherit; }
 .import-errors-toggle:hover { background: var(--bg); }
 .csv-import-errors { margin: -6px 0 14px; padding-inline-start: 20px; color: var(--danger); font-size: 13px; display: flex; flex-direction: column; gap: 3px; }
-.bulk-actions-bar { display: flex; align-items: center; gap: 12px; padding: 8px 12px; margin-bottom: 8px; background: var(--surface-muted); border: 1px solid var(--border-soft); border-radius: 8px; font-size: 13.5px; }
+.bulk-actions-bar { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; padding: 8px 12px; margin-bottom: 8px; background: var(--surface-muted); border: 1px solid var(--border-soft); border-radius: 8px; font-size: 13.5px; }
+.bulk-edit-field-label { display: flex; align-items: center; gap: 6px; }
 .select-col { width: 1%; white-space: nowrap; }
 .entity-totals-row th { background: var(--surface-subtle); border-top: 2px solid var(--border); font-weight: 700; text-align: start; }
 .app-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 20px; }

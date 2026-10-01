@@ -1221,6 +1221,193 @@ test("the exported EntityView renders real bulk-select + bulk-delete for table r
   assert.match(stylesCss, /input\[type="checkbox"\]/);
 });
 
+/**
+ * New in this round: the exported standalone app's bulk-actions bar only
+ * ever offered "Delete selected", unlike the live Forge AI preview's own
+ * bar (EntityPanel.tsx round 258/89) which also offers "Duplicate selected"
+ * and a "Set field: ... Apply to N" bulk update. A smoking-gun comment
+ * elsewhere in this same generated file already referenced
+ * "handleBulkDelete/handleBulkDuplicate's own existing behavior" despite
+ * handleBulkDuplicate never actually existing here -- this port makes that
+ * comment true.
+ */
+test("the exported EntityView's bulk-actions bar also supports duplicating and bulk-field-updating selected records, not just deleting them", () => {
+  const files = generateExportFiles(project);
+  const entityViewJsx = files.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+
+  assert.match(entityViewJsx, /const \[bulkEditField, setBulkEditField\] = useState\(""\);/);
+  assert.match(entityViewJsx, /const \[bulkEditValue, setBulkEditValue\] = useState\(""\);/);
+  assert.match(entityViewJsx, /async function handleBulkDuplicate\(\) \{/);
+  assert.match(entityViewJsx, /async function handleBulkUpdate\(\) \{/);
+  assert.match(entityViewJsx, /function handleBulkEditFieldChange\(fieldName\) \{/);
+
+  // The bulk-actions bar itself must render the field picker, the live
+  // FieldInput for the chosen field, and both new action buttons --
+  // filtered through isInlineEditableField so a relation field (whose
+  // "value" is another record's id) can never be picked for a bulk update.
+  assert.match(entityViewJsx, /entity\.fields\.filter\(isInlineEditableField\)\.map\(\(f\) => \(/);
+  assert.match(
+    entityViewJsx,
+    /<FieldInput entity=\{entity\} field=\{entity\.fields\.find\(\(f\) => f\.name === bulkEditField\)\} value=\{bulkEditValue\} onChange=\{setBulkEditValue\} \/>/,
+  );
+  assert.match(entityViewJsx, /onClick=\{handleBulkUpdate\}/);
+  assert.match(entityViewJsx, /onClick=\{handleBulkDuplicate\}/);
+  assert.match(entityViewJsx, /Apply to \{selectedIds\.size\}/);
+  assert.match(entityViewJsx, /📋 Duplicate selected/);
+
+  const stylesCss = files.find((f) => f.path === "web/src/styles.css")!.content;
+  assert.match(stylesCss, /\.bulk-edit-field-label/);
+
+  // handleBulkEditFieldChange must reset bulkEditValue to a type-appropriate
+  // empty value (false for boolean, "" otherwise), the same guard the live
+  // preview's own version has -- otherwise switching the picker from an
+  // enum to a boolean field would try to render a stale string value.
+  const changeSrc = entityViewJsx.match(/function handleBulkEditFieldChange\(fieldName\) \{[\s\S]*?\n  \}\n/)?.[0];
+  assert.ok(changeSrc, "expected to find handleBulkEditFieldChange in generated output");
+  let capturedField: string | undefined;
+  let capturedValue: unknown;
+  const changeFn = new Function(
+    "entity",
+    "setBulkEditField",
+    "setBulkEditValue",
+    `${changeSrc}\nreturn handleBulkEditFieldChange;`,
+  )(
+    { fields: [{ name: "active", type: "boolean" }, { name: "status", type: "enum" }] },
+    (f: string) => (capturedField = f),
+    (v: unknown) => (capturedValue = v),
+  );
+  changeFn("active");
+  assert.equal(capturedField, "active");
+  assert.equal(capturedValue, false, "a boolean field must start from false, not an empty string");
+  changeFn("status");
+  assert.equal(capturedValue, "", "a non-boolean field must start from an empty string");
+});
+
+/**
+ * Regression test, same Promise.allSettled-partial-failure standard as the
+ * existing handleBulkDelete test above: a single rejected duplicate/update
+ * must not hide the ones that DID succeed, and the ones that failed must
+ * stay selected so the user can retry just those.
+ */
+test("the exported EntityView's handleBulkDuplicate and handleBulkUpdate keep only the ids that actually failed selected, on a real partial failure", async () => {
+  const entityViewJsx = generateExportFiles(project).find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+
+  const handleBulkDuplicateSrc = entityViewJsx.match(/async function handleBulkDuplicate\(\) \{[\s\S]*?\n  \}\n/)?.[0];
+  assert.ok(handleBulkDuplicateSrc, "expected to find handleBulkDuplicate in generated output");
+  {
+    let capturedError: string | undefined;
+    let capturedSelectedIds: Set<number> | undefined;
+    let refreshCalled = 0;
+    const createdCopies: Record<string, unknown>[] = [];
+    const fn = new Function(
+      "entity",
+      "records",
+      "selectedIds",
+      "setSelectedIds",
+      "setError",
+      "createRecord",
+      "refresh",
+      `${handleBulkDuplicateSrc}\nreturn handleBulkDuplicate;`,
+    )(
+      { fields: [{ name: "name" }] },
+      [{ id: 1, name: "A" }, { id: 2, name: "B" }, { id: 3, name: "C" }],
+      new Set([1, 2, 3]),
+      (next: Set<number>) => (capturedSelectedIds = next),
+      (msg: string) => (capturedError = msg),
+      async (_entityName: string, copy: Record<string, unknown>) => {
+        createdCopies.push(copy);
+        if (copy.name === "B") throw new Error("record B duplicate failed");
+      },
+      async () => {
+        refreshCalled += 1;
+      },
+    );
+    await fn();
+    assert.deepEqual(
+      createdCopies.map((c) => c.name).sort(),
+      ["A", "B", "C"],
+      "must attempt every selected record's duplicate, not stop at the first failure",
+    );
+    assert.deepEqual([...capturedSelectedIds!].sort(), [2], "only the record whose duplicate actually failed should remain selected");
+    assert.equal(capturedError, "1 of 3 records could not be duplicated.");
+    assert.equal(refreshCalled, 1, "refresh() must still run to reflect the duplicates that succeeded");
+  }
+
+  const handleBulkUpdateSrc = entityViewJsx.match(/async function handleBulkUpdate\(\) \{[\s\S]*?\n  \}\n/)?.[0];
+  assert.ok(handleBulkUpdateSrc, "expected to find handleBulkUpdate in generated output");
+  {
+    let capturedError: string | undefined;
+    let capturedSelectedIds: Set<number> | undefined;
+    let refreshCalled = 0;
+    const updatedIds: number[] = [];
+    const fn = new Function(
+      "entity",
+      "bulkEditField",
+      "bulkEditValue",
+      "selectedIds",
+      "setSelectedIds",
+      "setError",
+      "updateRecord",
+      "refresh",
+      `${handleBulkUpdateSrc}\nreturn handleBulkUpdate;`,
+    )(
+      { name: "Order" },
+      "status",
+      "Shipped",
+      new Set([1, 2, 3]),
+      (next: Set<number>) => (capturedSelectedIds = next),
+      (msg: string) => (capturedError = msg),
+      async (_entityName: string, id: number, patch: Record<string, unknown>) => {
+        updatedIds.push(id);
+        assert.deepEqual(patch, { status: "Shipped" });
+        if (id === 3) throw new Error("record 3 update failed");
+      },
+      async () => {
+        refreshCalled += 1;
+      },
+    );
+    await fn();
+    assert.deepEqual(updatedIds.slice().sort(), [1, 2, 3], "must attempt every selected id's update, not stop at the first failure");
+    assert.deepEqual([...capturedSelectedIds!].sort(), [3], "only the id that actually failed to update should remain selected");
+    assert.equal(capturedError, "1 of 3 records could not be updated.");
+    assert.equal(refreshCalled, 1, "refresh() must still run to reflect the updates that succeeded");
+  }
+
+  // A bulk update with no field chosen must be a real no-op -- no calls at
+  // all, matching the live preview's own `if (!bulkEditField) return;` guard.
+  {
+    let updateRecordCalled = 0;
+    let refreshCalled = 0;
+    const fn = new Function(
+      "entity",
+      "bulkEditField",
+      "bulkEditValue",
+      "selectedIds",
+      "setSelectedIds",
+      "setError",
+      "updateRecord",
+      "refresh",
+      `${handleBulkUpdateSrc}\nreturn handleBulkUpdate;`,
+    )(
+      { name: "Order" },
+      "",
+      "",
+      new Set([1, 2]),
+      () => {},
+      () => {},
+      async () => {
+        updateRecordCalled += 1;
+      },
+      async () => {
+        refreshCalled += 1;
+      },
+    );
+    await fn();
+    assert.equal(updateRecordCalled, 0, "no field chosen must mean no update calls at all");
+    assert.equal(refreshCalled, 0);
+  }
+});
+
 test("the exported EntityView renders a real Duplicate action (table and board views) that copies a record via a real createRecord call", () => {
   const files = generateExportFiles(project);
   const entityViewJsx = files.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
