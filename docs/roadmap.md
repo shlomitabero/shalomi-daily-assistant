@@ -19078,6 +19078,68 @@ Full suite green: **1170 tests** (`@forge/shared` 13, `@forge/spec-engine`
 via `npm test` at the repo root, plus a clean
 `npm run build --workspace=@forge/api` (esbuild).
 
+### Round 316 — The home screen's own project search box finally remembers recent searches, the last screen in the app without that memory
+
+An Explore survey, after confirming the port-to-exported-codegen family
+is now fully closed and that round 315's hook-import audit left nothing
+behind, found a genuinely fresh gap on a screen no recent round had
+touched: the home screen's own "Your projects" search box (shown once a
+user has more than 5 projects) was the one search box left in the whole
+app with zero memory of past queries. Three sibling features already
+solve this exact shape -- `recentSearches.ts` (Global Search's query box,
+round 180), `historyRecentSearches.ts` (Time Machine's checkpoint
+search), and `whatsappRecentNumbers.ts` (the WhatsApp test-number field)
+-- each a thin localStorage-backed list capped at 5 entries with
+case-insensitive dedup. The home screen's own search box sat right next
+to `projectSortMode.ts`/`projectStatusFilter.ts`, which already persist
+their own choices, while the free-text search itself reset to empty on
+every reopen -- a real, visible annoyance for anyone with enough projects
+to need the search box in the first place, re-typing a recurring client
+name or project-name prefix every single time.
+
+Added `recentProjectSearches.ts`, matching the three existing modules'
+shape (`getRecentProjectSearches`/`addRecentProjectSearch`/
+`removeRecentProjectSearch`/`clearRecentProjectSearches`) but NOT scoped
+per-project the way they are -- this feature lives on the project list
+itself, so there's no enclosing project to scope by, the same reasoning
+`projectSortMode.ts`/`projectStatusFilter.ts` already use for their own
+single flat storage key.
+
+Wired into `App.tsx`: since this search box filters live on every
+keystroke (no submit button, unlike Global Search's own form), Enter is
+the natural "I'm done typing this" signal to persist a query -- the
+closest analog to a submit-driven search's own commit moment. Added a new
+`handleProjectSearchKeyDown` handler plus a recent-searches chip row
+below the input (reusing the app's existing `.chips`/`.chip`/
+`.chip-removable` CSS system rather than inventing new styling), visible
+only when the box is empty and at least one recent search exists --
+clicking a chip re-applies that search instantly, with its own
+`Clear`-all button and per-chip remove button, the identical UX Global
+Search's own recent-searches row already has.
+
+Tests: a full pure-function suite for `recentProjectSearches.ts` mirroring
+`recentSearches.test.ts` exactly (defaults, round-tripping, capping at 5,
+case-insensitive dedup, clearing, per-query removal, and tolerating
+corrupted localStorage content), plus a handler-extraction test for
+`App.tsx`'s new `handleProjectSearchKeyDown` (same `new Function` +
+`transformSync` technique `handleSetProjectStatusFilter`'s own test
+uses), confirming it adds to recent searches on Enter with a real query,
+but never on another key or an empty/whitespace-only search.
+
+Deliberate-break-and-restore: reverted the handler to a no-op and
+confirmed the new handler test failed with the precise expected
+mismatch (an empty array instead of `["acme"]`). Restored from a verified
+pre-break backup with a confirmed byte-identical `diff`, then re-ran
+every workspace: `@forge/shared` 13/13, `@forge/spec-engine` 85/85,
+`@forge/db` 96/96, `@forge/api` 325/325 (unchanged, confirmed anyway per
+the established process), `@forge/web` 651 → 662, plus a clean
+`npm run build --workspace=@forge/web`.
+
+Full suite green: **1181 tests** (`@forge/shared` 13, `@forge/spec-engine`
+85, `@forge/db` 96, `@forge/api` 325 unchanged; `@forge/web` 651 → 662)
+via `npm test` at the repo root, plus a clean
+`npm run build --workspace=@forge/web` (tsc + vite).
+
 ## Phase 4
 
 - Template/agent marketplace
