@@ -19477,6 +19477,63 @@ Full suite green: **1212 tests** (`@forge/shared` 13, `@forge/spec-engine`
 via `npm test` at the repo root, plus a clean full monorepo
 `npm run build`.
 
+### Round 322 — EntityPanel's own table finally gets a Copy button, matching every other panel in the app
+
+With round 321's own named candidate already closed and both the
+recentSearches and undo-toast feature-families now fully shut, this
+round needed a fresh Explore survey. It came back with a clean "exists
+everywhere except one sibling" gap: `BusinessTwinPanel.tsx`,
+`HistoryPanel.tsx`, `GlobalSearchPanel.tsx`, and `WhatsAppPanel.tsx`'s
+own message log all already have a "Copy" button right next to their
+"Download" button -- the exact same idle/copied/failed state pattern
+with a 2-second auto-reset -- but `EntityPanel.tsx`, the single
+most-used screen in the whole app (every entity tab, every project),
+only ever had `handleExportCsv`: a real file download, no clipboard
+option at all. Anyone who wanted to paste a handful of rows into
+Slack/email/a doc had to download a CSV first and open it somewhere
+else, while every other panel in the app already let them do it in one
+click.
+
+Fix: added a `handleCopy` right next to the existing `handleExportCsv`
+in `EntityPanel.tsx`, reusing the exact same CSV text
+`recordsToCsv`/`selectedOrAllRecords` already build for the download
+(no new formatting logic -- genuinely the same content, just written to
+`navigator.clipboard` instead of a Blob/download link), with its own
+`copyStatus` state and a `.copy-records-btn` button placed directly
+before the CSV-export button, matching the CSV button's own
+`selectedIds.size > 0 ? "N selected" : "all"` wording convention.
+
+Tests: two new real-DOM tests in `EntityPanel.test.ts`, mirroring
+`HistoryPanel.test.ts`'s own copy-button tests exactly: the Copy button
+writes the real CSV text (confirmed to include every real field, not
+just the name) to a stubbed `navigator.clipboard.writeText`, shows a
+real "Copied!" confirmation, and reverts to the normal label after a
+real mocked 2-second `setTimeout` tick; and the other half, confirming
+a real clipboard rejection shows "Copy failed" rather than failing
+silently or crashing, also reverting after the same delay.
+
+Deliberate-break-and-restore: reverted `EntityPanel.tsx` to its
+pre-round state and confirmed both new tests failed with the exact
+expected mismatches (no Copy button found; `fireEvent.click` with no
+DOM element to click). Restored from a verified pre-break backup with
+a confirmed byte-identical `diff`, then re-ran every workspace:
+`@forge/shared` 13/13, `@forge/spec-engine` 85/85, `@forge/db` 96/96,
+`@forge/api` 327/327 (unchanged, confirmed anyway per the established
+process), `@forge/web` 691 → 693, plus a clean full monorepo
+`npm run build`.
+
+Scope note, matching this project's own repeated live-preview/export
+split: only the live preview got this round. `codegen.ts`'s generated
+`EntityView` has the identical gap (confirmed during this round's
+Explore survey: it has `handleExportCsv` but no `handleCopy` anywhere
+in the file) and is a natural candidate for a future round, alongside
+Global Search's own still-open recent-searches port.
+
+Full suite green: **1214 tests** (`@forge/shared` 13, `@forge/spec-engine`
+85, `@forge/db` 96, `@forge/api` 327 unchanged; `@forge/web` 691 → 693)
+via `npm test` at the repo root, plus a clean full monorepo
+`npm run build`.
+
 ## Phase 4
 
 - Template/agent marketplace
