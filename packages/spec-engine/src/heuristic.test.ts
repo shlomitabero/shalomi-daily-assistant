@@ -47,6 +47,44 @@ test("rejects an empty description", async () => {
   await assert.rejects(() => provider.generate(""));
 });
 
+/**
+ * New in this round: buildAssumptions used to tell every heuristic-
+ * generated project's owner "multi-user authentication is not implemented
+ * yet" / "אין עדיין שיתוף בין כמה משתמשים על אותו פרויקט" -- false since
+ * real signup/login (apps/api/src/routes/auth.ts) and real per-project
+ * collaborator invites (packages/db/src/collaborators.ts,
+ * CollaboratorsPanel.tsx) both already exist. A Hebrew-speaking owner with
+ * no Anthropic key reading their generated spec was told the app couldn't
+ * do something it demonstrably already does, while a working
+ * "Collaborators" button sat right there in the same UI. Confirms the
+ * stale claim is gone and the real, narrower limitation (no granular
+ * permission tier -- every collaborator gets full access, only the owner
+ * can manage who's invited) is stated instead, in both languages.
+ */
+test("the generated assumptions no longer claim multi-user support doesn't exist, since real auth + collaborator sharing both already ship", async () => {
+  const provider = new HeuristicSpecProvider();
+
+  const enSpec = await provider.generate("I want to organize my hobby collection.");
+  assert.ok(
+    enSpec.assumptions.every((a) => !/multi-user authentication is not implemented/i.test(a)),
+    "must not claim multi-user auth is unimplemented -- it is",
+  );
+  assert.ok(
+    enSpec.assumptions.some((a) => /collaborator/i.test(a) && /owner/i.test(a)),
+    "should instead describe the real collaborator-invite capability and its actual limitation",
+  );
+
+  const heSpec = await provider.generate("אני רוצה לנהל את אוסף התחביב שלי.");
+  assert.ok(
+    heSpec.assumptions.every((a) => !/שיתוף בין כמה משתמשים/.test(a)),
+    "must not claim no multi-user sharing exists -- it does",
+  );
+  assert.ok(
+    heSpec.assumptions.some((a) => /שותפים/.test(a) && /בעלים/.test(a)),
+    "should instead describe the real collaborator-invite capability and its actual limitation",
+  );
+});
+
 test("asks about payments when billing entities are implied", async () => {
   const provider = new HeuristicSpecProvider();
   const spec = await provider.generate("A shop that tracks orders and sends invoices to customers.");

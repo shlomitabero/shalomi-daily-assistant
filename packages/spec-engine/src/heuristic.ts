@@ -158,13 +158,13 @@ function buildAssumptions(isHebrew: boolean): string[] {
   if (isHebrew) {
     return [
       "האפליקציה בנויה כרגע על מנוע גנרי משותף עם בסיס נתונים אמיתי — לא קוד ייעודי מלא לכל פרויקט.",
-      "יש כרגע סביבת עבודה אחת פרטית לחשבון שלך; אין עדיין שיתוף בין כמה משתמשים על אותו פרויקט.",
+      "יש כניסה אמיתית למשתמשים (הרשמה+סיסמה), ואפשר להזמין משתמשים קיימים כשותפים לאותו פרויקט — אך עדיין בלי הבחנה בין רמות הרשאה: כל שותף מקבל גישה מלאה לנתונים, חוץ מניהול השותפים עצמו שנשאר אצל הבעלים.",
       "כל אינטגרציה שהוזכרה בתיאור (תשלומים, הודעות וכו') עדיין לא מחוברת בפועל — ראו את השאלות הפתוחות למטה.",
     ];
   }
   return [
     "Using a generic schema-driven CRUD engine backed by SQLite for this Phase 1 slice, not a dedicated generated codebase per project yet.",
-    "Single demo workspace; multi-user authentication is not implemented yet.",
+    "Real signup/login authentication exists, and the project owner can invite existing users as collaborators on the same project — but there's no granular permission tier yet: every collaborator gets full data access, and only the owner can manage who else is invited.",
     "Any integrations mentioned in the description (payments, messaging, etc.) are not wired up yet — see open questions and the product roadmap.",
   ];
 }
