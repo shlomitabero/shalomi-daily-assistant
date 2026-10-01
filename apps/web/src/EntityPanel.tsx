@@ -341,6 +341,7 @@ function BoardCard({
   allEntities,
   relatedRecords,
   highlightQuery,
+  hasMoveError,
   onMove,
   onEdit,
   onDuplicate,
@@ -355,6 +356,7 @@ function BoardCard({
   allEntities: Entity[];
   relatedRecords: RelatedRecordsByEntity;
   highlightQuery?: string;
+  hasMoveError?: boolean;
   onMove: (value: string) => void;
   onEdit: () => void;
   onDuplicate: () => void;
@@ -364,7 +366,7 @@ function BoardCard({
   const otherFields = entity.fields.filter((f) => f.name !== boardField.name);
   return (
     <div
-      className="board-card"
+      className={hasMoveError ? "board-card board-card-move-error" : "board-card"}
       data-record-id={record.id as number}
       draggable
       onDragStart={(e) => e.dataTransfer.setData("text/plain", String(record.id))}
@@ -431,6 +433,7 @@ function CalendarView({
   onEdit,
   onDayClick,
   onReschedule,
+  moveErrorId,
 }: {
   entity: Entity;
   dateField: Field;
@@ -444,6 +447,7 @@ function CalendarView({
   onEdit: (record: EntityRecord) => void;
   onDayClick: (date: Date) => void;
   onReschedule: (record: EntityRecord, date: Date) => void;
+  moveErrorId?: number | null;
 }) {
   const year = month.getFullYear();
   const monthIndex = month.getMonth();
@@ -531,7 +535,11 @@ function CalendarView({
                 <button
                   type="button"
                   key={record.id as number}
-                  className="calendar-record-chip"
+                  className={
+                    record.id === moveErrorId
+                      ? "calendar-record-chip calendar-record-chip-move-error"
+                      : "calendar-record-chip"
+                  }
                   draggable
                   onDragStart={(e) => {
                     // A drag that starts on the record chip must never also
@@ -780,6 +788,12 @@ export function EntityPanel({
   const [draggedField, setDraggedField] = useState<string | null>(null);
   const [dragOverField, setDragOverField] = useState<string | null>(null);
   const [highlightedRecordId, setHighlightedRecordId] = useState<number | null>(null);
+  // Which record's last inline-edit/drag-move PATCH failed -- handleMove and
+  // commitInlineEdit both used to only ever show a generic error banner far
+  // from the actual row/card/chip (near the top of the panel), with zero
+  // in-place indication of which specific record the failure was even
+  // about. Cleared on a timer below, same pattern as highlightedRecordId.
+  const [moveErrorId, setMoveErrorId] = useState<number | null>(null);
   const [focusedRowId, setFocusedRowId] = useState<number | null>(null);
   const [editingCell, setEditingCell] = useState<{ recordId: number; field: string } | null>(null);
   const [cellDraft, setCellDraft] = useState<unknown>(undefined);
@@ -1010,6 +1024,14 @@ export function EntityPanel({
     const timer = setTimeout(() => setHighlightedRecordId(null), 4000);
     return () => clearTimeout(timer);
   }, [highlightedRecordId]);
+
+  // Same auto-fade pattern as highlightedRecordId above, for the per-record
+  // move/edit error marker instead of a jump-to highlight.
+  useEffect(() => {
+    if (moveErrorId == null) return;
+    const timer = setTimeout(() => setMoveErrorId(null), 5000);
+    return () => clearTimeout(timer);
+  }, [moveErrorId]);
 
   /**
    * A plain click always sorts by just this one column (replacing
@@ -1554,6 +1576,7 @@ export function EntityPanel({
       await refresh();
     } catch (err) {
       setError((err as Error).message);
+      setMoveErrorId(id);
     }
   }
 
@@ -1619,6 +1642,7 @@ export function EntityPanel({
       await refresh();
     } catch (err) {
       setError((err as Error).message);
+      setMoveErrorId(recordId);
     }
   }
 
@@ -1653,6 +1677,7 @@ export function EntityPanel({
           [
             record.id === highlightedRecordId ? "record-row-highlighted" : null,
             record.id === focusedRowId ? "record-row-focused" : null,
+            record.id === moveErrorId ? "record-row-move-error" : null,
           ]
             .filter(Boolean)
             .join(" ") || undefined
@@ -1985,6 +2010,7 @@ export function EntityPanel({
                       allEntities={allEntities}
                       relatedRecords={relatedRecords}
                       highlightQuery={search}
+                      hasMoveError={record.id === moveErrorId}
                       onMove={(value) => handleMove(record.id as number, boardField.name, value)}
                       onEdit={() => startEdit(record)}
                       onDuplicate={() => handleDuplicate(record.id as number)}
@@ -2009,6 +2035,7 @@ export function EntityPanel({
               onEdit={startEdit}
               onDayClick={(date) => startCreateForDate(date, dateField)}
               onReschedule={(record, date) => handleCalendarDrop(record, dateField.name, date)}
+              moveErrorId={moveErrorId}
             />
           ) : (
             <div className="table-scroll" ref={tableScrollRef}>

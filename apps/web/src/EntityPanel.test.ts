@@ -1028,6 +1028,106 @@ test("EntityPanel's board view moves a card to its new column once the status ch
   });
 });
 
+/**
+ * New in this round: a failed inline-cell-edit PATCH used to show only a
+ * generic error banner near the top of the panel (far from the actual
+ * table row, possibly scrolled out of view entirely), with zero in-place
+ * indication of which specific record the failure was even about -- the
+ * cell itself just silently reverted to its old value. Confirms the
+ * failing row now carries its own real "record-row-move-error" marker
+ * class, in addition to (not instead of) the existing top banner.
+ */
+test("EntityPanel marks the specific table row with a move-error indicator when an inline-cell-edit PATCH fails", async () => {
+  await withJsdom(async () => {
+    const store: EntityRecord[] = [{ id: 1, createdAt: "x", name: "Acme Corp", status: "new" }];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      if (init?.method === "PATCH") {
+        return new Response(JSON.stringify({ error: "Server exploded" }), {
+          status: 500,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      return mockRecordsFetch(store)(input, init);
+    }) as typeof fetch;
+    try {
+      renderEntityPanel();
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 1);
+
+      const row = document.querySelector("table tbody tr") as HTMLTableRowElement;
+      assert.equal(row.classList.contains("record-row-move-error"), false, "the row must start with no error marker");
+
+      const nameCell = document.querySelectorAll("table tbody td")[1] as HTMLTableCellElement;
+      fireEvent.doubleClick(nameCell);
+      const input = nameCell.querySelector('input[type="text"]') as HTMLInputElement;
+      fireEvent.change(input, { target: { value: "Acme Corporation" } });
+      fireEvent.keyDown(input, { key: "Enter" });
+
+      await waitForCondition(() => document.querySelector("p.error") !== null);
+      assert.ok(document.querySelector("p.error"), "the existing top error banner must still appear, unchanged");
+      assert.equal(
+        row.classList.contains("record-row-move-error"),
+        true,
+        "the specific row whose edit failed must now carry its own move-error marker, not just the far-away banner",
+      );
+      assert.equal(
+        document.querySelectorAll("table tbody td")[1]?.textContent,
+        "Acme Corp",
+        "a failed edit must leave the cell showing its original, untouched value",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
+ * The board-view sibling of the inline-edit test above: a failed
+ * column-move PATCH used to leave the dragged/moved card with zero visual
+ * cue of its own -- the card just silently stayed where it was, with only
+ * the same far-away banner as any other failure. Confirms the specific
+ * card now carries its own "board-card-move-error" marker class.
+ */
+test("EntityPanel marks the specific board card with a move-error indicator when a column-move PATCH fails", async () => {
+  await withJsdom(async () => {
+    const store: EntityRecord[] = [{ id: 1, name: "Acme Corp", status: "new" }];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      if (init?.method === "PATCH") {
+        return new Response(JSON.stringify({ error: "Server exploded" }), {
+          status: 500,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      return mockRecordsFetch(store)(input, init);
+    }) as typeof fetch;
+    try {
+      renderEntityPanel();
+      await waitForCondition(() => document.querySelector(".entity-toolbar") !== null);
+
+      const boardToggle = document.querySelectorAll(".view-toggle-btn")[1] as HTMLButtonElement;
+      fireEvent.click(boardToggle);
+      await waitForCondition(() => document.querySelectorAll(".board-card").length === 1);
+
+      const card = document.querySelector(".board-card") as HTMLElement;
+      assert.equal(card.classList.contains("board-card-move-error"), false, "the card must start with no error marker");
+
+      const moveSelect = document.querySelector(".board-card-move") as HTMLSelectElement;
+      fireEvent.change(moveSelect, { target: { value: "won" } });
+
+      await waitForCondition(() => document.querySelector("p.error") !== null);
+      assert.equal(
+        document.querySelector(".board-card")!.classList.contains("board-card-move-error"),
+        true,
+        "the specific card whose move failed must now carry its own move-error marker",
+      );
+      assert.equal(store[0].status, "new", "a failed move must leave the mock server's own record genuinely unchanged");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
 const APPOINTMENT_ENTITY: Entity = {
   name: "Appointment",
   label: "Appointment",
@@ -1436,6 +1536,74 @@ test("EntityPanel's calendar view reschedules a record via a real drag-and-drop 
         0,
         "the chip must be gone from its original day once it's been rescheduled",
       );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
+ * The calendar-view sibling of the inline-edit/board-move tests above: a
+ * failed reschedule-drag PATCH used to leave the dragged chip with zero
+ * visual cue -- it just silently stayed on its original day. Confirms the
+ * specific chip now carries its own "calendar-record-chip-move-error"
+ * marker class.
+ */
+test("EntityPanel marks the specific calendar chip with a move-error indicator when a reschedule-drag PATCH fails", async () => {
+  await withJsdom(async () => {
+    const today = isoDateToday();
+    const store: EntityRecord[] = [{ id: 1, title: "Dana's appointment", date: today }];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/entities/Appointment") {
+        return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      if (method === "PATCH") {
+        return new Response(JSON.stringify({ error: "Server exploded" }), {
+          status: 500,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+    try {
+      renderAppointmentPanel();
+      await waitForCondition(() => document.querySelector(".entity-toolbar") !== null);
+
+      const calendarToggle = document.querySelectorAll(".view-toggle-btn")[1] as HTMLButtonElement;
+      fireEvent.click(calendarToggle);
+      await waitForCondition(() => document.querySelectorAll(".calendar-record-chip").length === 1);
+
+      function makeDataTransfer() {
+        let payload = "";
+        return { setData: (_type: string, value: string) => (payload = value), getData: () => payload };
+      }
+
+      const chip = document.querySelector(".calendar-record-chip") as HTMLButtonElement;
+      assert.equal(chip.classList.contains("calendar-record-chip-move-error"), false, "the chip must start with no error marker");
+
+      const emptyDayCells = Array.from(document.querySelectorAll(".calendar-day-clickable")).filter(
+        (el) => el.querySelectorAll(".calendar-record-chip").length === 0,
+      );
+      const targetDay = emptyDayCells[0] as HTMLElement;
+      const dataTransfer = makeDataTransfer();
+      fireEvent.dragStart(chip, { dataTransfer });
+      fireEvent.dragOver(targetDay, { dataTransfer });
+      fireEvent.drop(targetDay, { dataTransfer });
+
+      await waitForCondition(() => document.querySelector("p.error") !== null);
+      assert.equal(
+        document.querySelector(".calendar-record-chip")!.classList.contains("calendar-record-chip-move-error"),
+        true,
+        "the specific chip whose reschedule failed must now carry its own move-error marker",
+      );
+      assert.equal(
+        document.querySelectorAll(".calendar-record-chip").length,
+        1,
+        "a failed reschedule must leave the chip on its original day, not move it or duplicate it",
+      );
+      assert.equal(store[0].date, today, "a failed reschedule must leave the mock server's own record genuinely unchanged");
     } finally {
       globalThis.fetch = originalFetch;
     }

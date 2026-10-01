@@ -1583,7 +1583,7 @@ function buildCalendarIcs(entity, dateField, labelField, records, relatedRecords
 // shape every entity gets. Each day cell shows a chip per record landing on
 // that date (click to edit), with a "+N more" overflow instead of an
 // ever-growing cell.
-function CalendarView({ entity, dateField, records, month, onPrevMonth, onNextMonth, onToday, onEdit, onDayClick, onReschedule }) {
+function CalendarView({ entity, dateField, records, month, onPrevMonth, onNextMonth, onToday, onEdit, onDayClick, onReschedule, moveErrorId }) {
   const year = month.getFullYear();
   const monthIndex = month.getMonth();
   const days = useMemo(() => buildCalendarMonth(records, dateField, year, monthIndex), [records, dateField, year, monthIndex]);
@@ -1665,7 +1665,7 @@ function CalendarView({ entity, dateField, records, month, onPrevMonth, onNextMo
                 <button
                   type="button"
                   key={record.id}
-                  className="calendar-record-chip"
+                  className={record.id === moveErrorId ? "calendar-record-chip calendar-record-chip-move-error" : "calendar-record-chip"}
                   draggable
                   onDragStart={(e) => {
                     e.stopPropagation();
@@ -1710,10 +1710,10 @@ function CalendarView({ entity, dateField, records, month, onPrevMonth, onNextMo
 // field itself, since that's implied by which column the card is in), a
 // select to move it directly to another column, and the same Edit/Delete
 // actions the table row has.
-function BoardCard({ entity, boardField, record, relatedRecords, onMove, onEdit, onDuplicate, onDelete, onJumpToRecord }) {
+function BoardCard({ entity, boardField, record, relatedRecords, hasMoveError, onMove, onEdit, onDuplicate, onDelete, onJumpToRecord }) {
   const otherFields = entity.fields.filter((f) => f.name !== boardField.name);
   return (
-    <div className="board-card" draggable onDragStart={(e) => e.dataTransfer.setData("text/plain", String(record.id))}>
+    <div className={hasMoveError ? "board-card board-card-move-error" : "board-card"} draggable onDragStart={(e) => e.dataTransfer.setData("text/plain", String(record.id))}>
       {otherFields.map((f) => (
         <div key={f.name} className="board-card-field">
           <span className="muted small">{f.label}</span>
@@ -1836,6 +1836,7 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
   const [search, setSearch] = useState("");
   const [fieldFilters, setFieldFilters] = useState({});
   const [highlightedRecordId, setHighlightedRecordId] = useState(null);
+  const [moveErrorId, setMoveErrorId] = useState(null);
   const [sortKeys, setSortKeys] = useState([]);
   const [viewMode, setViewMode] = useState("table");
   const [calendarMonth, setCalendarMonth] = useState(() => new Date());
@@ -1964,6 +1965,14 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
     const timer = setTimeout(() => setHighlightedRecordId(null), 4000);
     return () => clearTimeout(timer);
   }, [highlightedRecordId]);
+
+  // Same auto-fade pattern as highlightedRecordId above, for the per-record
+  // move/edit error marker instead of a jump-to highlight.
+  useEffect(() => {
+    if (moveErrorId == null) return;
+    const timer = setTimeout(() => setMoveErrorId(null), 5000);
+    return () => clearTimeout(timer);
+  }, [moveErrorId]);
 
   // Fires the real DELETE request for a record the undo window has already
   // closed on (either the timer ran out, or a newer delete pre-empted it) --
@@ -2263,6 +2272,7 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
       await refresh();
     } catch (err) {
       setError(err.message);
+      setMoveErrorId(id);
     }
   }
 
@@ -2287,6 +2297,7 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
       await refresh();
     } catch (err) {
       setError(err.message);
+      setMoveErrorId(recordId);
     }
   }
 
@@ -2607,6 +2618,7 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
                       boardField={boardField}
                       record={r}
                       relatedRecords={relatedRecords}
+                      hasMoveError={r.id === moveErrorId}
                       onMove={(value) => handleMove(r.id, boardField.name, value)}
                       onEdit={() => startEdit(r)}
                       onDuplicate={() => handleDuplicate(r.id)}
@@ -2629,6 +2641,7 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
               onEdit={startEdit}
               onDayClick={(date) => startCreateForDate(date, dateField)}
               onReschedule={(record, date) => handleCalendarDrop(record, dateField.name, date)}
+              moveErrorId={moveErrorId}
             />
           ) : (
             <div className="table-scroll">
@@ -2691,7 +2704,7 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
                 </thead>
                 <tbody>
                   {visibleRecords.map((r) => (
-                    <tr key={r.id} data-record-id={r.id} className={r.id === highlightedRecordId ? "record-row-highlighted" : undefined}>
+                    <tr key={r.id} data-record-id={r.id} className={[r.id === highlightedRecordId ? "record-row-highlighted" : null, r.id === moveErrorId ? "record-row-move-error" : null].filter(Boolean).join(" ") || undefined}>
                       <td className="select-col">
                         <input type="checkbox" checked={selectedIds.has(r.id)} onChange={() => toggleSelected(r.id)} />
                       </td>
@@ -3282,6 +3295,7 @@ th, td { text-align: start; padding: 8px 10px; border-bottom: 1px solid var(--bo
 .board-add-card-btn { background: none; border: none; padding: 0 4px; font-size: 16px; font-weight: 600; opacity: 0.5; cursor: pointer; line-height: 1; }
 .board-add-card-btn:hover { opacity: 1; color: var(--accent); }
 .board-card { background: var(--surface); border: 1px solid var(--border-soft); border-radius: 8px; padding: 10px 12px; box-shadow: var(--shadow-sm); display: flex; flex-direction: column; gap: 6px; }
+.board-card-move-error { border-color: var(--danger); background: var(--danger-soft); }
 .board-card-field { display: flex; flex-direction: column; gap: 1px; font-size: 13.5px; }
 .board-card-move { margin-top: 4px; }
 .calendar-view { display: flex; flex-direction: column; gap: 10px; }
@@ -3304,6 +3318,7 @@ th, td { text-align: start; padding: 8px 10px; border-bottom: 1px solid var(--bo
 .calendar-record-chip { background: var(--surface); border: 1px solid var(--border-soft); border-radius: 4px; padding: 2px 5px; font-size: 11.5px; text-align: start; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: grab; color: var(--text); }
 .calendar-record-chip:hover { background: var(--bg); }
 .calendar-record-chip:active { cursor: grabbing; }
+.calendar-record-chip-move-error { background: var(--danger-soft); border-color: var(--danger); }
 .calendar-record-more { font-size: 11px; color: var(--muted); padding: 2px 5px; background: none; border: none; text-align: start; cursor: pointer; font: inherit; }
 .calendar-record-more:hover { color: var(--text); text-decoration: underline; }
 .csv-export-btn, .ics-export-btn { flex-shrink: 0; padding: 8px 14px; font-size: 13px; border-radius: 8px; border: 1px solid var(--border); background: var(--surface); color: var(--text); cursor: pointer; font: inherit; }
@@ -3349,6 +3364,7 @@ th, td { text-align: start; padding: 8px 10px; border-bottom: 1px solid var(--bo
 .global-search-hits { margin: 10px 0 0; padding-inline-start: 20px; display: flex; flex-direction: column; gap: 6px; font-size: 14.5px; }
 .global-search-hit-button { display: block; width: 100%; text-align: start; white-space: normal; }
 .record-row-highlighted, .record-row-highlighted:hover { background: var(--accent-soft); transition: background 1.5s ease; }
+.record-row-move-error, .record-row-move-error:hover { background: var(--danger-soft); transition: background 2s ease; }
 `;
 }
 

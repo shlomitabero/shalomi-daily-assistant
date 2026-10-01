@@ -989,6 +989,12 @@ tbody tr:hover {
   outline-offset: -2px;
 }
 
+.record-row-move-error,
+.record-row-move-error:hover {
+  background: var(--danger-soft);
+  transition: background 2s ease;
+}
+
 .cell-inline-editable {
   cursor: text;
 }
@@ -1255,6 +1261,11 @@ tbody tr:hover {
   cursor: grab;
 }
 
+.board-card-move-error {
+  border-color: var(--danger);
+  background: var(--danger-soft);
+}
+
 .board-card:active {
   cursor: grabbing;
 }
@@ -1386,6 +1397,11 @@ tbody tr:hover {
 
 .calendar-record-chip:active {
   cursor: grabbing;
+}
+
+.calendar-record-chip-move-error {
+  background: var(--danger-soft);
+  border-color: var(--danger);
 }
 
 .calendar-record-more {

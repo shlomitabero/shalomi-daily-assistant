@@ -566,7 +566,10 @@ test("the exported EntityView's calendar record chips are drag-and-drop-able ont
 
   assert.match(entityViewJsx, /const \[dragOverDay, setDragOverDay\] = useState\(null\);/);
   // The record chip itself must be a real drag source, not just visually styled.
-  assert.match(entityViewJsx, /className="calendar-record-chip"\s*draggable\s*onDragStart=\{\(e\) => \{/);
+  assert.match(
+    entityViewJsx,
+    /className=\{record\.id === moveErrorId \? "calendar-record-chip calendar-record-chip-move-error" : "calendar-record-chip"\}\s*draggable\s*onDragStart=\{\(e\) => \{/,
+  );
   assert.match(entityViewJsx, /e\.dataTransfer\.setData\("text\/plain", String\(record\.id\)\);\s*e\.dataTransfer\.effectAllowed = "move";/);
   // The day cell itself must be a real drop target, highlighted only while actually dragged over.
   assert.match(entityViewJsx, /onDragOver=\{\s*day\.inCurrentMonth\s*\?\s*\(e\) => \{\s*e\.preventDefault\(\);\s*setDragOverDay\(dayKey\);\s*\}\s*: undefined\s*\}/);
@@ -1167,6 +1170,7 @@ test("the exported EntityView's handleDuplicate/handleBulkDelete/handleMove surf
       "selectedIds",
       "setSelectedIds",
       "setError",
+      "setMoveErrorId",
       "deleteRecord",
       "createRecord",
       "updateRecord",
@@ -1181,6 +1185,7 @@ test("the exported EntityView's handleDuplicate/handleBulkDelete/handleMove surf
       (msg: string) => {
         capturedError = msg;
       },
+      () => {},
       async () => {
         throw rejection;
       },
@@ -1432,7 +1437,7 @@ test("the exported EntityView's relation cells jump to the related record via th
   // Threaded through every layer that can render a relation cell: the
   // table, the Kanban board (via BoardCard), the per-entity View wrapper,
   // and App's own activeEntity.View call -- not just the leaf component.
-  assert.match(entityViewJsx, /function BoardCard\(\{ entity, boardField, record, relatedRecords, onMove, onEdit, onDuplicate, onDelete, onJumpToRecord \}\)/);
+  assert.match(entityViewJsx, /function BoardCard\(\{ entity, boardField, record, relatedRecords, hasMoveError, onMove, onEdit, onDuplicate, onDelete, onJumpToRecord \}\)/);
   assert.match(entityViewJsx, /<Cell\s+field=\{f\}\s+value=\{record\[f\.name\]\}\s+relationLabel=\{[^}]+\}\s+onJumpToRecord=\{onJumpToRecord\}/);
   assert.match(entityViewJsx, /export function EntityView\(\{ entity, highlightRecordId, onHighlightHandled, onJumpToRecord \}\)/);
 
@@ -2027,7 +2032,10 @@ test("the exported app's Global Search can jump to an individual matched record,
   assert.match(entityViewJsx, /setHighlightedRecordId\(highlightRecordId\);/);
   assert.match(entityViewJsx, /onHighlightHandled\?\.\(\);/);
   assert.match(entityViewJsx, /setTimeout\(\(\) => setHighlightedRecordId\(null\), 4000\)/);
-  assert.match(entityViewJsx, /data-record-id=\{r\.id\} className=\{r\.id === highlightedRecordId \? "record-row-highlighted" : undefined\}/);
+  assert.match(
+    entityViewJsx,
+    /data-record-id=\{r\.id\} className=\{\[r\.id === highlightedRecordId \? "record-row-highlighted" : null, r\.id === moveErrorId \? "record-row-move-error" : null\]\.filter\(Boolean\)\.join\(" "\) \|\| undefined\}/,
+  );
   assert.match(entityViewJsx, /querySelector\(`tr\[data-record-id="\$\{highlightedRecordId\}"\]`\)/);
 
   // App.jsx: owns the highlightRecordId state, threads it into the active
@@ -2818,7 +2826,7 @@ test("the exported EntityView's Kanban board cards are drag-and-drop-able onto a
   // BoardCard itself must be a real native drag source, not just visually styled.
   assert.match(
     entityViewJsx,
-    /<div className="board-card" draggable onDragStart=\{\(e\) => e\.dataTransfer\.setData\("text\/plain", String\(record\.id\)\)\}>/,
+    /<div className=\{hasMoveError \? "board-card board-card-move-error" : "board-card"\} draggable onDragStart=\{\(e\) => e\.dataTransfer\.setData\("text\/plain", String\(record\.id\)\)\}>/,
   );
   // handleCardDrop must guard against a real no-op (dropping a card back onto its own column) before ever calling handleMove.
   const dropSrc = entityViewJsx.match(/function handleCardDrop\(e, fieldName, value\) \{[\s\S]*?\n {2}\}\n/)?.[0];
@@ -3124,5 +3132,59 @@ test("the exported GlobalSearch scrolls the newly-highlighted result group into 
     globalSearchJsx,
     /<div key=\{result\.entityName\} data-group-index=\{i\}/,
     "expected each result group div to carry its own data-group-index",
+  );
+});
+
+/**
+ * New in this round: the exported app's own EntityView.jsx had the
+ * identical gap the live preview's own EntityPanel.tsx did -- a failed
+ * inline-cell-edit PATCH, column-move PATCH (Kanban drag), or
+ * reschedule-drag PATCH (calendar drag) only ever showed a generic error
+ * banner near the top of the panel, with zero in-place indication of which
+ * specific record/card/chip the failure was even about. Confirms the
+ * generated EntityView.jsx wires a moveErrorId into all three failure
+ * sites and into the three places that render it (table row, board card,
+ * calendar chip).
+ */
+test("the exported EntityView marks the specific row/card/chip with a move-error indicator when its own PATCH fails", () => {
+  const files = generateExportFiles(project);
+  const entityViewJsx = files.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+
+  const handleMoveSrc = entityViewJsx.match(/async function handleMove\([\s\S]*?\n  \}\n/)?.[0];
+  assert.ok(handleMoveSrc, "expected to find handleMove in generated output");
+  assert.match(handleMoveSrc!, /setMoveErrorId\(id\)/, "handleMove's catch block must set moveErrorId");
+
+  const commitInlineEditSrc = entityViewJsx.match(/async function commitInlineEdit\(\)[\s\S]*?\n  \}\n/)?.[0];
+  assert.ok(commitInlineEditSrc, "expected to find commitInlineEdit in generated output");
+  assert.match(
+    commitInlineEditSrc!,
+    /setMoveErrorId\(recordId\)/,
+    "commitInlineEdit's catch block must set moveErrorId",
+  );
+
+  assert.match(
+    entityViewJsx,
+    /r\.id === moveErrorId \? "record-row-move-error" : null/,
+    "the table row's className must include a moveErrorId-driven marker",
+  );
+  assert.match(
+    entityViewJsx,
+    /hasMoveError \? "board-card board-card-move-error" : "board-card"/,
+    "BoardCard's root div className must reflect its own hasMoveError prop",
+  );
+  assert.match(
+    entityViewJsx,
+    /hasMoveError=\{r\.id === moveErrorId\}/,
+    "the BoardCard call site must pass hasMoveError scoped to that specific record",
+  );
+  assert.match(
+    entityViewJsx,
+    /record\.id === moveErrorId \? "calendar-record-chip calendar-record-chip-move-error" : "calendar-record-chip"/,
+    "the calendar chip's className must reflect moveErrorId",
+  );
+  assert.match(
+    entityViewJsx,
+    /moveErrorId=\{moveErrorId\}/,
+    "the CalendarView call site must pass moveErrorId through",
   );
 });
