@@ -18457,6 +18457,69 @@ Full suite green: **1155 tests** (`@forge/shared` 13, `@forge/spec-engine`
 via `npm test` at the repo root, plus a clean
 `npm run build --workspace=@forge/api` (esbuild).
 
+### Round 308 — The exported app's grouped table now shows a per-group numeric subtotal, not just one grand total
+
+An Explore survey, following the two small follow-up candidates round 306
+flagged (per-group subtotals and group-by persistence in `codegen.ts`),
+ran a systematic `entity-*` CSS-class diff between the live preview's
+`EntityPanel.tsx` and `codegen.ts`'s generated output to confirm this was
+genuinely the best remaining candidate: every other class matched (search,
+sort, CSV import/export, bulk-delete, duplicate, relation picker, global
+search, entity-tab badges, base table-grouping) except
+`entity-group-totals-row`, which existed only in the live preview.
+
+Before this round, a business owner who downloaded their app and grouped
+an Orders/Deals table by Status (possible since round 306) saw group
+header rows but no way to compare numeric totals across groups -- the
+grand-total `<tfoot>` still only summed the whole table, exactly the
+behavior round 302 fixed in the live preview. Grouping a numeric table by
+status specifically to compare revenue across "Paid" vs "Pending" is the
+whole reason to group it in the first place, so this was a real,
+behavior-breaking gap between what a user tests in the live preview and
+what they actually ship.
+
+Added a `groupNumericTotals` `useMemo` to `codegen.ts`'s generated
+`EntityView` (right after the existing `recordGroups` memo), computing one
+`sumNumericFields` result per group -- a direct, plain-JS port of the live
+preview's own memo (`EntityPanel.tsx:1160-1167`, round 302), guarded the
+same way (`hasNumericVisibleField && recordGroups`). Added the matching
+`entity-group-totals-row` `<tr>` inside the grouped `<tbody>` branch,
+rendered right after each group's own rows (`group.records.map(renderRow)`)
+-- one `Total: {value.toLocaleString()}` cell per numeric visible field,
+using codegen.ts's own no-i18n convention rather than the live preview's
+`formatNumberValue`/`lang`. Added the matching `.entity-group-totals-row`
+CSS rule to `renderStylesCss()`, mirroring the live preview's own styling
+(`var(--surface-subtle)` background, a bottom border, bold weight).
+
+Test: one new `codegen.test.ts` test regex-confirms the new memo, the
+per-group totals row markup, and the new CSS rule against the real
+generated `EntityView.jsx`/`styles.css`. All 89 pre-existing
+`codegen.test.ts` tests passed unchanged -- this was a purely additive
+change (no existing JSX branch or component signature was altered), so no
+collateral test updates were needed this round, unlike rounds 303/306/307's
+signature-change fallout.
+
+Deliberate-break-and-restore: removed the entire `entity-group-totals-row`
+block from the grouped `<tbody>` branch -- the new test failed exactly as
+expected (no match for the subtotal-row regex). Restored from a verified
+pre-break backup with a confirmed byte-identical `diff`; re-ran the full
+suite and confirmed everything passed again.
+
+Live verification (same real `vite build` + real `server.js` + real
+Chromium pattern as rounds 306-307): built a real "Order" project with a
+Status enum field and an Amount number field, created 3 real records
+through the real form (two "Paid" at 100 and 50, one "Pending" at 30),
+confirmed the real ungrouped grand total read "Total: 180", grouped by
+Status and confirmed the real per-group subtotals read "Total: 150" (Paid)
+and "Total: 30" (Pending) -- genuinely summed from the real SQLite-backed
+records, not hardcoded -- and confirmed the grand total still correctly
+read "Total: 180" underneath while grouped.
+
+Full suite green: **1156 tests** (`@forge/shared` 13, `@forge/spec-engine`
+85, `@forge/db` 93, `@forge/web` 651 unchanged; `@forge/api` 313 → 314)
+via `npm test` at the repo root, plus a clean
+`npm run build --workspace=@forge/api` (esbuild).
+
 ## Phase 4
 
 - Template/agent marketplace
