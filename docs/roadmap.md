@@ -18520,6 +18520,77 @@ Full suite green: **1156 tests** (`@forge/shared` 13, `@forge/spec-engine`
 via `npm test` at the repo root, plus a clean
 `npm run build --workspace=@forge/api` (esbuild).
 
+### Round 309 — The exported app's entity tabs are now drag-and-drop reorderable, like the live preview's
+
+With most of the known port-to-codegen backlog closed (table-grouping,
+entity-tab badges, per-group subtotals), an Explore survey was sent in
+fresh, specifically asked to look past the known small backup candidate
+(group-by-preference persistence) and check relatively unexplored UI
+surfaces. It found that the live preview's entity-tab bar supports
+dragging a tab to reorder it (`App.tsx:409-443`, persisted per-project via
+`entityTabOrder.ts`'s `localStorage` key, reusing `columnOrder.ts`'s own
+generic `applyColumnOrder`/`reorderColumns` math since an `Entity` has a
+`name` field just like a table field does) -- but `codegen.ts`'s generated
+`App.jsx` nav (`renderAppJsx`) rendered plain, non-draggable `<button>`s in
+`ENTITIES`' fixed declaration order, with no drag handlers and no
+persistence at all. This is a real, tactile regression: a user reorders
+their tabs while testing in the live preview to put their most-used entity
+first, exports the app, and the downloaded version silently ignores that
+order and can't be dragged at all.
+
+Ported the same mechanics into `renderAppJsx`'s generated `App.jsx`. Since
+`App.jsx` and `EntityView.jsx` are separate generated files (the existing
+`applyColumnOrder`/`reorderColumns` live only inside `EntityView.jsx`'s own
+template), the pure reorder math was mirrored rather than reused, as
+`applyEntityTabOrder`/`reorderEntityTabs` -- functionally identical, named
+distinctly to avoid implying a cross-file import that doesn't exist. Added
+a single-flat-array `ENTITY_TAB_ORDER_STORAGE_KEY` store (`getEntityTabOrder`/
+`setEntityTabOrder`): unlike the live preview's per-project keying, an
+exported app only ever has the one project baked in, so no project-id
+scoping was needed. Added `entityTabOrder`/`draggedEntityTab`/
+`dragOverEntityTab` state and a `handleReorderEntityTab` function to the
+generated `App` component (mirroring `App.tsx`'s own), replaced the nav's
+`ENTITIES.map` with `orderedEntities.map` (an `applyEntityTabOrder`-derived
+`useMemo`), and wired `draggable`/`onDragStart`/`onDragOver`/`onDragLeave`/
+`onDrop` onto each tab button. Added a `nav button.drag-over` CSS rule
+(dashed accent-colored border) right after the existing `nav button.active`
+rule.
+
+Test: one new `codegen.test.ts` test regex-confirms the new state, memo,
+handler, and drag-wired JSX against the real generated `App.jsx`, confirms
+the new CSS rule, then runs the real generated
+`applyEntityTabOrder`/`reorderEntityTabs` via `new Function` against plain
+arrays (including the "empty order falls back to natural order" and
+"dropping a tab on itself is a no-op" cases), and the real generated
+`getEntityTabOrder`/`setEntityTabOrder` against a fake `localStorage` to
+prove a genuine round trip. All 89 pre-existing `codegen.test.ts` tests
+passed unchanged -- another purely additive change (no existing JSX branch
+or component signature was altered), so no collateral test updates were
+needed, matching round 308's own pattern rather than 306/307's
+signature-change fallout.
+
+Deliberate-break-and-restore: reverted the nav JSX back to
+`ENTITIES.map`/no drag handlers -- the new test failed exactly as expected
+(no match for the `orderedEntities.map` / drag-handler regexes). Restored
+from a verified pre-break backup with a confirmed byte-identical `diff`;
+re-ran the full suite and confirmed everything passed again.
+
+Live verification (same real `vite build` + real `server.js` + real
+Chromium pattern as rounds 306-308): built a real 3-entity ("Alpha",
+"Beta", "Gamma") project, confirmed the real initial nav order matched
+`spec.entities`' declaration order, dragged the "Gamma" tab onto "Alpha"
+via a real native HTML5 drag (Playwright's `dragTo`), confirmed the nav
+immediately reordered to Gamma/Alpha/Beta, **reloaded the page** and
+confirmed the reordered order survived -- the real proof this persists via
+`localStorage` and not just in-memory React state -- and confirmed
+clicking a reordered tab ("Beta") still correctly activated it and showed
+its own record form.
+
+Full suite green: **1157 tests** (`@forge/shared` 13, `@forge/spec-engine`
+85, `@forge/db` 93, `@forge/web` 651 unchanged; `@forge/api` 314 → 315)
+via `npm test` at the repo root, plus a clean
+`npm run build --workspace=@forge/api` (esbuild).
+
 ## Phase 4
 
 - Template/agent marketplace
