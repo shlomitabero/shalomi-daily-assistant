@@ -19140,6 +19140,58 @@ Full suite green: **1181 tests** (`@forge/shared` 13, `@forge/spec-engine`
 via `npm test` at the repo root, plus a clean
 `npm run build --workspace=@forge/web` (tsc + vite).
 
+### Round 317 — The browser tab title now shows the real unread WhatsApp count, connecting two features that were each already complete on their own
+
+An Explore survey, after checking the usual panel list and finding
+nothing new, specifically looked for places where two already-closed
+features were never actually wired together -- and found one: the
+browser tab title already changed per open project (`documentTitle.ts`),
+and the in-page WhatsApp badge already tracked `whatsappUnreadCount`
+(`App.tsx`), but the two had never been connected. The in-page badge
+only ever caught someone's eye while that exact tab was already focused
+and visible on screen; the entire point of a badge like this, the same
+Gmail/Slack convention, is to be visible from the browser's own tab bar
+or alt-tab switcher while working in a completely different tab --
+which this app's title never supported at all.
+
+Fix: extended `formatDocumentTitle(projectName, unreadWhatsAppCount = 0)`
+to prefix a `"(N) "` count ahead of the existing `"ProjectName · Forge
+AI"` text whenever the count is nonzero, and wired the existing
+`whatsappUnreadCount` state into the title effect's own call and
+dependency array in `App.tsx`. `whatsappUnreadCount` itself needed no
+changes at all -- it was already fully and correctly maintained (reset
+to 0 on opening the WhatsApp panel, reset on switching projects,
+recomputed via `countUnreadWhatsAppMessages` on every poll) -- it simply
+had no reader outside the in-page badge until now.
+
+Tests: three new pure-function cases for `formatDocumentTitle` (a zero or
+unspecified count omits the prefix entirely; a real count prefixes
+correctly ahead of the project name; the prefix still applies even with
+no project open), plus a source-regex wiring test in `App.test.ts`
+confirming BOTH that the real effect call passes `whatsappUnreadCount`
+through AND that the effect's own dependency array includes it -- a
+title effect with the right call but a stale deps array would silently
+never re-run when the unread count changes, invisible to any test that
+only checked the call site. Mirrors the same two-part regex-on-source
+technique this file's own "wires onClose into useDialogFocusTrap" test
+already uses for effect-level wiring that can't be extracted as a
+standalone function the way a plain handler can.
+
+Deliberate-break-and-restore: reverted `formatDocumentTitle` to ignore
+its new count parameter entirely and confirmed the new test failed with
+the exact expected mismatch (`"My Shop · Forge AI"` instead of `"(3) My
+Shop · Forge AI"`). Restored from a verified pre-break backup with a
+confirmed byte-identical `diff`, then re-ran every workspace:
+`@forge/shared` 13/13, `@forge/spec-engine` 85/85, `@forge/db` 96/96,
+`@forge/api` 325/325 (unchanged, confirmed anyway per the established
+process), `@forge/web` 662 → 666, plus a clean
+`npm run build --workspace=@forge/web`.
+
+Full suite green: **1185 tests** (`@forge/shared` 13, `@forge/spec-engine`
+85, `@forge/db` 96, `@forge/api` 325 unchanged; `@forge/web` 662 → 666)
+via `npm test` at the repo root, plus a clean
+`npm run build --workspace=@forge/web` (tsc + vite).
+
 ## Phase 4
 
 - Template/agent marketplace
