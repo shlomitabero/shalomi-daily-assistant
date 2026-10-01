@@ -19264,6 +19264,78 @@ Full suite green: **1197 tests** (`@forge/shared` 13, `@forge/spec-engine`
 via `npm test` at the repo root, plus a clean full monorepo
 `npm run build`.
 
+### Round 319 — The WhatsApp message log's own search box finally remembers recent searches, the last live-filter search box in the app without that memory
+
+An Explore survey, explicitly asked to keep hunting the "feature-family
+missing on one sibling" shape that found rounds 317 and 318, came back
+with the WhatsApp panel's own message-log search box
+(`WhatsAppPanel.tsx`, shown once a project has more than 5 messages) as
+the strongest fit: a live filter-as-you-type box with real match
+highlighting (explicitly built to mirror `EntityPanel.tsx`'s/
+`GlobalSearchPanel.tsx`'s own `Highlighted` component), but the one
+search box in the whole app still with zero memory of past queries --
+Global Search (round 180), Time Machine, the home screen's project
+search (round 316), and the per-entity table search (round 318,
+explicitly called "the last search box in the app without that memory"
+at the time) all already have this. A sixth, previously-overlooked
+instance of the exact pattern rounds 316-318 each closed one at a time.
+Distinct from the already-wired `whatsappRecentNumbers.ts`, which
+remembers phone numbers typed into the separate "send test message"
+field, not log search queries -- confirmed via grep that this really was
+a fresh, unaddressed gap rather than a re-suggestion.
+
+Added `whatsappLogRecentSearches.ts`, matching the four existing
+`recentSearches`-family modules' add/remove/clear/cap-at-5 behavior, but
+scoped per project only (not per-entity) -- mirroring `recentSearches.ts`/
+`recentProjectSearches.ts`'s own single-key-per-scope shape, since
+there's only one message log per project, unlike `entityRecentSearches.ts`
+(round 318) which needed a two-key scope for its one-log-per-entity shape.
+
+Wired into `WhatsAppPanel.tsx`: a new `logRecentSearches` state lazily
+initialized from the store (the panel unmounts entirely on close --
+see `App.tsx`'s `{showWhatsApp && <WhatsAppPanel .../>}` -- so, exactly
+like the existing `recentNumbers`/`directionFilter` state just above it,
+a fresh mount always re-reads the real persisted list; no separate
+resync effect needed). Enter is the commit signal (identical reasoning
+to rounds 316/318's own handlers) via a new `handleLogSearchKeyDown`. A
+recent-searches chip row renders directly below the existing
+`.whatsapp-log-filters` row, reusing the app's `.chips`/`.chip`/
+`.chip-removable` CSS, gated on the same `messages.length > SEARCH_THRESHOLD`
+condition that shows the search box itself (so the chip row can never
+appear orphaned with no search box above it) plus an empty search box
+and at least one recent search.
+
+Tests: a full pure-function suite for `whatsappLogRecentSearches.ts`
+mirroring `recentProjectSearches.test.ts`'s own coverage (defaults,
+round-tripping, capping at 5, case-insensitive dedup, per-project
+scoping isolation, per-query removal, clearing, and tolerating corrupted
+localStorage content) in `whatsappLogRecentSearches.test.ts`, plus a
+real-DOM wiring test added to the existing `WhatsAppPanel.test.ts`
+(which already renders the real component with
+`@testing-library/react`): renders with 6 messages (crossing the
+`SEARCH_THRESHOLD = 5` so the search box actually shows), types a query
+and presses Enter, confirms the chip row stays hidden while the box
+still has text, confirms the chip appears once the box is empty,
+confirms clicking the chip refills the search box, and confirms the
+per-chip remove button clears the row.
+
+Deliberate-break-and-restore: reverted `WhatsAppPanel.tsx` to its
+pre-round state (the new `whatsappLogRecentSearches.ts` module and its
+own test file left in place, the same "feature built but never wired"
+shape this round targets) and confirmed the new real-DOM wiring test
+failed with `waitForCondition: condition never became true` (the chip
+row never appeared) -- the exact expected failure. Restored from a
+verified pre-break backup with a confirmed byte-identical `diff`, then
+re-ran every workspace: `@forge/shared` 13/13, `@forge/spec-engine`
+85/85, `@forge/db` 96/96, `@forge/api` 325/325 (unchanged, confirmed
+anyway per the established process), `@forge/web` 678 → 690, plus a
+clean full monorepo `npm run build`.
+
+Full suite green: **1209 tests** (`@forge/shared` 13, `@forge/spec-engine`
+85, `@forge/db` 96, `@forge/api` 325 unchanged; `@forge/web` 678 → 690)
+via `npm test` at the repo root, plus a clean full monorepo
+`npm run build`.
+
 ## Phase 4
 
 - Template/agent marketplace
