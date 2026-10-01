@@ -19336,6 +19336,77 @@ Full suite green: **1209 tests** (`@forge/shared` 13, `@forge/spec-engine`
 via `npm test` at the repo root, plus a clean full monorepo
 `npm run build`.
 
+### Round 320 — Bulk-delete finally gets the same 5-second undo window single delete has had since round 184
+
+With all six recentSearches boxes now closed (round 319), an Explore
+survey explicitly re-verified the two standing backup candidates and
+ran a fresh search for a new "exists everywhere except one sibling"
+gap. It recommended the safety fix over a new feature this round:
+bulk-delete (`EntityPanel.tsx`'s `handleBulkDelete`) was still exactly
+what single-record delete used to be before round 184 -- a
+`window.confirm` dialog, then every real `DELETE` fired immediately
+with zero recovery -- while `handleDelete`, right next to it in the
+same file, has had a real 5-second undo window (optimistic removal,
+delayed real API call, an "Undo" toast) since round 184. Bulk-delete
+is the single highest-stakes action in the app (it can wipe many
+records in one click) and the easiest to mis-trigger (a stale filter
+or selection bug leaving the wrong rows checked), yet it was the one
+destructive action left with the thinnest safety net -- a real, felt
+gap, not a cosmetic one.
+
+Fix: generalized the existing `PendingDelete` state from a single
+record to a batch (`PendingDeleteEntry[]`), so `handleDelete` and
+`handleBulkDelete` now share the exact same machinery --
+`commitPendingDelete` runs every entry's real `DELETE` through
+`Promise.allSettled` (preserving the partial-failure resilience
+`handleBulkDelete` already had on its own, now generalized rather than
+duplicated), and `handleUndoDelete` restores every entry via
+`restoreRecordAt` in ascending original-index order so a bulk undo
+puts every row back exactly where it was, not in some arbitrary
+order. A single shared toast (`pendingDelete.message`, precomputed via
+`t()` at the call site instead of interpolated at render time, since
+the two call sites now need two different translation keys for the
+same field) names the real count for a bulk delete
+(`entity.bulk.deleteUndoToast`). The bulk confirm dialog's own text was
+also updated (`entity.bulk.confirmDelete`) since "this can't be undone"
+was no longer true.
+
+Tests: replaced the two stale `handleBulkDelete` regex-extraction tests
+(which tested the old inline-`Promise.allSettled`-plus-`refresh()`
+shape, now gone) with three real-DOM tests in `EntityPanel.test.ts`,
+mirroring single-delete's own undo tests' exact technique (render the
+real component, `t.mock.timers`, `fireEvent`): bulk delete removes
+every selected row immediately and shows one toast naming the real
+count, clicking Undo restores every row in original order while
+genuinely cancelling every pending `DELETE`; not clicking Undo commits
+every real `DELETE` once the window elapses; and a partial failure
+(one record's real delete succeeds, another's fails with a 409)
+restores only the record that actually failed and surfaces the
+translated partial-failure message with the real counts.
+
+Deliberate-break-and-restore: reverted `EntityPanel.tsx` to its
+pre-round state and confirmed all three new tests failed with the
+precise expected mismatches (rows not disappearing, the real DELETE
+firing immediately instead of waiting for the undo window, the
+partial-failure row count never settling). Restored from a verified
+pre-break backup with a confirmed byte-identical `diff`, then re-ran
+every workspace: `@forge/shared` 13/13, `@forge/spec-engine` 85/85,
+`@forge/db` 96/96, `@forge/api` 325/325 (unchanged, confirmed anyway
+per the established process), `@forge/web` 690 → 691 (net: -2 stale
+tests, +3 new ones), plus a clean full monorepo `npm run build`.
+
+Scope note, matching this project's own repeated live-preview/export
+split (e.g. rounds 53→54, 67→70, 51→52): only the live preview got
+fixed this round. `codegen.ts`'s generated `EntityView`'s own
+`handleBulkDelete` has the identical gap and is the explicit next
+candidate for round 321, mirroring this same change into the exported
+app's generated code.
+
+Full suite green: **1210 tests** (`@forge/shared` 13, `@forge/spec-engine`
+85, `@forge/db` 96, `@forge/api` 325 unchanged; `@forge/web` 690 → 691)
+via `npm test` at the repo root, plus a clean full monorepo
+`npm run build`.
+
 ## Phase 4
 
 - Template/agent marketplace
