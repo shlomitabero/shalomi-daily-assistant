@@ -20254,6 +20254,52 @@ Full suite green: **1230 tests** (`@forge/shared` 13, `@forge/spec-engine`
 unchanged, assertions added inside existing tests) via `npm test` at the
 repo root, plus a clean full monorepo `npm run build`.
 
+### Round 335 — Error messages announced to screen readers in HistoryPanel and WhatsAppPanel (batch 2 of 2)
+
+The natural follow-up round 334 deliberately deferred: the remaining 9
+`<p className="error">` elements with no ARIA role, split across
+`HistoryPanel.tsx` (its shared `error`, `deleteError`, and
+round-328 `loadError`) and `WhatsAppPanel.tsx` (`loadError`,
+`initialLoadError`, two separate `status.error` renders across the
+disconnected/connecting/qr states, `retryError`, and `deleteError`).
+Re-verified via a fresh grep right before editing — per round 334's own
+new standing lesson — rather than trusting the prior count blindly, and
+all 9 were confirmed exactly where the round-334 survey said.
+
+Same design decision as every prior round in this family: `role="status"`,
+matching `EntityPanel`'s own round-328 precedent, not `role="alert"`
+(reserved for inline per-field validation elsewhere in this project).
+
+Tests: added one assertion (`getAttribute("role") === "status"`) into
+each file's own existing test that already renders and grabs its
+`error-retry-row`'s error paragraph — the same approach rounds 327, 331,
+and 334 already established. The other 7 elements (`HistoryPanel`'s
+shared `error`/`deleteError`, `WhatsAppPanel`'s `status.error` ×2,
+`retryError`, `deleteError`) had no pre-existing test rendering them, so
+those fixes went in without a new assertion, consistent with round 334's
+own practice of not inventing a render-from-scratch test just to cover
+one attribute — the fix itself was still verified via `tsc -b` and a
+full `npm run build`.
+
+Deliberate-break-and-restore: backed up all 4 changed files, reverted
+just the 2 `.tsx` components to their pre-round HEAD state, and confirmed
+exactly 1 test failed per file (the one carrying the new assertion)
+while every other test in each file (16 in `HistoryPanel`, 25 in
+`WhatsAppPanel`) kept passing. Restored from the verified backup with a
+confirmed byte-identical `diff` against all 4 files, then re-ran the
+full `@forge/web` suite (698/698) and a clean full monorepo
+`npm run build`.
+
+With this round, **all 15 of the originally-surveyed error-role
+accessibility gaps are closed** — every `<p className="error">` element
+in the live preview now has a `role` matching the established
+`EntityPanel` precedent.
+
+Full suite green: **1230 tests** (`@forge/shared` 13, `@forge/spec-engine`
+85, `@forge/db` 96, `@forge/api` 338 unchanged; `@forge/web` 698
+unchanged, assertions added inside existing tests) via `npm test` at the
+repo root, plus a clean full monorepo `npm run build`.
+
 ## Phase 4
 
 - Template/agent marketplace
