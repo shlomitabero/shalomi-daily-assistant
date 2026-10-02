@@ -21306,6 +21306,67 @@ Full suite green: **1262 tests** (`@forge/shared` 13, `@forge/spec-engine`
 716 (+1 new test)) via `npm test` at the repo root, plus a clean full
 monorepo `npm run build`.
 
+### Round 352 — Ctrl/Cmd+Enter submits the record form from any field
+
+No ready candidate going into this round, so spawned an Explore survey
+(continuing round 346's own finding that gaps now live in
+`EntityPanel.tsx`/`codegen.ts` themselves). Independently re-verified its
+pick rather than trusting the report: read the form's own `onKeyDown`
+(added last round for Escape-to-cancel) and confirmed it only checks
+`e.key === "Escape"`. Read the `longtext` field's `<textarea>` rendering
+and confirmed it gets no special `onKeyDown` of its own, so a bare Enter
+there just inserts a newline -- unlike every single-line input, where
+Enter already submits the form natively via the browser's own default
+form-submission behavior. Grepped for `ctrlKey|metaKey` across both
+files and found exactly one existing use (the unrelated Ctrl/Cmd+K
+search shortcut) -- confirming no Ctrl/Cmd+Enter submit handling existed
+anywhere. Confirmed the identical gap in `apps/api/src/codegen.ts`'s
+mirrored form.
+
+Extended the same form `onKeyDown` handler: on Ctrl+Enter or Cmd+Enter,
+call `e.currentTarget.requestSubmit()` -- the real native submit path,
+identical to what the Save button's own `type="submit"` click, or Enter
+in a single-line input, already triggers (including this form's own
+`noValidate`), so there's zero duplicated submit logic. Works from any
+field in the form (not just the textarea) since the handler lives on the
+`<form>` element itself, catching every bubbled keydown.
+
+**Verified `requestSubmit()` actually works under this repo's test
+tooling before committing to the approach**, rather than assuming it:
+wrote a tiny standalone script against the exact `jsdom` version in
+`node_modules` (30.1.0) confirming `HTMLFormElement.prototype.requestSubmit`
+exists and genuinely fires a real `submit` event -- avoiding a repeat of
+the jsdom-gaps class of bug this session has hit before (`scrollIntoView`,
+`Notification`, `Clipboard` are all missing; `requestSubmit` is not).
+
+Added a `["Ctrl", "Enter"]` row to `ShortcutsPanel.tsx`'s own list and a
+new `shortcuts.submitForm` i18n key (Hebrew + English).
+
+Ported identically into `apps/api/src/codegen.ts`'s matching form.
+
+Tests: new real-DOM tests in `EntityPanel.test.ts` and `codegen.test.ts`
+build a `Lead` entity fixture (text + longtext fields), confirm a bare
+Enter in the longtext `<textarea>` never submits (postCount stays 0),
+then confirm Ctrl+Enter AND Cmd+Enter each genuinely create a real
+record through the real mocked API. Updated `ShortcutsPanel.test.ts`'s
+own row-count assertion (10→11) and added an assertion that exactly two
+distinct `"Ctrl"`-prefixed shortcut rows now exist (Ctrl+K and
+Ctrl+Enter), rather than just checking presence.
+
+Deliberate-break-and-restore: backed up all 7 changed files, reverted
+the 4 implementation files to HEAD, and confirmed exactly 1 failure in
+each of the 3 affected suites (`ShortcutsPanel.test.ts` 1/2,
+`EntityPanel.test.ts` 84/85, `codegen.test.ts` 126/127) -- no other
+tests affected. Restored every file from the backup and confirmed
+byte-identical via `diff -q` against all 7 files, then re-ran both full
+suites and both production builds clean one final time before
+committing.
+
+Full suite green: **1264 tests** (`@forge/shared` 13, `@forge/spec-engine`
+85, `@forge/db` 96 unchanged; `@forge/api` 353 (+1 new test); `@forge/web`
+717 (+1 new test)) via `npm test` at the repo root, plus a clean full
+monorepo `npm run build`.
+
 ## Phase 4
 
 - Template/agent marketplace
