@@ -1298,12 +1298,15 @@ export function EntityPanel({
 
   /**
    * j/k (and ArrowDown/ArrowUp) move a keyboard focus between table rows,
-   * Enter opens the focused row for editing, and "x" toggles that row's
-   * own selection checkbox -- previously a keyboard-only user could
+   * Enter opens the focused row for editing, "x" toggles that row's own
+   * selection checkbox, and Delete/Backspace deletes it (reusing
+   * handleDelete's own confirm dialog and undo-toast, exactly like its
+   * mouse-driven Delete button) -- previously a keyboard-only user could
    * navigate to and open any record but could never build a multi-row
-   * selection for the bulk actions (bulk delete/duplicate/edit) without
-   * reaching for the mouse. Only active in table view (board/calendar
-   * have their own navigation shapes), and isTypingTarget guards against
+   * selection for the bulk actions (bulk delete/duplicate/edit), or
+   * delete a single record, without reaching for the mouse. Only active
+   * in table view (board/calendar have their own navigation shapes), and
+   * isTypingTarget guards against
    * hijacking keystrokes meant for the search box, a filter dropdown, or
    * the add/edit form -- the same guard App.tsx's own Ctrl+K/Escape
    * handler gets for free by only running in the "preview" view, which
@@ -1329,6 +1332,9 @@ export function EntityPanel({
       } else if (e.key === "x" && focusedRowId != null) {
         e.preventDefault();
         toggleSelected(focusedRowId);
+      } else if ((e.key === "Delete" || e.key === "Backspace") && focusedRowId != null) {
+        e.preventDefault();
+        void handleDelete(focusedRowId);
       }
     }
     window.addEventListener("keydown", handleKeyDown);

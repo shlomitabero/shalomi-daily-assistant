@@ -3285,6 +3285,70 @@ test("EntityPanel's 'x' shortcut toggles the focused row's own selection checkbo
 });
 
 /**
+ * New in this round: j/k/Enter/x above let a keyboard-only user navigate,
+ * open, and select rows, but deleting one still required reaching for the
+ * mouse (the row's own Delete button). Delete/Backspace now delete the
+ * focused row, reusing handleDelete's own confirm dialog and undo-toast
+ * verbatim (the exact same function the mouse-driven button already
+ * calls) -- so this confirms window.confirm is actually invoked (not
+ * bypassed), the row disappears once confirmed, and the isTypingTarget
+ * guard still applies: pressing Delete/Backspace while the search box has
+ * focus must edit its own text (deleting a character), not delete a
+ * record.
+ */
+test("EntityPanel's Delete/Backspace shortcut deletes the focused row via the real confirm dialog, without hijacking keystrokes typed into the search box", async () => {
+  await withJsdom(async () => {
+    const store: EntityRecord[] = [
+      { id: 1, name: "Acme Corp", status: "new" },
+      { id: 2, name: "Globex", status: "won" },
+    ];
+    const originalFetch = globalThis.fetch;
+    const originalConfirm = globalThis.window.confirm;
+    globalThis.fetch = mockRecordsFetch(store) as typeof fetch;
+    let confirmCalls = 0;
+    globalThis.window.confirm = (() => {
+      confirmCalls += 1;
+      return true;
+    }) as typeof window.confirm;
+    try {
+      renderEntityPanel();
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 2);
+
+      for (let attempt = 0; document.querySelectorAll(".record-row-focused").length === 0 && attempt < 40; attempt++) {
+        fireEvent.keyDown(window, { key: "j" });
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      }
+      const focused = document.querySelector(".record-row-focused") as HTMLElement;
+      assert.equal(focused.getAttribute("data-record-id"), "1", "sanity check: 'j' must have focused the first row");
+
+      // Pressing Delete/Backspace while the search box has focus must never
+      // trigger the delete confirm dialog or remove a row (isTypingTarget's
+      // job) -- fired at the search box itself, same as the "j"/"x" guard
+      // tests above, without changing its value (a real Backspace there
+      // would edit its own text, not delete a record either way).
+      const searchBox = document.querySelector(".entity-search") as HTMLInputElement;
+      fireEvent.keyDown(searchBox, { key: "Backspace" });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      assert.equal(confirmCalls, 0, "a Backspace keydown targeting the search box must never trigger the delete confirm dialog");
+      assert.equal(document.querySelectorAll("table tbody tr").length, 2, "no row must be deleted while the search box had focus");
+
+      fireEvent.keyDown(window, { key: "Delete" });
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 1);
+      assert.equal(confirmCalls, 1, "the real confirm dialog must actually be invoked, not bypassed");
+      assert.equal(
+        document.querySelector('tr[data-record-id="1"]'),
+        null,
+        "the focused row (Acme Corp, id 1) must be the one deleted, not the other row",
+      );
+      assert.ok(document.querySelector('tr[data-record-id="2"]'), "the untouched row must still render");
+    } finally {
+      globalThis.fetch = originalFetch;
+      globalThis.window.confirm = originalConfirm;
+    }
+  });
+});
+
+/**
  * New in this round: there was no keyboard-only way to start adding a new
  * record -- j/k/Enter above only navigate EXISTING rows. "n" jumps to a
  * blank add form and focuses its first field, discarding any in-progress

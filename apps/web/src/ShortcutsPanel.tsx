@@ -21,6 +21,7 @@ const SHORTCUTS: { keys: string[]; descriptionKey: string }[] = [
   { keys: ["Enter"], descriptionKey: "shortcuts.rowEdit" },
   { keys: ["x"], descriptionKey: "shortcuts.toggleSelect" },
   { keys: ["n"], descriptionKey: "shortcuts.newRecord" },
+  { keys: ["Delete"], descriptionKey: "shortcuts.rowDelete" },
 ];
 
 export function ShortcutsPanel({ onClose }: { onClose: () => void }) {

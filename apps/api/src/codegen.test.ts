@@ -2222,6 +2222,89 @@ test("the exported EntityView's 'x' shortcut toggles the focused row's own selec
 });
 
 /**
+ * New in this round: porting the live preview's own Delete/Backspace
+ * shortcut (delete the focused row) to the exported app's EntityView.jsx.
+ * j/k/Enter/x above let a keyboard-only user navigate, open, and select
+ * rows, but deleting one still required reaching for the mouse --
+ * confirmed via grep that handleDelete was only ever wired to the row's
+ * own Delete button's onClick. Reuses handleDelete verbatim (its real
+ * window.confirm dialog and undo-toast machinery), so this confirms
+ * confirm is actually invoked (not bypassed) and only the focused row
+ * disappears.
+ */
+test("the exported EntityView's Delete/Backspace shortcut deletes the focused row via the real confirm dialog", async () => {
+  const files = generateExportFiles(project);
+  const dir = writeGeneratedWebComponent(files);
+  const store = [
+    { id: 1, name: "Acme Corp", status: "New" },
+    { id: 2, name: "Globex", status: "Won" },
+  ];
+  const originalFetch = globalThis.fetch;
+  const originalConfirm = globalThis.window?.confirm;
+  globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
+    const method = init?.method ?? "GET";
+    if (method === "GET" && input === "/api/Customer") {
+      return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    if (method === "DELETE" && input === "/api/Customer/1") {
+      return new Response(null, { status: 204 });
+    }
+    throw new Error(`unexpected request ${method} ${input}`);
+  }) as typeof fetch;
+  let confirmCalls = 0;
+  (globalThis.window as unknown as { confirm: () => boolean }).confirm = () => {
+    confirmCalls += 1;
+    return true;
+  };
+
+  try {
+    await withRealLocalStorage(async () => {
+      const { EntityView } = await import(path.join(dir, "web", "src", "components", "EntityView.jsx"));
+      const customerEntity = project.spec.entities.find((e) => e.name === "Customer")!;
+      const props = {
+        entity: customerEntity,
+        highlightRecordId: null,
+        onHighlightHandled: () => {},
+        onJumpToRecord: () => {},
+        onRecordCountChange: () => {},
+      };
+
+      const { container } = render(React.createElement(EntityView, props));
+      for (let i = 0; i < 40; i++) {
+        if (container.querySelectorAll("tbody tr").length === 2) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+      assert.equal(container.querySelectorAll("tbody tr").length, 2, "expected both records to have loaded");
+
+      await act(async () => {
+        fireEvent.keyDown(window, { key: "j" });
+      });
+      const focused = container.querySelector(".record-row-focused") as HTMLElement;
+      assert.equal(focused.getAttribute("data-record-id"), "1", "sanity check: 'j' must have focused the first row");
+
+      await act(async () => {
+        fireEvent.keyDown(window, { key: "Delete" });
+      });
+      assert.equal(confirmCalls, 1, "the real confirm dialog must actually be invoked, not bypassed");
+      assert.equal(container.querySelectorAll("tbody tr").length, 1, "the focused row must be deleted");
+      assert.equal(
+        container.querySelector('tr[data-record-id="1"]'),
+        null,
+        "the focused row (Acme Corp, id 1) must be the one deleted, not the other row",
+      );
+      assert.ok(container.querySelector('tr[data-record-id="2"]'), "the untouched row must still render");
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (originalConfirm) (globalThis.window as unknown as { confirm: () => boolean }).confirm = originalConfirm;
+    cleanup();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
  * New in this round: porting the live preview's own "n" shortcut
  * (jump to a blank add-record form) to the exported app's EntityView.jsx.
  * Unlike j/k/Enter above, this listener is NOT scoped to table view -- the
