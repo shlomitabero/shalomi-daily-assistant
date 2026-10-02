@@ -926,6 +926,12 @@ function setColumnWidth(entityName, fieldName, width) {
   writeColumnWidthsStore(store);
   return widths;
 }
+function clearColumnWidths(entityName) {
+  const store = readColumnWidthsStore();
+  delete store[entityName];
+  writeColumnWidthsStore(store);
+  return {};
+}
 
 // The actual drag math: how far the mouse has moved since the drag started,
 // added to the column's width at that moment, clamped to a sane range.
@@ -3343,6 +3349,11 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
                 </div>
               )}
             </div>
+            {Object.keys(columnWidths).length > 0 && (
+              <button type="button" className="entity-reset-column-widths" onClick={() => setColumnWidths(clearColumnWidths(entity.name))}>
+                Reset column widths
+              </button>
+            )}
           </div>
           {!search.trim() && recentSearches.length > 0 && (
             <div className="entity-search-recent">

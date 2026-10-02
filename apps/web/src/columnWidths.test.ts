@@ -2,7 +2,7 @@ import "./jsdomWarmup.js";
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { JSDOM } from "jsdom";
-import { computeResizedWidth, getColumnWidths, MAX_COLUMN_WIDTH, MIN_COLUMN_WIDTH, setColumnWidth } from "./columnWidths.js";
+import { clearColumnWidths, computeResizedWidth, getColumnWidths, MAX_COLUMN_WIDTH, MIN_COLUMN_WIDTH, setColumnWidth } from "./columnWidths.js";
 
 /** Same full-jsdom-swap technique used by columnVisibility.test.ts/pinnedProjects.test.ts: real localStorage, not a mock. */
 async function withJsdom(fn: () => void | Promise<void>): Promise<void> {
@@ -60,6 +60,26 @@ test("getColumnWidths falls back to an empty record for corrupted/foreign localS
   await withJsdom(() => {
     localStorage.setItem("forge.columnWidths", "not real json{{{");
     assert.deepEqual(getColumnWidths("proj1", "Customer"), {});
+  });
+});
+
+test("clearColumnWidths drops every resized width for the entity, and a fresh getColumnWidths call sees it gone -- a real round trip, not just the return value", async () => {
+  await withJsdom(() => {
+    setColumnWidth("proj1", "Customer", "name", 220);
+    setColumnWidth("proj1", "Customer", "email", 300);
+    const after = clearColumnWidths("proj1", "Customer");
+    assert.deepEqual(after, {});
+    assert.deepEqual(getColumnWidths("proj1", "Customer"), {}, "must actually be removed from storage, not just returned as empty");
+  });
+});
+
+test("clearColumnWidths only clears the given project+entity, leaving a different entity's own resized widths untouched", async () => {
+  await withJsdom(() => {
+    setColumnWidth("proj1", "Customer", "name", 220);
+    setColumnWidth("proj1", "Order", "total", 180);
+    clearColumnWidths("proj1", "Customer");
+    assert.deepEqual(getColumnWidths("proj1", "Customer"), {});
+    assert.deepEqual(getColumnWidths("proj1", "Order"), { total: 180 }, "a different entity's own resized widths must survive clearing Customer's");
   });
 });
 

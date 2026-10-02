@@ -4981,6 +4981,84 @@ test("the exported EntityView's group-header toggle collapses and expands just t
 });
 
 /**
+ * New in this round: mirrors the live preview's own "Reset column
+ * widths" button -- once a column was manually resized, the only way
+ * back to automatic sizing was dragging it back by hand, with no
+ * one-click way to reset. Drives a real mousedown/mousemove/mouseup
+ * drag on the Name column's own resize handle (the same wire-up the
+ * generated app's startResize/computeResizedWidth already has), then
+ * confirms the reset button appears, clicking it clears the live inline
+ * width, and the persisted storage is genuinely cleared too (read
+ * directly from localStorage, not just inferred from the DOM).
+ */
+test("the exported EntityView's 'Reset column widths' button only appears once a column has been resized, and clears both the live width and persisted storage", async () => {
+  const files = generateExportFiles(project);
+  const dir = writeGeneratedWebComponent(files);
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async () => ({
+    ok: true,
+    status: 200,
+    json: async () => ({ records: [{ id: 1, name: "Alice", status: "New" }] }),
+  })) as typeof fetch;
+
+  try {
+    await withRealLocalStorage(async () => {
+      const { EntityView } = await import(path.join(dir, "web", "src", "components", "EntityView.jsx"));
+      const customerEntity = project.spec.entities.find((e) => e.name === "Customer")!;
+      const props = {
+        entity: customerEntity,
+        highlightRecordId: null,
+        onHighlightHandled: () => {},
+        onJumpToRecord: () => {},
+        onRecordCountChange: () => {},
+      };
+
+      const { container } = render(React.createElement(EntityView, props));
+      for (let i = 0; i < 40; i++) {
+        if (container.querySelector(".resizable-col")) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+      assert.equal(container.querySelector(".entity-reset-column-widths"), null, "no reset button before any column has been resized");
+
+      const nameHeader = container.querySelector(".resizable-col") as HTMLTableCellElement;
+      const handle = nameHeader.querySelector(".column-resize-handle") as HTMLSpanElement;
+      assert.ok(handle, "expected a real resize handle inside the Name column's header");
+
+      // mousedown sets resizingField, and only the useEffect reacting to
+      // THAT state attaches the real window mousemove/mouseup listeners --
+      // a single act() around all three events risks firing mousemove
+      // before that effect has run, so mousedown gets its own act() first.
+      await act(async () => {
+        fireEvent.mouseDown(handle, { clientX: 100 });
+      });
+      await act(async () => {
+        fireEvent.mouseMove(window, { clientX: 160 });
+        fireEvent.mouseUp(window, { clientX: 160 });
+      });
+      assert.equal(nameHeader.style.width, "60px", "sanity check: the drag itself must have actually resized the column");
+
+      const resetButton = container.querySelector(".entity-reset-column-widths") as HTMLButtonElement;
+      assert.ok(resetButton, "expected the reset button to appear once a column has been resized");
+
+      await act(async () => {
+        fireEvent.click(resetButton);
+      });
+      assert.equal(nameHeader.style.width, "", "clicking reset must clear the live inline width back to automatic sizing");
+      assert.equal(container.querySelector(".entity-reset-column-widths"), null, "the reset button itself must disappear once there's nothing left to reset");
+
+      const stored = JSON.parse(localStorage.getItem("forge_column_widths") ?? "{}");
+      assert.deepEqual(stored.Customer ?? {}, {}, "clicking reset must also clear the persisted storage, not just the live DOM");
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    cleanup();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
  * New in this round (341): mirrors the live preview's own "Clear filters"
  * button -- with no way to reset multiple active per-field filters except
  * reopening each dropdown individually, a button now appears only once at

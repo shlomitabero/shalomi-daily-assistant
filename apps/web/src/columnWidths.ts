@@ -61,6 +61,20 @@ export function setColumnWidth(projectId: string, entityName: string, fieldName:
 }
 
 /**
+ * Drops every manually-resized width for this entity, returning the table
+ * to its normal automatic sizing -- previously the only way back to
+ * default widths after a drag was resizing each column back by hand, one
+ * drag at a time, unlike fieldFilters' own one-click "Clear all filters"
+ * (round 341).
+ */
+export function clearColumnWidths(projectId: string, entityName: string): Record<string, number> {
+  const store = readStore();
+  delete store[keyFor(projectId, entityName)];
+  writeStore(store);
+  return {};
+}
+
+/**
  * The actual drag math behind dragging a column's resize handle: how far the
  * mouse has moved since the drag started, added to the column's width at
  * that moment, clamped to a sane range. In a right-to-left layout (Hebrew),

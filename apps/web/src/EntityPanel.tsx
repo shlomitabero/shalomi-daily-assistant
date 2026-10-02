@@ -3,7 +3,7 @@ import type { Entity, EntityRecord, Field, Project } from "@forge/shared";
 import { createRecord, deleteRecord, listRecords, updateRecord } from "./api.js";
 import { buildCalendarIcs, downloadCalendarIcs } from "./calendarIcs.js";
 import { getHiddenFields, toggleFieldVisibility } from "./columnVisibility.js";
-import { computeResizedWidth, getColumnWidths, setColumnWidth } from "./columnWidths.js";
+import { clearColumnWidths, computeResizedWidth, getColumnWidths, setColumnWidth } from "./columnWidths.js";
 import { applyColumnOrder, getColumnOrder, reorderColumns, setColumnOrder } from "./columnOrder.js";
 import {
   addEntityRecentSearch,
@@ -2220,6 +2220,15 @@ export function EntityPanel({
                 </div>
               )}
             </div>
+            {Object.keys(columnWidths).length > 0 && (
+              <button
+                type="button"
+                className="secondary small entity-reset-column-widths"
+                onClick={() => setColumnWidths(clearColumnWidths(projectId, entity.name))}
+              >
+                {t("entity.columns.resetWidths")}
+              </button>
+            )}
           </div>
           {!search.trim() && recentSearches.length > 0 && (
             <div className="entity-search-recent">

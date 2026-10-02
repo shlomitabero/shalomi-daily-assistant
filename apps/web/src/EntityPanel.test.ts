@@ -2944,6 +2944,46 @@ test("EntityPanel's column resize handle drags a column to a new width, applies 
 });
 
 /**
+ * New in this round: once a column was manually resized, the only way
+ * back to the table's normal automatic sizing was dragging each resized
+ * column back by hand -- no one-click way to reset, unlike fieldFilters'
+ * own "Clear all filters" (round 341). Confirms the button is absent
+ * when no column has ever been resized, appears once one has, clicking
+ * it drops BOTH the live inline widths and the persisted storage, and it
+ * then disappears again (nothing left to reset).
+ */
+test("EntityPanel's 'Reset column widths' button only appears once a column has been resized, and clears both the live widths and persisted storage", async () => {
+  await withJsdom(async () => {
+    const store: EntityRecord[] = [{ id: 1, name: "Acme Corp", status: "new" }];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = mockRecordsFetch(store) as typeof fetch;
+    try {
+      renderEntityPanel();
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 1);
+
+      assert.equal(document.querySelector(".entity-reset-column-widths"), null, "no reset button before any column has been resized");
+
+      const nameHeader = document.querySelectorAll("th.resizable-col")[0] as HTMLTableCellElement;
+      const handle = nameHeader.querySelector(".column-resize-handle") as HTMLSpanElement;
+      fireEvent.mouseDown(handle, { clientX: 100 });
+      fireEvent.mouseMove(window, { clientX: 160 });
+      fireEvent.mouseUp(window, { clientX: 160 });
+      assert.equal(nameHeader.style.width, "60px", "sanity check: the drag itself must have actually resized the column");
+
+      const resetButton = document.querySelector(".entity-reset-column-widths") as HTMLButtonElement;
+      assert.ok(resetButton, "expected the reset button to appear once a column has been resized");
+
+      fireEvent.click(resetButton);
+      assert.equal(nameHeader.style.width, "", "clicking reset must clear the live inline width back to automatic sizing");
+      assert.deepEqual(getColumnWidths("proj1", "Deal"), {}, "clicking reset must also clear the persisted storage, not just the live DOM");
+      assert.equal(document.querySelector(".entity-reset-column-widths"), null, "the reset button itself must disappear once there's nothing left to reset");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * New in this round: the board view's card <select> (still there, and
  * still the accessible/keyboard-reachable way to move a card) was the only
  * way to move a card between columns -- a real Kanban board is expected to
