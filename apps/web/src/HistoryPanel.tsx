@@ -41,6 +41,7 @@ export function HistoryPanel({
   const { t, lang } = useTranslation();
   const [checkpoints, setCheckpoints] = useState<Checkpoint[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [compareTargetId, setCompareTargetId] = useState<string | null>(null);
@@ -53,10 +54,16 @@ export function HistoryPanel({
   const dialogRef = useDialogFocusTrap<HTMLDivElement>(onClose);
   const visibleCheckpoints = filterCheckpointsByType(filterCheckpoints(checkpoints, search), typeFilter);
 
-  useEffect(() => {
+  function loadHistory() {
+    setLoadError(null);
     listCheckpoints(projectId)
       .then(({ checkpoints }) => setCheckpoints(checkpoints))
-      .catch((err) => setError((err as Error).message));
+      .catch((err) => setLoadError((err as Error).message));
+  }
+
+  useEffect(() => {
+    loadHistory();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectId]);
 
   /** Splices the freshly-renamed checkpoint back into the loaded list, matching handleRestore's own "update from the real server response" shape rather than an optimistic local edit. */
@@ -192,6 +199,14 @@ export function HistoryPanel({
         <p className="muted small">{t("history.description")}</p>
         {error && <p className="error">{error}</p>}
         {deleteError && <p className="error">{deleteError}</p>}
+        {loadError && (
+          <div className="error-retry-row">
+            <p className="error">{loadError}</p>
+            <button type="button" className="secondary small" onClick={loadHistory}>
+              {t("history.retry")}
+            </button>
+          </div>
+        )}
         {checkpoints.length > 5 && (
           <div className="history-filters">
             <input
@@ -247,7 +262,7 @@ export function HistoryPanel({
           </div>
         )}
         {checkpoints.length === 0 ? (
-          <p className="muted">{t("history.empty")}</p>
+          loadError ? null : <p className="muted">{t("history.empty")}</p>
         ) : visibleCheckpoints.length === 0 ? (
           <p className="muted">{t("history.search.noResults")}</p>
         ) : (

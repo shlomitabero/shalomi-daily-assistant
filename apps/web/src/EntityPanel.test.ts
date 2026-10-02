@@ -482,7 +482,7 @@ test("EntityPanel's refresh ignores a stale, still-in-flight refresh's records o
     "projectId",
     "entity",
     "setRecords",
-    "setError",
+    "setLoadError",
     `${code}\nreturn refresh;`,
   )(
     refreshRequestId,
@@ -519,6 +519,62 @@ test("EntityPanel's refresh ignores a stale, still-in-flight refresh's records o
     1,
     "the stale (first) refresh resolving afterward must never call setRecords again and overwrite the fresh records",
   );
+});
+
+/**
+ * New in this round: a failed initial load (a transient network blip, a
+ * cold-starting backend) left the table permanently stuck on the generic
+ * "No records yet" empty-state text -- indistinguishable from a genuinely
+ * empty table, and with no way to recover short of closing and reopening
+ * the entity tab. BusinessTwinPanel already had this exact "Retry" pattern
+ * (its own loadTwin); this closes the identical, previously-missing gap
+ * here. Confirms the real error+Retry row appears instead of the
+ * misleading empty-state message, and clicking Retry genuinely re-fetches
+ * (not a reimplementation) and shows the real data once it succeeds.
+ */
+test("EntityPanel shows a real error with a Retry button when the initial load fails, instead of the misleading 'No records yet' message", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    let callCount = 0;
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      if ((init?.method ?? "GET") === "GET" && input === "/api/projects/proj1/entities/Deal") {
+        callCount += 1;
+        if (callCount === 1) {
+          return new Response(JSON.stringify({ error: "Server exploded" }), {
+            status: 500,
+            headers: { "content-type": "application/json" },
+          });
+        }
+        return new Response(JSON.stringify({ records: [{ id: 1, name: "Acme Corp", status: "new" }] }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      throw new Error(`unexpected request ${init?.method ?? "GET"} ${input}`);
+    }) as typeof fetch;
+    try {
+      renderEntityPanel();
+      await waitForCondition(() => document.querySelector(".error-retry-row") !== null);
+
+      assert.match(document.querySelector(".error-retry-row p.error")!.textContent ?? "", /Server exploded/);
+      assert.equal(
+        document.querySelector(".empty-state"),
+        null,
+        "a real load failure must not also show the misleading 'No records yet' empty-state text",
+      );
+
+      const retryButton = document.querySelector(".error-retry-row button") as HTMLButtonElement;
+      assert.ok(retryButton, "expected a real Retry button");
+
+      fireEvent.click(retryButton);
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 1);
+
+      assert.equal(document.querySelector(".error-retry-row"), null, "the error+Retry row must disappear once the retry succeeds");
+      assert.match(document.querySelector("table tbody tr")!.textContent ?? "", /Acme Corp/, "the real record from the successful retry must now render");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
 });
 
 /** Same jsdom-swap technique as useDialogFocusTrap.test.ts/BuildProgress.test.ts. */

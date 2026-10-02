@@ -2321,13 +2321,15 @@ button.sort-header:hover:not(:disabled) {
   margin: 10px 0 0;
 }
 
-.twin-error-row {
+.twin-error-row,
+.error-retry-row {
   display: flex;
   align-items: center;
   gap: 10px;
 }
 
-.twin-error-row .error {
+.twin-error-row .error,
+.error-retry-row .error {
   margin: 0;
 }
 

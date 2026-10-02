@@ -329,6 +329,58 @@ function renderGlobalSearchPanel(
 }
 
 /**
+ * New in this round: a failed search left only a bare error line with no
+ * way to retry the exact same query short of retyping it and hitting
+ * submit again. Unlike the other 3 panels touched this round, error here
+ * was already single-purpose (search failures only), so no new state was
+ * needed -- just a Retry button wired to re-run runSearch(highlightQuery),
+ * the actually-submitted query, not whatever may since have been typed
+ * into the box.
+ */
+test("GlobalSearchPanel shows a real error with a Retry button when a search fails, and Retry re-runs the exact same query", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    let callCount = 0;
+    globalThis.fetch = (async (input: string): Promise<Response> => {
+      if (input === "/api/projects/proj1/entities/Customer" || input === "/api/projects/proj1/entities/Order") {
+        callCount += 1;
+        if (callCount <= 2) {
+          return new Response(JSON.stringify({ error: "Server exploded" }), {
+            status: 500,
+            headers: { "content-type": "application/json" },
+          });
+        }
+        const records: EntityRecord[] = input.endsWith("/Customer") ? [{ id: 1, name: "Acme widget order" }] : [{ id: 1, note: "Acme widget order" }];
+        return new Response(JSON.stringify({ records }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${input}`);
+    }) as typeof fetch;
+    try {
+      renderGlobalSearchPanel(() => {});
+
+      const input = document.querySelector(".global-search-input") as HTMLInputElement;
+      fireEvent.change(input, { target: { value: "widget" } });
+      const form = document.querySelector("form.global-search-form")!;
+      fireEvent.submit(form);
+
+      await waitForCondition(() => document.querySelector(".error-retry-row") !== null);
+      assert.match(document.querySelector(".error-retry-row p.error")!.textContent ?? "", /Server exploded/);
+
+      const retryButton = document.querySelector(".error-retry-row button") as HTMLButtonElement;
+      assert.ok(retryButton, "expected a real Retry button");
+
+      fireEvent.click(retryButton);
+      await waitForCondition(() => document.querySelectorAll(".global-search-group").length === 2);
+
+      assert.equal(document.querySelector(".error-retry-row"), null, "the error+Retry row must disappear once the retry succeeds");
+      assert.match(input.value, /widget/, "Retry must re-run the originally-submitted query, not clear it");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * Real-DOM coverage for the one piece of GlobalSearchPanel that was never
  * tested at all, not even via function extraction: handleInputKeyDown's
  * ArrowDown/ArrowUp/Enter keyboard navigation across result groups. A real

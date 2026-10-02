@@ -72,6 +72,77 @@ function makeCheckpoint(id: string, label: string): Checkpoint {
 }
 
 /**
+ * New in this round: a failed initial load of the checkpoint list left the
+ * panel permanently stuck on the generic "No saved points yet" empty-state
+ * text -- indistinguishable from a project with genuinely no history, and
+ * with no way to recover short of closing and reopening Time Machine.
+ * BusinessTwinPanel already had this exact "Retry" pattern; this closes
+ * the identical, previously-missing gap here. Confirms the real error+Retry
+ * row appears instead of the misleading empty-state message, and clicking
+ * Retry genuinely re-fetches (not a reimplementation) and shows the real
+ * checkpoints once it succeeds.
+ */
+test("HistoryPanel shows a real error with a Retry button when the initial load fails, instead of the misleading 'No saved points yet' message", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    const cp1 = makeCheckpoint("cp1", "Initial build");
+    let callCount = 0;
+    globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/checkpoints") {
+        callCount += 1;
+        if (callCount === 1) {
+          return new Response(JSON.stringify({ error: "Server exploded" }), {
+            status: 500,
+            headers: { "content-type": "application/json" },
+          });
+        }
+        return new Response(JSON.stringify({ checkpoints: [cp1] }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+    try {
+      render(
+        React.createElement(
+          ThemeProvider,
+          null,
+          React.createElement(
+            LanguageProvider,
+            null,
+            React.createElement(HistoryPanel, {
+              projectId: "proj1",
+              projectName: "Test Project",
+              currentSpec: cp1.spec,
+              onRestored: () => {},
+              onClose: () => {},
+            }),
+          ),
+        ),
+      );
+      await waitForCondition(() => document.querySelector(".error-retry-row") !== null);
+
+      assert.match(document.querySelector(".error-retry-row p.error")!.textContent ?? "", /Server exploded/);
+      assert.equal(
+        document.body.textContent?.includes("No saved points yet"),
+        false,
+        "a real load failure must not also show the misleading 'No saved points yet' empty-state text",
+      );
+
+      const retryButton = document.querySelector(".error-retry-row button") as HTMLButtonElement;
+      assert.ok(retryButton, "expected a real Retry button");
+
+      fireEvent.click(retryButton);
+      await waitForCondition(() => document.querySelectorAll(".checkpoint-list li").length === 1);
+
+      assert.equal(document.querySelector(".error-retry-row"), null, "the error+Retry row must disappear once the retry succeeds");
+      assert.match(document.querySelector(".checkpoint-list li")!.textContent ?? "", /Initial build/, "the real checkpoint from the successful retry must now render");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * Regression test: handleRestore only disabled the ONE button whose own
  * checkpoint.id matched the in-flight busyId, leaving every other
  * checkpoint's restore button clickable while a restore request was still

@@ -115,6 +115,14 @@ export function WhatsAppPanel({
   const { t, lang } = useTranslation();
   const [status, setStatus] = useState<WhatsAppStatusView | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
+  /**
+   * Distinct from the shared loadError above (which also covers connect/
+   * disconnect/send/load-more failures, all of which have their own clear
+   * recovery action already): specifically the very first status fetch on
+   * mount failing, which left the panel permanently stuck with nothing to
+   * click short of closing and reopening it.
+   */
+  const [initialLoadError, setInitialLoadError] = useState<string | null>(null);
   const [connecting, setConnecting] = useState(false);
   const [disconnecting, setDisconnecting] = useState(false);
   const [testTo, setTestTo] = useState(() => prefillTo ?? "");
@@ -286,7 +294,8 @@ export function WhatsAppPanel({
     }, POLL_INTERVAL_MS);
   }
 
-  useEffect(() => {
+  function loadInitialStatus() {
+    setInitialLoadError(null);
     getWhatsAppStatus(projectId)
       .then((s) => {
         setStatus(s);
@@ -301,7 +310,11 @@ export function WhatsAppPanel({
           startConnectedPolling();
         }
       })
-      .catch((err) => setLoadError((err as Error).message));
+      .catch((err) => setInitialLoadError((err as Error).message));
+  }
+
+  useEffect(() => {
+    loadInitialStatus();
     return () => {
       stopPolling();
       stopConnectedPolling();
@@ -556,6 +569,14 @@ export function WhatsAppPanel({
         <p className="muted small">{t("whatsapp.description")}</p>
         <p className="muted small whatsapp-prereq">{t("whatsapp.prerequisite")}</p>
         {loadError && <p className="error">{loadError}</p>}
+        {initialLoadError && (
+          <div className="error-retry-row">
+            <p className="error">{initialLoadError}</p>
+            <button type="button" className="secondary small" onClick={loadInitialStatus}>
+              {t("whatsapp.retry")}
+            </button>
+          </div>
+        )}
 
         {s === "disconnected" && (
           <div className="whatsapp-connect-box">

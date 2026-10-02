@@ -330,7 +330,14 @@ export function GlobalSearchPanel({
           </button>
         </form>
 
-        {error && <p className="error">{error}</p>}
+        {error && (
+          <div className="error-retry-row">
+            <p className="error">{error}</p>
+            <button type="button" className="secondary small" onClick={() => runSearch(highlightQuery)}>
+              {t("search.retry")}
+            </button>
+          </div>
+        )}
         {loading && <p className="muted">{t("entity.loading")}</p>}
 
         {!loading && !searched && !error && (

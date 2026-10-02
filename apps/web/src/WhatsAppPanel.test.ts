@@ -374,6 +374,68 @@ async function waitForCondition(check: () => boolean, maxTicks = 40): Promise<vo
 }
 
 /**
+ * New in this round: a failed initial status fetch left the panel
+ * permanently showing the plain "disconnected" Connect box with only a
+ * generic error line above it -- no way to retry the status check itself
+ * short of closing and reopening the panel. BusinessTwinPanel already had
+ * this exact "Retry" pattern; this closes the identical, previously-missing
+ * gap here, via a new initialLoadError distinct from the shared loadError
+ * (which still covers connect/disconnect/send/load-more failures, each of
+ * which already has its own clear retry action). Confirms the real
+ * error+Retry row appears, and clicking Retry genuinely re-fetches the real
+ * status (not a reimplementation).
+ */
+test("WhatsAppPanel shows a real error with a Retry button when the initial status fetch fails", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    let callCount = 0;
+    globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/integrations/whatsapp/status") {
+        callCount += 1;
+        if (callCount === 1) {
+          return new Response(JSON.stringify({ error: "Server exploded" }), {
+            status: 500,
+            headers: { "content-type": "application/json" },
+          });
+        }
+        return new Response(JSON.stringify({ status: "disconnected", phoneNumber: "972501234567", qrDataUrl: null, error: null }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+    try {
+      render(
+        React.createElement(
+          ThemeProvider,
+          null,
+          React.createElement(LanguageProvider, null, React.createElement(WhatsAppPanel, { projectId: "proj1", projectName: "Test Project", onClose: () => {}, onJumpToEntity: () => {}, onJumpToRecord: () => {} })),
+        ),
+      );
+      await waitForCondition(() => document.querySelector(".error-retry-row") !== null);
+
+      assert.match(document.querySelector(".error-retry-row p.error")!.textContent ?? "", /Server exploded/);
+
+      const retryButton = document.querySelector(".error-retry-row button") as HTMLButtonElement;
+      assert.ok(retryButton, "expected a real Retry button");
+
+      fireEvent.click(retryButton);
+      await waitForCondition(() => (document.body.textContent ?? "").includes("972501234567"));
+
+      assert.equal(
+        document.querySelector(".error-retry-row"),
+        null,
+        "the error+Retry row must disappear once the retry succeeds",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * Real-DOM coverage for handleSendTest -- the two typed text fields
  * (recipient number, message body) had never been exercised through a
  * real render, only via handleDisconnect's own function-extraction tests

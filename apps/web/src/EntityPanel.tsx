@@ -776,6 +776,7 @@ export function EntityPanel({
   const [editingId, setEditingId] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [recentSearches, setRecentSearches] = useState<string[]>(() => getEntityRecentSearches(projectId, entity.name));
   const [fieldFilters, setFieldFilters] = useState<Record<string, string>>({});
@@ -879,13 +880,14 @@ export function EntityPanel({
   async function refresh() {
     const requestId = ++refreshRequestId.current;
     setLoading(true);
+    setLoadError(null);
     try {
       const { records } = await listRecords(projectId, entity.name);
       if (refreshRequestId.current !== requestId) return;
       setRecords(records);
     } catch (err) {
       if (refreshRequestId.current !== requestId) return;
-      setError((err as Error).message);
+      setLoadError((err as Error).message);
     } finally {
       if (refreshRequestId.current === requestId) setLoading(false);
     }
@@ -1912,6 +1914,15 @@ export function EntityPanel({
         </p>
       )}
 
+      {loadError && (
+        <div className="error-retry-row">
+          <p className="error">{loadError}</p>
+          <button type="button" className="secondary small" onClick={refresh}>
+            {t("entity.retry")}
+          </button>
+        </div>
+      )}
+
       {pendingDelete && (
         <p className="entity-undo-toast" role="status">
           {pendingDelete.message}
@@ -1948,9 +1959,11 @@ export function EntityPanel({
       {loading ? (
         <p className="muted">{t("entity.loading")}</p>
       ) : records.length === 0 ? (
-        <div className="empty-state">
-          <p>{t("entity.noRecords")}</p>
-        </div>
+        loadError ? null : (
+          <div className="empty-state">
+            <p>{t("entity.noRecords")}</p>
+          </div>
+        )
       ) : (
         <>
           <div className="entity-toolbar">
