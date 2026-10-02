@@ -20853,6 +20853,71 @@ Full suite green: **1246 tests** (`@forge/shared` 13, `@forge/spec-engine`
 707 (+1 new test)) via `npm test` at the repo root, plus a clean full
 monorepo `npm run build`.
 
+### Round 345 — "Reset column widths" button once a column has been resized
+
+Round 344's own Explore survey named this as candidate #2, unimplemented
+at the time. Re-verified independently before starting: grepped
+`columnWidths.ts`/`EntityPanel.tsx` for `resetColumnWidths`/"reset" --
+confirmed `columnWidths.ts` only ever exported `getColumnWidths`/
+`setColumnWidth`, no clear-all, and no such button existed in the
+toolbar. Column widths already persist per project+entity and are
+drag-resizable, but the only way back to the table's own automatic
+sizing was dragging each resized column back by hand, one drag at a
+time -- unlike `fieldFilters`' own one-click "Clear all filters" (round
+341), which this round's button deliberately mirrors.
+
+Added `clearColumnWidths(projectId, entityName)` to `columnWidths.ts`
+(drops the entity's whole stored width map, mirroring `setFieldFilters`'
+own "clear removes the storage key entirely" semantics rather than
+persisting an empty-but-present record). Added a button to
+`EntityPanel.tsx`'s toolbar, right next to the Columns menu, that only
+renders once `Object.keys(columnWidths).length > 0` -- the same
+conditional-render pattern the "Clear filters" button already uses.
+
+Ported identically into `apps/api/src/codegen.ts`'s `EntityView`: a
+matching `clearColumnWidths(entityName)` next to the existing
+`COLUMN_WIDTHS_STORAGE_KEY` store, and a plain, unstyled button (no
+`secondary`/`small` classes -- round 341's own finding that this file
+has none at all).
+
+Tests: new pure-function tests in `columnWidths.test.ts` confirm
+`clearColumnWidths` actually removes the stored entry (not just returns
+an empty object) and only clears the given entity, leaving a different
+entity's own resized widths untouched. New real-DOM tests in both
+`EntityPanel.test.ts` and `codegen.test.ts` drive an actual mousedown/
+mousemove/mouseup resize drag on the Name column's handle, confirm the
+reset button is absent beforehand, appears after the resize, and
+clicking it clears both the live inline width (back to `""`, automatic
+sizing) and the persisted storage (read directly via `localStorage` in
+the codegen.ts test, not just inferred from the DOM) -- then confirms
+the button itself disappears again once there's nothing left to reset.
+
+**One real wrinkle found while writing the codegen.test.ts test:** the
+generated `EntityView`'s resize-drag wiring only attaches its real
+`window` mousemove/mouseup listeners inside a `useEffect` that reacts to
+the `resizingField` state `mousedown` itself sets -- firing mousedown
+and the mousemove/mouseup pair inside a single `act()` block raced that
+effect, so the mousemove could fire before the listeners existed yet.
+Split into two `act()` calls (mousedown alone first, then mousemove+
+mouseup) so the effect has run by the time the drag continues; the live
+preview's own equivalent test needed no such split (that file's own
+`fireEvent` calls aren't wrapped in explicit `act()` at all).
+
+Deliberate-break-and-restore: backed up all 7 changed files, reverted
+the 4 implementation files to HEAD, and confirmed the expected failures:
+the entire `columnWidths.test.ts` file failed to even load
+(`SyntaxError`, the now-missing `clearColumnWidths` export, proving the
+import is genuinely load-bearing) plus the new `EntityPanel.test.ts`
+test failed (700/710 total on the web side) and exactly 1 api test
+failed (345/346: the new codegen.test.ts test) -- no other tests
+affected. Restored from backup and confirmed byte-identical via `diff -q`
+against all 4 files, then re-ran the full suite and build.
+
+Full suite green: **1250 tests** (`@forge/shared` 13, `@forge/spec-engine`
+85, `@forge/db` 96 unchanged; `@forge/api` 346 (+1 new test); `@forge/web`
+710 (+3 new tests)) via `npm test` at the repo root, plus a clean full
+monorepo `npm run build`.
+
 ## Phase 4
 
 - Template/agent marketplace
