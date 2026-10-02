@@ -2546,7 +2546,7 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
     if (index === -1) return;
     const record = records[index];
     const label = recordDisplayLabel(entity, record);
-    if (!window.confirm(\`Delete "\${label}"? This can't be undone.\`)) return;
+    if (!window.confirm(\`Delete "\${label}"? You can undo this for a few seconds after deleting.\`)) return;
 
     if (pendingDeleteRef.current) {
       clearTimeout(pendingDeleteRef.current.timeoutId);

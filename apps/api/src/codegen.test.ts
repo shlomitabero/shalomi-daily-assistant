@@ -2682,7 +2682,81 @@ test("the exported EntityView asks for confirmation before deleting a single rec
   const files = generateExportFiles(project);
   const entityViewJsx = files.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
   assert.match(entityViewJsx, /function handleDelete\(id\) \{\s*const index = records\.findIndex/);
-  assert.match(entityViewJsx, /window\.confirm\(`Delete "\$\{label\}"\? This can't be undone\.`\)/);
+  assert.match(entityViewJsx, /window\.confirm\(`Delete "\$\{label\}"\? You can undo this for a few seconds after deleting\.`\)/);
+});
+
+/**
+ * New in this round: the confirm dialog's own text claimed "This can't be
+ * undone" -- factually false, since handleDelete (confirmed right above)
+ * sets up a real 5-second pendingDelete/Undo-toast immediately afterward,
+ * the exact same mechanism the bulk-delete confirm right below it already
+ * described correctly ("You can undo this for a few seconds after
+ * deleting"). `git log -S"can't be undone"` traces it to a confirm dialog
+ * added (round 73's "Add confirmation dialog to single-row delete") before
+ * single-record undo existed (round 184), never updated once it did.
+ * Confirms the real, rendered Delete button's click genuinely passes the
+ * corrected, truthful message to the real window.confirm -- not just that
+ * the right string exists somewhere in the source.
+ */
+test("the exported EntityView's single-record Delete button's confirm dialog tells the truth about undo being available", async () => {
+  const files = generateExportFiles(project);
+  const dir = writeGeneratedWebComponent(files);
+  const store = [{ id: 1, name: "Acme Corp", status: "New" }];
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
+    const method = init?.method ?? "GET";
+    if (method === "GET" && input === "/api/Customer") {
+      return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    throw new Error(`unexpected request ${method} ${input}`);
+  }) as typeof fetch;
+  const originalConfirm = globalThis.window?.confirm;
+  let capturedMessage: string | undefined;
+  (globalThis.window as unknown as { confirm: (msg: string) => boolean }).confirm = (msg: string) => {
+    capturedMessage = msg;
+    return true;
+  };
+
+  try {
+    await withRealLocalStorage(async () => {
+      const { EntityView } = await import(path.join(dir, "web", "src", "components", "EntityView.jsx"));
+      const customerEntity = project.spec.entities.find((e) => e.name === "Customer")!;
+      const props = {
+        entity: customerEntity,
+        highlightRecordId: null,
+        onHighlightHandled: () => {},
+        onJumpToRecord: () => {},
+        onRecordCountChange: () => {},
+      };
+
+      const { container } = render(React.createElement(EntityView, props));
+      for (let i = 0; i < 40; i++) {
+        if (container.querySelectorAll("tbody tr").length === 1) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+      assert.equal(container.querySelectorAll("tbody tr").length, 1, "expected the record to have loaded");
+
+      const deleteButton = Array.from(container.querySelectorAll("button")).find((b) => b.textContent === "Delete");
+      assert.ok(deleteButton, "expected a real Delete button");
+
+      await act(async () => {
+        fireEvent.click(deleteButton!);
+      });
+
+      assert.equal(
+        capturedMessage,
+        'Delete "Acme Corp"? You can undo this for a few seconds after deleting.',
+        "the real confirm dialog must tell the truth about the undo window that actually follows, not claim it can't be undone",
+      );
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (originalConfirm) (globalThis.window as unknown as { confirm: () => boolean }).confirm = originalConfirm;
+    cleanup();
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 /**
