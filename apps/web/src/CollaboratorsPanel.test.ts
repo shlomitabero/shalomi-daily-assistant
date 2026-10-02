@@ -158,6 +158,11 @@ test("CollaboratorsPanel shows a real error with a Retry button when the initial
       await waitForCondition(() => document.querySelector(".error-retry-row") !== null);
 
       assert.match(document.querySelector(".error-retry-row p.error")!.textContent ?? "", /Server exploded/);
+      assert.equal(
+        document.querySelector(".error-retry-row p.error")!.getAttribute("role"),
+        "status",
+        "the error must be announced to screen readers, not just shown visually",
+      );
       assert.equal(document.querySelector(".collab-list"), null, "a real load failure must not also render an empty, misleading collaborator list");
       assert.equal(document.body.textContent?.includes("Loading"), false, "a real load failure must not keep claiming it's still loading");
 

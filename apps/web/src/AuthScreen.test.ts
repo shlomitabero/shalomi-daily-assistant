@@ -232,6 +232,7 @@ test("AuthScreen blocks signup entirely when password and confirmPassword don't 
 
       assert.equal(requestCount, 0, "a mismatched confirmation must never send a real signup request");
       assert.match(document.querySelector(".error")!.textContent ?? "", /match/i);
+      assert.equal(document.querySelector(".error")!.getAttribute("role"), "status", "the error must be announced to screen readers, not just shown visually");
     } finally {
       globalThis.fetch = originalFetch;
     }

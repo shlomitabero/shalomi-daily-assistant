@@ -86,7 +86,11 @@ export function AuthScreen({ onAuthenticated }: { onAuthenticated: (user: User) 
               {busy ? t("auth.submit.busy") : mode === "signup" ? t("auth.submit.signup") : t("auth.submit.login")}
             </button>
           </form>
-          {error && <p className="error">{error}</p>}
+          {error && (
+            <p className="error" role="status">
+              {error}
+            </p>
+          )}
           <button
             type="button"
             className="secondary link-button"

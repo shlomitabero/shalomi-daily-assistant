@@ -143,10 +143,16 @@ export function CollaboratorsPanel({
         </div>
         <p className="muted small">{t("collab.description")}</p>
 
-        {error && <p className="error">{error}</p>}
+        {error && (
+          <p className="error" role="status">
+            {error}
+          </p>
+        )}
         {loadError && (
           <div className="error-retry-row">
-            <p className="error">{loadError}</p>
+            <p className="error" role="status">
+              {loadError}
+            </p>
             <button type="button" className="secondary small" onClick={loadCollaborators}>
               {t("collab.retry")}
             </button>

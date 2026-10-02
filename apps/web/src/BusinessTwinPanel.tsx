@@ -141,7 +141,9 @@ export function BusinessTwinPanel({
 
         {error && (
           <div className="twin-error-row">
-            <p className="error">{error}</p>
+            <p className="error" role="status">
+              {error}
+            </p>
             <button type="button" className="secondary small" onClick={loadTwin}>
               {t("twin.retry")}
             </button>

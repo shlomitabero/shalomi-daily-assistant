@@ -378,6 +378,11 @@ test("BuildProgress still shows the failed-build banner for a genuine, unrecover
       true,
       "the 'Build failed' banner must still show for a real, never-recovered failure",
     );
+    assert.equal(
+      document.querySelector("p.error:not(.banner)")!.getAttribute("role"),
+      "status",
+      "the failed-build banner must be announced to screen readers, not just shown visually",
+    );
   });
 });
 

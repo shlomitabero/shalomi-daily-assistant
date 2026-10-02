@@ -555,6 +555,7 @@ test("BusinessTwinPanel's Retry button re-fetches after a failed load and recove
       const retryButton = Array.from(document.querySelectorAll("button")).find((b) => b.textContent === "Try again");
       assert.ok(retryButton, "expected a Retry button once the initial load fails");
       assert.equal(callCount, 1, "must not have retried on its own yet");
+      assert.equal(document.querySelector(".error")!.getAttribute("role"), "status", "the error must be announced to screen readers, not just shown visually");
 
       fireEvent.click(retryButton!);
       await waitForCondition(() => document.querySelector(".twin-total") !== null);

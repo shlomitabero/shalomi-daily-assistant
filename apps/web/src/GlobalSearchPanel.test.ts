@@ -365,6 +365,11 @@ test("GlobalSearchPanel shows a real error with a Retry button when a search fai
 
       await waitForCondition(() => document.querySelector(".error-retry-row") !== null);
       assert.match(document.querySelector(".error-retry-row p.error")!.textContent ?? "", /Server exploded/);
+      assert.equal(
+        document.querySelector(".error-retry-row p.error")!.getAttribute("role"),
+        "status",
+        "the error must be announced to screen readers, not just shown visually",
+      );
 
       const retryButton = document.querySelector(".error-retry-row button") as HTMLButtonElement;
       assert.ok(retryButton, "expected a real Retry button");

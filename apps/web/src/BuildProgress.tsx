@@ -496,10 +496,16 @@ export function BuildProgress({
         })}
       </ol>
       {!compact && <p className="muted small">{t("build.footer")}</p>}
-      {error && <p className="error banner">{error}</p>}
+      {error && (
+        <p className="error banner" role="status">
+          {error}
+        </p>
+      )}
       {failedStep && (
         <div>
-          <p className="error">{t("build.failed.banner")}</p>
+          <p className="error" role="status">
+            {t("build.failed.banner")}
+          </p>
           {/* A SUCCESSFUL build's `finished` state is never actually
            * reachable here -- the very effect that sets it also calls
            * onComplete in the same tick, which immediately swaps the
