@@ -20013,6 +20013,58 @@ Full suite green: **1227 tests** (`@forge/shared` 13, `@forge/spec-engine`
 697 unchanged) via `npm test` at the repo root, plus a clean full
 monorepo `npm run build`.
 
+### Round 330 — j/k row-navigation reaches the exported app's EntityView
+
+An Explore survey (since the error+Retry family had just closed entirely
+across live + exported, leaving no explicit backup candidate) found that
+codegen.ts's generated `EntityView` had zero equivalent of the live
+preview's own j/k (and ArrowUp/ArrowDown) keyboard row-focus navigation
+plus Enter-to-edit, a real, documented interaction (surfaced in the live
+app's own `ShortcutsPanel.tsx`). Confirmed via grep before implementing:
+`focusedRowId`/`computeNextFocusedRowId`/`isTypingTarget` appeared nowhere
+in codegen.ts except one misleading comment ("Mirrors EntityView's own
+focusedRowId scroll effect") referencing a feature that, on inspection,
+EntityView itself never actually had — so exported-app table users lost
+this interaction entirely, with no trace of a deliberate decision to skip
+it.
+
+Ported directly from `apps/web/src/entityFormatting.ts` and
+`EntityPanel.tsx`: the same `computeNextFocusedRowId` (clamps at both
+ends rather than wrapping; restarts from the first row if the focused id
+scrolled out of the visible set) and `isTypingTarget` (guards against j/k
+hijacking keystrokes meant for the search box, a filter dropdown, or the
+add/edit form) pure helpers, a new `focusedRowId` state, a scroll-into-
+view effect mirroring the existing `highlightedRecordId` one, and a
+window-level keydown handler gated to table view only. The `record-row-
+focused` CSS outline and the `data-record-id`-keyed row lookup both reuse
+the exact same patterns `highlightedRecordId`/`moveErrorId` already
+established in this file.
+
+Tests: one new real-DOM test rendering the actual generated `EntityView`
+with 3 real records, pressing real `j`/`ArrowUp`/`Enter` keys via
+`fireEvent.keyDown(window, ...)` (the live preview's own proven pattern,
+since the handler is attached to `window`, not scoped to a container),
+confirming the focus moves to the correct row by its real
+`data-record-id` and Enter genuinely opens that row's own data in the
+edit form (checked via the pre-filled name field, not just a state flag).
+Also updated one pre-existing test whose regex asserted the exact row
+`className` expression verbatim — needed a one-line update to include the
+new `focusedRowId` condition alongside the existing `highlightedRecordId`/
+`moveErrorId` ones.
+
+Deliberate-break-and-restore: backed up both changed files, reverted just
+`codegen.ts` to its pre-round HEAD state, and confirmed exactly 2 tests
+failed (the new row-navigation test, and the pre-existing regex test now
+tied to this round's className change) while the other 109 kept passing.
+Restored from the verified backup with a confirmed byte-identical `diff`,
+then re-ran the full `@forge/api` suite (337/337) and a clean full
+monorepo `npm run build`.
+
+Full suite green: **1228 tests** (`@forge/shared` 13, `@forge/spec-engine`
+85, `@forge/db` 96, `@forge/web` 697 unchanged; `@forge/api` 337, up from
+336) via `npm test` at the repo root, plus a clean full monorepo
+`npm run build`.
+
 ## Phase 4
 
 - Template/agent marketplace
