@@ -33,19 +33,32 @@ export function CollaboratorsPanel({
   const [collaborators, setCollaborators] = useState<ProjectCollaborator[] | null>(null);
   const [owner, setOwner] = useState<ProjectOwnerInfo | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // Distinct from the error above (shared by invite/remove/leave failures,
+  // each of which already has its own clear recovery path): specifically
+  // the initial listCollaborators call failing, which otherwise left the
+  // panel showing nothing at all but the bare error line -- no owner row,
+  // no collaborator list, no empty-state, and no way to retry short of
+  // closing and reopening the whole panel.
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [email, setEmail] = useState("");
   const [inviteBusy, setInviteBusy] = useState(false);
   const [inviteInfo, setInviteInfo] = useState<string | null>(null);
   const [removingUserId, setRemovingUserId] = useState<string | null>(null);
   const dialogRef = useDialogFocusTrap<HTMLDivElement>(onClose);
 
-  useEffect(() => {
+  function loadCollaborators() {
+    setLoadError(null);
     listCollaborators(projectId)
       .then(({ collaborators, owner }) => {
         setCollaborators(collaborators);
         setOwner(owner);
       })
-      .catch((err) => setError((err as Error).message));
+      .catch((err) => setLoadError((err as Error).message));
+  }
+
+  useEffect(() => {
+    loadCollaborators();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectId]);
 
   async function handleInvite(e: React.FormEvent) {
@@ -131,6 +144,14 @@ export function CollaboratorsPanel({
         <p className="muted small">{t("collab.description")}</p>
 
         {error && <p className="error">{error}</p>}
+        {loadError && (
+          <div className="error-retry-row">
+            <p className="error">{loadError}</p>
+            <button type="button" className="secondary small" onClick={loadCollaborators}>
+              {t("collab.retry")}
+            </button>
+          </div>
+        )}
 
         {isOwner && (
           <form className="collab-invite-form" onSubmit={handleInvite}>
@@ -157,7 +178,7 @@ export function CollaboratorsPanel({
         )}
 
         {collaborators === null && !error ? (
-          <p className="muted">{t("collab.loading")}</p>
+          loadError ? null : <p className="muted">{t("collab.loading")}</p>
         ) : (
           <>
             <ul className="collab-list">

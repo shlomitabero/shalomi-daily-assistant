@@ -122,6 +122,61 @@ test("CollaboratorsPanel's header shows the real total count -- the owner plus e
 });
 
 /**
+ * New in this round: a failed initial load here was strictly worse than
+ * the 4 panels fixed in round 328 -- the bare error line rendered, but
+ * `collaborators === null && !error` was now false (error got set), so
+ * the branch fell through to the "loaded" render: an empty <ul> with no
+ * owner row, no collaborator list, no empty-state message, and no way to
+ * retry short of closing and reopening the whole panel. Mirrors
+ * BusinessTwinPanel's own loadTwin-retry pattern: a new, narrowly-scoped
+ * loadError state (separate from the existing error, which also covers
+ * invite/remove/leave failures) used only by the initial load's own catch
+ * block.
+ */
+test("CollaboratorsPanel shows a real error with a Retry button when the initial load fails, instead of a silently empty list", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    const dana = makeCollaborator("u1", "dana@example.com");
+    let callCount = 0;
+    globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/collaborators") {
+        callCount += 1;
+        if (callCount === 1) {
+          return new Response(JSON.stringify({ error: "Server exploded" }), { status: 500, headers: { "content-type": "application/json" } });
+        }
+        return new Response(JSON.stringify({ collaborators: [dana], owner: { userId: "owner1", email: "amit@example.com" } }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+
+    try {
+      renderPanel(true);
+      await waitForCondition(() => document.querySelector(".error-retry-row") !== null);
+
+      assert.match(document.querySelector(".error-retry-row p.error")!.textContent ?? "", /Server exploded/);
+      assert.equal(document.querySelector(".collab-list"), null, "a real load failure must not also render an empty, misleading collaborator list");
+      assert.equal(document.body.textContent?.includes("Loading"), false, "a real load failure must not keep claiming it's still loading");
+
+      const retryButton = document.querySelector(".error-retry-row button") as HTMLButtonElement;
+      assert.ok(retryButton, "expected a real Retry button");
+
+      fireEvent.click(retryButton);
+      await waitForCondition(() => document.querySelector(".collab-list") !== null);
+
+      assert.equal(document.querySelector(".error-retry-row"), null, "the error+Retry row must disappear once the retry succeeds");
+      assert.match(document.body.textContent ?? "", /dana@example\.com/, "the real collaborator from the successful retry must now render");
+      assert.match(document.body.textContent ?? "", /amit@example\.com/, "the real owner from the successful retry must now render");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * New in this round: removing a collaborator (unlike every other real
  * destructive action in this app -- deleting a project, round 123;
  * deleting a record, round 73) had NO confirmation at all -- one click on
