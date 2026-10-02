@@ -2145,6 +2145,74 @@ test("the exported EntityView's j/k/ArrowUp/ArrowDown move a real keyboard focus
 });
 
 /**
+ * New in this round: porting the live preview's own "n" shortcut
+ * (jump to a blank add-record form) to the exported app's EntityView.jsx.
+ * Unlike j/k/Enter above, this listener is NOT scoped to table view -- the
+ * record-form itself renders above the table/board/calendar switch, so the
+ * shortcut must keep working from any of them. Opens Globex (id 2) for
+ * editing first, so "n" genuinely has an in-progress edit to discard.
+ */
+test("the exported EntityView's 'n' shortcut discards an in-progress edit, resets the form, and focuses its first field", async () => {
+  const files = generateExportFiles(project);
+  const dir = writeGeneratedWebComponent(files);
+  const store = [
+    { id: 1, name: "Acme Corp", status: "New" },
+    { id: 2, name: "Globex", status: "Won" },
+  ];
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
+    const method = init?.method ?? "GET";
+    if (method === "GET" && input === "/api/Customer") {
+      return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    throw new Error(`unexpected request ${method} ${input}`);
+  }) as typeof fetch;
+
+  try {
+    await withRealLocalStorage(async () => {
+      const { EntityView } = await import(path.join(dir, "web", "src", "components", "EntityView.jsx"));
+      const customerEntity = project.spec.entities.find((e) => e.name === "Customer")!;
+      const props = {
+        entity: customerEntity,
+        highlightRecordId: null,
+        onHighlightHandled: () => {},
+        onJumpToRecord: () => {},
+        onRecordCountChange: () => {},
+      };
+
+      const { container } = render(React.createElement(EntityView, props));
+      for (let i = 0; i < 40; i++) {
+        if (container.querySelectorAll("tbody tr").length === 2) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+      assert.equal(container.querySelectorAll("tbody tr").length, 2, "expected both records to have loaded");
+
+      const editButtons = Array.from(container.querySelectorAll("tbody button")) as HTMLButtonElement[];
+      const globexEdit = editButtons.find((b) => b.closest("tr")?.getAttribute("data-record-id") === "2" && /edit/i.test(b.textContent ?? ""));
+      assert.ok(globexEdit, "expected an Edit button on the Globex row");
+      await act(async () => {
+        fireEvent.click(globexEdit!);
+      });
+      const nameInput = container.querySelector('input[type="text"]') as HTMLInputElement;
+      assert.equal(nameInput.value, "Globex", "expected the form to be mid-edit on Globex before 'n' is pressed");
+
+      await act(async () => {
+        fireEvent.keyDown(window, { key: "n" });
+      });
+      assert.equal(nameInput.value, "", "'n' must reset the form back to blank, discarding the in-progress edit");
+      assert.match(container.querySelector("form")?.textContent ?? "", /Add/, "'n' must flip the submit button back to its add-record label");
+      assert.equal(document.activeElement, nameInput, "'n' must focus the form's first field");
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    cleanup();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
  * Regression test: the exported app's own EntityView.jsx is a deliberate
  * duplicate of the live-preview EntityPanel.tsx, and its refresh() had
  * the exact same stale-async-overwrites-newer-setState race this session

@@ -2567,6 +2567,25 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [viewMode, visibleRecords, focusedRowId]);
 
+  /**
+   * "n" jumps straight to a blank add-record form, abandoning whatever
+   * edit was in progress -- unlike j/k/Enter above, this isn't scoped to
+   * table view: the form itself renders above the table/board/calendar
+   * switch and stays reachable from any of them, so the shortcut has to
+   * stay active in all three too. Mirrors the live Forge AI preview's own
+   * EntityPanel.tsx.
+   */
+  useEffect(() => {
+    function handleKeyDown(e) {
+      if (e.key !== "n") return;
+      if (isTypingTarget(e.target)) return;
+      e.preventDefault();
+      startCreateNew();
+    }
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [entity]);
+
   async function handleSubmit(e) {
     e.preventDefault();
     setError(null);
@@ -2607,6 +2626,17 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
   function startCreateForDate(date, field) {
     setEditingId(null);
     setForm({ ...emptyForm(entity), [field.name]: formatDateForInput(date) });
+  }
+
+  // The "n" shortcut's own target -- discards an in-progress edit (if
+  // any), resets the form, and moves focus to it.
+  function startCreateNew() {
+    setEditingId(null);
+    setForm(emptyForm(entity));
+    const formEl = document.querySelector(".record-form");
+    formEl?.scrollIntoView?.({ behavior: "smooth", block: "start" });
+    const firstField = document.querySelector(".record-form input, .record-form select, .record-form textarea");
+    firstField?.focus();
   }
 
   // Deleting a record used to call the real DELETE endpoint the instant the

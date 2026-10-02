@@ -62,8 +62,8 @@ test("renders a real dialog listing every actual shortcut, not a placeholder", a
     assert.equal(dialog!.getAttribute("aria-modal"), "true");
 
     const rows = document.querySelectorAll(".shortcuts-row");
-    // Ctrl+K, "/", "?", Escape, j/down, k/up, Enter -- 7 rows.
-    assert.equal(rows.length, 7, "expected one row per known shortcut");
+    // Ctrl+K, "/", "?", Escape, j/down, k/up, Enter, n -- 8 rows.
+    assert.equal(rows.length, 8, "expected one row per known shortcut");
 
     const kbds = Array.from(document.querySelectorAll(".shortcuts-keys kbd")).map((el) => el.textContent);
     assert.ok(kbds.includes("Ctrl"), "expected Ctrl+K to be listed");
@@ -73,6 +73,7 @@ test("renders a real dialog listing every actual shortcut, not a placeholder", a
     assert.ok(kbds.includes("j"), "expected j (row-down) to be listed");
     assert.ok(kbds.includes("k"), "expected k (row-up) to be listed");
     assert.ok(kbds.includes("Enter"), "expected Enter (edit row) to be listed");
+    assert.ok(kbds.includes("n"), "expected n (new record) to be listed");
 
     // Each row's description comes from t(row.descriptionKey) -- a dynamic
     // key, not a string literal -- so this also proves that call site

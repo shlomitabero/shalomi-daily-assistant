@@ -1290,6 +1290,26 @@ export function EntityPanel({
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [viewMode, visibleRecords, focusedRowId]);
 
+  /**
+   * "n" jumps straight to a blank add-record form, abandoning whatever
+   * edit was in progress -- unlike j/k/Enter above, this isn't scoped to
+   * table view: the form itself renders above the table/board/calendar
+   * switch and stays reachable from any of them, so the shortcut has to
+   * stay active in all three too. isTypingTarget keeps it from hijacking
+   * a keystroke meant for the search box, a filter dropdown, or a field
+   * already being typed into.
+   */
+  useEffect(() => {
+    function handleKeyDown(e: KeyboardEvent) {
+      if (e.key !== "n") return;
+      if (isTypingTarget(e.target as HTMLElement | null)) return;
+      e.preventDefault();
+      startCreateNew();
+    }
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [entity]);
+
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
@@ -1324,6 +1344,19 @@ export function EntityPanel({
   }
 
   /**
+   * The "n" shortcut's own target -- discards an in-progress edit (if any),
+   * resets the form, and moves focus to it, so the keyboard alone can go
+   * from anywhere in the panel to typing a new record's first field.
+   */
+  function startCreateNew() {
+    setEditingId(null);
+    setForm(emptyForm(entity));
+    formRef.current?.scrollIntoView?.({ behavior: "smooth", block: "start" });
+    const firstField = formRef.current?.querySelector<HTMLElement>("input, select, textarea");
+    firstField?.focus();
+  }
+
+  /**
    * Clicking an empty calendar day was previously inert -- the only way to
    * add a record for a specific date was scrolling up to the general
    * create form and typing the date in by hand. Pre-fills that same form
@@ -1333,7 +1366,7 @@ export function EntityPanel({
   function startCreateForDate(date: Date, dateField: Field) {
     setEditingId(null);
     setForm({ ...emptyForm(entity), [dateField.name]: formatDateForInput(date) });
-    formRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+    formRef.current?.scrollIntoView?.({ behavior: "smooth", block: "start" });
   }
 
   /**
@@ -1345,7 +1378,7 @@ export function EntityPanel({
   function startCreateForColumn(value: string, field: Field) {
     setEditingId(null);
     setForm({ ...emptyForm(entity), [field.name]: value });
-    formRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+    formRef.current?.scrollIntoView?.({ behavior: "smooth", block: "start" });
   }
 
   // Fires the real DELETE request for a record the undo window has already

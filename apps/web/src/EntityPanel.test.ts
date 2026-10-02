@@ -3099,6 +3099,65 @@ test("EntityPanel's table rows support j/k row navigation and Enter-to-edit, wit
 });
 
 /**
+ * New in this round: there was no keyboard-only way to start adding a new
+ * record -- j/k/Enter above only navigate EXISTING rows. "n" jumps to a
+ * blank add form and focuses its first field, discarding any in-progress
+ * edit, and (unlike j/k/Enter) must keep working outside table view too,
+ * since the record-form itself renders above the table/board/calendar
+ * switch. Also confirms the isTypingTarget guard: pressing "n" while the
+ * search box has focus must type a literal "n", not reset the form.
+ */
+test("EntityPanel's 'n' shortcut jumps to a blank add-record form and focuses its first field, without hijacking keystrokes typed into the search box", async () => {
+  await withJsdom(async () => {
+    const store: EntityRecord[] = [
+      { id: 1, name: "Acme Corp", status: "new" },
+      { id: 2, name: "Globex", status: "won" },
+    ];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = mockRecordsFetch(store) as typeof fetch;
+    try {
+      renderEntityPanel();
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 2);
+
+      const submitButton = document.querySelector(".record-form button[type=submit]") as HTMLButtonElement;
+      const addLabel = submitButton.textContent;
+      const nameInput = document.querySelector(".record-form input[type=text]") as HTMLInputElement;
+
+      // Open Globex (id 2) for editing via its row's own Edit button, so
+      // the form is genuinely mid-edit -- not just coincidentally blank
+      // already -- before "n" is pressed.
+      const editButtons = Array.from(document.querySelectorAll("table tbody button")) as HTMLButtonElement[];
+      const globexEdit = editButtons.find((b) => b.closest("tr")?.getAttribute("data-record-id") === "2" && /edit/i.test(b.textContent ?? ""));
+      assert.ok(globexEdit, "expected an Edit button on the Globex row");
+      fireEvent.click(globexEdit!);
+      await waitForCondition(() => nameInput.value === "Globex");
+
+      // "n" must abandon that edit: the form resets to blank, the submit
+      // button reverts to its "add" label, and the first field (the name
+      // text input) ends up focused -- all without any mouse click.
+      for (let attempt = 0; nameInput.value !== "" && attempt < 40; attempt++) {
+        fireEvent.keyDown(window, { key: "n" });
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      }
+      assert.equal(nameInput.value, "", "'n' must reset the form back to blank, discarding the in-progress edit");
+      assert.equal(submitButton.textContent, addLabel, "'n' must flip the submit button back to its add-record label");
+      assert.equal(document.activeElement, nameInput, "'n' must focus the form's first field");
+
+      // Pressing "n" while the search box itself has focus must type a
+      // literal "n" there instead of being hijacked by the shortcut.
+      const searchBox = document.querySelector(".entity-search") as HTMLInputElement;
+      searchBox.focus();
+      searchBox.value = "";
+      fireEvent.keyDown(searchBox, { key: "n" });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      assert.equal(document.activeElement, searchBox, "a 'n' keydown targeting the search box must not steal focus to the add form");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * New in this round: table columns could only be resized (round 185) or
  * hidden (round 138) -- never actually REORDERED. Dragging a column
  * header's own label to another header now reorders the real columns,
