@@ -824,7 +824,9 @@ function AppContent() {
     return (
       <div className="app">
         {wakingBanner}
-        <p className="muted">{t("app.loading")}</p>
+        <p className="muted" role="status">
+          {t("app.loading")}
+        </p>
       </div>
     );
   }

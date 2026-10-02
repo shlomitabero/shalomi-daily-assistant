@@ -1957,7 +1957,9 @@ export function EntityPanel({
       )}
 
       {loading ? (
-        <p className="muted">{t("entity.loading")}</p>
+        <p className="muted" role="status">
+          {t("entity.loading")}
+        </p>
       ) : records.length === 0 ? (
         loadError ? null : (
           <div className="empty-state">

@@ -149,7 +149,11 @@ export function BusinessTwinPanel({
             </button>
           </div>
         )}
-        {!twin && !error && <p className="muted">{t("twin.loading")}</p>}
+        {!twin && !error && (
+          <p className="muted" role="status">
+            {t("twin.loading")}
+          </p>
+        )}
 
         {twin && (
           <>

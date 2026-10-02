@@ -184,7 +184,11 @@ export function CollaboratorsPanel({
         )}
 
         {collaborators === null && !error ? (
-          loadError ? null : <p className="muted">{t("collab.loading")}</p>
+          loadError ? null : (
+            <p className="muted" role="status">
+              {t("collab.loading")}
+            </p>
+          )
         ) : (
           <>
             <ul className="collab-list">

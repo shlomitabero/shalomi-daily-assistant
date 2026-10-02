@@ -340,7 +340,11 @@ export function GlobalSearchPanel({
             </button>
           </div>
         )}
-        {loading && <p className="muted">{t("entity.loading")}</p>}
+        {loading && (
+          <p className="muted" role="status">
+            {t("entity.loading")}
+          </p>
+        )}
 
         {!loading && !searched && !error && (
           <>
