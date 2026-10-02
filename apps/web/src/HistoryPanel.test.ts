@@ -123,6 +123,11 @@ test("HistoryPanel shows a real error with a Retry button when the initial load 
 
       assert.match(document.querySelector(".error-retry-row p.error")!.textContent ?? "", /Server exploded/);
       assert.equal(
+        document.querySelector(".error-retry-row p.error")!.getAttribute("role"),
+        "status",
+        "the error must be announced to screen readers, not just shown visually",
+      );
+      assert.equal(
         document.body.textContent?.includes("No saved points yet"),
         false,
         "a real load failure must not also show the misleading 'No saved points yet' empty-state text",

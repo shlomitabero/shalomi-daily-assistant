@@ -568,10 +568,16 @@ export function WhatsAppPanel({
         </div>
         <p className="muted small">{t("whatsapp.description")}</p>
         <p className="muted small whatsapp-prereq">{t("whatsapp.prerequisite")}</p>
-        {loadError && <p className="error">{loadError}</p>}
+        {loadError && (
+          <p className="error" role="status">
+            {loadError}
+          </p>
+        )}
         {initialLoadError && (
           <div className="error-retry-row">
-            <p className="error">{initialLoadError}</p>
+            <p className="error" role="status">
+              {initialLoadError}
+            </p>
             <button type="button" className="secondary small" onClick={loadInitialStatus}>
               {t("whatsapp.retry")}
             </button>
@@ -584,7 +590,11 @@ export function WhatsAppPanel({
             <button type="button" onClick={handleConnect} disabled={connecting}>
               {connecting ? t("whatsapp.connect.connecting") : t("whatsapp.connect.button")}
             </button>
-            {status?.error && <p className="error">{status.error}</p>}
+            {status?.error && (
+              <p className="error" role="status">
+                {status.error}
+              </p>
+            )}
           </div>
         )}
 
@@ -597,7 +607,11 @@ export function WhatsAppPanel({
                 <img className="whatsapp-qr-image" src={status.qrDataUrl} alt={t("whatsapp.title")} />
               </>
             )}
-            {status?.error && <p className="error">{status.error}</p>}
+            {status?.error && (
+              <p className="error" role="status">
+                {status.error}
+              </p>
+            )}
           </div>
         )}
 
@@ -702,8 +716,16 @@ export function WhatsAppPanel({
               </div>
             )}
           </div>
-          {retryError && <p className="error">{retryError}</p>}
-          {deleteError && <p className="error">{deleteError}</p>}
+          {retryError && (
+            <p className="error" role="status">
+              {retryError}
+            </p>
+          )}
+          {deleteError && (
+            <p className="error" role="status">
+              {deleteError}
+            </p>
+          )}
           {messages.length > SEARCH_THRESHOLD && (
             <div className="whatsapp-log-filters">
               <input

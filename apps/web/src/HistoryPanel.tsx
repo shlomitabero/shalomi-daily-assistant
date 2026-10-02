@@ -197,11 +197,21 @@ export function HistoryPanel({
           </div>
         </div>
         <p className="muted small">{t("history.description")}</p>
-        {error && <p className="error">{error}</p>}
-        {deleteError && <p className="error">{deleteError}</p>}
+        {error && (
+          <p className="error" role="status">
+            {error}
+          </p>
+        )}
+        {deleteError && (
+          <p className="error" role="status">
+            {deleteError}
+          </p>
+        )}
         {loadError && (
           <div className="error-retry-row">
-            <p className="error">{loadError}</p>
+            <p className="error" role="status">
+              {loadError}
+            </p>
             <button type="button" className="secondary small" onClick={loadHistory}>
               {t("history.retry")}
             </button>
