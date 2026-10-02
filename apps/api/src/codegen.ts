@@ -1840,9 +1840,9 @@ function CalendarView({ entity, dateField, records, month, onPrevMonth, onNextMo
     <div className="calendar-view">
       <div className="calendar-nav">
         <button type="button" className="calendar-today-btn" onClick={onToday} disabled={isCurrentMonth}>Today</button>
-        <button type="button" onClick={onPrevMonth}>‹</button>
+        <button type="button" onClick={onPrevMonth} aria-label="Previous month">‹</button>
         <span className="calendar-month-label">{monthLabel}</span>
-        <button type="button" onClick={onNextMonth}>›</button>
+        <button type="button" onClick={onNextMonth} aria-label="Next month">›</button>
       </div>
       <div className="calendar-grid calendar-weekdays">
         {weekdayLabels.map((label, i) => (

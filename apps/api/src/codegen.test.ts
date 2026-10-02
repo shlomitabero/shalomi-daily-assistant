@@ -1080,6 +1080,13 @@ test("the exported CalendarView renders a Today button wired to onToday and disa
   assert.match(calendarViewSource, /calendar-today-btn/);
   assert.match(calendarViewSource, /onClick=\{onToday\}/);
   assert.match(calendarViewSource, /disabled=\{isCurrentMonth\}/);
+  // New in this round: the prev/next month buttons were bare glyphs
+  // ("‹"/"›") with no accessible name at all -- unlike the live preview's
+  // own EntityPanel.tsx, which labels them via aria-label={t("entity.calendar.prev"/"next")}.
+  // codegen.ts has no i18n at all, so these are hardcoded English,
+  // matching the exported app's own existing all-English convention.
+  assert.match(calendarViewSource, /onClick=\{onPrevMonth\} aria-label="Previous month"/);
+  assert.match(calendarViewSource, /onClick=\{onNextMonth\} aria-label="Next month"/);
 
   const stylesCss = generateExportFiles(project).find((f) => f.path === "web/src/styles.css")!.content;
   assert.match(stylesCss, /\.calendar-today-btn/);
