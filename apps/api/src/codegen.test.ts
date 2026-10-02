@@ -6198,3 +6198,95 @@ test("the exported EntityView shows a required-field error instead of relying on
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+/**
+ * New in this round: mirrors the live preview's own fix -- extends the
+ * already-established Escape-to-cancel convention (the inline cell editor
+ * already has it) to the exported app's main add/edit form, which
+ * previously had no keyboard way at all to back out of an in-progress
+ * edit; only the mouse-driven Cancel button could. Confirms Escape on a
+ * focused field calls the exact same reset the Cancel button's own
+ * onClick already does, and -- the flip side -- that Escape never clears
+ * an in-progress NEW-record draft outside edit mode (editingId is null
+ * then, and this same form IS the blank create form).
+ */
+test("the exported EntityView's record form discards an in-progress EDIT on Escape (same as Cancel), but never clears an in-progress NEW-record draft", async () => {
+  const files = generateExportFiles(project);
+  const dir = writeGeneratedWebComponent(files);
+  const originalFetch = globalThis.fetch;
+  const store = [{ id: 1, name: "Acme Corp", status: "New" }];
+  globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
+    const method = init?.method ?? "GET";
+    if (method === "GET" && input === "/api/Customer") {
+      return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    throw new Error(`unexpected request ${method} ${input}`);
+  }) as typeof fetch;
+
+  try {
+    await withRealLocalStorage(async () => {
+      const { EntityView } = await import(path.join(dir, "web", "src", "components", "EntityView.jsx"));
+      const customerEntity = project.spec.entities.find((e) => e.name === "Customer")!;
+      const props = {
+        entity: customerEntity,
+        highlightRecordId: null,
+        onHighlightHandled: () => {},
+        onJumpToRecord: () => {},
+        onRecordCountChange: () => {},
+      };
+
+      const { container } = render(React.createElement(EntityView, props));
+      for (let i = 0; i < 40; i++) {
+        if (container.querySelectorAll("tbody tr").length === 1) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+
+      // Not editing yet -- a draft for a brand-new record must survive Escape untouched.
+      const nameInput = container.querySelector('.record-form input[type="text"]') as HTMLInputElement;
+      await act(async () => {
+        fireEvent.change(nameInput, { target: { value: "Draft not yet saved" } });
+        fireEvent.keyDown(nameInput, { key: "Escape" });
+      });
+      assert.equal(nameInput.value, "Draft not yet saved", "Escape must never clear an in-progress NEW-record draft (editingId is null here)");
+
+      // Now actually open the real record for editing.
+      const editButton = Array.from(container.querySelectorAll("button")).find((b) => b.textContent === "Edit") as HTMLButtonElement;
+      assert.ok(editButton, "expected a real Edit button");
+      await act(async () => {
+        fireEvent.click(editButton);
+      });
+      for (let i = 0; i < 40; i++) {
+        if ((container.querySelector('.record-form input[type="text"]') as HTMLInputElement)?.value === "Acme Corp") break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+      const cancelButton = Array.from(container.querySelectorAll("button")).find((b) => b.textContent === "Cancel");
+      assert.ok(cancelButton, "expected a real Cancel button once editing an existing record");
+
+      await act(async () => {
+        fireEvent.keyDown(container.querySelector('.record-form input[type="text"]') as HTMLInputElement, { key: "Escape" });
+      });
+
+      assert.equal(
+        (container.querySelector('.record-form input[type="text"]') as HTMLInputElement).value,
+        "",
+        "Escape must reset the form to blank, exactly like Cancel",
+      );
+      assert.equal(
+        Array.from(container.querySelectorAll("button")).find((b) => b.textContent === "Cancel"),
+        undefined,
+        "Escape must discard edit mode exactly like Cancel -- the Cancel button must disappear",
+      );
+      const submitButton = container.querySelector(".record-form button[type=submit]") as HTMLButtonElement;
+      assert.equal(submitButton.textContent, "Add", "the submit button must revert to create-mode wording once Escape discards the edit");
+      assert.equal(store[0].name, "Acme Corp", "the mock server's own record must be untouched -- Escape never saves");
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    cleanup();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});

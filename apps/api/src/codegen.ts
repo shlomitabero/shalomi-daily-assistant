@@ -3208,7 +3208,18 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
   return (
     <div className="panel">
       <h3>{entity.label}</h3>
-      <form className="record-form" onSubmit={handleSubmit} noValidate>
+      <form
+        className="record-form"
+        onSubmit={handleSubmit}
+        noValidate
+        onKeyDown={(e) => {
+          if (e.key === "Escape" && editingId != null) {
+            e.preventDefault();
+            setForm(emptyForm(entity));
+            setEditingId(null);
+          }
+        }}
+      >
         {entity.fields.map((f) => (
           <label className="field" key={f.name}>
             <span>

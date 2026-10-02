@@ -2017,7 +2017,25 @@ export function EntityPanel({
       <EntityLabelEditor entity={entity} projectId={projectId} onRenamed={onEntityRenamed} />
       {entity.description && <p className="muted">{entity.description}</p>}
 
-      <form className="record-form" ref={formRef} onSubmit={handleSubmit} noValidate>
+      <form
+        className="record-form"
+        ref={formRef}
+        onSubmit={handleSubmit}
+        noValidate
+        onKeyDown={(e) => {
+          // Escape discards an in-progress edit the same way the Cancel
+          // button already does, mirroring the inline cell-edit Escape
+          // convention just above -- but only while actually editing an
+          // existing record. Outside edit mode this form IS the blank
+          // create form, so Escape must never wipe a user's in-progress
+          // new-record draft.
+          if (e.key === "Escape" && editingId != null) {
+            e.preventDefault();
+            setEditingId(null);
+            setForm(emptyForm(entity));
+          }
+        }}
+      >
         {entity.fields.map((field) => (
           <label key={field.name} className="field-row">
             <FieldLabelEditor entityName={entity.name} field={field} projectId={projectId} onRenamed={onEntityRenamed} />

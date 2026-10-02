@@ -3714,6 +3714,57 @@ test("EntityPanel's inline cell editor discards the draft on Escape without send
 });
 
 /**
+ * New in this round: the SAME Escape-to-cancel convention as the inline
+ * cell editor just above, extended to the main add/edit form -- which had
+ * no keyboard way at all to back out of an in-progress edit; only the
+ * mouse-driven Cancel button could. Pressing Escape on a focused field now
+ * calls the exact same reset the Cancel button's own onClick already does.
+ * Also confirms the flip side: outside edit mode this same form IS the
+ * blank create form, so Escape there must never wipe a user's in-progress
+ * NEW-record draft -- only an actual edit (editingId != null) is Escape's
+ * to discard.
+ */
+test("EntityPanel's record form discards an in-progress EDIT on Escape (same as the Cancel button), but never clears an in-progress NEW-record draft", async () => {
+  await withJsdom(async () => {
+    const store: EntityRecord[] = [{ id: 1, name: "Acme Corp", status: "new" }];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = mockRecordsFetch(store) as typeof fetch;
+    try {
+      renderEntityPanel();
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 1);
+
+      // Not editing yet -- type a draft for a brand-new record and confirm
+      // Escape leaves it completely untouched.
+      const nameInput = document.querySelector('.record-form input[type="text"]') as HTMLInputElement;
+      fireEvent.change(nameInput, { target: { value: "Draft not yet saved" } });
+      fireEvent.keyDown(nameInput, { key: "Escape" });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      assert.equal(nameInput.value, "Draft not yet saved", "Escape must never clear an in-progress NEW-record draft (editingId is null here)");
+
+      // Now actually open the real record for editing.
+      const editButton = document.querySelector(".row-actions button") as HTMLButtonElement;
+      fireEvent.click(editButton);
+      await waitForCondition(() => (document.querySelector('.record-form input[type="text"]') as HTMLInputElement)?.value === "Acme Corp");
+      assert.ok(document.querySelector(".form-actions button.secondary"), "expected a real Cancel button once editing an existing record");
+
+      fireEvent.keyDown(document.querySelector('.record-form input[type="text"]') as HTMLInputElement, { key: "Escape" });
+      await waitForCondition(() => (document.querySelector('.record-form input[type="text"]') as HTMLInputElement)?.value === "");
+
+      assert.equal(
+        document.querySelector(".form-actions button.secondary"),
+        null,
+        "Escape must discard edit mode exactly like Cancel -- the Cancel button must disappear",
+      );
+      const submitButton = document.querySelector(".form-actions button[type=submit]") as HTMLButtonElement;
+      assert.equal(submitButton.textContent, "Add", "the submit button must revert to create-mode wording once Escape discards the edit");
+      assert.equal(store[0].name, "Acme Corp", "the mock server's own record must be untouched -- Escape never saves");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * New in this round: the search box's own matchesSearch fell through to
  * the raw stored foreign-key id for a relation field, so typing the exact
  * name a relation cell visibly shows (e.g. "Dana", resolved via
