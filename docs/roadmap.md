@@ -21178,6 +21178,84 @@ Full suite green: **1258 tests** (`@forge/shared` 13, `@forge/spec-engine`
 714 (+1 new test)) via `npm test` at the repo root, plus a clean full
 monorepo `npm run build`.
 
+### Round 350 — Keyboard-focusable, operable calendar day cell
+
+No ready candidate going into this round, so spawned an Explore survey
+(per round 346's own finding that the other panels are mature and gaps
+now live in `EntityPanel.tsx`/`codegen.ts` themselves). Independently
+re-verified its pick rather than trusting the report: read
+`EntityPanel.tsx`'s `CalendarView` day-cell `<div>` (~line 525) and
+confirmed it has a real `onClick` but no `tabIndex`/`role`/`onKeyDown` --
+unlike every other interactive element already shipped this far (table
+rows, board columns, record chips, which are all real `<button>`s or
+have their own keyboard wiring). Confirmed the identical gap in
+`apps/api/src/codegen.ts`'s mirrored `CalendarView`.
+
+Added `tabIndex={0}`, `role="button"`, a real `aria-label`, and an
+`onKeyDown` that calls the same `onDayClick` the mouse click already
+does on Enter/Space, gated on the same `day.inCurrentMonth` condition
+`onClick` already uses. Reused the existing `entity.calendar.addOnDay`
+i18n key (already used for the cell's `title`) for the new
+`aria-label`, rather than adding a near-duplicate key.
+
+**A real bubbling hazard caught before it shipped, not after:** a
+record chip inside a day cell is a genuine focusable `<button>`, so
+pressing Enter on a focused chip fires a native `keydown` that bubbles
+straight up to the day cell's own new `onKeyDown` too -- the exact same
+hazard the chip's `onClick` already guards against with
+`stopPropagation` for the mouse case, but a `keydown` bubbles regardless
+of what the button's own default Enter-activation did. Guarded with
+`e.target !== e.currentTarget`, so only a keydown whose target really
+is the day cell itself (not bubbled up from a child) can trigger
+`onDayClick`.
+
+Ported identically into `apps/api/src/codegen.ts`'s `CalendarView`.
+
+Tests: `EntityPanel.test.ts` adds a real-DOM test confirming the day
+cell's `tabIndex="0"`/`role="button"`/a real `aria-label`, that a real
+`Enter` keydown on an empty day cell opens the create form pre-filled
+with that day's own date (exactly like a real click would), and that
+pressing `Enter` on a focused record chip never also fires the day
+cell's own `onClick` underneath it. `codegen.test.ts` follows this
+file's own established `CalendarView`-testing convention (source-regex
+structural assertions, since this component isn't exercised through
+real DOM in that file -- round 336's own documented exception), but
+goes further than a purely structural check: it extracts the actual
+generated `onKeyDown` expression as a string and executes it for real
+via `new Function` (not reimplemented), confirming Enter and Space both
+call `onDayClick` with the exact day clicked, every other key is a
+no-op, and a keydown whose `target` isn't the cell itself never fires
+it either -- plus confirming a day cell outside the current month gets
+no `onKeyDown` handler at all.
+
+**Two real test bugs caught and fixed by the regression discipline
+itself, both before committing:** (1) the codegen.test.ts extraction
+sliced from `"onKeyDown={"` up to the start of the next JSX attribute
+(`"onDragOver={"`), which also picked up that attribute boundary's own
+closing `}` -- the one that closes the `onKeyDown={...}` JSX expression
+itself, not part of the ternary expression inside it -- producing a
+`SyntaxError` the first time the extracted code was actually executed;
+fixed by stripping exactly that trailing `}` before handing the string
+to `new Function`. (2) the test's own `fireKey` helper unconditionally
+reset the capture variable (`calledWith = undefined`) at the top of
+every call, which silently wiped out a sentinel value a later assertion
+needed to prove a no-op key or a bubbled keydown genuinely called
+nothing; fixed by moving the sentinel reset to each call site instead
+of inside the shared helper.
+
+Deliberate-break-and-restore: backed up all 4 changed files, reverted
+the 2 implementation files to HEAD, and confirmed exactly 1 failure in
+each of the 2 affected suites (`EntityPanel.test.ts` 82/83,
+`codegen.test.ts` 124/125) -- no other tests affected. Restored every
+file from the backup and confirmed byte-identical via `diff -q` against
+all 4 files, then re-ran both full suites and both production builds
+clean one final time before committing.
+
+Full suite green: **1260 tests** (`@forge/shared` 13, `@forge/spec-engine`
+85, `@forge/db` 96 unchanged; `@forge/api` 351 (+1 new test); `@forge/web`
+715 (+1 new test)) via `npm test` at the repo root, plus a clean full
+monorepo `npm run build`.
+
 ## Phase 4
 
 - Template/agent marketplace
