@@ -20345,6 +20345,52 @@ Full suite green: **1230 tests** (`@forge/shared` 13, `@forge/spec-engine`
 unchanged, assertions added inside an existing test) via `npm test` at
 the repo root, plus a clean full monorepo `npm run build`.
 
+### Round 337 — "Loading…" placeholders announced to screen readers across 5 panels
+
+A distinct gap from the just-closed error-role family, surfaced by round
+336's own Explore survey: `BusinessTwinPanel.tsx`, `CollaboratorsPanel.tsx`,
+`EntityPanel.tsx`, `GlobalSearchPanel.tsx`, and `App.tsx`'s initial
+session-check screen each render their "Loading…" placeholder as a plain
+`<p className="muted">` with no `role` or `aria-live` at all -- a screen
+reader user gets zero signal that content is being fetched. Re-verified
+independently via `grep`/`Read` on all 5 exact locations named by the
+survey before touching any code, per the standing rule; confirmed each
+one, and noted that the *error* paragraphs in these very same files
+(e.g. `BusinessTwinPanel.tsx:144`, `GlobalSearchPanel.tsx:335`,
+`CollaboratorsPanel.tsx:181`) already carry `role="status"` from rounds
+328/334 -- only the loading placeholder itself had been missed.
+
+Fix: added `role="status"` to each of the 5 loading `<p>` elements,
+matching the exact convention already established for error messages in
+the same files (no design decision needed -- this is the same pattern,
+just applied to a sibling element that had been overlooked).
+
+No pre-existing test renders any of the 5 elements mid-load (confirmed
+via grep across each file's own `.test.ts`), so no new test was added,
+following the established practice from rounds 334/335 for fixes with no
+existing test to extend -- verification rests on `tsc -b`, a clean
+`npm run build --workspace=@forge/web`, and the full `@forge/web` suite.
+
+One correction made along the way: an initial manual test run using the
+non-recursive glob `src/*.test.ts*` reported only 672 passing tests,
+appearing to contradict the long-carried "698" figure from prior rounds'
+summaries. Investigating before assuming either number was right turned
+up the real cause -- that glob misses 3 nested test files
+(`theme/theme.test.ts`, `theme/ThemeContext.test.ts`,
+`i18n/language.test.ts`, 26 tests total) that the package's actual
+`npm test` script (`tsx --test 'src/**/*.test.ts'`) does pick up via its
+recursive pattern. Running the real `npm test` at the repo root confirmed
+**698/698** passing with this round's changes in place -- the "698"
+figure carried in prior rounds' summaries was correct all along; the
+discrepancy was in how this round first invoked the suite, not in the
+number itself.
+
+Full suite green: **1230 tests** (`@forge/shared` 13, `@forge/spec-engine`
+85, `@forge/db` 96, `@forge/api` 338 unchanged; `@forge/web` 698
+unchanged, no new test added for the 5 untested elements per established
+practice) via `npm test` at the repo root, plus a clean full monorepo
+`npm run build`.
+
 ## Phase 4
 
 - Template/agent marketplace
