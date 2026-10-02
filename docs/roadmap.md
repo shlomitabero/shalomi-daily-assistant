@@ -21120,6 +21120,64 @@ Full suite green: **1256 tests** (`@forge/shared` 13, `@forge/spec-engine`
 713 (+1 new test)) via `npm test` at the repo root, plus a clean full
 monorepo `npm run build`.
 
+### Round 349 — Delete/Backspace keyboard shortcut for the focused table row
+
+No ready-made candidate going into this round, so spawned an Explore
+survey over `EntityPanel.tsx`/`codegen.ts` (per round 348's own finding
+that the other panels are mature and gaps now live there), then
+independently re-verified its top pick myself rather than trusting the
+report: read the table view's own keydown handler
+(`EntityPanel.tsx` ~1312-1336) and confirmed it only wires
+j/ArrowDown, k/ArrowUp, Enter, and "x" -- no `"Delete"`/`"Backspace"`
+case. Read `handleDelete` (~1488) and grepped its only two call sites
+(both mouse-driven `onClick`s on Delete buttons) -- confirmed the row a
+keyboard-only user already has `focusedRowId`-tracked and can open with
+Enter or select with "x" could still never be deleted without reaching
+for the mouse. Confirmed the identical gap in `apps/api/src/codegen.ts`'s
+own mirrored keydown handler and `handleDelete`.
+
+Added a `(e.key === "Delete" || e.key === "Backspace") && focusedRowId
+!= null` branch to that same keydown handler in both files, calling
+the existing `handleDelete(focusedRowId)` verbatim -- so it reuses that
+function's own real `window.confirm` dialog and undo-toast machinery
+exactly as the mouse-driven button already does, with zero duplicated
+logic. Guarded by the same `isTypingTarget` check already guarding
+j/k/Enter/x in that handler, so it never fires while a cell, the search
+box, or the add/edit form has focus. Added a "Delete" row to
+`ShortcutsPanel.tsx`'s own list and a new `shortcuts.rowDelete` i18n key
+(Hebrew + English).
+
+Tests: new real-DOM tests in `EntityPanel.test.ts` and `codegen.test.ts`
+focus a row via "j", press Delete, and confirm `window.confirm` is
+actually invoked (not bypassed) and only the focused row disappears
+(the other row is untouched) -- `EntityPanel.test.ts`'s version also
+confirms the `isTypingTarget` guard, firing Backspace at the search box
+itself and confirming neither the confirm dialog nor a deletion fires.
+**One wrinkle caught by the test suite itself, not by inspection:** the
+first draft of that guard test set the search box's own value to "x"
+before pressing Backspace there, which the live search filter then used
+to narrow the table down to 1 row on its own (unrelated to any
+deletion) -- "Globex" contains an "x", "Acme Corp" doesn't -- producing
+a false failure. Fixed by not changing the search box's value at all
+(mirroring the existing "j"/"x" guard tests' own pattern exactly), since
+the guard only needs to prove nothing fires, not exercise live search.
+Also updated `ShortcutsPanel.test.ts`'s own row-count assertion (9→10)
+and kbd-text assertions for the new "Delete" row.
+
+Deliberate-break-and-restore: backed up all 7 changed files, reverted
+the 4 implementation files to HEAD, and confirmed exactly 1 failure in
+each of the 3 affected suites (`ShortcutsPanel.test.ts` 1/2,
+`EntityPanel.test.ts` 81/82, `codegen.test.ts` 123/124) -- no other
+tests affected. Restored every file from the backup and confirmed
+byte-identical via `diff -q` against all 7 files, then re-ran both full
+suites and both production builds clean one final time before
+committing.
+
+Full suite green: **1258 tests** (`@forge/shared` 13, `@forge/spec-engine`
+85, `@forge/db` 96 unchanged; `@forge/api` 350 (+1 new test); `@forge/web`
+714 (+1 new test)) via `npm test` at the repo root, plus a clean full
+monorepo `npm run build`.
+
 ## Phase 4
 
 - Template/agent marketplace
