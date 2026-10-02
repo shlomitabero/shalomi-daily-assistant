@@ -19956,6 +19956,63 @@ Full suite green: **1225 tests** (`@forge/shared` 13, `@forge/spec-engine`
 693) via `npm test` at the repo root, plus a clean full monorepo
 `npm run build`.
 
+### Round 329 — Error+Retry reaches the exported app's EntityView and GlobalSearch
+
+The export-port half of round 328: codegen.ts's generated `EntityView`
+and `GlobalSearch` components had the identical gap their live-preview
+counterparts did before round 328's fix — a failed initial load either
+showed a dead-end error line, or (for EntityView specifically) fell
+through to a misleading "No records yet" empty-state even though the real
+problem was a failed fetch, not an empty table.
+
+Same audit-before-fix approach as round 328: EntityView's `refresh()`
+shares its existing `error` state with CSV-import and bulk-edit failures
+(mirroring the live EntityPanel.tsx exactly, since this component is a
+deliberate duplicate of it), so it got a new, narrowly-scoped `loadError`
+state used only by `refresh()`'s own catch block. GlobalSearch's `error`
+was already single-purpose (search failures only, same as the live
+GlobalSearchPanel.tsx), so it just got a Retry button wired to
+`runSearch(query)` — re-running the exact query still sitting in the
+input, with no separate submitted-query variable to worry about since
+this component already uses `query` directly for everything (including
+`handleShowAll`'s own re-filtering).
+
+Tests: one new real-DOM test per component, both using the actual
+generated files via `writeGeneratedWebComponent` + dynamic import (not
+regex/extraction), mocking the real GET endpoint to fail once then
+succeed, confirming the error+Retry row renders with the real message,
+EntityView's misleading empty-state text is absent, clicking Retry
+genuinely re-fetches, and the row disappears once real data renders. Also
+fixed one pre-existing `refresh()` extraction test
+(`new Function(...)`-based) whose parameter list still named `setError`
+after the rename to `setLoadError`.
+
+Simpler than round 328's own live-preview version of this test in one
+respect: the exported app's own `request()` helper (in its generated
+`api.js`) has no cold-start retry wrapper at all — that's a live-preview-
+only concern (`wakeRetry.ts`, for Render's free-tier cold starts) with no
+equivalent in a self-hosted exported app — so the mock fetch here could
+return a plain `{ ok: false, status: 500, json: async () => ... }` object
+directly with no risk of the ~101-second retry hang round 328 hit.
+
+Deliberate-break-and-restore: backed up both changed files (`codegen.ts`,
+`codegen.test.ts`), reverted just `codegen.ts` to its pre-round HEAD
+state, and confirmed exactly the 2 new tests failed while all 108 other
+`codegen.test.ts` tests kept passing. Restored from the verified backup
+with a confirmed byte-identical `diff`, then re-ran the full `@forge/api`
+suite (336/336) and a clean full monorepo `npm run build`.
+
+Scope note: with this round, the error+Retry family is now closed across
+both the live preview (4/4 panels, round 328) and the exported codegen
+app (2/2 components with an initial-load gap — EntityView and
+GlobalSearch, the only two the round-328 Explore survey identified as
+having one).
+
+Full suite green: **1227 tests** (`@forge/shared` 13, `@forge/spec-engine`
+85, `@forge/db` 96 unchanged; `@forge/api` 336, up from 334; `@forge/web`
+697 unchanged) via `npm test` at the repo root, plus a clean full
+monorepo `npm run build`.
+
 ## Phase 4
 
 - Template/agent marketplace
