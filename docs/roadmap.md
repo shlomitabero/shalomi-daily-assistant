@@ -20587,6 +20587,59 @@ Full suite green: **1236 tests** (`@forge/shared` 13, `@forge/spec-engine`
 `@forge/web` 703 (+4 new tests)) via `npm test` at the repo root, plus a
 clean full monorepo `npm run build`.
 
+### Round 341 — A "Clear filters" button once multiple per-field filters are active
+
+Round 340's own survey had flagged "saved/named multi-filter views" as a
+lead too large for a single round. Investigating it before accepting
+that verdict at face value: `fieldFilters`, `sortKeys`, and
+`groupFieldName` each already auto-persist independently per
+project+entity (rounds 339, 250, and earlier respectively) -- so "save
+the current combo and reload it on return" is already happening today,
+field by field. A single implicit "view slot" would just be a redundant
+wrapper around three stores that already do exactly this; there was no
+real missing behavior left to add there. A fresh Explore survey instead
+found a genuine, concrete, previously-unaddressed gap: with 2 or more
+enum-field filter dropdowns active simultaneously, there was no way to
+reset them all at once -- only reopening each dropdown individually and
+picking "All" one at a time.
+
+Added a "Clear filters" button to `EntityPanel.tsx`'s toolbar, right
+after the per-field filter `<select>` elements: it renders only once at
+least one filter is actually set
+(`Object.values(fieldFilters).some(Boolean)`), and resets every filter
+in one click, writing the empty filter map through to
+`fieldFiltersPreference.ts` so the clear itself persists too, not just
+the in-memory state (otherwise a stale filter would silently reappear on
+the next visit to the tab). Reuses the existing `.secondary.small`
+button styling already shared by the Retry buttons, plus a new
+`entity.filter.clearAll` i18n key (Hebrew + English, required by the
+project's own automated he/en-parity test).
+
+Ported the identical button into the exported app
+(`apps/api/src/codegen.ts`'s `EntityView`), in the same position
+relative to its own filter selects. Confirmed via grep that
+`codegen.ts`'s exported app has no `.secondary` button class at all --
+its own "Try again" buttons are plain, unstyled `<button>`s -- so the
+ported button is plain too, matching that file's own existing
+convention rather than introducing a style class it doesn't have.
+
+Tests: new real-DOM tests in both `EntityPanel.test.ts` and
+`codegen.test.ts`, each confirming the button is absent with no active
+filter, appears the moment one is set, clears both the UI and persisted
+storage on a single click, and disappears again afterward.
+
+Deliberate-break-and-restore: backed up all 5 changed files, reverted
+the 3 implementation files to HEAD, confirmed the new `codegen.test.ts`
+test failed (115/116) and the new `EntityPanel.test.ts` test failed with
+the expected assertion message ("the button must appear the moment a
+filter is set"). Restored from backup and confirmed byte-identical via
+`diff -q`, then re-ran the full suite and build.
+
+Full suite green: **1238 tests** (`@forge/shared` 13, `@forge/spec-engine`
+85, `@forge/db` 96 unchanged; `@forge/api` 342 (+1 new test); `@forge/web`
+704 (+1 new test)) via `npm test` at the repo root, plus a clean full
+monorepo `npm run build`.
+
 ## Phase 4
 
 - Template/agent marketplace
