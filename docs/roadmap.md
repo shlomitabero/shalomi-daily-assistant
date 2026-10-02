@@ -21031,6 +21031,95 @@ Full suite green: **1254 tests** (`@forge/shared` 13, `@forge/spec-engine`
 712 (+1 new test)) via `npm test` at the repo root, plus a clean full
 monorepo `npm run build`.
 
+### Round 348 — Collapse/expand toggle for Kanban board columns
+
+Followed up on a candidate round 347's own survey had already flagged
+("collapse/expand toggle for board-view columns... slightly more
+complex/risky since board columns are also drag-drop targets") rather
+than trusting that flag at face value: re-read the actual board-column
+JSX in both `EntityPanel.tsx` and `codegen.ts` myself and grepped for
+any existing collapse wiring there, confirming the gap was real -- a
+huge "Won"/"Done" column always rendered every one of its cards, with
+no way to hide it, even though the sibling table-grouping feature
+(round 344) already had exactly this via `collapsedGroupsPreference.ts`.
+
+Deliberately did **not** reuse `collapsedGroupsPreference.ts` for this.
+Both the table-group collapse keys and the board-column collapse values
+are scoped only by project+entity, not by which field produced the
+value -- so sharing one storage key between them would let collapsing
+"Won" in a table group silently also collapse a board column literally
+named "Won" if the board happened to be grouped by a *different* field
+with an overlapping value. Instead added a brand-new, fully separate
+module, `apps/web/src/collapsedBoardColumnsPreference.ts`
+(`getCollapsedBoardColumns`/`setCollapsedBoardColumns`), mirroring that
+file's own established shape (`STORAGE_KEY` constant, `keyFor(projectId,
+entityName)`, try/catch-wrapped `localStorage` read/write, dedupe via
+`Set`, delete the key entirely once the collapsed set is empty).
+
+Each board column's header now has its own toggle button
+(`.board-column-toggle`, a ▾/▸ glyph) next to its badge. Clicking it
+hides only that column's own `column.records.map(...)` card list --
+the outer `<div className="board-column">` itself, with its
+`onDragOver`/`onDragLeave`/`onDrop` handlers, always stays rendered
+regardless of collapsed state, so a card can still be dragged onto a
+collapsed column. New `entity.board.collapseColumn`/`expandColumn` i18n
+keys (Hebrew + English) feed the toggle's `aria-label`; `aria-expanded`
+reflects the live state.
+
+Ported identically into `apps/api/src/codegen.ts`'s `EntityView`: a
+fully separate `COLLAPSED_BOARD_COLUMNS_STORAGE_KEY` and its own
+`getPersistedCollapsedBoardColumns`/`setPersistedCollapsedBoardColumns`
+pair (mirroring that file's own `CollapsedGroups` helpers structurally,
+but never sharing their storage key), the same toggle button with a
+hardcoded English `aria-label` per that file's no-i18n convention, and
+the same `{!collapsed && column.records.map(...)}` conditional
+rendering. The new `collapsedBoardColumns` state is initialized and
+reloaded inside the existing combined reset+reload `useEffect` (keyed
+on `entity.name`), alongside every other persisted per-entity
+preference, per round 339's own lesson about that file's single-effect
+convention.
+
+**One wrinkle while writing the codegen.test.ts test:** the shared
+`project` fixture's own Customer entity declares `enumLabels: { New:
+"חדש", Won: "הצליח" }` for its `status` field -- round 345's/347's own
+Hebrew-label lesson, recurring on a *new* axis this time (board-column
+labels, not table headers or group headers). The first draft picked
+columns by matching `"New"`/`"Won"` against each column's own rendered
+label text, which never matched since the real rendered text is
+Hebrew; fixed by selecting columns by their declared `enumValues` array
+order (index 0 = "New", index 1 = "Won") instead of by label text,
+exactly the same fix shape round 345/347 already used for sort headers.
+
+Tests: new real-DOM tests in both `EntityPanel.test.ts` and
+`codegen.test.ts` render a real board with two records in two different
+statuses, confirm both columns start expanded with their own card
+visible, click one column's toggle and confirm only that column's card
+disappears (the other column's card is untouched), confirm the
+collapsed column's own `aria-expanded` flips to `"false"`, fire a real
+`dragover` on the collapsed column and confirm it still shows genuine
+drag-over feedback (`.board-column-drag-over`) -- proving the drop
+target survives collapsing -- then unmount and remount the whole
+component and confirm the collapsed column comes back up still
+collapsed (not reset to expanded), and finally re-expand it.
+
+Deliberate-break-and-restore: backed up all 7 changed/new files
+(including the brand-new `collapsedBoardColumnsPreference.ts`) to the
+scratchpad, reverted the 4 implementation files to HEAD and **deleted**
+the new untracked preference module outright (to prove its import is
+genuinely load-bearing, not dead code), then ran both suites against
+that deliberately-broken tree and confirmed exactly 1 web test failed
+(80/81 in `EntityPanel.test.ts`) and exactly 1 api test failed (122/123
+in `codegen.test.ts`) -- no other tests affected. Restored every file
+from the backup and confirmed byte-identical via `diff -q` against all
+7 files, then re-ran both full suites and both production builds
+(`npm run build --workspace=@forge/web`, `npm run build
+--workspace=@forge/api`) clean one final time before committing.
+
+Full suite green: **1256 tests** (`@forge/shared` 13, `@forge/spec-engine`
+85, `@forge/db` 96 unchanged; `@forge/api` 349 (+1 new test); `@forge/web`
+713 (+1 new test)) via `npm test` at the repo root, plus a clean full
+monorepo `npm run build`.
+
 ## Phase 4
 
 - Template/agent marketplace
