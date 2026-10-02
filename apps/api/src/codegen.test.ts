@@ -5058,6 +5058,134 @@ test("the exported EntityView's group-header toggle collapses and expands just t
 });
 
 /**
+ * New in this round: mirrors the live preview's own board-column collapse
+ * toggle -- a huge "Won" column previously always rendered every one of
+ * its cards, with no way to hide it. Confirms the toggle hides/shows just
+ * that one column's own cards (leaving the other column untouched), the
+ * collapsed state survives an unmount+remount (getPersistedCollapsedBoardColumns/
+ * setPersistedCollapsedBoardColumns -- a deliberately separate store from
+ * the group-collapse feature's own, just above, since both are keyed only
+ * by entity name and could otherwise cross-contaminate), and a collapsed
+ * column's own drag-and-drop target wiring stays fully live (only its card
+ * list is hidden, never its outer onDragOver/onDrop handlers).
+ */
+test("the exported EntityView's board-column toggle collapses and expands just that one column's cards, survives an unmount+remount, and keeps a collapsed column's drop target live", async () => {
+  const files = generateExportFiles(project);
+  const dir = writeGeneratedWebComponent(files);
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async () => ({
+    ok: true,
+    status: 200,
+    json: async () => ({
+      records: [
+        { id: 1, name: "Alice", status: "New" },
+        { id: 2, name: "Bob", status: "Won" },
+      ],
+    }),
+  })) as typeof fetch;
+
+  async function waitForBoardButton(container: HTMLElement): Promise<HTMLButtonElement> {
+    for (let i = 0; i < 40; i++) {
+      const found = Array.from(container.querySelectorAll("button")).find((b) => b.textContent?.includes("Board"));
+      if (found) return found as HTMLButtonElement;
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      });
+    }
+    throw new Error("waitForBoardButton: Board view-toggle button never appeared");
+  }
+
+  // The Customer fixture's status enum has Hebrew enumLabels (New: "חדש",
+  // Won: "הצליח"), so columns must be picked by their declared enumValues
+  // order (["New", "Won"]), not by matching English label text.
+  function columns(container: HTMLElement): HTMLElement[] {
+    return Array.from(container.querySelectorAll(".board-column")) as HTMLElement[];
+  }
+
+  try {
+    await withRealLocalStorage(async () => {
+      const { EntityView } = await import(path.join(dir, "web", "src", "components", "EntityView.jsx"));
+      const customerEntity = project.spec.entities.find((e) => e.name === "Customer")!;
+      const props = {
+        entity: customerEntity,
+        highlightRecordId: null,
+        onHighlightHandled: () => {},
+        onJumpToRecord: () => {},
+        onRecordCountChange: () => {},
+      };
+
+      const firstMount = render(React.createElement(EntityView, props));
+      const boardButton = await waitForBoardButton(firstMount.container);
+      await act(async () => {
+        fireEvent.click(boardButton);
+      });
+      for (let i = 0; i < 40; i++) {
+        if (firstMount.container.querySelectorAll(".board-column").length > 0) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+
+      assert.equal(columns(firstMount.container).length, 2, "expected exactly 2 board columns for the 2 declared enum values");
+      assert.equal(columns(firstMount.container)[0].querySelectorAll(".board-card").length, 1, "the 'New' column (index 0) must start expanded with its own card visible");
+      assert.equal(columns(firstMount.container)[1].querySelectorAll(".board-card").length, 1, "the 'Won' column (index 1) must start expanded with its own card visible");
+
+      const wonToggle = columns(firstMount.container)[1].querySelector(".board-column-toggle") as HTMLButtonElement;
+      assert.ok(wonToggle, "expected a real toggle button in the 'Won' column's header");
+      assert.equal(wonToggle.getAttribute("aria-expanded"), "true", "a freshly opened board must start with every column expanded");
+
+      await act(async () => {
+        fireEvent.click(wonToggle);
+      });
+      assert.equal(
+        columns(firstMount.container)[1].querySelectorAll(".board-card").length,
+        0,
+        "collapsing the 'Won' column must hide its own card",
+      );
+      assert.equal(
+        columns(firstMount.container)[0].querySelectorAll(".board-card").length,
+        1,
+        "collapsing 'Won' must not affect the unrelated 'New' column's own card",
+      );
+      assert.equal(
+        columns(firstMount.container)[1].querySelector(".board-column-toggle")!.getAttribute("aria-expanded"),
+        "false",
+        "the collapsed column's own toggle must report aria-expanded=false",
+      );
+
+      // A collapsed column's own drop target must still be fully live.
+      await act(async () => {
+        fireEvent.dragOver(columns(firstMount.container)[1], { dataTransfer: { getData: () => "", setData: () => {} } });
+      });
+      assert.ok(
+        columns(firstMount.container)[1].classList.contains("board-column-drag-over"),
+        "a collapsed column must still show real drag-over feedback -- only its card list should be hidden, not its drop wiring",
+      );
+      firstMount.unmount();
+
+      const secondMount = render(React.createElement(EntityView, props));
+      await waitForBoardButton(secondMount.container);
+      for (let i = 0; i < 40; i++) {
+        if (columns(secondMount.container).length > 0) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+      assert.equal(
+        columns(secondMount.container)[1].querySelectorAll(".board-card").length,
+        0,
+        "a freshly mounted EntityView for the same entity must come back up with 'Won' (index 1) still collapsed, not reset to all-expanded",
+      );
+      secondMount.unmount();
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    cleanup();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
  * New in this round: mirrors the live preview's own "Reset column
  * widths" button -- once a column was manually resized, the only way
  * back to automatic sizing was dragging it back by hand, with no

@@ -1157,6 +1157,45 @@ function setPersistedCollapsedGroups(entityName, keys) {
   return deduped;
 }
 
+// Which board-view column values are collapsed, per entity. Mirrors the
+// live preview's own collapsedBoardColumnsPreference.ts -- deliberately
+// a SEPARATE store from the one just above (table groups and board
+// columns can be keyed by different fields, so sharing storage would
+// conflate the two). Previously a board column always rendered every one
+// of its own cards, even a huge "Done" column.
+const COLLAPSED_BOARD_COLUMNS_STORAGE_KEY = "forge_collapsed_board_columns";
+function readCollapsedBoardColumnsStore() {
+  try {
+    const raw = localStorage.getItem(COLLAPSED_BOARD_COLUMNS_STORAGE_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) return {};
+    return parsed;
+  } catch {
+    return {};
+  }
+}
+function writeCollapsedBoardColumnsStore(store) {
+  try {
+    localStorage.setItem(COLLAPSED_BOARD_COLUMNS_STORAGE_KEY, JSON.stringify(store));
+  } catch {
+    // localStorage can be unavailable (private mode) -- the choice just won't survive a reload.
+  }
+}
+function getPersistedCollapsedBoardColumns(entityName) {
+  const store = readCollapsedBoardColumnsStore();
+  const values = store[entityName];
+  return Array.isArray(values) ? values.filter((v) => typeof v === "string") : [];
+}
+function setPersistedCollapsedBoardColumns(entityName, values) {
+  const store = readCollapsedBoardColumnsStore();
+  const deduped = [...new Set(values)];
+  if (deduped.length === 0) delete store[entityName];
+  else store[entityName] = deduped;
+  writeCollapsedBoardColumnsStore(store);
+  return deduped;
+}
+
 // Applies a persisted (possibly stale) column order to the entity's current
 // real field list: a field the order mentions keeps its persisted relative
 // position, and any field the order doesn't mention (a newly added field,
@@ -2221,6 +2260,7 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
   const [fieldFilters, setFieldFilters] = useState(() => getPersistedFieldFilters(entity.name));
   const [groupFieldName, setGroupFieldName] = useState(() => getPersistedGroupField(entity.name));
   const [collapsedGroups, setCollapsedGroups] = useState(() => new Set(getPersistedCollapsedGroups(entity.name)));
+  const [collapsedBoardColumns, setCollapsedBoardColumns] = useState(() => new Set(getPersistedCollapsedBoardColumns(entity.name)));
   const [highlightedRecordId, setHighlightedRecordId] = useState(null);
   const [moveErrorId, setMoveErrorId] = useState(null);
   const [focusedRowId, setFocusedRowId] = useState(null);
@@ -2330,6 +2370,7 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
     setFieldFilters(getPersistedFieldFilters(entity.name));
     setGroupFieldName(getPersistedGroupField(entity.name));
     setCollapsedGroups(new Set(getPersistedCollapsedGroups(entity.name)));
+    setCollapsedBoardColumns(new Set(getPersistedCollapsedBoardColumns(entity.name)));
     setSortKeys(getPersistedSortKeys(entity.name));
     setViewMode(getPersistedViewMode(entity.name));
     setCalendarMonth(new Date());
@@ -2697,6 +2738,17 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
       if (next.has(groupKey)) next.delete(groupKey);
       else next.add(groupKey);
       setPersistedCollapsedGroups(entity.name, [...next]);
+      return next;
+    });
+  }
+
+  // Mirrors toggleGroupCollapsed above, for board columns instead of table groups.
+  function toggleBoardColumnCollapsed(columnValue) {
+    setCollapsedBoardColumns((prev) => {
+      const next = new Set(prev);
+      if (next.has(columnValue)) next.delete(columnValue);
+      else next.add(columnValue);
+      setPersistedCollapsedBoardColumns(entity.name, [...next]);
       return next;
     });
   }
@@ -3399,7 +3451,9 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
             </div>
           ) : viewMode === "board" && boardField ? (
             <div className="board-scroll">
-              {groupByField(visibleRecords, boardField).map((column) => (
+              {groupByField(visibleRecords, boardField).map((column) => {
+                const collapsed = collapsedBoardColumns.has(column.value);
+                return (
                 <div
                   className={dragOverColumn === column.value ? "board-column board-column-drag-over" : "board-column"}
                   key={column.value}
@@ -3412,6 +3466,15 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
                 >
                   <div className="board-column-header">
                     <div className="board-column-header-info">
+                      <button
+                        type="button"
+                        className="board-column-toggle"
+                        onClick={() => toggleBoardColumnCollapsed(column.value)}
+                        aria-expanded={!collapsed}
+                        aria-label={collapsed ? "Expand column" : "Collapse column"}
+                      >
+                        {collapsed ? "▸" : "▾"}
+                      </button>
                       <span className={\`badge badge-\${badgeTone(column.value)}\`}>{column.label}</span>
                       <span className="muted small">{column.records.length}</span>
                     </div>
@@ -3425,7 +3488,7 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
                       +
                     </button>
                   </div>
-                  {column.records.map((r) => (
+                  {!collapsed && column.records.map((r) => (
                     <BoardCard
                       key={r.id}
                       entity={entity}
@@ -3441,7 +3504,8 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
                     />
                   ))}
                 </div>
-              ))}
+                );
+              })}
             </div>
           ) : viewMode === "calendar" && dateField ? (
             <CalendarView
@@ -4455,6 +4519,7 @@ nav button.active .tab-count { background: rgba(255, 255, 255, 0.25); color: inh
 .board-column-drag-over { background: var(--accent-soft); border-color: var(--accent); }
 .board-column-header { display: flex; align-items: center; justify-content: space-between; padding-bottom: 8px; border-bottom: 1px solid var(--border-soft); }
 .board-column-header-info { display: flex; align-items: center; gap: 6px; }
+.board-column-toggle { background: none; border: none; cursor: pointer; padding: 0 4px; font-size: 12px; color: inherit; }
 .board-add-card-btn { background: none; border: none; padding: 0 4px; font-size: 16px; font-weight: 600; opacity: 0.5; cursor: pointer; line-height: 1; }
 .board-add-card-btn:hover { opacity: 1; color: var(--accent); }
 .board-card { background: var(--surface); border: 1px solid var(--border-soft); border-radius: 8px; padding: 10px 12px; box-shadow: var(--shadow-sm); display: flex; flex-direction: column; gap: 6px; }

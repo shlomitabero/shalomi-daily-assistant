@@ -16,6 +16,7 @@ import { getViewMode as getViewModePreference, setViewMode as setViewModePrefere
 import { getSortKeys as getSortKeysPreference, setSortKeys as setSortKeysPreference } from "./sortKeysPreference.js";
 import { getFieldFilters as getFieldFiltersPreference, setFieldFilters as setFieldFiltersPreference } from "./fieldFiltersPreference.js";
 import { getCollapsedGroups, setCollapsedGroups as setCollapsedGroupsPreference } from "./collapsedGroupsPreference.js";
+import { getCollapsedBoardColumns, setCollapsedBoardColumns as setCollapsedBoardColumnsPreference } from "./collapsedBoardColumnsPreference.js";
 import { EntityLabelEditor } from "./EntityLabelEditor.js";
 import { FieldLabelEditor } from "./FieldLabelEditor.js";
 import {
@@ -793,6 +794,7 @@ export function EntityPanel({
   const [fieldFilters, setFieldFilters] = useState<Record<string, string>>({});
   const [groupFieldName, setGroupFieldName] = useState("");
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
+  const [collapsedBoardColumns, setCollapsedBoardColumns] = useState<Set<string>>(new Set());
   const [sortKeys, setSortKeys] = useState<SortKey[]>([]);
   const [viewMode, setViewMode] = useState<ViewMode>("table");
   const [calendarMonth, setCalendarMonth] = useState(() => new Date());
@@ -967,6 +969,25 @@ export function EntityPanel({
       if (next.has(groupKey)) next.delete(groupKey);
       else next.add(groupKey);
       setCollapsedGroupsPreference(projectId, entity.name, [...next]);
+      return next;
+    });
+  }
+
+  // Same reasoning as collapsedGroups' own effect just above -- which
+  // board columns are collapsed is scoped per project+entity too, in its
+  // own separate store (board columns and table groups can be keyed by
+  // different fields, so sharing storage would conflate the two).
+  useEffect(() => {
+    setCollapsedBoardColumns(new Set(getCollapsedBoardColumns(projectId, entity.name)));
+  }, [projectId, entity.name]);
+
+  /** Mirrors toggleGroupCollapsed above, for board columns instead of table groups. */
+  function toggleBoardColumnCollapsed(columnValue: string) {
+    setCollapsedBoardColumns((prev) => {
+      const next = new Set(prev);
+      if (next.has(columnValue)) next.delete(columnValue);
+      else next.add(columnValue);
+      setCollapsedBoardColumnsPreference(projectId, entity.name, [...next]);
       return next;
     });
   }
@@ -2278,7 +2299,9 @@ export function EntityPanel({
             </div>
           ) : viewMode === "board" && boardField ? (
             <div className="board-scroll">
-              {groupByField(visibleRecords, boardField).map((column) => (
+              {groupByField(visibleRecords, boardField).map((column) => {
+                const collapsed = collapsedBoardColumns.has(column.value);
+                return (
                 <div
                   className={dragOverColumn === column.value ? "board-column board-column-drag-over" : "board-column"}
                   key={column.value}
@@ -2291,6 +2314,15 @@ export function EntityPanel({
                 >
                   <div className="board-column-header">
                     <div className="board-column-header-info">
+                      <button
+                        type="button"
+                        className="board-column-toggle"
+                        onClick={() => toggleBoardColumnCollapsed(column.value)}
+                        aria-expanded={!collapsed}
+                        aria-label={collapsed ? t("entity.board.expandColumn") : t("entity.board.collapseColumn")}
+                      >
+                        {collapsed ? "▸" : "▾"}
+                      </button>
                       <span className={`badge badge-${badgeTone(column.value)}`}>{column.label}</span>
                       <span className="muted small">{column.records.length}</span>
                     </div>
@@ -2304,7 +2336,7 @@ export function EntityPanel({
                       +
                     </button>
                   </div>
-                  {column.records.map((record) => (
+                  {!collapsed && column.records.map((record) => (
                     <BoardCard
                       key={record.id as number}
                       entity={entity}
@@ -2324,7 +2356,8 @@ export function EntityPanel({
                     />
                   ))}
                 </div>
-              ))}
+                );
+              })}
             </div>
           ) : viewMode === "calendar" && dateField ? (
             <CalendarView

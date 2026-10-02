@@ -3057,6 +3057,94 @@ test("EntityPanel's board view moves a card via a real drag-and-drop, and droppi
 });
 
 /**
+ * New in this round: a huge "Done"/"Won" column with dozens of cards always
+ * rendered every single one, with no way to collapse it out of the way.
+ * Each column header now has its own toggle button. Confirms: (1) toggling
+ * one column hides only that column's own cards, leaving the other column's
+ * cards untouched (2) the collapsed state survives a full unmount+remount
+ * (scoped per project+entity via collapsedBoardColumnsPreference.ts, a
+ * deliberately separate store from the table-group collapse feature's own,
+ * since both are keyed only by project+entity and could otherwise cross-
+ * contaminate if the board's grouping field and the table's grouping field
+ * ever shared a value) (3) a collapsed column's outer drop target stays
+ * fully wired -- dragging over it still shows real drag-over feedback --
+ * since only the inner card list is hidden, not the whole column.
+ */
+test("EntityPanel's board column toggle hides only that column's cards, persists across remount, and keeps a collapsed column's drop target live", async () => {
+  await withJsdom(async () => {
+    const store: EntityRecord[] = [
+      { id: 1, name: "Acme Corp", status: "new" },
+      { id: 2, name: "Globex", status: "won" },
+    ];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = mockRecordsFetch(store) as typeof fetch;
+    try {
+      const view = renderEntityPanel();
+      await waitForCondition(() => document.querySelector(".entity-toolbar") !== null);
+
+      const boardToggle = document.querySelectorAll(".view-toggle-btn")[1] as HTMLButtonElement;
+      fireEvent.click(boardToggle);
+      await waitForCondition(() => document.querySelectorAll(".board-column").length === 3);
+
+      function findColumn(label: string) {
+        return Array.from(document.querySelectorAll(".board-column")).find((col) =>
+          col.querySelector(".board-column-header-info")?.textContent?.includes(label),
+        ) as HTMLDivElement;
+      }
+
+      const newColumn = findColumn("New");
+      const wonColumn = findColumn("Won");
+      assert.equal(newColumn.querySelectorAll(".board-card").length, 1, "the 'New' column must start expanded with its 1 card visible");
+      assert.equal(wonColumn.querySelectorAll(".board-card").length, 1, "the 'Won' column must start expanded with its 1 card visible");
+
+      const newToggle = newColumn.querySelector(".board-column-toggle") as HTMLButtonElement;
+      assert.equal(newToggle.getAttribute("aria-expanded"), "true", "an expanded column's toggle must report aria-expanded=true");
+
+      fireEvent.click(newToggle);
+      await waitForCondition(() => findColumn("New").querySelectorAll(".board-card").length === 0);
+
+      assert.equal(
+        findColumn("Won").querySelectorAll(".board-card").length,
+        1,
+        "collapsing the 'New' column must not affect the unrelated 'Won' column's own cards",
+      );
+      assert.equal(
+        findColumn("New").querySelector(".board-column-toggle")!.getAttribute("aria-expanded"),
+        "false",
+        "a collapsed column's toggle must report aria-expanded=false",
+      );
+
+      // A collapsed column's own drop target must still be fully live.
+      function makeDataTransfer() {
+        let payload = "";
+        return { setData: (_type: string, value: string) => (payload = value), getData: () => payload };
+      }
+      fireEvent.dragOver(findColumn("New"), { dataTransfer: makeDataTransfer() });
+      assert.ok(
+        findColumn("New").classList.contains("board-column-drag-over"),
+        "a collapsed column must still show real drag-over feedback -- only its card list should be hidden, not its drop wiring",
+      );
+
+      // The collapsed state must survive a full unmount+remount (persisted per project+entity).
+      view.unmount();
+      renderEntityPanel();
+      await waitForCondition(() => document.querySelectorAll(".board-column").length === 3);
+      assert.equal(
+        findColumn("New").querySelectorAll(".board-card").length,
+        0,
+        "the 'New' column must still be collapsed after a full remount",
+      );
+
+      // Clicking it again must restore the hidden card.
+      fireEvent.click(findColumn("New").querySelector(".board-column-toggle") as HTMLButtonElement);
+      await waitForCondition(() => findColumn("New").querySelectorAll(".board-card").length === 1);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * New in this round: the table view had no way to move between rows
  * without reaching for the mouse. j/k (and ArrowDown/ArrowUp) move a
  * keyboard focus between visible rows, and Enter opens the focused row for
