@@ -3140,6 +3140,63 @@ test("EntityPanel's table rows support j/k row navigation and Enter-to-edit, wit
 });
 
 /**
+ * New in this round: j/k/Enter above let a keyboard-only user navigate to
+ * and open any record, but there was no way to actually SELECT a row (the
+ * checkbox toggleSelected already wires to onClick) without reaching for
+ * the mouse -- a fully keyboard-driven user could never build a multi-row
+ * selection to bulk-delete/duplicate/edit. "x" toggles the focused row's
+ * own selection, confirmed via the real checkbox's checked state (not
+ * just a CSS class), and confirms the isTypingTarget guard: pressing "x"
+ * while the search box has focus must type a literal "x", not toggle
+ * selection.
+ */
+test("EntityPanel's 'x' shortcut toggles the focused row's own selection checkbox, without hijacking keystrokes typed into the search box", async () => {
+  await withJsdom(async () => {
+    const store: EntityRecord[] = [
+      { id: 1, name: "Acme Corp", status: "new" },
+      { id: 2, name: "Globex", status: "won" },
+    ];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = mockRecordsFetch(store) as typeof fetch;
+    try {
+      renderEntityPanel();
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 2);
+
+      for (let attempt = 0; document.querySelectorAll(".record-row-focused").length === 0 && attempt < 40; attempt++) {
+        fireEvent.keyDown(window, { key: "j" });
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      }
+      const focused = document.querySelector(".record-row-focused") as HTMLElement;
+      assert.equal(focused.getAttribute("data-record-id"), "1", "sanity check: 'j' must have focused the first row");
+      const checkbox = focused.querySelector('input[type="checkbox"]') as HTMLInputElement;
+      assert.ok(checkbox, "expected a real selection checkbox in the focused row");
+      assert.equal(checkbox.checked, false, "the row must start unselected");
+
+      fireEvent.keyDown(window, { key: "x" });
+      await waitForCondition(() => checkbox.checked === true);
+      assert.equal(
+        document.querySelectorAll('tr[data-record-id="2"] input[type="checkbox"]:checked').length,
+        0,
+        "'x' must select only the focused row, not the other one",
+      );
+
+      // Pressing "x" again on the same focused row must deselect it.
+      fireEvent.keyDown(window, { key: "x" });
+      await waitForCondition(() => checkbox.checked === false);
+
+      // Pressing "x" while the search box itself has focus must type a
+      // literal "x" there instead of toggling the focused row's selection.
+      const searchBox = document.querySelector(".entity-search") as HTMLInputElement;
+      fireEvent.keyDown(searchBox, { key: "x" });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      assert.equal(checkbox.checked, false, "a 'x' keydown targeting the search box must not toggle the focused row's selection");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * New in this round: there was no keyboard-only way to start adding a new
  * record -- j/k/Enter above only navigate EXISTING rows. "n" jumps to a
  * blank add form and focuses its first field, discarding any in-progress

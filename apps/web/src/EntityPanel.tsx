@@ -1277,14 +1277,16 @@ export function EntityPanel({
 
   /**
    * j/k (and ArrowDown/ArrowUp) move a keyboard focus between table rows,
-   * and Enter opens the focused row for editing -- the table view
-   * previously had no way to move between records without reaching for
-   * the mouse. Only active in table view (board/calendar have their own
-   * navigation shapes), and isTypingTarget guards against hijacking
-   * keystrokes meant for the search box, a filter dropdown, or the add/
-   * edit form -- the same guard App.tsx's own Ctrl+K/Escape handler gets
-   * for free by only running in the "preview" view, which doesn't apply
-   * here since this panel *is* full of its own text inputs.
+   * Enter opens the focused row for editing, and "x" toggles that row's
+   * own selection checkbox -- previously a keyboard-only user could
+   * navigate to and open any record but could never build a multi-row
+   * selection for the bulk actions (bulk delete/duplicate/edit) without
+   * reaching for the mouse. Only active in table view (board/calendar
+   * have their own navigation shapes), and isTypingTarget guards against
+   * hijacking keystrokes meant for the search box, a filter dropdown, or
+   * the add/edit form -- the same guard App.tsx's own Ctrl+K/Escape
+   * handler gets for free by only running in the "preview" view, which
+   * doesn't apply here since this panel *is* full of its own text inputs.
    */
   useEffect(() => {
     if (viewMode !== "table") return;
@@ -1303,6 +1305,9 @@ export function EntityPanel({
           e.preventDefault();
           startEdit(record);
         }
+      } else if (e.key === "x" && focusedRowId != null) {
+        e.preventDefault();
+        toggleSelected(focusedRowId);
       }
     }
     window.addEventListener("keydown", handleKeyDown);

@@ -2145,6 +2145,83 @@ test("the exported EntityView's j/k/ArrowUp/ArrowDown move a real keyboard focus
 });
 
 /**
+ * New in this round: porting the live preview's own "x" shortcut
+ * (toggle the focused row's own selection checkbox) to the exported
+ * app's EntityView.jsx. j/k/Enter above let a keyboard-only user
+ * navigate to and open any record, but there was no way to actually
+ * select one for the bulk actions (bulk delete/duplicate/edit) without
+ * reaching for the mouse -- confirmed via grep that toggleSelected was
+ * only ever wired to the checkbox's own onChange.
+ */
+test("the exported EntityView's 'x' shortcut toggles the focused row's own selection checkbox", async () => {
+  const files = generateExportFiles(project);
+  const dir = writeGeneratedWebComponent(files);
+  const store = [
+    { id: 1, name: "Acme Corp", status: "New" },
+    { id: 2, name: "Globex", status: "Won" },
+  ];
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
+    const method = init?.method ?? "GET";
+    if (method === "GET" && input === "/api/Customer") {
+      return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    throw new Error(`unexpected request ${method} ${input}`);
+  }) as typeof fetch;
+
+  try {
+    await withRealLocalStorage(async () => {
+      const { EntityView } = await import(path.join(dir, "web", "src", "components", "EntityView.jsx"));
+      const customerEntity = project.spec.entities.find((e) => e.name === "Customer")!;
+      const props = {
+        entity: customerEntity,
+        highlightRecordId: null,
+        onHighlightHandled: () => {},
+        onJumpToRecord: () => {},
+        onRecordCountChange: () => {},
+      };
+
+      const { container } = render(React.createElement(EntityView, props));
+      for (let i = 0; i < 40; i++) {
+        if (container.querySelectorAll("tbody tr").length === 2) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+      assert.equal(container.querySelectorAll("tbody tr").length, 2, "expected both records to have loaded");
+
+      await act(async () => {
+        fireEvent.keyDown(window, { key: "j" });
+      });
+      const focused = container.querySelector(".record-row-focused") as HTMLElement;
+      assert.equal(focused.getAttribute("data-record-id"), "1", "sanity check: 'j' must have focused the first row");
+      const checkbox = focused.querySelector('input[type="checkbox"]') as HTMLInputElement;
+      assert.ok(checkbox, "expected a real selection checkbox in the focused row");
+      assert.equal(checkbox.checked, false, "the row must start unselected");
+
+      await act(async () => {
+        fireEvent.keyDown(window, { key: "x" });
+      });
+      assert.equal(checkbox.checked, true, "'x' must select the focused row");
+      assert.equal(
+        container.querySelectorAll('tr[data-record-id="2"] input[type="checkbox"]:checked').length,
+        0,
+        "'x' must select only the focused row, not the other one",
+      );
+
+      await act(async () => {
+        fireEvent.keyDown(window, { key: "x" });
+      });
+      assert.equal(checkbox.checked, false, "pressing 'x' again on the same focused row must deselect it");
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    cleanup();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
  * New in this round: porting the live preview's own "n" shortcut
  * (jump to a blank add-record form) to the exported app's EntityView.jsx.
  * Unlike j/k/Enter above, this listener is NOT scoped to table view -- the

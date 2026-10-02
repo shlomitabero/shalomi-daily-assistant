@@ -19,6 +19,7 @@ const SHORTCUTS: { keys: string[]; descriptionKey: string }[] = [
   { keys: ["j", "↓"], descriptionKey: "shortcuts.rowDown" },
   { keys: ["k", "↑"], descriptionKey: "shortcuts.rowUp" },
   { keys: ["Enter"], descriptionKey: "shortcuts.rowEdit" },
+  { keys: ["x"], descriptionKey: "shortcuts.toggleSelect" },
   { keys: ["n"], descriptionKey: "shortcuts.newRecord" },
 ];
 
