@@ -21256,6 +21256,56 @@ Full suite green: **1260 tests** (`@forge/shared` 13, `@forge/spec-engine`
 715 (+1 new test)) via `npm test` at the repo root, plus a clean full
 monorepo `npm run build`.
 
+### Round 351 — Escape-to-cancel for the record add/edit form
+
+No ready candidate going into this round, so spawned an Explore survey
+(continuing round 346's own finding that gaps now live in
+`EntityPanel.tsx`/`codegen.ts` themselves). Independently re-verified its
+pick rather than trusting the report: read `EntityPanel.tsx`'s
+`<form className="record-form" ...>` (~line 2020) and confirmed it has
+`onSubmit` but no `onKeyDown` at all -- the only way to back out of an
+in-progress edit (`editingId != null`) was the mouse-driven Cancel
+button's own `onClick`. Grepped for `Escape` and confirmed it's already
+an established convention elsewhere (the inline cell editor discards its
+own draft on Escape, round 184; dialog overlays close on Escape via
+`useDialogFocusTrap`) -- just never extended to this one form, a real
+inconsistency rather than a speculative nice-to-have. Confirmed the
+identical gap in `apps/api/src/codegen.ts`'s mirrored form.
+
+Added an `onKeyDown` directly on the `<form>` element: Escape, gated on
+`editingId != null`, calls the exact same reset the Cancel button's own
+`onClick` already does (`setEditingId(null)` + `setForm(emptyForm(entity))`)
+-- zero duplicated logic, just reusing the existing reset inline. The
+`editingId != null` gate matters: outside edit mode this same form IS
+the blank create form, so Escape must never wipe a user's in-progress
+NEW-record draft -- only an actual edit is Escape's to discard.
+
+Ported identically into `apps/api/src/codegen.ts`'s matching form.
+
+Tests: new real-DOM tests in both `EntityPanel.test.ts` and
+`codegen.test.ts` type a draft into the blank create form and confirm
+Escape there leaves it completely untouched (`editingId` is `null`),
+then open a real existing record for editing via its own Edit button,
+confirm the Cancel button and pre-filled values are genuinely present,
+press Escape, and confirm: the form resets to blank, the Cancel button
+disappears, the submit button reverts to its create-mode wording ("Add"),
+and the mock server's own record is left completely untouched (Escape
+never saves, matching the inline-cell-editor convention's own
+`patchCount === 0` style assertion).
+
+Deliberate-break-and-restore: backed up all 4 changed files, reverted
+the 2 implementation files to HEAD, and confirmed exactly 1 failure in
+each of the 2 affected suites (`EntityPanel.test.ts` 83/84,
+`codegen.test.ts` 125/126) -- no other tests affected. Restored every
+file from the backup and confirmed byte-identical via `diff -q` against
+all 4 files, then re-ran both full suites and both production builds
+clean one final time before committing.
+
+Full suite green: **1262 tests** (`@forge/shared` 13, `@forge/spec-engine`
+85, `@forge/db` 96 unchanged; `@forge/api` 352 (+1 new test); `@forge/web`
+716 (+1 new test)) via `npm test` at the repo root, plus a clean full
+monorepo `npm run build`.
+
 ## Phase 4
 
 - Template/agent marketplace
