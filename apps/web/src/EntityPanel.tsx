@@ -1916,7 +1916,9 @@ export function EntityPanel({
 
       {loadError && (
         <div className="error-retry-row">
-          <p className="error">{loadError}</p>
+          <p className="error" role="status">
+            {loadError}
+          </p>
           <button type="button" className="secondary small" onClick={refresh}>
             {t("entity.retry")}
           </button>

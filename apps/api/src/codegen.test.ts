@@ -2033,6 +2033,7 @@ test("the exported EntityView shows a real error with a Retry button when the in
         });
       }
       assert.match(container.querySelector(".error-retry-row p.error")?.textContent ?? "", /Server exploded/);
+      assert.equal(container.querySelector(".error-retry-row p.error")?.getAttribute("role"), "status", "the error message must be announced to screen readers");
       assert.equal(container.querySelector(".empty-state"), null, "a real load failure must not also show the misleading 'No records yet' empty-state text");
 
       const retryButton = container.querySelector(".error-retry-row button") as HTMLButtonElement;
@@ -5030,6 +5031,7 @@ test("the exported GlobalSearch shows a real error with a Retry button when a se
       });
 
       assert.match(container.querySelector(".error-retry-row p.error")?.textContent ?? "", /Server exploded/);
+      assert.equal(container.querySelector(".error-retry-row p.error")?.getAttribute("role"), "status", "the error message must be announced to screen readers");
       const retryButton = container.querySelector(".error-retry-row button") as HTMLButtonElement;
       assert.ok(retryButton, "expected a real Retry button");
 

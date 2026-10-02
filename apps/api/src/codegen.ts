@@ -3003,10 +3003,10 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
           )}
         </div>
       </form>
-      {error && <p className="error">{error}</p>}
+      {error && <p className="error" role="status">{error}</p>}
       {loadError && (
         <div className="error-retry-row">
-          <p className="error">{loadError}</p>
+          <p className="error" role="status">{loadError}</p>
           <button type="button" onClick={refresh}>
             Try again
           </button>
@@ -3043,7 +3043,7 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
       )}
 
       {loading ? (
-        <p className="muted">Loading…</p>
+        <p className="muted" role="status">Loading…</p>
       ) : records.length === 0 ? (
         loadError ? null : (
           <div className="empty-state">
@@ -3697,13 +3697,13 @@ export function GlobalSearch({ entities, onClose, onJumpToEntity, onJumpToRecord
 
         {error && (
           <div className="error-retry-row">
-            <p className="error">{error}</p>
+            <p className="error" role="status">{error}</p>
             <button type="button" onClick={() => runSearch(query)}>
               Try again
             </button>
           </div>
         )}
-        {loading && <p className="muted">Loading…</p>}
+        {loading && <p className="muted" role="status">Loading…</p>}
         {!loading && !searched && !error && (
           <>
             <p className="muted">Start typing to search.</p>
