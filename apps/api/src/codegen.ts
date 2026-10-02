@@ -2064,6 +2064,13 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
   const [records, setRecords] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  // Distinct from the error above (shared by CSV import, bulk-edit, and
+  // other mutation failures, each of which already has its own clear
+  // recovery path): specifically the initial/refresh listRecords call
+  // failing, which otherwise left the panel either showing a dead-end
+  // error line or, worse, falling into the empty-state branch below with
+  // "No records yet" even though the real problem was a failed fetch.
+  const [loadError, setLoadError] = useState(null);
   const [form, setForm] = useState(() => emptyForm(entity));
   const [editingId, setEditingId] = useState(null);
   const [search, setSearch] = useState("");
@@ -2157,13 +2164,14 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
   async function refresh() {
     const requestId = ++refreshRequestId.current;
     setLoading(true);
+    setLoadError(null);
     try {
       const { records } = await listRecords(entity.name);
       if (refreshRequestId.current !== requestId) return;
       setRecords(records);
     } catch (err) {
       if (refreshRequestId.current !== requestId) return;
-      setError(err.message);
+      setLoadError(err.message);
     } finally {
       if (refreshRequestId.current === requestId) setLoading(false);
     }
@@ -2925,6 +2933,14 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
         </div>
       </form>
       {error && <p className="error">{error}</p>}
+      {loadError && (
+        <div className="error-retry-row">
+          <p className="error">{loadError}</p>
+          <button type="button" onClick={refresh}>
+            Try again
+          </button>
+        </div>
+      )}
 
       {pendingDelete && (
         <p className="entity-undo-toast" role="status">
@@ -2958,9 +2974,11 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
       {loading ? (
         <p className="muted">Loading…</p>
       ) : records.length === 0 ? (
-        <div className="empty-state">
-          <p>No records yet — add the first one above.</p>
-        </div>
+        loadError ? null : (
+          <div className="empty-state">
+            <p>No records yet — add the first one above.</p>
+          </div>
+        )
       ) : (
         <>
           <div className="entity-toolbar">
@@ -3604,7 +3622,14 @@ export function GlobalSearch({ entities, onClose, onJumpToEntity, onJumpToRecord
           <button type="submit" disabled={!query.trim()}>Search</button>
         </form>
 
-        {error && <p className="error">{error}</p>}
+        {error && (
+          <div className="error-retry-row">
+            <p className="error">{error}</p>
+            <button type="button" onClick={() => runSearch(query)}>
+              Try again
+            </button>
+          </div>
+        )}
         {loading && <p className="muted">Loading…</p>}
         {!loading && !searched && !error && (
           <>
@@ -4088,6 +4113,9 @@ th, td { text-align: start; padding: 8px 10px; border-bottom: 1px solid var(--bo
 .row-actions button { margin-inline-start: 4px; padding: 5px 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface); color: var(--text); cursor: pointer; }
 .muted { color: var(--muted); font-size: 13px; }
 .error { color: var(--danger); }
+.error-retry-row { display: flex; align-items: center; gap: 10px; }
+.error-retry-row .error { margin: 0; }
+.error-retry-row button { padding: 5px 14px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface); color: var(--text); cursor: pointer; font: inherit; }
 .entity-undo-toast { display: flex; align-items: center; gap: 10px; background: var(--accent-soft); border: 1px solid var(--accent); color: var(--text); padding: 8px 14px; border-radius: 8px; margin: 0 0 16px; }
 .link-button { background: none; border: none; color: var(--accent); padding: 0; text-decoration: underline; font: inherit; font-weight: 600; cursor: pointer; }
 .cell-link { color: var(--accent); text-decoration: underline; }

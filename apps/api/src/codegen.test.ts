@@ -1978,6 +1978,79 @@ test("the exported EntityView's pending bulk delete commits every real delete on
 });
 
 /**
+ * New in this round: porting the live preview's own error+Retry pattern
+ * (round 328, EntityPanel.tsx) to the exported app's EntityView.jsx. Before
+ * this fix, a failed initial load here fell into the empty-state branch
+ * with "No records yet" -- indistinguishable from a genuinely empty table
+ * -- with no way to recover short of reloading the whole page. Uses the
+ * real generated component, a real failing then succeeding fetch, and a
+ * real click on the real Retry button.
+ */
+test("the exported EntityView shows a real error with a Retry button when the initial load fails, instead of the misleading 'No records yet' message", async () => {
+  const files = generateExportFiles(project);
+  const dir = writeGeneratedWebComponent(files);
+  const originalFetch = globalThis.fetch;
+  let callCount = 0;
+  globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
+    const method = init?.method ?? "GET";
+    if (method === "GET" && input === "/api/Customer") {
+      callCount += 1;
+      if (callCount === 1) {
+        return new Response(JSON.stringify({ error: "Server exploded" }), { status: 500, headers: { "content-type": "application/json" } });
+      }
+      return new Response(JSON.stringify({ records: [{ id: 1, name: "Acme Corp", status: "New" }] }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }
+    throw new Error(`unexpected request ${method} ${input}`);
+  }) as typeof fetch;
+
+  try {
+    await withRealLocalStorage(async () => {
+      const { EntityView } = await import(path.join(dir, "web", "src", "components", "EntityView.jsx"));
+      const customerEntity = project.spec.entities.find((e) => e.name === "Customer")!;
+      const props = {
+        entity: customerEntity,
+        highlightRecordId: null,
+        onHighlightHandled: () => {},
+        onJumpToRecord: () => {},
+        onRecordCountChange: () => {},
+      };
+
+      const { container } = render(React.createElement(EntityView, props));
+      for (let i = 0; i < 40; i++) {
+        if (container.querySelector(".error-retry-row")) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+      assert.match(container.querySelector(".error-retry-row p.error")?.textContent ?? "", /Server exploded/);
+      assert.equal(container.querySelector(".empty-state"), null, "a real load failure must not also show the misleading 'No records yet' empty-state text");
+
+      const retryButton = container.querySelector(".error-retry-row button") as HTMLButtonElement;
+      assert.ok(retryButton, "expected a real Retry button");
+      await act(async () => {
+        fireEvent.click(retryButton);
+      });
+
+      for (let i = 0; i < 40; i++) {
+        if (container.querySelectorAll("tbody tr").length === 1) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+      assert.equal(container.querySelector(".error-retry-row"), null, "the error+Retry row must disappear once the retry succeeds");
+      assert.match(container.querySelector("tbody tr")?.textContent ?? "", /Acme Corp/, "the real record from the successful retry must now render");
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    cleanup();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
  * Regression test: the exported app's own EntityView.jsx is a deliberate
  * duplicate of the live-preview EntityPanel.tsx, and its refresh() had
  * the exact same stale-async-overwrites-newer-setState race this session
@@ -2012,7 +2085,7 @@ test("the exported EntityView's refresh ignores a stale, still-in-flight refresh
     "listRecords",
     "entity",
     "setRecords",
-    "setError",
+    "setLoadError",
     `${refreshSrc}\nreturn refresh;`,
   )(
     refreshRequestId,
@@ -4741,6 +4814,68 @@ test("the exported GlobalSearch remembers a submitted search and shows it as a r
 
       const removeButton = secondMount.container.querySelector(".global-search-recent .chip-remove") as HTMLButtonElement | null;
       assert.equal(removeButton, null, "the recent-searches row (and its remove button) must stay hidden once results are showing again");
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    cleanup();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
+ * New in this round: porting the live preview's own error+Retry pattern
+ * (round 328, GlobalSearchPanel.tsx) to the exported app's GlobalSearch.jsx.
+ * Unlike EntityView/EntityPanel, GlobalSearch's own error state was already
+ * single-purpose (set only inside runSearch, same as the live preview) --
+ * so this is just a Retry button wired to re-run the search, no new state
+ * needed. Confirms a real failed-then-retried search via the real generated
+ * component.
+ */
+test("the exported GlobalSearch shows a real error with a Retry button when a search fails, and Retry re-runs the exact same query", async () => {
+  const files = generateExportFiles(project);
+  const dir = writeGeneratedWebComponent(files);
+  const originalFetch = globalThis.fetch;
+  let callCount = 0;
+  globalThis.fetch = (async (input: string) => {
+    callCount += 1;
+    if (callCount <= 2) {
+      return { ok: false, status: 500, json: async () => ({ error: "Server exploded" }) };
+    }
+    if (String(input).endsWith("/Customer")) {
+      return { ok: true, status: 200, json: async () => ({ records: [{ id: 1, name: "Acme widget order" }] }) };
+    }
+    return { ok: true, status: 200, json: async () => ({ records: [] }) };
+  }) as typeof fetch;
+
+  try {
+    await withRealLocalStorage(async () => {
+      const { GlobalSearch } = await import(path.join(dir, "web", "src", "components", "GlobalSearch.jsx"));
+      const props = { entities: project.spec.entities, onClose: () => {}, onJumpToEntity: () => {}, onJumpToRecord: () => {} };
+
+      const { container } = render(React.createElement(GlobalSearch, props));
+      const input = container.querySelector(".global-search-input") as HTMLInputElement;
+      await act(async () => {
+        fireEvent.change(input, { target: { value: "widget" } });
+        fireEvent.submit(container.querySelector("form.global-search-form")!);
+        await Promise.resolve();
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+
+      assert.match(container.querySelector(".error-retry-row p.error")?.textContent ?? "", /Server exploded/);
+      const retryButton = container.querySelector(".error-retry-row button") as HTMLButtonElement;
+      assert.ok(retryButton, "expected a real Retry button");
+
+      await act(async () => {
+        fireEvent.click(retryButton);
+        await Promise.resolve();
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+
+      assert.equal(container.querySelector(".error-retry-row"), null, "the error+Retry row must disappear once the retry succeeds");
+      assert.match(container.textContent ?? "", /Acme widget order/, "Retry must re-run the originally-submitted query");
+      assert.equal(input.value, "widget", "Retry must not clear the query that's still in the box");
     });
   } finally {
     globalThis.fetch = originalFetch;
