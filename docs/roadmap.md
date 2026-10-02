@@ -20391,6 +20391,62 @@ unchanged, no new test added for the 5 untested elements per established
 practice) via `npm test` at the repo root, plus a clean full monorepo
 `npm run build`.
 
+### Round 338 — Closing out the last role="status" stragglers in codegen.ts and EntityPanel
+
+An Explore survey's top candidate was that `codegen.ts`'s exported
+`EntityView` and `GlobalSearch` never got the `role="status"` fix round
+337 applied to the live-preview app's "Loading…" placeholders. Verifying
+that claim independently (a fresh `grep` across `codegen.ts` for every
+`className="error"`/`className="muted">Loading…` element, not just the
+two the survey named) turned up three more elements with the identical
+gap in the same file: `EntityView`'s plain `error` and `loadError`
+paragraphs (`codegen.ts:3006`, `3009`), and `GlobalSearch`'s `error`
+paragraph (`codegen.ts:3700`) -- all still bare, even though rounds
+328-335 had already given their live-preview counterparts `role="status"`.
+
+A further sweep of the live-preview app itself (grepping every
+`apps/web/src/*.tsx` for a bare `className="error"` with no `role` at
+all) turned up one last straggler there too: `EntityPanel.tsx:1919`'s own
+`loadError` paragraph. Its sibling `error` paragraph two lines up
+(`EntityPanel.tsx:1912`) got `role="status"` back in round 328 -- the very
+round that established the pattern -- but `loadError` itself was added in
+that same round purely for the retry mechanism, before `role="status"`
+existed as a convention yet, and no later round's grep ever caught the
+asymmetry because every prior survey searched for bare error paragraphs
+with *no* role attribute at all in files that already had *some*
+`role="status"` usage, which this file did (on its sibling `error` line),
+so it read as "already done."
+
+Fixed all 6 in one pass, matching the `role="status"` convention already
+established everywhere else in both files: `codegen.ts`'s `EntityView`
+`error`/`loadError` (3006, 3009), `GlobalSearch`'s `error` (3700), both
+"Loading…" placeholders (3046, 3706), and `EntityPanel.tsx`'s `loadError`
+(1919).
+
+Tests: `codegen.test.ts` already had real-DOM tests (jsdom +
+@testing-library/react) rendering both `.error-retry-row` elements for
+`EntityView` and `GlobalSearch` -- added one
+`getAttribute("role") === "status"` assertion into each existing test.
+No pre-existing test renders the plain `error` or Loading-placeholder
+states in either file, nor `EntityPanel`'s `loadError` specifically, so
+no new test was added for those three, consistent with the established
+practice for untested elements.
+
+Deliberate-break-and-restore: backed up all 3 changed files, reverted
+`codegen.ts` to HEAD, and confirmed exactly the 2 modified tests failed
+(110/112 passing) while every other `codegen.test.ts` test kept passing.
+Restored from backup and confirmed byte-identical via `diff -q` against
+all 3 files. One `npm test --workspace=@forge/api` run immediately after
+restoration failed on an unrelated timing-dependent test; re-running it
+once (per the project's own standing practice for exactly this failure
+mode) came back clean. Final numbers after restoration: `@forge/api`
+338/338, `@forge/web` 698/698, and a clean build on both workspaces.
+
+Full suite green: **1230 tests** (`@forge/shared` 13, `@forge/spec-engine`
+85, `@forge/db` 96 unchanged; `@forge/api` 338 unchanged, 2 assertions
+added inside existing tests; `@forge/web` 698 unchanged) via `npm test`
+at the repo root, plus a clean full monorepo `npm run build`.
+
 ## Phase 4
 
 - Template/agent marketplace
