@@ -3217,6 +3217,9 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
             e.preventDefault();
             setForm(emptyForm(entity));
             setEditingId(null);
+          } else if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
+            e.preventDefault();
+            e.currentTarget.requestSubmit();
           }
         }}
       >

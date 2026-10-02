@@ -5141,3 +5141,68 @@ test("EntityPanel shows a translated required-field error instead of relying on 
     }
   });
 });
+
+/**
+ * New in this round: a longtext field's own <textarea> had no keyboard way
+ * to submit the form at all -- a bare Enter there just inserts a newline
+ * (unlike every single-line input, where Enter already submits the form
+ * natively), and the form's own onKeyDown only handled Escape. Extended
+ * that same handler to also call the real form submit (via
+ * requestSubmit(), the exact same real submit event path the Save button's
+ * own type="submit" click already goes through) on Ctrl+Enter or Cmd+Enter.
+ * Confirms both halves: a bare Enter in the textarea must never submit
+ * (postCount stays 0), while Ctrl+Enter AND Cmd+Enter each genuinely
+ * create a real record through the real API.
+ */
+test("EntityPanel's record form submits on Ctrl+Enter or Cmd+Enter from a longtext textarea, but a bare Enter there never submits", async () => {
+  await withJsdom(async () => {
+    const leadEntity: Entity = {
+      name: "Lead",
+      label: "Lead",
+      fields: [
+        { name: "name", label: "Name", type: "text", required: true },
+        { name: "notes", label: "Notes", type: "longtext", required: false },
+      ],
+    };
+    const store: EntityRecord[] = [];
+    const originalFetch = globalThis.fetch;
+    let postCount = 0;
+    globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/entities/Lead") {
+        return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      if (method === "POST" && input === "/api/projects/proj1/entities/Lead") {
+        postCount += 1;
+        const record = { id: postCount, ...JSON.parse(init!.body as string) };
+        store.push(record);
+        return new Response(JSON.stringify({ record }), { status: 201, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+
+    try {
+      renderEntityPanel({ entity: leadEntity, allEntities: [leadEntity] });
+      await waitForCondition(() => document.querySelector(".record-form") !== null);
+
+      const nameInput = document.querySelector('.record-form input[type="text"]') as HTMLInputElement;
+      const notesTextarea = document.querySelector(".record-form textarea") as HTMLTextAreaElement;
+
+      fireEvent.change(nameInput, { target: { value: "Dana" } });
+      fireEvent.keyDown(notesTextarea, { key: "Enter" });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      assert.equal(postCount, 0, "a bare Enter in the longtext textarea must never submit the form");
+
+      fireEvent.keyDown(notesTextarea, { key: "Enter", ctrlKey: true });
+      await waitForCondition(() => postCount === 1);
+      assert.equal(store[0]?.name, "Dana", "Ctrl+Enter must create the real record through the real API");
+
+      fireEvent.change(nameInput, { target: { value: "Lee" } });
+      fireEvent.keyDown(notesTextarea, { key: "Enter", metaKey: true });
+      await waitForCondition(() => postCount === 2);
+      assert.equal(store[1]?.name, "Lee", "Cmd+Enter (metaKey) must also create a real record through the real API");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});

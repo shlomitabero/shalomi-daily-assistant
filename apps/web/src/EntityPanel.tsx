@@ -2033,6 +2033,15 @@ export function EntityPanel({
             e.preventDefault();
             setEditingId(null);
             setForm(emptyForm(entity));
+          } else if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
+            // A longtext field's own <textarea> has no other way to submit --
+            // a bare Enter there only inserts a newline, unlike every
+            // single-line input where Enter already submits natively.
+            // requestSubmit() (rather than calling handleSubmit directly)
+            // goes through the exact same real submit event every other
+            // path already does, including this form's own noValidate.
+            e.preventDefault();
+            e.currentTarget.requestSubmit();
           }
         }}
       >

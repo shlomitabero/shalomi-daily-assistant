@@ -6290,3 +6290,113 @@ test("the exported EntityView's record form discards an in-progress EDIT on Esca
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+/**
+ * New in this round: mirrors the live preview's own fix -- a longtext
+ * field's own <textarea> had no keyboard way to submit the form at all (a
+ * bare Enter there just inserts a newline, unlike every single-line input
+ * where Enter already submits natively), and the exported form's own
+ * onKeyDown only handled Escape. Extended that same handler to also call
+ * the real form submit (via requestSubmit()) on Ctrl+Enter or Cmd+Enter.
+ * Confirms both halves: a bare Enter in the textarea never submits
+ * (postCount stays 0), while Ctrl+Enter AND Cmd+Enter each genuinely
+ * create a real record through the real API.
+ */
+test("the exported EntityView's record form submits on Ctrl+Enter or Cmd+Enter from a longtext textarea, but a bare Enter there never submits", async () => {
+  const withLead: Project = {
+    ...project,
+    spec: {
+      ...project.spec,
+      entities: [
+        ...project.spec.entities,
+        {
+          name: "Lead",
+          label: "Lead",
+          fields: [
+            { name: "name", label: "Name", type: "text", required: true },
+            { name: "notes", label: "Notes", type: "longtext", required: false },
+          ],
+        },
+      ],
+    },
+  };
+  const files = generateExportFiles(withLead);
+  const dir = writeGeneratedWebComponent(files);
+  const originalFetch = globalThis.fetch;
+  const store: { id: number; name: string; notes: string }[] = [];
+  let postCount = 0;
+  globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
+    const method = init?.method ?? "GET";
+    if (method === "GET" && input === "/api/Lead") {
+      return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    if (method === "POST" && input === "/api/Lead") {
+      postCount += 1;
+      const record = { id: postCount, ...JSON.parse(init!.body as string) };
+      store.push(record);
+      return new Response(JSON.stringify({ record }), { status: 201, headers: { "content-type": "application/json" } });
+    }
+    throw new Error(`unexpected request ${method} ${input}`);
+  }) as typeof fetch;
+
+  try {
+    await withRealLocalStorage(async () => {
+      const { EntityView } = await import(path.join(dir, "web", "src", "components", "EntityView.jsx"));
+      const leadEntity = withLead.spec.entities.find((e) => e.name === "Lead")!;
+      const props = {
+        entity: leadEntity,
+        highlightRecordId: null,
+        onHighlightHandled: () => {},
+        onJumpToRecord: () => {},
+        onRecordCountChange: () => {},
+      };
+
+      const { container } = render(React.createElement(EntityView, props));
+      for (let i = 0; i < 40; i++) {
+        if (container.querySelector(".record-form") !== null) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+
+      const nameInput = container.querySelector('.record-form input[type="text"]') as HTMLInputElement;
+      const notesTextarea = container.querySelector(".record-form textarea") as HTMLTextAreaElement;
+      assert.ok(notesTextarea, "expected a real textarea for the longtext field");
+
+      await act(async () => {
+        fireEvent.change(nameInput, { target: { value: "Dana" } });
+        fireEvent.keyDown(notesTextarea, { key: "Enter" });
+      });
+      assert.equal(postCount, 0, "a bare Enter in the longtext textarea must never submit the form");
+
+      await act(async () => {
+        fireEvent.keyDown(notesTextarea, { key: "Enter", ctrlKey: true });
+      });
+      for (let i = 0; i < 40; i++) {
+        if (postCount === 1) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+      assert.equal(postCount, 1, "Ctrl+Enter must create the real record through the real API");
+      assert.equal(store[0]?.name, "Dana");
+
+      await act(async () => {
+        fireEvent.change(nameInput, { target: { value: "Lee" } });
+        fireEvent.keyDown(notesTextarea, { key: "Enter", metaKey: true });
+      });
+      for (let i = 0; i < 40; i++) {
+        if (postCount === 2) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+      assert.equal(postCount, 2, "Cmd+Enter (metaKey) must also create a real record through the real API");
+      assert.equal(store[1]?.name, "Lee");
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    cleanup();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
