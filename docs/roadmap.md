@@ -20969,6 +20969,68 @@ Full suite green: **1252 tests** (`@forge/shared` 13, `@forge/spec-engine`
 711 (+1 new test)) via `npm test` at the repo root, plus a clean full
 monorepo `npm run build`.
 
+### Round 347 — "Clear sort" button once a multi-column sort is active
+
+An Explore survey's top pick, re-verified independently before
+implementing: read `toggleSort` (`EntityPanel.tsx`) and confirmed its
+own non-additive (plain-click) branch only ever collapses a sort down
+to a single key -- `prev.length === 1` flips that one key's direction,
+anything else replaces the whole array with a fresh single-key sort --
+it never produces `[]`. Grepped `entity.sort`/`clearSort`/`resetSort`
+across both `EntityPanel.tsx`/`codegen.ts` and found nothing. So once a
+user shift-clicked to build a multi-column sort (an already-shipped
+feature), there was no one-click way back to the table's natural order
+-- the exact same bug class "Clear filters" (round 341) and "Reset
+column widths" (round 345) already got fixed, but sort never did.
+
+The survey also re-confirmed, via its own independent pass, that the
+other panels (GlobalSearch/BusinessTwin/Collaborators/History/WhatsApp)
+really are as mature as round 346 found -- no new candidate turned up
+there this round either, reinforcing that lesson rather than
+re-discovering it from scratch.
+
+Added a button to `EntityPanel.tsx`'s toolbar, right after "Reset
+column widths", that only renders once `sortKeys.length > 0` and resets
+it to `[]` via the existing `setSortKeysPreference(projectId,
+entity.name, [])` (already drops the storage key entirely when handed
+an empty array, matching `setFieldFilters`'/`clearColumnWidths`' own
+"clear removes the key" semantics). New `entity.sort.clearAll` i18n key
+(Hebrew + English).
+
+Ported identically into `apps/api/src/codegen.ts`'s `EntityView`: the
+same button next to its own "Reset column widths", calling the existing
+`setPersistedSortKeys(entity.name, [])`, hardcoded English per that
+file's no-i18n convention.
+
+**One wrinkle while writing the codegen.test.ts test:** the Customer
+fixture's own field labels are Hebrew ("שם"/"סטטוס") -- round 342's own
+durable lesson, re-encountered rather than re-discovered from scratch.
+The first draft picked sort-header buttons by matching `/Status/`/`/Name/`
+against their English-assuming text, which never matched anything;
+fixed by picking headers by their declared field order (`name` then
+`status`) instead of by label text.
+
+Tests: new real-DOM tests in both `EntityPanel.test.ts` and
+`codegen.test.ts` confirm the button is absent before any sort, build a
+real multi-column sort via a real shift-click (reusing round 250's own
+header-lookup pattern), confirm the button appears once at least one
+key is set (including a multi-key one), and confirm clicking it clears
+every column's `aria-sort`/priority badge, the persisted storage (read
+directly via `localStorage` in the codegen.ts test), and the button
+itself.
+
+Deliberate-break-and-restore: backed up all 5 changed files, reverted
+the 3 implementation files to HEAD, and confirmed exactly 1 web test
+failed (711/712: the new "Clear sort" test) and exactly 1 api test
+failed (347/348: the new codegen.test.ts "Clear sort" test) -- no other
+tests affected. Restored from backup and confirmed byte-identical via
+`diff -q` against all 3 files, then re-ran the full suite and build.
+
+Full suite green: **1254 tests** (`@forge/shared` 13, `@forge/spec-engine`
+85, `@forge/db` 96 unchanged; `@forge/api` 348 (+1 new test); `@forge/web`
+712 (+1 new test)) via `npm test` at the repo root, plus a clean full
+monorepo `npm run build`.
+
 ## Phase 4
 
 - Template/agent marketplace
