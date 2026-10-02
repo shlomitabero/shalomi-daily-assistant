@@ -20640,6 +20640,65 @@ Full suite green: **1238 tests** (`@forge/shared` 13, `@forge/spec-engine`
 704 (+1 new test)) via `npm test` at the repo root, plus a clean full
 monorepo `npm run build`.
 
+### Round 342 — A real, translated error instead of the browser's native validation tooltip
+
+Round 341's own survey had flagged four unverified leads. Investigating
+all four before picking one: undo for bulk-delete turned out to already
+be fully built (round 320/321 gave `handleBulkDelete` the identical
+undo/toast machinery single-delete has, in both the live preview and
+`codegen.ts`); CSV export of only the visible/filtered rows was also
+already the case (`handleExportCsv` has always called
+`selectedOrAllRecords(records, visibleRecords, selectedIds)`, never the
+full unfiltered set -- that was the original design). The remaining two
+leads both held up under inspection, and the stronger of the two won out:
+submitting the add/edit record form with a required field left empty
+fell through to the browser's own native HTML5 constraint-validation
+tooltip -- rendered by the OS/browser in its own locale, not through
+`t()`. In an otherwise fully Hebrew-translated, RTL form, that native
+tooltip was the one piece of user-facing text that would pop up in
+English (or whatever the OS language happens to be) regardless of the
+app's own language setting -- and unlike a missing keyboard shortcut
+(the other surviving lead), this happens every single time a user
+submits an incomplete form. Confirmed via grep across every field
+renderer (both `EntityPanel.tsx` and `codegen.ts`) that none set
+`aria-invalid` or rendered any field-level error text at all; the form's
+only error paragraph was populated solely from server-catch blocks,
+never from client-side required-field detection.
+
+Added `noValidate` to `EntityPanel.tsx`'s `<form>`, and `handleSubmit`
+now checks for the first required field left empty/null (the same `""`
+/ `false` default `emptyForm` already establishes per field type)
+before ever calling the API, surfacing a real, translated error through
+the exact same `role="status"` paragraph every other error already
+uses. New `entity.form.requiredField` i18n key (Hebrew + English, with a
+`{field}` placeholder naming the actual missing field, not a generic
+message).
+
+Ported the identical fix into the exported app
+(`apps/api/src/codegen.ts`'s `EntityView`): the same `noValidate` +
+pre-flight required-field check in its own `handleSubmit`, with a
+hardcoded English message matching that file's own no-i18n convention.
+
+Tests: new real-DOM tests in both `EntityPanel.test.ts` and
+`codegen.test.ts` submit the form with a required field empty, confirm
+the translated error names the actual missing field via the same
+`role="status"` pattern, confirm the API is never called until the
+field is filled in, and confirm the real create request then succeeds.
+
+Deliberate-break-and-restore: backed up all 5 changed files, reverted
+the 3 implementation files to HEAD, confirmed the new `codegen.test.ts`
+test failed (116/117) and the new `EntityPanel.test.ts` test failed by
+timing out waiting for the error paragraph -- the native browser
+validation silently blocked the submit entirely with the fix removed,
+proving the fix is genuinely load-bearing rather than merely additive.
+Restored from backup and confirmed byte-identical via `diff -q`, then
+re-ran the full suite and build.
+
+Full suite green: **1240 tests** (`@forge/shared` 13, `@forge/spec-engine`
+85, `@forge/db` 96 unchanged; `@forge/api` 343 (+1 new test); `@forge/web`
+705 (+1 new test)) via `npm test` at the repo root, plus a clean full
+monorepo `npm run build`.
+
 ## Phase 4
 
 - Template/agent marketplace
