@@ -100,6 +100,45 @@ export function formatDateValue(value: string, lang: Lang): string {
   return date.toLocaleDateString(LOCALE[lang]);
 }
 
+const DUE_SOON_WINDOW_DAYS = 3;
+
+/**
+ * A field only reads as a deadline a record can be "overdue" against if its
+ * own name says so -- a date field in general carries no such meaning (a
+ * past dateOfBirth/joinedDate/shipDate is normal, not overdue). Mirrors
+ * badgeTone's own word-list approach: "due" also matches "dueDate" (the
+ * built-in Invoice/Task domain entities' own field name, see
+ * domainEntities.ts), "deadline" matches the built-in Task entity's own
+ * "deadline" field.
+ */
+export function isDeadlineFieldName(fieldName: string): boolean {
+  const lower = fieldName.toLowerCase();
+  return lower.includes("due") || lower.includes("deadline");
+}
+
+export type DateUrgency = "overdue" | "dueSoon" | null;
+
+/**
+ * Classifies a deadline-like date field's value relative to `today`
+ * (defaults to the real current date; a fixed value is passed in tests so
+ * the result doesn't depend on when the suite happens to run). Compares
+ * calendar days only (via parseFieldDate's own local-midnight construction,
+ * the same one formatDateValue uses), not exact timestamps, so a deadline
+ * of today itself reads as "dueSoon" rather than "overdue" for the entire
+ * day. Returns null for an unparseable value, matching formatDateValue's
+ * own fallback behavior of simply not applying any derived styling.
+ */
+export function getDateUrgency(value: string, today: Date = new Date()): DateUrgency {
+  const date = parseFieldDate(value);
+  if (Number.isNaN(date.getTime())) return null;
+  const startOfToday = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+  const dayMs = 24 * 60 * 60 * 1000;
+  const daysUntil = Math.round((date.getTime() - startOfToday.getTime()) / dayMs);
+  if (daysUntil < 0) return "overdue";
+  if (daysUntil < DUE_SOON_WINDOW_DAYS) return "dueSoon";
+  return null;
+}
+
 /**
  * Formats a record's own `createdAt` (a real server-assigned ISO
  * timestamp -- see repository.ts's insertRecord, which always stamps

@@ -16,8 +16,10 @@ import {
   formatEntityRecordCount,
   formatNumberValue,
   formatRecordCreatedAt,
+  getDateUrgency,
   groupByField,
   groupRecordsByField,
+  isDeadlineFieldName,
   isGroupableField,
   isInlineEditableField,
   isSameDay,
@@ -1372,4 +1374,25 @@ test("sumNumericFields returns an empty object when there are no number fields",
 test("sumNumericFields returns 0 totals for number fields when there are no records at all", () => {
   const fields: Field[] = [{ name: "amount", type: "number", required: false }];
   assert.deepEqual(sumNumericFields([], fields), { amount: 0 });
+});
+
+test("isDeadlineFieldName matches field names that actually mean a deadline, and rejects ordinary date fields", () => {
+  assert.equal(isDeadlineFieldName("dueDate"), true, "the built-in Invoice/Task entities' own field name");
+  assert.equal(isDeadlineFieldName("deadline"), true, "the built-in Task entity's own field name");
+  assert.equal(isDeadlineFieldName("DueDate"), true, "case-insensitive");
+  assert.equal(isDeadlineFieldName("dateOfBirth"), false, "a past date is normal, not overdue");
+  assert.equal(isDeadlineFieldName("startDate"), false);
+  assert.equal(isDeadlineFieldName("shipDate"), false);
+  assert.equal(isDeadlineFieldName("joinedDate"), false);
+});
+
+test("getDateUrgency classifies a date relative to a fixed reference day, not real wall-clock time", () => {
+  const today = new Date(2026, 5, 15); // June 15, 2026 -- a Monday, chosen arbitrarily
+  assert.equal(getDateUrgency("2026-06-10", today), "overdue", "a date before today is overdue");
+  assert.equal(getDateUrgency("2026-06-14", today), "overdue", "yesterday is overdue");
+  assert.equal(getDateUrgency("2026-06-15", today), "dueSoon", "today itself reads as due-soon for its whole day, not yet overdue");
+  assert.equal(getDateUrgency("2026-06-16", today), "dueSoon", "tomorrow is within the due-soon window");
+  assert.equal(getDateUrgency("2026-06-17", today), "dueSoon", "the day after tomorrow is still within the 3-day window");
+  assert.equal(getDateUrgency("2026-06-18", today), null, "4 days out is far enough away to need no styling at all");
+  assert.equal(getDateUrgency("not-a-date", today), null, "an unparseable value must never be flagged");
 });

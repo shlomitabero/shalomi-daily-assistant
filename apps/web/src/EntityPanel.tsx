@@ -32,8 +32,10 @@ import {
   formatEntityRecordCount,
   formatNumberValue,
   formatRecordCreatedAt,
+  getDateUrgency,
   groupByField,
   groupRecordsByField,
+  isDeadlineFieldName,
   isGroupableField,
   isInlineEditableField,
   isSameDay,
@@ -204,7 +206,14 @@ function Cell({
     );
   }
   if (field.type === "date") {
-    return <>{formatDateValue(String(value), lang)}</>;
+    const formatted = formatDateValue(String(value), lang);
+    const urgency = isDeadlineFieldName(field.name) ? getDateUrgency(String(value)) : null;
+    if (!urgency) return <>{formatted}</>;
+    return (
+      <span className={`date-${urgency === "overdue" ? "overdue" : "due-soon"}`} title={t(urgency === "overdue" ? "entity.dateOverdue" : "entity.dateDueSoon")}>
+        {formatted}
+      </span>
+    );
   }
   if (field.type === "number") {
     return <>{formatNumberValue(Number(value), lang)}</>;

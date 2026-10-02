@@ -17,6 +17,8 @@
   --danger-soft: #fbe6e2;
   --success: #2e8b57;
   --success-soft: #e2f2e8;
+  --warning: #a66a06;
+  --warning-soft: #faf0d7;
   --radius-sm: 8px;
   --radius-md: 12px;
   --radius-lg: 18px;
@@ -1529,6 +1531,16 @@ button.sort-header:hover:not(:disabled) {
   color: var(--steel);
 }
 
+.date-overdue {
+  color: var(--danger);
+  font-weight: 700;
+}
+
+.date-due-soon {
+  color: var(--warning);
+  font-weight: 700;
+}
+
 .whatsapp-unread-badge {
   display: inline-block;
   margin-inline-start: 6px;
@@ -2738,6 +2750,8 @@ button.sort-header:hover:not(:disabled) {
     --danger-soft: #3a2019;
     --success: #6bbf94;
     --success-soft: #1c2e24;
+    --warning: #e0b34d;
+    --warning-soft: #3a2f14;
     --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
     --shadow-md: 0 8px 24px rgba(0, 0, 0, 0.4);
     --shadow-lift: 0 10px 30px rgba(239, 125, 67, 0.25);
@@ -2763,6 +2777,8 @@ button.sort-header:hover:not(:disabled) {
   --danger-soft: #3a2019;
   --success: #6bbf94;
   --success-soft: #1c2e24;
+  --warning: #e0b34d;
+  --warning-soft: #3a2f14;
   --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
   --shadow-md: 0 8px 24px rgba(0, 0, 0, 0.4);
   --shadow-lift: 0 10px 30px rgba(239, 125, 67, 0.25);

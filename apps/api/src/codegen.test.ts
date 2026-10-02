@@ -1129,9 +1129,13 @@ test("the exported record table's date cell shows the correct calendar day even 
 
   const dateHelperSrc = entityViewJsx.match(/const CALENDAR_DATE_FORMAT[\s\S]*?\nfunction parseFieldDate\(raw\) \{[\s\S]*?\n\}\n/)?.[0];
   const cellSrc = entityViewJsx.match(/function Cell\(\{ field, value, relationLabel, onJumpToRecord \}\) \{[\s\S]*?\n\}\n/)?.[0];
-  assert.ok(dateHelperSrc && cellSrc, "expected to find parseFieldDate/Cell in generated output");
+  // Cell also calls isDeadlineFieldName/getDateUrgency (round 340) --
+  // needed here too, since this test evals Cell in isolation rather than
+  // importing the whole generated module.
+  const urgencyHelperSrc = entityViewJsx.match(/function isDeadlineFieldName\(fieldName\) \{[\s\S]*?\nfunction getDateUrgency\(value, today\) \{[\s\S]*?\n\}\n/)?.[0];
+  assert.ok(dateHelperSrc && cellSrc && urgencyHelperSrc, "expected to find parseFieldDate/Cell/isDeadlineFieldName+getDateUrgency in generated output");
 
-  const transformed = transformSync(`${dateHelperSrc}\n${cellSrc}`, { loader: "jsx", jsxFactory: "h", jsxFragment: "Frag" }).code;
+  const transformed = transformSync(`${urgencyHelperSrc}\n${dateHelperSrc}\n${cellSrc}`, { loader: "jsx", jsxFactory: "h", jsxFragment: "Frag" }).code;
   const Cell = new Function("h", "Frag", `${transformed}\nreturn Cell;`)(
     (_type: unknown, _props: unknown, ...children: unknown[]) => (children.length === 1 ? children[0] : children),
     Symbol("Fragment"),
@@ -1140,7 +1144,7 @@ test("the exported record table's date cell shows the correct calendar day even 
   const originalTz = process.env.TZ;
   process.env.TZ = "America/New_York";
   try {
-    const rendered = Cell({ field: { type: "date" }, value: "2026-03-15" });
+    const rendered = Cell({ field: { type: "date", name: "date" }, value: "2026-03-15" });
     assert.equal(rendered, "3/15/2026", "must render the 15th, not shift back to the 14th");
   } finally {
     process.env.TZ = originalTz;
@@ -5201,6 +5205,141 @@ test("the exported GlobalSearch's 'Show all' button reveals every match beyond t
       null,
       "the 'Show all' button must disappear once every match is already shown",
     );
+  } finally {
+    globalThis.fetch = originalFetch;
+    cleanup();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
+ * New in this round (340): porting the live preview's own deadline
+ * overdue/due-soon date indicator to the exported app's EntityView.jsx --
+ * before this fix, every date field rendered as plain text with zero
+ * comparison to "today" anywhere in the generated code. Confirms both that
+ * a deadline-named field (dueDate) does get flagged, using the same
+ * isDeadlineFieldName/getDateUrgency functions the live preview's
+ * entityFormatting.ts introduces, and that an ordinary date field never
+ * does -- a past dateOfBirth is normal, not overdue.
+ */
+test("the exported EntityView flags a deadline-named date field as overdue/due-soon, but never an ordinary date field", async () => {
+  const files = generateExportFiles(project);
+  const dir = writeGeneratedWebComponent(files);
+  const originalFetch = globalThis.fetch;
+
+  function isoDateOffset(days: number): string {
+    const d = new Date();
+    d.setDate(d.getDate() + days);
+    const pad = (n: number) => String(n).padStart(2, "0");
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+  }
+
+  const taskEntity = {
+    name: "Task",
+    label: "Task",
+    fields: [
+      { name: "title", label: "Title", type: "text", required: true },
+      { name: "dueDate", label: "Due", type: "date", required: false },
+    ],
+  };
+  const records = [
+    { id: 1, title: "Overdue task", dueDate: isoDateOffset(-5) },
+    { id: 2, title: "Due soon task", dueDate: isoDateOffset(1) },
+    { id: 3, title: "Far future task", dueDate: isoDateOffset(30) },
+  ];
+  globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
+    const method = init?.method ?? "GET";
+    if (method === "GET" && input === "/api/Task") {
+      return new Response(JSON.stringify({ records }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    throw new Error(`unexpected request ${method} ${input}`);
+  }) as typeof fetch;
+
+  try {
+    await withRealLocalStorage(async () => {
+      const { EntityView } = await import(path.join(dir, "web", "src", "components", "EntityView.jsx"));
+      const props = {
+        entity: taskEntity,
+        highlightRecordId: null,
+        onHighlightHandled: () => {},
+        onJumpToRecord: () => {},
+        onRecordCountChange: () => {},
+      };
+
+      const { container } = render(React.createElement(EntityView, props));
+      for (let i = 0; i < 40; i++) {
+        if (container.querySelectorAll("tbody tr").length === 3) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+      const rows = Array.from(container.querySelectorAll("tbody tr"));
+      const overdueRow = rows.find((r) => /Overdue task/.test(r.textContent ?? ""))!;
+      const dueSoonRow = rows.find((r) => /Due soon task/.test(r.textContent ?? ""))!;
+      const farRow = rows.find((r) => /Far future task/.test(r.textContent ?? ""))!;
+
+      assert.ok(overdueRow.querySelector(".date-overdue"), "a dueDate 5 days in the past must be flagged overdue");
+      assert.ok(dueSoonRow.querySelector(".date-due-soon"), "a dueDate due tomorrow must be flagged due-soon");
+      assert.equal(farRow.querySelector(".date-overdue"), null, "a dueDate a month out needs no overdue styling");
+      assert.equal(farRow.querySelector(".date-due-soon"), null, "a dueDate a month out needs no due-soon styling either");
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    cleanup();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("the exported EntityView never flags an ordinary (non-deadline-named) date field as overdue, even decades in the past", async () => {
+  const files = generateExportFiles(project);
+  const dir = writeGeneratedWebComponent(files);
+  const originalFetch = globalThis.fetch;
+
+  function isoDateOffset(days: number): string {
+    const d = new Date();
+    d.setDate(d.getDate() + days);
+    const pad = (n: number) => String(n).padStart(2, "0");
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+  }
+
+  const personEntity = {
+    name: "Person",
+    label: "Person",
+    fields: [
+      { name: "name", label: "Name", type: "text", required: true },
+      { name: "dateOfBirth", label: "Born", type: "date", required: false },
+    ],
+  };
+  const records = [{ id: 1, name: "Alice", dateOfBirth: isoDateOffset(-365 * 30) }];
+  globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
+    const method = init?.method ?? "GET";
+    if (method === "GET" && input === "/api/Person") {
+      return new Response(JSON.stringify({ records }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    throw new Error(`unexpected request ${method} ${input}`);
+  }) as typeof fetch;
+
+  try {
+    await withRealLocalStorage(async () => {
+      const { EntityView } = await import(path.join(dir, "web", "src", "components", "EntityView.jsx"));
+      const props = {
+        entity: personEntity,
+        highlightRecordId: null,
+        onHighlightHandled: () => {},
+        onJumpToRecord: () => {},
+        onRecordCountChange: () => {},
+      };
+
+      const { container } = render(React.createElement(EntityView, props));
+      for (let i = 0; i < 40; i++) {
+        if (container.querySelectorAll("tbody tr").length === 1) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+      assert.equal(container.querySelector(".date-overdue"), null, "a birth date decades in the past must never read as 'overdue'");
+      assert.equal(container.querySelector(".date-due-soon"), null);
+    });
   } finally {
     globalThis.fetch = originalFetch;
     cleanup();

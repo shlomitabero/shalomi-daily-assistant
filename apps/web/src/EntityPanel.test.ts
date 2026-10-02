@@ -4395,3 +4395,96 @@ test("EntityPanel's search box remembers a query on Enter, shows it as a chip on
     }
   });
 });
+
+/**
+ * New in this round: a deadline-like date field (name containing "due" or
+ * "deadline") now gets a real visual overdue/due-soon indicator in the
+ * records table -- the gap round 339's own Explore survey flagged and
+ * confirmed absent (no date-field logic anywhere compared a stored date to
+ * "today" at all). Uses real offsets from the actual current date (the
+ * same style as this file's own isoDateToday helper above), since
+ * getDateUrgency's default `today` argument is the real wall-clock date.
+ */
+test("a date field named like a deadline is visually flagged overdue/due-soon in the records table, but an ordinary date field never is", async () => {
+  await withJsdom(async () => {
+    function isoDateOffset(days: number): string {
+      const d = new Date();
+      d.setDate(d.getDate() + days);
+      const pad = (n: number) => String(n).padStart(2, "0");
+      return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+    }
+    const taskEntity: Entity = {
+      name: "Task",
+      label: "Task",
+      fields: [
+        { name: "title", label: "Title", type: "text", required: true },
+        { name: "dueDate", label: "Due", type: "date", required: false },
+      ],
+    };
+    const store: EntityRecord[] = [
+      { id: 1, title: "Overdue task", dueDate: isoDateOffset(-5) },
+      { id: 2, title: "Due soon task", dueDate: isoDateOffset(1) },
+      { id: 3, title: "Far future task", dueDate: isoDateOffset(30) },
+    ];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/entities/Task") {
+        return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+    try {
+      renderEntityPanel({ entity: taskEntity, allEntities: [taskEntity] });
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 3);
+
+      const rows = Array.from(document.querySelectorAll("table tbody tr"));
+      const overdueRow = rows.find((r) => /Overdue task/.test(r.textContent ?? ""))!;
+      const dueSoonRow = rows.find((r) => /Due soon task/.test(r.textContent ?? ""))!;
+      const farRow = rows.find((r) => /Far future task/.test(r.textContent ?? ""))!;
+
+      assert.ok(overdueRow.querySelector(".date-overdue"), "a dueDate 5 days in the past must be flagged overdue");
+      assert.ok(dueSoonRow.querySelector(".date-due-soon"), "a dueDate due tomorrow must be flagged due-soon");
+      assert.equal(farRow.querySelector(".date-overdue"), null, "a dueDate a month out needs no overdue styling");
+      assert.equal(farRow.querySelector(".date-due-soon"), null, "a dueDate a month out needs no due-soon styling either");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+test("an ordinary (non-deadline-named) date field in the past is never flagged overdue, even decades back", async () => {
+  await withJsdom(async () => {
+    function isoDateOffset(days: number): string {
+      const d = new Date();
+      d.setDate(d.getDate() + days);
+      const pad = (n: number) => String(n).padStart(2, "0");
+      return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+    }
+    const personEntity: Entity = {
+      name: "Person",
+      label: "Person",
+      fields: [
+        { name: "name", label: "Name", type: "text", required: true },
+        { name: "dateOfBirth", label: "Born", type: "date", required: false },
+      ],
+    };
+    const store: EntityRecord[] = [{ id: 1, name: "Alice", dateOfBirth: isoDateOffset(-365 * 30) }];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/entities/Person") {
+        return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+    try {
+      renderEntityPanel({ entity: personEntity, allEntities: [personEntity] });
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 1);
+      assert.equal(document.querySelector(".date-overdue"), null, "a birth date decades in the past must never read as 'overdue'");
+      assert.equal(document.querySelector(".date-due-soon"), null);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});

@@ -1209,6 +1209,27 @@ function badgeTone(rawValue) {
   return "neutral";
 }
 
+// Mirrors the live preview's own entityFormatting.ts isDeadlineFieldName/
+// getDateUrgency. A date field only reads as a deadline a record can be
+// "overdue" against if its own name says so -- a plain date field (e.g.
+// dateOfBirth, joinedDate, shipDate) carries no such meaning on its own.
+function isDeadlineFieldName(fieldName) {
+  const lower = fieldName.toLowerCase();
+  return lower.includes("due") || lower.includes("deadline");
+}
+const DUE_SOON_WINDOW_DAYS = 3;
+function getDateUrgency(value, today) {
+  const date = parseFieldDate(value);
+  if (Number.isNaN(date.getTime())) return null;
+  const now = today || new Date();
+  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const dayMs = 24 * 60 * 60 * 1000;
+  const daysUntil = Math.round((date.getTime() - startOfToday.getTime()) / dayMs);
+  if (daysUntil < 0) return "overdue";
+  if (daysUntil < DUE_SOON_WINDOW_DAYS) return "dueSoon";
+  return null;
+}
+
 // A relation cell already shows a label resolved from a *different*
 // record (see relationDisplayLabel), not the raw stored value an inline
 // editor would need to edit -- mirrors the live preview's own
@@ -1305,7 +1326,14 @@ function Cell({ field, value, relationLabel, onJumpToRecord }) {
     // earlier than the actual stored date for any viewer whose local time
     // is behind UTC.
     const date = parseFieldDate(value);
-    return <>{Number.isNaN(date.getTime()) ? value : date.toLocaleDateString()}</>;
+    const formatted = Number.isNaN(date.getTime()) ? value : date.toLocaleDateString();
+    const urgency = isDeadlineFieldName(field.name) ? getDateUrgency(value) : null;
+    if (!urgency) return <>{formatted}</>;
+    return (
+      <span className={\`date-\${urgency === "overdue" ? "overdue" : "due-soon"}\`} title={urgency === "overdue" ? "Overdue" : "Due soon"}>
+        {formatted}
+      </span>
+    );
   }
   if (field.type === "number") return <>{Number(value).toLocaleString()}</>;
   if (field.type === "longtext") {
@@ -4150,6 +4178,8 @@ function renderStylesCss(): string {
   --danger-soft: #fbe6e2;
   --success: #2e8b57;
   --success-soft: #e2f2e8;
+  --warning: #a66a06;
+  --warning-soft: #faf0d7;
   --steel: #4c5b6a;
   --steel-soft: #e9edf0;
   --shadow-sm: 0 1px 2px rgba(36,31,25,0.06);
@@ -4179,6 +4209,8 @@ function renderStylesCss(): string {
     --danger-soft: #3a2019;
     --success: #6bbf94;
     --success-soft: #1c2e24;
+    --warning: #e0b34d;
+    --warning-soft: #3a2f14;
     --steel: #9db3c6;
     --steel-soft: #262b30;
     --shadow-sm: 0 1px 2px rgba(0,0,0,0.3);
@@ -4205,6 +4237,8 @@ function renderStylesCss(): string {
   --danger-soft: #3a2019;
   --success: #6bbf94;
   --success-soft: #1c2e24;
+  --warning: #e0b34d;
+  --warning-soft: #3a2f14;
   --steel: #9db3c6;
   --steel-soft: #262b30;
   --shadow-sm: 0 1px 2px rgba(0,0,0,0.3);
@@ -4256,6 +4290,8 @@ th, td { text-align: start; padding: 8px 10px; border-bottom: 1px solid var(--bo
 .badge-positive { background: var(--success-soft); color: var(--success); }
 .badge-negative { background: var(--danger-soft); color: var(--danger); }
 .badge-neutral { background: var(--steel-soft); color: var(--steel); }
+.date-overdue { color: var(--danger); font-weight: 700; }
+.date-due-soon { color: var(--warning); font-weight: 700; }
 .bool-yes { color: var(--success); font-weight: 700; }
 .empty-state { padding: 32px 16px; text-align: center; color: var(--muted); background: var(--surface-subtle); border: 1px dashed var(--border); border-radius: 10px; }
 .entity-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 14px; }
