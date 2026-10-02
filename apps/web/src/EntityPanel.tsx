@@ -527,6 +527,22 @@ function CalendarView({
             className={dayClasses.join(" ")}
             onClick={day.inCurrentMonth ? () => onDayClick(day.date) : undefined}
             title={day.inCurrentMonth ? t("entity.calendar.addOnDay") : undefined}
+            tabIndex={day.inCurrentMonth ? 0 : undefined}
+            role={day.inCurrentMonth ? "button" : undefined}
+            aria-label={day.inCurrentMonth ? t("entity.calendar.addOnDay") : undefined}
+            onKeyDown={
+              day.inCurrentMonth
+                ? (e) => {
+                    // Guard against a focused record-chip button's own Enter/Space
+                    // bubbling up here too -- keydown bubbles even though the
+                    // chip's own onClick already stopPropagation()s its CLICK.
+                    if (e.target !== e.currentTarget) return;
+                    if (e.key !== "Enter" && e.key !== " ") return;
+                    e.preventDefault();
+                    onDayClick(day.date);
+                  }
+                : undefined
+            }
             onDragOver={
               day.inCurrentMonth
                 ? (e) => {

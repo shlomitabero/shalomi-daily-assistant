@@ -2020,6 +2020,19 @@ function CalendarView({ entity, dateField, records, month, onPrevMonth, onNextMo
             className={dayClasses.join(" ")}
             onClick={day.inCurrentMonth ? () => onDayClick(day.date) : undefined}
             title={day.inCurrentMonth ? "Add a record on this day" : undefined}
+            tabIndex={day.inCurrentMonth ? 0 : undefined}
+            role={day.inCurrentMonth ? "button" : undefined}
+            aria-label={day.inCurrentMonth ? "Add a record on this day" : undefined}
+            onKeyDown={
+              day.inCurrentMonth
+                ? (e) => {
+                    if (e.target !== e.currentTarget) return;
+                    if (e.key !== "Enter" && e.key !== " ") return;
+                    e.preventDefault();
+                    onDayClick(day.date);
+                  }
+                : undefined
+            }
             onDragOver={
               day.inCurrentMonth
                 ? (e) => {

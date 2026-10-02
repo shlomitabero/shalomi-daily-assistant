@@ -906,6 +906,95 @@ test("the exported EntityView's calendar has a real clickable day that pre-fills
 });
 
 /**
+ * New in this round: mirrors the live preview's own fix -- the exported
+ * calendar's day cell was a plain, non-focusable `<div onClick=...>`, the
+ * ONLY way to reach onDayClick for a keyboard-only user. Confirms the
+ * generated day cell carries real tabIndex/role/aria-label (structurally,
+ * via regex, per this file's own established CalendarView-testing
+ * convention), then extracts the actual generated onKeyDown expression
+ * and executes it for real (not reimplemented) to prove: Enter and " "
+ * both call onDayClick, every other key is ignored, and -- the same
+ * bubbling hazard the record chip's own onClick already guards against
+ * with stopPropagation -- a keydown whose e.target isn't the day cell
+ * itself (i.e. bubbled up from a focused chip inside it) must never also
+ * fire onDayClick.
+ */
+test("the exported EntityView's calendar day cell is keyboard-focusable, and its real onKeyDown calls onDayClick only for Enter/Space targeted at the cell itself", () => {
+  const withDate: Project = {
+    ...project,
+    spec: {
+      ...project.spec,
+      entities: [
+        ...project.spec.entities,
+        {
+          name: "Appointment",
+          label: "תורים",
+          fields: [
+            { name: "customerName", label: "שם לקוח", type: "text", required: true },
+            { name: "date", label: "תאריך", type: "date", required: true },
+          ],
+        },
+      ],
+    },
+  };
+  const files = generateExportFiles(withDate);
+  const entityViewJsx = files.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+
+  assert.match(entityViewJsx, /tabIndex=\{day\.inCurrentMonth \? 0 : undefined\}/);
+  assert.match(entityViewJsx, /role=\{day\.inCurrentMonth \? "button" : undefined\}/);
+  assert.match(entityViewJsx, /aria-label=\{day\.inCurrentMonth \? "Add a record on this day" : undefined\}/);
+
+  // The slice runs up to the start of the next attribute (onDragOver={),
+  // so it also picks up the closing "}" of onKeyDown's own JSX attribute
+  // brace -- strip exactly that trailing brace, not part of the expression.
+  const onKeyDownExpr = entityViewJsx
+    .slice(entityViewJsx.indexOf("onKeyDown={") + "onKeyDown={".length, entityViewJsx.indexOf("onDragOver={"))
+    .trim()
+    .replace(/\}\s*$/, "")
+    .trim();
+  assert.match(onKeyDownExpr, /day\.inCurrentMonth/, "expected to find the real generated onKeyDown expression");
+
+  const makeHandler = (day: { inCurrentMonth: boolean }, onDayClick: (date: unknown) => void) =>
+    new Function("day", "onDayClick", `return (${onKeyDownExpr});`)(day, onDayClick) as ((e: unknown) => void) | undefined;
+
+  let calledWith: unknown;
+  const onDayClick = (date: unknown) => {
+    calledWith = date;
+  };
+  const day = { inCurrentMonth: true, date: "2026-09-15" };
+  const handler = makeHandler(day, onDayClick);
+  assert.equal(typeof handler, "function", "a day cell inCurrentMonth must get a real onKeyDown function, not undefined");
+
+  function fireKey(key: string, sameTarget: boolean) {
+    let prevented = false;
+    const cell = {};
+    handler!({ key, target: sameTarget ? cell : {}, currentTarget: cell, preventDefault: () => (prevented = true) });
+    return prevented;
+  }
+
+  assert.equal(fireKey("Enter", true), true, "Enter targeted at the cell itself must preventDefault");
+  assert.equal(calledWith, "2026-09-15", "Enter targeted at the cell itself must call onDayClick with that day's own date");
+
+  assert.equal(fireKey(" ", true), true, "Space targeted at the cell itself must preventDefault");
+  assert.equal(calledWith, "2026-09-15", "Space targeted at the cell itself must also call onDayClick");
+
+  calledWith = "untouched";
+  fireKey("Tab", true);
+  assert.equal(calledWith, "untouched", "any other key must never call onDayClick");
+
+  calledWith = "untouched";
+  fireKey("Enter", false);
+  assert.equal(
+    calledWith,
+    "untouched",
+    "Enter whose target is NOT the day cell itself (bubbled from a focused chip inside it) must never call onDayClick",
+  );
+
+  const outsideDay = { inCurrentMonth: false, date: "2026-09-16" };
+  assert.equal(makeHandler(outsideDay, onDayClick), undefined, "a day cell outside the current month must get no onKeyDown handler at all");
+});
+
+/**
  * New in this round: the exported standalone app's calendar could only
  * reschedule a record by opening its edit form and retyping the date --
  * unlike the live Forge AI preview (round 211's own native HTML5
