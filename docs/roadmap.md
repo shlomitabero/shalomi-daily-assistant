@@ -20447,6 +20447,73 @@ Full suite green: **1230 tests** (`@forge/shared` 13, `@forge/spec-engine`
 added inside existing tests; `@forge/web` 698 unchanged) via `npm test`
 at the repo root, plus a clean full monorepo `npm run build`.
 
+### Round 339 — Per-field enum filters finally survive switching entity tabs
+
+With the entire ARIA/role="status" family now closed, this round's
+Explore survey turned to a real, visible feature a daily user would
+actually notice: `EntityPanel.tsx`'s `fieldFilters` state (the per-field
+enum dropdown filters, e.g. filtering a table down to "Active"
+customers) was plain in-memory state with no persistence at all --
+unlike every other per-entity preference in the same file (hidden
+columns, column order, column widths, group-by field, and especially
+`sortKeys`, which round 250 already fixed for this exact bug class). A
+user who sets a status filter, switches to another entity tab to check
+something, then comes back, found the filter silently gone, even though
+sort order, grouping, hidden columns, and column widths all survived the
+identical switch.
+
+Added `fieldFiltersPreference.ts`, mirroring `columnWidths.ts`'s own
+`Record<projectId:entityName, Record<field, value>>` shape and
+`sortKeysPreference.ts`'s doc style. Wired into `EntityPanel.tsx`:
+removed `fieldFilters` from the combined per-entity reset effect, added
+a dedicated load effect (keyed on `[projectId, entity.name]`, dropping
+any persisted filter referencing a field the entity no longer has,
+mirroring `sortKeys`' own effect), and made the filter `<select>`'s
+`onChange` write through to storage.
+
+Ported the identical fix into the exported app
+(`apps/api/src/codegen.ts`'s `EntityView`): matching
+`FIELD_FILTERS_STORAGE_KEY`/`getPersistedFieldFilters`/
+`setPersistedFieldFilters` helpers added right after the existing
+sort-keys store, and `fieldFilters`' `useState` switched to the same
+lazy-initializer pattern already used for `groupFieldName`/`sortKeys`/
+`viewMode`.
+
+A genuine bug was caught by the port's own test before it ever shipped,
+not discovered later: unlike the live preview, `codegen.ts`'s
+`EntityView` has no separate per-preference reset effects -- instead
+ONE combined effect (keyed on `entity.name`) reloads `groupFieldName`/
+`sortKeys`/`viewMode` from storage on every mount. The first version of
+this fix left that effect's `fieldFilters` line as `setFieldFilters({})`,
+which silently overwrote the lazy initializer's correctly-loaded value
+immediately after mount -- a real-DOM unmount+remount test caught this
+the moment it was run, before any commit. Fixed by changing that line to
+`setFieldFilters(getPersistedFieldFilters(entity.name))`, matching its
+sibling lines exactly.
+
+Tests: a new regression test in `EntityPanel.test.ts`, modeled closely
+on round 250's own sortKeys-persistence test (same unmount+remount +
+different-entity-drops-stale-filter structure). For `codegen.ts`: the
+existing group/view/sort pure-function extraction test's regex range was
+extended to also capture the new store functions, plus a brand-new
+real-DOM unmount+remount test mirroring the existing view-mode one. One
+pre-existing test's regex, which literally matched the old
+`useState({})` text, also needed updating.
+
+Deliberate-break-and-restore: backed up all 5 files (4 modified + 1 new),
+reverted `codegen.ts` and `EntityPanel.tsx` to HEAD and deleted the new
+preference file, confirmed exactly 3 `codegen.test.ts` tests failed
+(110/113) and `EntityPanel.test.ts` failed to even load (its import of
+the now-missing preference module) -- itself proof the dependency is
+load-bearing. Restored from backup and confirmed byte-identical via
+`diff -q` against all 5 files, then re-ran the full suite and build.
+
+Full suite green: **1232 tests** (`@forge/shared` 13, `@forge/spec-engine`
+85, `@forge/db` 96 unchanged; `@forge/api` 339 (+1 new real-DOM test, plus
+assertions folded into an existing test); `@forge/web` 699 (+1 new test))
+via `npm test` at the repo root, plus a clean full monorepo
+`npm run build`.
+
 ## Phase 4
 
 - Template/agent marketplace
