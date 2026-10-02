@@ -19855,6 +19855,107 @@ Full suite green: **1221 tests** (`@forge/shared` 13, `@forge/spec-engine`
 unchanged, assertions added inside existing tests) via `npm test` at the
 repo root, plus a clean full monorepo `npm run build`.
 
+### Round 328 — Real error+Retry recovery on 4 panels' initial data loads
+
+BusinessTwinPanel already had a real `loadTwin`/retry pattern: its own
+`error` state is single-purpose (set only by `loadTwin`'s own catch block),
+rendered as an error line plus a genuine "Try again" button wired straight
+back to `loadTwin`. An Explore survey this round confirmed the other 4
+data-driven panels never got the same treatment: EntityPanel's `refresh()`,
+HistoryPanel's initial `listCheckpoints` call, WhatsAppPanel's initial
+`getWhatsAppStatus` fetch, and GlobalSearchPanel's `runSearch` all either
+showed a bare, dead-end error line, or — worse, for EntityPanel and
+HistoryPanel — fell through to a misleading "No records yet" / "No saved
+points yet" empty-state message that implied the table was genuinely
+empty rather than that the load had failed outright.
+
+The fix was not a single shared change: each panel's existing error state
+first had to be audited for whether it was already single-purpose or
+shared across multiple, semantically different failure sources, since a
+"Retry" button bolted onto a shared error would be wrong for the other
+failures it also covers:
+
+- **EntityPanel** and **HistoryPanel**: their existing `error` state also
+  covers bulk-action/CSV-import/PATCH failures and checkpoint-restore
+  failures respectively — clicking "Retry" after a failed CSV import
+  shouldn't just silently reload the table. Each got a brand-new, narrowly
+  scoped `loadError` state, set only inside `refresh()`'s / the extracted
+  `loadHistory()`'s own catch block, completely independent of the
+  existing shared state.
+- **WhatsAppPanel**: its existing `loadError` name was already taken by a
+  pre-existing multi-purpose state (connect/disconnect/send/load-more/
+  initial-status-fetch all share it), so the new state is named
+  `initialLoadError` instead, set only inside the newly-extracted
+  `loadInitialStatus()`'s catch block.
+- **GlobalSearchPanel**: the one exception — its `error` state was already
+  single-purpose (search failures only), so no new state was needed; just
+  a Retry button wired to `runSearch(highlightQuery)`, re-running the
+  actually-submitted query rather than whatever may since have been edited
+  into the input box.
+
+Each new error row renders the same shape as BusinessTwinPanel's own (now
+shared via a new `.error-retry-row` CSS class rather than reusing the
+panel-specific `.twin-error-row` name): the real error message plus a
+"Try again" button that calls the real initial-load function again.
+EntityPanel's and HistoryPanel's empty-state branches were also changed to
+suppress their misleading "no records" text whenever the new load-error
+state is set, so a genuine failure can no longer masquerade as "you just
+have no data yet."
+
+New i18n keys added (Hebrew + English): `entity.retry`, `history.retry`,
+`whatsapp.retry`, `search.retry` — all "ניסיון נוסף" / "Try again".
+
+Bug hit and fixed mid-round: the first version of the new EntityPanel test
+simulated the load failure by having the mocked `fetch()` throw directly
+(`throw new Error("Network error")`), which hung for ~4.5 seconds before
+timing out. Root cause, found by reading `apps/web/src/api.ts` and
+`apps/web/src/wakeRetry.ts`: `fetchWithWakeRetry()` treats any thrown
+`fetch()` error as a cold-start signal and retries up to 7 times over
+~101 seconds before giving up — only a non-ok HTTP *response* (4xx/5xx,
+returned normally rather than thrown) fails immediately. Fixed by having
+the mock return `new Response(JSON.stringify({ error: "..." }), { status:
+500 })` instead of throwing; the same lesson was then applied correctly
+from the start for the HistoryPanel, WhatsAppPanel, and GlobalSearchPanel
+tests, all of which passed on the first run. A second, smaller bug: the
+first WhatsAppPanel retry test asserted the real phone number rendered
+immediately after `.error-retry-row` disappeared from the DOM — but
+`setInitialLoadError(null)` runs synchronously before the retry's fetch
+promise even resolves, so the row vanishes a full tick before the real
+data arrives. Fixed by waiting on the real data appearing in the DOM
+rather than on the error row's disappearance.
+
+Tests: one new real-DOM test per panel (4 total), each mocking the
+relevant GET endpoint to fail with a `500` on the first call and succeed
+on the second, confirming the error+Retry row appears with the real
+message, the misleading empty-state text is absent, clicking Retry
+re-fetches for real, and the row disappears once real data renders. Also
+fixed one pre-existing EntityPanel extraction test
+(`new Function(...)`-based) that broke when `refresh()`'s catch block
+changed from `setError` to `setLoadError` — updated the extraction's
+parameter name to match.
+
+Deliberate-break-and-restore: backed up all 10 changed files (4
+components, their 4 test files, `i18n/language.ts`, `styles.css`),
+reverted just the 4 `.tsx` components to their pre-round HEAD state, and
+confirmed exactly the 4 new tests failed (1 per file) while every sibling
+test in each file — 69/70 EntityPanel, 16/17 HistoryPanel, 25/26
+WhatsAppPanel, 15/16 GlobalSearchPanel — kept passing. Restored from the
+verified backup with a confirmed byte-identical `diff` against all 4
+component files, then re-ran the full `@forge/web` suite (697/697) and
+`@forge/api` suite (334/334 unchanged), plus a clean full monorepo
+`npm run build`.
+
+Scope note: this is a live-preview-only fix. codegen.ts's generated
+`EntityView` and `GlobalSearch` have the identical static-error-text-with-
+no-retry gap (confirmed via grep at codegen.ts's generated-template lines
+for each), a natural next-round candidate following this project's own
+established "live preview first, export port next round" convention.
+
+Full suite green: **1225 tests** (`@forge/shared` 13, `@forge/spec-engine`
+85, `@forge/db` 96, `@forge/api` 334 unchanged; `@forge/web` 697, up from
+693) via `npm test` at the repo root, plus a clean full monorepo
+`npm run build`.
+
 ## Phase 4
 
 - Template/agent marketplace
