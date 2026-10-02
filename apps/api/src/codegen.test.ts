@@ -695,7 +695,7 @@ test("the exported EntityView's table can be grouped by an enum/boolean field, n
   assert.match(entityViewJsx, /className="entity-group-by"/);
   // Row rendering was extracted so both the flat and grouped tbody branches reuse it verbatim
   assert.match(entityViewJsx, /const renderRow = \(r\) => \(/);
-  assert.match(entityViewJsx, /recordGroups\s*\n\s*\? recordGroups\.map\(\(group\) => \(/);
+  assert.match(entityViewJsx, /recordGroups\s*\n\s*\? recordGroups\.map\(\(group\) => \{/);
   assert.match(entityViewJsx, /className="entity-group-header-row"/);
   assert.match(entityViewJsx, /group\.records\.map\(renderRow\)/);
   assert.match(entityViewJsx, /: visibleRecords\.map\(renderRow\)/);
@@ -4874,6 +4874,103 @@ test("the exported EntityView's per-field enum filter actually survives an unmou
         1,
         "the restored filter must actually narrow the rendered rows again, not just show as selected while listing everything",
       );
+      secondMount.unmount();
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    cleanup();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
+ * New in this round: mirrors the live preview's own group-collapse
+ * toggle -- a grouped table previously rendered every one of a group's
+ * rows unconditionally, with no way to hide a group a person doesn't
+ * care about right now. Confirms the toggle actually hides/shows just
+ * that one group's own rows and that the collapsed state survives an
+ * unmount+remount (getPersistedCollapsedGroups/setPersistedCollapsedGroups),
+ * not just that the dropdown/header-row classNames exist (see round 336's
+ * own regex-level assertions for that).
+ */
+test("the exported EntityView's group-header toggle collapses and expands just that one group's rows, and survives an unmount+remount", async () => {
+  const files = generateExportFiles(project);
+  const dir = writeGeneratedWebComponent(files);
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async () => ({
+    ok: true,
+    status: 200,
+    json: async () => ({
+      records: [
+        { id: 1, name: "Alice", status: "New" },
+        { id: 2, name: "Bob", status: "Won" },
+        { id: 3, name: "Carol", status: "Won" },
+      ],
+    }),
+  })) as typeof fetch;
+
+  try {
+    await withRealLocalStorage(async () => {
+      const { EntityView } = await import(path.join(dir, "web", "src", "components", "EntityView.jsx"));
+      const customerEntity = project.spec.entities.find((e) => e.name === "Customer")!;
+      const props = {
+        entity: customerEntity,
+        highlightRecordId: null,
+        onHighlightHandled: () => {},
+        onJumpToRecord: () => {},
+        onRecordCountChange: () => {},
+      };
+
+      const firstMount = render(React.createElement(EntityView, props));
+      for (let i = 0; i < 40; i++) {
+        if (firstMount.container.querySelector(".entity-group-by")) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+      const groupBySelect = firstMount.container.querySelector(".entity-group-by") as HTMLSelectElement;
+      assert.ok(groupBySelect, "expected a real 'Group by' dropdown");
+      await act(async () => {
+        fireEvent.change(groupBySelect, { target: { value: "status" } });
+      });
+      for (let i = 0; i < 40; i++) {
+        if (firstMount.container.querySelectorAll(".entity-group-header-row").length === 2) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+      assert.equal(firstMount.container.querySelectorAll("tbody tr").length, 5, "3 record rows + 2 group-header rows before any toggle");
+
+      const headerRows = Array.from(firstMount.container.querySelectorAll(".entity-group-header-row"));
+      const wonToggle = headerRows[1].querySelector(".entity-group-toggle") as HTMLButtonElement;
+      assert.ok(wonToggle, "expected a real toggle button in the group header");
+      assert.equal(wonToggle.getAttribute("aria-expanded"), "true", "a freshly grouped table must start with every group expanded");
+
+      await act(async () => {
+        fireEvent.click(wonToggle);
+      });
+      assert.equal(firstMount.container.querySelectorAll("tbody tr").length, 3, "collapsing 'Won' must hide its own 2 record rows, leaving 2 headers + 1 'New' record");
+      assert.equal(wonToggle.getAttribute("aria-expanded"), "false", "collapsing the 'Won' group must flip its own toggle's aria-expanded");
+      assert.ok(!firstMount.container.textContent?.includes("Bob"), "the collapsed 'Won' group's own rows must no longer render");
+      assert.ok(firstMount.container.textContent?.includes("Alice"), "the untouched 'New' group's own row must still render");
+      firstMount.unmount();
+
+      const secondMount = render(React.createElement(EntityView, props));
+      for (let i = 0; i < 40; i++) {
+        if (secondMount.container.querySelectorAll(".entity-group-header-row").length === 2) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+      assert.equal(
+        secondMount.container.querySelectorAll("tbody tr").length,
+        3,
+        "a freshly mounted EntityView for the same entity must come back up with 'Won' still collapsed, not reset to all-expanded",
+      );
+      const wonToggleAfterRemount = Array.from(secondMount.container.querySelectorAll(".entity-group-header-row"))[1].querySelector(
+        ".entity-group-toggle",
+      ) as HTMLButtonElement;
+      assert.equal(wonToggleAfterRemount.getAttribute("aria-expanded"), "false", "the restored toggle must itself report collapsed too");
       secondMount.unmount();
     });
   } finally {

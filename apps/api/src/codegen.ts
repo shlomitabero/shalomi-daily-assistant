@@ -1113,6 +1113,44 @@ function setPersistedFieldFilters(entityName, filters) {
   return cleaned;
 }
 
+// Which grouped-table-view group keys are collapsed, per entity. Mirrors
+// the live preview's own collapsedGroupsPreference.ts. Previously a
+// grouped table always rendered every one of a group's rows, defeating
+// the point of grouping a sizeable table to see just the groups you care
+// about.
+const COLLAPSED_GROUPS_STORAGE_KEY = "forge_collapsed_groups";
+function readCollapsedGroupsStore() {
+  try {
+    const raw = localStorage.getItem(COLLAPSED_GROUPS_STORAGE_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) return {};
+    return parsed;
+  } catch {
+    return {};
+  }
+}
+function writeCollapsedGroupsStore(store) {
+  try {
+    localStorage.setItem(COLLAPSED_GROUPS_STORAGE_KEY, JSON.stringify(store));
+  } catch {
+    // localStorage can be unavailable (private mode) -- the choice just won't survive a reload.
+  }
+}
+function getPersistedCollapsedGroups(entityName) {
+  const store = readCollapsedGroupsStore();
+  const keys = store[entityName];
+  return Array.isArray(keys) ? keys.filter((k) => typeof k === "string") : [];
+}
+function setPersistedCollapsedGroups(entityName, keys) {
+  const store = readCollapsedGroupsStore();
+  const deduped = [...new Set(keys)];
+  if (deduped.length === 0) delete store[entityName];
+  else store[entityName] = deduped;
+  writeCollapsedGroupsStore(store);
+  return deduped;
+}
+
 // Applies a persisted (possibly stale) column order to the entity's current
 // real field list: a field the order mentions keeps its persisted relative
 // position, and any field the order doesn't mention (a newly added field,
@@ -2176,6 +2214,7 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
   const [recentSearches, setRecentSearches] = useState(() => getEntityRecentSearches(entity.name));
   const [fieldFilters, setFieldFilters] = useState(() => getPersistedFieldFilters(entity.name));
   const [groupFieldName, setGroupFieldName] = useState(() => getPersistedGroupField(entity.name));
+  const [collapsedGroups, setCollapsedGroups] = useState(() => new Set(getPersistedCollapsedGroups(entity.name)));
   const [highlightedRecordId, setHighlightedRecordId] = useState(null);
   const [moveErrorId, setMoveErrorId] = useState(null);
   const [focusedRowId, setFocusedRowId] = useState(null);
@@ -2284,6 +2323,7 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
     setRecentSearches(getEntityRecentSearches(entity.name));
     setFieldFilters(getPersistedFieldFilters(entity.name));
     setGroupFieldName(getPersistedGroupField(entity.name));
+    setCollapsedGroups(new Set(getPersistedCollapsedGroups(entity.name)));
     setSortKeys(getPersistedSortKeys(entity.name));
     setViewMode(getPersistedViewMode(entity.name));
     setCalendarMonth(new Date());
@@ -2637,6 +2677,17 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
     formEl?.scrollIntoView?.({ behavior: "smooth", block: "start" });
     const firstField = document.querySelector(".record-form input, .record-form select, .record-form textarea");
     firstField?.focus();
+  }
+
+  // Toggles one group's collapsed state and persists the full updated set.
+  function toggleGroupCollapsed(groupKey) {
+    setCollapsedGroups((prev) => {
+      const next = new Set(prev);
+      if (next.has(groupKey)) next.delete(groupKey);
+      else next.add(groupKey);
+      setPersistedCollapsedGroups(entity.name, [...next]);
+      return next;
+    });
   }
 
   // Deleting a record used to call the real DELETE endpoint the instant the
@@ -3468,15 +3519,26 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
                 </thead>
                 <tbody>
                   {recordGroups
-                    ? recordGroups.map((group) => (
+                    ? recordGroups.map((group) => {
+                        const collapsed = collapsedGroups.has(group.key);
+                        return (
                         <Fragment key={group.key}>
                           <tr className="entity-group-header-row">
                             <td colSpan={visibleFields.length + 2}>
+                              <button
+                                type="button"
+                                className="entity-group-toggle"
+                                onClick={() => toggleGroupCollapsed(group.key)}
+                                aria-expanded={!collapsed}
+                                aria-label={collapsed ? "Expand group" : "Collapse group"}
+                              >
+                                {collapsed ? "▸" : "▾"}
+                              </button>{" "}
                               {group.label} <span className="muted small">({group.records.length})</span>
                             </td>
                           </tr>
-                          {group.records.map(renderRow)}
-                          {hasNumericVisibleField && (
+                          {!collapsed && group.records.map(renderRow)}
+                          {!collapsed && hasNumericVisibleField && (
                             <tr className="entity-group-totals-row">
                               <td className="select-col"></td>
                               {visibleFields.map((f) => (
@@ -3492,7 +3554,8 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
                             </tr>
                           )}
                         </Fragment>
-                      ))
+                        );
+                      })
                     : visibleRecords.map(renderRow)}
                 </tbody>
                 {hasNumericVisibleField && (
@@ -4360,6 +4423,7 @@ th, td { text-align: start; padding: 8px 10px; border-bottom: 1px solid var(--bo
 .entity-status-filter, .entity-group-by { max-width: 200px; margin-bottom: 0; flex-shrink: 0; }
 .entity-group-header-row td { background: var(--surface-subtle); font-weight: 600; padding: 6px 10px; }
 .entity-group-totals-row td { background: var(--surface-subtle); border-bottom: 1px solid var(--border); font-weight: 600; }
+.entity-group-toggle { background: none; border: none; cursor: pointer; padding: 0 4px; font-size: 12px; color: inherit; }
 .tab-count { display: inline-block; margin-inline-start: 6px; padding: 1px 7px; border-radius: 999px; font-size: 11.5px; font-weight: 700; line-height: 1.5; background: var(--steel-soft); color: var(--steel); }
 nav button.active .tab-count { background: rgba(255, 255, 255, 0.25); color: inherit; }
 .view-toggle { display: flex; gap: 4px; padding: 3px; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; flex-shrink: 0; }

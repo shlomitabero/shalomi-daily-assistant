@@ -9,6 +9,7 @@ import { act, cleanup, fireEvent, render } from "@testing-library/react";
 import type { Entity, EntityRecord } from "@forge/shared";
 import { getColumnWidths, setColumnWidth } from "./columnWidths.js";
 import { getGroupByField } from "./groupByPreference.js";
+import { getCollapsedGroups } from "./collapsedGroupsPreference.js";
 import { getViewMode } from "./viewModePreference.js";
 import { getSortKeys } from "./sortKeysPreference.js";
 import { getFieldFilters } from "./fieldFiltersPreference.js";
@@ -3819,8 +3820,8 @@ test("EntityPanel's 'Group by' dropdown clusters the table into real group-heade
       const headerRows = Array.from(document.querySelectorAll(".entity-group-header-row"));
       assert.deepEqual(
         headerRows.map((r) => r.textContent?.trim()),
-        ["New (1)", "Won (2)"],
-        "must show one header per status that actually has records, in the enum's own declared order, with the real count -- and skip 'Lost' entirely since nothing matched it",
+        ["▾ New (1)", "▾ Won (2)"],
+        "must show one header per status that actually has records, in the enum's own declared order, with the real count (plus the collapse-toggle's own arrow glyph) -- and skip 'Lost' entirely since nothing matched it",
       );
       assert.equal(document.querySelectorAll("table tbody tr").length, 5, "3 record rows + 2 group-header rows");
 
@@ -3901,6 +3902,77 @@ test("EntityPanel's 'Group by' choice survives an unmount+remount of the same en
         "a different entity in the same project must never inherit Deal's persisted 'status' group-by choice",
       );
       assert.equal(getGroupByField("proj1", "Customer"), "", "and must never have written anything to Customer's own storage slot either");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
+ * New in this round: a grouped table always rendered every one of a
+ * group's rows unconditionally -- grouping a large table by e.g. Status
+ * only clustered the rows visually, it never let a person actually HIDE
+ * a group they don't care about right now (confirmed via grep: no
+ * "collapsed"/"Collapse" anywhere in apps/web/src before this round).
+ * Confirms the toggle button actually hides/shows that one group's own
+ * rows (and its totals row), leaves the other group untouched, and that
+ * the collapsed set survives an unmount+remount (collapsedGroupsPreference.ts,
+ * scoped per project+entity like fieldFiltersPreference.ts).
+ */
+test("EntityPanel's group-header toggle collapses and expands just that one group's rows, and the collapsed state survives an unmount+remount", async () => {
+  await withJsdom(async () => {
+    const store: EntityRecord[] = [
+      { id: 1, createdAt: "x", name: "Acme Corp", status: "new" },
+      { id: 2, createdAt: "x", name: "Beta Inc", status: "won" },
+      { id: 3, createdAt: "x", name: "Gamma LLC", status: "won" },
+    ];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = mockRecordsFetch(store) as typeof fetch;
+    try {
+      const firstView = renderEntityPanel();
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 3);
+
+      const groupBySelect = document.querySelector(".entity-group-by") as HTMLSelectElement;
+      fireEvent.change(groupBySelect, { target: { value: "status" } });
+      await waitForCondition(() => document.querySelectorAll(".entity-group-header-row").length === 2);
+      assert.equal(document.querySelectorAll("table tbody tr").length, 5, "3 record rows + 2 group-header rows before any toggle");
+
+      const headerRows = Array.from(document.querySelectorAll(".entity-group-header-row"));
+      const wonToggle = headerRows[1].querySelector(".entity-group-toggle") as HTMLButtonElement;
+      assert.ok(wonToggle, "expected a real toggle button in the group header");
+      assert.equal(wonToggle.getAttribute("aria-expanded"), "true", "a freshly grouped table must start with every group expanded");
+
+      fireEvent.click(wonToggle);
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 3);
+      assert.equal(wonToggle.getAttribute("aria-expanded"), "false", "collapsing the 'Won' group must flip its own toggle's aria-expanded");
+      // "New" (id 1) stays visible; both "Won" rows (ids 2, 3) are hidden.
+      assert.ok(Array.from(document.querySelectorAll("table tbody tr")).some((r) => r.textContent?.includes("Acme Corp")), "the untouched 'New' group's own row must still render");
+      assert.ok(!Array.from(document.querySelectorAll("table tbody tr")).some((r) => r.textContent?.includes("Beta Inc")), "the collapsed 'Won' group's rows must no longer render");
+
+      fireEvent.click(wonToggle);
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 5);
+      assert.equal(wonToggle.getAttribute("aria-expanded"), "true", "clicking the same toggle again must re-expand the group");
+
+      // Collapse it once more, then unmount+remount to confirm persistence.
+      fireEvent.click(wonToggle);
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 3);
+      assert.deepEqual(
+        getCollapsedGroups("proj1", "Deal"),
+        ["won"],
+        "the collapsed group key must actually be persisted, not just held in memory",
+      );
+
+      firstView.unmount();
+      renderEntityPanel();
+      await waitForCondition(() => document.querySelectorAll(".entity-group-header-row").length === 2);
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 3);
+      const headerRowsAfterRemount = Array.from(document.querySelectorAll(".entity-group-header-row"));
+      const wonToggleAfterRemount = headerRowsAfterRemount[1].querySelector(".entity-group-toggle") as HTMLButtonElement;
+      assert.equal(
+        wonToggleAfterRemount.getAttribute("aria-expanded"),
+        "false",
+        "a fresh mount of the same project+entity must restore the persisted collapsed group, not reset to all-expanded",
+      );
     } finally {
       globalThis.fetch = originalFetch;
     }

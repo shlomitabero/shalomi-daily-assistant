@@ -15,6 +15,7 @@ import { getGroupByField, setGroupByField } from "./groupByPreference.js";
 import { getViewMode as getViewModePreference, setViewMode as setViewModePreference } from "./viewModePreference.js";
 import { getSortKeys as getSortKeysPreference, setSortKeys as setSortKeysPreference } from "./sortKeysPreference.js";
 import { getFieldFilters as getFieldFiltersPreference, setFieldFilters as setFieldFiltersPreference } from "./fieldFiltersPreference.js";
+import { getCollapsedGroups, setCollapsedGroups as setCollapsedGroupsPreference } from "./collapsedGroupsPreference.js";
 import { EntityLabelEditor } from "./EntityLabelEditor.js";
 import { FieldLabelEditor } from "./FieldLabelEditor.js";
 import {
@@ -791,6 +792,7 @@ export function EntityPanel({
   const [recentSearches, setRecentSearches] = useState<string[]>(() => getEntityRecentSearches(projectId, entity.name));
   const [fieldFilters, setFieldFilters] = useState<Record<string, string>>({});
   const [groupFieldName, setGroupFieldName] = useState("");
+  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
   const [sortKeys, setSortKeys] = useState<SortKey[]>([]);
   const [viewMode, setViewMode] = useState<ViewMode>("table");
   const [calendarMonth, setCalendarMonth] = useState(() => new Date());
@@ -951,6 +953,23 @@ export function EntityPanel({
   useEffect(() => {
     setGroupFieldName(getGroupByField(projectId, entity.name));
   }, [projectId, entity.name]);
+
+  // Same reasoning as groupFieldName's own effect just above -- which
+  // groups are collapsed is scoped per project+entity too.
+  useEffect(() => {
+    setCollapsedGroups(new Set(getCollapsedGroups(projectId, entity.name)));
+  }, [projectId, entity.name]);
+
+  /** Toggles one group's collapsed state and persists the full updated set, mirroring handleFieldFilterChange's write-through-to-storage pattern. */
+  function toggleGroupCollapsed(groupKey: string) {
+    setCollapsedGroups((prev) => {
+      const next = new Set(prev);
+      if (next.has(groupKey)) next.delete(groupKey);
+      else next.add(groupKey);
+      setCollapsedGroupsPreference(projectId, entity.name, [...next]);
+      return next;
+    });
+  }
 
   // Same reasoning as groupFieldName's own effect just above -- the chosen
   // Table/Board/Calendar view is scoped per project+entity too. Falls back
@@ -2410,15 +2429,26 @@ export function EntityPanel({
                 </thead>
                 <tbody>
                   {recordGroups
-                    ? recordGroups.map((group) => (
+                    ? recordGroups.map((group) => {
+                        const collapsed = collapsedGroups.has(group.key);
+                        return (
                         <Fragment key={group.key}>
                           <tr className="entity-group-header-row">
                             <td colSpan={visibleFields.length + 3}>
+                              <button
+                                type="button"
+                                className="entity-group-toggle"
+                                onClick={() => toggleGroupCollapsed(group.key)}
+                                aria-expanded={!collapsed}
+                                aria-label={collapsed ? t("entity.group.expand") : t("entity.group.collapse")}
+                              >
+                                {collapsed ? "▸" : "▾"}
+                              </button>{" "}
                               {group.label} <span className="muted small">({group.records.length})</span>
                             </td>
                           </tr>
-                          {group.records.map(renderRecordRow)}
-                          {hasNumericVisibleField && (
+                          {!collapsed && group.records.map(renderRecordRow)}
+                          {!collapsed && hasNumericVisibleField && (
                             <tr className="entity-group-totals-row">
                               <td className="select-col" />
                               {visibleFields.map((f) => (
@@ -2436,7 +2466,8 @@ export function EntityPanel({
                             </tr>
                           )}
                         </Fragment>
-                      ))
+                        );
+                      })
                     : visibleRecords.map(renderRecordRow)}
                 </tbody>
                 {hasNumericVisibleField && (
