@@ -2051,6 +2051,88 @@ test("the exported EntityView shows a real error with a Retry button when the in
 });
 
 /**
+ * New in this round: porting the live preview's own j/k row-navigation
+ * (EntityPanel.tsx) to the exported app's EntityView.jsx. Before this fix,
+ * the exported app's table had zero keyboard way to move between records
+ * without reaching for the mouse -- confirmed via grep: neither
+ * focusedRowId nor computeNextFocusedRowId/isTypingTarget existed anywhere
+ * in the generated output. Uses the real generated component with real
+ * records and real keydown events on window (the live preview's own
+ * handler is attached the same way, not scoped to a container).
+ */
+test("the exported EntityView's j/k/ArrowUp/ArrowDown move a real keyboard focus between table rows, and Enter opens the focused row for editing", async () => {
+  const files = generateExportFiles(project);
+  const dir = writeGeneratedWebComponent(files);
+  const store = [
+    { id: 1, name: "Acme Corp", status: "New" },
+    { id: 2, name: "Globex", status: "Won" },
+    { id: 3, name: "Initech", status: "New" },
+  ];
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
+    const method = init?.method ?? "GET";
+    if (method === "GET" && input === "/api/Customer") {
+      return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    throw new Error(`unexpected request ${method} ${input}`);
+  }) as typeof fetch;
+
+  try {
+    await withRealLocalStorage(async () => {
+      const { EntityView } = await import(path.join(dir, "web", "src", "components", "EntityView.jsx"));
+      const customerEntity = project.spec.entities.find((e) => e.name === "Customer")!;
+      const props = {
+        entity: customerEntity,
+        highlightRecordId: null,
+        onHighlightHandled: () => {},
+        onJumpToRecord: () => {},
+        onRecordCountChange: () => {},
+      };
+
+      const { container } = render(React.createElement(EntityView, props));
+      for (let i = 0; i < 40; i++) {
+        if (container.querySelectorAll("tbody tr").length === 3) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+      assert.equal(container.querySelectorAll("tbody tr").length, 3, "expected all three records to have loaded");
+      assert.equal(container.querySelector(".record-row-focused"), null, "no row should be focused before any key is pressed");
+
+      await act(async () => {
+        fireEvent.keyDown(window, { key: "j" });
+      });
+      let focused = container.querySelector(".record-row-focused");
+      assert.ok(focused, "the first 'j' must focus the first row");
+      assert.equal(focused!.getAttribute("data-record-id"), "1");
+
+      await act(async () => {
+        fireEvent.keyDown(window, { key: "j" });
+      });
+      focused = container.querySelector(".record-row-focused");
+      assert.equal(focused!.getAttribute("data-record-id"), "2", "a second 'j' must move the focus to the next row");
+
+      await act(async () => {
+        fireEvent.keyDown(window, { key: "ArrowUp" });
+      });
+      focused = container.querySelector(".record-row-focused");
+      assert.equal(focused!.getAttribute("data-record-id"), "1", "ArrowUp must move the focus back to the previous row");
+
+      await act(async () => {
+        fireEvent.keyDown(window, { key: "Enter" });
+      });
+      assert.match(container.querySelector("form")?.textContent ?? "", /Save/, "Enter must open the focused row for editing (the form switches from Add to Save)");
+      const nameInput = container.querySelector('input[type="text"]') as HTMLInputElement;
+      assert.equal(nameInput.value, "Acme Corp", "the edit form must be pre-filled with the focused row's own record");
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    cleanup();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
  * Regression test: the exported app's own EntityView.jsx is a deliberate
  * duplicate of the live-preview EntityPanel.tsx, and its refresh() had
  * the exact same stale-async-overwrites-newer-setState race this session
@@ -2971,7 +3053,7 @@ test("the exported app's Global Search can jump to an individual matched record,
   assert.match(entityViewJsx, /setTimeout\(\(\) => setHighlightedRecordId\(null\), 4000\)/);
   assert.match(
     entityViewJsx,
-    /data-record-id=\{r\.id\} className=\{\[r\.id === highlightedRecordId \? "record-row-highlighted" : null, r\.id === moveErrorId \? "record-row-move-error" : null\]\.filter\(Boolean\)\.join\(" "\) \|\| undefined\}/,
+    /data-record-id=\{r\.id\} className=\{\[r\.id === highlightedRecordId \? "record-row-highlighted" : null, r\.id === focusedRowId \? "record-row-focused" : null, r\.id === moveErrorId \? "record-row-move-error" : null\]\.filter\(Boolean\)\.join\(" "\) \|\| undefined\}/,
   );
   assert.match(entityViewJsx, /querySelector\(`tr\[data-record-id="\$\{highlightedRecordId\}"\]`\)/);
 

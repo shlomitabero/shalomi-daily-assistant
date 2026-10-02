@@ -2059,6 +2059,36 @@ function FieldInput({ entity, field, value, onChange, relatedEntity, relatedEnti
 // the delete silently didn't happen.
 const UNDO_WINDOW_MS = 5000;
 
+/**
+ * j/k (and ArrowDown/ArrowUp) move a keyboard focus between table rows, and
+ * Enter opens the focused row for editing -- the table view otherwise has
+ * no way to move between records without reaching for the mouse.
+ * Deliberately doesn't wrap at either end: a long table is the common case,
+ * and wrapping from the last row back to the first (or vice versa) after a
+ * refresh/re-sort would silently jump the focus somewhere the user never
+ * intended. If the currently-focused id has since scrolled out of the
+ * visible set entirely (a search/filter changed, or the record was
+ * deleted), treat it the same as "nothing focused yet" and (re)start from
+ * the first row, regardless of which direction was pressed. Mirrors the
+ * live Forge AI preview's own entityFormatting.ts exactly.
+ */
+export function computeNextFocusedRowId(visibleIds, currentFocusedId, direction) {
+  if (visibleIds.length === 0) return null;
+  const currentIndex = currentFocusedId == null ? -1 : visibleIds.indexOf(currentFocusedId);
+  if (currentIndex === -1) return visibleIds[0];
+  const nextIndex = direction === "next" ? currentIndex + 1 : currentIndex - 1;
+  const clampedIndex = Math.max(0, Math.min(nextIndex, visibleIds.length - 1));
+  return visibleIds[clampedIndex];
+}
+
+/** True while the user is actively typing somewhere else on the page (a text field, a select, a contenteditable region) -- j/k must never hijack keystrokes meant for the search box, a filter dropdown, or the add/edit form. */
+export function isTypingTarget(target) {
+  if (!target) return false;
+  if (target.isContentEditable) return true;
+  const tag = target.tagName?.toUpperCase();
+  return tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT";
+}
+
 /** Shared list + form UI used by every entity's own component file. */
 export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJumpToRecord, onRecordCountChange }) {
   const [records, setRecords] = useState([]);
@@ -2079,6 +2109,7 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
   const [groupFieldName, setGroupFieldName] = useState(() => getPersistedGroupField(entity.name));
   const [highlightedRecordId, setHighlightedRecordId] = useState(null);
   const [moveErrorId, setMoveErrorId] = useState(null);
+  const [focusedRowId, setFocusedRowId] = useState(null);
   const [sortKeys, setSortKeys] = useState(() => getPersistedSortKeys(entity.name));
   const [viewMode, setViewMode] = useState(() => getPersistedViewMode(entity.name));
   const [calendarMonth, setCalendarMonth] = useState(() => new Date());
@@ -2426,6 +2457,46 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
     const row = document.querySelector(\`tr[data-record-id="\${highlightedRecordId}"]\`);
     row?.scrollIntoView?.({ behavior: "smooth", block: "center" });
   }, [highlightedRecordId, visibleRecords]);
+
+  // Mirrors the highlighted-row scroll effect above, for the keyboard-
+  // focused row instead of a jump-to target.
+  useEffect(() => {
+    if (focusedRowId == null) return;
+    const row = document.querySelector(\`tr[data-record-id="\${focusedRowId}"]\`);
+    row?.scrollIntoView?.({ behavior: "smooth", block: "nearest" });
+  }, [focusedRowId, visibleRecords]);
+
+  /**
+   * j/k (and ArrowDown/ArrowUp) move a keyboard focus between table rows,
+   * and Enter opens the focused row for editing -- the table view
+   * previously had no way to move between records without reaching for
+   * the mouse. Only active in table view (board/calendar have their own
+   * navigation shapes), and isTypingTarget guards against hijacking
+   * keystrokes meant for the search box, a filter dropdown, or the add/
+   * edit form. Mirrors the live Forge AI preview's own EntityPanel.tsx.
+   */
+  useEffect(() => {
+    if (viewMode !== "table") return;
+    function handleKeyDown(e) {
+      if (isTypingTarget(e.target)) return;
+      const visibleIds = visibleRecords.map((r) => r.id);
+      if (e.key === "j" || e.key === "ArrowDown") {
+        e.preventDefault();
+        setFocusedRowId((current) => computeNextFocusedRowId(visibleIds, current, "next"));
+      } else if (e.key === "k" || e.key === "ArrowUp") {
+        e.preventDefault();
+        setFocusedRowId((current) => computeNextFocusedRowId(visibleIds, current, "prev"));
+      } else if (e.key === "Enter" && focusedRowId != null) {
+        const record = visibleRecords.find((r) => r.id === focusedRowId);
+        if (record) {
+          e.preventDefault();
+          startEdit(record);
+        }
+      }
+    }
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [viewMode, visibleRecords, focusedRowId]);
 
   async function handleSubmit(e) {
     e.preventDefault();
@@ -2841,7 +2912,7 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
   // changes which records a given <tbody> section lists, never how a
   // single row itself looks.
   const renderRow = (r) => (
-    <tr key={r.id} data-record-id={r.id} className={[r.id === highlightedRecordId ? "record-row-highlighted" : null, r.id === moveErrorId ? "record-row-move-error" : null].filter(Boolean).join(" ") || undefined}>
+    <tr key={r.id} data-record-id={r.id} className={[r.id === highlightedRecordId ? "record-row-highlighted" : null, r.id === focusedRowId ? "record-row-focused" : null, r.id === moveErrorId ? "record-row-move-error" : null].filter(Boolean).join(" ") || undefined}>
       <td className="select-col">
         <input type="checkbox" checked={selectedIds.has(r.id)} onChange={() => toggleSelected(r.id)} />
       </td>
@@ -4239,6 +4310,7 @@ nav button.active .tab-count { background: rgba(255, 255, 255, 0.25); color: inh
 .global-search-show-all { margin-top: 6px; font-size: 13px; }
 .global-search-hit-button { display: block; width: 100%; text-align: start; white-space: normal; }
 .record-row-highlighted, .record-row-highlighted:hover { background: var(--accent-soft); transition: background 1.5s ease; }
+.record-row-focused { outline: 2px solid var(--accent); outline-offset: -2px; }
 .record-row-move-error, .record-row-move-error:hover { background: var(--danger-soft); transition: background 2s ease; }
 `;
 }
