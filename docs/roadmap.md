@@ -20918,6 +20918,57 @@ Full suite green: **1250 tests** (`@forge/shared` 13, `@forge/spec-engine`
 710 (+3 new tests)) via `npm test` at the repo root, plus a clean full
 monorepo `npm run build`.
 
+### Round 346 — "x" keyboard shortcut to toggle the focused row's selection
+
+An Explore survey's top pick, re-verified independently before
+implementing: grepped `toggleSelected`/`focusedRowId`/`isTypingTarget`/
+`handleKeyDown` in both `EntityPanel.tsx` and `codegen.ts` and confirmed
+selection was only ever wired to the row checkbox's own `onChange`, never
+to any keydown handler, in both files identically. j/k/Enter (round
+188/343) already let a keyboard-only user navigate to and open any
+record, and bulk delete/duplicate/edit already exist as real features
+-- but there was no way to actually build a multi-row selection to act
+on without reaching for the mouse at least once per row.
+
+Added an `"x"` branch to the SAME table-scoped j/k/Enter `useEffect` in
+`EntityPanel.tsx` (not a new, separately-scoped effect -- selection, like
+j/k/Enter, only makes sense in table view) that calls the already-
+existing `toggleSelected(focusedRowId)` when a row is focused, reusing
+the same `isTypingTarget` guard the rest of that effect already has.
+Updated the effect's own doc comment to describe all four keys together
+instead of just j/k/Enter.
+
+Added the `shortcuts.toggleSelect` i18n key (Hebrew + English) and a new
+`"x"` row in `ShortcutsPanel.tsx`'s `SHORTCUTS` list (7 → 9, after
+round 343 already took it to 8) so the shortcut is discoverable through
+the "?" panel.
+
+Ported identically into `apps/api/src/codegen.ts`'s `EntityView`: the
+same `"x"` branch added to its own table-scoped j/k/Enter effect,
+calling the existing `toggleSelected(focusedRowId)`.
+
+Tests: new real-DOM tests in both `EntityPanel.test.ts` and
+`codegen.test.ts` focus a row via "j", confirm its own checkbox starts
+unchecked, pressing "x" checks only that row's checkbox (not the other
+row's), pressing "x" again unchecks it, and (`EntityPanel.test.ts` only,
+mirroring every prior shortcut's own `isTypingTarget` coverage) confirm
+pressing "x" while the search box has focus types a literal "x" instead
+of toggling selection. Updated `ShortcutsPanel.test.ts`'s own
+exact-row-count assertion (8 → 9) and its `kbds.includes(...)` list.
+
+Deliberate-break-and-restore: backed up all 7 changed files, reverted
+the 4 implementation files to HEAD, and confirmed exactly 2 web tests
+failed (709/711: the new "x"-shortcut test and the updated
+`ShortcutsPanel` row-count test) and exactly 1 api test failed
+(346/347: the new codegen.test.ts "x"-shortcut test) -- no other tests
+affected. Restored from backup and confirmed byte-identical via `diff -q`
+against all 4 files, then re-ran the full suite and build.
+
+Full suite green: **1252 tests** (`@forge/shared` 13, `@forge/spec-engine`
+85, `@forge/db` 96 unchanged; `@forge/api` 347 (+1 new test); `@forge/web`
+711 (+1 new test)) via `npm test` at the repo root, plus a clean full
+monorepo `npm run build`.
+
 ## Phase 4
 
 - Template/agent marketplace
