@@ -20201,6 +20201,59 @@ Full suite green: **1230 tests** (`@forge/shared` 13, `@forge/spec-engine`
 697) via `npm test` at the repo root, plus a clean full monorepo
 `npm run build`.
 
+### Round 334 — Error messages announced to screen readers in 5 more panels (batch 1 of 2)
+
+Round 333's survey flagged a genuine, broad consistency gap: `EntityPanel`
+got `role="status"` on its own error line back in round 328, but a grep
+across every other panel found 15 more `<p className="error">` elements
+spread across 7 files with no ARIA role at all — a screen-reader user
+hit a real error with zero signal it had even happened, in most of the
+app. Confirmed independently via grep (not just trusting the prior
+survey) before touching anything. Too large for one round at full size,
+so split into two batches: this round covers the 5 simpler files
+(6 elements), leaving `HistoryPanel` (3) and `WhatsAppPanel` (6) for
+round 335.
+
+Design decision carried over from round 327's own reasoning for copy
+buttons: `role="status"`, matching `EntityPanel`'s existing precedent —
+not `role="alert"`, which this project already reserves for inline
+per-field validation (`SpecListItemRemover.tsx`'s per-action error spans,
+`PasswordInput.tsx`'s caps-lock warning). Fixed: `AuthScreen.tsx`'s signup
+error, `BusinessTwinPanel.tsx`'s load-failure error,
+`GlobalSearchPanel.tsx`'s search-failure error, and both of
+`CollaboratorsPanel.tsx`'s error paragraphs (its shared `error` and its
+own round-333 `loadError`). `BuildProgress.tsx` turned out to need two
+fixes, not the one the survey counted — its generic stream-failure
+`error` banner (a separate state from the already-counted
+`build.failed.banner` text) had the identical gap and was fixed too,
+since leaving one bare right next to the newly-announced one in the same
+file would have been an inconsistent half-fix.
+
+Tests: rather than new test files, added one assertion
+(`getAttribute("role") === "status"`) into each file's own existing test
+that already renders and grabs the relevant error element — the same
+"one assertion in an existing test" approach rounds 327 and 331 already
+established for this exact kind of cross-file identical fix.
+`BuildProgress.tsx`'s own stream-failure banner and `CollaboratorsPanel`'s
+shared `error` state had no pre-existing test that rendered them, so
+those two fixes went in without a new assertion (consistent with this
+project's standing practice of not writing brand-new tests to cover
+elements nothing exercised before) — the fix itself was still verified
+via `tsc -b` and a full `npm run build`.
+
+Deliberate-break-and-restore: backed up all 10 changed files, reverted
+just the 5 `.tsx` components to their pre-round HEAD state, and confirmed
+exactly 1 test failed per file (the one carrying the new assertion) while
+every other test in each file (69 total across the 5 files) kept passing.
+Restored from the verified backup with a confirmed byte-identical `diff`
+against all 10 files, then re-ran the full `@forge/web` suite (698/698)
+and a clean full monorepo `npm run build`.
+
+Full suite green: **1230 tests** (`@forge/shared` 13, `@forge/spec-engine`
+85, `@forge/db` 96, `@forge/api` 338 unchanged; `@forge/web` 698
+unchanged, assertions added inside existing tests) via `npm test` at the
+repo root, plus a clean full monorepo `npm run build`.
+
 ## Phase 4
 
 - Template/agent marketplace
