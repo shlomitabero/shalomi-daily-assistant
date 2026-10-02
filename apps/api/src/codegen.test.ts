@@ -5412,3 +5412,90 @@ test("the exported EntityView never flags an ordinary (non-deadline-named) date 
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+/**
+ * New in this round (342): mirrors the live preview's own identical fix.
+ * Submitting the exported app's add/edit form with a required field left
+ * empty previously fell through to the browser's own native HTML5
+ * constraint-validation tooltip instead of a real, app-rendered error.
+ * The form now has noValidate, and handleSubmit checks required fields
+ * itself before ever calling the API, showing the error through the same
+ * role="status" paragraph every other error in this file already uses.
+ */
+test("the exported EntityView shows a required-field error instead of relying on the browser's own native validation, and never calls the API until it's fixed", async () => {
+  const files = generateExportFiles(project);
+  const dir = writeGeneratedWebComponent(files);
+  const originalFetch = globalThis.fetch;
+  const store = [{ id: 1, name: "Globex", status: "Won" }];
+  let postCount = 0;
+  globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
+    const method = init?.method ?? "GET";
+    if (method === "GET" && input === "/api/Customer") {
+      return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    if (method === "POST" && input === "/api/Customer") {
+      postCount += 1;
+      const record = { id: 2, ...JSON.parse(init!.body as string) };
+      store.push(record);
+      return new Response(JSON.stringify({ record }), { status: 201, headers: { "content-type": "application/json" } });
+    }
+    throw new Error(`unexpected request ${method} ${input}`);
+  }) as typeof fetch;
+
+  try {
+    await withRealLocalStorage(async () => {
+      const { EntityView } = await import(path.join(dir, "web", "src", "components", "EntityView.jsx"));
+      const customerEntity = project.spec.entities.find((e) => e.name === "Customer")!;
+      const props = {
+        entity: customerEntity,
+        highlightRecordId: null,
+        onHighlightHandled: () => {},
+        onJumpToRecord: () => {},
+        onRecordCountChange: () => {},
+      };
+
+      const { container } = render(React.createElement(EntityView, props));
+      for (let i = 0; i < 40; i++) {
+        if (container.querySelectorAll("tbody tr").length === 1) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+
+      const submitButton = container.querySelector(".record-form button[type=submit]") as HTMLButtonElement;
+      assert.ok(submitButton, "expected a real submit button");
+      await act(async () => {
+        fireEvent.click(submitButton);
+      });
+
+      const errorEl = container.querySelector(".record-form + p.error") as HTMLElement;
+      assert.ok(errorEl, "expected a real error paragraph to appear");
+      assert.match(errorEl.textContent ?? "", /שם/, "the error must name the actual missing field (Customer's own \"name\" field is labeled שם)");
+      assert.equal(errorEl.getAttribute("role"), "status", "must use the same role=status pattern as every other error here");
+      assert.equal(postCount, 0, "the API must never be called while a required field is still empty");
+
+      const nameInput = container.querySelector('.record-form input[type="text"]') as HTMLInputElement;
+      const statusSelect = container.querySelector(".record-form select") as HTMLSelectElement;
+      await act(async () => {
+        fireEvent.change(nameInput, { target: { value: "Acme Corp" } });
+        fireEvent.change(statusSelect, { target: { value: "New" } });
+      });
+      await act(async () => {
+        fireEvent.click(submitButton);
+      });
+      for (let i = 0; i < 40; i++) {
+        if (container.querySelectorAll("tbody tr").length === 2) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+
+      assert.equal(postCount, 1, "once every required field is filled in, the real create request must actually fire");
+      assert.equal(container.querySelector(".record-form + p.error"), null, "the error must clear once the record is created successfully");
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    cleanup();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});

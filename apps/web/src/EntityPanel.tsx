@@ -1293,6 +1293,17 @@ export function EntityPanel({
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
+    // Checked client-side (with noValidate on the <form>) rather than
+    // relying on the browser's own native required-field validation: that
+    // native tooltip is rendered by the OS/browser in its own locale, not
+    // through t() -- the one piece of user-facing text in this entire,
+    // fully-Hebrew-translated form that would otherwise show up in English
+    // regardless of the app's own language setting.
+    const missingField = entity.fields.find((f) => f.required && (form[f.name] === "" || form[f.name] == null));
+    if (missingField) {
+      setError(t("entity.form.requiredField", { field: missingField.label ?? missingField.name }));
+      return;
+    }
     try {
       if (editingId != null) {
         await updateRecord(projectId, entity.name, editingId, form);
@@ -1906,7 +1917,7 @@ export function EntityPanel({
       <EntityLabelEditor entity={entity} projectId={projectId} onRenamed={onEntityRenamed} />
       {entity.description && <p className="muted">{entity.description}</p>}
 
-      <form className="record-form" ref={formRef} onSubmit={handleSubmit}>
+      <form className="record-form" ref={formRef} onSubmit={handleSubmit} noValidate>
         {entity.fields.map((field) => (
           <label key={field.name} className="field-row">
             <FieldLabelEditor entityName={entity.name} field={field} projectId={projectId} onRenamed={onEntityRenamed} />

@@ -4529,3 +4529,62 @@ test("an ordinary (non-deadline-named) date field in the past is never flagged o
     }
   });
 });
+
+/**
+ * New in this round (342): submitting the add/edit form with a required
+ * field left empty previously fell through to the browser's own native
+ * HTML5 constraint-validation tooltip -- rendered by the OS/browser in
+ * its own locale, not through t(), the one piece of user-facing text in
+ * this entire Hebrew-translated form that would show up in English (or
+ * whatever the OS language is) regardless of the app's own language
+ * setting. The form now has noValidate, and handleSubmit checks required
+ * fields itself before ever calling the API, showing a real translated
+ * error through the exact same role="status" paragraph every other error
+ * already uses.
+ */
+test("EntityPanel shows a translated required-field error instead of relying on the browser's own native validation tooltip, and never calls the API until it's fixed", async () => {
+  await withJsdom(async () => {
+    const store: EntityRecord[] = [{ id: 1, name: "Globex", status: "won" }];
+    const originalFetch = globalThis.fetch;
+    let postCount = 0;
+    globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/entities/Deal") {
+        return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      if (method === "POST" && input === "/api/projects/proj1/entities/Deal") {
+        postCount += 1;
+        const record = { id: 2, ...JSON.parse(init!.body as string) };
+        store.push(record);
+        return new Response(JSON.stringify({ record }), { status: 201, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+
+    try {
+      renderEntityPanel();
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 1);
+
+      const submitButton = document.querySelector(".record-form button[type=submit]") as HTMLButtonElement;
+      fireEvent.click(submitButton);
+      await waitForCondition(() => document.querySelector(".record-form + p.error") !== null);
+
+      const errorEl = document.querySelector(".record-form + p.error") as HTMLElement;
+      assert.match(errorEl.textContent ?? "", /Name/, "the error must name the actual missing field, not a generic message");
+      assert.equal(errorEl.getAttribute("role"), "status", "must use the same role=status pattern as every other error in this panel");
+      assert.equal(postCount, 0, "the API must never be called while a required field is still empty");
+
+      const nameInput = document.querySelector('.record-form input[type="text"]') as HTMLInputElement;
+      const statusSelect = document.querySelector(".record-form select") as HTMLSelectElement;
+      fireEvent.change(nameInput, { target: { value: "Acme Corp" } });
+      fireEvent.change(statusSelect, { target: { value: "new" } });
+      fireEvent.click(submitButton);
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 2);
+
+      assert.equal(postCount, 1, "once every required field is filled in, the real create request must actually fire");
+      assert.equal(document.querySelector(".record-form + p.error"), null, "the error must clear once the record is created successfully");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});

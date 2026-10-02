@@ -2570,6 +2570,14 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
   async function handleSubmit(e) {
     e.preventDefault();
     setError(null);
+    // Checked client-side (with noValidate on the <form>) rather than
+    // relying on the browser's own native required-field validation --
+    // mirrors the live preview's own identical fix.
+    const missingField = entity.fields.find((f) => f.required && (form[f.name] === "" || form[f.name] == null));
+    if (missingField) {
+      setError(\`"\${missingField.label || missingField.name}" is a required field\`);
+      return;
+    }
     try {
       if (editingId != null) {
         await updateRecord(entity.name, editingId, form);
@@ -3038,7 +3046,7 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
   return (
     <div className="panel">
       <h3>{entity.label}</h3>
-      <form className="record-form" onSubmit={handleSubmit}>
+      <form className="record-form" onSubmit={handleSubmit} noValidate>
         {entity.fields.map((f) => (
           <label className="field" key={f.name}>
             <span>
