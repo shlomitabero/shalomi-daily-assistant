@@ -20154,6 +20154,53 @@ Full suite green: **1229 tests** (`@forge/shared` 13, `@forge/spec-engine`
 337) via `npm test` at the repo root, plus a clean full monorepo
 `npm run build`.
 
+### Round 333 — CollaboratorsPanel gets real error+Retry on its own initial load
+
+Round 332's survey (from the round-330 Explore agent) flagged this as a
+ready candidate — verified independently via grep rather than trusting
+the agent's report at face value, per this round's own new standing
+lesson. `CollaboratorsPanel.tsx`'s initial `listCollaborators` call
+failing was worse than any of the 4 panels fixed in round 328: the bare
+error line rendered (`error` got set), but that very fact flipped the
+loading guard (`collaborators === null && !error`) to false, so the
+component fell through to its "loaded" render branch — an empty `<ul>`
+with no owner row, no collaborator row, no empty-state message, and
+nothing to click besides closing and reopening the entire panel.
+
+Same audit-before-fix approach as round 328: confirmed via grep that
+`error` here is multi-purpose (shared by `listCollaborators`'s own catch,
+plus `handleInvite`/`handleRemove`/`handleLeave`), so a Retry button
+bolted onto it would misfire after an unrelated invite/remove/leave
+failure. Added a new, narrowly-scoped `loadError` state instead, set only
+inside a newly-extracted `loadCollaborators()` function's own catch
+block, with the loading-vs-error guard updated to stop claiming
+"Loading…" once a real failure is known. This is a live-preview-only
+fix — collaborators are a multi-tenant feature with no equivalent at all
+in the single-tenant exported app (confirmed via grep: zero "collab"
+hits in codegen.ts), so there is no export-port follow-up needed.
+
+New i18n key added (Hebrew + English): `collab.retry` — "ניסיון נוסף" /
+"Try again", matching every other panel's own retry-button wording.
+
+Tests: one new real-DOM test mocking the real GET endpoint to fail with a
+`500` on the first call and succeed on the second, confirming the
+error+Retry row renders with the real message, no collaborator list or
+misleading "Loading…" text shows alongside it, clicking Retry genuinely
+re-fetches, and both the real owner and the real collaborator render once
+the retry succeeds.
+
+Deliberate-break-and-restore: backed up all 3 changed files, reverted
+just `CollaboratorsPanel.tsx` to its pre-round HEAD state, and confirmed
+exactly the 1 new test failed while the other 9 kept passing. Restored
+from the verified backup with a confirmed byte-identical `diff` against
+all 3 files, then re-ran the full `@forge/web` suite (698/698) and a
+clean full monorepo `npm run build`.
+
+Full suite green: **1230 tests** (`@forge/shared` 13, `@forge/spec-engine`
+85, `@forge/db` 96, `@forge/api` 338 unchanged; `@forge/web` 698, up from
+697) via `npm test` at the repo root, plus a clean full monorepo
+`npm run build`.
+
 ## Phase 4
 
 - Template/agent marketplace
