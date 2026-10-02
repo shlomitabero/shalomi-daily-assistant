@@ -20106,6 +20106,54 @@ Full suite green: **1228 tests** (`@forge/shared` 13, `@forge/spec-engine`
 unchanged, assertions added inside existing tests) via `npm test` at the
 repo root, plus a clean full monorepo `npm run build`.
 
+### Round 332 — Exported app's single-delete confirm stopped lying about undo
+
+Round 330's survey had suggested adding an undo-toast to WhatsAppPanel's
+single-message delete as round 332's candidate. Investigating it first
+(as the trigger's own process requires) found the premise was wrong:
+`handleDeleteMessage` in `apps/web/src/WhatsAppPanel.tsx` already sends a
+real server `DELETE` immediately via `deleteWhatsAppMessage` — it is not
+local-only as assumed. Adding undo there would need the exact same
+deferred-delete architecture (a pending-delete ref, a 5-second window, a
+timer that fires the real delete afterward) already built for entity
+records in rounds 320-321 — for a much lower-stakes action, one chat log
+line rather than a business record. Not a good trade, so a fresh Explore
+survey ran instead and found a genuine, much smaller bug.
+
+codegen.ts's generated `EntityView` asks for confirmation before deleting
+a single record with `window.confirm(\`Delete "${label}"? This can't be
+undone.\`)` — but the very next lines of `handleDelete` set up a real
+5-second `pendingDelete`/Undo-toast immediately after the user confirms,
+the exact mechanism the bulk-delete confirm two lines below already
+describes correctly ("You can undo this for a few seconds after
+deleting"). `git log -S"can't be undone"` traced the stale line to the
+confirm dialog added in round 73 ("Add confirmation dialog to
+single-row delete"), which predates single-record undo (round 184) by
+over a hundred rounds and was never updated once undo landed. Fixed to
+match the bulk-delete confirm's own accurate wording. The live preview's
+own `entity.confirmDelete` i18n string already says the correct thing, so
+this was an exported-app-only gap, not a cross-cutting one.
+
+Tests: fixed one pre-existing regex test that had the stale string baked
+in as an assertion (so it was itself guaranteeing the bug stayed in
+place), and added one new real-DOM test — rendering the actual generated
+`EntityView` with a real record, clicking its real Delete button, and
+capturing the real argument passed to `window.confirm` — proving the
+rendered component genuinely passes the corrected, truthful message, not
+just that the right string exists somewhere in the source.
+
+Deliberate-break-and-restore: backed up both changed files, reverted just
+`codegen.ts` to its pre-round HEAD state, and confirmed exactly 2 tests
+failed (the updated regex test and the new real-DOM test) while all other
+110 `codegen.test.ts` tests kept passing. Restored from the verified
+backup with a confirmed byte-identical `diff`, then re-ran the full
+`@forge/api` suite (338/338) and a clean full monorepo `npm run build`.
+
+Full suite green: **1229 tests** (`@forge/shared` 13, `@forge/spec-engine`
+85, `@forge/db` 96, `@forge/web` 697 unchanged; `@forge/api` 338, up from
+337) via `npm test` at the repo root, plus a clean full monorepo
+`npm run build`.
+
 ## Phase 4
 
 - Template/agent marketplace
