@@ -20699,6 +20699,88 @@ Full suite green: **1240 tests** (`@forge/shared` 13, `@forge/spec-engine`
 705 (+1 new test)) via `npm test` at the repo root, plus a clean full
 monorepo `npm run build`.
 
+### Round 343 — A keyboard shortcut for starting a new record, from any view
+
+An Explore survey flagged a gap already noted (and set aside) in round
+342: the table view's own j/k/Enter row navigation (round 188) lets a
+keyboard-only user move between and open EXISTING records, but there was
+still no keyboard way to START adding one -- only a mouse click on the
+form above the table, or scrolling up to it by hand, got you there.
+
+Before implementing, checked whether the add/edit form is actually
+reachable from every view mode, not just table -- j/k/Enter's own
+`useEffect` is scoped with `if (viewMode !== "table") return;`, and a
+naive port would have inherited that same scoping without checking
+whether it was appropriate here too. Reading `EntityPanel.tsx` confirmed
+the `<form className="record-form">` renders unconditionally, above the
+table/board/calendar switch -- it's reachable from any view mode already.
+So the new shortcut needed its own always-active `useEffect`, separate
+from j/k/Enter's table-only one, not a branch added inside it.
+
+Added a new `"n"` key handler (guarded by the same `isTypingTarget` check
+j/k/Enter already uses) that calls a new `startCreateNew()`: clears
+`editingId`, resets the form to blank (abandoning any in-progress edit,
+matching the existing Cancel button's own reset), scrolls the form into
+view via the same `formRef.current?.scrollIntoView(...)` pattern
+`startCreateForDate`/`startCreateForColumn` already use, and focuses the
+form's first field via `formRef.current?.querySelector("input, select,
+textarea")` -- every `FieldInput` field type (text/longtext/enum/boolean/
+relation/date) renders one of those three elements as its own top-level
+node, confirmed by reading `FieldInput`'s full branch list first.
+
+Ported the identical shortcut into the exported app's own
+`codegen.ts`/`EntityView.jsx`, using a plain `document.querySelector(".record-form")`
+in place of a React ref, matching that file's own existing convention
+for DOM access from effects (its j/k/Enter row-scroll effects already
+query `document` directly rather than threading refs through).
+
+Added the `shortcuts.newRecord` i18n key (Hebrew + English) and a new
+row in `ShortcutsPanel.tsx`'s `SHORTCUTS` list, so the shortcut is
+actually discoverable through the same "?" panel every prior shortcut
+since round 68 has used.
+
+**Bug found and fixed along the way:** the new real-DOM test (dispatching
+"n" via `fireEvent.keyDown(window, ...)`, the same way the shortcut fires
+for real) crashed and hung the entire `EntityPanel.test.ts` run for the
+full 122-second timeout before being killed. Root cause: jsdom doesn't
+implement `scrollIntoView` on `HTMLElement` at all (already known and
+documented in `GlobalSearchPanel.test.ts`), and `startCreateNew`'s call
+to `formRef.current?.scrollIntoView(...)` only optional-chained the
+`.current` access, not the method call itself -- unlike the project's own
+established, already-safe pattern elsewhere in the same file
+(`row?.scrollIntoView?.(...)`, double-chained). Calling an undefined
+method threw a `TypeError` inside a native `window`-level keydown
+listener (not React's synthetic event system), which deadlocked React's
+act-scope bookkeeping rather than failing the one test cleanly. Fixed by
+double-chaining the new call (`formRef.current?.scrollIntoView?.(...)`),
+and, for consistency, fixed the same latent gap in the two pre-existing
+callers it was copied from (`startCreateForDate`/`startCreateForColumn`)
+-- they share the exact same bug, just were never exercised through a
+`window`-level dispatch path that surfaced it as a hang rather than a
+silently-swallowed, click-triggered DOM error.
+
+Tests: new real-DOM tests in both `EntityPanel.test.ts` and
+`codegen.test.ts` open an existing record for editing, press "n", and
+confirm the form resets to blank, the submit button reverts to its
+add-record label, and the first field actually receives focus -- plus
+(`EntityPanel.test.ts` only, mirroring j/k/Enter's own existing coverage)
+confirming the `isTypingTarget` guard: pressing "n" while the search box
+has focus types a literal "n" there instead of resetting the form.
+Updated `ShortcutsPanel.test.ts`'s own exact-row-count assertion (7 → 8).
+
+Deliberate-break-and-restore: backed up all 7 changed files, reverted
+the 4 implementation files to HEAD, and confirmed exactly 2 web tests
+failed (704/706: the new "n"-shortcut test and the updated
+`ShortcutsPanel` row-count test) and exactly 1 api test failed
+(343/344: the new `codegen.test.ts` "n"-shortcut test) -- no other
+tests affected. Restored from backup and confirmed byte-identical via
+`diff -q` against all 4 files, then re-ran the full suite and build.
+
+Full suite green: **1244 tests** (`@forge/shared` 13, `@forge/spec-engine`
+85, `@forge/db` 96 unchanged; `@forge/api` 344 (+1 new test); `@forge/web`
+706 (+1 new test)) via `npm test` at the repo root, plus a clean full
+monorepo `npm run build`.
+
 ## Phase 4
 
 - Template/agent marketplace
