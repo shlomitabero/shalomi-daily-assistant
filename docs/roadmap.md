@@ -20514,6 +20514,79 @@ assertions folded into an existing test); `@forge/web` 699 (+1 new test))
 via `npm test` at the repo root, plus a clean full monorepo
 `npm run build`.
 
+### Round 340 — Overdue/due-soon deadline dates are finally flagged in the records table
+
+Round 339's own survey flagged three unverified leads for a future round;
+this round's Explore survey investigated all three and recommended the
+most concrete and real one: no date field anywhere in the app ever
+compared a stored value to "today" -- every date cell, in both the live
+preview and the exported app, rendered as plain formatted text even for a
+field literally named "dueDate" or "deadline" that had already passed. A
+user scanning her Invoice or Task table had no visual signal that a
+deadline was overdue short of reading every date by eye -- exactly the
+kind of real, visible gap שלומי's own standing direction asks for over
+another accessibility tweak.
+
+Before implementing, checked the built-in domain entity library
+(`packages/spec-engine/src/domainEntities.ts`) for every date field name
+in use: alongside `dueDate` and `deadline`, it also declares `dateOfBirth`,
+`startDate`, `shipDate`, `joinedDate`, `appliedDate`, `scheduledDate`, and
+others -- fields whose value is routinely in the past *on purpose* and is
+not "overdue" by any reasonable meaning of the word. A blanket
+"any date field, if it's in the past, show it as overdue" rule would have
+been actively wrong for most of the app's own built-in entities, so the
+new logic only fires for a field whose own *name* contains "due" or
+"deadline" (case-insensitive), mirroring how `badgeTone` already
+classifies enum values by matching against word lists rather than
+globally.
+
+Added `isDeadlineFieldName`/`getDateUrgency` (returns `"overdue"`,
+`"dueSoon"` within a 3-day window, or `null`) to `entityFormatting.ts`,
+and wired them into `EntityPanel.tsx`'s `Cell`: a flagged date now
+renders with a `date-overdue`/`date-due-soon` CSS class (new
+`--warning`/`--warning-soft` theme variables, added to both the light and
+dark palettes) plus a title tooltip, with new `entity.dateOverdue`/
+`entity.dateDueSoon` i18n keys (Hebrew + English, required by the
+project's own automated he/en-parity test). Ported the identical logic
+into the exported app (`apps/api/src/codegen.ts`'s `EntityView`):
+matching helpers added right after the existing `badgeTone`, `Cell`'s date
+branch updated to match, and the same CSS variables/rules added to the
+exported app's own `styles.css` generation -- hardcoded English for the
+tooltip text, since `codegen.ts`'s exported app has no i18n system at
+all.
+
+A pre-existing `codegen.test.ts` test had to be fixed, not just left
+alone: it evals the generated `Cell` function's extracted source in
+complete isolation (via `new Function`, not a full module import) to test
+a UTC-vs-local timezone edge case, so it needed `isDeadlineFieldName`/
+`getDateUrgency`'s source concatenated into that same isolated eval too,
+plus a `field.name` added to its minimal field fixture (`Cell` now reads
+`field.name`, which that fixture had never previously needed to supply).
+
+Tests: `entityFormatting.test.ts` gets direct unit coverage for both new
+pure functions, including the deadline-vs-ordinary field-name
+distinction. `EntityPanel.test.ts` and `codegen.test.ts` each get a new
+real-DOM test rendering a `dueDate`-named entity (confirms overdue/
+due-soon/far-future records render with the correct class) and a
+`dateOfBirth`-named entity (confirms a decades-old date is never
+flagged).
+
+Deliberate-break-and-restore: backed up all 8 changed files, reverted the
+5 implementation files to HEAD, and ran `codegen.test.ts` against the
+reverted code: confirmed exactly 2 of its 115 tests failed (the fixed
+pre-existing timezone test and the new "flags overdue" test) -- the new
+"never flags an ordinary field" test passed even against the reverted
+code too, since it only asserts the *absence* of a class that trivially
+never exists without the feature at all; the sibling positive test
+already proves the feature is genuinely load-bearing. Restored from
+backup and confirmed byte-identical via `diff -q` against all 8 files,
+then re-ran the full suite and build.
+
+Full suite green: **1236 tests** (`@forge/shared` 13, `@forge/spec-engine`
+85, `@forge/db` 96 unchanged; `@forge/api` 341 (+2 new tests);
+`@forge/web` 703 (+4 new tests)) via `npm test` at the repo root, plus a
+clean full monorepo `npm run build`.
+
 ## Phase 4
 
 - Template/agent marketplace
