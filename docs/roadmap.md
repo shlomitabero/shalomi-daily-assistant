@@ -20300,6 +20300,51 @@ Full suite green: **1230 tests** (`@forge/shared` 13, `@forge/spec-engine`
 unchanged, assertions added inside existing tests) via `npm test` at the
 repo root, plus a clean full monorepo `npm run build`.
 
+### Round 336 — Accessible name for the exported app's calendar prev/next buttons
+
+With the error-role family now fully closed, this round's survey turned
+up a different, unrelated gap: in `apps/api/src/codegen.ts`'s
+`CalendarView`, the month-navigation buttons rendered as bare glyphs
+(`‹` / `›`) with `onClick` handlers but no accessible name at all — a
+screen reader announces them only as "button". Re-verified independently
+before touching any code, per the standing rule to never trust a survey
+claim blindly: grepped `codegen.ts` and confirmed zero occurrences of
+"Previous month", "Next month", or any `aria-label` near `onPrevMonth`/
+`onNextMonth`; then checked the live preview's own equivalent in
+`apps/web/src/EntityPanel.tsx`, which already labels its matching buttons
+via `aria-label={t("entity.calendar.prev")}` / `.next`, resolving (per
+`apps/web/src/i18n/language.ts`) to the English strings "Previous month"
+and "Next month".
+
+`codegen.ts`'s generated output has no i18n system at all — every string
+in the exported app is hardcoded English — so the fix mirrors that
+existing convention rather than introducing any translation call:
+`aria-label="Previous month"` and `aria-label="Next month"` added
+directly onto the two buttons.
+
+No pre-existing test referenced `onPrevMonth`/`onNextMonth` directly, but
+`CalendarView` has its own established testing convention distinct from
+`EntityView`'s real-DOM tests: it's verified via static source-regex
+slicing against the generated JSX string. Extended the existing "Today
+button" test in `codegen.test.ts` with two new `assert.match` lines
+against the same sliced `calendarViewSource`, rather than writing a new
+test block, matching that file's own convention.
+
+Deliberate-break-and-restore: backed up both changed files, reverted
+`codegen.ts` to HEAD, confirmed via `git diff --stat` the revert was
+clean, then ran the full `codegen.test.ts` suite against the reverted
+code and confirmed exactly 1 of 112 tests failed (the modified "Today
+button" test — `111 pass / 1 fail`) while all other tests, including the
+rest of `CalendarView`'s own tests, kept passing. Restored from backup
+and confirmed via `diff -q` both files were byte-identical to their
+pre-revert versions, then re-ran the full `@forge/api` suite (338/338)
+and a clean full monorepo `npm run build` once more.
+
+Full suite green: **1230 tests** (`@forge/shared` 13, `@forge/spec-engine`
+85, `@forge/db` 96, `@forge/web` 698 unchanged; `@forge/api` 338
+unchanged, assertions added inside an existing test) via `npm test` at
+the repo root, plus a clean full monorepo `npm run build`.
+
 ## Phase 4
 
 - Template/agent marketplace
