@@ -3359,6 +3359,11 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
                 Reset column widths
               </button>
             )}
+            {sortKeys.length > 0 && (
+              <button type="button" className="entity-clear-sort" onClick={() => setSortKeys(setPersistedSortKeys(entity.name, []))}>
+                Clear sort
+              </button>
+            )}
           </div>
           {!search.trim() && recentSearches.length > 0 && (
             <div className="entity-search-recent">

@@ -5202,6 +5202,85 @@ test("the exported EntityView shows a 'Clear filters' button only once a filter 
 });
 
 /**
+ * New in this round: mirrors the live preview's own "Clear sort" button
+ * -- toggleSort's own non-additive branch only ever collapses a sort
+ * down to a single key, never back to [], so once a multi-column sort
+ * was built via shift-click there was no one-click way back to the
+ * table's natural/unsorted order.
+ */
+test("the exported EntityView shows a 'Clear sort' button only once a sort is active, and it resets both the headers and the persisted storage", async () => {
+  const files = generateExportFiles(project);
+  const dir = writeGeneratedWebComponent(files);
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async () => ({
+    ok: true,
+    status: 200,
+    json: async () => ({
+      records: [
+        { id: 1, name: "Globex", status: "Won" },
+        { id: 2, name: "Zeta Inc", status: "New" },
+        { id: 3, name: "Acme Corp", status: "New" },
+      ],
+    }),
+  })) as typeof fetch;
+
+  try {
+    await withRealLocalStorage(async () => {
+      const { EntityView } = await import(path.join(dir, "web", "src", "components", "EntityView.jsx"));
+      const customerEntity = project.spec.entities.find((e) => e.name === "Customer")!;
+      const props = {
+        entity: customerEntity,
+        highlightRecordId: null,
+        onHighlightHandled: () => {},
+        onJumpToRecord: () => {},
+        onRecordCountChange: () => {},
+      };
+
+      const { container } = render(React.createElement(EntityView, props));
+      for (let i = 0; i < 40; i++) {
+        if (container.querySelectorAll("tbody tr").length === 3) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+      assert.equal(container.querySelector(".entity-clear-sort"), null, "no sort is active yet, so the button must not render at all");
+
+      // The Customer fixture's own field labels are Hebrew ("שם"/"סטטוס",
+      // round 342's own lesson), so headers are picked by their declared
+      // field order (name, then status) rather than by label text.
+      const sortHeaders = container.querySelectorAll("thead th button.sort-header");
+      const nameHeader = sortHeaders[0] as HTMLButtonElement;
+      const statusHeader = sortHeaders[1] as HTMLButtonElement;
+      await act(async () => {
+        fireEvent.click(statusHeader);
+      });
+      await act(async () => {
+        fireEvent.click(nameHeader, { shiftKey: true });
+      });
+      assert.equal(container.querySelectorAll(".sort-priority").length, 2, "sanity check: shift-click must have actually built a multi-key sort");
+
+      const clearButton = container.querySelector(".entity-clear-sort") as HTMLButtonElement;
+      assert.ok(clearButton, "the button must appear the moment a sort is active, including a multi-key one");
+
+      await act(async () => {
+        fireEvent.click(clearButton);
+      });
+      assert.equal(container.querySelectorAll(".sort-priority").length, 0, "clicking it must clear the multi-key priority badges");
+      const sortedHeaders = Array.from(container.querySelectorAll("thead th[aria-sort]")).filter((th) => th.getAttribute("aria-sort") !== "none");
+      assert.equal(sortedHeaders.length, 0, "no column header must still report itself as sorted");
+      assert.equal(container.querySelector(".entity-clear-sort"), null, "the button must disappear again once nothing is sorted");
+
+      const stored = JSON.parse(localStorage.getItem("forge_sort_keys") ?? "{}");
+      assert.deepEqual(stored.Customer ?? [], [], "clicking it must also clear the persisted storage, not just the live DOM");
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    cleanup();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
  * New in this round: the exported app's per-entity table search box had
  * zero memory of recent queries, the same gap the live preview's own
  * EntityPanel.tsx had before entityRecentSearches.ts (round 318) -- and

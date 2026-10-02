@@ -2234,6 +2234,15 @@ export function EntityPanel({
                 {t("entity.columns.resetWidths")}
               </button>
             )}
+            {sortKeys.length > 0 && (
+              <button
+                type="button"
+                className="secondary small entity-clear-sort"
+                onClick={() => setSortKeys(setSortKeysPreference(projectId, entity.name, []))}
+              >
+                {t("entity.sort.clearAll")}
+              </button>
+            )}
           </div>
           {!search.trim() && recentSearches.length > 0 && (
             <div className="entity-search-recent">

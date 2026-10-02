@@ -4327,6 +4327,56 @@ test("EntityPanel shows a 'Clear filters' button only once a filter is active, a
 });
 
 /**
+ * New in this round: toggleSort's own non-additive branch only ever
+ * collapses a sort down to a single key -- it can never empty sortKeys
+ * back to [], so once a multi-column sort was built (shift-click), there
+ * was no way back to the table's natural/unsorted order except reversing
+ * each column's direction twice by hand. Mirrors "Clear filters" (round
+ * 341) and "Reset column widths" (round 345): a one-click reset button
+ * that only renders once there's actually something to reset.
+ */
+test("EntityPanel shows a 'Clear sort' button only once a sort is active, and it resets both the headers and the persisted storage", async () => {
+  await withJsdom(async () => {
+    const store: EntityRecord[] = [
+      { id: 1, name: "Globex", status: "won" },
+      { id: 2, name: "Zeta Inc", status: "new" },
+      { id: 3, name: "Acme Corp", status: "new" },
+    ];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = mockRecordsFetch(store) as typeof fetch;
+    try {
+      renderEntityPanel();
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 3);
+
+      assert.equal(document.querySelector(".entity-clear-sort"), null, "no sort is active yet, so the button must not render at all");
+
+      const statusHeader = Array.from(document.querySelectorAll("thead th button.sort-header")).find((el) =>
+        /Status/.test(el.textContent ?? ""),
+      ) as HTMLButtonElement;
+      const nameHeader = Array.from(document.querySelectorAll("thead th button.sort-header")).find((el) =>
+        /Name/.test(el.textContent ?? ""),
+      ) as HTMLButtonElement;
+      fireEvent.click(statusHeader);
+      fireEvent.click(nameHeader, { shiftKey: true });
+      await waitForCondition(() => document.querySelectorAll(".sort-priority").length === 2);
+
+      const clearButton = document.querySelector(".entity-clear-sort") as HTMLButtonElement;
+      assert.ok(clearButton, "the button must appear the moment a sort is active, including a multi-key one");
+
+      fireEvent.click(clearButton);
+      await waitForCondition(() => document.querySelectorAll(".sort-priority").length === 0);
+
+      const sortedHeaders = Array.from(document.querySelectorAll("thead th[aria-sort]")).filter((th) => th.getAttribute("aria-sort") !== "none");
+      assert.equal(sortedHeaders.length, 0, "no column header must still report itself as sorted");
+      assert.deepEqual(getSortKeys("proj1", "Deal"), [], "the persisted storage must be cleared too, not just the in-memory state");
+      assert.equal(document.querySelector(".entity-clear-sort"), null, "the button must disappear again once nothing is sorted");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * New in this round: the table had no footer totals for a numeric column --
  * for an entity like Invoice, a business owner had to add up the amounts by
  * eye. Confirms the totals row sums only the currently-visible (searched)
