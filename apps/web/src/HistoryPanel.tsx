@@ -171,7 +171,7 @@ export function HistoryPanel({
           </h2>
           <div className="history-header-actions">
             {checkpoints.length > 0 && (
-              <button type="button" className="secondary" onClick={handleCopy}>
+              <button type="button" className="secondary" onClick={handleCopy} aria-live="polite" aria-atomic="true">
                 {copyStatus === "copied"
                   ? t("history.copy.copied")
                   : copyStatus === "failed"

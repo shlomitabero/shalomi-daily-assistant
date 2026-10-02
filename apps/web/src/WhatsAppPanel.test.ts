@@ -1799,6 +1799,12 @@ test("WhatsAppPanel's copy button writes the real formatted log to the clipboard
 
       const copyButton = Array.from(document.querySelectorAll("button")).find((b) => b.textContent === "📋 Copy History");
       assert.ok(copyButton, "expected a Copy History button once the log has real messages");
+      assert.equal(
+        copyButton!.getAttribute("aria-live"),
+        "polite",
+        "the copy button's own changing label must be announced to screen readers, not just silently change visually",
+      );
+      assert.equal(copyButton!.getAttribute("aria-atomic"), "true", "the whole button's text must be re-announced, not just the changed part");
 
       await act(async () => {
         fireEvent.click(copyButton!);

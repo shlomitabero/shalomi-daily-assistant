@@ -2356,6 +2356,12 @@ test("EntityPanel's copy button writes the real CSV text to the clipboard, shows
       const copyButton = document.querySelector(".copy-records-btn") as HTMLButtonElement;
       assert.ok(copyButton, "expected a real Copy button in the toolbar");
       assert.equal(copyButton.textContent, "📋 Copy");
+      assert.equal(
+        copyButton.getAttribute("aria-live"),
+        "polite",
+        "the copy button's own changing label must be announced to screen readers, not just silently change visually",
+      );
+      assert.equal(copyButton.getAttribute("aria-atomic"), "true", "the whole button's text must be re-announced, not just the changed part");
 
       await act(async () => {
         fireEvent.click(copyButton);

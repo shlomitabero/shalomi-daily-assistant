@@ -595,6 +595,12 @@ test("BusinessTwinPanel's copy button writes the real formatted report to the cl
 
       const copyButton = Array.from(document.querySelectorAll("button")).find((b) => b.textContent === "📋 Copy report");
       assert.ok(copyButton, "expected a Copy report button once the twin has loaded");
+      assert.equal(
+        copyButton!.getAttribute("aria-live"),
+        "polite",
+        "the copy button's own changing label must be announced to screen readers, not just silently change visually",
+      );
+      assert.equal(copyButton!.getAttribute("aria-atomic"), "true", "the whole button's text must be re-announced, not just the changed part");
 
       await act(async () => {
         fireEvent.click(copyButton!);

@@ -2041,6 +2041,8 @@ export function EntityPanel({
               className="secondary copy-records-btn"
               onClick={handleCopy}
               disabled={selectedIds.size === 0 && visibleRecords.length === 0}
+              aria-live="polite"
+              aria-atomic="true"
             >
               {copyStatus === "copied"
                 ? t("entity.copy.copied")

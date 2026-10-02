@@ -294,7 +294,7 @@ export function GlobalSearchPanel({
           <h2 id="search-panel-title">{t("search.title")}</h2>
           <div className="history-header-actions">
             {!loading && results.length > 0 && (
-              <button type="button" className="secondary" onClick={handleCopy}>
+              <button type="button" className="secondary" onClick={handleCopy} aria-live="polite" aria-atomic="true">
                 {copyStatus === "copied"
                   ? t("search.copy.copied")
                   : copyStatus === "failed"

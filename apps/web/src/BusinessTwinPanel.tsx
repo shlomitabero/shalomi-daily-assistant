@@ -119,7 +119,7 @@ export function BusinessTwinPanel({
           <h2 id="twin-panel-title">{t("twin.title")}</h2>
           <div className="history-header-actions">
             {twin && (
-              <button type="button" className="secondary" onClick={handleCopy}>
+              <button type="button" className="secondary" onClick={handleCopy} aria-live="polite" aria-atomic="true">
                 {copyStatus === "copied"
                   ? t("twin.copyReport.copied")
                   : copyStatus === "failed"

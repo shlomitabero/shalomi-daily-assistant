@@ -665,7 +665,7 @@ export function WhatsAppPanel({
             </h3>
             {messages.length > 0 && (
               <div className="whatsapp-log-header-actions">
-                <button type="button" className="secondary small" onClick={handleCopyLog}>
+                <button type="button" className="secondary small" onClick={handleCopyLog} aria-live="polite" aria-atomic="true">
                   {copyStatus === "copied"
                     ? t("whatsapp.log.copy.copied")
                     : copyStatus === "failed"

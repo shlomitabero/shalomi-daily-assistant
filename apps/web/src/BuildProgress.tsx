@@ -510,7 +510,7 @@ export function BuildProgress({
            * this is the one place a "download what actually happened"
            * button is real, not decorative -- useful for sharing exactly
            * what each agent reported when asking for help with a failure. */}
-          <button type="button" className="secondary small" onClick={handleCopySummary}>
+          <button type="button" className="secondary small" onClick={handleCopySummary} aria-live="polite" aria-atomic="true">
             {copyStatus === "copied"
               ? t("build.summary.copy.copied")
               : copyStatus === "failed"

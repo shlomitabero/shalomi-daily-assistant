@@ -795,6 +795,12 @@ test("GlobalSearchPanel shows Copy/Download buttons only once real results exist
       const downloadButton = Array.from(document.querySelectorAll("button")).find((b) => b.textContent?.includes("Download results"));
       assert.ok(copyButton, "expected a Copy results button once real results exist");
       assert.ok(downloadButton, "expected a Download results button once real results exist");
+      assert.equal(
+        copyButton!.getAttribute("aria-live"),
+        "polite",
+        "the copy button's own changing label must be announced to screen readers, not just silently change visually",
+      );
+      assert.equal(copyButton!.getAttribute("aria-atomic"), "true", "the whole button's text must be re-announced, not just the changed part");
 
       t.mock.timers.enable({ apis: ["setTimeout"] });
 
