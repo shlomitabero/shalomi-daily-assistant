@@ -20065,6 +20065,47 @@ Full suite green: **1228 tests** (`@forge/shared` 13, `@forge/spec-engine`
 336) via `npm test` at the repo root, plus a clean full monorepo
 `npm run build`.
 
+### Round 331 — Copy button aria-live reaches the exported app
+
+The explicit backup candidate from round 330's own Explore survey: round
+327 added `aria-live="polite" aria-atomic="true"` to all 6 live-preview
+copy-to-clipboard buttons but deliberately left codegen.ts's generated
+`EntityView` and `GlobalSearch` copy buttons untouched as a future
+candidate, flagging it in that round's own scope note. Confirmed via grep
+before implementing that the gap was still real (zero `aria-live`/
+`aria-atomic` occurrences anywhere in codegen.ts) — so a screen-reader
+user clicking Copy in an exported app heard nothing when the label
+silently changed to "Copied!" or "Copy failed."
+
+The smallest round in a while: two one-line attribute additions, the
+exact same pattern round 327 already proved live, applied to
+`EntityView`'s `.copy-records-btn` and `GlobalSearch`'s small Copy
+button.
+
+Tests: rather than two new test files, added the same two assertions
+(`aria-live="polite"` / `aria-atomic="true"`) into each component's own
+*existing* "Copy button writes the real CSV/results to the clipboard"
+test, right where it already grabs the real rendered button — mirroring
+round 327's own "one assertion in an existing test, not a new test"
+decision for the identical situation.
+
+Deliberate-break-and-restore: backed up both changed files, reverted just
+`codegen.ts` to its pre-round HEAD state, and confirmed exactly the 2 new
+assertions failed (the surrounding clipboard-write/revert-after-2s
+behavior in both tests, untouched, kept passing) while all other 109
+tests passed. Restored from the verified backup with a confirmed
+byte-identical `diff`, then re-ran the full `@forge/api` suite (337/337)
+and a clean full monorepo `npm run build`.
+
+Scope note: with this round, copyStatus aria-live is closed across both
+the live preview (6/6 panels, round 327) and the exported codegen app
+(2/2 copy buttons — EntityView and GlobalSearch, the only two it has).
+
+Full suite green: **1228 tests** (`@forge/shared` 13, `@forge/spec-engine`
+85, `@forge/db` 96, `@forge/web` 697 unchanged; `@forge/api` 337
+unchanged, assertions added inside existing tests) via `npm test` at the
+repo root, plus a clean full monorepo `npm run build`.
+
 ## Phase 4
 
 - Template/agent marketplace
