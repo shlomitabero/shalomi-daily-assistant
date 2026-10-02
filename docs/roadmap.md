@@ -19802,6 +19802,59 @@ Full suite green: **1221 tests** (`@forge/shared` 13, `@forge/spec-engine`
 via `npm test` at the repo root, plus a clean full monorepo
 `npm run build`.
 
+### Round 327 — Copy buttons finally announce their own status change to screen readers
+
+Round 326's own Explore survey flagged this as a legitimate backup
+candidate (not "tested and rejected"): every copy-to-clipboard button
+across the app -- `BuildProgress.tsx`, `BusinessTwinPanel.tsx`,
+`EntityPanel.tsx`, `GlobalSearchPanel.tsx`, `HistoryPanel.tsx`,
+`WhatsAppPanel.tsx` -- shares the exact same `copyStatus`
+idle/copied/failed label dance, but none of them told assistive
+technology when the label actually changed. A sighted user sees "Copy"
+flip to "✅ Copied!"; a screen-reader user clicking the same button got
+no signal either way without navigating back to re-read it.
+
+Design decision made before implementing (flagged in the trigger as
+needing one): `role="status"` on the `<button>` itself was rejected,
+since it would override the button's own native interactive role rather
+than add to it. The fix instead adds `aria-live="polite"
+aria-atomic="true"` directly on each button -- valid on any element
+regardless of its own role, and `aria-atomic` ensures the whole updated
+label is announced as one unit rather than only the changed substring.
+No new shared component or hook was needed; this is six identical,
+independent one-line additions.
+
+Tests: rather than writing six new test files, added one assertion pair
+(`aria-live="polite"` / `aria-atomic="true"`) into each panel's own
+*existing* "copy button writes real text to clipboard" test, right where
+it already grabs the real rendered button -- a genuine DOM assertion on
+the actual component, not a new reimplementation.
+
+Deliberate-break-and-restore: backed up all 12 changed files (6
+components + 6 test files), reverted just the 6 `.tsx` components to
+their pre-round HEAD state, and confirmed exactly the 6 new assertions
+failed (the "shows a failure label when clipboard rejects" sibling tests,
+untouched, kept passing) -- proof the new assertions exercise the real
+fix and nothing else. Restored from the verified backup with a confirmed
+byte-identical `diff` against all 12 files, then re-ran every workspace:
+`@forge/shared` 13/13, `@forge/spec-engine` 85/85, `@forge/db` 96/96,
+`@forge/api` 334 unchanged, `@forge/web` 693 unchanged (same test count,
+since these are new assertions inside existing tests rather than new
+test cases), plus a clean full monorepo `npm run build`.
+
+Scope note: this is a live-preview-only fix. The exported codegen app's
+own copy buttons (EntityView, GlobalSearch) have the identical gap, now a
+candidate for a future round if genuinely user-visible enough to justify
+(exported apps are typically run by their own deploying developer, who is
+less likely to depend on a screen reader for their own admin tooling than
+the live preview's broader audience -- worth a fresh look later rather
+than assumed equally urgent).
+
+Full suite green: **1221 tests** (`@forge/shared` 13, `@forge/spec-engine`
+85, `@forge/db` 96, `@forge/api` 334 unchanged; `@forge/web` 693
+unchanged, assertions added inside existing tests) via `npm test` at the
+repo root, plus a clean full monorepo `npm run build`.
+
 ## Phase 4
 
 - Template/agent marketplace
