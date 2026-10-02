@@ -3131,6 +3131,8 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
               className="copy-records-btn"
               onClick={handleCopy}
               disabled={selectedIds.size === 0 && visibleRecords.length === 0}
+              aria-live="polite"
+              aria-atomic="true"
             >
               {copyStatus === "copied"
                 ? "✅ Copied!"
@@ -3668,7 +3670,7 @@ export function GlobalSearch({ entities, onClose, onJumpToEntity, onJumpToRecord
           <h2>🔍 Search everything</h2>
           <div className="search-header-actions">
             {!loading && results.length > 0 && (
-              <button type="button" className="small" onClick={handleCopy}>
+              <button type="button" className="small" onClick={handleCopy} aria-live="polite" aria-atomic="true">
                 {copyStatus === "copied" ? "Copied!" : copyStatus === "failed" ? "Copy failed" : "Copy"}
               </button>
             )}
