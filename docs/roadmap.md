@@ -20781,6 +20781,78 @@ Full suite green: **1244 tests** (`@forge/shared` 13, `@forge/spec-engine`
 706 (+1 new test)) via `npm test` at the repo root, plus a clean full
 monorepo `npm run build`.
 
+### Round 344 — Collapse/expand toggle for grouped table view sections
+
+An Explore survey (verified independently, as always) confirmed a
+genuine gap: grouping the table by an enum/boolean field (round 219)
+clusters rows under a header, but always renders every one of a group's
+rows unconditionally -- confirmed via grep that "collapsed"/"Collapse"
+appeared nowhere in `apps/web/src` before this round. A person grouping
+a sizeable table by Status specifically to compare groups had no way to
+hide the one they don't currently care about (e.g. 50 "Done" records),
+unlike every other list-density control this table already has (hidden
+columns, column widths, filters, sort).
+
+Added a real toggle button (▾/▸, with `aria-expanded` and an expand/
+collapse `aria-label`) inside each group's own header row in
+`EntityPanel.tsx`: clicking it hides that one group's record rows and
+its numeric-totals row, leaving every other group untouched. New
+`collapsedGroups` state (a `Set<string>` of group keys) persists per
+project+entity via a new `collapsedGroupsPreference.ts` module, mirroring
+`fieldFiltersPreference.ts`'s own storage shape (round 339) -- loaded
+through its own dedicated `useEffect` keyed on `[projectId, entity.name]`,
+matching the established pattern every other persisted per-entity
+preference in this file already follows (`groupFieldName`, `sortKeys`,
+`viewMode`, `fieldFilters`).
+
+Ported identically into `apps/api/src/codegen.ts`'s `EntityView`: a new
+`COLLAPSED_GROUPS_STORAGE_KEY` store (`getPersistedCollapsedGroups`/
+`setPersistedCollapsedGroups`), with `collapsedGroups` lazy-initialized
+from storage and also explicitly reloaded inside the file's own combined
+reset+reload `useEffect` -- round 339's durable lesson (codegen.ts's
+`EntityView` has ONE combined effect for every persisted per-entity
+preference, unlike the live preview's separate effects) applied
+correctly from the start this time, rather than being discovered as a
+bug after the fact.
+
+New `entity.group.collapse`/`entity.group.expand` i18n keys (Hebrew +
+English) for the live preview's toggle button's `aria-label`; codegen.ts's
+own toggle uses a hardcoded English label, matching that file's no-i18n
+convention.
+
+**Pre-existing test updated, not broken by a bug:** the toggle button's
+own arrow glyph (▾) is now part of each group header's `textContent`, so
+round 219's own existing assertion (`["New (1)", "Won (2)"]`) needed its
+expected strings updated to `["▾ New (1)", "▾ Won (2)"]` -- a genuine,
+intentional consequence of the new UI, not a regression. Similarly, a
+round-336 regex-extraction test asserting the generated `recordGroups.map`
+shape needed its pattern widened from `=> (` to `=> {` to match the new
+`const collapsed = ...; return (...)` function body the toggle's
+per-group collapsed-check requires.
+
+Tests: new real-DOM tests in both `EntityPanel.test.ts` and
+`codegen.test.ts` group a 3-record table by status, confirm the toggle
+starts expanded, collapsing hides only that group's own rows (the
+untouched group's row still renders, the collapsed group's rows don't),
+re-expanding restores them, and the collapsed state survives an
+unmount+remount (simulating a reload) without resetting to all-expanded.
+
+Deliberate-break-and-restore: backed up all 7 changed/new files,
+reverted the 5 implementation files to HEAD (including removing the new,
+previously-untracked `collapsedGroupsPreference.ts`), and confirmed the
+expected failures: the entire `EntityPanel.test.ts` file failed to even
+load (`ERR_MODULE_NOT_FOUND` for the now-missing `collapsedGroupsPreference.js`,
+proving the import is genuinely load-bearing) and exactly 2 api tests
+failed (343/345: the round-336 regex test, now mismatched against the
+reverted code's old shape, and the new collapse-toggle test). Restored
+from backup and confirmed byte-identical via `diff -q` against all 5
+files, then re-ran the full suite and build.
+
+Full suite green: **1246 tests** (`@forge/shared` 13, `@forge/spec-engine`
+85, `@forge/db` 96 unchanged; `@forge/api` 345 (+1 new test); `@forge/web`
+707 (+1 new test)) via `npm test` at the repo root, plus a clean full
+monorepo `npm run build`.
+
 ## Phase 4
 
 - Template/agent marketplace
