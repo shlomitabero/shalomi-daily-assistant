@@ -4816,6 +4816,72 @@ test("the exported EntityView's per-field enum filter actually survives an unmou
 });
 
 /**
+ * New in this round (341): mirrors the live preview's own "Clear filters"
+ * button -- with no way to reset multiple active per-field filters except
+ * reopening each dropdown individually, a button now appears only once at
+ * least one filter is set, and resets every filter (both in memory and in
+ * persisted storage) with one click.
+ */
+test("the exported EntityView shows a 'Clear filters' button only once a filter is active, and it resets both the select and the persisted storage", async () => {
+  const files = generateExportFiles(project);
+  const dir = writeGeneratedWebComponent(files);
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async () => ({
+    ok: true,
+    status: 200,
+    json: async () => ({
+      records: [
+        { id: 1, name: "Alice", status: "New" },
+        { id: 2, name: "Bob", status: "Won" },
+      ],
+    }),
+  })) as typeof fetch;
+
+  try {
+    await withRealLocalStorage(async () => {
+      const { EntityView } = await import(path.join(dir, "web", "src", "components", "EntityView.jsx"));
+      const customerEntity = project.spec.entities.find((e) => e.name === "Customer")!;
+      const props = {
+        entity: customerEntity,
+        highlightRecordId: null,
+        onHighlightHandled: () => {},
+        onJumpToRecord: () => {},
+        onRecordCountChange: () => {},
+      };
+
+      const { container } = render(React.createElement(EntityView, props));
+      for (let i = 0; i < 40; i++) {
+        if (container.querySelector(".entity-status-filter")) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+      assert.equal(container.querySelector(".entity-clear-filters"), null, "no filter is active yet, so the button must not render at all");
+
+      const statusFilter = container.querySelector(".entity-status-filter") as HTMLSelectElement;
+      await act(async () => {
+        fireEvent.change(statusFilter, { target: { value: "New" } });
+      });
+      assert.equal(container.querySelectorAll("tbody tr").length, 1, "the filter must actually narrow the rendered rows");
+
+      const clearButton = container.querySelector(".entity-clear-filters") as HTMLButtonElement;
+      assert.ok(clearButton, "the button must appear the moment a filter is set");
+
+      await act(async () => {
+        fireEvent.click(clearButton);
+      });
+      assert.equal(container.querySelectorAll("tbody tr").length, 2, "clicking it must actually restore every row");
+      assert.equal((container.querySelector(".entity-status-filter") as HTMLSelectElement).value, "", "the select itself must reset back to 'All'");
+      assert.equal(container.querySelector(".entity-clear-filters"), null, "the button must disappear again once nothing is filtered");
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    cleanup();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
  * New in this round: the exported app's per-entity table search box had
  * zero memory of recent queries, the same gap the live preview's own
  * EntityPanel.tsx had before entityRecentSearches.ts (round 318) -- and

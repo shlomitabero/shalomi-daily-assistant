@@ -3152,6 +3152,20 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
                 ))}
               </select>
             ))}
+            {filterableEnumFields.length > 0 && Object.values(fieldFilters).some(Boolean) && (
+              <button
+                type="button"
+                className="entity-clear-filters"
+                onClick={() =>
+                  setFieldFilters(() => {
+                    setPersistedFieldFilters(entity.name, {});
+                    return {};
+                  })
+                }
+              >
+                Clear all filters
+              </button>
+            )}
             {viewMode === "table" && groupableFields.length > 0 && (
               <select
                 className="entity-group-by"

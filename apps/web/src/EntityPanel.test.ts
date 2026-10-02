@@ -4058,6 +4058,47 @@ test("EntityPanel's per-field enum filter survives an unmount+remount of the sam
 });
 
 /**
+ * New in this round (341): with no way to reset multiple active per-field
+ * filters except reopening each dropdown individually, a "Clear filters"
+ * button now appears only once at least one filter is actually set, and
+ * resets every filter (both in memory and in persisted storage) with one
+ * click.
+ */
+test("EntityPanel shows a 'Clear filters' button only once a filter is active, and it resets both the select and the persisted storage", async () => {
+  await withJsdom(async () => {
+    const store: EntityRecord[] = [
+      { id: 1, name: "Globex", status: "won" },
+      { id: 2, name: "Zeta Inc", status: "new" },
+      { id: 3, name: "Acme Corp", status: "new" },
+    ];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = mockRecordsFetch(store) as typeof fetch;
+    try {
+      renderEntityPanel();
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 3);
+
+      assert.equal(document.querySelector(".entity-clear-filters"), null, "no filter is active yet, so the button must not render at all");
+
+      const statusFilter = document.querySelector(".entity-status-filter") as HTMLSelectElement;
+      fireEvent.change(statusFilter, { target: { value: "new" } });
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 2);
+
+      const clearButton = document.querySelector(".entity-clear-filters") as HTMLButtonElement;
+      assert.ok(clearButton, "the button must appear the moment a filter is set");
+
+      fireEvent.click(clearButton);
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 3);
+
+      assert.equal((document.querySelector(".entity-status-filter") as HTMLSelectElement).value, "", "the select itself must reset back to 'All'");
+      assert.deepEqual(getFieldFilters("proj1", "Deal"), {}, "the persisted storage must be cleared too, not just the in-memory state");
+      assert.equal(document.querySelector(".entity-clear-filters"), null, "the button must disappear again once nothing is filtered");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * New in this round: the table had no footer totals for a numeric column --
  * for an entity like Invoice, a business owner had to add up the amounts by
  * eye. Confirms the totals row sums only the currently-visible (searched)
