@@ -14,6 +14,7 @@ import {
 import { getGroupByField, setGroupByField } from "./groupByPreference.js";
 import { getViewMode as getViewModePreference, setViewMode as setViewModePreference } from "./viewModePreference.js";
 import { getSortKeys as getSortKeysPreference, setSortKeys as setSortKeysPreference } from "./sortKeysPreference.js";
+import { getFieldFilters as getFieldFiltersPreference, setFieldFilters as setFieldFiltersPreference } from "./fieldFiltersPreference.js";
 import { EntityLabelEditor } from "./EntityLabelEditor.js";
 import { FieldLabelEditor } from "./FieldLabelEditor.js";
 import {
@@ -897,7 +898,6 @@ export function EntityPanel({
     setForm(emptyForm(entity));
     setEditingId(null);
     setSearch("");
-    setFieldFilters({});
     setCalendarMonth(new Date());
     setSelectedIds(new Set());
     setImportMessage(null);
@@ -968,6 +968,25 @@ export function EntityPanel({
     const validFieldNames = new Set(entity.fields.map((f) => f.name));
     validFieldNames.add("createdAt");
     setSortKeys(getSortKeysPreference(projectId, entity.name).filter((k) => validFieldNames.has(k.field)));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [projectId, entity.name]);
+
+  // Same reasoning as sortKeys' own effect just above -- the chosen per-field
+  // enum filters are scoped per project+entity too. Previously fieldFilters
+  // was hard-reset to {} on every entity switch (see the combined reset
+  // effect above) and never persisted at all, so a deliberately-set filter
+  // didn't even survive clicking to another tab and back, unlike this
+  // entity's sort order, grouping, hidden columns, and column widths, every
+  // one of which already survives the same switch. Drops any persisted
+  // filter referencing a field this entity no longer has.
+  useEffect(() => {
+    const validFieldNames = new Set(entity.fields.map((f) => f.name));
+    const persisted = getFieldFiltersPreference(projectId, entity.name);
+    const next: Record<string, string> = {};
+    for (const [field, value] of Object.entries(persisted)) {
+      if (validFieldNames.has(field)) next[field] = value;
+    }
+    setFieldFilters(next);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectId, entity.name]);
 
@@ -1989,7 +2008,13 @@ export function EntityPanel({
                 className="entity-status-filter"
                 aria-label={t("entity.filter.byField", { field: f.label ?? f.name })}
                 value={fieldFilters[f.name] ?? ""}
-                onChange={(e) => setFieldFilters((prev) => ({ ...prev, [f.name]: e.target.value }))}
+                onChange={(e) =>
+                  setFieldFilters((prev) => {
+                    const next = { ...prev, [f.name]: e.target.value };
+                    setFieldFiltersPreference(projectId, entity.name, next);
+                    return next;
+                  })
+                }
               >
                 <option value="">{t("entity.filter.allValues", { field: f.label ?? f.name })}</option>
                 {(f.enumValues ?? []).map((v) => (

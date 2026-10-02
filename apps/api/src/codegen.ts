@@ -1072,6 +1072,47 @@ function setPersistedSortKeys(entityName, keys) {
   return keys;
 }
 
+// Mirrors the live preview's own fieldFiltersPreference.ts. Previously
+// fieldFilters had no persistence at all, so a deliberately-set per-field
+// filter didn't survive switching away from this entity's tab and back,
+// unlike its sort order, grouping, hidden columns, and column widths, every
+// one of which already survives the same switch.
+const FIELD_FILTERS_STORAGE_KEY = "forge_field_filters";
+function readFieldFiltersStore() {
+  try {
+    const raw = localStorage.getItem(FIELD_FILTERS_STORAGE_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) return {};
+    return parsed;
+  } catch {
+    return {};
+  }
+}
+function writeFieldFiltersStore(store) {
+  try {
+    localStorage.setItem(FIELD_FILTERS_STORAGE_KEY, JSON.stringify(store));
+  } catch {
+    // localStorage can be unavailable (private mode) -- the choice just won't survive a reload.
+  }
+}
+function getPersistedFieldFilters(entityName) {
+  const store = readFieldFiltersStore();
+  const filters = store[entityName];
+  return filters && typeof filters === "object" && !Array.isArray(filters) ? filters : {};
+}
+function setPersistedFieldFilters(entityName, filters) {
+  const store = readFieldFiltersStore();
+  const cleaned = {};
+  for (const [field, value] of Object.entries(filters)) {
+    if (value) cleaned[field] = value;
+  }
+  if (Object.keys(cleaned).length === 0) delete store[entityName];
+  else store[entityName] = cleaned;
+  writeFieldFiltersStore(store);
+  return cleaned;
+}
+
 // Applies a persisted (possibly stale) column order to the entity's current
 // real field list: a field the order mentions keeps its persisted relative
 // position, and any field the order doesn't mention (a newly added field,
@@ -2105,7 +2146,7 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
   const [editingId, setEditingId] = useState(null);
   const [search, setSearch] = useState("");
   const [recentSearches, setRecentSearches] = useState(() => getEntityRecentSearches(entity.name));
-  const [fieldFilters, setFieldFilters] = useState({});
+  const [fieldFilters, setFieldFilters] = useState(() => getPersistedFieldFilters(entity.name));
   const [groupFieldName, setGroupFieldName] = useState(() => getPersistedGroupField(entity.name));
   const [highlightedRecordId, setHighlightedRecordId] = useState(null);
   const [moveErrorId, setMoveErrorId] = useState(null);
@@ -2213,7 +2254,7 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
     setEditingId(null);
     setSearch("");
     setRecentSearches(getEntityRecentSearches(entity.name));
-    setFieldFilters({});
+    setFieldFilters(getPersistedFieldFilters(entity.name));
     setGroupFieldName(getPersistedGroupField(entity.name));
     setSortKeys(getPersistedSortKeys(entity.name));
     setViewMode(getPersistedViewMode(entity.name));
@@ -3067,7 +3108,13 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
                 className="entity-status-filter"
                 aria-label={"Filter by " + (f.label || f.name)}
                 value={fieldFilters[f.name] || ""}
-                onChange={(e) => setFieldFilters((prev) => ({ ...prev, [f.name]: e.target.value }))}
+                onChange={(e) =>
+                  setFieldFilters((prev) => {
+                    const next = { ...prev, [f.name]: e.target.value };
+                    setPersistedFieldFilters(entity.name, next);
+                    return next;
+                  })
+                }
               >
                 <option value="">{"All " + (f.label || f.name)}</option>
                 {(f.enumValues || []).map((v) => (

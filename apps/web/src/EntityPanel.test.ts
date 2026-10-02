@@ -11,6 +11,7 @@ import { getColumnWidths, setColumnWidth } from "./columnWidths.js";
 import { getGroupByField } from "./groupByPreference.js";
 import { getViewMode } from "./viewModePreference.js";
 import { getSortKeys } from "./sortKeysPreference.js";
+import { getFieldFilters } from "./fieldFiltersPreference.js";
 import { EntityPanel } from "./EntityPanel.js";
 import { LanguageProvider } from "./i18n/LanguageContext.js";
 import { ThemeProvider } from "./theme/ThemeContext.js";
@@ -3985,6 +3986,70 @@ test("EntityPanel's multi-column sort survives an unmount+remount of the same en
         document.querySelectorAll(".sort-priority").length,
         0,
         "a different entity with no 'status' field must never inherit Deal's persisted sort keys",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
+ * Regression test for round 339: fieldFilters previously had no persistence
+ * at all -- it was hard-reset to {} on every entity/tab switch (see the
+ * combined reset effect keyed on entity.name), so a deliberately-set
+ * per-field filter never survived leaving and returning to the same tab,
+ * unlike this entity's sort order, grouping, hidden columns, and column
+ * widths, all of which already survived the exact same switch (round 250
+ * fixed this for sortKeys specifically). Mirrors that test almost exactly.
+ */
+test("EntityPanel's per-field enum filter survives an unmount+remount of the same entity, and drops a filter whose field no longer exists on a different entity", async () => {
+  await withJsdom(async () => {
+    const store: EntityRecord[] = [
+      { id: 1, name: "Globex", status: "won" },
+      { id: 2, name: "Zeta Inc", status: "new" },
+      { id: 3, name: "Acme Corp", status: "new" },
+    ];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = mockRecordsFetch(store) as typeof fetch;
+    try {
+      const firstView = renderEntityPanel();
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 3);
+
+      const statusFilter = document.querySelector(".entity-status-filter") as HTMLSelectElement;
+      fireEvent.change(statusFilter, { target: { value: "new" } });
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 2);
+      assert.deepEqual(getFieldFilters("proj1", "Deal"), { status: "new" }, "must actually be persisted, not just held in memory");
+
+      firstView.unmount();
+      renderEntityPanel();
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 2);
+      assert.equal(
+        (document.querySelector(".entity-status-filter") as HTMLSelectElement).value,
+        "new",
+        "a fresh mount of the same project+entity must restore the persisted filter, not reset to 'All'",
+      );
+
+      cleanup();
+      const textOnlyEntity: Entity = {
+        name: "Note",
+        fields: [{ name: "name", type: "text", required: true }],
+      };
+      globalThis.fetch = (async (input: string) => {
+        if (input === "/api/projects/proj1/entities/Note") {
+          return new Response(JSON.stringify({ records: [{ id: 1, createdAt: "x", name: "Reminder" }] }), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          });
+        }
+        throw new Error(`unexpected request ${input}`);
+      }) as typeof fetch;
+      renderEntityPanel({ entity: textOnlyEntity, allEntities: [textOnlyEntity] });
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 1);
+
+      assert.equal(
+        document.querySelector(".entity-status-filter"),
+        null,
+        "a different entity with no enum field at all must never inherit Deal's persisted filter, nor render a filter select that has nothing to filter by",
       );
     } finally {
       globalThis.fetch = originalFetch;

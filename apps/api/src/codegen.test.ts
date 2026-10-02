@@ -657,7 +657,7 @@ test("the exported EntityView's table toolbar has one filter dropdown per qualif
 
   assert.match(entityViewJsx, /function findFilterableEnumFields\(fields\) \{/);
   assert.match(entityViewJsx, /const filterableEnumFields = useMemo\(\(\) => findFilterableEnumFields\(entity\.fields\), \[entity\.fields\]\);/);
-  assert.match(entityViewJsx, /const \[fieldFilters, setFieldFilters\] = useState\(\{\}\);/);
+  assert.match(entityViewJsx, /const \[fieldFilters, setFieldFilters\] = useState\(\(\) => getPersistedFieldFilters\(entity\.name\)\);/);
   assert.match(entityViewJsx, /\{filterableEnumFields\.map\(\(f\) => \(/);
   assert.match(entityViewJsx, /className="entity-status-filter"/);
   // The filter must actually apply to visibleRecords, not just render inert dropdowns
@@ -4591,9 +4591,9 @@ test("the exported EntityView's group-by/view-mode/sort-key choices are each per
   const entityViewJsx = files.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
 
   const storeSrc = entityViewJsx.match(
-    /const GROUP_FIELD_STORAGE_KEY[\s\S]*?\nfunction setPersistedSortKeys\(entityName, keys\) \{[\s\S]*?\n\}\n/,
+    /const GROUP_FIELD_STORAGE_KEY[\s\S]*?\nfunction setPersistedFieldFilters\(entityName, filters\) \{[\s\S]*?\n\}\n/,
   )?.[0];
-  assert.ok(storeSrc, "expected to find the group-field/view-mode/sort-keys store functions in generated output");
+  assert.ok(storeSrc, "expected to find the group-field/view-mode/sort-keys/field-filters store functions in generated output");
 
   const fakeStorage: Record<string, string> = {};
   const {
@@ -4603,9 +4603,11 @@ test("the exported EntityView's group-by/view-mode/sort-key choices are each per
     setPersistedViewMode,
     getPersistedSortKeys,
     setPersistedSortKeys,
+    getPersistedFieldFilters,
+    setPersistedFieldFilters,
   } = new Function(
     "localStorage",
-    `${storeSrc}\nreturn { getPersistedGroupField, setPersistedGroupField, getPersistedViewMode, setPersistedViewMode, getPersistedSortKeys, setPersistedSortKeys };`,
+    `${storeSrc}\nreturn { getPersistedGroupField, setPersistedGroupField, getPersistedViewMode, setPersistedViewMode, getPersistedSortKeys, setPersistedSortKeys, getPersistedFieldFilters, setPersistedFieldFilters };`,
   )({
     getItem: (k: string) => fakeStorage[k] ?? null,
     setItem: (k: string, v: string) => {
@@ -4618,12 +4620,15 @@ test("the exported EntityView's group-by/view-mode/sort-key choices are each per
     setPersistedViewMode: (entityName: string, mode: string) => string;
     getPersistedSortKeys: (entityName: string) => { field: string; direction: string }[];
     setPersistedSortKeys: (entityName: string, keys: { field: string; direction: string }[]) => { field: string; direction: string }[];
+    getPersistedFieldFilters: (entityName: string) => Record<string, string>;
+    setPersistedFieldFilters: (entityName: string, filters: Record<string, string>) => Record<string, string>;
   };
 
   // Defaults, matching the live app's own "" / "table" / [] defaults.
   assert.equal(getPersistedGroupField("Customer"), "", "no stored group field yet must default to empty (no grouping)");
   assert.equal(getPersistedViewMode("Customer"), "table", "no stored view mode yet must default to table");
   assert.deepEqual(getPersistedSortKeys("Customer"), [], "no stored sort keys yet must default to an empty array");
+  assert.deepEqual(getPersistedFieldFilters("Customer"), {}, "no stored field filters yet must default to an empty object");
 
   // Round-trip each store, scoped by entity name.
   setPersistedGroupField("Customer", "status");
@@ -4633,21 +4638,27 @@ test("the exported EntityView's group-by/view-mode/sort-key choices are each per
   const keys = [{ field: "name", direction: "asc" }];
   setPersistedSortKeys("Customer", keys);
   assert.deepEqual(getPersistedSortKeys("Customer"), keys, "stored sort keys must round-trip");
+  setPersistedFieldFilters("Customer", { status: "New" });
+  assert.deepEqual(getPersistedFieldFilters("Customer"), { status: "New" }, "stored field filters must round-trip");
 
   // A different entity must not see Customer's own stored choices.
   assert.equal(getPersistedGroupField("Service"), "", "a different entity must not inherit another entity's group field");
   assert.equal(getPersistedViewMode("Service"), "table", "a different entity must not inherit another entity's view mode");
   assert.deepEqual(getPersistedSortKeys("Service"), [], "a different entity must not inherit another entity's sort keys");
+  assert.deepEqual(getPersistedFieldFilters("Service"), {}, "a different entity must not inherit another entity's field filters");
 
   // Clearing back to the default value removes the stored entry entirely
-  // (mirroring the live app's own "" / "table" / [] clearing semantics),
-  // rather than leaving a stale, now-meaningless entry behind forever.
+  // (mirroring the live app's own "" / "table" / [] / {} clearing
+  // semantics), rather than leaving a stale, now-meaningless entry behind
+  // forever.
   setPersistedGroupField("Customer", "");
   assert.equal(getPersistedGroupField("Customer"), "", "clearing the group field must round-trip back to empty");
   setPersistedViewMode("Customer", "table");
   assert.equal(getPersistedViewMode("Customer"), "table", "switching back to table view must round-trip");
   setPersistedSortKeys("Customer", []);
   assert.deepEqual(getPersistedSortKeys("Customer"), [], "clearing all sort keys must round-trip back to empty");
+  setPersistedFieldFilters("Customer", { status: "" });
+  assert.deepEqual(getPersistedFieldFilters("Customer"), {}, "clearing a filter back to '' must drop it from storage entirely, not persist an empty string");
 });
 
 /**
@@ -4714,6 +4725,82 @@ test("the exported EntityView's view-mode choice actually survives an unmount+re
       assert.ok(
         secondMount.container.querySelector(".view-toggle-btn-active")?.textContent?.includes("Board"),
         "a freshly mounted EntityView for the same entity must come back up already on Board view, not reset to Table",
+      );
+      secondMount.unmount();
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    cleanup();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
+ * Real-DOM companion to the field-filters assertions folded into the
+ * pure-function store test above (round 339): proves the actual generated
+ * EntityView component -- not just its store helpers in isolation --
+ * genuinely survives a reload. fieldFilters previously had no persistence
+ * at all here, unlike groupFieldName/sortKeys/viewMode just above, and
+ * unlike the live preview's own newly-added fieldFiltersPreference.ts.
+ */
+test("the exported EntityView's per-field enum filter actually survives an unmount+remount (simulated reload), not just its store function in isolation", async () => {
+  const files = generateExportFiles(project);
+  const dir = writeGeneratedWebComponent(files);
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async () => ({
+    ok: true,
+    status: 200,
+    json: async () => ({
+      records: [
+        { id: 1, name: "Alice", status: "New" },
+        { id: 2, name: "Bob", status: "Won" },
+      ],
+    }),
+  })) as typeof fetch;
+
+  try {
+    await withRealLocalStorage(async () => {
+      const { EntityView } = await import(path.join(dir, "web", "src", "components", "EntityView.jsx"));
+      const customerEntity = project.spec.entities.find((e) => e.name === "Customer")!;
+      const props = {
+        entity: customerEntity,
+        highlightRecordId: null,
+        onHighlightHandled: () => {},
+        onJumpToRecord: () => {},
+        onRecordCountChange: () => {},
+      };
+
+      const firstMount = render(React.createElement(EntityView, props));
+      for (let i = 0; i < 40; i++) {
+        if (firstMount.container.querySelector(".entity-status-filter")) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+      const statusFilter = firstMount.container.querySelector(".entity-status-filter") as HTMLSelectElement;
+      assert.ok(statusFilter, "expected a real status filter select");
+      await act(async () => {
+        fireEvent.change(statusFilter, { target: { value: "New" } });
+      });
+      assert.equal(firstMount.container.querySelectorAll("tbody tr").length, 1, "the filter must actually narrow the rendered rows");
+      firstMount.unmount();
+
+      const secondMount = render(React.createElement(EntityView, props));
+      for (let i = 0; i < 40; i++) {
+        if (secondMount.container.querySelector(".entity-status-filter")) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+      assert.equal(
+        (secondMount.container.querySelector(".entity-status-filter") as HTMLSelectElement).value,
+        "New",
+        "a freshly mounted EntityView for the same entity must come back up with the persisted filter still selected, not reset to 'All'",
+      );
+      assert.equal(
+        secondMount.container.querySelectorAll("tbody tr").length,
+        1,
+        "the restored filter must actually narrow the rendered rows again, not just show as selected while listing everything",
       );
       secondMount.unmount();
     });
