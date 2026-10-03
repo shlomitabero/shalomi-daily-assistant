@@ -22375,6 +22375,102 @@ anywhere else in the codebase outside grouping -- e.g. the per-field
 export/import's handling of a legacy value. That's a real candidate for
 a future round's survey, not yet ruled in or out.
 
+### Round 369: changing your password never revoked any other active session
+
+Before any new implementation this round, the "filter by declared enum
+value, silently drop the rest" follow-up candidate left open by round
+368 was checked and ruled out: `EntityPanel.tsx`'s "Filter by status"
+dropdown's own `fieldFilters` logic (`!value || String(r[fieldName] ??
+"") === value`) treats an unselected filter ("All") as matching
+everything, including a record with a legacy value -- it was never
+silently dropping anything, only unable to filter *to* a legacy value
+specifically, which is a minor, non-dropping gap at most. CSV export
+(`recordsToCsv`) doesn't filter by `enumValues` at all; it writes
+whatever `fieldDisplayValue` resolves for the raw stored value
+regardless. Neither is a bug, so an Explore subagent was dispatched for
+a fresh general survey instead.
+
+The subagent's top finding, independently re-verified line-by-line
+before implementing: `PATCH /auth/password` (`apps/api/src/routes/auth.ts`,
+then lines 130-161) required the caller's *current* password before
+accepting a new one, and its own doc comment explicitly reasoned about
+the standard threat model a password change exists to defend against --
+"someone briefly at an already-logged-in device" shouldn't be able to
+silently lock the real owner out. But the route never actually touched
+the `sessions` table at all: a lost laptop, a borrowed phone, or a
+leaked token that was already logged in kept working **indefinitely**
+after a password change, completely defeating the one thing a password
+change is supposed to guarantee. The route's own comment tried to
+justify this gap with "this app's session model has no
+bulk-revoke-by-user mechanism to begin with" -- demonstrably false by
+the time that comment was written: `deleteAllSessionsForUser`
+(`packages/db/src/users.ts`) already existed and was already being
+called 30-some lines below, by the sibling `DELETE /auth/account`
+route, for exactly this purpose. Verified directly by reading both
+routes and the DB function myself (not just taking the subagent's line
+numbers on faith), and confirmed via `apps/api/src/app.test.ts`'s
+existing password-change tests (lines 358-416 before this round) that
+none of them ever checked a second session's fate after a password
+change -- an untested gap, consistent with an oversight rather than a
+deliberate, verified design choice.
+
+**Fix**: added `deleteOtherSessionsForUser(db, userId, keepToken)` to
+`packages/db/src/users.ts` -- a narrow sibling to
+`deleteAllSessionsForUser` that deliberately spares one specific token,
+since unlike account deletion, the change-password route's own 204
+response still needs *this* request's own session to remain valid.
+Exported it from `packages/db/src/index.ts`, wired it into
+`PATCH /auth/password` right after `updatePasswordHash` (passing
+`extractBearerToken(req)!`, already available in that exact handler via
+`requireAuth`), and corrected the route's own doc comment, which had
+been actively asserting something false about the codebase.
+
+Checked whether the exported standalone app (`apps/api/src/codegen.ts`)
+has an analogous auth/session system that would need the identical fix:
+confirmed via `grep` that it has **no authentication at all**, by
+design (it's a single-user, local-only export) -- so this fix is
+correctly scoped to the live Forge AI API only, no codegen.ts changes.
+
+Tests: 2 new in `packages/db/src/users.test.ts`, modeled directly on the
+existing `deleteAllSessionsForUser` tests' own structure -- revokes
+every other session for a user while sparing the one matching
+`keepToken`, leaving a different user's own session completely
+untouched; and a harmless no-op when there's no other session to
+revoke. 1 new in `apps/api/src/app.test.ts`, placed right after the
+existing "wrong current password" test -- signs up (first session),
+logs in again for a real second session, changes the password from the
+first session, then confirms the second session's token now gets a
+real 401 from `GET /auth/me` while the first session (the one that made
+the change-password request) still returns 200.
+
+Deliberate-break-and-restore: backed up all 5 changed files (3
+implementation: `users.ts`, `index.ts`, `auth.ts`; 2 test: `users.test.ts`,
+`app.test.ts`), reverted only the 3 implementation files to HEAD, ran
+each affected workspace's tests separately (per round 368's own new
+lesson about `npm test`'s root script stopping at the first failing
+workspace) and confirmed exactly the expected failures: `db`'s entire
+`users.test.ts` fails to even load at import time (`deleteOtherSessionsForUser`
+no longer exported -- the same clean failure mode as round 365's
+`isAnyDialogOpen` precedent, not a bug in the test), and `api`'s 1 new
+`app.test.ts` test fails individually (the route's old reverted
+behavior simply doesn't revoke the second session). Restored all 3
+implementation files from backup, confirmed byte-identical via `diff -q`
+on all 5 files, then re-ran the full suite and a clean production build
+one final time before committing.
+
+Full suite green: **1295 tests** (`@forge/shared` 13, `@forge/spec-engine`
+85, `@forge/db` 98 (+2 new), `@forge/api` 360 (+1 new), `@forge/web` 739
+unchanged -- no web-side changes this round) via `npm test` at the repo
+root, plus a clean full monorepo `npm run build`. Pushed as commit
+`0bbc150`.
+
+**Topic status**: this specific gap (password change not revoking other
+sessions) is now closed. Not yet checked: whether any other
+security-relevant action in this app (e.g. changing the account email,
+if that's ever added) has a similar "should revoke other sessions but
+doesn't" gap -- not a candidate today since email-change doesn't exist
+yet, but worth keeping in mind if it's ever built.
+
 ## Phase 4
 
 - Template/agent marketplace
