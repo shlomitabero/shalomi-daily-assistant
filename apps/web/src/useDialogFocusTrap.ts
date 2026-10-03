@@ -72,6 +72,23 @@ export function useDialogFocusTrap<T extends HTMLElement>(onClose?: () => void) 
 
     function handleKeyDown(e: KeyboardEvent) {
       if (e.key === "Escape") {
+        // An inner control (a search box clearing itself, an inline rename
+        // reverting its draft) can opt out of this by marking itself with
+        // data-escape-handled-locally -- e.g. CheckpointLabelEditor.tsx's
+        // own rename input, or HistoryPanel.tsx's own search box. This
+        // listener is a plain native addEventListener on this container
+        // DOM node, which real bubbling reaches BEFORE the event ever gets
+        // to wherever React's own root listener lives (always further up
+        // the real DOM tree, e.g. the #root div in main.tsx) -- so by the
+        // time this fires, no inner element's own React onKeyDown has run
+        // yet, and nothing it does (including e.stopPropagation()) can
+        // suppress this call; only checking the target *before* deciding
+        // to close actually works. Returning here (not stopping
+        // propagation) still lets the event keep bubbling up to React
+        // afterward, so the inner control's own onKeyDown still fires
+        // completely normally and handles its local Escape as usual.
+        const target = e.target as HTMLElement | null;
+        if (target?.closest("[data-escape-handled-locally]")) return;
         onCloseRef.current?.();
         return;
       }

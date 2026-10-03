@@ -1216,6 +1216,93 @@ test("HistoryPanel's checkpoint label is a real click-to-rename control wired in
 });
 
 /**
+ * New in this round: real bug found while surveying for gaps, not a
+ * speculative one. useDialogFocusTrap.ts's own keydown listener (on the
+ * dialog's container div) closes the WHOLE dialog on any Escape keydown
+ * that reaches it uncancelled -- and neither CheckpointLabelEditor's own
+ * Escape-cancels-rename handler nor HistoryPanel's own Escape-clears-
+ * search handler (round 358) ever called stopPropagation, so pressing
+ * Escape to cancel a rename, or to clear the search box, also closed the
+ * entire History panel out from under the user. Fixed by adding
+ * e.stopPropagation() at both sites. Confirms both with a REAL onClose
+ * spy passed all the way down through the real dialog wrapper -- not a
+ * no-op -- so this is the one test in this file that would have actually
+ * caught the bug: every other test here passes `onClose: () => {}`,
+ * which can't distinguish "never called" from "called and ignored".
+ */
+test("HistoryPanel's own Escape-cancels-rename and Escape-clears-search never also close the whole dialog", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    const checkpoints = [
+      makeCheckpoint("cp1", "Initial build"),
+      makeCheckpoint("cp2", "Refine: add invoice tracking"),
+      makeCheckpoint("cp3", "Refine: add customer notes"),
+      makeCheckpoint("cp4", "Refine: fix invoice totals"),
+      makeCheckpoint("cp5", "Refine: add reminders"),
+      makeCheckpoint("cp6", "Refine: add tags"),
+    ];
+    globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/checkpoints") {
+        return new Response(JSON.stringify({ checkpoints }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+
+    let closeCalls = 0;
+    try {
+      render(
+        React.createElement(
+          ThemeProvider,
+          null,
+          React.createElement(
+            LanguageProvider,
+            null,
+            React.createElement(HistoryPanel, {
+              projectId: "proj1",
+              projectName: "Test Project",
+              currentSpec: checkpoints[0].spec,
+              onRestored: () => {},
+              onClose: () => {
+                closeCalls += 1;
+              },
+            }),
+          ),
+        ),
+      );
+      await waitForCondition(() => document.querySelectorAll(".checkpoint-list li").length === 6);
+      assert.ok(document.querySelector('[role="dialog"]'), "sanity check: a real dialog wired to the real onClose must be open");
+
+      fireEvent.click(document.querySelector(".checkpoint-label") as HTMLElement);
+      await waitForCondition(() => document.querySelector(".checkpoint-label-edit input") !== null);
+      const renameInput = document.querySelector(".checkpoint-label-edit input") as HTMLInputElement;
+      fireEvent.change(renameInput, { target: { value: "this draft must be discarded" } });
+      fireEvent.keyDown(renameInput, { key: "Escape" });
+
+      await waitForCondition(() => document.querySelector(".checkpoint-label-edit input") === null);
+      assert.ok(
+        (document.querySelector(".checkpoint-label") as HTMLElement).textContent?.includes("Initial build"),
+        "Escape must still cancel the rename back to the original label",
+      );
+      assert.equal(closeCalls, 0, "Escape cancelling a rename must never also close the whole History dialog");
+      assert.ok(document.querySelector('[role="dialog"]'), "the dialog itself must still be in the DOM after that Escape");
+
+      const searchBox = document.querySelector(".history-search") as HTMLInputElement;
+      fireEvent.change(searchBox, { target: { value: "invoice" } });
+      await waitForCondition(() => document.querySelectorAll(".checkpoint-list li").length === 2);
+      fireEvent.keyDown(searchBox, { key: "Escape" });
+
+      await waitForCondition(() => document.querySelectorAll(".checkpoint-list li").length === 6);
+      assert.equal(searchBox.value, "", "Escape must still clear the search box");
+      assert.equal(closeCalls, 0, "Escape clearing the search box must never also close the whole History dialog");
+      assert.ok(document.querySelector('[role="dialog"]'), "the dialog itself must still be in the DOM after that Escape too");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * New in this round: the same "Copy report" companion action rounds
  * 222/223 added to Business Twin's and the WhatsApp log's own Download
  * buttons, closing out that pattern's third and final candidate here --
