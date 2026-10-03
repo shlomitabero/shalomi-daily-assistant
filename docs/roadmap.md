@@ -21596,6 +21596,54 @@ Full suite green: **1272 tests** (`@forge/shared` 13, `@forge/spec-engine`
 721 (+1 new test)) via `npm test` at the repo root, plus a clean full
 monorepo `npm run build`.
 
+### Round 357 (autonomous hourly routine): Escape-to-clear in the entity search box
+
+Independently verified a fresh Explore-subagent survey via grep/Read
+before implementing: Escape already clears the table's multi-row
+selection (round 356) via a window-level keydown handler, but that
+handler opens with `if (isTypingTarget(e.target)) return;` -- and the
+search `<input>` is itself a typing target, so it bails out before
+ever reaching that Escape branch. Confirmed via Read that
+`handleSearchKeyDown` (the input's own `onKeyDown`) only ever checked
+`e.key === "Enter"` in both `EntityPanel.tsx` and `codegen.ts` --
+Escape typed directly into the search box was a dead key, inconsistent
+with every other free-text input in this panel: the inline cell editor
+discards its draft on Escape, and the add/edit form discards an
+in-progress edit on Escape (round 351).
+
+Added `else if (e.key === "Escape" && search.length > 0) {
+e.preventDefault(); setSearch(""); }` to `handleSearchKeyDown` in both
+the live `EntityPanel.tsx` and the exported `codegen.ts`, reusing the
+exact same `setSearch("")` the round-355 "Clear search" ✕ button
+already calls -- zero new state, zero new storage keys, same
+conditional (`search.length > 0`) the button's own rendering already
+uses.
+
+Tests: new real-DOM tests in `EntityPanel.test.ts` and `codegen.test.ts`
+confirm Escape on an already-empty search box is a harmless no-op,
+that typing a query narrows the table and Escape then both empties the
+box and restores every row, and -- distinguishing this from the
+unrelated recent-searches "Clear" button and its own storage -- that
+Escape never commits a recent search (only Enter does that, and the
+recent-searches chip row never appears as a side effect of pressing
+Escape).
+
+Deliberate-break-and-restore: backed up all 4 changed files, reverted
+the 2 implementation files (`codegen.ts`, `EntityPanel.tsx`) to HEAD,
+and confirmed exactly 1 failure in each of the 2 affected suites
+(`EntityPanel.test.ts`, `codegen.test.ts` -- both failing with "Escape
+must empty the search box", and both failing fast since this round's
+assertions compare plain strings, not live DOM elements, avoiding the
+round-356 hang hazard entirely) -- no other tests affected. Restored
+every file from the backup and confirmed byte-identical via `diff -q`
+against all 4 files, then re-ran both full suites and both production
+builds clean one final time before committing.
+
+Full suite green: **1274 tests** (`@forge/shared` 13, `@forge/spec-engine`
+85, `@forge/db` 96 unchanged; `@forge/api` 358 (+1 new test); `@forge/web`
+722 (+1 new test)) via `npm test` at the repo root, plus a clean full
+monorepo `npm run build`.
+
 ## Phase 4
 
 - Template/agent marketplace
