@@ -19,6 +19,7 @@ import { getCollapsedGroups, setCollapsedGroups as setCollapsedGroupsPreference 
 import { getCollapsedBoardColumns, setCollapsedBoardColumns as setCollapsedBoardColumnsPreference } from "./collapsedBoardColumnsPreference.js";
 import { EntityLabelEditor } from "./EntityLabelEditor.js";
 import { FieldLabelEditor } from "./FieldLabelEditor.js";
+import { isAnyDialogOpen } from "./useDialogFocusTrap.js";
 import {
   badgeTone,
   buildCalendarMonth,
@@ -1342,11 +1343,20 @@ export function EntityPanel({
    * Ctrl+K/Escape handler gets for free by only running in the "preview"
    * view, which doesn't apply here since this panel *is* full of its own
    * text inputs.
+   *
+   * isAnyDialogOpen() guards the other gap isTypingTarget alone can't
+   * catch (round 365): this panel never unmounts while an overlay dialog
+   * (History, WhatsApp, Business Twin, ...) sits on top of it, and focus
+   * on open often lands on something that isn't a text input at all --
+   * ShortcutsPanel's own Close button, for instance, since that panel has
+   * no text input to autoFocus into. Without this, pressing j/k/x/d while
+   * reading the shortcuts cheat-sheet silently mutated or deleted a
+   * background row the person wasn't even looking at.
    */
   useEffect(() => {
     if (viewMode !== "table") return;
     function handleKeyDown(e: KeyboardEvent) {
-      if (isTypingTarget(e.target as HTMLElement | null)) return;
+      if (isTypingTarget(e.target as HTMLElement | null) || isAnyDialogOpen()) return;
       const visibleIds = visibleRecords.map((r) => r.id as number);
       if (e.key === "j" || e.key === "ArrowDown") {
         e.preventDefault();
@@ -1385,12 +1395,16 @@ export function EntityPanel({
    * switch and stays reachable from any of them, so the shortcut has to
    * stay active in all three too. isTypingTarget keeps it from hijacking
    * a keystroke meant for the search box, a filter dropdown, or a field
-   * already being typed into.
+   * already being typed into; isAnyDialogOpen() keeps it from firing (and
+   * yanking focus out of an open overlay dialog into this hidden form,
+   * discarding an in-progress edit) while, say, ShortcutsPanel is open
+   * and focus sits on its own Close button rather than a text input
+   * (round 365 -- see the j/k/x/d effect just above for the full story).
    */
   useEffect(() => {
     function handleKeyDown(e: KeyboardEvent) {
       if (e.key !== "n") return;
-      if (isTypingTarget(e.target as HTMLElement | null)) return;
+      if (isTypingTarget(e.target as HTMLElement | null) || isAnyDialogOpen()) return;
       e.preventDefault();
       startCreateNew();
     }

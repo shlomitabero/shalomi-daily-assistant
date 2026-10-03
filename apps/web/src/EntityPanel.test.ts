@@ -16,6 +16,24 @@ import { getFieldFilters } from "./fieldFiltersPreference.js";
 import { EntityPanel } from "./EntityPanel.js";
 import { LanguageProvider } from "./i18n/LanguageContext.js";
 import { ThemeProvider } from "./theme/ThemeContext.js";
+import { useDialogFocusTrap } from "./useDialogFocusTrap.js";
+
+/**
+ * Stands in for any real overlay dialog (History, WhatsApp, Shortcuts, ...)
+ * for the round-365 isAnyDialogOpen() regression test below -- a plain
+ * button, deliberately no text input at all, mirroring ShortcutsPanel.tsx's
+ * own shape exactly (the real dialog the round-365 bug report used as its
+ * concrete repro, since its Close button is where useDialogFocusTrap's own
+ * focus-move-in logic lands focus when a dialog has nothing else focusable).
+ */
+function TestOverlayDialog({ onClose }: { onClose: () => void }) {
+  const dialogRef = useDialogFocusTrap<HTMLDivElement>(onClose);
+  return React.createElement(
+    "div",
+    { ref: dialogRef, role: "dialog", "aria-modal": "true" },
+    React.createElement("button", { type: "button", onClick: onClose }, "Close"),
+  );
+}
 
 const entityPanelSrc = readFileSync(new URL("./EntityPanel.tsx", import.meta.url), "utf8");
 
@@ -3667,6 +3685,65 @@ test("EntityPanel's 'n' shortcut jumps to a blank add-record form and focuses it
       fireEvent.keyDown(searchBox, { key: "n" });
       await new Promise((resolve) => setTimeout(resolve, 0));
       assert.equal(document.activeElement, searchBox, "a 'n' keydown targeting the search box must not steal focus to the add form");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
+ * Round 365 regression: EntityPanel never unmounts while an overlay dialog
+ * (History, WhatsApp, Shortcuts, ...) is open on top of it (see App.tsx --
+ * they render as siblings), so its own window-level "n"/j/k/x/Delete/d
+ * shortcuts used to keep firing underneath an open dialog whenever focus
+ * landed on something other than a text input inside it -- isTypingTarget
+ * alone can't catch a focused plain <button>, exactly where focus sits in
+ * a dialog with no text input (ShortcutsPanel.tsx's own Close button, the
+ * real repro this fix was built from). Renders a real dialog built on the
+ * same useDialogFocusTrap hook alongside EntityPanel to prove "n" and "j"
+ * are both silently swallowed while it's open -- not abandoning the
+ * in-progress edit, not moving the row focus -- and that the exact same
+ * keys work normally again the instant that dialog closes.
+ */
+test("EntityPanel's window-level keyboard shortcuts ('n', j/k) are suppressed while a real overlay dialog is open, and work again once it closes", async () => {
+  await withJsdom(async () => {
+    const store: EntityRecord[] = [
+      { id: 1, name: "Acme Corp", status: "new" },
+      { id: 2, name: "Globex", status: "won" },
+    ];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = mockRecordsFetch(store) as typeof fetch;
+    try {
+      renderEntityPanel();
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 2);
+
+      const nameInput = document.querySelector(".record-form input[type=text]") as HTMLInputElement;
+      const editButtons = Array.from(document.querySelectorAll("table tbody button")) as HTMLButtonElement[];
+      const globexEdit = editButtons.find((b) => b.closest("tr")?.getAttribute("data-record-id") === "2" && /edit/i.test(b.textContent ?? ""));
+      fireEvent.click(globexEdit!);
+      await waitForCondition(() => nameInput.value === "Globex");
+
+      let closeCalls = 0;
+      const dialog = render(React.createElement(TestOverlayDialog, { onClose: () => (closeCalls += 1) }));
+      const closeButton = dialog.container.querySelector("button")!;
+      assert.equal(document.activeElement, closeButton, "sanity check: focus must land on the dialog's own button, not a text input");
+
+      fireEvent.keyDown(window, { key: "n" });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      assert.equal(nameInput.value, "Globex", "'n' must NOT abandon the in-progress edit while a real dialog is open");
+
+      fireEvent.keyDown(window, { key: "j" });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      assert.equal(document.activeElement, closeButton, "'j' must NOT move the background table's row focus while a real dialog is open");
+
+      dialog.unmount();
+      assert.equal(closeCalls, 0, "sanity check: the dialog must close via the test's own unmount, not an accidental Escape/onClose");
+
+      for (let attempt = 0; (nameInput.value as string) !== "" && attempt < 40; attempt++) {
+        fireEvent.keyDown(window, { key: "n" });
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      }
+      assert.equal(nameInput.value, "", "'n' must work normally again once the dialog has closed");
     } finally {
       globalThis.fetch = originalFetch;
     }

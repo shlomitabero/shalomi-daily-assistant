@@ -4,6 +4,26 @@ import { hideBackgroundFromAssistiveTech } from "./domInert.js";
 const FOCUSABLE_SELECTOR =
   'a[href], button:not([disabled]), textarea:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])';
 
+// EntityPanel.tsx never unmounts while an overlay dialog (History, WhatsApp,
+// Collaborators, Business Twin, Global Search, Shortcuts, ...) is open on
+// top of it (see App.tsx -- it renders as a sibling, not conditionally), so
+// its own window-level j/k/n/x/Delete/d keyboard shortcuts kept firing
+// underneath an open dialog whenever focus landed on something other than a
+// text input inside it -- e.g. ShortcutsPanel's own Close button, which is
+// exactly where useDialogFocusTrap's own focus-move-in logic puts focus on
+// open, since that panel has no text input at all. Pressing "n"/"Delete"/"d"
+// while just reading the shortcuts cheat-sheet silently discarded an
+// in-progress edit, popped a delete confirmation over the open dialog, or
+// duplicated a record the user wasn't even looking at. A module-scoped count
+// (not component state) is deliberate: EntityPanel's own effects need to
+// read "is ANY dialog open right now" synchronously inside a native
+// `window` keydown handler, not re-render in response to one.
+let openDialogCount = 0;
+
+export function isAnyDialogOpen(): boolean {
+  return openDialogCount > 0;
+}
+
 /**
  * Real dialog behavior for the app's overlay panels (History, Business
  * Twin, WhatsApp, global search): a CSS overlay alone doesn't give a
@@ -51,6 +71,7 @@ export function useDialogFocusTrap<T extends HTMLElement>(onClose?: () => void) 
     if (!container) return;
     const previouslyFocused = previouslyFocusedRef.current;
     const restoreBackground = hideBackgroundFromAssistiveTech(container);
+    openDialogCount += 1;
 
     function getFocusable(): HTMLElement[] {
       return Array.from(container!.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR));
@@ -114,6 +135,7 @@ export function useDialogFocusTrap<T extends HTMLElement>(onClose?: () => void) 
       container.removeEventListener("keydown", handleKeyDown);
       restoreBackground();
       previouslyFocused?.focus();
+      openDialogCount -= 1;
     };
   }, []);
 

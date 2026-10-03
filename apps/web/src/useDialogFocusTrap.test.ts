@@ -4,7 +4,7 @@ import { test } from "node:test";
 import { JSDOM } from "jsdom";
 import React from "react";
 import { cleanup, fireEvent, render } from "@testing-library/react";
-import { useDialogFocusTrap } from "./useDialogFocusTrap.js";
+import { isAnyDialogOpen, useDialogFocusTrap } from "./useDialogFocusTrap.js";
 
 /**
  * Real DOM test infrastructure for this project (previously nonexistent --
@@ -173,5 +173,52 @@ test("useDialogFocusTrap does not throw on Escape when no onClose was given", as
     render(React.createElement(TestDialog));
     const first = document.getElementById("first")!;
     assert.doesNotThrow(() => fireEvent.keyDown(first, { key: "Escape" }));
+  });
+});
+
+/**
+ * Round 365: EntityPanel.tsx's own window-level j/k/n/x/Delete/d keyboard
+ * shortcuts kept firing underneath an open overlay dialog (History,
+ * WhatsApp, Shortcuts, ...) because EntityPanel never unmounts while one
+ * is open (see App.tsx), and those shortcuts were only ever guarded by
+ * isTypingTarget -- which returns false for a plain focused <button>,
+ * exactly where focus lands in a dialog with no text input at all (e.g.
+ * ShortcutsPanel's own Close button). isAnyDialogOpen() is a module-level
+ * counter (not component state) this hook now maintains, so a native
+ * window keydown handler elsewhere in the app can check synchronously
+ * whether ANY dialog built on this hook is currently mounted. Confirms it
+ * starts false, flips true for as long as a dialog built on this hook is
+ * mounted, and reliably returns to false once it unmounts.
+ */
+test("isAnyDialogOpen reflects whether a dialog built on useDialogFocusTrap is currently mounted", async () => {
+  await withJsdom(() => {
+    assert.equal(isAnyDialogOpen(), false, "must start false with no dialog mounted at all");
+
+    const { unmount } = render(React.createElement(TestDialog));
+    assert.equal(isAnyDialogOpen(), true, "must become true the moment a dialog using this hook mounts");
+
+    unmount();
+    assert.equal(isAnyDialogOpen(), false, "must go back to false once that dialog unmounts");
+  });
+});
+
+/**
+ * Companion: a real counter, not a boolean toggle -- two dialogs built on
+ * this hook can legitimately be mounted at once in this app today (a
+ * confirm dialog opened from within an already-open overlay), so closing
+ * only one of them must never make isAnyDialogOpen() report false while
+ * the other is still genuinely open.
+ */
+test("isAnyDialogOpen stays true while a second dialog is still mounted, even after the first one closes", async () => {
+  await withJsdom(() => {
+    const first = render(React.createElement(TestDialog));
+    const second = render(React.createElement(TestDialog));
+    assert.equal(isAnyDialogOpen(), true);
+
+    first.unmount();
+    assert.equal(isAnyDialogOpen(), true, "must stay true while the second dialog is still mounted");
+
+    second.unmount();
+    assert.equal(isAnyDialogOpen(), false, "must only go false once every mounted dialog has unmounted");
   });
 });
