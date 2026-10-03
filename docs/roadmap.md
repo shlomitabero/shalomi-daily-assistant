@@ -21817,6 +21817,62 @@ Full suite green: **1277 tests** (`@forge/shared` 13, `@forge/spec-engine`
 test)) via `npm test` at the repo root, plus a clean full monorepo
 `npm run build`.
 
+### Round 361: Global Search's own query box could still close the whole dialog on Escape
+
+Continuing the "spread the fix" survey (rounds 358-360), an Explore
+subagent checked the 5 named dialogs (GlobalSearchPanel, BusinessTwinPanel,
+CollaboratorsPanel, ChangePasswordPanel, DeleteAccountPanel) for the same
+round-359 bug class. Independently verified by reading
+`GlobalSearchPanel.tsx` directly (not trusting the subagent's report alone):
+`handleInputKeyDown` handled ArrowUp/ArrowDown/Enter for result navigation
+but had **zero Escape handling at all**, and the query `<input>` had no
+`data-escape-handled-locally` marker and no clear affordance. Today,
+pressing Escape while typing a global-search query closed the entire
+dialog via `useDialogFocusTrap`'s native listener -- the exact bug class
+fixed in `HistoryPanel.tsx`/`WhatsAppPanel.tsx` (rounds 358-360), just
+never closed here because no local Escape handler existed yet to clash
+with it. `CollaboratorsPanel.tsx`'s email input and
+`DeleteAccountPanel.tsx`'s confirm-email input are one-shot submit fields,
+not search/filter boxes, so Escape-to-clear is a weak fit there.
+`BusinessTwinPanel.tsx`/`ChangePasswordPanel.tsx` have no relevant inputs
+at all.
+
+Added to `GlobalSearchPanel.tsx`: an `else if (e.key === "Escape" &&
+query.length > 0)` branch at the *top* of `handleInputKeyDown` (checked
+before the `results.length === 0` early-return, so clearing still works
+even before any search has run), `setQuery("")`, and the
+`data-escape-handled-locally` marker on the input. A new "Clear" button
+(`.global-search-clear-query`, `✕` glyph + aria-label, mirroring
+HistoryPanel/WhatsAppPanel's own clear buttons exactly) appears next to
+the input only while `query.length > 0`. New `search.query.clear` i18n
+key (Hebrew: "ניקוי החיפוש", English: "Clear search") -- named
+`search.query.clear` rather than reusing `search.recent.clear`, which
+already means something different (clearing the *recent-searches history
+list*, not the live query).
+
+Tests: one new real-DOM test in `GlobalSearchPanel.test.ts`, passing a
+*real* `onClose` spy (not the shared `renderGlobalSearchPanel` helper's
+no-op, which can't tell "never called" apart from "called and ignored").
+Confirms the Clear button is absent before typing, appears once the box
+has text, that Escape clears the query without ever closing the dialog,
+that Escape on an already-empty box is a harmless no-op, and that
+clicking the Clear button also empties the query and hides the button
+again.
+
+Deliberate-break-and-restore: backed up all 3 changed files
+(`GlobalSearchPanel.tsx`, `GlobalSearchPanel.test.ts`, `language.ts`),
+reverted the 2 implementation files to HEAD, and confirmed exactly 1
+failure ("the Clear button must appear the moment the query box has
+text") in the 1 affected suite -- fast, no hang, confirming round 356's
+own hang-fix lesson held here too. Restored from backup and confirmed
+byte-identical via `diff -q` against all 3 files, then re-ran the full
+web suite and a clean production build one final time before committing.
+
+Full suite green: **1278 tests** (`@forge/shared` 13, `@forge/spec-engine`
+85, `@forge/db` 96, `@forge/api` 358 unchanged; `@forge/web` 726 (+1 new
+test)) via `npm test` at the repo root, plus a clean full monorepo
+`npm run build`.
+
 ## Phase 4
 
 - Template/agent marketplace
