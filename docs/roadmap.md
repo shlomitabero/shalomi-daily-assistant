@@ -21764,6 +21764,59 @@ Full suite green: **1276 tests** (`@forge/shared` 13, `@forge/spec-engine`
 test)) via `npm test` at the repo root, plus a clean full monorepo
 `npm run build`.
 
+### Round 360 (autonomous hourly routine): "Clear search" button + Escape-to-clear for the WhatsApp log search box
+
+Independently verified a fresh Explore-subagent survey via grep/Read
+before implementing, explicitly applying round 359's own lesson:
+check whether a fix established in one place correctly "spread"
+everywhere it structurally should. `HistoryPanel.tsx`'s own
+checkpoint-search box already has a "Clear search" (✕) button and
+Escape-to-clear with the new `data-escape-handled-locally` marker
+(rounds 358/359), but `WhatsAppPanel.tsx`'s message-log search box --
+the exact same live-filter-as-you-type + recent-searches-chips shape,
+surfaced once `messages.length > SEARCH_THRESHOLD` (5) -- had none of
+it. Confirmed via grep that `data-escape-handled-locally` existed
+nowhere outside `CheckpointLabelEditor.tsx`/`HistoryPanel.tsx`, that
+`handleLogSearchKeyDown` only ever checked `e.key === "Enter"`, and
+that `whatsapp.log.search.clear` didn't exist in `language.ts` at all
+(while `history.search.clear` did). Before this round's fix, pressing
+Escape in this search box would have closed the *entire* WhatsApp
+dialog instead of clearing the box, since `WhatsAppPanel.tsx` is also
+built on `useDialogFocusTrap`.
+
+Added a `<button className="secondary small whatsapp-log-clear-search">`
+(shown only when `search.length > 0`, calling `setSearch("")`) next to
+the `.whatsapp-log-search` input, an `else if (e.key === "Escape" &&
+search.length > 0)` branch to `handleLogSearchKeyDown`, and the
+`data-escape-handled-locally` marker on the input itself so round
+359's own dialog-level Escape listener skips it. New
+`whatsapp.log.search.clear` i18n key (Hebrew: "ניקוי החיפוש", English:
+"Clear search").
+
+Tests: one new real-DOM test in `WhatsAppPanel.test.ts`, reusing the
+existing 6-message fixture that already crosses the `>5` threshold.
+Passes a *real* `onClose` spy through the whole dialog (most tests in
+this file use a no-op, which can't distinguish "never called" from
+"called and ignored" -- the same lesson round 359's own test applied)
+and confirms the button is absent while empty, appears once the box
+has text and the list narrows, and that both clicking it and pressing
+Escape empty the box, restore all 6 messages, and never close the
+dialog.
+
+Deliberate-break-and-restore: backed up all 3 changed files, reverted
+the 2 implementation files (`WhatsAppPanel.tsx`, `language.ts`) to
+HEAD, and confirmed exactly 1 failure in the 1 affected suite
+(`WhatsAppPanel.test.ts` -- failing fast with "the button must appear
+the moment the search box has text") -- no other tests affected.
+Restored every file from the backup and confirmed byte-identical via
+`diff -q` against all 3 files, then re-ran the full web suite and a
+clean production build one final time before committing.
+
+Full suite green: **1277 tests** (`@forge/shared` 13, `@forge/spec-engine`
+85, `@forge/db` 96, `@forge/api` 358 unchanged; `@forge/web` 725 (+1 new
+test)) via `npm test` at the repo root, plus a clean full monorepo
+`npm run build`.
+
 ## Phase 4
 
 - Template/agent marketplace
