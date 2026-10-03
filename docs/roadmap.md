@@ -22471,6 +22471,104 @@ if that's ever added) has a similar "should revoke other sessions but
 doesn't" gap -- not a candidate today since email-change doesn't exist
 yet, but worth keeping in mind if it's ever built.
 
+### Round 370: checkpoint restore was the one spec-mutating route not guarded against a concurrent build/refine
+
+An Explore subagent's deep survey (per round 369's own trigger note
+pointing at areas not yet audited -- pipeline.ts/debug.ts/repository.ts/
+checkpoints.ts internals, the Refine conversation-history logic,
+zipWriter.ts, domainEntities.ts) returned two candidates. The first
+(a heuristic keyword collision where Deal's bare `"pipeline"` keyword
+still spuriously matches the idiomatic phrase "hiring pipeline",
+contradicting the file's own documented pitfall) was set aside as the
+smaller, lower-impact of the two; the second was independently
+re-verified in full and picked instead, since it's a genuine data-loss
+race, not just an entity-detection quality nit.
+
+`apps/api/src/routes/projects.ts`'s own module-level comment on its
+`activePipelines` set (lines 288-306) documents a specific hazard class
+in detail: `/build`, `/refine`, and `/answers` each read `project.spec`
+once, spend real time (an AI/heuristic call, and for `/build`/`/refine`
+also a migration), then write `project.spec` back -- two such requests
+for the same project running concurrently means whichever finishes last
+silently overwrites the other's result. All three routes are correctly
+guarded with an `activePipelines.has(project.id)` check before
+proceeding. The checkpoint-restore route (`POST
+/projects/:id/checkpoints/:checkpointId/restore`, lines 625-641 before
+this round) has the exact same read-then-write-after-a-gap shape
+(`diffAndMigrate` reads `project.spec`, `updateProjectSpec` writes it
+back) but had no such guard at all -- confirmed directly via `grep -n
+"activePipelines" apps/api/src/routes/projects.ts`, which returned zero
+matches inside the restore handler.
+
+**Real-world reachability, independently verified (not just reasoned
+about)**: `apps/web/src/App.tsx`'s `preview-header-actions` button row,
+including the History button (`onClick={() => openPanel("history")}`,
+around line 1525), is rendered unconditionally -- `refineRunning` (used
+around line 1561) only swaps the chat pane's own content, it never
+disables or hides the header buttons. `HistoryPanel.tsx`'s restore
+button is gated only by `busyId`/`deletingId`/`isCurrent`, nothing tied
+to whether a refine is streaming. So a real user can start a refine
+(genuinely slow -- an AI call), open History while it's running, and
+click Restore on an older checkpoint: the restore commits its own
+(older) spec immediately (both its DB operations are synchronous, no
+`await` in the handler), and moments later the already-in-progress
+refine's own completion silently overwrites it right back -- the user's
+restore is lost with zero error or warning.
+
+**Fix**: added the identical `activePipelines.has(project.id)` check,
+throwing the same `409 PIPELINE_IN_PROGRESS` `HttpError`, at the top of
+the restore handler. Unlike the other three routes, restore doesn't add
+itself to `activePipelines` for its own duration: since its own work
+(`diffAndMigrate` + `updateProjectSpec`) never awaits anything, it can't
+itself be interrupted mid-flight by another request in Node's
+single-threaded event loop -- it only ever needs to refuse to proceed
+while something slower (a `/build` or `/refine` already in flight)
+already holds the lock, never to hold the lock itself.
+
+No web-side changes were needed: `HistoryPanel.tsx`'s existing
+`handleRestore` already surfaces any thrown error's message via
+`setError`, and the `PIPELINE_IN_PROGRESS` code already has a translated
+message from the pre-existing `/build`/`/refine` error paths (reused
+as-is). No `codegen.ts` changes were needed either: confirmed via `grep`
+that the exported standalone app has no build/refine/checkpoint
+pipeline at all (it's a static, already-built single-tenant export).
+
+Tests: 1 new in `apps/api/src/app.test.ts`, reusing the existing
+`createGatedProvider` test harness verbatim (the same one the
+`/refine`-vs-`/refine` and `/answers`-vs-`/answers` concurrency tests
+from round 106 already use) to deterministically force a restore
+request to land while a real refine is genuinely in flight -- confirms
+the restore gets a real `409`/`PIPELINE_IN_PROGRESS`, the in-flight
+refine still completes normally and successfully, and a later,
+non-concurrent restore of the same checkpoint succeeds once the refine
+has actually finished.
+
+Deliberate-break-and-restore: backed up both changed files
+(`routes/projects.ts`, `app.test.ts`), reverted only `routes/projects.ts`
+to HEAD, ran the `api` workspace's tests and confirmed exactly the 1
+expected failure (the new test), restored from backup, confirmed
+byte-identical via `diff -q`, then re-ran the full suite. One run hit an
+unrelated one-off flake in a pre-existing exported-app SQL-keyword test
+(`generated server.js works end-to-end for an entity named after a
+reserved SQL keyword`) -- confirmed clean on an immediate re-run, per
+the established round 337/338 precedent for this exact kind of
+transient failure, and not touched by this round's own changes.
+
+Full suite green: **1296 tests** (`@forge/shared` 13, `@forge/spec-engine`
+85, `@forge/db` 98 unchanged, `@forge/api` 361 (+1 new), `@forge/web` 739
+unchanged -- no web-side changes this round) via `npm test` at the repo
+root, plus a clean full monorepo `npm run build`. Pushed as commit
+`a807933`.
+
+**Topic status**: this specific gap (checkpoint restore racing against
+build/refine) is now closed. The lower-priority candidate the same
+survey turned up -- Deal's heuristic keyword list still spuriously
+matching "hiring pipeline" despite the file's own documented pitfall
+comment about exactly this collision -- was NOT implemented this round
+(set aside as smaller/lower-impact, not ruled out as illegitimate) and
+remains a real, available candidate for a future round if nothing
+better turns up first.
+
 ## Phase 4
 
 - Template/agent marketplace
