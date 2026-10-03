@@ -22569,6 +22569,91 @@ comment about exactly this collision -- was NOT implemented this round
 remains a real, available candidate for a future round if nothing
 better turns up first.
 
+### Round 371: Deal's heuristic "pipeline" keyword still spuriously matched "hiring pipeline"
+
+Took up the candidate round 370's own survey had already found and
+verified but set aside as lower-priority. `domainEntities.ts`'s own
+top-of-file doc comment names this exact collision by name as a known
+pitfall: "pipeline" ⊂ "hiring pipeline" colliding with Deal's own
+"pipeline" keyword. But the fix that was actually applied only ever
+touched JobApplicant's side of the collision (its own keyword uses
+"hiring" alone, never "hiring pipeline") -- Deal's own "pipeline"
+keyword was simply never removed or fixed. Reproduced directly before
+touching any code: `matchEntities("Track candidates through our hiring
+pipeline for open roles.")` returned `['Deal', 'JobApplicant']` -- any
+recruiting app described using the single most idiomatic HR/ATS phrase
+for a recruitment funnel still got a spurious sales `Deal` entity
+(title/value/stage Lead-Negotiation-Won-Lost/owner) injected right
+alongside the real `JobApplicant` entity.
+
+**A real correction to the candidate as originally proposed**: the
+round-370 survey (and this round's own trigger note) suggested wrapping
+Deal's "pipeline" keyword in a `\b`-bounded `RegExp`, mirroring the
+existing fix for Order's "order" (a substring of "disorder(s)"/
+"recorder(s)"/"border(s)"). Verified directly before implementing
+anything -- `/\bpipeline\b/.test("...hiring pipeline...")` is `true`.
+Order's collision and this one are NOT the same shape: "order" is a
+substring *inside* a different, unrelated word, which a word boundary
+correctly blocks; "pipeline" in "hiring pipeline" is a genuine,
+correctly-spelled, standalone word, just one that happens to co-occur
+with another real word in a two-word idiom that means something
+completely different. No amount of word-boundary matching on
+"pipeline" itself changes anything, since it already *is* matching as
+its own whole word, exactly as `\b` requires. The only real fix once
+every keyword's own spelling genuinely is the colliding word is
+removing the keyword outright, once the rest of the entity's own
+keyword list still covers the ordinary case well enough alone.
+
+**Fix**: removed `"pipeline"` from Deal's keyword list in
+`domainEntities.ts` (now just `["deals", "negotiation", "עסקה",
+"עסקאות", "משא ומתן"]`) -- `"deals"`/`"negotiation"` already cover the
+ordinary English phrasing for a sales Deal on their own, confirmed by
+the pre-existing test at line ~530 ("An app to track sales deals through
+our pipeline.") that was already matching via "deals", not "pipeline",
+so removing "pipeline" doesn't touch it. Updated the file's own
+top-of-file doc comment: the mischaracterization of this collision as
+the same shape as "events" ⊂ "prevents" (pitfall 1, fixable with a
+different keyword or a RegExp) is corrected into its own named pitfall
+1b -- two real, correctly-matched words from two different entities'
+keyword lists co-occurring inside one idiomatic phrase, which word
+boundaries cannot help with at all. Also fixed `heuristic.test.ts`'s own
+existing comment on JobApplicant's `"hiring"` keyword, which asserted
+"pipeline is Deal's own keyword" as a present-tense fact that's no
+longer true after this round.
+
+Confirmed via `grep` that `domainEntities.ts`'s `DOMAIN_ENTITY_RULES` is
+the single source of truth for this keyword library -- not duplicated
+in `apps/web` or `apps/api/src/codegen.ts` -- so no porting was needed
+anywhere else.
+
+Tests: 1 new in `heuristic.test.ts`, confirming "Track candidates
+through our hiring pipeline for open roles." now matches `JobApplicant`
+but not `Deal`, while "An app to track sales deals through our
+pipeline." still matches `Deal` (via "deals", proving Deal itself didn't
+become unreachable, just no longer reachable through the single word
+"pipeline" on its own). Also corrected the existing
+Ticket/Subscription/JobApplicant collision test's own stale comment to
+stop asserting the now-false "pipeline is Deal's own keyword" claim.
+
+Deliberate-break-and-restore: backed up both changed files
+(`domainEntities.ts`, `heuristic.test.ts`), reverted only
+`domainEntities.ts` to HEAD, ran the `spec-engine` workspace's tests and
+confirmed exactly the 1 expected failure (the new test), restored from
+backup, confirmed byte-identical via `diff -q`, then re-ran the full
+suite and a clean build one final time before committing.
+
+Full suite green: **1297 tests** (`@forge/shared` 13, `@forge/spec-engine`
+86 (+1 new), `@forge/db` 98 unchanged, `@forge/api` 361 unchanged,
+`@forge/web` 739 unchanged) via `npm test` at the repo root, plus a
+clean full monorepo `npm run build`. Pushed as commit `06f4551`.
+
+**Topic status**: this specific gap (Deal's "pipeline" keyword
+colliding with "hiring pipeline") is now closed, and the underlying
+documentation mistake (treating this as the same fixable-by-RegExp
+shape as a plain substring collision) is corrected for future rounds
+adding new keywords to this file. No other open candidates remain from
+round 370's survey; round 372 starts from a fresh survey.
+
 ## Phase 4
 
 - Template/agent marketplace
