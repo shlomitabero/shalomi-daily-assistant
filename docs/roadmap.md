@@ -21367,6 +21367,56 @@ Full suite green: **1264 tests** (`@forge/shared` 13, `@forge/spec-engine`
 717 (+1 new test)) via `npm test` at the repo root, plus a clean full
 monorepo `npm run build`.
 
+### Round 353 — "d" keyboard shortcut duplicates the focused table row
+
+No ready candidate going into this round, so spawned an Explore survey
+(continuing round 346's own finding that gaps now live in
+`EntityPanel.tsx`/`codegen.ts` themselves). Independently re-verified
+its pick rather than trusting the report: read the table view's own
+keydown handler and confirmed j/k/Enter/x/Delete-Backspace are wired
+but no `"d"` branch exists. Read `handleDuplicate` (round 337's own
+addition) and confirmed its only two call sites are both mouse-driven
+`onClick`s on Duplicate buttons (table row actions and the board card)
+-- the row a keyboard-only user already has `focusedRowId`-tracked, can
+open with Enter, select with "x", and delete with Delete/Backspace,
+could still never be duplicated without reaching for the mouse.
+Confirmed the identical gap in `apps/api/src/codegen.ts`'s own mirrored
+keydown handler and `handleDuplicate`.
+
+Added a `e.key === "d" && focusedRowId != null` branch to that same
+keydown handler in both files, calling the existing
+`handleDuplicate(focusedRowId)` verbatim -- zero duplicated logic, and
+deliberately no confirmation dialog (unlike Delete's), since
+duplicating only ever creates data, never destroys it, matching
+`handleDuplicate`'s own established design. Guarded by the same
+`isTypingTarget` check already guarding j/k/Enter/x/Delete in that
+handler, so it never fires while a cell, the search box, or the
+add/edit form has focus. Added a "d" row to `ShortcutsPanel.tsx`'s own
+list and a new `shortcuts.rowDuplicate` i18n key (Hebrew + English).
+
+Tests: new real-DOM tests in `EntityPanel.test.ts` and `codegen.test.ts`
+focus a row via "j", press "d", and confirm the real duplicate POST
+fires exactly once with the focused row's own field values (not the
+other row's) and the new record actually appears in the table.
+`EntityPanel.test.ts`'s version also confirms the `isTypingTarget`
+guard, firing "d" at the search box itself and confirming no duplicate
+request fires. Updated `ShortcutsPanel.test.ts`'s own row-count
+assertion (11→12) and kbd-text assertions for the new "d" row.
+
+Deliberate-break-and-restore: backed up all 7 changed files, reverted
+the 4 implementation files to HEAD, and confirmed exactly 1 failure in
+each of the 3 affected suites (`ShortcutsPanel.test.ts` 1/2,
+`EntityPanel.test.ts` 85/86, `codegen.test.ts` 127/128) -- no other
+tests affected. Restored every file from the backup and confirmed
+byte-identical via `diff -q` against all 7 files, then re-ran both full
+suites and both production builds clean one final time before
+committing.
+
+Full suite green: **1266 tests** (`@forge/shared` 13, `@forge/spec-engine`
+85, `@forge/db` 96 unchanged; `@forge/api` 354 (+1 new test); `@forge/web`
+718 (+1 new test)) via `npm test` at the repo root, plus a clean full
+monorepo `npm run build`.
+
 ## Phase 4
 
 - Template/agent marketplace
