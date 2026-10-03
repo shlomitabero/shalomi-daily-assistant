@@ -4732,6 +4732,49 @@ test("EntityPanel shows a 'Clear filters' button only once a filter is active, a
 });
 
 /**
+ * New in this round: every other filtering control in the toolbar already
+ * has a one-click way to reset it ("Clear filters" for the per-field enum
+ * selects just above, "Clear sort" for column sort), but the free-text
+ * search box itself still had none -- the only ways to empty it were
+ * deleting every character by hand or switching entities (a side effect
+ * of an unrelated reset, not a user-facing action). A small "x" button now
+ * appears next to the search input only once it actually has text in it,
+ * and clears it (and only it -- not the persisted recent-searches list,
+ * which has its own separate "Clear" button and storage key) in one click.
+ */
+test("EntityPanel shows a 'Clear search' button only once the search box has text, and it empties only the live search value", async () => {
+  await withJsdom(async () => {
+    const store: EntityRecord[] = [
+      { id: 1, name: "Globex", status: "won" },
+      { id: 2, name: "Acme Corp", status: "new" },
+    ];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = mockRecordsFetch(store) as typeof fetch;
+    try {
+      renderEntityPanel();
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 2);
+
+      assert.equal(document.querySelector(".entity-clear-search"), null, "the search box starts empty, so the button must not render at all");
+
+      const searchBox = document.querySelector(".entity-search") as HTMLInputElement;
+      fireEvent.change(searchBox, { target: { value: "Globex" } });
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 1);
+
+      const clearButton = document.querySelector(".entity-clear-search") as HTMLButtonElement;
+      assert.ok(clearButton, "the button must appear the moment the search box has text");
+
+      fireEvent.click(clearButton);
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 2);
+
+      assert.equal((document.querySelector(".entity-search") as HTMLInputElement).value, "", "the search input itself must empty out");
+      assert.equal(document.querySelector(".entity-clear-search"), null, "the button must disappear again once the search box is empty");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * New in this round: toggleSort's own non-additive branch only ever
  * collapses a sort down to a single key -- it can never empty sortKeys
  * back to [], so once a multi-column sort was built (shift-click), there

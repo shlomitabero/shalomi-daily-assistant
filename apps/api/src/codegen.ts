@@ -3318,6 +3318,11 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
               onChange={(e) => setSearch(e.target.value)}
               onKeyDown={handleSearchKeyDown}
             />
+            {search.length > 0 && (
+              <button type="button" className="entity-clear-search" aria-label="Clear search" onClick={() => setSearch("")}>
+                ✕
+              </button>
+            )}
             {filterableEnumFields.map((f) => (
               <select
                 key={f.name}

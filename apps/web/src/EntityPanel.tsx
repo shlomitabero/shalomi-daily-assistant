@@ -2152,6 +2152,16 @@ export function EntityPanel({
               onChange={(e) => setSearch(e.target.value)}
               onKeyDown={handleSearchKeyDown}
             />
+            {search.length > 0 && (
+              <button
+                type="button"
+                className="secondary small entity-clear-search"
+                aria-label={t("entity.search.clear")}
+                onClick={() => setSearch("")}
+              >
+                ✕
+              </button>
+            )}
             <span className="muted small entity-record-count">
               {formatEntityRecordCount(visibleRecords.length, records.length, t)}
             </span>

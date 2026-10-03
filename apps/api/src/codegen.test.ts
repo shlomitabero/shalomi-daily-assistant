@@ -5671,6 +5671,73 @@ test("the exported EntityView shows a 'Clear filters' button only once a filter 
 });
 
 /**
+ * New in this round: mirrors the live preview's own "Clear search" button
+ * -- every other filtering control in the exported app's toolbar already
+ * had a one-click reset (the "Clear filters"/"Clear sort" buttons just
+ * above), but the free-text search box itself had none. A small "x"
+ * button now appears next to the search input only once it has text in
+ * it, and clears only that live value.
+ */
+test("the exported EntityView shows a 'Clear search' button only once the search box has text, and clicking it empties the search value", async () => {
+  const files = generateExportFiles(project);
+  const dir = writeGeneratedWebComponent(files);
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async () => ({
+    ok: true,
+    status: 200,
+    json: async () => ({
+      records: [
+        { id: 1, name: "Alice", status: "New" },
+        { id: 2, name: "Bob", status: "Won" },
+      ],
+    }),
+  })) as typeof fetch;
+
+  try {
+    await withRealLocalStorage(async () => {
+      const { EntityView } = await import(path.join(dir, "web", "src", "components", "EntityView.jsx"));
+      const customerEntity = project.spec.entities.find((e) => e.name === "Customer")!;
+      const props = {
+        entity: customerEntity,
+        highlightRecordId: null,
+        onHighlightHandled: () => {},
+        onJumpToRecord: () => {},
+        onRecordCountChange: () => {},
+      };
+
+      const { container } = render(React.createElement(EntityView, props));
+      for (let i = 0; i < 40; i++) {
+        if (container.querySelector(".entity-search")) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+      assert.equal(container.querySelector(".entity-clear-search"), null, "the search box starts empty, so the button must not render at all");
+
+      const searchBox = container.querySelector(".entity-search") as HTMLInputElement;
+      await act(async () => {
+        fireEvent.change(searchBox, { target: { value: "Alice" } });
+      });
+      assert.equal(container.querySelectorAll("tbody tr").length, 1, "the search must actually narrow the rendered rows");
+
+      const clearButton = container.querySelector(".entity-clear-search") as HTMLButtonElement;
+      assert.ok(clearButton, "the button must appear the moment the search box has text");
+
+      await act(async () => {
+        fireEvent.click(clearButton);
+      });
+      assert.equal(container.querySelectorAll("tbody tr").length, 2, "clicking it must actually restore every row");
+      assert.equal((container.querySelector(".entity-search") as HTMLInputElement).value, "", "the search input itself must empty out");
+      assert.equal(container.querySelector(".entity-clear-search"), null, "the button must disappear again once the search box is empty");
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    cleanup();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
  * New in this round: mirrors the live preview's own "Clear sort" button
  * -- toggleSort's own non-additive branch only ever collapses a sort
  * down to a single key, never back to [], so once a multi-column sort
