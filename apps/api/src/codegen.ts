@@ -1763,14 +1763,26 @@ function findBoardField(fields) {
 
 // Groups records into one column per declared enum value, in declared
 // order, including a value with zero matching records so an empty stage
-// still shows as a column instead of disappearing.
+// still shows as a column instead of disappearing. A record whose stored
+// value isn't in the field's current enumValues (a legacy value left
+// behind after a refine renamed/restructured the field's options --
+// migrations only ever add columns, never rewrite existing row data) is
+// collected into a trailing synthetic "(other)" column instead of
+// silently vanishing, mirroring groupRecordsByField's own "(other)"
+// bucket below.
 function groupByField(records, field) {
   const values = field.enumValues || [];
-  return values.map((value) => ({
+  const columns = values.map((value) => ({
     value,
     label: (field.enumLabels && field.enumLabels[value]) || value,
     records: records.filter((r) => String(r[field.name]) === value),
   }));
+  const known = new Set(values);
+  const other = records.filter((r) => !known.has(String(r[field.name] || "")));
+  if (other.length > 0) {
+    columns.push({ value: "__other__", label: "Other", records: other, isOther: true });
+  }
+  return columns;
 }
 
 // Whether a field's own value space is small and fixed enough to group the
@@ -3509,14 +3521,24 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
                 const collapsed = collapsedBoardColumns.has(column.value);
                 return (
                 <div
-                  className={dragOverColumn === column.value ? "board-column board-column-drag-over" : "board-column"}
+                  className={
+                    dragOverColumn === column.value
+                      ? "board-column board-column-drag-over"
+                      : column.isOther
+                        ? "board-column board-column-other"
+                        : "board-column"
+                  }
                   key={column.value}
                   onDragOver={(e) => {
+                    if (column.isOther) return;
                     e.preventDefault();
                     setDragOverColumn(column.value);
                   }}
                   onDragLeave={() => setDragOverColumn((prev) => (prev === column.value ? null : prev))}
-                  onDrop={(e) => handleCardDrop(e, boardField.name, column.value)}
+                  onDrop={(e) => {
+                    if (column.isOther) return;
+                    handleCardDrop(e, boardField.name, column.value);
+                  }}
                 >
                   <div className="board-column-header">
                     <div className="board-column-header-info">
@@ -3532,15 +3554,17 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
                       <span className={\`badge badge-\${badgeTone(column.value)}\`}>{column.label}</span>
                       <span className="muted small">{column.records.length}</span>
                     </div>
-                    <button
-                      type="button"
-                      className="board-add-card-btn"
-                      title={\`Add a record under "\${column.label}"\`}
-                      aria-label={\`Add a record under "\${column.label}"\`}
-                      onClick={() => startCreateForColumn(column.value, boardField)}
-                    >
-                      +
-                    </button>
+                    {!column.isOther && (
+                      <button
+                        type="button"
+                        className="board-add-card-btn"
+                        title={\`Add a record under "\${column.label}"\`}
+                        aria-label={\`Add a record under "\${column.label}"\`}
+                        onClick={() => startCreateForColumn(column.value, boardField)}
+                      >
+                        +
+                      </button>
+                    )}
                   </div>
                   {!collapsed && column.records.map((r) => (
                     <BoardCard
@@ -4574,6 +4598,7 @@ nav button.active .tab-count { background: rgba(255, 255, 255, 0.25); color: inh
 .board-scroll { display: flex; gap: 14px; overflow-x: auto; padding-bottom: 8px; }
 .board-column { flex: 0 0 240px; background: var(--surface-muted); border: 1px solid var(--border-soft); border-radius: 10px; padding: 12px; display: flex; flex-direction: column; gap: 10px; }
 .board-column-drag-over { background: var(--accent-soft); border-color: var(--accent); }
+.board-column-other { border-style: dashed; }
 .board-column-header { display: flex; align-items: center; justify-content: space-between; padding-bottom: 8px; border-bottom: 1px solid var(--border-soft); }
 .board-column-header-info { display: flex; align-items: center; gap: 6px; }
 .board-column-toggle { background: none; border: none; cursor: pointer; padding: 0 4px; font-size: 12px; color: inherit; }

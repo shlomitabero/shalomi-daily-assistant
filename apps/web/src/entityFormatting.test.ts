@@ -1140,6 +1140,44 @@ test("groupByField groups records into one column per declared enum value, in de
   assert.equal(columns.find((c) => c.value === "Negotiation")!.records.length, 0); // empty column, not omitted
 });
 
+test("groupByField collects a record whose stored value isn't a declared enum value into a trailing '(other)' column instead of dropping it", () => {
+  const t = (key: string) => translate("en", key);
+  const field: Field = {
+    name: "stage",
+    type: "enum",
+    required: true,
+    enumValues: ["Lead", "Won", "Lost"],
+  };
+  const records = [
+    { id: 1, stage: "Won" },
+    { id: 2, stage: "Archived" }, // a legacy value left behind after a refine renamed the options
+    { id: 3, stage: "Lead" },
+  ];
+  const columns = groupByField(records, field, t);
+  assert.deepEqual(
+    columns.map((c) => c.value),
+    ["Lead", "Won", "Lost", "__other__"],
+  );
+  const other = columns.find((c) => c.value === "__other__")!;
+  assert.equal(other.label, "Other");
+  assert.equal(other.isOther, true);
+  assert.deepEqual(other.records.map((r) => r.id), [2]);
+  // real enum columns are unaffected and never marked isOther
+  assert.equal(columns.find((c) => c.value === "Won")!.isOther, undefined);
+});
+
+test("groupByField omits the '(other)' column entirely when every record's value is a declared enum value", () => {
+  const field: Field = { name: "stage", type: "enum", required: true, enumValues: ["Lead", "Won"] };
+  const columns = groupByField([{ id: 1, stage: "Won" }], field);
+  assert.equal(columns.find((c) => c.value === "__other__"), undefined);
+});
+
+test("groupByField falls back to the raw 'Other' label when called without a translator", () => {
+  const field: Field = { name: "stage", type: "enum", required: true, enumValues: ["Lead"] };
+  const columns = groupByField([{ id: 1, stage: "Archived" }], field);
+  assert.equal(columns.find((c) => c.value === "__other__")!.label, "Other");
+});
+
 /**
  * New in this round: a search/filter narrowing the table lost all sense of
  * how many records matched versus the real total -- both counts were

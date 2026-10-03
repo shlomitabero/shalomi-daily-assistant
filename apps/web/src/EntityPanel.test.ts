@@ -899,6 +899,62 @@ test("EntityPanel's board view '+' button opens the create form pre-filled with 
 });
 
 /**
+ * Regression coverage for a real bug: a record whose stored status isn't
+ * one of the 3 declared enum values (e.g. a legacy "archived" value left
+ * behind after a refine renamed the field's options -- migrations only
+ * ever add columns, never rewrite existing row data) used to simply vanish
+ * from the board with no trace, while still showing up fine in table view.
+ * groupByField now collects it into a trailing "(other)" column instead.
+ * This also confirms that synthetic column is display-only: it has no
+ * "+" add-card button (there's no real status value to create against),
+ * and dropping a card onto it is a no-op rather than writing a bogus value.
+ */
+test("EntityPanel's board view collects a record with an unrecognized status into an '(other)' column instead of dropping it", async () => {
+  await withJsdom(async () => {
+    const store: EntityRecord[] = [
+      { id: 1, name: "Acme Corp", status: "new" },
+      { id: 2, name: "Globex", status: "archived" },
+    ];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = mockRecordsFetch(store) as typeof fetch;
+    try {
+      renderEntityPanel();
+      await waitForCondition(() => document.querySelector(".entity-toolbar") !== null);
+
+      const boardToggle = document.querySelectorAll(".view-toggle-btn")[1] as HTMLButtonElement;
+      fireEvent.click(boardToggle);
+      await waitForCondition(() => document.querySelectorAll(".board-column").length === 4);
+
+      const otherColumn = Array.from(document.querySelectorAll(".board-column")).find((col) =>
+        col.querySelector(".board-column-header")?.textContent?.includes("Other"),
+      );
+      assert.ok(otherColumn, "expected a trailing '(other)' column");
+      assert.equal(otherColumn!.classList.contains("board-column-other"), true);
+      assert.equal(
+        otherColumn!.querySelectorAll(".board-card").length,
+        1,
+        "the 1 record with the unrecognized status must render here, not vanish",
+      );
+      assert.equal(
+        otherColumn!.querySelector(".board-add-card-btn"),
+        null,
+        "no add-card button -- there's no real status value to create a record against",
+      );
+
+      fireEvent.drop(otherColumn!, { dataTransfer: { getData: () => "1" } });
+      await new Promise((resolve) => setTimeout(resolve, 0)); // let any (wrongly) fired PATCH's promise chain settle
+      assert.equal(
+        store.find((r) => r.id === 1)!.status,
+        "new",
+        "dropping a card onto the synthetic '(other)' column must not PATCH anything -- record 1's status must be untouched",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * New in this round: a "Filter by <field>" dropdown next to the search box,
  * scoped to whichever enum field the board view already uses (findBoardField
  * -- usually "status"/"stage"), so a long table can be narrowed to one

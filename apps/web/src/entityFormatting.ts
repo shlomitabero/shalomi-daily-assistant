@@ -496,6 +496,8 @@ export interface BoardColumn {
   value: string;
   label: string;
   records: EntityRecord[];
+  /** True only for the trailing synthetic "(other)" column -- see below. */
+  isOther?: boolean;
 }
 
 /**
@@ -503,14 +505,39 @@ export interface BoardColumn {
  * own declared order (not first-seen order) -- including a value with zero
  * matching records, so an empty stage still shows as a column rather than
  * silently disappearing.
+ *
+ * A record whose stored value isn't in the field's current enumValues (e.g.
+ * a legacy value left behind after an AI refine renamed/restructured the
+ * field's options -- migrate.ts only ever adds columns, it never rewrites
+ * existing row data) used to simply vanish from the board with no trace,
+ * while still showing up fine in Table/Calendar views. It's now collected
+ * into a trailing "(other)" column instead, mirroring the same bucket
+ * groupRecordsByField below already uses for table-view grouping. `t` is
+ * optional so existing callers that only care about real enum columns don't
+ * need to pass a translator.
  */
-export function groupByField(records: EntityRecord[], field: Field): BoardColumn[] {
+export function groupByField(
+  records: EntityRecord[],
+  field: Field,
+  t?: (key: string) => string,
+): BoardColumn[] {
   const values = field.enumValues ?? [];
-  return values.map((value) => ({
+  const columns: BoardColumn[] = values.map((value) => ({
     value,
     label: field.enumLabels?.[value] ?? value,
     records: records.filter((r) => String(r[field.name]) === value),
   }));
+  const known = new Set(values);
+  const other = records.filter((r) => !known.has(String(r[field.name] ?? "")));
+  if (other.length > 0) {
+    columns.push({
+      value: "__other__",
+      label: t ? t("entity.groupBy.other") : "Other",
+      records: other,
+      isOther: true,
+    });
+  }
+  return columns;
 }
 
 const DATE_FIELD_NAME_HINTS = ["date", "appointmentdate", "scheduleddate", "eventdate", "duedate"];

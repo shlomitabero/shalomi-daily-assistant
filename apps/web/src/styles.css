@@ -1259,6 +1259,10 @@ tbody tr:hover {
   border-color: var(--accent);
 }
 
+.board-column-other {
+  border-style: dashed;
+}
+
 .board-column-header {
   display: flex;
   align-items: center;

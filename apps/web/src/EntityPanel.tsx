@@ -2393,18 +2393,32 @@ export function EntityPanel({
             </div>
           ) : viewMode === "board" && boardField ? (
             <div className="board-scroll">
-              {groupByField(visibleRecords, boardField).map((column) => {
+              {groupByField(visibleRecords, boardField, t).map((column) => {
                 const collapsed = collapsedBoardColumns.has(column.value);
                 return (
                 <div
-                  className={dragOverColumn === column.value ? "board-column board-column-drag-over" : "board-column"}
+                  className={
+                    dragOverColumn === column.value
+                      ? "board-column board-column-drag-over"
+                      : column.isOther
+                        ? "board-column board-column-other"
+                        : "board-column"
+                  }
                   key={column.value}
                   onDragOver={(e) => {
+                    // The synthetic "(other)" column has no real enum value
+                    // to write back, so it's display-only -- never a valid
+                    // drop target. Not calling preventDefault() here means
+                    // the browser rejects the drop before onDrop can fire.
+                    if (column.isOther) return;
                     e.preventDefault();
                     setDragOverColumn(column.value);
                   }}
                   onDragLeave={() => setDragOverColumn((prev) => (prev === column.value ? null : prev))}
-                  onDrop={(e) => handleCardDrop(e, boardField.name, column.value)}
+                  onDrop={(e) => {
+                    if (column.isOther) return;
+                    handleCardDrop(e, boardField.name, column.value);
+                  }}
                 >
                   <div className="board-column-header">
                     <div className="board-column-header-info">
@@ -2420,15 +2434,17 @@ export function EntityPanel({
                       <span className={`badge badge-${badgeTone(column.value)}`}>{column.label}</span>
                       <span className="muted small">{column.records.length}</span>
                     </div>
-                    <button
-                      type="button"
-                      className="board-add-card-btn"
-                      title={t("entity.board.addCard", { value: column.label })}
-                      aria-label={t("entity.board.addCard", { value: column.label })}
-                      onClick={() => startCreateForColumn(column.value, boardField)}
-                    >
-                      +
-                    </button>
+                    {!column.isOther && (
+                      <button
+                        type="button"
+                        className="board-add-card-btn"
+                        title={t("entity.board.addCard", { value: column.label })}
+                        aria-label={t("entity.board.addCard", { value: column.label })}
+                        onClick={() => startCreateForColumn(column.value, boardField)}
+                      >
+                        +
+                      </button>
+                    )}
                   </div>
                   {!collapsed && column.records.map((record) => (
                     <BoardCard

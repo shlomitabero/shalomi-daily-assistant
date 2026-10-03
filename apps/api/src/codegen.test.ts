@@ -624,6 +624,42 @@ test("the exported EntityView renders a real Kanban board for entities with a st
 });
 
 /**
+ * Regression test for a real bug: the exported app's own groupByField had
+ * the identical gap the live preview's did (see entityFormatting.ts's
+ * groupByField/groupRecordsByField) -- a record whose stored status isn't
+ * one of the field's current declared enumValues (e.g. a legacy value left
+ * behind after a refine renamed the field's options; migrations only ever
+ * ADD columns, never rewrite existing row data) simply vanished from the
+ * Kanban board with no trace, while still showing up fine in table view.
+ * Runs the real generated groupByField, not a reimplementation, confirming
+ * it now collects such a record into a trailing "(other)" column instead.
+ */
+test("the exported EntityView's groupByField collects a record with an unrecognized status into a trailing '(other)' column instead of dropping it", () => {
+  const entityViewJsx = generateExportFiles(project).find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+  const groupByFieldSrc = entityViewJsx.match(/function groupByField\(records, field\) \{[\s\S]*?\n\}\n/)?.[0];
+  assert.ok(groupByFieldSrc, "expected to find groupByField in generated output");
+
+  const groupByField = new Function(`${groupByFieldSrc}\nreturn groupByField;`)() as (
+    records: Record<string, unknown>[],
+    field: { name: string; enumValues?: string[]; enumLabels?: Record<string, string> },
+  ) => { value: string; label: string; records: unknown[]; isOther?: boolean }[];
+
+  const field = { name: "status", enumValues: ["new", "won", "lost"] };
+  const records = [{ id: 1, status: "won" }, { id: 2, status: "archived" }];
+  const columns = groupByField(records, field);
+
+  assert.deepEqual(columns.map((c) => c.value), ["new", "won", "lost", "__other__"]);
+  const other = columns.find((c) => c.value === "__other__")!;
+  assert.equal(other.label, "Other");
+  assert.equal(other.isOther, true);
+  assert.deepEqual(other.records, [{ id: 2, status: "archived" }]);
+  assert.equal(columns.find((c) => c.value === "won")!.isOther, undefined, "a real enum column must never be marked isOther");
+
+  // No legacy value at all -- the "(other)" column must not be rendered.
+  assert.equal(groupByField([{ id: 1, status: "won" }], field).find((c) => c.value === "__other__"), undefined);
+});
+
+/**
  * Regression test for a real bug found by round 286's Explore survey and
  * fixed the same round in both the live preview (EntityPanel.tsx) and here:
  * findBoardField only ever picks ONE enum field per entity, for Kanban
@@ -4516,17 +4552,25 @@ test("the exported EntityView's Kanban board cards are drag-and-drop-able onto a
   assert.match(dropSrc!, /const record = records\.find\(\(r\) => r\.id === id\);/);
   assert.match(dropSrc!, /if \(record && String\(record\[fieldName\] \?\? ""\) === value\) return;/);
   assert.match(dropSrc!, /void handleMove\(id, fieldName, value\);/);
-  // The column itself must be a real drop target, highlighted only while actually dragged over.
-  assert.match(entityViewJsx, /onDragOver=\{\(e\) => \{\s*e\.preventDefault\(\);\s*setDragOverColumn\(column\.value\);\s*\}\}/);
-  assert.match(entityViewJsx, /onDragLeave=\{\(\) => setDragOverColumn\(\(prev\) => \(prev === column\.value \? null : prev\)\)\}/);
-  assert.match(entityViewJsx, /onDrop=\{\(e\) => handleCardDrop\(e, boardField\.name, column\.value\)\}/);
+  // The column itself must be a real drop target, highlighted only while actually dragged over -- except
+  // the synthetic "(other)" column (see the "(other)" bucket test below), which must guard out of both.
   assert.match(
     entityViewJsx,
-    /className=\{dragOverColumn === column\.value \? "board-column board-column-drag-over" : "board-column"\}/,
+    /onDragOver=\{\(e\) => \{\s*if \(column\.isOther\) return;\s*e\.preventDefault\(\);\s*setDragOverColumn\(column\.value\);\s*\}\}/,
+  );
+  assert.match(entityViewJsx, /onDragLeave=\{\(\) => setDragOverColumn\(\(prev\) => \(prev === column\.value \? null : prev\)\)\}/);
+  assert.match(
+    entityViewJsx,
+    /onDrop=\{\(e\) => \{\s*if \(column\.isOther\) return;\s*handleCardDrop\(e, boardField\.name, column\.value\);\s*\}\}/,
+  );
+  assert.match(
+    entityViewJsx,
+    /className=\{\s*dragOverColumn === column\.value\s*\? "board-column board-column-drag-over"\s*: column\.isOther\s*\? "board-column board-column-other"\s*: "board-column"\s*\}/,
   );
 
   const stylesCss = files.find((f) => f.path === "web/src/styles.css")!.content;
   assert.match(stylesCss, /\.board-column-drag-over/);
+  assert.match(stylesCss, /\.board-column-other/);
 });
 
 // Executes the real generated isInlineEditableField (extracted from real
