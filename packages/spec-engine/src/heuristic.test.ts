@@ -352,11 +352,14 @@ test("Ticket/Subscription/JobApplicant keywords avoid the substring collisions t
   const provider = new HeuristicSpecProvider();
 
   // JobApplicant deliberately uses "hiring" alone, not "hiring pipeline" --
-  // the obvious phrase -- because "pipeline" is Deal's own keyword. A
-  // recruitment description would otherwise spuriously also match Deal.
+  // the obvious phrase. Historically this was because "pipeline" was Deal's
+  // own keyword too (removed in round 371, see domainEntities.ts's own
+  // pitfall 1b comment), but the test below still exercises the plain
+  // "hiring process" phrasing on its own terms, regardless of Deal's
+  // current keyword list.
   const recruiting = await provider.generate("Track candidates through our hiring process for open roles.");
   assert.ok(recruiting.entities.some((e) => e.name === "JobApplicant"));
-  assert.ok(!recruiting.entities.some((e) => e.name === "Deal"), "'hiring' must not spuriously match Deal via a 'pipeline' substring that was deliberately left out");
+  assert.ok(!recruiting.entities.some((e) => e.name === "Deal"), "'hiring process' must not spuriously match Deal");
 
   // Same reasoning in Hebrew: "גיוס" alone, not "גיוס עובדים" -- the obvious
   // phrase -- because "עובדים" is Employee's own keyword. A recruitment
@@ -364,6 +367,32 @@ test("Ticket/Subscription/JobApplicant keywords avoid the substring collisions t
   const recruitingHe = await provider.generate("אפליקציה לניהול מועמדים בתהליך הגיוס שלנו");
   assert.ok(recruitingHe.entities.some((e) => e.name === "JobApplicant"));
   assert.ok(!recruitingHe.entities.some((e) => e.name === "Employee"), "'גיוס' must not spuriously match Employee via an 'עובדים' substring that was deliberately left out");
+});
+
+/**
+ * Regression test for a real bug found in round 371: Deal's own keyword
+ * list used to include bare "pipeline", which is also the single most
+ * idiomatic HR/ATS phrase for a recruitment funnel ("hiring pipeline") --
+ * so any recruiting-app description using that ordinary phrase spuriously
+ * got a sales Deal entity (title/value/stage/owner) injected alongside the
+ * real JobApplicant entity. Confirmed via domainEntities.ts's own
+ * doc-comment calling this out by name as a known pitfall (pitfall 1b) that
+ * was never actually fixed on Deal's own side -- only worked around on
+ * JobApplicant's side (see the test above). Fixed by dropping "pipeline"
+ * from Deal's keyword list entirely, since "deals"/"negotiation" already
+ * cover the ordinary English phrasing for a sales Deal on their own.
+ */
+test("Deal's keyword list no longer spuriously matches the idiomatic recruiting phrase 'hiring pipeline'", async () => {
+  const provider = new HeuristicSpecProvider();
+  const recruiting = await provider.generate("Track candidates through our hiring pipeline for open roles.");
+  assert.ok(recruiting.entities.some((e) => e.name === "JobApplicant"));
+  assert.ok(!recruiting.entities.some((e) => e.name === "Deal"), "'hiring pipeline' must not spuriously match Deal");
+
+  // The real sales-pipeline phrasing for Deal must still work -- this isn't
+  // a case of Deal becoming unreachable, just no longer reachable via the
+  // single word "pipeline" on its own.
+  const sales = await provider.generate("An app to track sales deals through our pipeline.");
+  assert.ok(sales.entities.some((e) => e.name === "Deal"));
 });
 
 test("recognizes nonprofit-donation, logistics/warehouse, and insurance-claims descriptions with tailored entities", async () => {

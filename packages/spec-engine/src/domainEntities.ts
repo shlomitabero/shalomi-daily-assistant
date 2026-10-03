@@ -14,19 +14,33 @@ import type { Entity } from "@forge/shared";
  * display text, attached onto the entity/field as `label` when the user's
  * description is in Hebrew (see heuristic.ts).
  *
- * Two keyword pitfalls to check for before adding a new one (both caught by
+ * Three keyword pitfalls to check for before adding a new one (all caught by
  * writing a real regression test, not by inspection):
  * 1. English substring collisions with a short/common word inside an
- *    unrelated word (e.g. "events" ⊂ "prevents", "pipeline" ⊂ "hiring
- *    pipeline" colliding with Deal's own "pipeline" keyword). Usually fixed
- *    by picking a different, collision-free keyword string (see "deal" vs.
- *    "deals" below) — but when EVERY spelling of the real word is itself a
+ *    unrelated word (e.g. "events" ⊂ "prevents"). Usually fixed by picking a
+ *    different, collision-free keyword string (see "deal" vs. "deals"
+ *    below) — but when EVERY spelling of the real word is itself a
  *    substring of the colliding word(s), as with "order" (contained inside
  *    "disorder(s)", "recorder(s)", "border(s)", no matter singular/plural),
  *    no plain string keyword can win: use a `RegExp` keyword instead (see
  *    Order's own entry below), matched with `\b` word boundaries so
  *    "orders" matches but "disorders" doesn't (a letter immediately before
  *    "order" blocks the boundary).
+ * 1b. A DIFFERENT shape of collision a `\b`-bounded RegExp can't fix: two
+ *    entities' keywords both legitimately matching because they co-occur as
+ *    two separate, real, whole words inside one idiomatic phrase -- e.g.
+ *    "pipeline" (Deal's own keyword, removed below after this exact
+ *    collision was found in round 371) really is a genuine standalone word
+ *    in "hiring pipeline", the single most idiomatic HR/ATS phrase for a
+ *    recruitment funnel, so no amount of word-boundary-matching on
+ *    "pipeline" itself changes anything. Word boundaries only ever help
+ *    against a keyword being a SUBSTRING of a different word (pitfall 1);
+ *    they do nothing when the keyword is already its own correct word, just
+ *    inside a two-word phrase that means something else entirely. The only
+ *    real fix is dropping the colliding keyword outright, once the rest of
+ *    the entity's keyword list still covers the ordinary case well enough
+ *    on its own (see JobApplicant's own "hiring" below, deliberately not
+ *    "hiring pipeline").
  * 2. Hebrew construct-state (סמיכות) and other suffix inflection: a keyword
  *    like "תמיכה" does NOT match "תמיכת לקוחות" ("customer support") as a
  *    substring, since the word's ending changes. Prefixes (ה/ו/ב/כ/ל/מ)
@@ -264,7 +278,16 @@ export const DOMAIN_ENTITY_RULES: DomainEntityRule[] = [
     // here. Plural "deals" doesn't have either problem (neither "ideal"
     // nor "dealership" contains it as a substring) and is still the
     // natural way this entity gets mentioned ("track deals"/"our deals").
-    keywords: ["deals", "negotiation", "pipeline", "עסקה", "עסקאות", "משא ומתן"],
+    //
+    // "pipeline" was removed (it used to be listed here) -- unlike "deal"
+    // above, this isn't a substring collision a `\b`-bounded RegExp could
+    // fix: "pipeline" is a genuine standalone word in "hiring pipeline",
+    // the single most idiomatic HR/ATS phrase for a recruitment funnel
+    // (and the exact phrase pitfall 1's own comment above uses as its
+    // example), so any word-boundary-respecting match for "pipeline"
+    // still fires on it. "deals"/"negotiation" already cover the ordinary
+    // English phrasing for this entity well enough on their own.
+    keywords: ["deals", "negotiation", "עסקה", "עסקאות", "משא ומתן"],
     labelHe: "עסקאות",
     descriptionHe: "עסקת מכירה פוטנציאלית.",
     fieldLabelsHe: { title: "כותרת", value: "שווי", stage: "שלב", owner: "אחראי/ת" },
