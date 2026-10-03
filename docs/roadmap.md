@@ -21644,6 +21644,60 @@ Full suite green: **1274 tests** (`@forge/shared` 13, `@forge/spec-engine`
 722 (+1 new test)) via `npm test` at the repo root, plus a clean full
 monorepo `npm run build`.
 
+### Round 358 (autonomous hourly routine): "Clear search" button + Escape-to-clear in the History panel
+
+EntityPanel.tsx/codegen.ts have now had 12 straight rounds (346-357)
+of small keyboard-shortcut/button-polish gaps, so this round's Explore
+survey was explicitly asked to prioritize less-recently-examined files
+first -- App.tsx, the build pipeline, spec-engine, db migrations,
+BusinessTwin/Collaborators/History/WhatsApp panels -- before falling
+back to the two well-worn files. It found a real gap in
+`HistoryPanel.tsx`: its checkpoint search box (`.history-search`,
+same filter-as-you-type + recent-searches-chips pattern as
+EntityPanel's own search box) never got the "Clear search" (✕) button
+(round 355) or Escape-to-clear (round 357) that pattern already has
+everywhere else. Independently verified via Read/grep that
+`handleSearchKeyDown`'s equivalent inline `onKeyDown` only checked
+`e.key === "Enter"`, and that `handleClearRecentSearches` is a
+genuinely separate action (it only empties the *saved* recent-searches
+list, never the live search value) -- the same distinction round 355's
+own entry already drew for EntityPanel.
+
+Added a `<button className="secondary small history-clear-search">`
+(shown only when `search.length > 0`, calling `setSearch("")`) next to
+the `.history-search` input, and an `else if (e.key === "Escape" &&
+search.length > 0)` branch to the input's own `onKeyDown` (alongside
+the existing Enter-commits-recent-search branch). New
+`history.search.clear` i18n key (Hebrew: "ניקוי החיפוש", English:
+"Clear search"). `HistoryPanel.tsx` has no `codegen.ts` counterpart
+(it's part of the live builder UI only, never exported), so there was
+no second file to port this to.
+
+Tests: one new real-DOM test in `HistoryPanel.test.ts`, reusing the
+existing 6-checkpoint fixture that already crosses the `>5` threshold
+needed for the search box to render at all. Confirms the button is
+absent while empty, appears once the search box has text and the list
+is narrowed, and that both clicking it and pressing Escape empty the
+box, restore all 6 checkpoints, and -- critically -- never show or
+commit anything to the separate `.history-recent-searches` list (only
+Enter/blur do that).
+
+Deliberate-break-and-restore: backed up all 3 changed files, reverted
+the 2 implementation files (`HistoryPanel.tsx`, `language.ts`) to
+HEAD, and confirmed exactly 1 failure in the 1 affected suite
+(`HistoryPanel.test.ts` -- failing fast with "the button must appear
+the moment the search box has text", comparing a boolean/`undefined`,
+not a live DOM element, so no round-356 hang risk) -- no other tests
+affected. Restored every file from the backup and confirmed
+byte-identical via `diff -q` against all 3 files, then re-ran the full
+web suite and a clean production build one final time before
+committing.
+
+Full suite green: **1275 tests** (`@forge/shared` 13, `@forge/spec-engine`
+85, `@forge/db` 96, `@forge/api` 358 unchanged; `@forge/web` 723 (+1 new
+test)) via `npm test` at the repo root, plus a clean full monorepo
+`npm run build`.
+
 ## Phase 4
 
 - Template/agent marketplace
