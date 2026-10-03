@@ -105,7 +105,18 @@ export const DOMAIN_ENTITY_RULES: DomainEntityRule[] = [
     // make any donation-app description spuriously also produce an
     // Appointment entity. "תורים" (plural) doesn't have this problem and
     // is what every real appointment-related description already uses.
-    keywords: ["appointment", "booking", "reservation", "schedule", "תורים", "פגישה", "פגישות"],
+    //
+    // "schedule" was removed (round 373) -- it's a real, correctly-spelled
+    // standalone word, so a `\b`-bounded RegExp can't help here (the same
+    // idiom-co-occurrence shape as Deal's removed "pipeline" keyword, not
+    // a substring-within-a-word collision): "payment schedule"/"project
+    // schedule"/"work schedule" are all ordinary business-management
+    // phrases with nothing to do with booking a customer appointment, and
+    // every one of them was spuriously matching this entity. Verified no
+    // existing test relied on bare "schedule" before removing it;
+    // "appointment"/"booking"/"reservation" already cover the ordinary
+    // case well enough on their own.
+    keywords: ["appointment", "booking", "reservation", "תורים", "פגישה", "פגישות"],
     labelHe: "תורים",
     descriptionHe: "פגישה מתוזמנת עם לקוח.",
     fieldLabelsHe: {

@@ -395,6 +395,38 @@ test("Deal's keyword list no longer spuriously matches the idiomatic recruiting 
   assert.ok(sales.entities.some((e) => e.name === "Deal"));
 });
 
+/**
+ * Regression test for a real bug found in round 373: Appointment's own
+ * "schedule" keyword is the same idiom-co-occurrence shape as Deal's
+ * removed "pipeline" keyword (round 371), not a substring collision --
+ * "payment schedule"/"project schedule"/"work schedule" are all ordinary
+ * business-management phrases with nothing to do with booking a customer
+ * appointment, and every one of them was spuriously matching this entity.
+ */
+test("Appointment's keyword list no longer spuriously matches 'payment schedule'/'work schedule'", async () => {
+  const provider = new HeuristicSpecProvider();
+
+  const invoicing = await provider.generate(
+    "An invoicing app that tracks invoices and a payment schedule for each client project.",
+  );
+  assert.ok(
+    !invoicing.entities.some((e) => e.name === "Appointment"),
+    "'payment schedule' must not spuriously match Appointment",
+  );
+
+  const workforce = await provider.generate("A tool to manage our weekly work schedule for employees.");
+  assert.ok(
+    !workforce.entities.some((e) => e.name === "Appointment"),
+    "'work schedule' must not spuriously match Appointment",
+  );
+
+  // The real appointment-booking phrasing must still work -- this isn't a
+  // case of Appointment becoming unreachable, just no longer reachable via
+  // the single word "schedule" on its own.
+  const booking = await provider.generate("An app to book appointments with customers for haircuts.");
+  assert.ok(booking.entities.some((e) => e.name === "Appointment"));
+});
+
 test("recognizes nonprofit-donation, logistics/warehouse, and insurance-claims descriptions with tailored entities", async () => {
   const provider = new HeuristicSpecProvider();
 
