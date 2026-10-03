@@ -2394,6 +2394,92 @@ test("the exported EntityView's Delete/Backspace shortcut deletes the focused ro
 });
 
 /**
+ * New in this round: porting the live preview's own "d" shortcut
+ * (duplicate the focused row) to the exported app's EntityView.jsx.
+ * j/k/Enter/x/Delete above let a keyboard-only user navigate, open,
+ * select, and delete rows, but duplicating one still required reaching
+ * for the mouse -- confirmed via grep that handleDuplicate was only
+ * ever wired to the row's own Duplicate button's onClick. Reuses
+ * handleDuplicate verbatim (no confirm dialog, since duplicating only
+ * creates data), so this confirms the real POST fires exactly once with
+ * the focused row's own field values and the new record actually
+ * appears in the table.
+ */
+test("the exported EntityView's 'd' shortcut duplicates the focused row via the real API", async () => {
+  const files = generateExportFiles(project);
+  const dir = writeGeneratedWebComponent(files);
+  const store = [
+    { id: 1, name: "Acme Corp", status: "New" },
+    { id: 2, name: "Globex", status: "Won" },
+  ];
+  const originalFetch = globalThis.fetch;
+  let postCount = 0;
+  const postedBodies: Record<string, unknown>[] = [];
+  globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
+    const method = init?.method ?? "GET";
+    if (method === "GET" && input === "/api/Customer") {
+      return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    if (method === "POST" && input === "/api/Customer") {
+      postCount += 1;
+      const body = JSON.parse(init!.body as string);
+      postedBodies.push(body);
+      const record = { id: 3, ...body };
+      store.push(record);
+      return new Response(JSON.stringify({ record }), { status: 201, headers: { "content-type": "application/json" } });
+    }
+    throw new Error(`unexpected request ${method} ${input}`);
+  }) as typeof fetch;
+
+  try {
+    await withRealLocalStorage(async () => {
+      const { EntityView } = await import(path.join(dir, "web", "src", "components", "EntityView.jsx"));
+      const customerEntity = project.spec.entities.find((e) => e.name === "Customer")!;
+      const props = {
+        entity: customerEntity,
+        highlightRecordId: null,
+        onHighlightHandled: () => {},
+        onJumpToRecord: () => {},
+        onRecordCountChange: () => {},
+      };
+
+      const { container } = render(React.createElement(EntityView, props));
+      for (let i = 0; i < 40; i++) {
+        if (container.querySelectorAll("tbody tr").length === 2) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+      assert.equal(container.querySelectorAll("tbody tr").length, 2, "expected both records to have loaded");
+
+      await act(async () => {
+        fireEvent.keyDown(window, { key: "j" });
+      });
+      const focused = container.querySelector(".record-row-focused") as HTMLElement;
+      assert.equal(focused.getAttribute("data-record-id"), "1", "sanity check: 'j' must have focused the first row");
+
+      await act(async () => {
+        fireEvent.keyDown(window, { key: "d" });
+      });
+      for (let i = 0; i < 40; i++) {
+        if (container.querySelectorAll("tbody tr").length === 3) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+      assert.equal(postCount, 1, "the real duplicate request must fire exactly once");
+      assert.equal(postedBodies[0]?.name, "Acme Corp", "the duplicate must copy the focused row's own values, not the other row's");
+      assert.equal(postedBodies[0]?.status, "New");
+      assert.equal(container.querySelectorAll("tbody tr").length, 3, "the new duplicated record must actually appear in the table");
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    cleanup();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
  * New in this round: porting the live preview's own "n" shortcut
  * (jump to a blank add-record form) to the exported app's EntityView.jsx.
  * Unlike j/k/Enter above, this listener is NOT scoped to table view -- the

@@ -62,8 +62,8 @@ test("renders a real dialog listing every actual shortcut, not a placeholder", a
     assert.equal(dialog!.getAttribute("aria-modal"), "true");
 
     const rows = document.querySelectorAll(".shortcuts-row");
-    // Ctrl+K, "/", "?", Escape, j/down, k/up, Enter, x, n, Delete, Ctrl+Enter -- 11 rows.
-    assert.equal(rows.length, 11, "expected one row per known shortcut");
+    // Ctrl+K, "/", "?", Escape, j/down, k/up, Enter, x, n, Delete, d, Ctrl+Enter -- 12 rows.
+    assert.equal(rows.length, 12, "expected one row per known shortcut");
 
     const kbds = Array.from(document.querySelectorAll(".shortcuts-keys kbd")).map((el) => el.textContent);
     assert.ok(kbds.includes("Ctrl"), "expected Ctrl+K to be listed");
@@ -76,6 +76,7 @@ test("renders a real dialog listing every actual shortcut, not a placeholder", a
     assert.ok(kbds.includes("x"), "expected x (toggle select) to be listed");
     assert.ok(kbds.includes("n"), "expected n (new record) to be listed");
     assert.ok(kbds.includes("Delete"), "expected Delete (delete row) to be listed");
+    assert.ok(kbds.includes("d"), "expected d (duplicate row) to be listed");
     assert.equal(
       kbds.filter((k) => k === "Ctrl").length,
       2,

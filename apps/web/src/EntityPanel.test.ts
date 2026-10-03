@@ -3421,6 +3421,73 @@ test("EntityPanel's Delete/Backspace shortcut deletes the focused row via the re
 });
 
 /**
+ * New in this round: j/k/Enter/x/Delete above let a keyboard-only user
+ * navigate, open, select, and delete rows, but duplicating one still
+ * required reaching for the mouse (the row's own Duplicate button). "d"
+ * now duplicates the focused row, reusing handleDuplicate verbatim (the
+ * exact same function the mouse-driven button already calls) -- no
+ * confirm dialog, since duplicating only creates data, never destroys
+ * it. Confirms the real POST fires exactly once with the focused row's
+ * own field values (not the other row's), the new record actually
+ * appears in the table, and the isTypingTarget guard still applies:
+ * pressing "d" while the search box has focus must type a literal "d",
+ * never duplicate a record.
+ */
+test("EntityPanel's 'd' shortcut duplicates the focused row via the real API, without hijacking keystrokes typed into the search box", async () => {
+  await withJsdom(async () => {
+    const store: EntityRecord[] = [
+      { id: 1, name: "Acme Corp", status: "new" },
+      { id: 2, name: "Globex", status: "won" },
+    ];
+    const originalFetch = globalThis.fetch;
+    let postCount = 0;
+    const postedBodies: Record<string, unknown>[] = [];
+    globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/entities/Deal") {
+        return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      if (method === "POST" && input === "/api/projects/proj1/entities/Deal") {
+        postCount += 1;
+        const body = JSON.parse(init!.body as string);
+        postedBodies.push(body);
+        const record = { id: 3, ...body };
+        store.push(record);
+        return new Response(JSON.stringify({ record }), { status: 201, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+    try {
+      renderEntityPanel();
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 2);
+
+      for (let attempt = 0; document.querySelectorAll(".record-row-focused").length === 0 && attempt < 40; attempt++) {
+        fireEvent.keyDown(window, { key: "j" });
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      }
+      const focused = document.querySelector(".record-row-focused") as HTMLElement;
+      assert.equal(focused.getAttribute("data-record-id"), "1", "sanity check: 'j' must have focused the first row");
+
+      // Pressing "d" while the search box has focus must type a literal "d"
+      // there, never duplicate the focused row -- isTypingTarget's job.
+      const searchBox = document.querySelector(".entity-search") as HTMLInputElement;
+      fireEvent.keyDown(searchBox, { key: "d" });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      assert.equal(postCount, 0, "a 'd' keydown targeting the search box must never trigger a duplicate");
+      assert.equal(document.querySelectorAll("table tbody tr").length, 2, "no row must be duplicated while the search box had focus");
+
+      fireEvent.keyDown(window, { key: "d" });
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 3);
+      assert.equal(postCount, 1, "the real duplicate request must fire exactly once");
+      assert.equal(postedBodies[0]?.name, "Acme Corp", "the duplicate must copy the focused row's own values, not the other row's");
+      assert.equal(postedBodies[0]?.status, "new");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * New in this round: there was no keyboard-only way to start adding a new
  * record -- j/k/Enter above only navigate EXISTING rows. "n" jumps to a
  * blank add form and focuses its first field, discarding any in-progress

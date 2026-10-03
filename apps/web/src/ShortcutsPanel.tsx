@@ -22,6 +22,7 @@ const SHORTCUTS: { keys: string[]; descriptionKey: string }[] = [
   { keys: ["x"], descriptionKey: "shortcuts.toggleSelect" },
   { keys: ["n"], descriptionKey: "shortcuts.newRecord" },
   { keys: ["Delete"], descriptionKey: "shortcuts.rowDelete" },
+  { keys: ["d"], descriptionKey: "shortcuts.rowDuplicate" },
   { keys: ["Ctrl", "Enter"], descriptionKey: "shortcuts.submitForm" },
 ];
 

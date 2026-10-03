@@ -1315,12 +1315,15 @@ export function EntityPanel({
   /**
    * j/k (and ArrowDown/ArrowUp) move a keyboard focus between table rows,
    * Enter opens the focused row for editing, "x" toggles that row's own
-   * selection checkbox, and Delete/Backspace deletes it (reusing
+   * selection checkbox, Delete/Backspace deletes it (reusing
    * handleDelete's own confirm dialog and undo-toast, exactly like its
-   * mouse-driven Delete button) -- previously a keyboard-only user could
-   * navigate to and open any record but could never build a multi-row
-   * selection for the bulk actions (bulk delete/duplicate/edit), or
-   * delete a single record, without reaching for the mouse. Only active
+   * mouse-driven Delete button), and "d" duplicates it (reusing
+   * handleDuplicate verbatim, exactly like its own mouse-driven Duplicate
+   * button -- no confirmation needed since duplicating only creates data,
+   * never destroys it) -- previously a keyboard-only user could navigate
+   * to and open any record but could never build a multi-row selection
+   * for the bulk actions (bulk delete/duplicate/edit), delete a single
+   * record, or duplicate one, without reaching for the mouse. Only active
    * in table view (board/calendar have their own navigation shapes), and
    * isTypingTarget guards against
    * hijacking keystrokes meant for the search box, a filter dropdown, or
@@ -1351,6 +1354,9 @@ export function EntityPanel({
       } else if ((e.key === "Delete" || e.key === "Backspace") && focusedRowId != null) {
         e.preventDefault();
         void handleDelete(focusedRowId);
+      } else if (e.key === "d" && focusedRowId != null) {
+        e.preventDefault();
+        void handleDuplicate(focusedRowId);
       }
     }
     window.addEventListener("keydown", handleKeyDown);
