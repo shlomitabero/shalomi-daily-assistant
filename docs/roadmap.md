@@ -22814,6 +22814,89 @@ genuinely fresh survey is now warranted for the next round rather than
 continuing to mine this same file on the strength of a prior round's
 leftover.
 
+### Round 374: `requestSpecFix` (Debug Agent) had no retry on transient Anthropic 429/529 responses, unlike its two siblings which fall back to heuristics on any failure
+
+Per round 373's own instruction, did a genuinely fresh survey this round
+rather than continuing to mine `domainEntities.ts` (that investigative
+thread, rounds 371-373, is closed). An Explore subagent surveyed the
+codebase broadly and returned two candidates:
+
+1. `packages/spec-engine/src/anthropicFetch.ts`: `fetchAnthropic` never
+   retried a transient Anthropic API failure.
+2. `apps/web/src/CollaboratorsPanel.tsx` / the collaborator-invite route
+   in `apps/api/src/routes/projects.ts`: the invite flow returns a
+   distinguishable "No account found" error, which could let an attacker
+   enumerate registered email addresses.
+
+Independently verified both before implementing anything, rather than
+taking the subagent's recommendation on faith:
+
+- Read `apps/api/src/routes/projects.ts` (the invite route),
+  `apps/api/src/routes/auth.ts` (the login route's own timing-defense
+  sibling, `dummyPasswordHashPromise`, added round 369), and
+  `apps/web/src/CollaboratorsPanel.tsx` (lines ~71-91). The UI
+  **deliberately** surfaces "No account found" so the project owner gets
+  real product feedback telling them to invite that person to sign up
+  first -- this is a documented, intentional design choice, not an
+  oversight like the login route's incidental timing side-channel was.
+  Fixing it correctly would mean either breaking that feature or building
+  new rate-limiting infrastructure (confirmed via `grep` that none exists
+  anywhere in the codebase yet) -- too large a judgment call for this
+  round's established "small, scoped fix" discipline. Deliberately set
+  aside, not ruled out, as a candidate for a future, more deliberate round
+  if שלומי wants to revisit the product tradeoff.
+- Read the full original `packages/spec-engine/src/anthropicFetch.ts`,
+  `packages/spec-engine/src/debug.ts` (`requestSpecFix`, lines ~40-117),
+  and confirmed via `grep` that `anthropicFetch.ts`'s three callers
+  (`anthropic.ts`, `promptEnhancer.ts`, `debug.ts`) are the only places
+  touching it, and that `apps/api/src` has zero references to
+  `fetchAnthropic`/`ANTHROPIC_API_URL` -- the fix needs no porting
+  anywhere else. Confirmed `requestSpecFix` has no offline fallback
+  whatsoever (unlike `AnthropicSpecProvider`/`AnthropicPromptEnhancer`,
+  which both fall back to the heuristic provider on any failure), so a
+  single transient Anthropic hiccup on this one call could kill the
+  entire Debug Agent step -- and with it the whole multi-agent build
+  pipeline -- even when the underlying error being fixed was perfectly
+  fixable.
+
+**Fix**: `fetchAnthropic` now retries automatically on exactly the two
+status codes Anthropic's own API documents as transient and safe to
+retry -- `429` ("rate_limit_error") and `529` ("overloaded_error") --
+never on any other 4xx/5xx, since those reflect a genuine
+request/configuration problem that retrying can't fix. Added two new
+optional trailing parameters (`retryDelaysMs`, `sleep`) with real-world
+defaults mirroring `apps/web/src/wakeRetry.ts`'s own injectable-sleep
+convention, so none of the three existing call sites needed to change.
+
+Tests: 4 new in `anthropicFetch.test.ts` -- retry-then-succeed on 429,
+retry-then-succeed on 529, giving up and returning the final response
+once configured retries are exhausted (never retrying forever), and
+never retrying a non-retryable status like 400.
+
+Deliberate-break-and-restore: backed up both changed files
+(`anthropicFetch.ts`, `anthropicFetch.test.ts`) to the scratchpad,
+reverted only `anthropicFetch.ts` to HEAD, ran the `spec-engine`
+workspace's tests directly and confirmed exactly the 3 expected failures
+(the two retry-success tests and the exhaust-retries test; the
+non-retryable-400 test still passed, since old code never retried
+anyway), restored from backup, confirmed byte-identical via `diff -q` on
+both files, then re-ran the full suite and a clean build one final time
+before committing.
+
+Full suite green: **1304 tests** (`@forge/shared` 13, `@forge/spec-engine`
+93 (+4 new), `@forge/db` 98 unchanged, `@forge/api` 361 unchanged,
+`@forge/web` 739 unchanged) via `npm test` at the repo root, plus a clean
+full monorepo `npm run build`. Pushed as commit `8d970a4`.
+
+**Topic status**: this fix is closed. Candidate 2 (collaborator-invite
+email enumeration) remains open but deliberately un-queued -- it is
+available for a future round only if specifically chosen with full
+awareness that the "right" fix requires either breaking the documented
+invite-feedback feature or building new rate-limiting infrastructure from
+scratch, neither of which fits a single autonomous round's normal scope.
+Round 375 should do its own fresh survey unless that candidate is
+specifically chosen with that tradeoff in mind.
+
 ## Phase 4
 
 - Template/agent marketplace
