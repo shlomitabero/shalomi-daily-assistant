@@ -21999,6 +21999,62 @@ Full suite green: **1281 tests** (`@forge/shared` 13, `@forge/spec-engine`
 tests)) via `npm test` at the repo root, plus a clean full monorepo
 `npm run build`.
 
+### Round 364: Escape in a field-label rename also wiped the whole in-progress record edit
+
+Continuing round 363's fresh-code-reading model, this round's Explore
+survey found a real bug by reading `FieldLabelEditor.tsx` together with
+where it's actually rendered in `EntityPanel.tsx`, rather than in
+isolation.
+
+`FieldLabelEditor.tsx`'s rename `<input>` (the pencil-icon inline editor
+for fixing an awkward auto-generated field label, e.g. "Phnoe" ->
+"Phone") handles its own Escape to cancel the rename
+(`if (e.key === "Escape") cancelEditing();`), but never called
+`stopPropagation()`. That input is rendered one-per-field directly
+inside `EntityPanel.tsx`'s own record `<form>` (line ~2071), which has
+its own `onKeyDown` that discards the *entire* in-progress record edit
+on Escape whenever `editingId != null` (the same handler
+round 351 added). With no `stopPropagation()`, a single Escape meant to
+back out of a two-second label fix kept bubbling from the label's own
+input up to the form, silently wiping every other field's unsaved value
+in the record being edited. Verified by reading both files directly
+(`FieldLabelEditor.tsx` in full, `EntityPanel.tsx`'s record-form JSX and
+its `onKeyDown` block), not by guessing from names.
+
+**Why this differs from rounds 359-362's own Escape-marker work**: that
+fix was for `useDialogFocusTrap.ts`'s *native* `addEventListener`
+listener, which fires on the real DOM before React's own synthetic
+dispatch even starts -- `stopPropagation()` inside a React handler
+can't stop it, hence the `data-escape-handled-locally` marker. Here,
+both the label input's and the form's handlers are plain React
+`onKeyDown` props with no native listener in between, so React's own
+simulated bubbling *does* respect `stopPropagation()` -- a real
+`e.stopPropagation()` is the correct, sufficient fix, not a marker.
+
+Fix: add `e.stopPropagation()` alongside the existing `cancelEditing()`
+call in `FieldLabelEditor.tsx`'s input `onKeyDown`. Checked
+`EntityLabelEditor.tsx` (rendered just above the form, not inside it --
+unaffected) and confirmed `apps/api/src/codegen.ts` has no equivalent
+field-label-rename feature at all (live-builder-only, no port needed).
+
+Tests: new regression test in `EntityPanel.test.ts`, right after the
+existing record-form Escape test it extends -- opens a record for
+editing, opens a field's label rename, types a draft, presses Escape,
+and confirms the rename is cancelled (no PATCH sent) while the record
+edit itself stays open with its original value and Cancel button still
+present (i.e. `editingId` was never cleared).
+
+Deliberate-break-and-restore: backed up both changed files, reverted
+`FieldLabelEditor.tsx` to HEAD, confirmed exactly 1 failure (the new
+test, fast, no hang), restored from backup and confirmed byte-identical
+via `diff -q`, then re-ran the full web suite and a clean production
+build one final time before committing.
+
+Full suite green: **1282 tests** (`@forge/shared` 13, `@forge/spec-engine`
+85, `@forge/db` 96, `@forge/api` 358 unchanged; `@forge/web` 730 (+1 new
+test)) via `npm test` at the repo root, plus a clean full monorepo
+`npm run build`.
+
 ## Phase 4
 
 - Template/agent marketplace
