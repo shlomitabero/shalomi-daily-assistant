@@ -21873,6 +21873,69 @@ Full suite green: **1278 tests** (`@forge/shared` 13, `@forge/spec-engine`
 test)) via `npm test` at the repo root, plus a clean full monorepo
 `npm run build`.
 
+### Round 362: Escape silently did nothing on an already-empty search/query box
+
+Round 362's own prep work (closing the marker-spread survey) confirmed
+`data-escape-handled-locally` was present and correct on all 8 dialogs
+that need it -- but a fresh Explore survey, independently verified by
+reading the actual code (not trusting the subagent's report alone), found
+a different, real bug in the marker's own *correctness* on three of
+those inputs, introduced across rounds 358-361.
+
+`useDialogFocusTrap.ts`'s own Escape listener
+(`target?.closest("[data-escape-handled-locally]")`) skips closing the
+dialog whenever the marker is present on the event's target, *regardless
+of whether the local handler bound to that same input actually does
+anything*. But `GlobalSearchPanel.tsx`'s `handleInputKeyDown`,
+`HistoryPanel.tsx`'s inline search handler, and
+`WhatsAppPanel.tsx`'s `handleLogSearchKeyDown` all only act on Escape
+when the field already has text (`query.length > 0` /
+`search.length > 0`) -- yet all three put the marker on their `<input>`
+unconditionally. With an already-empty, focused box (the common case:
+every one of these inputs has `autoFocus`, so the cursor lands there the
+instant the dialog opens), pressing Escape matched neither the marker's
+"something handles this locally" assumption nor the length-gated local
+handler: nothing happened at all, contradicting the app's own documented
+"Esc: close" shortcut (`ShortcutsPanel.tsx`'s `shortcuts.close` row) for
+a completely ordinary keyboard flow.
+
+Fix, identical in all three files: the marker is now conditional on
+there being something to locally clear --
+`` data-escape-handled-locally={search.length > 0 ? "" : undefined} `` (or
+`query` in GlobalSearchPanel.tsx). `undefined` omits the attribute
+entirely in React, so on an empty box `useDialogFocusTrap`'s own
+`[data-escape-handled-locally]` selector no longer matches and Escape
+falls through to its normal close-the-dialog behavior; with text in the
+box, behavior is byte-for-byte unchanged from before. `CheckpointLabelEditor.tsx`'s
+own use of the marker was checked too and needs no change -- its Escape
+handler (`cancelEditing()`) always does something regardless of draft
+length, so an unconditional marker there is correct, not a bug.
+
+Tests: extended the existing round-359/360/361 onClose-spy tests in
+`HistoryPanel.test.ts`, `WhatsAppPanel.test.ts`, and
+`GlobalSearchPanel.test.ts` (rather than adding new ones) with one more
+assertion each: after the box is cleared back to empty, a second Escape
+press must now increment the real `onClose` spy exactly once. The
+existing `GlobalSearchPanel.test.ts` assertion from round 361 that
+explicitly expected the *buggy* behavior ("Escape on an already-empty
+query box must be a harmless no-op, not close the dialog") was corrected
+to expect the fixed behavior instead, with a comment explaining why.
+
+Deliberate-break-and-restore: backed up all 6 changed files (3
+implementation, 3 test), reverted the 3 implementation files to HEAD,
+and confirmed exactly 3 failures -- one per affected suite, each failing
+on the pre-existing assertion that now expects the real fix (not a new,
+separately-added test) -- fast, no hang. Restored from backup and
+confirmed byte-identical via `diff -q` against all 6 files, then re-ran
+the full web suite and a clean production build one final time before
+committing. Test *count* is unchanged (no new `test(...)` blocks, just
+extended assertions in three existing ones).
+
+Full suite green: **1278 tests** (`@forge/shared` 13, `@forge/spec-engine`
+85, `@forge/db` 96, `@forge/api` 358 unchanged; `@forge/web` 726
+unchanged) via `npm test` at the repo root, plus a clean full monorepo
+`npm run build`.
+
 ## Phase 4
 
 - Template/agent marketplace
