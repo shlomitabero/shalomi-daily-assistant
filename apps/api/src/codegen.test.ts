@@ -2563,6 +2563,91 @@ test("the exported EntityView's 'd' shortcut duplicates the focused row via the 
 });
 
 /**
+ * New in this round: porting the live preview's own Escape shortcut
+ * (clear the table's multi-row selection) to the exported app's
+ * EntityView.jsx. "x" above lets a keyboard-only user build a
+ * selection, but the only way to back out of it required the mouse --
+ * either the "Clear selection" button, or committing an actual bulk
+ * action just to escape the mode. Escape now reuses the exact same
+ * setSelectedIds(new Set()) that button already calls, with zero API
+ * calls.
+ */
+test("the exported EntityView's Escape shortcut clears the table's multi-row selection without calling the API", async () => {
+  const files = generateExportFiles(project);
+  const dir = writeGeneratedWebComponent(files);
+  const store = [
+    { id: 1, name: "Acme Corp", status: "New" },
+    { id: 2, name: "Globex", status: "Won" },
+  ];
+  const originalFetch = globalThis.fetch;
+  let getCount = 0;
+  globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
+    const method = init?.method ?? "GET";
+    if (method === "GET" && input === "/api/Customer") {
+      getCount += 1;
+      return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    throw new Error(`unexpected request ${method} ${input}`);
+  }) as typeof fetch;
+
+  try {
+    await withRealLocalStorage(async () => {
+      const { EntityView } = await import(path.join(dir, "web", "src", "components", "EntityView.jsx"));
+      const customerEntity = project.spec.entities.find((e) => e.name === "Customer")!;
+      const props = {
+        entity: customerEntity,
+        highlightRecordId: null,
+        onHighlightHandled: () => {},
+        onJumpToRecord: () => {},
+        onRecordCountChange: () => {},
+      };
+
+      const { container } = render(React.createElement(EntityView, props));
+      for (let i = 0; i < 40; i++) {
+        if (container.querySelectorAll("tbody tr").length === 2) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+      assert.equal(container.querySelectorAll("tbody tr").length, 2, "expected both records to have loaded");
+      const getCountAfterLoad = getCount;
+
+      await act(async () => {
+        fireEvent.keyDown(window, { key: "j" });
+      });
+      await act(async () => {
+        fireEvent.keyDown(window, { key: "x" });
+      });
+      assert.ok(container.querySelector(".bulk-actions-bar"), "expected the bulk-actions-bar once a row is selected via 'x'");
+
+      await act(async () => {
+        fireEvent.keyDown(window, { key: "Escape" });
+      });
+
+      // Deliberately compared as a boolean, not `assert.equal(element, null,
+      // ...)` -- when that assertion actually fails (the element is still
+      // there), node:assert's default diff formatter tries to inspect the
+      // real DOM element for the error message, which hangs indefinitely on
+      // jsdom's circular/huge node structure. Confirmed empirically: this
+      // exact revert-and-rerun regression-proof hung for 90+ seconds before
+      // being killed, while the boolean form below fails in ~200ms.
+      assert.equal(container.querySelector(".bulk-actions-bar") == null, true, "the bulk-actions-bar must disappear once Escape clears the selection");
+      assert.equal(
+        Array.from(container.querySelectorAll('td.select-col input[type="checkbox"]')).filter((c) => (c as HTMLInputElement).checked).length,
+        0,
+        "every row's own checkbox must be unchecked again",
+      );
+      assert.equal(container.querySelectorAll("tbody tr").length, 2, "clearing the selection must not delete or hide any record");
+      assert.equal(getCount, getCountAfterLoad, "clearing the selection via Escape must never call the API, not even a refetch");
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    cleanup();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
  * New in this round: porting the live preview's own "n" shortcut
  * (jump to a blank add-record form) to the exported app's EntityView.jsx.
  * Unlike j/k/Enter above, this listener is NOT scoped to table view -- the

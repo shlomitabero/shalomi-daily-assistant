@@ -24,6 +24,7 @@ const SHORTCUTS: { keys: string[]; descriptionKey: string }[] = [
   { keys: ["Delete"], descriptionKey: "shortcuts.rowDelete" },
   { keys: ["d"], descriptionKey: "shortcuts.rowDuplicate" },
   { keys: ["Ctrl", "Enter"], descriptionKey: "shortcuts.submitForm" },
+  { keys: ["Esc"], descriptionKey: "shortcuts.clearSelection" },
 ];
 
 export function ShortcutsPanel({ onClose }: { onClose: () => void }) {

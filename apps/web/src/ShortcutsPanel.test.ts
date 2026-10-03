@@ -62,8 +62,9 @@ test("renders a real dialog listing every actual shortcut, not a placeholder", a
     assert.equal(dialog!.getAttribute("aria-modal"), "true");
 
     const rows = document.querySelectorAll(".shortcuts-row");
-    // Ctrl+K, "/", "?", Escape, j/down, k/up, Enter, x, n, Delete, d, Ctrl+Enter -- 12 rows.
-    assert.equal(rows.length, 12, "expected one row per known shortcut");
+    // Ctrl+K, "/", "?", Escape (close), j/down, k/up, Enter, x, n, Delete, d,
+    // Ctrl+Enter, Escape (clear selection) -- 13 rows.
+    assert.equal(rows.length, 13, "expected one row per known shortcut");
 
     const kbds = Array.from(document.querySelectorAll(".shortcuts-keys kbd")).map((el) => el.textContent);
     assert.ok(kbds.includes("Ctrl"), "expected Ctrl+K to be listed");
@@ -81,6 +82,11 @@ test("renders a real dialog listing every actual shortcut, not a placeholder", a
       kbds.filter((k) => k === "Ctrl").length,
       2,
       "expected two distinct Ctrl-prefixed shortcuts: Ctrl+K and Ctrl+Enter",
+    );
+    assert.equal(
+      kbds.filter((k) => k === "Esc").length,
+      2,
+      "expected two distinct Escape shortcuts: close the open panel, and clear the table's multi-row selection",
     );
 
     // Each row's description comes from t(row.descriptionKey) -- a dynamic

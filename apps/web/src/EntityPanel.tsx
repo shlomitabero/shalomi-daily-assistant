@@ -1317,19 +1317,21 @@ export function EntityPanel({
    * Enter opens the focused row for editing, "x" toggles that row's own
    * selection checkbox, Delete/Backspace deletes it (reusing
    * handleDelete's own confirm dialog and undo-toast, exactly like its
-   * mouse-driven Delete button), and "d" duplicates it (reusing
+   * mouse-driven Delete button), "d" duplicates it (reusing
    * handleDuplicate verbatim, exactly like its own mouse-driven Duplicate
    * button -- no confirmation needed since duplicating only creates data,
-   * never destroys it) -- previously a keyboard-only user could navigate
-   * to and open any record but could never build a multi-row selection
-   * for the bulk actions (bulk delete/duplicate/edit), delete a single
-   * record, or duplicate one, without reaching for the mouse. Only active
-   * in table view (board/calendar have their own navigation shapes), and
-   * isTypingTarget guards against
-   * hijacking keystrokes meant for the search box, a filter dropdown, or
-   * the add/edit form -- the same guard App.tsx's own Ctrl+K/Escape
-   * handler gets for free by only running in the "preview" view, which
-   * doesn't apply here since this panel *is* full of its own text inputs.
+   * never destroys it), and Escape clears the whole multi-row selection
+   * (reusing the same setSelectedIds(new Set()) the round-354
+   * "Clear selection" button already calls) -- previously a keyboard-only
+   * user who built a selection with "x" had no way to back out of it
+   * without reaching for the mouse, or without committing a
+   * destructive/mutating bulk action. Only active in table view
+   * (board/calendar have their own navigation shapes), and isTypingTarget
+   * guards against hijacking keystrokes meant for the search box, a
+   * filter dropdown, or the add/edit form -- the same guard App.tsx's own
+   * Ctrl+K/Escape handler gets for free by only running in the "preview"
+   * view, which doesn't apply here since this panel *is* full of its own
+   * text inputs.
    */
   useEffect(() => {
     if (viewMode !== "table") return;
@@ -1357,11 +1359,14 @@ export function EntityPanel({
       } else if (e.key === "d" && focusedRowId != null) {
         e.preventDefault();
         void handleDuplicate(focusedRowId);
+      } else if (e.key === "Escape" && selectedIds.size > 0) {
+        e.preventDefault();
+        setSelectedIds(new Set());
       }
     }
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [viewMode, visibleRecords, focusedRowId]);
+  }, [viewMode, visibleRecords, focusedRowId, selectedIds]);
 
   /**
    * "n" jumps straight to a blank add-record form, abandoning whatever

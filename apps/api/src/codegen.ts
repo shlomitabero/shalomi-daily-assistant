@@ -2639,12 +2639,14 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
    * j/k (and ArrowDown/ArrowUp) move a keyboard focus between table rows,
    * Enter opens the focused row for editing, "x" toggles that row's own
    * selection checkbox, Delete/Backspace deletes it (reusing
-   * handleDelete's own confirm dialog and undo-toast), and "d" duplicates
-   * it (reusing handleDuplicate verbatim) -- the table view previously
+   * handleDelete's own confirm dialog and undo-toast), "d" duplicates
+   * it (reusing handleDuplicate verbatim), and Escape clears the whole
+   * multi-row selection (reusing the same setSelectedIds(new Set()) the
+   * "Clear selection" button already calls) -- the table view previously
    * had no way to move between records, select one for bulk actions,
-   * delete one, or duplicate one, without reaching for the mouse. Only
-   * active in table view (board/calendar have their own navigation
-   * shapes), and isTypingTarget guards
+   * delete one, duplicate one, or back out of a selection, without
+   * reaching for the mouse. Only active in table view (board/calendar
+   * have their own navigation shapes), and isTypingTarget guards
    * against hijacking keystrokes meant for the search box, a filter
    * dropdown, or the add/edit form. Mirrors the live Forge AI preview's
    * own EntityPanel.tsx.
@@ -2675,11 +2677,14 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
       } else if (e.key === "d" && focusedRowId != null) {
         e.preventDefault();
         handleDuplicate(focusedRowId);
+      } else if (e.key === "Escape" && selectedIds.size > 0) {
+        e.preventDefault();
+        setSelectedIds(new Set());
       }
     }
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [viewMode, visibleRecords, focusedRowId]);
+  }, [viewMode, visibleRecords, focusedRowId, selectedIds]);
 
   /**
    * "n" jumps straight to a blank add-record form, abandoning whatever

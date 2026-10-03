@@ -3551,6 +3551,70 @@ test("EntityPanel's 'd' shortcut duplicates the focused row via the real API, wi
 });
 
 /**
+ * New in this round: "x" above lets a keyboard-only user build a
+ * multi-row selection, but the only way to back OUT of it was reaching
+ * for the mouse -- either the round-354 "Clear selection" button, or
+ * committing an actual bulk delete/duplicate/update just to escape the
+ * mode. Escape now clears the selection the same way that button does
+ * (setSelectedIds(new Set())), with zero API calls. Confirms the
+ * isTypingTarget guard still applies: pressing Escape while the search
+ * box has focus must leave an active selection untouched (it's reserved
+ * for that input's own native behavior, not a shortcut to hijack).
+ */
+test("EntityPanel's Escape shortcut clears the table's multi-row selection, without hijacking Escape typed into the search box", async () => {
+  await withJsdom(async () => {
+    const store: EntityRecord[] = [
+      { id: 1, name: "Acme Corp", status: "new" },
+      { id: 2, name: "Globex", status: "won" },
+    ];
+    const originalFetch = globalThis.fetch;
+    let mutationCount = 0;
+    globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/entities/Deal") {
+        return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      mutationCount += 1;
+      throw new Error(`unexpected mutation ${method} ${input}`);
+    }) as typeof fetch;
+    try {
+      renderEntityPanel();
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 2);
+
+      for (let attempt = 0; document.querySelectorAll(".record-row-focused").length === 0 && attempt < 40; attempt++) {
+        fireEvent.keyDown(window, { key: "j" });
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      }
+      fireEvent.keyDown(window, { key: "x" });
+      await waitForCondition(() => document.querySelector(".bulk-actions-bar") !== null);
+      assert.equal(
+        Array.from(document.querySelectorAll('td.select-col input[type="checkbox"]')).filter((c) => (c as HTMLInputElement).checked).length,
+        1,
+        "the focused row must be selected before testing Escape",
+      );
+
+      // Escape targeting the search box must leave the selection untouched.
+      const searchBox = document.querySelector(".entity-search") as HTMLInputElement;
+      fireEvent.keyDown(searchBox, { key: "Escape" });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      assert.ok(document.querySelector(".bulk-actions-bar"), "Escape at the search box must never clear the selection -- isTypingTarget's job");
+
+      fireEvent.keyDown(window, { key: "Escape" });
+      await waitForCondition(() => document.querySelector(".bulk-actions-bar") === null);
+      assert.equal(
+        Array.from(document.querySelectorAll('td.select-col input[type="checkbox"]')).filter((c) => (c as HTMLInputElement).checked).length,
+        0,
+        "every row's own checkbox must be unchecked again",
+      );
+      assert.equal(document.querySelectorAll("table tbody tr").length, 2, "clearing the selection must not delete or hide any record");
+      assert.equal(mutationCount, 0, "clearing the selection via Escape must never call the API");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * New in this round: there was no keyboard-only way to start adding a new
  * record -- j/k/Enter above only navigate EXISTING rows. "n" jumps to a
  * blank add form and focuses its first field, discarding any in-progress
