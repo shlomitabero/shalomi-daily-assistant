@@ -3959,6 +3959,64 @@ test("EntityPanel's record form discards an in-progress EDIT on Escape (same as 
 });
 
 /**
+ * Round 364 regression: FieldLabelEditor's own rename input lives inside
+ * this same record-form (one per field), and that form's own onKeyDown
+ * (tested just above) discards the WHOLE in-progress edit on Escape
+ * whenever editingId != null, with no awareness that FieldLabelEditor's own
+ * Escape handler already fired first and handled it locally. Before this
+ * round's fix, pressing Escape to back out of a two-second field-label
+ * rename wiped every other field's unsaved value too, since the keystroke
+ * kept bubbling from the label's own input up to the record form -- unlike
+ * useDialogFocusTrap.ts's native listener (rounds 359-362), both handlers
+ * here are plain React onKeyDown, so a real e.stopPropagation() is the
+ * correct and sufficient fix, confirmed by this test actually passing.
+ */
+test("Escape while renaming a field's label cancels only that rename, never the surrounding in-progress record edit", async () => {
+  await withJsdom(async () => {
+    const store: EntityRecord[] = [{ id: 1, name: "Acme Corp", status: "new" }];
+    const originalFetch = globalThis.fetch;
+    let renameCalls = 0;
+    globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
+      if (init?.method === "PATCH" && /\/fields\/.+\/label$/.test(input)) {
+        renameCalls += 1;
+        throw new Error("renameFieldLabel must never be called -- Escape must cancel before any request");
+      }
+      return mockRecordsFetch(store)(input, init);
+    }) as typeof fetch;
+    try {
+      renderEntityPanel();
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 1);
+
+      fireEvent.click(document.querySelector(".row-actions button") as HTMLButtonElement);
+      await waitForCondition(() => (document.querySelector('.record-form input[type="text"]') as HTMLInputElement)?.value === "Acme Corp");
+      assert.ok(document.querySelector(".form-actions button.secondary"), "sanity check: a real in-progress edit must be open");
+
+      fireEvent.click(document.querySelector(".field-label-edit-btn") as HTMLElement);
+      await waitForCondition(() => document.querySelector(".field-label-edit input") !== null);
+      const renameInput = document.querySelector(".field-label-edit input") as HTMLInputElement;
+      fireEvent.change(renameInput, { target: { value: "Company Name" } });
+
+      fireEvent.keyDown(renameInput, { key: "Escape" });
+      await waitForCondition(() => document.querySelector(".field-label-edit") === null);
+
+      assert.equal(renameCalls, 0, "cancelling the label rename must never send a request");
+      assert.equal(
+        (document.querySelector('.record-form input[type="text"]') as HTMLInputElement)?.value,
+        "Acme Corp",
+        "the record edit itself must still be open with its real value, not wiped by the same Escape keystroke",
+      );
+      assert.ok(
+        document.querySelector(".form-actions button.secondary"),
+        "the Cancel button must still be present -- editingId must not have been cleared",
+      );
+      assert.equal(store[0].name, "Acme Corp", "the mock server's own record must be untouched");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * New in this round: the search box's own matchesSearch fell through to
  * the raw stored foreign-key id for a relation field, so typing the exact
  * name a relation cell visibly shows (e.g. "Dana", resolved via

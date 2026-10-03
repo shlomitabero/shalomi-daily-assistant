@@ -115,7 +115,21 @@ export function FieldLabelEditor({
           onBlur={save}
           onClick={(e) => e.stopPropagation()}
           onKeyDown={(e) => {
-            if (e.key === "Escape") cancelEditing();
+            // stopPropagation matters here, unlike the native-listener case
+            // useDialogFocusTrap.ts guards with data-escape-handled-locally:
+            // this input lives inside EntityPanel.tsx's own record <form>,
+            // which has its own plain React onKeyDown that discards the
+            // whole in-progress record edit on Escape. Both handlers are
+            // React synthetic onKeyDown (no native addEventListener
+            // involved), so React's own simulated bubbling -- unlike real
+            // DOM bubbling intercepted by a native listener higher up --
+            // does respect stopPropagation and skips the form's handler.
+            // Without it, pressing Escape to back out of a quick label
+            // rename silently wiped every other field's unsaved value too.
+            if (e.key === "Escape") {
+              e.stopPropagation();
+              cancelEditing();
+            }
           }}
         />
       </form>
