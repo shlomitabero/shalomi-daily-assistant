@@ -560,6 +560,64 @@ test("Deal's 'deal' keyword doesn't spuriously match 'ideal' or Vehicle's 'deale
   assert.ok(realDeal.entities.some((e) => e.name === "Deal"));
 });
 
+/**
+ * Regression test for a real bug found in round 372: the test above already
+ * covers the singular "deal" ⊂ "ideal" collision, but the plural "deals"
+ * keyword had the exact same problem one letter over -- it's a substring of
+ * "ideals" ("company values and ideals"), so a plain non-sales description
+ * mentioning a business's ideals spuriously got a Deal/CRM entity injected.
+ * Fixed with the same `\b`-bounded RegExp pattern Order's "order"/Product's
+ * "stock" already use (confirmed, unlike Deal's removed "pipeline" keyword
+ * in round 371, that this really is a substring-within-a-word collision a
+ * word boundary can fix, not an idiom co-occurrence one).
+ */
+test("Deal's 'deals' keyword doesn't spuriously match 'ideals'", async () => {
+  const provider = new HeuristicSpecProvider();
+
+  const ideals = await provider.generate(
+    "An app to track our company's core values and ideals, plus a list of our team members.",
+  );
+  assert.ok(
+    !ideals.entities.some((e) => e.name === "Deal"),
+    "'ideals' alone must not spuriously match Deal via a bare 'deals' substring",
+  );
+
+  // The real business term still works.
+  const realDeal = await provider.generate("An app to track our deals and negotiations with clients.");
+  assert.ok(realDeal.entities.some((e) => e.name === "Deal"));
+});
+
+/**
+ * Regression test for a real bug found in round 372: Patient's bare
+ * "patient" keyword is a substring of "impatient" -- an ordinary word in a
+ * plain customer-support description ("handle impatient customers
+ * politely") that has nothing to do with medical care, so it spuriously
+ * matched this entity. Fixed with the same `\b`-bounded RegExp pattern
+ * Order's "order"/Product's "stock" already use. Also confirms the fix
+ * didn't introduce its own regression: "outpatient" (a real healthcare
+ * term with no word boundary between "out" and "patient") still matches,
+ * because it's now listed as its own explicit keyword alongside the regex.
+ */
+test("Patient's 'patient' keyword doesn't spuriously match 'impatient', and 'outpatient' still matches", async () => {
+  const provider = new HeuristicSpecProvider();
+
+  const impatient = await provider.generate(
+    "A ticketing app for our support team to track tickets from impatient customers who want fast replies.",
+  );
+  assert.ok(
+    !impatient.entities.some((e) => e.name === "Patient"),
+    "'impatient' alone must not spuriously match Patient via a bare 'patient' substring",
+  );
+
+  // The real medical term still works, including the one real word that
+  // has no boundary before "patient" and needs its own explicit keyword.
+  const realPatient = await provider.generate("A clinic app to track patient visits and medical history.");
+  assert.ok(realPatient.entities.some((e) => e.name === "Patient"));
+
+  const outpatient = await provider.generate("A clinic app to manage outpatient appointments and follow-ups.");
+  assert.ok(outpatient.entities.some((e) => e.name === "Patient"), "'outpatient' must still match Patient");
+});
+
 test("MenuItem's 'מנה' keyword doesn't spuriously match 'מנהלים' (managers)", async () => {
   const provider = new HeuristicSpecProvider();
   const managers = await provider.generate("אפליקציה למעקב אחרי מנהלים בעסק");

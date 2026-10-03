@@ -275,9 +275,7 @@ export const DOMAIN_ENTITY_RULES: DomainEntityRule[] = [
     // (an ordinary word in phrases like "ideal customer"/"ideal workflow")
     // and of "dealership" (Vehicle's own "car dealership" keyword), so a
     // plain car-dealership CRM description would spuriously also match
-    // here. Plural "deals" doesn't have either problem (neither "ideal"
-    // nor "dealership" contains it as a substring) and is still the
-    // natural way this entity gets mentioned ("track deals"/"our deals").
+    // here.
     //
     // "pipeline" was removed (it used to be listed here) -- unlike "deal"
     // above, this isn't a substring collision a `\b`-bounded RegExp could
@@ -287,7 +285,18 @@ export const DOMAIN_ENTITY_RULES: DomainEntityRule[] = [
     // example), so any word-boundary-respecting match for "pipeline"
     // still fires on it. "deals"/"negotiation" already cover the ordinary
     // English phrasing for this entity well enough on their own.
-    keywords: ["deals", "negotiation", "עסקה", "עסקאות", "משא ומתן"],
+    //
+    // Plural "deals" (round 372): the author checked the singular pair
+    // (deal/ideal) above but missed that "deals" has the exact same
+    // problem one letter over -- it's a substring of "ideals" ("company
+    // values and ideals"), so a plain non-sales description mentioning a
+    // business's ideals spuriously matched Deal too. `\b`-bounded here
+    // (unlike "pipeline" above) because this really is the
+    // substring-within-a-word shape pitfall 1 describes, not the
+    // idiom-co-occurrence shape pitfall 1b describes -- confirmed with a
+    // real repro before fixing, per round 371's own lesson not to assume a
+    // RegExp fix transfers between the two shapes.
+    keywords: [/\bdeals\b/, "negotiation", "עסקה", "עסקאות", "משא ומתן"],
     labelHe: "עסקאות",
     descriptionHe: "עסקת מכירה פוטנציאלית.",
     fieldLabelsHe: { title: "כותרת", value: "שווי", stage: "שלב", owner: "אחראי/ת" },
@@ -456,7 +465,18 @@ export const DOMAIN_ENTITY_RULES: DomainEntityRule[] = [
     },
   },
   {
-    keywords: ["patient", "clinic patient", "מטופל", "מטופלת", "מטופלים"],
+    // Bare "patient" (round 372) is a substring of "impatient" -- an
+    // ordinary word in a plain customer-support description ("handle
+    // impatient customers politely") that has nothing to do with medical
+    // care, so it spuriously matched this entity. `\b`-bounded, same
+    // pitfall-1 shape as Order's "order"/Product's "stock" above (not the
+    // idiom-co-occurrence shape Deal's removed "pipeline" keyword was).
+    // "outpatient" is listed explicitly alongside the regex because it
+    // would otherwise stop matching too: there's no word boundary between
+    // "out" and "patient" in "outpatient" (both are word characters), so
+    // `\bpatient\b` alone can't see it, even though it's a real,
+    // legitimate healthcare term this entity should still catch.
+    keywords: [/\bpatient(s)?\b/, "outpatient", "clinic patient", "מטופל", "מטופלת", "מטופלים"],
     labelHe: "מטופלים",
     descriptionHe: "מי שמקבל טיפול רפואי מהעסק.",
     fieldLabelsHe: { name: "שם", phone: "טלפון", dateOfBirth: "תאריך לידה", notes: "הערות רפואיות" },
