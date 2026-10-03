@@ -415,6 +415,47 @@ test("changing your password with the wrong current password is rejected, and th
   });
 });
 
+/**
+ * Regression test for a real bug: changing your password never revoked any
+ * OTHER active session, defeating the standard security purpose of a
+ * password change (e.g. a lost laptop, a borrowed phone, a leaked token
+ * keeps working forever). The same revoke-by-user mechanism already existed
+ * for account deletion (deleteAllSessionsForUser) -- this ports the same
+ * idea, minus the one session making the change-password request itself,
+ * which must stay valid so this exact response can still succeed.
+ */
+test("changing your password revokes every OTHER session, but the session making the change itself stays valid", async () => {
+  await withServer(async (baseUrl) => {
+    const email = `change-pw-revoke-${Date.now()}@example.com`;
+    const signupRes = await fetch(`${baseUrl}/api/auth/signup`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ email, password: "original-password" }),
+    });
+    const { token: firstSessionToken } = (await signupRes.json()) as { token: string };
+
+    const secondLoginRes = await fetch(`${baseUrl}/api/auth/login`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ email, password: "original-password" }),
+    });
+    const { token: secondSessionToken } = (await secondLoginRes.json()) as { token: string };
+
+    const changeRes = await fetch(`${baseUrl}/api/auth/password`, {
+      method: "PATCH",
+      headers: authHeaders(firstSessionToken),
+      body: JSON.stringify({ currentPassword: "original-password", newPassword: "brand-new-password" }),
+    });
+    assert.equal(changeRes.status, 204);
+
+    const secondSessionMe = await fetch(`${baseUrl}/api/auth/me`, { headers: authHeaders(secondSessionToken) });
+    assert.equal(secondSessionMe.status, 401, "the other, now-stale session must be rejected after the password change");
+
+    const firstSessionMe = await fetch(`${baseUrl}/api/auth/me`, { headers: authHeaders(firstSessionToken) });
+    assert.equal(firstSessionMe.status, 200, "the session that made the change-password request itself must stay valid");
+  });
+});
+
 test("changing your password rejects a new password shorter than 8 characters, the same minimum signup enforces", async () => {
   await withServer(async (baseUrl) => {
     const token = await signup(baseUrl, `change-pw-3-${Date.now()}@example.com`);

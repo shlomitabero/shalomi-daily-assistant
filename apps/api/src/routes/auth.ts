@@ -5,6 +5,7 @@ import {
   createSession,
   createUser,
   deleteAllSessionsForUser,
+  deleteOtherSessionsForUser,
   deleteSession,
   deleteUser,
   deleteProject,
@@ -135,9 +136,11 @@ export function createAuthRouter(db: ForgeDatabase, whatsapp: WhatsAppWebManager
    * the real owner out; unlike signup/login there's no account to
    * enumerate here (the caller is already proven to be this exact user by
    * requireAuth), so this doesn't need the timing-side-channel defense
-   * login uses. Doesn't invalidate any other active session -- this app's
-   * session model has no bulk-revoke-by-user mechanism to begin with, and
-   * adding one is a bigger change than this route's own scope.
+   * login uses. Also revokes every one of this user's OTHER sessions
+   * (deleteOtherSessionsForUser) -- the standard security purpose of a
+   * password change, e.g. kicking out a lost laptop or a leaked token --
+   * while deliberately keeping this exact request's own session alive, so
+   * the 204 response below still has a valid session to return against.
    */
   router.patch("/auth/password", requireAuth(db), async (req, res, next) => {
     const parsed = ChangePasswordSchema.safeParse(req.body);
@@ -154,6 +157,7 @@ export function createAuthRouter(db: ForgeDatabase, whatsapp: WhatsAppWebManager
       }
       const newHash = await hashPassword(newPassword);
       updatePasswordHash(db, req.userId!, newHash);
+      deleteOtherSessionsForUser(db, req.userId!, extractBearerToken(req)!);
       res.status(204).end();
     } catch (err) {
       next(err);

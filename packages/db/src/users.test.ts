@@ -6,6 +6,7 @@ import {
   createUser,
   deleteAllSessionsForUser,
   deleteExpiredSessions,
+  deleteOtherSessionsForUser,
   deleteUser,
   ensureUsersTable,
   findUserById,
@@ -167,6 +168,44 @@ test("deleteAllSessionsForUser is a harmless no-op for a user with no sessions a
   const db = openDatabase(":memory:");
   ensureUsersTable(db);
   assert.doesNotThrow(() => deleteAllSessionsForUser(db, "never-logged-in"));
+});
+
+/**
+ * New in this round: part of the real "change my password" flow
+ * (routes/auth.ts) -- fixes a bug where changing your password never
+ * revoked any other active session (e.g. a lost laptop, a leaked token),
+ * defeating the standard security purpose of a password change, even
+ * though the exact revoke-by-user mechanism already existed for account
+ * deletion (deleteAllSessionsForUser above). Unlike that function, this
+ * one must deliberately spare one specific token -- the very session
+ * making the change-password request itself, which the route's own
+ * response still needs to be valid against.
+ */
+test("deleteOtherSessionsForUser revokes every OTHER session for this user, but leaves the one matching keepToken untouched", () => {
+  const db = openDatabase(":memory:");
+  ensureUsersTable(db);
+  const user = createUser(db, { id: "u1", email: "u1@example.com", passwordHash: "x" });
+  const otherUser = createUser(db, { id: "u2", email: "u2@example.com", passwordHash: "x" });
+  const future = new Date(Date.now() + HOUR_MS).toISOString();
+  createSession(db, { token: "current-session", userId: user.id, expiresAt: future });
+  createSession(db, { token: "lost-laptop-session", userId: user.id, expiresAt: future });
+  createSession(db, { token: "other-users-session", userId: otherUser.id, expiresAt: future });
+
+  deleteOtherSessionsForUser(db, user.id, "current-session");
+
+  assert.ok(getSessionUser(db, "current-session"), "the session making the request itself must stay valid");
+  assert.equal(getSessionUser(db, "lost-laptop-session"), undefined, "every other session for this user must be revoked");
+  assert.ok(getSessionUser(db, "other-users-session"), "a different user's own session must be completely untouched");
+});
+
+test("deleteOtherSessionsForUser is a harmless no-op for a user with no other sessions", () => {
+  const db = openDatabase(":memory:");
+  ensureUsersTable(db);
+  const user = createUser(db, { id: "u1", email: "u1@example.com", passwordHash: "x" });
+  createSession(db, { token: "only-session", userId: user.id, expiresAt: new Date(Date.now() + HOUR_MS).toISOString() });
+
+  assert.doesNotThrow(() => deleteOtherSessionsForUser(db, user.id, "only-session"));
+  assert.ok(getSessionUser(db, "only-session"), "the lone matching session must stay untouched");
 });
 
 /**

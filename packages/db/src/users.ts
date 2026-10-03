@@ -119,6 +119,17 @@ export function deleteAllSessionsForUser(db: ForgeDatabase, userId: string): voi
 }
 
 /**
+ * Part of the "change my password" flow (routes/auth.ts) -- revokes every
+ * one of this user's OTHER sessions (e.g. a lost laptop, a borrowed phone,
+ * a leaked token), the standard security purpose of a password change,
+ * without also killing the very session making this exact request (which
+ * requireAuth needs to stay valid so the response can still succeed).
+ */
+export function deleteOtherSessionsForUser(db: ForgeDatabase, userId: string, keepToken: string): void {
+  db.prepare("DELETE FROM sessions WHERE userId = ? AND token != ?").run(userId, keepToken);
+}
+
+/**
  * Deletes the user row itself -- the last step of "delete my account"
  * (routes/auth.ts), called only after every project this user owns has
  * already been deleted, every OTHER project's collaborator grant for them
