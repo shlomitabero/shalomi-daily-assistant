@@ -5228,6 +5228,49 @@ test("EntityPanel's search box remembers a query on Enter, shows it as a chip on
 });
 
 /**
+ * New in this round: the window-level table keydown handler already
+ * clears the multi-row selection on Escape (round 356), but it bails out
+ * via isTypingTarget the instant the search box has focus -- so Escape
+ * typed INTO the search box itself was a dead key, unlike every other
+ * free-text input in this panel (the inline cell editor and the add/edit
+ * form both already discard on Escape). Escape in the search box now
+ * reuses the same setSearch("") the round-355 "Clear search" button
+ * already calls -- confirms it empties the box and restores the
+ * unfiltered table, and that an Escape with nothing typed is a harmless
+ * no-op (never commits a recent search, since only Enter does that).
+ */
+test("EntityPanel's search box clears itself on Escape, restoring the unfiltered table", async () => {
+  await withJsdom(async () => {
+    const store: EntityRecord[] = [
+      { id: 1, name: "Acme Corp", status: "new" },
+      { id: 2, name: "Globex", status: "won" },
+    ];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = mockRecordsFetch(store) as typeof fetch;
+    try {
+      renderEntityPanel();
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 2);
+
+      const searchInput = document.querySelector(".entity-search") as HTMLInputElement;
+
+      // Escape with nothing typed must be a harmless no-op.
+      fireEvent.keyDown(searchInput, { key: "Escape" });
+      assert.equal(searchInput.value, "", "Escape on an already-empty search box must not throw or do anything odd");
+
+      fireEvent.change(searchInput, { target: { value: "Globex" } });
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 1);
+
+      fireEvent.keyDown(searchInput, { key: "Escape" });
+      assert.equal(searchInput.value, "", "Escape must empty the search box");
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 2);
+      assert.equal(document.querySelector(".entity-search-recent"), null, "Escape must never commit a recent search -- only Enter does that");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * New in this round: a deadline-like date field (name containing "due" or
  * "deadline") now gets a real visual overdue/due-soon indicator in the
  * records table -- the gap round 339's own Explore survey flagged and

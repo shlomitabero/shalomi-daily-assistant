@@ -3047,11 +3047,19 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
 
   // Persists the current search box value to this entity's recent list once
   // the user signals they're "done" by pressing Enter -- there's no submit
-  // button on a live filter-as-you-type box, so Enter is the commit signal,
-  // mirroring the live preview's own EntityPanel.tsx handleSearchKeyDown.
+  // button on a live filter-as-you-type box, so Enter is the commit signal.
+  // Escape clears the live search value (reusing the same setSearch("")
+  // the "Clear search" button already calls) -- the table's own
+  // window-level Escape handler (clears the multi-row selection) never
+  // reaches this input at all, since it bails out via isTypingTarget the
+  // moment this field has focus. Mirrors the live preview's own
+  // EntityPanel.tsx handleSearchKeyDown.
   function handleSearchKeyDown(e) {
     if (e.key === "Enter" && search.trim()) {
       setRecentSearches(addEntityRecentSearch(entity.name, search));
+    } else if (e.key === "Escape" && search.length > 0) {
+      e.preventDefault();
+      setSearch("");
     }
   }
   function handleRecentSearchClick(query) {

@@ -6043,6 +6043,81 @@ test("the exported EntityView's search box remembers a query on Enter and shows 
 });
 
 /**
+ * New in this round: the window-level table keydown handler already
+ * clears the multi-row selection on Escape, but it bails out via
+ * isTypingTarget the instant the search box has focus -- so Escape typed
+ * INTO the exported app's search box itself was a dead key. Reuses the
+ * same setSearch("") the "Clear search" button already calls: confirms
+ * it empties the box and restores the unfiltered table, and that an
+ * Escape with nothing typed is a harmless no-op that never commits a
+ * recent search (only Enter does that).
+ */
+test("the exported EntityView's search box clears itself on Escape, restoring the unfiltered table", async () => {
+  const files = generateExportFiles(project);
+  const dir = writeGeneratedWebComponent(files);
+  const store = [
+    { id: 1, name: "Acme Corp", status: "New" },
+    { id: 2, name: "Globex", status: "Won" },
+  ];
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async () => ({
+    ok: true,
+    status: 200,
+    json: async () => ({ records: store }),
+  })) as typeof fetch;
+
+  try {
+    await withRealLocalStorage(async () => {
+      const { EntityView } = await import(path.join(dir, "web", "src", "components", "EntityView.jsx"));
+      const customerEntity = project.spec.entities.find((e) => e.name === "Customer")!;
+      const props = {
+        entity: customerEntity,
+        highlightRecordId: null,
+        onHighlightHandled: () => {},
+        onJumpToRecord: () => {},
+        onRecordCountChange: () => {},
+      };
+
+      const { container } = render(React.createElement(EntityView, props));
+      for (let i = 0; i < 40; i++) {
+        if (container.querySelectorAll("tbody tr").length === 2) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+      assert.equal(container.querySelectorAll("tbody tr").length, 2, "expected both records to have loaded");
+
+      const searchInput = container.querySelector(".entity-search") as HTMLInputElement;
+
+      await act(async () => {
+        fireEvent.keyDown(searchInput, { key: "Escape" });
+      });
+      assert.equal(searchInput.value, "", "Escape on an already-empty search box must not throw or do anything odd");
+
+      await act(async () => {
+        fireEvent.change(searchInput, { target: { value: "Globex" } });
+      });
+      assert.equal(container.querySelectorAll("tbody tr").length, 1, "the search must actually narrow the rendered rows");
+
+      await act(async () => {
+        fireEvent.keyDown(searchInput, { key: "Escape" });
+      });
+      assert.equal(searchInput.value, "", "Escape must empty the search box");
+      assert.equal(container.querySelectorAll("tbody tr").length, 2, "clearing the search via Escape must restore every row");
+      assert.equal(
+        container.querySelector(".entity-search-recent"),
+        null,
+        "Escape must never commit a recent search -- only Enter does that",
+      );
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    cleanup();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
  * New in this round: the exported app's Global Search had the same
  * recent-searches gap EntityView's own table search box had before round
  * 324 -- the last remaining item in the recent-searches family. Extracts

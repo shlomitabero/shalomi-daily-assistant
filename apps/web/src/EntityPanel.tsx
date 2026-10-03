@@ -1160,11 +1160,21 @@ export function EntityPanel({
    * list once the user signals they're "done" by pressing Enter -- there's
    * no submit button on a live filter-as-you-type box, so Enter is the same
    * commit signal App.tsx's own handleProjectSearchKeyDown (round 316) uses
-   * for the home screen's search box.
+   * for the home screen's search box. Escape clears the live search value
+   * (reusing the same setSearch("") the round-355 "Clear search" button
+   * already calls) -- the table's own window-level Escape handler
+   * (round 356, clears the multi-row selection) never reaches this input
+   * at all, since it bails out via isTypingTarget the moment this field
+   * has focus, so without this, Escape here was a dead key, unlike every
+   * other free-text input in this panel (the inline cell editor and the
+   * add/edit form both already discard on Escape).
    */
   function handleSearchKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
     if (e.key === "Enter" && search.trim()) {
       setRecentSearches(addEntityRecentSearch(projectId, entity.name, search));
+    } else if (e.key === "Escape" && search.length > 0) {
+      e.preventDefault();
+      setSearch("");
     }
   }
   function handleRecentSearchClick(query: string) {
