@@ -1073,6 +1073,16 @@ test("WhatsAppPanel's log search box has a 'Clear search' button and Escape-to-c
       assert.equal(searchInput.value, "", "Escape must also empty the search box");
       assert.equal(closeCalls, 0, "Escape clearing the search box must never also close the whole dialog");
       assert.ok(document.querySelector('[role="dialog"]'), "the dialog itself must still be in the DOM after that Escape");
+
+      // Round 362 regression: data-escape-handled-locally used to sit on
+      // this input unconditionally, so once the box was already empty
+      // (nothing left to clear), useDialogFocusTrap's own Escape listener
+      // still skipped closing the dialog because the marker was present --
+      // and handleLogSearchKeyDown's own `search.length > 0` guard also did
+      // nothing, so Escape from a focused, empty search box silently did
+      // nothing at all instead of closing the dialog.
+      fireEvent.keyDown(searchInput, { key: "Escape" });
+      assert.equal(closeCalls, 1, "Escape on an already-empty search box must close the dialog normally, not get silently swallowed");
     } finally {
       globalThis.fetch = originalFetch;
     }

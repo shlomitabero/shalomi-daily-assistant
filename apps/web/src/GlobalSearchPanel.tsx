@@ -327,7 +327,7 @@ export function GlobalSearchPanel({
             placeholder={t("search.placeholder")}
             aria-label={t("search.placeholder")}
             value={query}
-            data-escape-handled-locally
+            data-escape-handled-locally={query.length > 0 ? "" : undefined}
             onChange={(e) => setQuery(e.target.value)}
             onKeyDown={handleInputKeyDown}
           />

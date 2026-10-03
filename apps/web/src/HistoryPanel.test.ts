@@ -1296,6 +1296,16 @@ test("HistoryPanel's own Escape-cancels-rename and Escape-clears-search never al
       assert.equal(searchBox.value, "", "Escape must still clear the search box");
       assert.equal(closeCalls, 0, "Escape clearing the search box must never also close the whole History dialog");
       assert.ok(document.querySelector('[role="dialog"]'), "the dialog itself must still be in the DOM after that Escape too");
+
+      // Round 362 regression: data-escape-handled-locally used to sit on
+      // this input unconditionally, so once the box was already empty
+      // (nothing left to clear), useDialogFocusTrap's own Escape listener
+      // still skipped closing the dialog because the marker was present --
+      // and this handler's own `search.length > 0` guard also did nothing,
+      // so Escape from a focused, empty search box silently did nothing at
+      // all instead of closing the dialog like any other focused control.
+      fireEvent.keyDown(searchBox, { key: "Escape" });
+      assert.equal(closeCalls, 1, "Escape on an already-empty search box must close the dialog normally, not get silently swallowed");
     } finally {
       globalThis.fetch = originalFetch;
     }

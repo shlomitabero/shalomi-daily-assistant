@@ -230,7 +230,7 @@ export function HistoryPanel({
               placeholder={t("history.search.placeholder")}
               aria-label={t("history.search.placeholder")}
               value={search}
-              data-escape-handled-locally
+              data-escape-handled-locally={search.length > 0 ? "" : undefined}
               onChange={(e) => setSearch(e.target.value)}
               onBlur={commitRecentSearch}
               onKeyDown={(e) => {

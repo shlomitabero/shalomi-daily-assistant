@@ -427,10 +427,15 @@ export function WhatsAppPanel({
    * handleSearchKeyDown (round 318): a live filter-as-you-type box has no
    * submit button, so Enter is the closest thing to a commit signal.
    * Escape clears the live search value (mirroring HistoryPanel.tsx's own
-   * search box, round 358) -- the input also carries
-   * data-escape-handled-locally so this dialog's own useDialogFocusTrap
-   * Escape-closes-everything listener (round 359's own fix) skips it and
-   * lets this handler run normally instead of closing the whole panel.
+   * search box, round 358) -- the input only carries
+   * data-escape-handled-locally while there's actually something to clear
+   * (round 362): with the marker unconditional, Escape on an EMPTY box
+   * matched neither this function's own `search.length > 0` guard nor
+   * useDialogFocusTrap's own close-the-dialog branch (which the marker's
+   * mere presence always skipped, regardless of whether this handler did
+   * anything) -- so Escape from a focused, empty search box silently did
+   * nothing at all instead of closing the dialog like every other focused
+   * control in it.
    */
   function handleLogSearchKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
     if (e.key === "Enter" && search.trim()) {
@@ -742,7 +747,7 @@ export function WhatsAppPanel({
                 placeholder={t("whatsapp.log.search.placeholder")}
                 aria-label={t("whatsapp.log.search.placeholder")}
                 value={search}
-                data-escape-handled-locally
+                data-escape-handled-locally={search.length > 0 ? "" : undefined}
                 onChange={(e) => setSearch(e.target.value)}
                 onKeyDown={handleLogSearchKeyDown}
               />

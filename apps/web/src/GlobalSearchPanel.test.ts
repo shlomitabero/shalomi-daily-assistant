@@ -1020,6 +1020,13 @@ test("GlobalSearchPanel matches a relation field's resolved display label, not t
  * bubbling normally. Uses a real onClose spy (not the shared helper's
  * no-op) so a false-positive "it works" can't hide a dialog that actually
  * closed underneath the test.
+ *
+ * Round 362 update: the marker was originally unconditional, which traded
+ * one bug for another -- Escape on an already-EMPTY, focused query box did
+ * nothing at all, instead of closing the dialog like every other focused
+ * control. Now covers that case too: the marker is only present while
+ * query.length > 0, so an empty box's Escape falls through to
+ * useDialogFocusTrap's own close-the-dialog behavior normally.
  */
 test("GlobalSearchPanel's query box has a 'Clear search' button and Escape-to-clear, and neither one closes the whole dialog", async () => {
   await withJsdom(async () => {
@@ -1072,8 +1079,16 @@ test("GlobalSearchPanel's query box has a 'Clear search' button and Escape-to-cl
         "the dialog must still be in the DOM after Escape cleared the query",
       );
 
+      // Round 362 regression fix: this used to assert Escape on an
+      // already-empty box was a harmless no-op, but it actually did
+      // nothing at all -- data-escape-handled-locally sat on this input
+      // unconditionally, so useDialogFocusTrap's own Escape listener
+      // always skipped closing regardless of whether there was anything
+      // left to clear locally. The marker is now conditional on
+      // query.length > 0, so Escape on an empty, focused box closes the
+      // dialog normally, matching every other focused control in it.
       fireEvent.keyDown(input, { key: "Escape" });
-      assert.equal(closeCalls, 0, "Escape on an already-empty query box must be a harmless no-op, not close the dialog");
+      assert.equal(closeCalls, 1, "Escape on an already-empty query box must close the dialog normally, not get silently swallowed");
 
       fireEvent.change(input, { target: { value: "acme" } });
       const clearButton = document.querySelector(".global-search-clear-query") as HTMLButtonElement;
