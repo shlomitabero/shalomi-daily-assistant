@@ -403,6 +403,23 @@ test("computeBusinessTwin flags two records that share the exact same display na
   );
 });
 
+test("computeBusinessTwin flags duplicates that differ only by case or surrounding whitespace, the exact shape a real accidental double-import produces", () => {
+  const db = openDatabase(":memory:");
+  const enProject: Project = { ...project, description: "I need a CRM for customers and appointments" };
+  applyMigrations(db, enProject.id, enProject.spec);
+  const customer = enProject.spec.entities[0];
+  insertRecord(db, enProject.id, customer, { name: "Dana Levi" });
+  insertRecord(db, enProject.id, customer, { name: "dana levi " });
+  insertRecord(db, enProject.id, customer, { name: "DANA LEVI" });
+  insertRecord(db, enProject.id, customer, { name: "Yossi Cohen" });
+
+  const twin = computeBusinessTwin(db, enProject);
+  const dupObservation = twin.jumpableObservations.find((o) => o.text.includes("possibly a duplicate"));
+  assert.ok(dupObservation, `expected a duplicate observation across case/whitespace variants, got: ${JSON.stringify(twin.jumpableObservations)}`);
+  assert.ok(dupObservation!.text.includes("3 records"), `expected all 3 variants grouped together, got: "${dupObservation!.text}"`);
+  assert.ok(!dupObservation!.text.includes("Yossi Cohen"), "Yossi Cohen appears only once and must not be reported");
+});
+
 test("computeBusinessTwin stays silent about duplicates when every record's display name is genuinely unique", () => {
   const db = openDatabase(":memory:");
   const enProject: Project = { ...project, description: "I need a CRM for customers and appointments" };

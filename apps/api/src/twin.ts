@@ -187,9 +187,9 @@ function computeRelationHubObservation(
 }
 
 /**
- * Flags records within the same entity that share the exact same display
- * label (the same field pickDisplayField/recordDisplayLabel already uses
- * to represent a record everywhere else in this app -- usually "name" or
+ * Flags records within the same entity that share the same display label
+ * (the same field pickDisplayField/recordDisplayLabel already uses to
+ * represent a record everywhere else in this app -- usually "name" or
  * "title") -- e.g. two "Customer" records both named "Dana Levi". This is
  * genuinely actionable for a real small business (a duplicate contact
  * entered twice, an accidental double-import) without ever claiming to
@@ -203,8 +203,17 @@ function computeRelationHubObservation(
  * unrelated shipments that both happen to weigh 5kg) without being
  * duplicates in any meaningful sense, so this only runs for an entity
  * whose picked display field is actually text -- the one case where two
- * records sharing that exact value really does suggest the same person or
- * thing was entered twice.
+ * records sharing that value really does suggest the same person or thing
+ * was entered twice.
+ *
+ * Grouping uses a trimmed, case-folded key rather than the raw label, since
+ * the exact double-import this observation targets is exactly the kind of
+ * mistake that produces "Dana Levi" and "dana levi " (or "DANA LEVI") as
+ * two distinct rows that are obviously the same person to a human reading
+ * the list, but were previously invisible to this check because they
+ * landed on two different Map keys. The group's first-seen original label
+ * (not the normalized key) is what gets displayed, so casing/whitespace in
+ * the observation text still matches a real record.
  */
 function computeDuplicateObservations(
   db: ForgeDatabase,
@@ -218,19 +227,25 @@ function computeDuplicateObservations(
     const records = listRecords(db, project.id, entity);
     if (records.length < 2) continue;
 
-    const countByLabel = new Map<string, number>();
+    const groupsByNormalizedLabel = new Map<string, { count: number; displayLabel: string }>();
     for (const record of records) {
       const label = recordDisplayLabel(entity, record);
-      countByLabel.set(label, (countByLabel.get(label) ?? 0) + 1);
+      const key = label.trim().toLowerCase();
+      const existing = groupsByNormalizedLabel.get(key);
+      if (existing) {
+        existing.count += 1;
+      } else {
+        groupsByNormalizedLabel.set(key, { count: 1, displayLabel: label });
+      }
     }
 
     const entityLabel = entity.label ?? entity.name;
-    for (const [label, count] of countByLabel) {
+    for (const { count, displayLabel } of groupsByNormalizedLabel.values()) {
       if (count < 2) continue;
       observations.push({
         text: hebrew
-          ? `ב"${entityLabel}", ${count} רשומות חולקות את השם "${label}" — יתכן כפילות.`
-          : `In "${entityLabel}", ${count} records share the name "${label}" — possibly a duplicate.`,
+          ? `ב"${entityLabel}", ${count} רשומות חולקות את השם "${displayLabel}" — יתכן כפילות.`
+          : `In "${entityLabel}", ${count} records share the name "${displayLabel}" — possibly a duplicate.`,
         entityName: entity.name,
       });
     }
