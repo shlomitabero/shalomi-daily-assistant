@@ -987,6 +987,99 @@ test("WhatsAppPanel's log search box remembers a query on Enter, shows it as a c
 });
 
 /**
+ * New in this round: HistoryPanel.tsx's own log/checkpoint search box
+ * already has a one-click "Clear search" (✕) button and Escape-to-clear
+ * (rounds 358/359), but this dialog's own, structurally identical
+ * message-log search box had neither -- the only way to empty it was
+ * deleting every character by hand, and (before round 359's
+ * data-escape-handled-locally fix was ported here) pressing Escape would
+ * have closed the whole WhatsApp dialog instead of clearing the box.
+ * Passes a REAL onClose spy all the way through the dialog (not the
+ * no-op most tests in this file use) specifically to prove Escape here
+ * only clears the search and never also closes the panel.
+ */
+test("WhatsAppPanel's log search box has a 'Clear search' button and Escape-to-clear, and neither one closes the whole dialog", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    const messages: WhatsAppMessageLogEntry[] = Array.from({ length: 6 }, (_, i) => ({
+      id: `m${i}`,
+      direction: "in",
+      fromNumber: "972521112233",
+      toNumber: "972501234567",
+      body: `Message number ${i}`,
+      matchedLabel: null,
+      matchedEntityName: null,
+      matchedRecordId: null,
+      status: "received",
+      createdAt: new Date().toISOString(),
+    }));
+    globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/integrations/whatsapp/status") {
+        return new Response(
+          JSON.stringify({ status: "connected", phoneNumber: "972501234567", qrDataUrl: null, error: null }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      if (method === "GET" && input === "/api/projects/proj1/integrations/whatsapp/messages") {
+        return new Response(JSON.stringify({ messages }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+
+    let closeCalls = 0;
+    try {
+      render(
+        React.createElement(
+          ThemeProvider,
+          null,
+          React.createElement(
+            LanguageProvider,
+            null,
+            React.createElement(WhatsAppPanel, {
+              projectId: "proj1",
+              projectName: "Test Project",
+              onClose: () => {
+                closeCalls += 1;
+              },
+              onJumpToEntity: () => {},
+              onJumpToRecord: () => {},
+            }),
+          ),
+        ),
+      );
+      await waitForCondition(() => document.querySelector(".whatsapp-log-search") !== null);
+      assert.ok(document.querySelector('[role="dialog"]'), "sanity check: a real dialog wired to the real onClose must be open");
+
+      const searchInput = document.querySelector(".whatsapp-log-search") as HTMLInputElement;
+      assert.equal(document.querySelector(".whatsapp-log-clear-search"), null, "the button must not render while the search box is empty");
+
+      fireEvent.change(searchInput, { target: { value: "number 3" } });
+      await waitForCondition(() => document.querySelectorAll(".whatsapp-log-list li").length === 1);
+
+      const clearButton = document.querySelector(".whatsapp-log-clear-search") as HTMLButtonElement;
+      assert.ok(clearButton, "the button must appear the moment the search box has text");
+      fireEvent.click(clearButton);
+      await waitForCondition(() => document.querySelectorAll(".whatsapp-log-list li").length === 6);
+      assert.equal(searchInput.value, "", "clicking the button must empty the search box");
+      assert.equal(document.querySelector(".whatsapp-log-clear-search"), null, "the button must disappear again once the search box is empty");
+      assert.equal(closeCalls, 0, "clicking Clear search must never also close the whole dialog");
+
+      fireEvent.change(searchInput, { target: { value: "number 5" } });
+      await waitForCondition(() => document.querySelectorAll(".whatsapp-log-list li").length === 1);
+      fireEvent.keyDown(searchInput, { key: "Escape" });
+
+      await waitForCondition(() => document.querySelectorAll(".whatsapp-log-list li").length === 6);
+      assert.equal(searchInput.value, "", "Escape must also empty the search box");
+      assert.equal(closeCalls, 0, "Escape clearing the search box must never also close the whole dialog");
+      assert.ok(document.querySelector('[role="dialog"]'), "the dialog itself must still be in the DOM after that Escape");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * New in this round: each message log row shows the real `createdAt` the
  * server actually recorded for it -- the type has always carried this
  * field (see api.ts's WhatsAppMessageLogEntry), but the row markup never

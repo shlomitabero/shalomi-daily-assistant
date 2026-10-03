@@ -426,10 +426,18 @@ export function WhatsAppPanel({
    * handleProjectSearchKeyDown (round 316) and EntityPanel.tsx's own
    * handleSearchKeyDown (round 318): a live filter-as-you-type box has no
    * submit button, so Enter is the closest thing to a commit signal.
+   * Escape clears the live search value (mirroring HistoryPanel.tsx's own
+   * search box, round 358) -- the input also carries
+   * data-escape-handled-locally so this dialog's own useDialogFocusTrap
+   * Escape-closes-everything listener (round 359's own fix) skips it and
+   * lets this handler run normally instead of closing the whole panel.
    */
   function handleLogSearchKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
     if (e.key === "Enter" && search.trim()) {
       setLogRecentSearches(addWhatsAppLogRecentSearch(projectId, search));
+    } else if (e.key === "Escape" && search.length > 0) {
+      e.preventDefault();
+      setSearch("");
     }
   }
   function handleRecentLogSearchClick(query: string) {
@@ -734,9 +742,20 @@ export function WhatsAppPanel({
                 placeholder={t("whatsapp.log.search.placeholder")}
                 aria-label={t("whatsapp.log.search.placeholder")}
                 value={search}
+                data-escape-handled-locally
                 onChange={(e) => setSearch(e.target.value)}
                 onKeyDown={handleLogSearchKeyDown}
               />
+              {search.length > 0 && (
+                <button
+                  type="button"
+                  className="secondary small whatsapp-log-clear-search"
+                  aria-label={t("whatsapp.log.search.clear")}
+                  onClick={() => setSearch("")}
+                >
+                  ✕
+                </button>
+              )}
               <select
                 className="whatsapp-log-direction-filter"
                 aria-label={t("whatsapp.log.filter.label")}
