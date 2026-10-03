@@ -1244,6 +1244,60 @@ test("App's preview keydown handler opens the shortcuts cheat-sheet on '?' (guar
 });
 
 /**
+ * Round 366 regression: Ctrl/Cmd+K, "/", and "?" all route through
+ * openPanel(), which is already mutually exclusive among its own six
+ * panels -- swapping between THOSE is intentional UX (Ctrl+K while History
+ * is open almost certainly means "I want Search now"). But
+ * ChangePassword/DeleteAccount aren't opened via openPanel at all (their
+ * own topbar buttons set showChangePassword/showDeleteAccount directly,
+ * independent of `view`), and useDialogFocusTrap.ts's own isAnyDialogOpen()
+ * counter (round 365) is the one thing both routes actually share. Before
+ * this fix, pressing "?" or Ctrl+K while a delete-account confirmation was
+ * open stacked ShortcutsPanel/GlobalSearchPanel on top of it -- two
+ * competing focus traps and two competing inert-background states at
+ * once. Extracts the real handleKeyDown function (same technique as the
+ * openPanel extraction test above) and runs it with a mock
+ * isAnyDialogOpen, confirming openPanel is never called while it reports
+ * true, for all three shortcuts, and that normal behavior is fully
+ * restored the instant it reports false again.
+ */
+test("App's preview keydown handler (Ctrl+K, '/', '?') never opens a panel while isAnyDialogOpen() is true, and works normally once it's false", () => {
+  const appSrc = readFileSync(new URL("./App.tsx", import.meta.url), "utf8");
+  const handlerMatch = appSrc.match(/function handleKeyDown\(e: KeyboardEvent\) \{\s*if \(isAnyDialogOpen\(\)\) return;[\s\S]*?\n {4}\}\n/);
+  assert.ok(handlerMatch, "expected to find the Ctrl+K/'/'/'?' handleKeyDown, starting with the isAnyDialogOpen() guard");
+  const { code } = transformSync(handlerMatch![0], { loader: "ts" });
+
+  function run(eventInit: { key: string; ctrlKey?: boolean; metaKey?: boolean; target?: unknown }, dialogOpen: boolean) {
+    const calls: string[] = [];
+    const fn = new Function(
+      "openPanel",
+      "isEditableEventTarget",
+      "isAnyDialogOpen",
+      `${code}\nreturn handleKeyDown;`,
+    )(
+      (panel: string) => calls.push(panel),
+      () => false,
+      () => dialogOpen,
+    ) as (e: unknown) => void;
+    let preventDefaultCalls = 0;
+    fn({ ...eventInit, preventDefault: () => (preventDefaultCalls += 1) });
+    return { calls, preventDefaultCalls };
+  }
+
+  for (const eventInit of [{ key: "k", ctrlKey: true }, { key: "/" }, { key: "?" }]) {
+    assert.deepEqual(
+      run(eventInit, true),
+      { calls: [], preventDefaultCalls: 0 },
+      `${JSON.stringify(eventInit)} must never call openPanel (or even preventDefault) while isAnyDialogOpen() is true`,
+    );
+  }
+
+  assert.deepEqual(run({ key: "k", ctrlKey: true }, false), { calls: ["search"], preventDefaultCalls: 1 }, "Ctrl+K must still open search normally once no dialog is open");
+  assert.deepEqual(run({ key: "/" }, false), { calls: ["search"], preventDefaultCalls: 1 }, "'/' must still open search normally once no dialog is open");
+  assert.deepEqual(run({ key: "?" }, false), { calls: ["shortcuts"], preventDefaultCalls: 1 }, "'?' must still open the shortcuts cheat-sheet normally once no dialog is open");
+});
+
+/**
  * Regression test for a real gap found by round 290's Explore survey:
  * the app's window-level Escape handler (removed this round, see above)
  * enumerated six of the app's eight `useDialogFocusTrap`-based dialogs by

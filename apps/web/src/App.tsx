@@ -33,6 +33,7 @@ import { ChangePasswordPanel } from "./ChangePasswordPanel.js";
 import { DeleteAccountPanel } from "./DeleteAccountPanel.js";
 import { ProjectNameEditor } from "./ProjectNameEditor.js";
 import { ShortcutsPanel } from "./ShortcutsPanel.js";
+import { isAnyDialogOpen } from "./useDialogFocusTrap.js";
 import { AddAssumptionForm, AddEntityForm, AddRoleForm, AssumptionItem, EntitySummaryItem, RoleChip } from "./SpecListItemRemover.js";
 import { applyColumnOrder, reorderColumns } from "./columnOrder.js";
 import { getEntityTabOrder, setEntityTabOrder } from "./entityTabOrder.js";
@@ -604,10 +605,25 @@ function AppContent() {
    * are reachable from every view via the topbar. Moved into
    * useDialogFocusTrap.ts (round 290) so every dialog built on that shared
    * hook gets Escape uniformly, with no separate list to keep in sync here.
+   *
+   * isAnyDialogOpen() guards opening a SECOND dialog on top of
+   * ChangePassword/DeleteAccount specifically (round 366): openPanel()
+   * itself is already mutually exclusive among its own six panels, so
+   * Ctrl+K/"/"/"?" swapping between THOSE is intentional, expected UX --
+   * but ChangePassword and DeleteAccount aren't routed through openPanel
+   * at all (opened directly via their own topbar buttons, independent of
+   * `view`), so nothing previously stopped Ctrl+K or "?" from stacking
+   * GlobalSearchPanel or ShortcutsPanel on top of an open delete-account
+   * confirmation -- two simultaneous focus traps fighting over the same
+   * Tab cycle and background inert state. Reusing the same counter round
+   * 365 added (rather than hand-checking showChangePassword/
+   * showDeleteAccount here) avoids exactly the "a list to keep in sync"
+   * trap this comment already warned about above for Escape.
    */
   useEffect(() => {
     if (view !== "preview") return;
     function handleKeyDown(e: KeyboardEvent) {
+      if (isAnyDialogOpen()) return;
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") {
         e.preventDefault();
         openPanel("search");
