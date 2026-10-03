@@ -1008,3 +1008,84 @@ test("GlobalSearchPanel matches a relation field's resolved display label, not t
     }
   });
 });
+
+/**
+ * Round 361: the query box had zero Escape handling at all -- pressing
+ * Escape while typing a query closed the WHOLE panel (useDialogFocusTrap's
+ * own native keydown listener on the dialog container), exactly the bug
+ * class fixed in HistoryPanel/WhatsAppPanel (rounds 358-360). Same fix:
+ * a "Clear search" button + local Escape-to-clear, protected by the
+ * data-escape-handled-locally marker so useDialogFocusTrap's own native
+ * listener skips calling onClose() for this input and lets the event keep
+ * bubbling normally. Uses a real onClose spy (not the shared helper's
+ * no-op) so a false-positive "it works" can't hide a dialog that actually
+ * closed underneath the test.
+ */
+test("GlobalSearchPanel's query box has a 'Clear search' button and Escape-to-clear, and neither one closes the whole dialog", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = mockGlobalSearchFetch() as typeof fetch;
+    let closeCalls = 0;
+    try {
+      render(
+        React.createElement(
+          ThemeProvider,
+          null,
+          React.createElement(
+            LanguageProvider,
+            null,
+            React.createElement(GlobalSearchPanel, {
+              projectId: "proj1",
+              projectName: "Test Project",
+              entities: [SEARCH_CUSTOMER_ENTITY, SEARCH_ORDER_ENTITY],
+              onClose: () => {
+                closeCalls += 1;
+              },
+              onJumpToEntity: () => {},
+              onJumpToRecord: () => {},
+            }),
+          ),
+        ),
+      );
+
+      const input = document.querySelector(".global-search-input") as HTMLInputElement;
+
+      assert.equal(
+        document.querySelector(".global-search-clear-query") == null,
+        true,
+        "no Clear button should exist before anything is typed",
+      );
+
+      fireEvent.change(input, { target: { value: "widget" } });
+      assert.equal(
+        document.querySelector(".global-search-clear-query") == null,
+        false,
+        "the Clear button must appear the moment the query box has text",
+      );
+
+      fireEvent.keyDown(input, { key: "Escape" });
+      assert.equal(input.value, "", "Escape with text in the box must clear the query");
+      assert.equal(closeCalls, 0, "clearing the query via Escape must never also close the whole dialog");
+      assert.equal(
+        document.querySelector('[role="dialog"]') == null,
+        false,
+        "the dialog must still be in the DOM after Escape cleared the query",
+      );
+
+      fireEvent.keyDown(input, { key: "Escape" });
+      assert.equal(closeCalls, 0, "Escape on an already-empty query box must be a harmless no-op, not close the dialog");
+
+      fireEvent.change(input, { target: { value: "acme" } });
+      const clearButton = document.querySelector(".global-search-clear-query") as HTMLButtonElement;
+      fireEvent.click(clearButton);
+      assert.equal(input.value, "", "clicking the Clear button must empty the query");
+      assert.equal(
+        document.querySelector(".global-search-clear-query") == null,
+        true,
+        "the Clear button must disappear once the query is empty again",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});

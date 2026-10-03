@@ -274,6 +274,11 @@ export function GlobalSearchPanel({
    * hits Enter once.
    */
   function handleInputKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
+    if (e.key === "Escape" && query.length > 0) {
+      e.preventDefault();
+      setQuery("");
+      return;
+    }
     if (results.length === 0) return;
     if (e.key === "ArrowDown") {
       e.preventDefault();
@@ -322,9 +327,20 @@ export function GlobalSearchPanel({
             placeholder={t("search.placeholder")}
             aria-label={t("search.placeholder")}
             value={query}
+            data-escape-handled-locally
             onChange={(e) => setQuery(e.target.value)}
             onKeyDown={handleInputKeyDown}
           />
+          {query.length > 0 && (
+            <button
+              type="button"
+              className="secondary small global-search-clear-query"
+              aria-label={t("search.query.clear")}
+              onClick={() => setQuery("")}
+            >
+              ✕
+            </button>
+          )}
           <button type="submit" disabled={!query.trim()}>
             {t("search.submit")}
           </button>
