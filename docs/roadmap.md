@@ -22748,6 +22748,72 @@ keyword in `domainEntities.ts` still carries an unfixed substring or
 idiom collision has not been exhaustively ruled out; this remains a
 productive area to re-check periodically as new keywords get added.
 
+### Round 373: Appointment's "schedule" keyword spuriously matched "payment schedule"/"work schedule"
+
+Took up the one open candidate round 372's own survey had flagged
+explicitly as a judgment call, not a verified bug -- independently
+re-verified from scratch before implementing anything, per the standing
+discipline of never taking a carried-forward candidate on faith.
+Appointment's keyword list included bare "schedule", and reproduced
+directly: `matchEntities("...payment schedule for each client
+project.")` returned `['Customer', 'Appointment', 'Invoice',
+'Project']`, and `matchEntities("...weekly work schedule for
+employees.")` returned `['Appointment', 'Employee']` -- an invoicing
+app and a plain employee-scheduling tool, neither with anything to do
+with booking a customer appointment, both spuriously got an Appointment
+entity injected.
+
+Confirmed this is the exact same idiom-co-occurrence shape as Deal's
+"pipeline" keyword removed in round 371 (not the substring-within-a-word
+shape fixed for Deal's "deals" and Patient's "patient" in round 372,
+both earlier this same investigative thread): "schedule" is a real,
+correctly-spelled standalone word in "payment schedule"/"work
+schedule", so a `\b`-bounded RegExp genuinely cannot help -- it already
+matches as its own correct whole word in every one of these phrases.
+Checked `grep` across `heuristic.test.ts` before removing anything: no
+existing test relied on bare "schedule" matching Appointment, so the
+removal carries no hidden regression risk the way round 372's Patient
+fix did (where "outpatient" had to be preserved as its own explicit
+keyword).
+
+**Fix**: removed "schedule" from Appointment's keyword list entirely --
+"appointment"/"booking"/"reservation" (plus the existing Hebrew
+keywords) already cover the ordinary booking-app case well enough on
+their own, the same resolution round 371 used for Deal's "pipeline".
+
+Confirmed via `grep` (as in rounds 371-372) that `domainEntities.ts`
+remains the single source of truth for this keyword library -- no
+`apps/web` or `apps/api/src/codegen.ts` changes needed.
+
+Tests: 1 new in `heuristic.test.ts`, placed directly after the existing
+Deal/"pipeline" removal test and following its own exact structure --
+confirms "payment schedule" and "work schedule" no longer spuriously
+match Appointment, while real appointment-booking phrasing ("An app to
+book appointments with customers for haircuts.") still does.
+
+Deliberate-break-and-restore: backed up both changed files
+(`domainEntities.ts`, `heuristic.test.ts`), reverted only
+`domainEntities.ts` to HEAD, ran the `spec-engine` workspace's tests and
+confirmed exactly the 1 expected failure (the new test), restored from
+backup, confirmed byte-identical via `diff -q`, then re-ran the full
+suite and a clean build one final time before committing.
+
+Full suite green: **1300 tests** (`@forge/shared` 13, `@forge/spec-engine`
+89 (+1 new), `@forge/db` 98 unchanged, `@forge/api` 361 unchanged,
+`@forge/web` 739 unchanged) via `npm test` at the repo root, plus a
+clean full monorepo `npm run build`. Pushed as commit `22613ee`.
+
+**Topic status**: this specific collision (Appointment's "schedule" vs.
+"payment schedule"/"work schedule") is now closed -- the last open
+candidate from round 372's survey. No candidate is currently queued for
+a future round from this investigative thread (`domainEntities.ts`
+keyword collisions, rounds 371-373); whether any further keyword in the
+file still carries an unfixed substring or idiom collision has not been
+exhaustively ruled out, and remains worth a periodic re-check, but a
+genuinely fresh survey is now warranted for the next round rather than
+continuing to mine this same file on the strength of a prior round's
+leftover.
+
 ## Phase 4
 
 - Template/agent marketplace
