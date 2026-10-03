@@ -441,6 +441,50 @@ test("App's openPanel closes every other overlay panel when opening one, instead
   assert.deepEqual(run("shortcuts"), { ...closed, shortcuts: true, whatsappUnreadResetCalls: 0 });
 });
 
+/**
+ * Round 367 regression: EntityPanel.tsx's per-record "Send WhatsApp" row
+ * action (shown whenever an entity has a phone field with a value) used to
+ * open the WhatsApp panel via a bare `setShowWhatsApp(true)`, bypassing
+ * openPanel() entirely -- unlike the topbar's own WhatsApp button, which
+ * already goes through openPanel("whatsapp"). openPanel's own round-288
+ * comment states its WhatsApp-specific guarantee explicitly: opening the
+ * panel immediately zeroes the unread badge, "since she's about to see
+ * every message right now" -- a guarantee this one entry point silently
+ * didn't honor. A real user with, say, 2 unread WhatsApp messages (topbar
+ * badge showing "2") who clicks "Send WhatsApp" on a customer record would
+ * see the WhatsApp log open -- those same 2 messages right in front of
+ * her -- while the topbar badge kept showing "2" for up to the
+ * background poll's own interval, instead of clearing immediately like
+ * every other way of opening the panel. Extracts the real onSendWhatsApp
+ * callback passed to <EntityPanel> and confirms it now routes through the
+ * real openPanel("whatsapp") (proving it shares openPanel's own
+ * mutual-exclusion and badge-reset guarantee), not a bare setShowWhatsApp.
+ */
+test("App's onSendWhatsApp (EntityPanel's per-record row action) opens the WhatsApp panel via the real openPanel, not a bare setShowWhatsApp", () => {
+  const appSrc = readFileSync(new URL("./App.tsx", import.meta.url), "utf8");
+  const callbackMatch = appSrc.match(/onSendWhatsApp=\{\(phoneNumber\) => \{[\s\S]*?\n {20}\}\}/);
+  assert.ok(callbackMatch, "expected to find the onSendWhatsApp callback passed to <EntityPanel>");
+  assert.doesNotMatch(
+    callbackMatch![0],
+    /setShowWhatsApp\(true\)/,
+    "onSendWhatsApp must never call setShowWhatsApp directly -- that bypasses openPanel's mutual-exclusion and unread-badge reset",
+  );
+
+  const body = callbackMatch![0].replace(/^onSendWhatsApp=\{/, "").replace(/\}$/, "");
+  const { code } = transformSync(`const fn = ${body};\nreturn fn;`, { loader: "ts" });
+  const calls: { setWhatsappPrefillTo: string[]; openPanel: string[] } = { setWhatsappPrefillTo: [], openPanel: [] };
+  const fn = new Function(
+    "setWhatsappPrefillTo",
+    "openPanel",
+    `${code}`,
+  )(
+    (v: string) => calls.setWhatsappPrefillTo.push(v),
+    (panel: string) => calls.openPanel.push(panel),
+  ) as (phoneNumber: string) => void;
+  fn("0501234567");
+  assert.deepEqual(calls, { setWhatsappPrefillTo: ["0501234567"], openPanel: ["whatsapp"] });
+});
+
 function whatsAppMsg(overrides: Partial<WhatsAppMessageLogEntry> & { id: string }): WhatsAppMessageLogEntry {
   return {
     direction: "in",

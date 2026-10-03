@@ -1687,7 +1687,7 @@ function AppContent() {
                     }}
                     onSendWhatsApp={(phoneNumber) => {
                       setWhatsappPrefillTo(phoneNumber);
-                      setShowWhatsApp(true);
+                      openPanel("whatsapp");
                     }}
                     onRecordCountChange={(entityName, count) =>
                       setEntityCounts((prev) => (prev[entityName] === count ? prev : { ...prev, [entityName]: count }))
