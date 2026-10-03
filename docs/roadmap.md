@@ -22142,6 +22142,59 @@ Full suite green: **1285 tests** (`@forge/shared` 13, `@forge/spec-engine`
 tests)) via `npm test` at the repo root, plus a clean full monorepo
 `npm run build`.
 
+### Round 366: Ctrl+K/"/"/"?" could stack a second dialog over ChangePassword/DeleteAccount
+
+Round 365's own trigger prompt flagged a related, intentionally-deferred
+finding to evaluate this round: `App.tsx`'s window-level handler for
+Ctrl/Cmd+K, "/", and "?" routes every open through `openPanel()`, which
+is already mutually exclusive among its own six panels (History,
+Business Twin, WhatsApp, Collaborators, Search, Shortcuts) -- swapping
+between those is genuinely intentional UX (Ctrl+K while History is open
+almost certainly means "I want Search now," not "stack another
+overlay"), confirmed by reading `openPanel`'s own doc comment, which
+says exactly that.
+
+But `ChangePasswordPanel` and `DeleteAccountPanel` are NOT opened via
+`openPanel` at all -- their own topbar buttons set
+`showChangePassword`/`showDeleteAccount` directly, independent of
+`view`. Nothing stopped Ctrl+K/"/"/"?" from stacking
+`GlobalSearchPanel` or `ShortcutsPanel` on top of an already-open
+delete-account confirmation: two competing `useDialogFocusTrap` focus
+traps and two competing inert-background states fighting over the same
+page at once. This is exactly the bug-class `useDialogFocusTrap.ts`'s
+own doc comment already describes being fixed for Escape (round 290,
+when ChangePassword/DeleteAccount were simply missing from a
+hand-enumerated six-dialog list) -- it had simply never been checked
+for these three *opening* shortcuts, since Escape and
+open-a-panel live in two separate handlers.
+
+Fix: reuses round 365's own `isAnyDialogOpen()` counter (from
+`useDialogFocusTrap.ts`) rather than hand-checking
+`showChangePassword || showDeleteAccount` here -- deliberately avoiding
+the exact "a separate list to keep in sync" trap the file's own round-290
+comment already warns about. `handleKeyDown` now early-returns on
+`isAnyDialogOpen()` before any of its three branches.
+
+Tests: new test in `App.test.ts`, following this file's own established
+"extract the real function, transform with esbuild, run via `new
+Function` with mocked dependencies" convention (the same technique the
+existing `openPanel` test above it uses) -- confirms none of Ctrl+K,
+"/", or "?" ever call `openPanel` (or even `preventDefault`) while a
+mocked `isAnyDialogOpen()` reports `true`, and that all three still work
+exactly as before once it reports `false`.
+
+Deliberate-break-and-restore: backed up both changed files, reverted
+`App.tsx` to HEAD, confirmed exactly 1 failure (the new test, fast, no
+hang -- its own extraction regex simply stopped matching without the
+new guard line), restored from backup and confirmed byte-identical via
+`diff -q`, then re-ran the full web suite and a clean production build
+one final time before committing.
+
+Full suite green: **1286 tests** (`@forge/shared` 13, `@forge/spec-engine`
+85, `@forge/db` 96, `@forge/api` 358 unchanged; `@forge/web` 734 (+1 new
+test)) via `npm test` at the repo root, plus a clean full monorepo
+`npm run build`.
+
 ## Phase 4
 
 - Template/agent marketplace
