@@ -22981,6 +22981,94 @@ pagination/virtualization for large entities (`packages/db/src/repository.ts`'s
 `listRecords` has no `LIMIT`). Round 376 should do its own fresh survey
 unless one of these is specifically chosen.
 
+### Round 376: CSV import permanently corrupted any value csvEscape guards against formula injection
+
+Per round 375's own instruction, ran a genuinely fresh Explore survey:
+export-to-codegen edge cases, auth token expiry/refresh, checkpoint/Time-
+Machine diff edge cases, CSV import/export round-trip with special
+characters, and dashboard/insights calculation edge cases beyond what
+round 375 already checked.
+
+Most areas came up empty:
+- **Auth token expiry/refresh**: a straightforward `expiresAt > ?` SQL
+  comparison on every read, sessions pruned opportunistically on every
+  `createSession`. No refresh mechanism exists (fixed 30-day TTL, by
+  design), but no boundary bug, reuse-after-logout path, or race
+  condition found -- every check is a fresh per-request DB read.
+- **Checkpoint/Time-Machine diff** (`apps/web/src/checkpointDiff.ts`):
+  `computeCheckpointDiff` does a pure structural comparison of two plain
+  snapshots, with no diff-of-diffs anywhere -- "diffing against a
+  restored checkpoint" can't double-count. Nothing fresh found.
+  - **codegen.ts export edge cases**: zero records just produces a
+  header-only CSV; identifiers are already `SAFE_IDENTIFIER`-guarded;
+  Unicode only ever appears in `label`, never as an identifier. Nothing
+  beyond what round 375 already covered.
+- **Dashboard/insights calculation**: checked the Business Twin's
+  activity/numeric-aggregate/enum-distribution/relation-hub observations
+  beyond round 375's own checks. All averages guard `length === 0`
+  before dividing; `createdAt` is always written as proper UTC. No
+  div-by-zero or off-by-one found.
+
+**The fix**: `csvEscape` (in both `apps/web/src/entityFormatting.ts`, the
+live-preview copy, and the identical copy `codegen.ts` generates into
+every exported app's `EntityView.jsx`) deliberately prepends a leading
+`'` to any value starting with `=`, `+`, `-`, `@`, or a tab/CR before
+writing it to a CSV cell -- a documented guard against CSV/formula
+injection (CWE-1236), matching Excel/Sheets/LibreOffice's own convention.
+Independently verified via direct read that `buildImportRecords`, its
+designed inverse, never stripped that apostrophe back off. Confirmed via
+a real repro: exporting `{ notes: "-1" }` produces the CSV cell `'-1`;
+re-importing that exact file back into the same entity produced the
+literal string `"'-1"` as the stored value, not `"-1"` -- permanent,
+silent data corruption on a plain text field. For a `number` field the
+corruption is worse in a different way: `Number("'-120.5")` is `NaN`,
+so a negative number in a number field failed the import outright with
+a confusing "isn't a number" error. Checked and confirmed this is a
+genuine oversight, not an intentional design choice -- `csvEscape`'s own
+doc comment never claims import handles it, and no existing test fed a
+guarded value through `buildImportRecords` to check it survives.
+
+**Fix**: reverse the guard when reconstructing a raw cell value during
+import -- strip a leading `'` only when the character right after it is
+one of the guarded ones (the same condition `csvEscape` used to add it),
+so a value that genuinely starts with a literal apostrophe (e.g. a name
+like `"'Ohana"`) is left untouched. In `codegen.ts` the fix is inlined
+directly into `buildImportRecords`'s own body rather than factored into
+a separate helper function, since several existing tests extract and
+execute that exact function via a regex matching its generated-source
+signature -- a separate helper would have been invisible to that
+extraction and thrown a `ReferenceError` at runtime the moment a test
+actually exercised the import path. Confirmed via `grep` that these are
+the only two implementations of this CSV round-trip logic in the
+codebase.
+
+Tests: 2 new in `entityFormatting.test.ts` (a full round-trip for a
+guarded text+number value through `recordsToCsv -> parseCsv ->
+buildImportRecords`, and a check that a value starting with a genuine,
+unguarded apostrophe is left alone), 1 new in `codegen.test.ts` exercising
+the real generated `recordsToCsv`/`parseCsv`/`buildImportRecords`
+end-to-end (not reimplemented).
+
+Deliberate-break-and-restore: backed up all 4 changed files to the
+scratchpad, reverted only the two implementation files
+(`entityFormatting.ts`, `codegen.ts`) to HEAD, ran each affected
+workspace's tests directly and confirmed exactly 1 failure in each (the
+new round-trip test; the apostrophe-non-guard test correctly still
+passed in both, since it was never affected by the bug), restored from
+backup, confirmed byte-identical via `diff -q` on all 4 files, then
+re-ran the full suite and a clean build one final time before
+committing.
+
+Full suite green: **1308 tests** (`@forge/shared` 13, `@forge/spec-engine`
+93 unchanged, `@forge/db` 98 unchanged, `@forge/api` 363 (+1 new),
+`@forge/web` 741 (+2 new)) via `npm test` at the repo root, plus a clean
+full monorepo `npm run build`. Pushed as commit `6ff6d02`.
+
+**Topic status**: this fix is closed. The two relation-field-picker
+candidates from round 375 (brief raw-number-input flash; unbounded
+`<select>` option list) remain open and un-queued. Round 377 should do
+its own fresh survey unless one of those is specifically chosen.
+
 ## Phase 4
 
 - Template/agent marketplace
