@@ -386,7 +386,7 @@ function AppContent() {
   const [backupDone, setBackupDone] = useState(false);
   const [showTwin, setShowTwin] = useState(false);
   const [showWhatsApp, setShowWhatsApp] = useState(false);
-  // Set alongside setShowWhatsApp(true) by EntityPanel's "Send WhatsApp" row
+  // Set alongside openPanel("whatsapp") by EntityPanel's "Send WhatsApp" row
   // action, so the panel opens with that record's number already in the
   // test-send box instead of the user having to copy/paste it themselves.
   const [whatsappPrefillTo, setWhatsappPrefillTo] = useState<string | null>(null);
