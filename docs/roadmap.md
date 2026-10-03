@@ -21698,6 +21698,72 @@ Full suite green: **1275 tests** (`@forge/shared` 13, `@forge/spec-engine`
 test)) via `npm test` at the repo root, plus a clean full monorepo
 `npm run build`.
 
+### Round 359 (autonomous hourly routine): fixed Escape in History's rename/search inputs also closing the whole dialog
+
+A real bug, not a speculative gap, found by an Explore survey explicitly
+told to prioritize files other than EntityPanel.tsx/codegen.ts (round
+358's own note, after 13 straight rounds of small gaps there).
+`useDialogFocusTrap.ts`'s own keydown listener closes the whole dialog
+on ANY Escape that reaches it (round 290) -- but it's a plain native
+`container.addEventListener("keydown", ...)` on the dialog's container
+DOM node, not a React prop. Real event bubbling reaches that listener
+*before* React's own synthetic dispatch (rooted at `#root`, further up
+the actual DOM tree per `main.tsx`) ever gets a chance to run any inner
+component's `onKeyDown`. So pressing Escape to cancel a checkpoint
+rename (`CheckpointLabelEditor.tsx`) or to clear the History search box
+(round 358, shipped just last round) also closed the entire Time
+Machine panel out from under the user.
+
+Confirmed via grep across every panel using `useDialogFocusTrap`
+(History, Global Search, Business Twin, Collaborators, WhatsApp,
+Change Password, Delete Account) that only these two inner Escape
+handlers exist anywhere, and neither called `stopPropagation()`.
+**First fix attempt (e.stopPropagation() in both inner React
+handlers) empirically failed** -- the new test below still showed
+`closeCalls === 1` -- which is what proved the real mechanism: a plain
+native listener on an ancestor DOM node fires during actual bubble
+*before* React's own root-level dispatch even starts, so nothing inside
+any React `onKeyDown` anywhere below that node, including
+`stopPropagation()`, can suppress it; by the time React gets around to
+invoking the input's handler, the ancestor's native listener has
+already run to completion.
+
+The real fix: `useDialogFocusTrap`'s own listener now checks whether
+the Escape event's `target` opts out via a new
+`data-escape-handled-locally` marker attribute (via `target.closest(...)`)
+and, if so, returns *without* calling `onClose` -- deliberately NOT
+calling `stopPropagation()` either, since the event must keep bubbling
+normally afterward for React's own dispatch to still invoke the input's
+own `onKeyDown` exactly as before. Added the marker to the rename input
+(`CheckpointLabelEditor.tsx`) and the search box (`HistoryPanel.tsx`);
+every other dialog is untouched, so Escape still closes them exactly as
+it did before this round.
+
+Tests: a new test in `HistoryPanel.test.ts` passes a *real* `onClose`
+spy all the way through the real dialog wrapper (every other test in
+this file passes a no-op `() => {}`, which can't distinguish "never
+called" from "called and ignored" -- this is the one test that would
+have actually caught the bug). Confirms both Escape paths (cancel a
+rename; clear the search box) still do their own local thing correctly
+*and* never call the spy, with the dialog itself still present in the
+DOM afterward.
+
+Deliberate-break-and-restore: backed up all 4 changed files, reverted
+the 3 implementation files (`CheckpointLabelEditor.tsx`,
+`HistoryPanel.tsx`, `useDialogFocusTrap.ts`) to HEAD, and confirmed
+exactly 1 failure in the 1 affected suite (`HistoryPanel.test.ts`,
+1/19 -- failing fast with "Escape cancelling a rename must never also
+close the whole History dialog", `1 !== 0`) -- no other tests
+affected. Restored every file from the backup and confirmed
+byte-identical via `diff -q` against all 4 files, then re-ran the full
+web suite and a clean production build one final time before
+committing.
+
+Full suite green: **1276 tests** (`@forge/shared` 13, `@forge/spec-engine`
+85, `@forge/db` 96, `@forge/api` 358 unchanged; `@forge/web` 724 (+1 new
+test)) via `npm test` at the repo root, plus a clean full monorepo
+`npm run build`.
+
 ## Phase 4
 
 - Template/agent marketplace
