@@ -22055,6 +22055,93 @@ Full suite green: **1282 tests** (`@forge/shared` 13, `@forge/spec-engine`
 test)) via `npm test` at the repo root, plus a clean full monorepo
 `npm run build`.
 
+### Round 365: EntityPanel's global keyboard shortcuts fired underneath open overlay dialogs
+
+Round 365's Explore survey built on round 364's own method -- grep for
+`onKeyDown`/keyboard-handling nesting pairs across the app -- and found
+a more significant bug than any single-input nesting case: a
+window-level handler firing underneath an entirely separate, already-
+open dialog.
+
+`EntityPanel.tsx`'s own window-level `keydown` listeners (j/k row focus,
+Enter to edit, "x" toggle-select, Delete/Backspace to delete, "d" to
+duplicate, "n" to start a new record) are guarded only by
+`isTypingTarget` (checks `tagName` for INPUT/TEXTAREA/SELECT or
+`isContentEditable`). `App.tsx` renders `EntityPanel` as a permanent
+sibling of every overlay dialog (History, WhatsApp, Business Twin,
+Collaborators, Global Search, Shortcuts) -- it never unmounts while one
+of them is open. `useDialogFocusTrap.ts`'s own native `keydown`
+listener (the shared hook every one of those dialogs is built on) only
+ever intercepts `"Escape"` and `"Tab"` -- every other key falls through
+untouched, by design (its own existing comment explains why a blanket
+`stopPropagation()` there would break the dialog's own inner inputs'
+React dispatch). `ShortcutsPanel.tsx` has no text input at all, just a
+Close `<button>` -- exactly where `useDialogFocusTrap`'s own
+focus-move-in logic puts focus the moment it opens, and exactly the
+kind of element `isTypingTarget` returns `false` for.
+
+**Real-world impact**: open the Shortcuts cheat-sheet (the `?` key) or
+any other overlay via its toolbar button, then press a familiar
+list-navigation key out of habit -- `j`/`k` silently move the hidden
+table's own row focus, `x` toggles a hidden row's selection, `d`
+duplicates a background record, and `Delete`/`Backspace` pops a native
+`confirm()` dialog *over* the already-open overlay, asking to delete a
+record the person isn't even looking at; `n` discards whatever
+add/edit form state was in progress and yanks keyboard focus out of the
+open, supposedly-trapped dialog into the hidden record form underneath
+it -- breaking the focus trap itself. Verified by reading
+`EntityPanel.tsx`'s two window-level effects, `useDialogFocusTrap.ts`'s
+own `handleKeyDown`, `App.tsx`'s render tree (confirming `EntityPanel`
+truly never unmounts under an overlay), and `ShortcutsPanel.tsx` (the
+concrete, simplest repro) -- not guessed from names.
+
+Fix: a module-scoped open-dialog counter in `useDialogFocusTrap.ts`
+(not component state -- `EntityPanel`'s own effects need to read "is
+ANY dialog open right now" synchronously inside a native `window`
+keydown handler, not re-render in response to one), exported as
+`isAnyDialogOpen()`, incremented when the hook's effect mounts and
+decremented in its cleanup. `EntityPanel.tsx`'s two window-level effects
+now early-return on `isAnyDialogOpen()` alongside the existing
+`isTypingTarget` check. The hook's own deliberate non-`stopPropagation`
+behavior for every key besides Escape/Tab is untouched -- this fix
+lives entirely on the "is a dialog open" side, not the dialog's own key
+handling.
+
+Tests: two new tests in `useDialogFocusTrap.test.ts` confirm
+`isAnyDialogOpen()` starts `false`, flips `true` for as long as a
+dialog built on the hook is mounted, returns to `false` on unmount, and
+behaves as a real counter (stays `true` while a second dialog is still
+mounted after a first one closes) rather than a boolean toggle. A new
+integration test in `EntityPanel.test.ts` renders a real dialog built
+on the same hook alongside a genuinely mid-edit `EntityPanel`, confirms
+focus lands on the dialog's own button (not a text input), and that
+`"n"` and `"j"` are both silently swallowed while it's open -- the
+in-progress edit survives, the row focus doesn't move -- then confirms
+the exact same keys work normally again the instant that dialog closes.
+
+Deliberate-break-and-restore: backed up all 4 changed files, reverted
+the 2 implementation files to HEAD, and confirmed exactly the expected
+failures -- 1 in `EntityPanel.test.ts` (the new integration test) plus
+the entire `useDialogFocusTrap.test.ts` file failing to even load (a
+clean `SyntaxError: ... does not provide an export named
+'isAnyDialogOpen'`, since the test file imports a function the reverted
+implementation no longer exports) -- no other tests affected. Restored
+from backup and confirmed byte-identical via `diff -q` against all 4
+files, then re-ran the full web suite and a clean production build one
+final time before committing. (One TypeScript narrowing false-positive
+surfaced during this process -- `assert.equal(nameInput.value,
+"Globex", ...)` directly in the test's own code flow let `tsc` narrow
+`nameInput.value`'s type to the literal `"Globex"` for the rest of the
+function, making a later `nameInput.value !== ""` comparison look like
+a type error with no real overlap; fixed with a local `as string` cast
+at that one comparison, verified by re-running the full
+break-and-restore cycle a second time after the fix.)
+
+Full suite green: **1285 tests** (`@forge/shared` 13, `@forge/spec-engine`
+85, `@forge/db` 96, `@forge/api` 358 unchanged; `@forge/web` 733 (+3 new
+tests)) via `npm test` at the repo root, plus a clean full monorepo
+`npm run build`.
+
 ## Phase 4
 
 - Template/agent marketplace
