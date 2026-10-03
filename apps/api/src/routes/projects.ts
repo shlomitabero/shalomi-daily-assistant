@@ -630,6 +630,17 @@ export function createProjectsRouter(db: ForgeDatabase, provider: SpecProvider |
       if (!checkpoint || checkpoint.projectId !== project.id) {
         throw new HttpError(404, `Checkpoint "${req.params.checkpointId}" not found`, "CHECKPOINT_NOT_FOUND");
       }
+      // Restore itself is the lost-update hazard activePipelines (see its
+      // own comment above) exists to prevent -- it reads project.spec, does
+      // work, then writes project.spec back, just like /build, /refine, and
+      // /answers do. Unlike those three, restore's own work below never
+      // awaits anything, so it can't itself be interrupted mid-flight; but
+      // without this check, restoring while a slow /build or /refine is
+      // already in flight would still get silently overwritten the moment
+      // that other request finishes and writes its own result back.
+      if (activePipelines.has(project.id)) {
+        throw new HttpError(409, "A build or refine is already running for this project", "PIPELINE_IN_PROGRESS");
+      }
       // Restoring never drops columns/tables (migrations are additive-only),
       // so it's always safe: this just ensures the restored spec's schema
       // exists (a no-op unless restoring "forward" to a spec never built)

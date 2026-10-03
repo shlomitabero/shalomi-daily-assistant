@@ -4285,6 +4285,82 @@ test("two concurrent /answers calls on the same not-yet-built project: the secon
 });
 
 /**
+ * Regression test for a real bug: unlike /build, /refine, and /answers
+ * above, the checkpoint-restore route never checked activePipelines at all
+ * before this round -- it has the exact same read-project.spec-then-write-
+ * it-back shape those three are guarded against, just with its own read
+ * and write both synchronous (no AI call), so the actual hazard is a SLOW
+ * /refine already in flight when a restore request lands: the restore
+ * commits its own (older) spec, and moments later the refine's own,
+ * already-in-progress write silently overwrites it right back, discarding
+ * the user's restore with no error. Uses the same gated-provider harness as
+ * the /refine-vs-/refine test above to force this deterministically.
+ */
+test("restoring a checkpoint while a refine is in flight is rejected with 409, instead of silently losing the restore once the refine completes", async () => {
+  const gated = createGatedProvider();
+  await withServer(
+    async (baseUrl) => {
+      const token = await signup(baseUrl);
+      const createRes = await fetch(`${baseUrl}/api/projects`, {
+        method: "POST",
+        headers: authHeaders(token),
+        body: JSON.stringify({ description: "A CRM with customers and deals." }),
+      });
+      const { project } = (await createRes.json()) as { project: { id: string } };
+
+      const buildRes = await fetch(`${baseUrl}/api/projects/${project.id}/build`, {
+        method: "POST",
+        headers: authHeaders(token),
+      });
+      assert.equal(buildRes.status, 200);
+      await collectSSE(buildRes);
+
+      const checkpointsRes = await fetch(`${baseUrl}/api/projects/${project.id}/checkpoints`, {
+        headers: authHeaders(token),
+      });
+      const { checkpoints } = (await checkpointsRes.json()) as { checkpoints: { id: string }[] };
+      const initialCheckpointId = checkpoints[0].id;
+
+      // Arm the gate only now -- build (and reading checkpoints) must run at full speed.
+      gated.arm();
+      const refinePromise = fetch(`${baseUrl}/api/projects/${project.id}/refine`, {
+        method: "POST",
+        headers: authHeaders(token),
+        body: JSON.stringify({ instruction: "Also track invoices for customers." }),
+      });
+      refinePromise.catch(() => {});
+      await gated.waitUntilStarted();
+
+      const restoreRes = await fetch(`${baseUrl}/api/projects/${project.id}/checkpoints/${initialCheckpointId}/restore`, {
+        method: "POST",
+        headers: authHeaders(token),
+      });
+      let restoreBody: { code?: string } = {};
+      try {
+        restoreBody = (await restoreRes.json()) as { code?: string };
+      } finally {
+        gated.release();
+      }
+      assert.equal(restoreRes.status, 409);
+      assert.equal(restoreBody.code, "PIPELINE_IN_PROGRESS");
+
+      const refineRes = await refinePromise;
+      assert.equal(refineRes.status, 200);
+      const refineEvents = await collectSSE(refineRes);
+      assert.ok(refineEvents.every((e) => e.status !== "failed"));
+
+      // Once the refine has genuinely finished, restoring the same checkpoint must succeed normally.
+      const restoreAgainRes = await fetch(
+        `${baseUrl}/api/projects/${project.id}/checkpoints/${initialCheckpointId}/restore`,
+        { method: "POST", headers: authHeaders(token) },
+      );
+      assert.equal(restoreAgainRes.status, 200);
+    },
+    { provider: gated.provider },
+  );
+});
+
+/**
  * updateRecord (packages/db/src/repository.ts) reads the current row
  * (getRecord), merges the caller's partial `data` into it, then writes the
  * merged result back -- a read-then-write shape structurally identical to
