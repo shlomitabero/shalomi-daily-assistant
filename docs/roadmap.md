@@ -22255,6 +22255,126 @@ Full suite green: **1287 tests** (`@forge/shared` 13, `@forge/spec-engine`
 test)) via `npm test` at the repo root, plus a clean full monorepo
 `npm run build`.
 
+### Round 368: Kanban board silently dropped records with an unrecognized enum value
+
+This round's Explore survey used the same "sibling comparison" method
+rounds 363/367 used, applied to `entityFormatting.ts`'s two grouping
+functions: `groupByField` (the Kanban board's own column builder) versus
+`groupRecordsByField` (table-view grouping). Both exist to bucket records
+by an enum field's value, and both have near-identical doc comments --
+but only `groupRecordsByField` actually handles a record whose stored
+value isn't one of the field's currently *declared* `enumValues`. It
+collects such records into a trailing `"__other__"` bucket. `groupByField`
+has no such handling at all: it builds one column per declared enum
+value and filters records by exact string match, so a record with an
+unrecognized value matches nothing and simply never appears in any
+column -- gone, with no error, no console warning, nothing.
+
+**Real-world trigger, independently verified by reading
+`packages/db/src/migrate.ts`'s own `diffAndMigrate`**: when an AI refine
+changes a field's `type` (e.g. "notes" text -> number), that's reported
+as a `"type_changed"` entry precisely because the SQL column's type is
+left alone and this is surfaced to the user. But when a refine renames or
+restructures only an enum field's *`enumValues` list* -- same declared
+`type: "enum"`, just different allowed strings -- `prevField.type !==
+field.type` is `false`, so the migration path doesn't even report it as
+a change, let alone touch any existing row's stored value. A record
+written under the old options keeps its old string forever; the board
+silently drops it the moment it stops being a `enumValues` match, while
+Table and Calendar views (which don't filter by declared value at all)
+keep showing it completely normally. A user editing their own data would
+see a customer "disappear" from the board with absolutely no indication
+why, while the exact same record is still sitting right there in table
+view.
+
+Independently verified (not just taken from the Explore subagent's
+report) by reading both functions directly in `entityFormatting.ts`
+(lines ~495-514 for the buggy `groupByField`, ~1100-1131 for the
+already-correct `groupRecordsByField`), by reading
+`apps/api/src/codegen.ts`'s own duplicate pair (lines ~1764-1808, which
+has the exact same gap -- `groupByField` lacks the bucket,
+`groupRecordsByField` right below it already has one), and by reading
+`migrate.ts`'s `diffAndMigrate` in full to confirm the root-cause
+mechanism above rather than guessing at it.
+
+**Fix**: ported the identical `"(other)"`-bucket pattern from
+`groupRecordsByField` into `groupByField`, in both
+`apps/web/src/entityFormatting.ts` (now takes an optional `t` translator
+and returns a `BoardColumn` with a new `isOther?: boolean` flag) and its
+`apps/api/src/codegen.ts` port (plain JS, hardcoded `"Other"` label, no
+`t()` in exported apps). Both `EntityPanel.tsx`'s and `codegen.ts`'s
+board-column JSX now render the extra column when it's non-empty.
+
+A real design decision had to be made for that column's own behavior,
+not just its rendering: dropping a card onto `"(other)"` has no real
+enum value to write back, so it was deliberately made **display-only**
+-- its `onDragOver`/`onDrop` handlers both guard on `column.isOther` and
+return immediately (no `preventDefault()`, so the browser's own native
+drag-and-drop contract rejects the drop before `onDrop` could even
+fire), and its header has no "+" add-card button, since there's nothing
+real to create a record against. A card sitting in `"(other)"` can still
+be dragged *out* into a real column completely normally, since
+`BoardCard`'s own `draggable`/`onDragStart` wiring (verified by reading
+it directly) is unconditional and has nothing to do with which column
+currently renders it. Gave the synthetic column a `.board-column-other`
+class (dashed border) in both `apps/web/src/styles.css` and the exported
+app's own inline stylesheet in `codegen.ts`, so it reads visually as
+"not a normal stage" without needing any new copy.
+
+Tests: 5 new, all exercising the real production code, not
+reimplementations --
+- `entityFormatting.test.ts` (3 new): the `"(other)"` bucket appearing
+  for a legacy value and carrying the right records/label/`isOther`
+  flag; the bucket being omitted entirely when no record has an
+  unrecognized value (proving this is additive, not a behavior change
+  for the common case); the raw `"Other"` fallback label when
+  `groupByField` is called without a translator (keeping the existing
+  call sites that don't pass one working unchanged).
+- `EntityPanel.test.ts` (1 new): a real-DOM render with one record on a
+  declared status and one on a legacy `"archived"` status, confirming a
+  4th `.board-column-other` column appears holding exactly that record,
+  has no `.board-add-card-btn`, and that firing a real `drop` DOM event
+  on it leaves the dropped record's `status` completely untouched (read
+  back from the mock fetch's own backing store, not just "no error
+  thrown").
+- `codegen.test.ts` (1 new): regex-extracts the real generated
+  `groupByField` out of `generateExportFiles`'s actual output and runs
+  it via `new Function`, covering the same `"(other)"`-bucket and
+  no-legacy-value-means-no-bucket cases for the exported standalone app.
+  Also had to update 3 existing regex assertions in the
+  already-passing "drag-and-drop" test (`onDragOver`/`onDrop`/
+  `className`) to match the new `column.isOther` guards and the
+  3-way className ternary -- these weren't new bugs, just literal-source
+  assertions that necessarily changed shape once the generated code did.
+
+Deliberate-break-and-restore: backed up all 7 changed files (4
+implementation: `entityFormatting.ts`, `EntityPanel.tsx`, `styles.css`,
+`codegen.ts`; 3 test: `entityFormatting.test.ts`, `EntityPanel.test.ts`,
+`codegen.test.ts`), reverted only the 4 implementation files to HEAD,
+ran the full suite and confirmed exactly the 5 expected failures (3 in
+`entityFormatting.test.ts`, 1 in `EntityPanel.test.ts`, 1 in
+`codegen.test.ts` -- plus, as expected, the 3 pre-existing
+`codegen.test.ts` assertions I'd updated for the new generated-code shape
+also failed against the reverted/old `codegen.ts`, confirming those
+weren't accidentally-always-passing assertions either), restored all 4
+implementation files from backup, confirmed byte-identical via `diff -q`
+on all 7 files, then re-ran the full suite and a clean production build
+one final time before committing.
+
+Full suite green: **1292 tests** (`@forge/shared` 13, `@forge/spec-engine`
+85, `@forge/db` 96, `@forge/api` 359 (+1 new test), `@forge/web` 739 (+4
+new tests)) via `npm test` at the repo root, plus a clean full monorepo
+`npm run build`. Pushed as commit `04a0c70`.
+
+**Topic status**: this specific gap (board-only grouping silently
+dropping unrecognized values) is now closed in both the live preview and
+the exported app. Not yet checked: whether the same
+"filter by declared enum value, silently drop the rest" pattern exists
+anywhere else in the codebase outside grouping -- e.g. the per-field
+"Filter by status" dropdown's own narrowing logic, or CSV
+export/import's handling of a legacy value. That's a real candidate for
+a future round's survey, not yet ruled in or out.
+
 ## Phase 4
 
 - Template/agent marketplace
