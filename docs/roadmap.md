@@ -21466,6 +21466,52 @@ Full suite green: **1268 tests** (`@forge/shared` 13, `@forge/spec-engine`
 719 (+1 new test)) via `npm test` at the repo root, plus a clean full
 monorepo `npm run build`.
 
+### Round 355 (autonomous hourly routine): "Clear search" button for the entity search box
+
+Independently verified a fresh Explore-subagent survey via grep/Read
+before implementing: every other filtering control in the entity
+toolbar already had a one-click reset -- the per-field enum filters get
+a "Clear filters" button (round 341), column sort gets "Clear sort"
+(round 347) -- but the free-text search box itself still had none.
+Confirmed via `grep -n "entity-search\|setSearch(\"\")\|entity-clear-filters"`
+in both `EntityPanel.tsx` and `codegen.ts` that the only existing
+`setSearch("")` calls are entity-switch/reset effects, not a dedicated
+user-facing clear action, and that the existing "Clear" button next to
+recent searches (`entity.search.recent.clear`) only empties the
+*saved* recent-search history, not the live search box's current
+value -- a genuinely separate gap from this one.
+
+Added a small "✕" `<button>` right after the `.entity-search` input,
+shown only when `search.length > 0`, calling `setSearch("")` on click
+-- in both the live `EntityPanel.tsx` and the exported `codegen.ts`'s
+`EntityView.jsx` output. New `entity.search.clear` i18n key (Hebrew:
+"ניקוי החיפוש", English: "Clear search") used as the button's
+`aria-label` in the live app; `codegen.ts` uses the hardcoded English
+string directly, matching that file's own no-i18n convention (and
+correctly has no "secondary"/"small" class, per the round 341 lesson
+that `codegen.ts` never defines those classes).
+
+Tests: new real-DOM tests in `EntityPanel.test.ts` and `codegen.test.ts`
+confirm the button is absent while the search box is empty, appears
+the moment it has text (and the search actually narrows the visible
+rows), and clicking it both empties the input and restores every row
+-- mirroring the existing "Clear filters" button test's exact shape.
+
+Deliberate-break-and-restore: backed up all 5 changed files, reverted
+the 3 implementation files (`codegen.ts`, `EntityPanel.tsx`,
+`language.ts`) to HEAD, and confirmed exactly 1 failure in each of the
+2 affected suites (`EntityPanel.test.ts`, `codegen.test.ts` -- both
+failing with "the button must appear the moment the search box has
+text") -- no other tests affected. Restored every file from the
+backup and confirmed byte-identical via `diff -q` against all 5 files,
+then re-ran both full suites and both production builds clean one
+final time before committing.
+
+Full suite green: **1270 tests** (`@forge/shared` 13, `@forge/spec-engine`
+85, `@forge/db` 96 unchanged; `@forge/api` 356 (+1 new test); `@forge/web`
+720 (+1 new test)) via `npm test` at the repo root, plus a clean full
+monorepo `npm run build`.
+
 ## Phase 4
 
 - Template/agent marketplace
