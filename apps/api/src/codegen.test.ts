@@ -3686,6 +3686,54 @@ test("the exported EntityView's CSV import maps each column to a distinct field 
   assert.deepEqual(records, [{ stage: "In Progress", shippingStatus: "Shipped" }]);
 });
 
+/**
+ * Regression test for a real bug found by round 376's Explore survey:
+ * csvEscape (this file's own guard against CSV/formula injection,
+ * CWE-1236) prepends a leading "'" to any value starting with =, +, -,
+ * @, or a tab/CR before writing it to a CSV cell -- but buildImportRecords,
+ * its designed inverse, never stripped that apostrophe back off. Re-
+ * importing a CSV the exported app's own "Export CSV" button had just
+ * produced would permanently corrupt a text value like "-1 day late" into
+ * the literal "'-1 day late", and silently fail to parse a negative
+ * number at all (Number("'-120.5") is NaN). Confirms the real generated
+ * recordsToCsv/parseCsv/buildImportRecords (not reimplemented here) now
+ * round-trip such values exactly.
+ */
+test("the exported EntityView's CSV export and import round-trip a value csvEscape guards against formula injection, instead of permanently corrupting it", () => {
+  const files = generateExportFiles(project);
+  const entityViewJsx = files.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+
+  const csvEscapeSrc = entityViewJsx.match(/function csvEscape\(value\) \{[\s\S]*?\n\}\n/)?.[0];
+  const fieldDisplayValueSrc = entityViewJsx.match(/function fieldDisplayValue\(field, value, relatedRecords\) \{[\s\S]*?\n\}\n/)?.[0];
+  const recordsToCsvSrc = entityViewJsx.match(/function recordsToCsv\(fields, records, relatedRecords\) \{[\s\S]*?\n\}\n/)?.[0];
+  const parseCsvSrc = entityViewJsx.match(/function parseCsv\(text\) \{[\s\S]*?\n\}\n/)?.[0];
+  const headerSrc = entityViewJsx.match(/function matchesImportHeader\(header, field\) \{[\s\S]*?\n\}\n/)?.[0];
+  const isValidDateSrc = entityViewJsx.match(/const DATE_FORMAT[\s\S]*?\nfunction isValidDate\(value\) \{[\s\S]*?\n\}\n/)?.[0];
+  const importSrc = entityViewJsx.match(/function buildImportRecords\(fields, rows\) \{[\s\S]*?\n\}\n/)?.[0];
+  assert.ok(
+    csvEscapeSrc && fieldDisplayValueSrc && recordsToCsvSrc && parseCsvSrc && headerSrc && isValidDateSrc && importSrc,
+    "expected to find csvEscape/fieldDisplayValue/recordsToCsv/parseCsv/matchesImportHeader/isValidDate/buildImportRecords in generated output",
+  );
+
+  const { recordsToCsv, parseCsv, buildImportRecords } = new Function(
+    `${csvEscapeSrc}\n${fieldDisplayValueSrc}\n${recordsToCsvSrc}\n${parseCsvSrc}\n${isValidDateSrc}\n${headerSrc}\n${importSrc}\nreturn { recordsToCsv, parseCsv, buildImportRecords };`,
+  )();
+
+  const fields = [
+    { name: "name", label: "Name", type: "text" },
+    { name: "notes", label: "Notes", type: "text" },
+    { name: "balance", label: "Balance", type: "number" },
+  ];
+  const original = { name: "Dana", notes: "-1 day late, call @dana", balance: -120.5 };
+
+  const csv = recordsToCsv(fields, [original], {});
+  const rows = parseCsv(csv);
+  const { records, errors } = buildImportRecords(fields, rows);
+
+  assert.deepEqual(errors, []);
+  assert.deepEqual(records, [original]);
+});
+
 test("the exported app includes a real cross-entity global search, ported from the Forge AI live preview", () => {
   const files = generateExportFiles(project);
   const globalSearchJsx = files.find((f) => f.path === "web/src/components/GlobalSearch.jsx")!.content;

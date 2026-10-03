@@ -1687,7 +1687,15 @@ function buildImportRecords(fields, rows) {
 
     for (const field of fields) {
       const columnIndex = columnFields.findIndex((f) => f && f.name === field.name);
-      const raw = columnIndex === -1 ? "" : (row[columnIndex] || "").trim();
+      const trimmedCell = columnIndex === -1 ? "" : (row[columnIndex] || "").trim();
+      // Reverses the leading "'" that csvEscape (this file's own guard
+      // against CSV/formula injection, CWE-1236) prepends to a value
+      // starting with =, +, -, @, or a tab/CR -- without this,
+      // re-importing a CSV this app itself exported would permanently
+      // bake that guard apostrophe into the data. Only strips it when the
+      // next character is one of the guarded ones, so a value that
+      // genuinely starts with a literal "'" is left untouched.
+      const raw = trimmedCell[0] === "'" && /^[=+\\-@\\t\\r]/.test(trimmedCell.slice(1)) ? trimmedCell.slice(1) : trimmedCell;
 
       if (field.type === "relation") continue;
 

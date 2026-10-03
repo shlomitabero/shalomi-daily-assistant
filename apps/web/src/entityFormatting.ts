@@ -902,6 +902,23 @@ function matchesHeader(header: string, field: Field): boolean {
 }
 
 /**
+ * Reverses the leading "'" that csvEscape (recordsToCsv's own guard
+ * against CSV/formula injection, CWE-1236) prepends to a value starting
+ * with =, +, -, @, or a tab/CR. Without this, re-importing a CSV this app
+ * itself just exported would permanently bake that guard apostrophe into
+ * the data -- a text note like "-1 day late" would come back as the
+ * literal string "'-1 day late", and a negative number would fail to
+ * parse at all (Number("'-120.5") is NaN), rejecting an otherwise-valid
+ * import row. Only strips the apostrophe when the character right after
+ * it is one of the guarded ones -- the same condition csvEscape used to
+ * add it -- so a value that genuinely starts with a literal "'" (e.g. a
+ * name like "'Ohana") is left untouched.
+ */
+function unescapeCsvGuard(raw: string): string {
+  return raw[0] === "'" && /^[=+\-@\t\r]/.test(raw.slice(1)) ? raw.slice(1) : raw;
+}
+
+/**
  * Turns parsed CSV rows into record payloads matching `fields`' types --
  * the reverse of `fieldDisplayValue`, so a file this app exported (or a
  * hand-edited copy of one) round-trips back in. Columns are matched to
@@ -956,7 +973,7 @@ export function buildImportRecords(fields: Field[], rows: string[][]): ImportRes
 
     for (const field of fields) {
       const columnIndex = columnFields.findIndex((f) => f?.name === field.name);
-      const raw = columnIndex === -1 ? "" : (row[columnIndex] ?? "").trim();
+      const raw = columnIndex === -1 ? "" : unescapeCsvGuard((row[columnIndex] ?? "").trim());
 
       if (field.type === "relation") continue; // see doc comment: not supported per-row yet
 

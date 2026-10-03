@@ -928,6 +928,30 @@ test("a number >= 1000 and a date field round-trip exactly through recordsToCsv 
   assert.deepEqual(records, [original]);
 });
 
+test("a text value and a negative number that csvEscape guards against formula injection round-trip exactly through recordsToCsv -> parseCsv -> buildImportRecords (a real bug: the guard's leading \"'\" used to come back baked into the re-imported data, and a negative number used to fail to parse at all)", () => {
+  const fields: Field[] = [
+    { name: "name", label: "Name", type: "text", required: true },
+    { name: "notes", label: "Notes", type: "text", required: false },
+    { name: "balance", label: "Balance", type: "number", required: false },
+  ];
+  const original = { name: "Dana", notes: "-1 day late, call @dana", balance: -120.5 };
+  const csv = recordsToCsv(fields, [original], "en");
+  const rows = parseCsv(csv);
+  const { records, errors } = buildImportRecords(fields, rows);
+  assert.deepEqual(errors, []);
+  assert.deepEqual(records, [original]);
+});
+
+test("unescapeCsvGuard leaves a value that genuinely starts with a literal apostrophe alone, rather than mistaking it for csvEscape's own guard", () => {
+  const fields: Field[] = [{ name: "name", label: "Name", type: "text", required: true }];
+  const original = { name: "'Ohana" };
+  const csv = recordsToCsv(fields, [original], "en");
+  const rows = parseCsv(csv);
+  const { records, errors } = buildImportRecords(fields, rows);
+  assert.deepEqual(errors, []);
+  assert.deepEqual(records, [original]);
+});
+
 test("parseCsv accepts bare LF line endings too, not just CRLF", () => {
   const rows = parseCsv("Name,Amount\nDana,10\nYossi,20");
   assert.deepEqual(rows, [
