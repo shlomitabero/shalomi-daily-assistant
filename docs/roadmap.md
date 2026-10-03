@@ -22897,6 +22897,90 @@ scratch, neither of which fits a single autonomous round's normal scope.
 Round 375 should do its own fresh survey unless that candidate is
 specifically chosen with that tradeoff in mind.
 
+### Round 375: Business Twin's duplicate-record detection missed case/whitespace variants of the same name
+
+Per round 374's own instruction, ran a genuinely fresh Explore survey
+across new territory: Business Twin internals, i18n completeness,
+accessibility gaps, export/ZIP codegen edge cases, WhatsApp log
+pagination/retention, and relation-field picker edge cases.
+
+Most areas came up empty on anything new -- each had already been
+exhaustively hardened in an earlier round:
+- i18n: the Hebrew/English dictionaries in `apps/web/src/i18n/language.ts`
+  were programmatically diffed and found perfectly symmetric (509 keys
+  each side).
+- Accessibility: no raw `<div onClick>` custom-widget patterns exist;
+  dialogs consistently use `useDialogFocusTrap` + `role="dialog"`; the
+  Kanban board's drag-and-drop already ships a keyboard-accessible
+  `<select>` fallback.
+- Export/ZIP codegen: `zip.ts` already guards the Zip64 65535-entry limit
+  explicitly, and `codegen.ts`'s `assertSafe`/`SAFE_IDENTIFIER` check is
+  defense-in-depth'd into the generated `server.js` itself.
+- WhatsApp pagination: `listWhatsAppMessages` already does real
+  offset/limit pagination with an honest `hasMore` flag (a round-263 fix);
+  no automatic retention exists, but that's a documented, intentional
+  "user's own explicit action" design choice, not an oversight.
+
+Two concrete findings survived from the relation-field picker (a brief
+flash where the field renders as a raw number input before the real
+`<select>` loads, and the picker having no pagination/virtualization for
+very large related-record lists) -- both logged as real but lower-priority
+than the cleanest candidate: **Business Twin's own duplicate-detection
+logic**.
+
+`computeDuplicateObservations` (`apps/api/src/twin.ts`) flags records
+within an entity that share the exact same display label (e.g. two
+"Customer" records both named "Dana Levi") as a possible accidental
+double-import. Independently verified via `grep`/direct read that
+`recordDisplayLabel` (`apps/api/src/displayField.ts`) returns
+`String(value)` verbatim -- no trim, no case-folding -- so the function
+grouped records by that raw string. The exact scenario this feature's own
+docstring names as its motivating use case (an accidental double-import)
+is also exactly what produces `"Dana Levi"`, `"dana levi "` (trailing
+space), and `"DANA LEVI"` as three distinct, uncollapsed `Map` keys --
+three records a human reading the list would immediately recognize as the
+same person were silently never flagged as duplicates of each other.
+Checked the existing tests (`apps/api/src/twin.test.ts`) and confirmed
+they only ever exercised exact-string matches, and checked the function's
+own doctring for any sign this was an intentional "exact match only"
+design choice (as round 374's email-enumeration candidate turned out to
+be) -- found none; this reads as a genuine oversight, not a deliberate
+feature.
+
+**Fix**: group by a trimmed, lowercased key instead of the raw label,
+while still displaying the first-seen original label in the observation
+text so the wording matches a real record on screen. Confirmed via `grep`
+that `computeDuplicateObservations` is the only duplicate-detection logic
+in the codebase -- not duplicated into `apps/web` or the exported codegen
+output, which has no Business Twin feature at all -- so no porting is
+needed anywhere else.
+
+Tests: 1 new in `twin.test.ts`, covering three case/whitespace variants of
+"Dana Levi" grouping into a single 3-record duplicate observation,
+alongside a fourth, genuinely-unique record that must not be swept in.
+
+Deliberate-break-and-restore: backed up both changed files (`twin.ts`,
+`twin.test.ts`) to the scratchpad, reverted only `twin.ts` to HEAD, ran
+the `api` workspace's tests directly and confirmed exactly the 1 expected
+failure (the new test; every pre-existing duplicate-detection test still
+passed unchanged), restored from backup, confirmed byte-identical via
+`diff -q` on both files, then re-ran the full suite and a clean build one
+final time before committing.
+
+Full suite green: **1305 tests** (`@forge/shared` 13, `@forge/spec-engine`
+93 unchanged, `@forge/db` 98 unchanged, `@forge/api` 362 (+1 new),
+`@forge/web` 739 unchanged) via `npm test` at the repo root, plus a clean
+full monorepo `npm run build`. Pushed as commit `c1b500e`.
+
+**Topic status**: this fix is closed. Two lower-priority candidates
+remain open and un-queued for a future round if nothing better turns up:
+(1) the relation-field picker's brief raw-number-input flash before
+related records finish loading (`apps/web/src/EntityPanel.tsx`), and (2)
+the relation picker's unbounded `<select>` option list with no
+pagination/virtualization for large entities (`packages/db/src/repository.ts`'s
+`listRecords` has no `LIMIT`). Round 376 should do its own fresh survey
+unless one of these is specifically chosen.
+
 ## Phase 4
 
 - Template/agent marketplace
