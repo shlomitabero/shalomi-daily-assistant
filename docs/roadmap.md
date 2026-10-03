@@ -21512,6 +21512,90 @@ Full suite green: **1270 tests** (`@forge/shared` 13, `@forge/spec-engine`
 720 (+1 new test)) via `npm test` at the repo root, plus a clean full
 monorepo `npm run build`.
 
+### Round 356 (autonomous hourly routine): Escape clears the table's multi-row selection
+
+Independently verified a fresh Explore-subagent survey via grep/Read
+before implementing: "x" (round 346) lets a keyboard-only user build a
+multi-row selection, but the only way to back out of it required the
+mouse -- either the round-354 "Clear selection" button, or committing
+an actual bulk delete/duplicate/update just to escape the mode.
+Confirmed via grep that `setSelectedIds(new Set())` was only ever
+called from that button's own `onClick` and from post-mutation reset
+effects, never from a keyboard path. Also confirmed Escape's other two
+existing meanings in this codebase -- `useDialogFocusTrap.ts`'s
+dialog-close (scoped to overlay dialogs, round 290) and the record
+form's own discard-edit handler (round 351, scoped to the form element
+itself) -- don't conflict: both are triggered on different DOM
+elements than this new window-level table listener, and `isTypingTarget`
+already guards it from firing while any of those inputs has focus.
+
+Added `else if (e.key === "Escape" && selectedIds.size > 0) {
+e.preventDefault(); setSelectedIds(new Set()); }` to the existing
+table-scoped keydown handler (the same one holding j/k/Enter/x/Delete/
+Backspace/d) in both the live `EntityPanel.tsx` and the exported
+`codegen.ts`, reusing the exact same `setSelectedIds(new Set())` the
+"Clear selection" button already calls -- zero new logic, zero API
+calls. Added an "Esc" row to `ShortcutsPanel.tsx` (a *second* "Esc" row
+alongside the existing one for closing dialogs -- two genuinely
+different shortcuts that happen to share a key, like Ctrl+K and
+Ctrl+Enter already do) and a new `shortcuts.clearSelection` i18n key
+(he/en).
+
+**New lesson, discovered empirically while writing this round's own
+regression-proof**: the first draft of the new `codegen.test.ts` test
+used `assert.equal(container.querySelector(".bulk-actions-bar"), null,
+...)`. When the implementation was reverted to HEAD to verify the test
+actually fails (the routine's standard deliberate-break-and-restore
+step), that assertion's `actual` value was a *real, non-null jsdom DOM
+element* -- and Node's `assert` library hung for 90+ seconds trying to
+format/diff that live DOM node for the AssertionError message (jsdom
+elements carry huge, effectively-circular internal structure --
+`parentNode`, `ownerDocument`, listeners, etc.). Confirmed the exact
+mechanism with a side-by-side comparison: forcing a different,
+already-existing test (the "d" shortcut test) to fail the same way
+failed in ~200ms as expected, while this test's `assert.equal(domNode,
+null, ...)` pattern specifically hung every single time it was rerun.
+Fixed by rewriting it as `assert.equal(container.querySelector(...) ==
+null, true, ...)` -- comparing a boolean instead of handing a live DOM
+node to `assert.equal` -- which now fails in ~200ms like every other
+assertion in this file. The live preview's own `EntityPanel.test.ts`
+version never hit this, because its failure path goes through the
+existing `waitForCondition` helper (which throws a plain string-based
+Error, never formatting a DOM node). This is now a durable lesson:
+**never pass a live DOM element as the `actual` argument to
+`assert.equal`/`assert.deepEqual` when expecting `null` -- compare
+`element == null` (or `element === null`) as a boolean instead,** since
+a *passing* assertion never triggers Node's diff formatter, but a
+*failing* one (exactly the case the routine's own regression-proof
+step deliberately forces every single round) can hang indefinitely.
+
+Tests: new real-DOM tests in `EntityPanel.test.ts` and `codegen.test.ts`
+both focus a row with "j", select it with "x", confirm the
+bulk-actions-bar appears, confirm Escape at the search box leaves the
+selection untouched (the `isTypingTarget` guard), then confirm Escape
+at the window level clears the selection (bulk-actions-bar gone, every
+checkbox unchecked, no record deleted/hidden, and -- in the codegen
+version -- zero additional API calls, not even a refetch).
+`ShortcutsPanel.test.ts`'s row-count assertion updated 12→13, plus a
+new assertion that exactly 2 distinct "Esc" `kbd` entries exist
+(mirroring the existing "exactly 2 Ctrl" assertion for Ctrl+K/Ctrl+Enter).
+
+Deliberate-break-and-restore: backed up all 7 changed files, reverted
+the 4 implementation files (`codegen.ts`, `EntityPanel.tsx`,
+`ShortcutsPanel.tsx`, `language.ts`) to HEAD, and confirmed exactly 1
+failure in each of the 3 affected suites (`ShortcutsPanel.test.ts`
+1/2, `EntityPanel.test.ts` 1/89, `codegen.test.ts` 1/131 -- the last
+one completing in under 7 seconds total, confirming the hang-fix
+above actually worked) -- no other tests affected. Restored every
+file from the backup and confirmed byte-identical via `diff -q`
+against all 7 files, then re-ran both full suites and both production
+builds clean one final time before committing.
+
+Full suite green: **1272 tests** (`@forge/shared` 13, `@forge/spec-engine`
+85, `@forge/db` 96 unchanged; `@forge/api` 357 (+1 new test); `@forge/web`
+721 (+1 new test)) via `npm test` at the repo root, plus a clean full
+monorepo `npm run build`.
+
 ## Phase 4
 
 - Template/agent marketplace
