@@ -143,6 +143,11 @@ export function HistoryPanel({
    * the search itself is already a live filter via `search` state) into
    * this project's own recent-history-searches list, same "commit on
    * leaving the field" convention as this app's other recentX lists.
+   * The search box's own Escape-to-clear and ✕ button (below, mirroring
+   * EntityPanel.tsx's identical search box from rounds 355/357) both call
+   * setSearch("") directly -- a genuinely separate action from
+   * handleClearRecentSearches, which only empties the *saved*
+   * recent-searches list below, never the live search value itself.
    */
   function commitRecentSearch() {
     if (!search.trim()) return;
@@ -229,8 +234,22 @@ export function HistoryPanel({
               onBlur={commitRecentSearch}
               onKeyDown={(e) => {
                 if (e.key === "Enter") commitRecentSearch();
+                else if (e.key === "Escape" && search.length > 0) {
+                  e.preventDefault();
+                  setSearch("");
+                }
               }}
             />
+            {search.length > 0 && (
+              <button
+                type="button"
+                className="secondary small history-clear-search"
+                aria-label={t("history.search.clear")}
+                onClick={() => setSearch("")}
+              >
+                ✕
+              </button>
+            )}
             <select
               className="history-type-filter"
               aria-label={t("history.filter.label")}

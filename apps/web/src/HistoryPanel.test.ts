@@ -587,6 +587,82 @@ test("HistoryPanel's search box (shown once there are more than 5 checkpoints) n
 });
 
 /**
+ * New in this round: EntityPanel.tsx's own identically-shaped live-filter
+ * search box already got a one-click "Clear search" (✕) button (round
+ * 355) and Escape-to-clear (round 357), but this sibling panel's search
+ * box was never given either -- the only way to empty it was deleting
+ * every character by hand. Confirms the ✕ button only renders once the
+ * box has text, that clicking it empties the box and restores the full
+ * list, that Escape does the same thing, and that neither ever touches
+ * the *separate* recent-searches history list (a genuinely different
+ * gap/button, already closed) -- only Enter/blur commit to that list.
+ */
+test("HistoryPanel's search box has a 'Clear search' button and Escape-to-clear, neither of which touches the separate recent-searches list", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    const checkpoints = [
+      makeCheckpoint("cp1", "Initial build"),
+      makeCheckpoint("cp2", "Refine: add invoice tracking"),
+      makeCheckpoint("cp3", "Refine: add customer notes"),
+      makeCheckpoint("cp4", "Refine: fix invoice totals"),
+      makeCheckpoint("cp5", "Refine: add reminders"),
+      makeCheckpoint("cp6", "Refine: add tags"),
+    ];
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/checkpoints") {
+        return new Response(JSON.stringify({ checkpoints }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+
+    try {
+      render(
+        React.createElement(
+          ThemeProvider,
+          null,
+          React.createElement(
+            LanguageProvider,
+            null,
+            React.createElement(HistoryPanel, {
+              projectId: "proj1",
+              projectName: "Test Project",
+              currentSpec: checkpoints[0].spec,
+              onRestored: () => {},
+              onClose: () => {},
+            }),
+          ),
+        ),
+      );
+      await waitForCondition(() => document.querySelectorAll(".checkpoint-list li").length === 6);
+
+      const searchBox = document.querySelector(".history-search") as HTMLInputElement;
+      assert.equal(document.querySelector(".history-clear-search"), null, "the button must not render while the search box is empty");
+
+      fireEvent.change(searchBox, { target: { value: "invoice" } });
+      await waitForCondition(() => document.querySelectorAll(".checkpoint-list li").length === 2);
+
+      const clearButton = document.querySelector(".history-clear-search") as HTMLButtonElement;
+      assert.ok(clearButton, "the button must appear the moment the search box has text");
+      fireEvent.click(clearButton);
+      await waitForCondition(() => document.querySelectorAll(".checkpoint-list li").length === 6);
+      assert.equal(searchBox.value, "", "clicking the button must empty the search box");
+      assert.equal(document.querySelector(".history-clear-search"), null, "the button must disappear again once the search box is empty");
+      assert.equal(document.querySelector(".history-recent-searches"), null, "clicking Clear search must never commit or show a recent search");
+
+      fireEvent.change(searchBox, { target: { value: "reminders" } });
+      await waitForCondition(() => document.querySelectorAll(".checkpoint-list li").length === 1);
+      fireEvent.keyDown(searchBox, { key: "Escape" });
+      await waitForCondition(() => document.querySelectorAll(".checkpoint-list li").length === 6);
+      assert.equal(searchBox.value, "", "Escape must also empty the search box");
+      assert.equal(document.querySelector(".history-recent-searches"), null, "Escape must never commit or show a recent search either -- only Enter/blur do that");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * New in this round: every checkpoint's own label already says whether it
  * came from the initial build or a later refine (see
  * apps/api/src/routes/projects.ts's changeLabel), but with no cap and no
