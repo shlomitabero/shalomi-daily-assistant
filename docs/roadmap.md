@@ -22195,6 +22195,66 @@ Full suite green: **1286 tests** (`@forge/shared` 13, `@forge/spec-engine`
 test)) via `npm test` at the repo root, plus a clean full monorepo
 `npm run build`.
 
+### Round 367: "Send WhatsApp" row action bypassed openPanel's unread-badge guarantee
+
+With the `isAnyDialogOpen()` topic exhaustively closed (confirmed by a
+round-367-prep grep: exactly 3 window-level keydown handlers exist in
+the whole app, all 3 now guarded), this round's Explore survey went
+back to broad, fresh code-reading and found a real bug by comparing
+`App.tsx`'s two different WhatsApp-panel entry points.
+
+`openPanel()` (App.tsx) is the single place every one of the app's six
+mutually-exclusive overlay panels is supposed to open through, and its
+own comment states a WhatsApp-specific guarantee explicitly: opening
+the panel immediately zeroes `whatsappUnreadCount`, "since she's about
+to see every message right now," rather than waiting for the next
+background poll tick to notice. The topbar's own WhatsApp button
+already calls `openPanel("whatsapp")`. But `EntityPanel.tsx`'s
+per-record "Send WhatsApp" row action (shown whenever an entity has a
+phone field with a value) was wired, in `App.tsx`'s `onSendWhatsApp`
+callback passed down to it, to a bare `setShowWhatsApp(true)` --
+bypassing `openPanel()` entirely, silently exempting this one entry
+point from both guarantees `openPanel` exists for (mutual exclusion
+and the immediate badge reset).
+
+**Real-world impact**: a user with, say, 2 unread WhatsApp messages
+(topbar badge showing "2") clicks "Send WhatsApp" on a customer record.
+The WhatsApp log opens -- those same 2 messages right in front of her --
+while the topbar badge keeps showing "2" for up to the background
+poll's own interval, instead of clearing immediately like every other
+way of opening the panel. Verified by reading `openPanel`'s own
+definition and comment, both its real call sites (the topbar button
+and this one), and `WhatsAppPanel.tsx`'s own mount effect (which only
+updates the badge's real source-of-truth asynchronously, not
+synchronously on open) -- not guessed from prop names.
+
+Fix: routes the `onSendWhatsApp` call site through
+`openPanel("whatsapp")` instead of the bare `setShowWhatsApp(true)`
+(ordering relative to the unrelated `setWhatsappPrefillTo` call doesn't
+matter, since `openPanel` never touches that state).
+
+Tests: new test in `App.test.ts`, extending this file's own
+regex-extraction convention one step further than the existing
+named-function extractions (`openPanel`, `handleKeyDown`) to an inline
+JSX-prop arrow function: regexes out the `onSendWhatsApp={...}` callback
+body, confirms the extracted source itself never contains
+`setShowWhatsApp(true)` (the actual bug this round fixed), then strips
+the JSX-attribute wrapper braces, transforms it with esbuild, and runs
+it via `new Function` with mocked `setWhatsappPrefillTo`/`openPanel` to
+confirm the real call sequence: `setWhatsappPrefillTo(phoneNumber)` then
+`openPanel("whatsapp")`.
+
+Deliberate-break-and-restore: backed up both changed files, reverted
+`App.tsx` to HEAD, confirmed exactly 1 failure (the new test, fast, no
+hang), restored from backup and confirmed byte-identical via `diff -q`,
+then re-ran the full web suite and a clean production build one final
+time before committing.
+
+Full suite green: **1287 tests** (`@forge/shared` 13, `@forge/spec-engine`
+85, `@forge/db` 96, `@forge/api` 358 unchanged; `@forge/web` 735 (+1 new
+test)) via `npm test` at the repo root, plus a clean full monorepo
+`npm run build`.
+
 ## Phase 4
 
 - Template/agent marketplace
