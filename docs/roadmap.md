@@ -21936,6 +21936,69 @@ Full suite green: **1278 tests** (`@forge/shared` 13, `@forge/spec-engine`
 unchanged) via `npm test` at the repo root, plus a clean full monorepo
 `npm run build`.
 
+### Round 363: LanguageProvider silently pinned an auto-detected language forever
+
+With the marker-spread (rounds 358-362) and EntityPanel/codegen.ts
+(rounds 346-357) survey strategies both exhausted, round 363's Explore
+agent did a broad, fresh read of files that hadn't had recent attention
+and found a real bug by direct comparison: `apps/web/src/i18n/
+LanguageContext.tsx`'s `LanguageProvider` versus its already-fixed
+sibling `apps/web/src/theme/ThemeContext.tsx`.
+
+`language.ts`'s own JSDoc contract says "an explicit stored choice
+always wins; otherwise a Hebrew browser locale picks Hebrew and
+anything else picks English." But the provider's mount effect wrote
+every `lang` value to `localStorage` unconditionally, including the very
+first one, which came purely from `detectInitialLang`'s own
+`navigator.language` guess, never from a real user action. The instant
+any page loaded, that guess got written to storage as if it were an
+explicit choice -- so the browser-detection branch could never fire
+again on that device. `ThemeContext.tsx` had the exact same bug and was
+already fixed (round 290) with a `hasExplicitChoiceRef`; independently
+verified by reading both files plus `theme/ThemeContext.test.ts`'s own
+regression test for it -- `LanguageContext.tsx` had no test file at all
+before this round (confirmed via `ls apps/web/src/i18n`).
+
+**Real-world impact**: a shared/public computer (library, office kiosk)
+where one visitor's browser locale auto-detects a language gets that
+language permanently pinned to local storage after their very first page
+view, even though they never touched the language switcher -- the next
+person on that same browser profile, with a different OS/browser
+language, inherits the previous visitor's accidental language instead
+of their own, with no way to tell "real choice" from "lucky first
+visitor's auto-detect" apart.
+
+Fix, mirroring `ThemeContext.tsx`'s pattern (adapted since `setLang` is
+called directly by `LanguageSwitcher.tsx`, unlike `theme`'s wrapped
+`toggleTheme`): a `hasExplicitChoiceRef = useRef(storedLang === "he" ||
+storedLang === "en")` computed from the real stored value at mount; the
+mount effect now only calls `localStorage.setItem` when that ref is
+true; `setLang` itself sets the ref to `true` before calling
+`setLangState`, so a real `LanguageSwitcher` click still persists
+immediately exactly as before -- only the auto-detected initial value is
+now withheld from storage.
+
+Tests: new `LanguageContext.test.ts` (previously nonexistent), modeled
+directly on `ThemeContext.test.ts`'s own structure -- (1) confirms a
+fresh mount with no stored choice does NOT write the auto-detected
+language to `localStorage`, (2) confirms a real stored explicit choice
+still wins over a browser locale that would otherwise auto-detect
+differently, (3) confirms a real `setLang` click still persists
+immediately, unaffected by the fix.
+
+Deliberate-break-and-restore: backed up both new/changed files, reverted
+`LanguageContext.tsx` to HEAD, and confirmed exactly 2 of the 3 new
+tests failed (test 2, the stored-explicit-choice case, is unaffected by
+this bug class and correctly kept passing) -- fast, no hang. Restored
+from backup and confirmed byte-identical via `diff -q`, then re-ran the
+full web suite and a clean production build one final time before
+committing.
+
+Full suite green: **1281 tests** (`@forge/shared` 13, `@forge/spec-engine`
+85, `@forge/db` 96, `@forge/api` 358 unchanged; `@forge/web` 729 (+3 new
+tests)) via `npm test` at the repo root, plus a clean full monorepo
+`npm run build`.
+
 ## Phase 4
 
 - Template/agent marketplace
