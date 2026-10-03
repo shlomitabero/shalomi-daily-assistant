@@ -22654,6 +22654,100 @@ shape as a plain substring collision) is corrected for future rounds
 adding new keywords to this file. No other open candidates remain from
 round 370's survey; round 372 starts from a fresh survey.
 
+### Round 372: two more heuristic keyword substring collisions -- Deal's "deals" and Patient's "patient"
+
+A fresh Explore survey re-read every file round 369's agent had not
+already cleared (`packages/db/src/repository.ts`, `checkpoints.ts`,
+`users.ts`, `collaborators.ts`, `whatsapp.ts`, `apps/api/src/zip.ts`,
+`pipeline.ts`'s own internal logic, and the refine-history persistence
+logic in `App.tsx`) and found nothing wrong in any of them -- all
+already carried heavy prior-round rationale in their own comments, and
+the refine history is explicitly, deliberately local-only. The
+productive area was still `domainEntities.ts`'s keyword corpus:
+rereading every rule (not just Deal's, which round 371 had just
+touched) turned up two more instances of the exact substring-collision
+pitfall the file's own header already named and had partially fixed
+(`order`/`disorder`, `stock`/`livestock`, `driver`/`screwdriver`).
+
+**Deal's "deals"**: the comment directly above Deal's keyword list
+already explains why bare "deal" was left out -- it's a substring of
+"ideal" ("ideal customer"/"ideal workflow"). But that check only ever
+covered the singular form; plural "deals" has the identical problem one
+letter over, since it's also a substring of "ideals" ("company values
+and ideals"). Reproduced directly: `matchEntities("...core values and
+ideals...")` returned `['Employee', 'Deal']` with zero sales content in
+the text.
+
+**Patient's "patient"**: bare "patient" is a substring of "impatient",
+an ordinary word in a plain customer-support description ("handle
+impatient customers politely") with nothing to do with medical care.
+Reproduced directly: `matchEntities("...impatient customers...")`
+returned `['Customer', 'Patient']`.
+
+Both are the SAME collision shape as Order/Product/Courier's already-
+fixed keywords (pitfall 1: substring-within-a-word) -- genuinely
+different from Deal's own "pipeline" keyword removed last round
+(pitfall 1b: idiom co-occurrence, where a `\b`-bounded RegExp does
+nothing). Verified each with a real repro of the proposed fix before
+committing to it, exactly as round 371's own lesson insists on: `
+/\bdeals\b/.test("ideals")` and `/\bpatient(s)?\b/.test("impatient
+customers")` both `false` (collision gone), while
+`/\bdeals\b/.test("track our deals and negotiations")` and
+`/\bpatient(s)?\b/.test("new patient intake")` both stay `true` (real
+usage unaffected).
+
+**Fix**: swapped both bare string keywords for the same `\b`-bounded
+RegExp pattern already used elsewhere in this file --
+`[/\bdeals\b/, "negotiation", ...]` for Deal,
+`[/\bpatient(s)?\b/, "outpatient", "clinic patient", ...]` for Patient.
+The Patient fix needed one extra step the Deal fix didn't: verified
+that `/\bpatient(s)?\b/.test("outpatient")` is `false`, since there's no
+word boundary between "out" and "patient" when directly concatenated --
+without adding "outpatient" as its own explicit keyword, the fix would
+have silently stopped catching that one real, legitimate healthcare
+term. Added it alongside the regex to avoid introducing that regression.
+
+Confirmed via `grep` (as in round 371) that `domainEntities.ts` is the
+single source of truth for this keyword library -- no `apps/web` or
+`apps/api/src/codegen.ts` changes needed.
+
+A third candidate the same survey turned up was deliberately NOT
+implemented this round: Appointment's "schedule" keyword spuriously
+co-occurring with unrelated phrases like "payment schedule"/"project
+schedule". This is the idiom-co-occurrence shape (like "pipeline"), not
+the substring shape -- a `\b`-bounded RegExp genuinely wouldn't help,
+and dropping "schedule" outright is a judgment call about whether
+"appointment"/"booking"/"reservation" already cover the ordinary case
+well enough without it. Left open as a real, available candidate for a
+future round, not ruled out as illegitimate.
+
+Tests: 2 new in `heuristic.test.ts`, placed directly after the existing
+Deal/"ideal" collision test and following its own exact structure --
+one confirming "ideals" no longer spuriously matches Deal while real
+"deals" usage still does, one confirming "impatient" no longer
+spuriously matches Patient while both real "patient" usage and
+"outpatient" still do.
+
+Deliberate-break-and-restore: backed up both changed files
+(`domainEntities.ts`, `heuristic.test.ts`), reverted only
+`domainEntities.ts` to HEAD, ran the `spec-engine` workspace's tests and
+confirmed exactly the 2 expected failures (the 2 new tests), restored
+from backup, confirmed byte-identical via `diff -q`, then re-ran the
+full suite and a clean build one final time before committing.
+
+Full suite green: **1299 tests** (`@forge/shared` 13, `@forge/spec-engine`
+88 (+2 new), `@forge/db` 98 unchanged, `@forge/api` 361 unchanged,
+`@forge/web` 739 unchanged) via `npm test` at the repo root, plus a
+clean full monorepo `npm run build`. Pushed as commit `6631bdf`.
+
+**Topic status**: these two specific collisions (Deal's "deals" vs.
+"ideals", Patient's "patient" vs. "impatient") are now closed. One open
+candidate remains from this round's own survey -- Appointment's
+"schedule" keyword -- available for a future round. Whether any further
+keyword in `domainEntities.ts` still carries an unfixed substring or
+idiom collision has not been exhaustively ruled out; this remains a
+productive area to re-check periodically as new keywords get added.
+
 ## Phase 4
 
 - Template/agent marketplace
