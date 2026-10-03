@@ -1978,6 +1978,89 @@ test("the exported EntityView's bulk delete removes every selected row immediate
 });
 
 /**
+ * New in this round: once rows are selected in the exported app, the only
+ * ways to leave selection mode were committing a real bulk delete/duplicate
+ * (mutating data just to escape the mode) or unchecking every row one at a
+ * time. Confirms a dedicated "Clear selection" button in the exported
+ * EntityView empties the selection (the bulk-actions-bar disappears, every
+ * checkbox unchecks) without ever calling the API -- not even a refetch.
+ */
+test("the exported EntityView's 'Clear selection' button empties the current selection without touching the API", async () => {
+  const files = generateExportFiles(project);
+  const dir = writeGeneratedWebComponent(files);
+  const store = [
+    { id: 1, name: "Acme Corp", email: "a@acme.example", status: "New" },
+    { id: 2, name: "Globex", email: "b@globex.example", status: "Won" },
+  ];
+  const originalFetch = globalThis.fetch;
+  let getCount = 0;
+  globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
+    const method = init?.method ?? "GET";
+    if (method === "GET" && input === "/api/Customer") {
+      getCount += 1;
+      return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    throw new Error(`unexpected request ${method} ${input}`);
+  }) as typeof fetch;
+
+  try {
+    await withRealLocalStorage(async () => {
+      const { EntityView } = await import(path.join(dir, "web", "src", "components", "EntityView.jsx"));
+      const customerEntity = project.spec.entities.find((e) => e.name === "Customer")!;
+      const props = {
+        entity: customerEntity,
+        highlightRecordId: null,
+        onHighlightHandled: () => {},
+        onJumpToRecord: () => {},
+        onRecordCountChange: () => {},
+      };
+
+      const { container } = render(React.createElement(EntityView, props));
+      for (let i = 0; i < 40; i++) {
+        if (container.querySelectorAll("tbody tr").length === 2) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+      assert.equal(container.querySelectorAll("tbody tr").length, 2, "expected both records to have loaded");
+      const getCountAfterLoad = getCount;
+
+      for (const checkbox of container.querySelectorAll('td.select-col input[type="checkbox"]')) {
+        await act(async () => {
+          fireEvent.click(checkbox);
+        });
+      }
+      assert.ok(container.querySelector(".bulk-actions-bar"), "expected the bulk-actions-bar once rows are selected");
+      assert.equal(
+        Array.from(container.querySelectorAll('td.select-col input[type="checkbox"]')).filter((c) => (c as HTMLInputElement).checked).length,
+        2,
+        "both rows must be checked before clearing",
+      );
+
+      const clearButton = Array.from(container.querySelectorAll(".bulk-actions-bar button")).find((b) => b.textContent === "Clear selection");
+      assert.ok(clearButton, "expected a real 'Clear selection' button once rows are selected");
+
+      await act(async () => {
+        fireEvent.click(clearButton!);
+      });
+
+      assert.equal(container.querySelector(".bulk-actions-bar"), null, "the bulk-actions-bar must disappear once the selection is cleared");
+      assert.equal(
+        Array.from(container.querySelectorAll('td.select-col input[type="checkbox"]')).filter((c) => (c as HTMLInputElement).checked).length,
+        0,
+        "every row's own checkbox must be unchecked again",
+      );
+      assert.equal(container.querySelectorAll("tbody tr").length, 2, "clearing the selection must not delete or hide any record");
+      assert.equal(getCount, getCountAfterLoad, "clearing the selection must be purely local state -- it must never call the API, not even a refetch");
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    cleanup();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
  * The other half, mirroring the live preview's own equivalent test: NOT
  * clicking Undo must commit every real DELETE in the batch once the undo
  * window actually elapses, including a partial failure restoring only the

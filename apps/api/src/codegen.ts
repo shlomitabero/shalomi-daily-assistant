@@ -3587,6 +3587,9 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
                   <button type="button" onClick={handleBulkDelete}>
                     🗑️ Delete selected
                   </button>
+                  <button type="button" onClick={() => setSelectedIds(new Set())}>
+                    Clear selection
+                  </button>
                 </div>
               )}
               <table className={Object.keys(columnWidths).length > 0 ? "entity-table-resized" : undefined}>

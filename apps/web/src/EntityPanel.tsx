@@ -2465,6 +2465,9 @@ export function EntityPanel({
                   <button type="button" className="danger" onClick={handleBulkDelete}>
                     {t("entity.bulk.deleteSelected")}
                   </button>
+                  <button type="button" className="secondary" onClick={() => setSelectedIds(new Set())}>
+                    {t("entity.bulk.clearSelection")}
+                  </button>
                 </div>
               )}
               <table className={Object.keys(columnWidths).length > 0 ? "entity-table-resized" : undefined}>

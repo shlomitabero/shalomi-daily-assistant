@@ -329,6 +329,69 @@ test("EntityPanel restores only the records whose real delete actually failed on
 });
 
 /**
+ * New in this round: once rows are selected, the only ways to leave
+ * selection mode were to actually commit a bulk delete/duplicate/update
+ * (mutating data just to escape the mode) or manually uncheck every row
+ * one at a time -- the header "select all" checkbox only clears when
+ * every visible row is ALREADY selected; with some-but-not-all selected it
+ * instead selects the rest, growing the selection rather than clearing it.
+ * Confirms a dedicated "Clear selection" button empties selectedIds (the
+ * bulk-actions-bar disappears and every row's checkbox is unchecked again)
+ * without ever calling the API -- not even a GET refresh, let alone a
+ * mutation.
+ */
+test("EntityPanel's 'Clear selection' button empties the current selection without touching the API", async () => {
+  await withJsdom(async () => {
+    const store: EntityRecord[] = [
+      { id: 1, name: "Acme Corp", status: "new" },
+      { id: 2, name: "Globex", status: "won" },
+    ];
+    const originalFetch = globalThis.fetch;
+    let getCount = 0;
+    globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/entities/Deal") {
+        getCount += 1;
+        return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+    try {
+      renderEntityPanel();
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 2);
+      const getCountAfterLoad = getCount;
+
+      for (const checkbox of document.querySelectorAll('td.select-col input[type="checkbox"]')) {
+        fireEvent.click(checkbox);
+      }
+      await waitForCondition(() => document.querySelector(".bulk-actions-bar") !== null);
+      assert.equal(
+        Array.from(document.querySelectorAll('td.select-col input[type="checkbox"]')).filter((c) => (c as HTMLInputElement).checked).length,
+        2,
+        "both rows must be checked before clearing",
+      );
+
+      const clearButton = Array.from(document.querySelectorAll(".bulk-actions-bar button")).find(
+        (b) => b.textContent === "Clear selection",
+      ) as HTMLButtonElement | undefined;
+      assert.ok(clearButton, "expected a 'Clear selection' button inside the bulk-actions-bar");
+      fireEvent.click(clearButton!);
+
+      assert.equal(document.querySelector(".bulk-actions-bar"), null, "the bulk-actions-bar must disappear once the selection is cleared");
+      assert.equal(
+        Array.from(document.querySelectorAll('td.select-col input[type="checkbox"]')).filter((c) => (c as HTMLInputElement).checked).length,
+        0,
+        "every row's own checkbox must be unchecked again",
+      );
+      assert.equal(document.querySelectorAll("table tbody tr").length, 2, "clearing the selection must not delete or hide any record");
+      assert.equal(getCount, getCountAfterLoad, "clearing the selection must be purely local state -- it must never call the API, not even a refetch");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * New in this round: bulk delete/duplicate already existed, but there was
  * no way to change a single shared field's value across several selected
  * records at once (e.g. marking 15 selected orders "Shipped") without
