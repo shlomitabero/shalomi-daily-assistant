@@ -21417,6 +21417,55 @@ Full suite green: **1266 tests** (`@forge/shared` 13, `@forge/spec-engine`
 718 (+1 new test)) via `npm test` at the repo root, plus a clean full
 monorepo `npm run build`.
 
+### Round 354 (autonomous hourly routine): "Clear selection" button in the bulk-actions-bar
+
+Independently verified a fresh Explore-subagent survey via grep/Read
+before implementing (per the standing round 346+ discipline): once rows
+are selected via the row checkboxes, the only ways to leave selection
+mode were committing a real bulk delete/duplicate/update (mutating data
+just to escape the mode) or manually unchecking every row one at a
+time. The header "select all" checkbox doesn't help either: with
+some-but-not-all rows selected it grows the selection to cover the rest
+rather than clearing it. Confirmed via `grep -n "setSelectedIds(new
+Set("` in both `EntityPanel.tsx` and `codegen.ts` that `setSelectedIds(new
+Set())` (an actual clear-to-empty) was only ever called after a
+mutation succeeded (bulk delete, entity switch), never from a
+dedicated user-initiated "clear/cancel selection" action.
+
+Added a `<button type="button" className="secondary" onClick={() =>
+setSelectedIds(new Set())}>` labeled "Clear selection" right after the
+existing "Duplicate selected"/"Delete selected" buttons inside the
+`bulk-actions-bar` div, in both the live `EntityPanel.tsx` and the
+exported `codegen.ts`'s `EntityView.jsx` output. New
+`entity.bulk.clearSelection` i18n key (Hebrew: "ביטול הבחירה", English:
+"Clear selection") added to `language.ts`; `codegen.ts`'s own
+hardcoded-English convention used the literal string directly, matching
+every other button in that file's bulk-actions-bar.
+
+Tests: new real-DOM tests in `EntityPanel.test.ts` and `codegen.test.ts`
+select every row's checkbox, confirm the bulk-actions-bar appears with
+both rows checked, click the new "Clear selection" button, and confirm
+the bulk-actions-bar disappears, every checkbox unchecks again, no
+record is deleted or hidden, and critically that the API was never
+called again afterward (not even a GET refetch) -- clearing selection
+is purely local React state with zero network side effects, unlike
+every other button in that bar.
+
+Deliberate-break-and-restore: backed up all 5 changed files, reverted
+the 3 implementation files (`codegen.ts`, `EntityPanel.tsx`,
+`language.ts`) to HEAD, and confirmed exactly 1 failure in each of the 2
+affected suites (`EntityPanel.test.ts`, `codegen.test.ts` -- the new
+test in each file failing with "expected a 'Clear selection' button...")
+-- no other tests affected. Restored every file from the backup and
+confirmed byte-identical via `diff -q` against all 5 files, then re-ran
+both full suites and both production builds clean one final time before
+committing.
+
+Full suite green: **1268 tests** (`@forge/shared` 13, `@forge/spec-engine`
+85, `@forge/db` 96 unchanged; `@forge/api` 355 (+1 new test); `@forge/web`
+719 (+1 new test)) via `npm test` at the repo root, plus a clean full
+monorepo `npm run build`.
+
 ## Phase 4
 
 - Template/agent marketplace
