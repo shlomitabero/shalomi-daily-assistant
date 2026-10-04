@@ -77,6 +77,37 @@ test("summarizeRefineImpact reports an entity the refine dropped from the spec, 
   assert.match(summary, /build\.detail\.architect\.entityRemoved/);
 });
 
+/**
+ * Regression test for a real gap found by round 397's Explore survey:
+ * computeImpact's changedEntities (pipeline.ts) already computed
+ * removedFieldNames alongside newFieldNames, but this chat-history
+ * summary never read it -- an entity that only lost a field (gained
+ * nothing) rendered an empty "gained new fields: " part with nothing
+ * after the colon, the exact same gap as BuildProgress.tsx's own panel.
+ */
+test("summarizeRefineImpact reports a field the refine dropped from an entity that still exists, not an empty 'gained fields' part", () => {
+  const events: AgentStepEvent[] = [
+    {
+      agent: "Architect",
+      status: "success",
+      message: "…",
+      detail: {
+        newEntities: [],
+        changedEntities: [{ name: "Order", label: "Order", newFieldNames: [], removedFieldNames: ["notes"] }],
+      },
+    },
+  ];
+  const summary = summarizeRefineImpact(events, t);
+  assert.match(summary, /Order/);
+  assert.match(summary, /notes/);
+  assert.match(summary, /build\.detail\.architect\.lostFields/);
+  assert.doesNotMatch(
+    summary,
+    /build\.detail\.architect\.gainedFields/,
+    "an entity that only lost a field must not produce an empty 'gained fields' part implying it gained something",
+  );
+});
+
 function question(text: string): OpenQuestion {
   return { question: text, options: ["Yes", "No"] };
 }

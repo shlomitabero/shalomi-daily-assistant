@@ -365,6 +365,73 @@ test("a refine that drops an existing entity is reported as a removed entity in 
 });
 
 /**
+ * Regression test for a real gap found by round 397's Explore survey:
+ * computeImpact's changedEntities already computed removedFieldNames
+ * alongside newFieldNames (added in the very same round-377 commit that
+ * fixed whole-entity removal above), but architectEvent's own message
+ * never read it -- an entity that only LOST a field (gained nothing) still
+ * made the message say "1 existing entities gaining fields", actively
+ * misleading rather than just silent. This is the same "data structure
+ * grew a field but a consumer never reads it" gap rounds 395/396 found in
+ * MigrationChange, just inside this file's own message string instead of
+ * a separate consumer file.
+ */
+test("a refine that drops a field from an entity that still exists is reported as a lost field in the Architect's message, not as 'gaining fields'", async () => {
+  const db = openDatabase(":memory:");
+  ensureProjectsTable(db);
+  ensureCheckpointsTable(db);
+  const previousSpec: ProductSpec = {
+    summary: "test",
+    personas: [],
+    roles: ["Admin"],
+    screens: [],
+    assumptions: [],
+    openQuestions: [],
+    entities: [
+      {
+        name: "Order",
+        label: "Order",
+        fields: [
+          { name: "name", type: "text", required: true },
+          { name: "notes", type: "longtext", required: false },
+        ],
+      },
+    ],
+  };
+  const nextSpec: ProductSpec = {
+    ...previousSpec,
+    entities: [{ ...previousSpec.entities[0], fields: [previousSpec.entities[0].fields[0]] }],
+  };
+  applyMigrations(db, "proj1", previousSpec);
+  const project = insertProject(db, {
+    id: "proj1",
+    ownerId: "user1",
+    name: "test",
+    description: "test",
+    spec: previousSpec,
+  });
+
+  const events = await collect(runBuildPipeline(db, project, { previousSpec, nextSpec, changeLabel: "Refine: drop notes" }));
+  const architectSuccess = events.find((e) => e.agent === "Architect" && e.status === "success");
+  assert.ok(architectSuccess);
+
+  // The real proof: the message must name the lost field, not just imply
+  // (incorrectly) that the entity gained fields.
+  assert.match(architectSuccess!.message, /Warning: Order lost field\(s\): notes/);
+  assert.doesNotMatch(
+    architectSuccess!.message,
+    /1 existing entities gaining fields\.(?! Warning)/,
+    "the phrase 'gaining fields' alone, with no warning clause following it, would be actively misleading for an entity that only lost a field",
+  );
+
+  type ImpactDetail = { changedEntities: { name: string; label: string; newFieldNames: string[]; removedFieldNames: string[] }[] };
+  const detail = architectSuccess!.detail as ImpactDetail;
+  assert.deepEqual(detail.changedEntities, [
+    { name: "Order", label: "Order", newFieldNames: [], removedFieldNames: ["notes"] },
+  ]);
+});
+
+/**
  * Companion to the test above: an INITIAL build has no previousSpec, so
  * there is nothing to have removed -- computeImpact must never report a
  * phantom removal just because previousSpec is undefined.

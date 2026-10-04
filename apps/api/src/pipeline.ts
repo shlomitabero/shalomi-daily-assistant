@@ -111,11 +111,23 @@ function computeImpact(previousSpec: ProductSpec | undefined, nextSpec: ProductS
 
 function architectEvent(previousSpec: ProductSpec | undefined, nextSpec: ProductSpec): AgentStepEvent {
   const impact = computeImpact(previousSpec, nextSpec);
+  // Mirrors the removedEntityNames warning below, one level down: an entity
+  // that still exists can nonetheless lose one of its OWN fields on a
+  // refine (same root cause -- the AI regenerates the whole spec from prose
+  // with no access to the previous structure). computeImpact already
+  // computes this per entity (changedEntities[].removedFieldNames), but
+  // without this clause the message says "N existing entities gaining
+  // fields" even when an entity only ever LOST a field and gained nothing,
+  // which is actively misleading, not just incomplete.
+  const entitiesWithRemovedFields = impact.changedEntities.filter((e) => e.removedFieldNames.length > 0);
   const message = previousSpec
     ? `Impact: +${impact.newEntityNames.length} new entities (${impact.newEntityNames.join(", ") || "none"}), ` +
       `${impact.changedEntities.length} existing entities gaining fields.` +
       (impact.removedEntityNames.length > 0
         ? ` Warning: ${impact.removedEntityNames.length} entities are no longer in the spec (${impact.removedEntityNames.join(", ")}) -- their data is kept but is no longer reachable through the app.`
+        : "") +
+      (entitiesWithRemovedFields.length > 0
+        ? ` Warning: ${entitiesWithRemovedFields.map((e) => `${e.label} lost field(s): ${e.removedFieldNames.join(", ")}`).join("; ")} -- their data is kept but is no longer reachable through the app.`
         : "")
     : `Designed ${nextSpec.entities.length} tables for ${nextSpec.roles.length} roles.`;
   return { agent: "Architect", status: "success", message, detail: impact };

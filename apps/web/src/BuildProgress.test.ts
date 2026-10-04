@@ -253,6 +253,52 @@ test("BuildProgress's Architect detail panel reports an entity the refine droppe
 });
 
 /**
+ * Regression test for a real gap found by round 397's Explore survey:
+ * computeImpact's changedEntities (pipeline.ts) already computed
+ * removedFieldNames alongside newFieldNames (added in the same round-377
+ * commit that added removedEntities, tested just above), but this panel's
+ * own ImpactDetail type never declared the field and the render loop never
+ * read it -- an entity that only lost a field (gained nothing) rendered an
+ * empty "gained new fields: " line with nothing after the colon, giving no
+ * indication a field was actually lost.
+ */
+test("BuildProgress's Architect detail panel reports a field the refine dropped from an entity that still exists, once expanded", async () => {
+  await withJsdom(async () => {
+    const events: AgentStepEvent[] = [
+      { agent: "Architect", status: "running", message: "…" },
+      {
+        agent: "Architect",
+        status: "success",
+        message: "Impact: +0 new entities (none), 1 existing entities gaining fields. Warning: Order lost field(s): notes -- their data is kept but is no longer reachable through the app.",
+        detail: {
+          newEntities: [],
+          changedEntities: [{ name: "Order", label: "Order", newFieldNames: [], removedFieldNames: ["notes"] }],
+        },
+      },
+    ];
+    renderBuildProgress(events);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const steps = [...document.querySelectorAll(".agent-step")];
+    const architectStep = steps.find((s) => s.textContent?.includes("Product Planner"));
+    const toggle = architectStep?.querySelector(".detail-toggle") as HTMLButtonElement | null;
+    assert.ok(toggle, "expected a details toggle for the Architect step once it succeeds with a detail payload");
+    fireEvent.click(toggle!);
+
+    const detailList = architectStep?.querySelector(".detail-list");
+    assert.ok(detailList, "expected the detail list to render once expanded");
+    const text = detailList!.textContent ?? "";
+    assert.match(text, /Order/);
+    assert.match(text, /notes/, "the lost field's own name must actually appear in the rendered text");
+    assert.doesNotMatch(
+      text,
+      /gained new fields/,
+      "an entity that only lost a field must not render an empty 'gained new fields:' line implying it gained something",
+    );
+  });
+});
+
+/**
  * Regression test for a real gap found by round 396's Explore survey:
  * round 395 added a 4th MigrationChange variant, "relation_target_changed"
  * (packages/db/src/migrate.ts), reported when a relation field's
