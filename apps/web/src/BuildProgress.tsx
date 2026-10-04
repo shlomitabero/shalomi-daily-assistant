@@ -150,11 +150,13 @@ interface ImpactDetail {
 }
 
 interface MigrationChangeDetail {
-  type: "new_table" | "new_column" | "type_changed";
+  type: "new_table" | "new_column" | "type_changed" | "relation_target_changed";
   table: string;
   column?: string;
   fromType?: string;
   toType?: string;
+  fromRelationTo?: string;
+  toRelationTo?: string;
 }
 
 interface QaResultDetail {
@@ -206,7 +208,9 @@ function AgentDetail({ agent, detail }: { agent: AgentStepEvent["agent"]; detail
               ? `${t("build.detail.database.newTable")}${c.table}`
               : c.type === "new_column"
                 ? `${t("build.detail.database.newColumn")}${c.table}.${c.column}`
-                : `${t("build.detail.database.typeChanged")}${c.table}.${c.column} (${c.fromType} → ${c.toType})`}
+                : c.type === "relation_target_changed"
+                  ? `${t("build.detail.database.relationTargetChanged")}${c.table}.${c.column} (${c.fromRelationTo} → ${c.toRelationTo})`
+                  : `${t("build.detail.database.typeChanged")}${c.table}.${c.column} (${c.fromType} → ${c.toType})`}
           </li>
         ))}
       </ul>

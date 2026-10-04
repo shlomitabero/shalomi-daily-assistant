@@ -253,6 +253,62 @@ test("BuildProgress's Architect detail panel reports an entity the refine droppe
 });
 
 /**
+ * Regression test for a real gap found by round 396's Explore survey:
+ * round 395 added a 4th MigrationChange variant, "relation_target_changed"
+ * (packages/db/src/migrate.ts), reported when a relation field's
+ * relationTo is repointed to a different entity -- and pipeline.ts's own
+ * collapsed Database-step summary message was updated to describe it
+ * correctly. But this panel's own local MigrationChangeDetail type (the
+ * one other place in the codebase that switches on MigrationChange.type
+ * by name) was never updated: before this fix, any detail entry that
+ * wasn't "new_table"/"new_column" fell into the final else branch, which
+ * assumes "type_changed" and reads fromType/toType -- fields a
+ * relation_target_changed entry doesn't have, rendering a bogus "Field
+ * type changed ... (undefined → undefined)" line that contradicts the
+ * correct collapsed summary right above it.
+ */
+test("BuildProgress's Database detail panel reports a relation field's changed target correctly, once expanded", async () => {
+  await withJsdom(async () => {
+    const events: AgentStepEvent[] = [
+      { agent: "Database", status: "running", message: "…" },
+      {
+        agent: "Database",
+        status: "success",
+        message: "1 schema change(s) applied (0 new tables, 0 new columns). Nothing was dropped. Note: entity_proj1_Order.customerId (Customer → Vendor) kept pointing at the original related table -- existing data was not re-linked.",
+        detail: [
+          {
+            type: "relation_target_changed",
+            table: "entity_proj1_Order",
+            column: "customerId",
+            fromRelationTo: "Customer",
+            toRelationTo: "Vendor",
+          },
+        ],
+      },
+    ];
+    renderBuildProgress(events);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const steps = [...document.querySelectorAll(".agent-step")];
+    const databaseStep = steps.find((s) => s.textContent?.includes("Database Engineer"));
+    const toggle = databaseStep?.querySelector(".detail-toggle") as HTMLButtonElement | null;
+    assert.ok(toggle, "expected a details toggle for the Database step once it succeeds with a detail payload");
+    fireEvent.click(toggle!);
+
+    const detailList = databaseStep?.querySelector(".detail-list");
+    assert.ok(detailList, "expected the detail list to render once expanded");
+    const text = detailList!.textContent ?? "";
+    assert.match(text, /Customer → Vendor/, "must name the real old and new related entities, not 'undefined → undefined'");
+    assert.doesNotMatch(text, /undefined/, "a relation_target_changed entry has no fromType/toType -- it must never fall through to the type_changed rendering branch");
+    assert.doesNotMatch(
+      text,
+      /Field type changed/,
+      "the wording must be specific to a relation target changing, not reuse the unrelated 'type changed' label",
+    );
+  });
+});
+
+/**
  * New in this round: the subtitle's "step N of M" text already carried
  * this same fraction, but only as text a reader had to do the division on
  * themselves. Confirms a real filled progress bar renders in the DOM with
