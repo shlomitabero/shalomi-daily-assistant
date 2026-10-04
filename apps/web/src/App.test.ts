@@ -108,6 +108,33 @@ test("summarizeRefineImpact reports a field the refine dropped from an entity th
   );
 });
 
+/**
+ * Regression test for a real gap found by round 398's Explore survey:
+ * computeImpact's changedEntities (pipeline.ts) now also computes
+ * tightenedFieldNames for a field that became required or lost an enum
+ * value, but this chat-history summary never read it -- an entity whose
+ * only change was a tightened field produced no summary part at all, the
+ * same gap as BuildProgress.tsx's own panel.
+ */
+test("summarizeRefineImpact reports a field the refine tightened on an entity that still exists", () => {
+  const events: AgentStepEvent[] = [
+    {
+      agent: "Architect",
+      status: "success",
+      message: "…",
+      detail: {
+        newEntities: [],
+        changedEntities: [{ name: "Deal", label: "Deal", newFieldNames: [], tightenedFieldNames: ["title", "stage"] }],
+      },
+    },
+  ];
+  const summary = summarizeRefineImpact(events, t);
+  assert.match(summary, /Deal/);
+  assert.match(summary, /title/);
+  assert.match(summary, /stage/);
+  assert.match(summary, /build\.detail\.architect\.tightenedFields/);
+});
+
 function question(text: string): OpenQuestion {
   return { question: text, options: ["Yes", "No"] };
 }

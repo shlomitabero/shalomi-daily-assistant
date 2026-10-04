@@ -299,6 +299,51 @@ test("BuildProgress's Architect detail panel reports a field the refine dropped 
 });
 
 /**
+ * Regression test for a real gap found by round 398's Explore survey:
+ * computeImpact's changedEntities (pipeline.ts) now also computes
+ * tightenedFieldNames for a field that became required or lost an enum
+ * value, but this panel's own ImpactDetail type never declared the field
+ * and the render loop never read it -- an entity whose only change was a
+ * tightened field rendered nothing at all, hiding a change that can break
+ * future edits to existing records.
+ */
+test("BuildProgress's Architect detail panel reports a field the refine tightened on an entity that still exists, once expanded", async () => {
+  await withJsdom(async () => {
+    const events: AgentStepEvent[] = [
+      { agent: "Architect", status: "running", message: "…" },
+      {
+        agent: "Architect",
+        status: "success",
+        message: "Impact: +0 new entities (none), 1 existing entities gaining fields. Warning: Deal now enforces stricter rules on: title.",
+        detail: {
+          newEntities: [],
+          changedEntities: [{ name: "Deal", label: "Deal", newFieldNames: [], tightenedFieldNames: ["title"] }],
+        },
+      },
+    ];
+    renderBuildProgress(events);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const steps = [...document.querySelectorAll(".agent-step")];
+    const architectStep = steps.find((s) => s.textContent?.includes("Product Planner"));
+    const toggle = architectStep?.querySelector(".detail-toggle") as HTMLButtonElement | null;
+    assert.ok(toggle, "expected a details toggle for the Architect step once it succeeds with a detail payload");
+    fireEvent.click(toggle!);
+
+    const detailList = architectStep?.querySelector(".detail-list");
+    assert.ok(detailList, "expected the detail list to render once expanded");
+    const text = detailList!.textContent ?? "";
+    assert.match(text, /Deal/);
+    assert.match(text, /title/, "the tightened field's own name must actually appear in the rendered text");
+    assert.doesNotMatch(
+      text,
+      /gained new fields/,
+      "an entity that only tightened a field must not render an empty 'gained new fields:' line implying it gained something",
+    );
+  });
+});
+
+/**
  * Regression test for a real gap found by round 396's Explore survey:
  * round 395 added a 4th MigrationChange variant, "relation_target_changed"
  * (packages/db/src/migrate.ts), reported when a relation field's

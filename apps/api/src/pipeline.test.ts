@@ -296,11 +296,11 @@ test("the Architect step's impact summary is re-emitted with the corrected spec 
     const architectSuccesses = events.filter((e) => e.agent === "Architect" && e.status === "success");
     assert.equal(architectSuccesses.length, 2, "the Architect step must report again once the spec is corrected");
 
-    type ImpactDetail = { changedEntities: { name: string; newFieldNames: string[]; removedFieldNames: string[] }[] };
+    type ImpactDetail = { changedEntities: { name: string; newFieldNames: string[]; removedFieldNames: string[]; tightenedFieldNames: string[] }[] };
     const finalImpact = architectSuccesses[architectSuccesses.length - 1].detail as ImpactDetail;
     assert.deepEqual(
       finalImpact.changedEntities,
-      [{ name: "Customer", label: "Customer", newFieldNames: ["notes"], removedFieldNames: [] }],
+      [{ name: "Customer", label: "Customer", newFieldNames: ["notes"], removedFieldNames: [], tightenedFieldNames: [] }],
       "the re-emitted Architect detail must reflect the corrected field, not the broken one that was never actually built",
     );
   } finally {
@@ -424,11 +424,142 @@ test("a refine that drops a field from an entity that still exists is reported a
     "the phrase 'gaining fields' alone, with no warning clause following it, would be actively misleading for an entity that only lost a field",
   );
 
-  type ImpactDetail = { changedEntities: { name: string; label: string; newFieldNames: string[]; removedFieldNames: string[] }[] };
+  type ImpactDetail = { changedEntities: { name: string; label: string; newFieldNames: string[]; removedFieldNames: string[]; tightenedFieldNames: string[] }[] };
   const detail = architectSuccess!.detail as ImpactDetail;
   assert.deepEqual(detail.changedEntities, [
-    { name: "Order", label: "Order", newFieldNames: [], removedFieldNames: ["notes"] },
+    { name: "Order", label: "Order", newFieldNames: [], removedFieldNames: ["notes"], tightenedFieldNames: [] },
   ]);
+});
+
+/**
+ * Regression test for a real gap found by round 398's Explore survey: a
+ * same-named field that keeps existing on both sides of a refine is
+ * invisible to computeImpact's new/removed field checks, but can still
+ * become more restrictive -- flipping from optional to required, or (for
+ * an enum) losing a value existing records may already be storing. Before
+ * this fix, nothing in the live build stream ever reported this: the
+ * Architect message said "0 existing entities gaining fields" with zero
+ * indication anything changed at all, even though repository.ts's own
+ * updateRecord comment explains exactly why this kind of change matters
+ * (a future edit to that field on an existing row must now satisfy the
+ * new, stricter rule).
+ *
+ * Deliberately distinct from checkpointDiff.ts's own fieldSignature: round
+ * 275 explicitly decided a required-flag or label change is NOT a
+ * structural diff for Time Machine's "what would restoring this change"
+ * question (see its own dedicated test) -- but this is a different
+ * question entirely ("what did my refine instruction just do"), asked by
+ * a different function (pipeline.ts's computeImpact) for a different UI
+ * (the live build stream), so the two are not in conflict.
+ */
+test("a refine that makes a field required or narrows an enum on an entity that still exists is reported as a tightened constraint, not silently", async () => {
+  const db = openDatabase(":memory:");
+  ensureProjectsTable(db);
+  ensureCheckpointsTable(db);
+  const previousSpec: ProductSpec = {
+    summary: "test",
+    personas: [],
+    roles: ["Admin"],
+    screens: [],
+    assumptions: [],
+    openQuestions: [],
+    entities: [
+      {
+        name: "Deal",
+        label: "Deal",
+        fields: [
+          { name: "title", type: "text", required: false },
+          { name: "stage", type: "enum", required: true, enumValues: ["Open", "Won", "Lost"] },
+        ],
+      },
+    ],
+  };
+  const nextSpec: ProductSpec = {
+    ...previousSpec,
+    entities: [
+      {
+        ...previousSpec.entities[0],
+        fields: [
+          { name: "title", type: "text", required: true },
+          { name: "stage", type: "enum", required: true, enumValues: ["Open", "Won"] },
+        ],
+      },
+    ],
+  };
+  applyMigrations(db, "proj1", previousSpec);
+  const project = insertProject(db, {
+    id: "proj1",
+    ownerId: "user1",
+    name: "test",
+    description: "test",
+    spec: previousSpec,
+  });
+
+  const events = await collect(
+    runBuildPipeline(db, project, { previousSpec, nextSpec, changeLabel: "Refine: tighten Deal rules" }),
+  );
+  const architectSuccess = events.find((e) => e.agent === "Architect" && e.status === "success");
+  assert.ok(architectSuccess);
+
+  assert.match(architectSuccess!.message, /Warning: Deal now enforces stricter rules on: title, stage/);
+
+  type ImpactDetail = { changedEntities: { name: string; label: string; newFieldNames: string[]; removedFieldNames: string[]; tightenedFieldNames: string[] }[] };
+  const detail = architectSuccess!.detail as ImpactDetail;
+  assert.deepEqual(detail.changedEntities, [
+    { name: "Deal", label: "Deal", newFieldNames: [], removedFieldNames: [], tightenedFieldNames: ["title", "stage"] },
+  ]);
+});
+
+test("a refine that only widens a field (optional stays optional, an enum gains a value) is never reported as tightened", async () => {
+  const db = openDatabase(":memory:");
+  ensureProjectsTable(db);
+  ensureCheckpointsTable(db);
+  const previousSpec: ProductSpec = {
+    summary: "test",
+    personas: [],
+    roles: ["Admin"],
+    screens: [],
+    assumptions: [],
+    openQuestions: [],
+    entities: [
+      {
+        name: "Deal",
+        label: "Deal",
+        fields: [
+          { name: "title", type: "text", required: true },
+          { name: "stage", type: "enum", required: true, enumValues: ["Open", "Won"] },
+        ],
+      },
+    ],
+  };
+  const nextSpec: ProductSpec = {
+    ...previousSpec,
+    entities: [
+      {
+        ...previousSpec.entities[0],
+        fields: [
+          { name: "title", type: "text", required: true },
+          { name: "stage", type: "enum", required: true, enumValues: ["Open", "Won", "Lost"] },
+        ],
+      },
+    ],
+  };
+  applyMigrations(db, "proj1", previousSpec);
+  const project = insertProject(db, {
+    id: "proj1",
+    ownerId: "user1",
+    name: "test",
+    description: "test",
+    spec: previousSpec,
+  });
+
+  const events = await collect(
+    runBuildPipeline(db, project, { previousSpec, nextSpec, changeLabel: "Refine: widen Deal rules" }),
+  );
+  const architectSuccess = events.find((e) => e.agent === "Architect" && e.status === "success");
+  assert.ok(architectSuccess);
+
+  assert.doesNotMatch(architectSuccess!.message, /now enforces stricter rules/);
 });
 
 /**

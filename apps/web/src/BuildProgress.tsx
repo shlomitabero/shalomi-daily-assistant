@@ -145,7 +145,7 @@ function StatusIcon({ status }: { status: AgentStepEvent["status"] }) {
 
 interface ImpactDetail {
   newEntities: { name: string; label: string }[];
-  changedEntities: { name: string; label: string; newFieldNames: string[]; removedFieldNames?: string[] }[];
+  changedEntities: { name: string; label: string; newFieldNames: string[]; removedFieldNames?: string[]; tightenedFieldNames?: string[] }[];
   removedEntities?: { name: string; label: string }[];
 }
 
@@ -195,6 +195,13 @@ function AgentDetail({ agent, detail }: { agent: AgentStepEvent["agent"]; detail
                 {" "}
                 {t("build.detail.architect.lostFields")}
                 {(e.removedFieldNames ?? []).join(", ")}
+              </>
+            )}
+            {(e.tightenedFieldNames ?? []).length > 0 && (
+              <>
+                {" "}
+                {t("build.detail.architect.tightenedFields")}
+                {(e.tightenedFieldNames ?? []).join(", ")}
               </>
             )}
           </li>

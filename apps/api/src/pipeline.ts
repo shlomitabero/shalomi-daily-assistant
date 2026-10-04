@@ -50,7 +50,7 @@ const SENSITIVE_FIELD_HINTS: (string | RegExp)[] = [
 interface ImpactSummary {
   newEntityNames: string[];
   newEntities: { name: string; label: string }[];
-  changedEntities: { name: string; label: string; newFieldNames: string[]; removedFieldNames: string[] }[];
+  changedEntities: { name: string; label: string; newFieldNames: string[]; removedFieldNames: string[]; tightenedFieldNames: string[] }[];
   removedEntityNames: string[];
   removedEntities: { name: string; label: string }[];
 }
@@ -74,7 +74,13 @@ function computeImpact(previousSpec: ProductSpec | undefined, nextSpec: ProductS
   const previousEntities = new Map((previousSpec?.entities ?? []).map((e) => [e.name, e]));
   const nextEntityNames = new Set(nextSpec.entities.map((e) => e.name));
   const newEntities: { name: string; label: string }[] = [];
-  const changedEntities: { name: string; label: string; newFieldNames: string[]; removedFieldNames: string[] }[] = [];
+  const changedEntities: {
+    name: string;
+    label: string;
+    newFieldNames: string[];
+    removedFieldNames: string[];
+    tightenedFieldNames: string[];
+  }[] = [];
 
   for (const entity of nextSpec.entities) {
     const prev = previousEntities.get(entity.name);
@@ -82,16 +88,36 @@ function computeImpact(previousSpec: ProductSpec | undefined, nextSpec: ProductS
       newEntities.push({ name: entity.name, label: entity.label ?? entity.name });
       continue;
     }
-    const prevFieldNames = new Set(prev.fields.map((f) => f.name));
+    const prevFieldsByName = new Map(prev.fields.map((f) => [f.name, f]));
     const nextFieldNames = new Set(entity.fields.map((f) => f.name));
-    const newFields = entity.fields.filter((f) => !prevFieldNames.has(f.name));
+    const newFields = entity.fields.filter((f) => !prevFieldsByName.has(f.name));
     const removedFields = prev.fields.filter((f) => !nextFieldNames.has(f.name));
-    if (newFields.length > 0 || removedFields.length > 0) {
+    // A same-named field that keeps existing on both sides is invisible to
+    // the new/removed check above, but can still tighten in a way that
+    // matters: becoming required where it wasn't, or (for an enum) losing
+    // a value existing records might already be storing. repository.ts's
+    // own updateRecord comment explains why this doesn't retroactively
+    // break anything by itself (only a field the caller actually supplies
+    // gets re-validated against the entity's current definition) -- but
+    // nothing told the user this constraint changed at all, unlike a field
+    // being added/removed outright.
+    const tightenedFields = entity.fields.filter((f) => {
+      const prevField = prevFieldsByName.get(f.name);
+      if (!prevField) return false;
+      if (f.required && !prevField.required) return true;
+      if (f.type === "enum" && prevField.type === "enum") {
+        const nextValues = new Set(f.enumValues ?? []);
+        return (prevField.enumValues ?? []).some((v) => !nextValues.has(v));
+      }
+      return false;
+    });
+    if (newFields.length > 0 || removedFields.length > 0 || tightenedFields.length > 0) {
       changedEntities.push({
         name: entity.name,
         label: entity.label ?? entity.name,
         newFieldNames: newFields.map((f) => f.label ?? f.name),
         removedFieldNames: removedFields.map((f) => f.label ?? f.name),
+        tightenedFieldNames: tightenedFields.map((f) => f.label ?? f.name),
       });
     }
   }
@@ -120,6 +146,11 @@ function architectEvent(previousSpec: ProductSpec | undefined, nextSpec: Product
   // fields" even when an entity only ever LOST a field and gained nothing,
   // which is actively misleading, not just incomplete.
   const entitiesWithRemovedFields = impact.changedEntities.filter((e) => e.removedFieldNames.length > 0);
+  // Same sibling-attribute gap class as removedFieldNames above, but for a
+  // field that keeps existing on both sides while becoming more restrictive
+  // (now required, or an enum losing a value) -- a real, user-caused change
+  // computeImpact now tracks but that otherwise had no warning at all.
+  const entitiesWithTightenedFields = impact.changedEntities.filter((e) => e.tightenedFieldNames.length > 0);
   const message = previousSpec
     ? `Impact: +${impact.newEntityNames.length} new entities (${impact.newEntityNames.join(", ") || "none"}), ` +
       `${impact.changedEntities.length} existing entities gaining fields.` +
@@ -128,6 +159,9 @@ function architectEvent(previousSpec: ProductSpec | undefined, nextSpec: Product
         : "") +
       (entitiesWithRemovedFields.length > 0
         ? ` Warning: ${entitiesWithRemovedFields.map((e) => `${e.label} lost field(s): ${e.removedFieldNames.join(", ")}`).join("; ")} -- their data is kept but is no longer reachable through the app.`
+        : "") +
+      (entitiesWithTightenedFields.length > 0
+        ? ` Warning: ${entitiesWithTightenedFields.map((e) => `${e.label} now enforces stricter rules on: ${e.tightenedFieldNames.join(", ")}`).join("; ")} -- existing records are unaffected unless edited again.`
         : "")
     : `Designed ${nextSpec.entities.length} tables for ${nextSpec.roles.length} roles.`;
   return { agent: "Architect", status: "success", message, detail: impact };
