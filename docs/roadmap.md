@@ -23533,6 +23533,84 @@ worth revisiting if שלומי explicitly asks for real email infrastructure).
 These join the existing open candidates from prior rounds. Round 382
 should do its own fresh survey unless one of these is specifically chosen.
 
+### Round 382: WhatsApp QR-timeout silently reverted to disconnected with zero explanation
+
+A fresh Explore subagent surveyed export ZIP content accuracy, WhatsApp
+QR-connect timeout/retry UX, Business Twin insight correctness on
+edge-case (0/1-record) data, collaborator role/permission display
+consistency, and keyboard shortcut discoverability. Four of the five
+turned out to already be correctly handled: export always uses a
+freshly-fetched project (no staleness/caching divergence), every Business
+Twin insight computation already guards empty/single-record inputs
+explicitly, ownership checks across the app all use one consistent
+`p.ownerId === user.id` definition, and keyboard shortcuts are already
+fully discoverable via a dedicated `ShortcutsPanel.tsx` (opened by "?").
+The fifth, WhatsApp QR-connect timeout, was real.
+
+**Chosen and independently re-verified**: traced the actual mechanism
+through Baileys' own `socket.js` (not just the subagent's claim) --
+once Baileys exhausts its own QR-refresh budget without a scan, it
+closes the socket with a non-401 status (408, `timedOut`/`connectionLost`),
+not a logout. `handleConnectionUpdate`'s close branch
+(`apps/api/src/whatsappWeb.ts`) treated every non-401 close identically
+to a logout in the one respect that mattered: it unconditionally deleted
+the session from the manager's in-memory map. Confirmed `getStatus()`
+unconditionally returns `error: null` the instant a project has no live
+session (falling back to the stored DB row, which never carries a live
+error) -- so whatever message a close handler set was immediately
+unreachable regardless of what it was. The frontend's existing
+`status?.error` rendering path (`WhatsAppPanel.tsx`, already wired up)
+had nothing to ever show for this case. The user just watched the QR
+silently vanish and the panel reset to a bare "Connect" button, with
+zero indication anything had actually happened.
+
+**Fix**: for a non-401 close, keep the session in the map instead of
+deleting it -- the exact same thing `runConnectAttempt`'s own catch
+block already does on a connect failure -- marking it
+`status: "disconnected"` with a real `error` message, so `getStatus()`
+can still find and return it. The message differs by what the session
+was doing right before the close: "QR code expired" if it was still
+`"qr"`/`"connecting"` (never finished authenticating), or "connection
+lost" if it had been fully `"connected"` (a QR-expired message would be
+misleading for a session that was never waiting on a QR scan in the
+first place). The logged-out (401) branch is unchanged -- that case
+still fully deletes the session and cleans up the auth dir, since the
+device was genuinely unlinked and the session really is gone.
+`connect()`'s own existing `existing.status !== "disconnected"` check
+already handles a session left in this new state correctly: it just
+overwrites it with a fresh session object on the next connect attempt,
+exactly as it already does after `runConnectAttempt`'s own catch-block
+failure path -- no new code needed there.
+
+Files: `apps/api/src/whatsappWeb.ts` (two new message constants, close
+branch split into the logged-out vs. non-logged-out cases), `apps/api/src/whatsappWeb.test.ts`
+(2 new tests reusing the existing fake-socket harness: a QR-timeout
+close at statusCode 408 while still awaiting a scan, and a close after
+having been fully connected at statusCode 515 -- confirming each gets a
+distinct, accurate message, neither blaming a QR scan for the latter
+case, and that a subsequent `connect()` call still works normally
+afterward).
+
+Deliberate-break-and-restore: backed up both changed files to the
+scratchpad, reverted only `whatsappWeb.ts` to HEAD, ran
+`whatsappWeb.test.ts` directly and confirmed exactly 2 of 19 failures
+(the two new tests; all 17 pre-existing tests still passed), restored
+from backup, confirmed byte-identical via `diff -q`, then re-ran the
+full suite and a clean build one final time before committing.
+
+Full suite green: **1325 tests** (`@forge/shared` 13, `@forge/spec-engine`
+93, `@forge/db` 99, `@forge/api` 374 (+2 new), `@forge/web` 746, all
+unchanged except api) via `npm test` at the repo root, plus a clean full
+monorepo `npm run build`. Pushed as commit `2309285`.
+
+**Topic status**: this fix is closed. No new candidates surfaced this
+round beyond what was already queued (export staleness marker,
+collaborator invite notification, AI-label language mismatch, checkpoint
+pruning, SESSION_EXPIRED reactive gap, Business Twin 6x `listRecords`,
+`sanitizeZipEntryName` collision, render.yaml disk stanza, and the
+weak-priority leftovers). Round 383 should do its own fresh survey
+unless one of these is specifically chosen.
+
 ## Phase 4
 
 - Template/agent marketplace
