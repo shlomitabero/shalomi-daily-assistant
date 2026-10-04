@@ -421,11 +421,32 @@ export function createProjectsRouter(db: ForgeDatabase, provider: SpecProvider |
    * real generated data tables, checkpoints, collaborator grants, and
    * WhatsApp connection/message history. Irreversible -- the client is
    * expected to confirm with the user before calling this.
+   *
+   * The activePipelines check below is the same guard /build, /refine,
+   * /answers, and restore already have, for a reason specific to THIS
+   * route: a running pipeline (runBuildPipeline, pipeline.ts) keeps
+   * creating entity tables (diffAndMigrate) and inserting seed rows
+   * entirely independently of this request, by project id, with no way
+   * to cancel it mid-flight. Deleting the project out from under it
+   * doesn't stop it -- deleteProject drops the project row and every
+   * table it currently knows about, but the in-flight pipeline's own
+   * later diffAndMigrate/insertRecord/updateProjectSpec calls just keep
+   * running against that same (now-gone) project id: at best they throw
+   * once updateProjectSpec can't find the row anymore (after the response
+   * headers for that pipeline's own SSE stream were already sent, so the
+   * client just sees the stream die with no error), and at worst any
+   * entity table diffAndMigrate re-creates *after* this delete runs is a
+   * permanently orphaned SQLite table with no project row ever pointing
+   * at it again -- a real disk-space leak nothing else in this app ever
+   * cleans up.
    */
   router.delete(
     "/projects/:id",
     asyncRoute(async (req, res) => {
       const project = requireProjectOwner(db, req.params.id, req.userId!);
+      if (activePipelines.has(project.id)) {
+        throw new HttpError(409, "A build or refine is already running for this project", "PIPELINE_IN_PROGRESS");
+      }
       await whatsapp.disconnect(project.id).catch(() => {});
       deleteProject(db, project);
       res.status(204).end();

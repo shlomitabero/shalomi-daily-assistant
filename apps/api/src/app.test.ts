@@ -4361,6 +4361,84 @@ test("restoring a checkpoint while a refine is in flight is rejected with 409, i
 });
 
 /**
+ * Regression test for a real bug found by round 378's Explore survey:
+ * unlike /build, /refine, /answers, and restore above, DELETE /projects/:id
+ * never checked activePipelines at all before this round. A running
+ * pipeline (runBuildPipeline) keeps creating entity tables and inserting
+ * seed/checkpoint rows for this project id entirely independently of this
+ * request, with no way to cancel it mid-flight -- deleting the project out
+ * from under it doesn't stop it, it just means the pipeline's own later
+ * writes either throw against a project row that's already gone (after its
+ * own SSE response headers were already sent, so the client just sees that
+ * stream die with no error) or, worse, successfully re-create an entity
+ * table that's now permanently orphaned with no project row ever pointing
+ * at it again. Uses the same gated-provider harness as the tests above to
+ * force this deterministically.
+ */
+test("deleting a project while a refine is in flight is rejected with 409, instead of racing the in-flight pipeline", async () => {
+  const gated = createGatedProvider();
+  await withServer(
+    async (baseUrl) => {
+      const token = await signup(baseUrl);
+      const createRes = await fetch(`${baseUrl}/api/projects`, {
+        method: "POST",
+        headers: authHeaders(token),
+        body: JSON.stringify({ description: "A CRM with customers and deals." }),
+      });
+      const { project } = (await createRes.json()) as { project: { id: string } };
+
+      const buildRes = await fetch(`${baseUrl}/api/projects/${project.id}/build`, {
+        method: "POST",
+        headers: authHeaders(token),
+      });
+      assert.equal(buildRes.status, 200);
+      await collectSSE(buildRes);
+
+      // Arm the gate only now -- build must run at full speed.
+      gated.arm();
+      const refinePromise = fetch(`${baseUrl}/api/projects/${project.id}/refine`, {
+        method: "POST",
+        headers: authHeaders(token),
+        body: JSON.stringify({ instruction: "Also track invoices for customers." }),
+      });
+      refinePromise.catch(() => {});
+      await gated.waitUntilStarted();
+
+      const deleteRes = await fetch(`${baseUrl}/api/projects/${project.id}`, {
+        method: "DELETE",
+        headers: authHeaders(token),
+      });
+      let deleteBody: { code?: string } = {};
+      try {
+        deleteBody = (await deleteRes.json()) as { code?: string };
+      } finally {
+        gated.release();
+      }
+      assert.equal(deleteRes.status, 409);
+      assert.equal(deleteBody.code, "PIPELINE_IN_PROGRESS");
+
+      const refineRes = await refinePromise;
+      assert.equal(refineRes.status, 200);
+      const refineEvents = await collectSSE(refineRes);
+      assert.ok(refineEvents.every((e) => e.status !== "failed"));
+
+      // The project must still genuinely exist -- the rejected delete must
+      // never have gone through.
+      const getRes = await fetch(`${baseUrl}/api/projects/${project.id}`, { headers: authHeaders(token) });
+      assert.equal(getRes.status, 200);
+
+      // Once the refine has genuinely finished, deleting the project must succeed normally.
+      const deleteAgainRes = await fetch(`${baseUrl}/api/projects/${project.id}`, {
+        method: "DELETE",
+        headers: authHeaders(token),
+      });
+      assert.equal(deleteAgainRes.status, 204);
+    },
+    { provider: gated.provider },
+  );
+});
+
+/**
  * updateRecord (packages/db/src/repository.ts) reads the current row
  * (getRecord), merges the caller's partial `data` into it, then writes the
  * merged result back -- a read-then-write shape structurally identical to
