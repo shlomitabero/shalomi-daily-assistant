@@ -69,19 +69,31 @@ function csvEscape(value: string): string {
  * as plain data (and could plausibly be re-imported via the per-entity
  * "Import CSV" feature, which shares this exact column format). A
  * locale-formatted "1,500" or "1/2/2024" wouldn't round-trip cleanly.
+ *
+ * Resolving a relation field used to `records.find(...)` a full linear
+ * scan of the related entity's whole record array, repeated once per row
+ * -- for an entity with N records and a relation field pointing to one
+ * with M records, that's O(N*M) of synchronous, blocking work inside a
+ * single request handler, before even counting a second relation field
+ * or a third entity. A per-entity id->record Map (built once, up front,
+ * in generateBackupZipEntries) turns this lookup into O(1): with tens of
+ * thousands of linked records -- a plausible dataset for a long-lived
+ * CRM-style project -- the old version could stall the whole Node
+ * process for seconds to minutes, blocking every other project's
+ * requests too, not just this one backup request.
  */
 function fieldDisplayValue(
   field: Field,
   value: unknown,
   allEntities: Entity[],
-  recordsByEntity: Record<string, EntityRecord[]>,
+  recordIndexByEntity: Record<string, Map<number, EntityRecord>>,
 ): string {
   if (value === null || value === undefined || value === "") return "";
   if (field.type === "relation") {
     const targetEntity = field.relationTo ? allEntities.find((e) => e.name === field.relationTo) : undefined;
-    const records = field.relationTo ? recordsByEntity[field.relationTo] : undefined;
-    if (!targetEntity || !records) return `#${value}`;
-    const match = records.find((r) => Number(r.id) === Number(value));
+    const index = field.relationTo ? recordIndexByEntity[field.relationTo] : undefined;
+    if (!targetEntity || !index) return `#${value}`;
+    const match = index.get(Number(value));
     return match ? recordDisplayLabel(targetEntity, match) : `#${value}`;
   }
   if (field.type === "boolean") return value ? "TRUE" : "FALSE";
@@ -89,10 +101,15 @@ function fieldDisplayValue(
   return String(value);
 }
 
-function entityToCsv(entity: Entity, records: EntityRecord[], allEntities: Entity[], recordsByEntity: Record<string, EntityRecord[]>): string {
+function entityToCsv(
+  entity: Entity,
+  records: EntityRecord[],
+  allEntities: Entity[],
+  recordIndexByEntity: Record<string, Map<number, EntityRecord>>,
+): string {
   const header = entity.fields.map((f) => csvEscape(f.label ?? f.name)).join(",");
   const rows = records.map((record) =>
-    entity.fields.map((f) => csvEscape(fieldDisplayValue(f, record[f.name], allEntities, recordsByEntity))).join(","),
+    entity.fields.map((f) => csvEscape(fieldDisplayValue(f, record[f.name], allEntities, recordIndexByEntity))).join(","),
   );
   return [header, ...rows].join("\r\n");
 }
@@ -160,13 +177,16 @@ function whatsappMessagesToCsv(messages: WhatsAppMessage[]): string {
 export function generateBackupZipEntries(db: ForgeDatabase, project: Project): { path: string; content: string }[] {
   const allEntities = project.spec.entities;
   const recordsByEntity: Record<string, EntityRecord[]> = {};
+  const recordIndexByEntity: Record<string, Map<number, EntityRecord>> = {};
   for (const entity of allEntities) {
-    recordsByEntity[entity.name] = listRecords(db, project.id, entity);
+    const records = listRecords(db, project.id, entity);
+    recordsByEntity[entity.name] = records;
+    recordIndexByEntity[entity.name] = new Map(records.map((r) => [Number(r.id), r]));
   }
 
   const entries = allEntities.map((entity) => ({
     path: `${sanitizeZipEntryName(entity.name)}.csv`,
-    content: "﻿" + entityToCsv(entity, recordsByEntity[entity.name], allEntities, recordsByEntity),
+    content: "﻿" + entityToCsv(entity, recordsByEntity[entity.name], allEntities, recordIndexByEntity),
   }));
 
   const whatsappMessages = collectAllWhatsAppMessages(db, project.id);

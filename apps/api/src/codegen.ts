@@ -600,13 +600,13 @@ function backupRecordDisplayLabel(entity, record) {
   return String(value);
 }
 
-function backupFieldDisplayValue(field, value, recordsByEntity) {
+function backupFieldDisplayValue(field, value, recordIndexByEntity) {
   if (value === null || value === undefined || value === "") return "";
   if (field.type === "relation") {
     const targetEntity = field.relationTo ? ENTITIES.find((e) => e.name === field.relationTo) : null;
-    const records = field.relationTo ? recordsByEntity[field.relationTo] : null;
-    if (!targetEntity || !records) return \`#\${value}\`;
-    const match = records.find((r) => Number(r.id) === Number(value));
+    const index = field.relationTo ? recordIndexByEntity[field.relationTo] : null;
+    if (!targetEntity || !index) return \`#\${value}\`;
+    const match = index.get(Number(value));
     return match ? backupRecordDisplayLabel(targetEntity, match) : \`#\${value}\`;
   }
   if (field.type === "boolean") return value ? "TRUE" : "FALSE";
@@ -614,23 +614,31 @@ function backupFieldDisplayValue(field, value, recordsByEntity) {
   return String(value);
 }
 
-function entityToCsv(entity, records, recordsByEntity) {
+// Resolving a relation field used to records.find(...) a full linear
+// scan of the related entity's whole record array, repeated once per
+// row -- O(N*M) for N rows and M related records. A per-entity
+// id->record Map (built once below, before any CSV is rendered) turns
+// that lookup into O(1).
+function entityToCsv(entity, records, recordIndexByEntity) {
   const header = entity.fields.map((f) => csvEscape(f.label || f.name)).join(",");
   const rows = records.map((record) =>
-    entity.fields.map((f) => csvEscape(backupFieldDisplayValue(f, record[f.name], recordsByEntity))).join(","),
+    entity.fields.map((f) => csvEscape(backupFieldDisplayValue(f, record[f.name], recordIndexByEntity))).join(","),
   );
   return [header, ...rows].join("\\r\\n");
 }
 
 app.get("/api/backup", (_req, res) => {
   const recordsByEntity = {};
+  const recordIndexByEntity = {};
   for (const entity of ENTITIES) {
     const rows = db.prepare(\`SELECT * FROM \${q(entity.name)} ORDER BY id DESC\`).all();
-    recordsByEntity[entity.name] = rows.map((r) => rowToRecord(entity, r));
+    const records = rows.map((r) => rowToRecord(entity, r));
+    recordsByEntity[entity.name] = records;
+    recordIndexByEntity[entity.name] = new Map(records.map((r) => [Number(r.id), r]));
   }
   const zipEntries = ENTITIES.map((entity) => ({
     path: \`\${entity.name}.csv\`,
-    content: "\\uFEFF" + entityToCsv(entity, recordsByEntity[entity.name], recordsByEntity),
+    content: "\\uFEFF" + entityToCsv(entity, recordsByEntity[entity.name], recordIndexByEntity),
   }));
   const zip = buildZip(zipEntries);
   res.setHeader("content-type", "application/zip");

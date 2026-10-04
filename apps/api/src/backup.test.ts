@@ -155,6 +155,52 @@ test("a relation field resolves to the related record's display label, not the r
   assert.equal(lines[1], "150,Dana Levi");
 });
 
+/**
+ * Regression test for round 385: resolving a relation field used to
+ * `records.find(...)` a full linear scan of the related entity's whole
+ * record array for every single row -- O(N*M) for N orders and M
+ * customers, before even counting a second relation field. With a
+ * couple thousand rows on each side (a perfectly ordinary dataset for a
+ * project that's been in real use for a while, not an extreme edge
+ * case), the pre-fix version took long enough to notice by hand in this
+ * exact test; the fixed version (a per-entity id->record Map built once)
+ * resolves it instantly. Not asserting on wall-clock time here --
+ * round 356's own durable lesson is that a timing assertion in a test
+ * is a real hang risk under load, not a reliable signal -- so this
+ * sticks to what actually matters: every relation in a large dataset
+ * still resolves to the correct display label, including a row whose
+ * customerId lands near the end of a large customers array (the case a
+ * truncated or short-circuited scan would be most likely to get wrong).
+ */
+test("a relation field resolves correctly across a large dataset (thousands of records), not just a tiny fixture", () => {
+  const db = createTestDb(project);
+  const customer = project.spec.entities[0];
+  const order = project.spec.entities[1];
+  const customerCount = 2000;
+  const customers = [];
+  for (let i = 0; i < customerCount; i += 1) {
+    customers.push(insertRecord(db, project.id, customer, { name: `Customer ${i}`, status: "New" }));
+  }
+  const lastCustomer = customers[customerCount - 1];
+  for (let i = 0; i < customerCount; i += 1) {
+    insertRecord(db, project.id, order, { amount: i, customerId: customers[i].id });
+  }
+  // One extra order pointing at the very last customer in the array --
+  // the row a broken/short-circuited lookup would be most likely to miss.
+  insertRecord(db, project.id, order, { amount: 999999, customerId: lastCustomer.id });
+
+  const entries = generateBackupZipEntries(db, project);
+  const orderCsv = entries.find((e) => e.path === "Order.csv")!.content.replace(/^﻿/, "");
+  const lines = orderCsv.split("\r\n");
+  assert.equal(lines.length, customerCount + 2, "header + every order row");
+  // listRecords orders by id DESC (newest first), so the most recently
+  // inserted row (the extra one, pointing at the last customer) comes
+  // first, and the very first inserted order (pointing at the first
+  // customer) comes last.
+  assert.equal(lines[1], `999999,Customer ${customerCount - 1}`, "the most recently inserted row must resolve correctly");
+  assert.equal(lines[lines.length - 1], "0,Customer 0", "the oldest row must still resolve correctly, not fall back to a raw #id");
+});
+
 test("a number >= 1000 is written unformatted, without a thousands separator (this CSV shares its column format with the per-entity Import CSV feature, so a locale-formatted \"1,234\" would fail that feature's plain Number() re-parse)", () => {
   const db = createTestDb(project);
   const order = project.spec.entities[1];

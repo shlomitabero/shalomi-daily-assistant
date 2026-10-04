@@ -4159,7 +4159,7 @@ test("the generated server.js's /api/backup endpoint returns a real ZIP with one
 test("the exported server.js's own rowToRecord + backupFieldDisplayValue render a boolean as TRUE/FALSE, and an omitted boolean as FALSE rather than blank", () => {
   const serverJs = generateExportFiles(project).find((f) => f.path === "server.js")!.content;
   const rowToRecordSrc = serverJs.match(/function rowToRecord\(entity, row\) \{[\s\S]*?\n\}\n/)?.[0];
-  const backupFieldDisplayValueSrc = serverJs.match(/function backupFieldDisplayValue\(field, value, recordsByEntity\) \{[\s\S]*?\n\}\n/)?.[0];
+  const backupFieldDisplayValueSrc = serverJs.match(/function backupFieldDisplayValue\(field, value, recordIndexByEntity\) \{[\s\S]*?\n\}\n/)?.[0];
   assert.ok(rowToRecordSrc, "expected to find rowToRecord in generated server.js");
   assert.ok(backupFieldDisplayValueSrc, "expected to find backupFieldDisplayValue in generated server.js");
 
@@ -4175,6 +4175,44 @@ test("the exported server.js's own rowToRecord + backupFieldDisplayValue render 
   assert.equal(backupFieldDisplayValue(entity.fields[0], trueRecord.done, {}), "TRUE");
   assert.equal(backupFieldDisplayValue(entity.fields[0], falseRecord.done, {}), "FALSE");
   assert.equal(backupFieldDisplayValue(entity.fields[0], unsetRecord.done, {}), "FALSE");
+});
+
+/**
+ * Round 385: backupFieldDisplayValue used to resolve a relation field by
+ * `records.find(...)` -- a full linear scan of the related entity's
+ * whole record array, repeated once per row, O(N*M) for N rows and M
+ * related records. Fixed to take a pre-built id->record Map instead
+ * (built once in the real /api/backup handler, before any CSV is
+ * rendered). Extracts and executes the real generated
+ * backupFieldDisplayValue (not a reimplementation), confirming it still
+ * resolves a relation correctly given that Map shape, and still falls
+ * back to the raw `#id` when the related record genuinely isn't found.
+ */
+test("the exported server.js's own backupFieldDisplayValue resolves a relation field via a Map lookup, not a linear scan, and still falls back to '#id' for a record that doesn't exist", () => {
+  const serverJs = generateExportFiles(project).find((f) => f.path === "server.js")!.content;
+  const backupRecordDisplayLabelSrc = serverJs.match(/function backupRecordDisplayLabel\(entity, record\) \{[\s\S]*?\n\}\n/)?.[0];
+  const backupPickDisplayFieldSrc = serverJs.match(/const BACKUP_DISPLAY_FIELD_HINTS[\s\S]*?\nfunction backupPickDisplayField\(entity\) \{[\s\S]*?\n\}\n/)?.[0];
+  const backupFieldDisplayValueSrc = serverJs.match(/function backupFieldDisplayValue\(field, value, recordIndexByEntity\) \{[\s\S]*?\n\}\n/)?.[0];
+  assert.ok(
+    backupRecordDisplayLabelSrc && backupPickDisplayFieldSrc && backupFieldDisplayValueSrc,
+    "expected to find backupRecordDisplayLabel/backupPickDisplayField/backupFieldDisplayValue in generated server.js",
+  );
+
+  const courierEntity = { name: "Courier", fields: [{ name: "name", type: "text" }] };
+  const backupFieldDisplayValue = new Function(
+    "ENTITIES",
+    `${backupPickDisplayFieldSrc}\n${backupRecordDisplayLabelSrc}\n${backupFieldDisplayValueSrc}\nreturn backupFieldDisplayValue;`,
+  )([courierEntity]);
+
+  const relationField = { name: "courierId", type: "relation", relationTo: "Courier" };
+  const recordIndexByEntity = { Courier: new Map([[42, { id: 42, name: "Avi Mizrahi" }]]) };
+
+  assert.equal(backupFieldDisplayValue(relationField, 42, recordIndexByEntity), "Avi Mizrahi");
+  assert.equal(
+    backupFieldDisplayValue(relationField, 999, recordIndexByEntity),
+    "#999",
+    "a relation id with no matching record must fall back to the raw id, not throw or return empty",
+  );
 });
 
 // Regression test: the exported app's own embedded buildZip() (a
