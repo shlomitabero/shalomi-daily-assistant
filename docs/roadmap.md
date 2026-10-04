@@ -23069,6 +23069,99 @@ candidates from round 375 (brief raw-number-input flash; unbounded
 `<select>` option list) remain open and un-queued. Round 377 should do
 its own fresh survey unless one of those is specifically chosen.
 
+### Round 377: a refine that silently drops an existing entity gave no warning anywhere in the live build stream
+
+Per round 376's own instruction, ran a genuinely fresh Explore survey:
+WhatsApp message content edge cases, build-pipeline error-recovery edge
+cases beyond the Debug Agent, Refine loop server-side validation, print
+list formatting, and enum field edge cases.
+
+Most areas came up empty or only surfaced minor candidates set aside for
+later:
+- **WhatsApp message content**: body is a plain unbounded TEXT column
+  with no truncation assumptions; search highlighting already goes
+  through the shared `splitHighlightSegments` pattern. Nothing fresh.
+- **Pipeline error recovery**: concurrency is solidly guarded by the
+  `activePipelines` Set; retry-after-partial-failure is explicitly
+  handled by idempotent migrations (`CREATE TABLE IF NOT EXISTS`,
+  `currentColumns.has()` guards) and the seed step's empty-table check.
+  Traced every throw site reachable from `requestSpecFix`/`diffAndMigrate`
+  and confirmed all are genuine `Error` instances. Nothing fresh beyond
+  the candidate below.
+- **Enum field edge cases**: empty `enumValues` is already blocked at the
+  schema level; stale enum values on existing records after a refine
+  narrows options already get a consistent "(other)" bucket in both live
+  preview and the generated app. Nothing fresh.
+- **Print layout** (set aside, lower priority): neither the single-record
+  nor list print sheet declares `overflow-wrap`/`word-break` on long
+  unbroken values (a long URL or a long run-on Hebrew sentence can
+  overflow the printed page width) -- confirmed no XSS risk separately
+  (no `dangerouslySetInnerHTML` anywhere in `apps/web/src`; print views
+  render through the same auto-escaping `Cell` component used on-screen).
+  Available for a future round.
+- **Duplicate `enumValues`** (set aside, lower priority): `FieldSchema`'s
+  `.refine()` only checks `enumValues.length > 0`, never uniqueness, so a
+  spec with `["Yes", "Yes", "No"]` renders a literally duplicated choice
+  (and a duplicate-React-key console warning) in every enum dropdown,
+  live and generated. Cosmetic, not data corruption. Available for a
+  future round.
+
+**The fix (the candidate implemented)**: a refine instruction like
+"rename Customer to Client" or "remove deals tracking, focus on
+invoices" regenerates the whole spec from plain prose --
+`AnthropicSpecProvider.generate` only ever receives description text,
+never the previous spec's structure -- so it's a very plausible way for
+the AI to simply omit an entity (or a field) from the next spec rather
+than literally renaming/removing it in place. Migrations are additive-
+only, so nothing is actually destroyed, but the moment that build
+finishes, the entity becomes unreachable through the UI/API. Independently
+verified that nothing in the live build stream ever said so:
+`pipeline.ts`'s `computeImpact` only ever reported what was newly ADDED.
+The only way to discover a removal was to later open Time Machine and
+manually diff two checkpoints with `checkpointDiff.ts`'s own (separate,
+client-side, retroactive-only) `removedEntities` logic -- after the fact,
+not in the moment it happened.
+
+**Fix**: extended `computeImpact` (`apps/api/src/pipeline.ts`) to also
+detect entities and fields present in the previous spec but missing from
+the next one, and surfaced it in the Architect event's `message` and
+structured `detail`. Threaded that detail through to where a user would
+actually see it: `BuildProgress.tsx`'s live Architect detail panel (the
+AI Team build screen), and `App.tsx`'s `summarizeRefineImpact` (the
+one-line summary shown in the refine chat history) -- the same gap was
+quietly replicated in both of this detail's independent consumers, not
+just the one that streams it. Added matching Hebrew/English i18n keys,
+keeping both dictionaries symmetric.
+
+Tests: 2 new in `pipeline.test.ts` (a refine that drops an entity reports
+it in both the message and detail; an initial build with no previous spec
+never reports a phantom removal), 1 new in `App.test.ts` for the chat
+summary, 1 new in `BuildProgress.test.ts` for the live detail panel.
+Updated one existing `pipeline.test.ts` assertion whose exact `deepEqual`
+now needs the new (always-present, possibly-empty) `removedFieldNames`
+key.
+
+Deliberate-break-and-restore: backed up all 7 changed files to the
+scratchpad, reverted the 4 implementation files (`pipeline.ts`, `App.tsx`,
+`BuildProgress.tsx`, `language.ts`) to HEAD, ran each affected workspace's
+tests directly and confirmed exactly the expected failures (3 in
+`apps/api`: the 2 new tests plus the one updated assertion; 2 in
+`apps/web`: the 2 new tests), restored from backup, confirmed
+byte-identical via `diff -q` on all 7 files, then re-ran the full suite
+and a clean build one final time before committing.
+
+Full suite green: **1312 tests** (`@forge/shared` 13, `@forge/spec-engine`
+93 unchanged, `@forge/db` 98 unchanged, `@forge/api` 365 (+2 new),
+`@forge/web` 743 (+2 new)) via `npm test` at the repo root, plus a clean
+full monorepo `npm run build`. Pushed as commit `d79d8bb`.
+
+**Topic status**: this fix is closed. Two lower-priority candidates from
+this round remain open and un-queued: (1) print-layout `overflow-wrap`
+missing on long unbroken values, and (2) duplicate `enumValues` never
+rejected/deduplicated. The two relation-field-picker candidates from
+round 375 also remain open. Round 378 should do its own fresh survey
+unless one of these is specifically chosen.
+
 ## Phase 4
 
 - Template/agent marketplace
