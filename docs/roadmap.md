@@ -23865,6 +23865,124 @@ judgment call), print overflow-wrap / duplicate `enumValues` /
 relation-picker flash / `listRecords` pagination (375, 377, weak
 priority), `calendarIcs.ts`'s UTF-16-vs-UTF-8 fold (367).
 
+### Round 385: O(N\*M) relation lookup in the "Backup all data" CSV export (live server and exported app alike)
+
+A fresh Explore survey covered four areas the round-384 trigger pointed
+at (collaborator permission edge cases across multiple projects,
+checkpoint restore vs. live WhatsApp session state, relation-field
+cascade behavior on record delete, export/backup ZIP behavior at large
+entity/record counts). Three came back clean on direct code reading:
+collaborator access is binary (owner vs. collaborator, no distinct
+permission levels to leak) and re-checked fresh from the DB on every
+request with no server-side cache (`requireProjectAccess`/
+`requireProjectOwner`, `apps/api/src/routes/projects.ts` lines 232-247);
+checkpoint restore is additive-only and never drops a table
+(`migrate.ts` lines 73-91), so a WhatsApp message matched against an
+entity from before a restore still has a live table to query, with only
+a minor, separate, not-worth-its-own-round UX nit noted (a "jump to"
+link for a message matched against an entity a *backward* restore later
+removed silently no-ops rather than crashing); relation-field delete
+cascade already has a real SQLite `FOREIGN KEY` constraint
+(`migrate.ts` lines 41-44, 161-166, `PRAGMA foreign_keys = ON`) that the
+delete route explicitly catches and translates into a clear 409 --
+confirmed by reading the actual migration and route code, not just the
+claim.
+
+The fourth area, large-dataset export/backup, surfaced a genuine,
+concrete bug I verified by reading the real code myself (not trusting
+the survey's description at face value): `apps/api/src/backup.ts`'s
+`fieldDisplayValue` (then line 84) resolved a relation field via
+`records.find((r) => Number(r.id) === Number(value))` -- a full linear
+scan of the related entity's *entire* record array, called once per row
+by `entityToCsv`'s own `records.map(...)`. For an entity with N records
+and a relation field pointing at one with M records, that's O(N\*M) of
+plain synchronous JavaScript with no yielding, running inside the
+`GET /projects/:id/backup` request handler -- it blocks the whole Node
+event loop for the entire computation, stalling every other project's
+requests on the same process too, not just a slow response for the
+requester. I measured the real difference with a standalone script (not
+committed, N=M=5000, one relation field): the linear-scan version took
+~112ms, the Map-based version ~2ms -- and a real project with tens of
+thousands of linked records (plausible after months of genuine use, not
+an extreme edge case) would scale the gap further, multiplied again by
+every additional relation field or entity. `apps/api/src/codegen.ts`
+lines 603-623 (`backupFieldDisplayValue`/`entityToCsv`, inside the
+template string that generates the exported app's own `/api/backup`
+route) was a verbatim duplicate of the identical pattern -- so every
+project a user exports and self-hosts carried the same quadratic backup
+endpoint forward permanently, not just this live preview.
+
+**Fix** (`apps/api/src/backup.ts`, `apps/api/src/codegen.ts`): both
+`generateBackupZipEntries` and the exported app's `/api/backup` handler
+now build a per-entity `id -> record` `Map` once, up front, alongside
+the existing per-entity records array, and `fieldDisplayValue`/
+`backupFieldDisplayValue` do an O(1) `Map.get` instead of the O(M)
+linear scan -- turning the whole operation into O(N+M). Output is
+byte-for-byte unchanged; this is purely an algorithmic-complexity fix,
+not a behavior change.
+
+**Tests**: `apps/api/src/backup.test.ts` (+1: a 2000-customer/
+2001-order dataset, including a row pointing at the very last customer
+in the array -- the position a broken or short-circuited lookup would
+most likely get wrong -- asserting every relation still resolves to the
+correct display label, not a raw `#id`; deliberately *not* a wall-clock
+timing assertion, per round 356's own durable lesson that a timing
+assertion in a test is a real hang risk under load, not a reliable
+signal -- correctness at scale is the thing that actually matters and
+is deterministic to assert). `apps/api/src/codegen.test.ts` (+1: the
+real generated `backupFieldDisplayValue`, extracted via this file's own
+regex-extraction-and-`eval` convention, resolves a relation via the new
+`Map` shape and still falls back to `#id` for a genuinely missing
+record; also fixed the one existing regex-extraction test whose literal
+signature text (`recordsByEntity` -> `recordIndexByEntity`) no longer
+matched after the parameter rename -- the round-383/384 durable lesson
+about signature changes applied here too).
+
+**Regression-proof**: backed up the 2 implementation files (both
+pre-existing, tracked) and `git checkout --` reverted them to HEAD while
+keeping the new/modified test files. `backup.test.ts` passed 14/14 even
+reverted -- an honest, expected limitation: the pre-fix linear scan was
+functionally *correct*, just slow, so a correctness-only test genuinely
+cannot distinguish fixed from unfixed for a pure performance bug; the
+real evidence for this fix is the separate, non-committed timing
+measurement above. `codegen.test.ts` had exactly 2 failures, both
+tracing to the regex no longer matching the reverted parameter name, as
+expected. Restored both files from backup, confirmed byte-identical via
+`diff -q`, then reran the full build + full suite clean.
+
+**A related, wider-reaching instance was found but deliberately left
+out of scope this round**: `apps/web/src/entityFormatting.ts`'s own
+`relationDisplayLabel` (and `apps/api/src/codegen.ts`'s identical
+copy, used by the live table/board/calendar cell rendering *and* the
+per-entity "Export CSV" button, not just backup) has the exact same
+`records.find(...)` pattern, with call sites across `EntityPanel.tsx`,
+`calendarIcs.ts`, and several spots in `codegen.ts`'s `EntityView.jsx`
+template. Fixing it properly means threading a pre-built index through
+every one of those call sites instead of the raw `relatedRecords`
+object they currently take, in both the live preview and the exported
+app -- a real, separate, larger refactor, not a drop-in swap like
+`backup.ts`'s self-contained fix. Flagged as a new candidate for a
+future round rather than silently expanding this round's scope.
+
+Full suite green: **1347 tests** (`@forge/shared` 13, `@forge/spec-engine`
+93, `@forge/db` 99, `@forge/api` 377 (+2 new), `@forge/web` 765
+unchanged) via `npm test` at the repo root, plus a clean full monorepo
+`npm run build`. Pushed as commit `d08cbb3`.
+
+**Topic status**: this fix is closed. New candidate for a future round:
+`relationDisplayLabel`'s identical O(N\*M) pattern in
+`entityFormatting.ts`/`codegen.ts`, used far more broadly (every
+relation cell render, plus the per-entity CSV export) -- needs its own
+round, not a quick follow-on, since fixing it touches many call sites
+across live table/board/calendar rendering and the exported app's
+mirror. Everything else still open from round 384 remains open and
+unchanged (auth-session hard-expiry, export staleness marker,
+collaborator invite notification, AI-label language mismatch,
+checkpoint pruning, `sanitizeZipEntryName` collision, render.yaml disk
+stanza, print overflow-wrap / duplicate `enumValues` / relation-picker
+flash / `listRecords` pagination, `calendarIcs.ts`'s UTF-16-vs-UTF-8
+fold).
+
 ## Phase 4
 
 - Template/agent marketplace
