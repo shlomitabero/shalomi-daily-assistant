@@ -24535,6 +24535,84 @@ overflow-wrap / duplicate `enumValues` / relation-picker flash /
 low-confidence was not pursued -- noted as a place to double-check in a
 future round if a concrete repro ever surfaces, not asserted as a bug.
 
+### Round 392: round 390's localStorage preference cleanup missed 6 more per-project stores of the exact same shape
+
+**Survey**: a fresh Explore subagent surveyed the codebase one more time,
+explicitly excluding every topic closed through round 391 (including
+round 391's own WhatsApp message-log fix). It flagged `projectPreferenceCleanup.ts`
+itself as worth re-examining: round 390's own doc comment said "at least
+ten" stores, which reads as an open-ended count rather than a closed one.
+Independent verification before implementing: read every one of the six
+flagged modules directly (`recentSearches.ts`, `whatsappRecentNumbers.ts`,
+`whatsappLogRecentSearches.ts`, `viewModePreference.ts`,
+`whatsappLogFilter.ts`, `whatsappUnread.ts`) to confirm each one really is
+keyed by `projectId` (flat or `${projectId}:${entityName}`) with no purge
+hook wired into round 390's orchestrator, rather than trusting the
+subagent's claim at face value.
+
+**The bug**: round 390 fixed ten localStorage preference stores but missed
+six more of the exact same shape: Global Search's own recent-search list
+(`recentSearches.ts`, `forge.recentSearches.<projectId>`), WhatsApp's
+"Send test message" recent-number list (`whatsappRecentNumbers.ts`),
+WhatsApp log search history (`whatsappLogRecentSearches.ts`), the
+per-entity table/board/calendar view-mode choice (`viewModePreference.ts`,
+nested `${projectId}:${entityName}` keying like `groupByPreference.ts`),
+the WhatsApp log direction/status filter (`whatsappLogFilter.ts`), and the
+WhatsApp unread "last seen message" marker (`whatsappUnread.ts`). Every
+deleted project kept leaving all six behind forever, identical to the bug
+round 390 fixed for the other ten.
+
+**The fix**: three of the six (`recentSearches.ts`,
+`whatsappRecentNumbers.ts`, `whatsappLogRecentSearches.ts`) already
+exported a correct, already-tested `clearXForProject`-style function
+(`clearRecentSearches`, `clearRecentWhatsAppNumbers`,
+`clearWhatsAppLogRecentSearches`) that simply wasn't called from the
+orchestrator -- a one-line wiring omission, not a design gap. Added
+`purgeViewModeForProject` to `viewModePreference.ts` (identical
+read-store/delete-prefixed-keys/write-store body to
+`groupByPreference.ts`'s own purge function) and `clearWhatsAppLogFilter`
+/ `clearWhatsAppLastSeenId` to the two single-key-per-project modules.
+Wired all six into `purgeProjectPreferences` in
+`apps/web/src/projectPreferenceCleanup.ts`, bringing the total swept
+stores from ten to sixteen, and updated its doc comment accordingly.
+
+**Tests**: extended the existing three-project integration test in
+`projectPreferenceCleanup.test.ts` (rather than writing six new small
+tests) to seed and assert on all six additional stores for the same three
+project ids ("abc" deleted, "proj2" unrelated, "abc-other" sharing "abc"
+as an id prefix), reusing the exact prefix-collision proof round 390
+already established.
+
+**Regression-proof**: backed up all five changed files, `git checkout --`
+reverted only `projectPreferenceCleanup.ts` to its round-390 state (keeping
+the three updated preference modules and the extended test). The test
+failed with a genuine, specific assertion mismatch -- `'board' !== 'table'`
+on the `viewMode must be purged` assertion -- proving the orchestrator
+really does still need the new wiring, not an import crash that proves
+nothing about the fix's substance. Restored `projectPreferenceCleanup.ts`
+from backup, confirmed byte-identical via `diff -q`, then reran the full
+build + full suite clean.
+
+Full suite green: **1356 tests** (`@forge/shared` 13, `@forge/spec-engine`
+93, `@forge/db` 100, `@forge/api` 379, `@forge/web` 771, all unchanged --
+no new `test()` block was added, only more assertions inside the existing
+one) via `npm test` at the repo root, plus a clean full monorepo
+`npm run build`. Pushed as commit `c583b9f`.
+
+**Topic status**: this fix is closed. Everything else still open from
+rounds 378-391 remains open and unchanged (`wakeRetry.ts`'s
+retry-on-any-method duplicate-write risk, export staleness marker,
+collaborator invite notification, AI-label language mismatch, checkpoint
+pruning, `sanitizeZipEntryName` collision, render.yaml disk stanza, print
+overflow-wrap / duplicate `enumValues` / relation-picker flash /
+`listRecords` pagination, `calendarIcs.ts`'s UTF-16-vs-UTF-8 fold). Two
+runner-up candidates from this round's survey were not pursued: a
+scheduling-conflict/double-booking detector for date-bearing entities
+(real feature gap, medium scope, left for a future round) and
+`BusinessTwinPanel.tsx`'s `loadTwin()` lacking a request-id guard against
+`projectId` changing mid-fetch (low real-world likelihood -- the panel is
+a modal keyed to one open project).
+
 ## Phase 4
 
 - Template/agent marketplace
