@@ -24457,6 +24457,84 @@ reported. Round 381's Render "deploy failed for forge-ai" email was
 investigated exhaustively with no reproducible code bug found; still
 awaiting her confirmation the live site works for her.
 
+### Round 391: WhatsApp message log silently lost paged-in history when sending or retrying a message
+
+**Survey**: a fresh Explore subagent surveyed areas not recently scrutinized
+(Kanban/calendar views, saved views, dashboard widgets, WhatsApp edge cases
+beyond what rounds 379/382/388 already covered, print/export formatting,
+accessibility of newer panels, collaborator/enum/relation edge cases,
+O(N\*M) hot paths, unhandled rejections, client/server state drift),
+explicitly excluding every topic already closed or deliberately deferred in
+rounds 371-390. Independent verification before picking the fix: read
+`apps/web/src/WhatsAppPanel.tsx` directly at every `setMessages` call site
+(lines 236, 278, 306, 401, 484, 504 before this round's edit) rather than
+trusting the subagent's line numbers, and confirmed the real pattern myself.
+
+**The bug**: `handleSendTest` and `handleRetry` both refreshed the message
+log after their own action by calling `listWhatsAppMessages(projectId)`
+with no offset (always the newest page) and then doing a plain
+`setMessages(messages)` -- a full replace, not a merge. Once a user had
+clicked "Load older messages" even once, sending a test message or
+retrying a failed one silently discarded every older page that click had
+loaded (nothing was actually lost server-side -- only the client's own view
+of it), and `hasMoreMessages` reset from that first-page response alone, so
+the "Load older messages" button reappeared as if no history had ever been
+paged in. This was inconsistent with a third refresh path in the very same
+file: `startConnectedPolling`'s own background interval tick already merged
+its newest-page fetch into the existing list correctly (prepend only ids
+not already present, never touch `hasMoreMessages`) -- round 288's fix for
+a different staleness problem had already solved this exact merge, just not
+in the other two call sites.
+
+**The fix**: extracted that merge logic into a shared module-level
+`mergeFreshMessages(prev, freshPage)` helper and reused it in all three
+call sites (`startConnectedPolling`, `handleSendTest`, `handleRetry`).
+Both fixed sites also stopped calling `setHasMoreMessages` from their
+post-action refresh: a same-size newest-page fetch can't tell you anything
+about history beyond what's already loaded, which is exactly what made the
+button reappear incorrectly -- `hasMoreMessages` is already correct from
+whichever earlier call (initial load, or a prior "Load older messages"
+click) last legitimately knew it.
+
+**Tests**: updated the existing `startConnectedPolling` regex-extraction
+test to inject the newly-extracted `mergeFreshMessages` dependency (the
+same round-383-through-390 lesson recurring at the first-possible
+opportunity: a helper pulled out of an extracted function's body needs its
+own injection too, not just new parameters on the function itself). Added
+a new full-render integration test reproducing the complete scenario: load
+page 1 (2 messages, `hasMore: true`), click "Load older messages" for page
+2 (1 message, `hasMore: false`, total 3 loaded), then send a test message
+whose post-send newest-page response includes the new message plus the
+previous newest one. Asserts the log ends up with all 4 messages in the
+right order (new one prepended, all 3 previously-loaded ones intact) and
+that "Load older messages" does not reappear.
+
+**Regression-proof**: backed up `WhatsAppPanel.tsx` and
+`WhatsAppPanel.test.ts`, `git checkout --` reverted only `WhatsAppPanel.tsx`
+to HEAD while keeping the new test. The new test failed with
+`waitForCondition: condition never became true` (the log never reached 4
+messages because the old full-replace code collapsed it back down to 2),
+while all 28 pre-existing tests in the file still passed -- proving the new
+test genuinely exercises the bug, not an incidental assertion. Restored
+`WhatsAppPanel.tsx` from backup, confirmed byte-identical via `diff -q`,
+then reran the full build + full suite clean.
+
+Full suite green: **1356 tests** (`@forge/shared` 13, `@forge/spec-engine`
+93, `@forge/db` 100, `@forge/api` 379, all unchanged; `@forge/web` 771,
++1 new test in `WhatsAppPanel.test.ts`) via `npm test` at the repo root,
+plus a clean full monorepo `npm run build`. Pushed as commit `08d3ca9`.
+
+**Topic status**: this fix is closed. Everything else still open from
+rounds 378-390 remains open and unchanged (`wakeRetry.ts`'s
+retry-on-any-method duplicate-write risk, export staleness marker,
+collaborator invite notification, AI-label language mismatch, checkpoint
+pruning, `sanitizeZipEntryName` collision, render.yaml disk stanza, print
+overflow-wrap / duplicate `enumValues` / relation-picker flash /
+`listRecords` pagination, `calendarIcs.ts`'s UTF-16-vs-UTF-8 fold). A
+`EntityPanel.tsx` drag-drop stale-closure concern the survey flagged as
+low-confidence was not pursued -- noted as a place to double-check in a
+future round if a concrete repro ever surfaces, not asserted as a bug.
+
 ## Phase 4
 
 - Template/agent marketplace
