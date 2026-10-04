@@ -962,7 +962,29 @@ export function createProjectsRouter(db: ForgeDatabase, provider: SpecProvider |
         throw new HttpError(409, "Project has not been built yet — call POST /build first", "BUILD_REQUIRED");
       }
       const entity = findEntity(project, req.params.entityName);
-      const record = insertRecord(db, project.id, entity, req.body ?? {});
+      /**
+       * Same `PRAGMA foreign_keys = ON` constraint the DELETE route below
+       * already translates (round 292), but on the write side: a relation
+       * field's picker in EntityPanel.tsx is built from `relatedRecords`
+       * fetched earlier, so submitting a create/edit referencing a record
+       * another collaborator (or this same browser's own deferred-delete
+       * undo window) deleted in the meantime hits this exact constraint.
+       * Without this, app.ts's generic error handler turned it into an
+       * unexplained 500 instead of a message naming the actual problem.
+       */
+      let record: ReturnType<typeof insertRecord>;
+      try {
+        record = insertRecord(db, project.id, entity, req.body ?? {});
+      } catch (err) {
+        if (err instanceof Error && err.message === "FOREIGN KEY constraint failed") {
+          throw new HttpError(
+            400,
+            "This record references another record that no longer exists",
+            "INVALID_RELATION_TARGET",
+          );
+        }
+        throw err;
+      }
       res.status(201).json({ record });
     }),
   );
@@ -1395,7 +1417,21 @@ export function createProjectsRouter(db: ForgeDatabase, provider: SpecProvider |
       }
       const entity = findEntity(project, req.params.entityName);
       const recordId = parseRecordId(req.params.recordId);
-      const record = updateRecord(db, project.id, entity, recordId, req.body ?? {});
+      // Same FOREIGN KEY constraint translation as the POST route above --
+      // see its own comment for why this is reachable through the real UI.
+      let record: ReturnType<typeof updateRecord>;
+      try {
+        record = updateRecord(db, project.id, entity, recordId, req.body ?? {});
+      } catch (err) {
+        if (err instanceof Error && err.message === "FOREIGN KEY constraint failed") {
+          throw new HttpError(
+            400,
+            "This record references another record that no longer exists",
+            "INVALID_RELATION_TARGET",
+          );
+        }
+        throw err;
+      }
       res.json({ record });
     }),
   );

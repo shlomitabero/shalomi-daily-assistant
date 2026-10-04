@@ -4879,6 +4879,70 @@ test("deleting a record another record still references through a relation field
 });
 
 /**
+ * Regression test for a real gap round 394's Explore survey found: the
+ * DELETE route above translates a FOREIGN KEY constraint failure into a
+ * clear 409, but creating or updating a record with a relation value that
+ * doesn't exist (e.g. referencing a Courier that was already deleted by
+ * another collaborator between EntityPanel.tsx fetching its relation
+ * picker options and the user submitting the form) hit the exact same
+ * constraint on the write side and was never translated -- app.ts's
+ * generic error handler turned it into an unexplained 500 instead. Fixed
+ * the same way as the DELETE route: translated into a 400
+ * INVALID_RELATION_TARGET, for both POST (create) and PATCH (update).
+ */
+test("creating or updating a record with a relation value that doesn't exist is rejected with INVALID_RELATION_TARGET, not a 500", async () => {
+  await withServer(async (baseUrl) => {
+    const token = await signup(baseUrl, "invalid-relation-target@example.com");
+    const createRes = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ description: "A small courier delivery business." }),
+    });
+    const { project } = (await createRes.json()) as { project: { id: string } };
+
+    const buildRes = await fetch(`${baseUrl}/api/projects/${project.id}/build`, { method: "POST", headers: authHeaders(token) });
+    await collectSSE(buildRes);
+
+    const missingCourierId = 999999;
+
+    const createOrderRes = await fetch(`${baseUrl}/api/projects/${project.id}/entities/Order`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ customerName: "Jane", total: 50, status: "Pending", courierId: missingCourierId }),
+    });
+    assert.equal(createOrderRes.status, 400, "creating a record referencing a nonexistent courier must be rejected with a real 400, not a 500");
+    assert.equal(((await createOrderRes.json()) as { code?: string }).code, "INVALID_RELATION_TARGET");
+
+    const courierRes = await fetch(`${baseUrl}/api/projects/${project.id}/entities/Courier`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ name: "Dave", status: "Available" }),
+    });
+    const { record: courier } = (await courierRes.json()) as { record: { id: number } };
+    const validOrderRes = await fetch(`${baseUrl}/api/projects/${project.id}/entities/Order`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ customerName: "Jane", total: 50, status: "Pending", courierId: courier.id }),
+    });
+    assert.equal(validOrderRes.status, 201, "a valid courierId must still create the order normally");
+    const { record: order } = (await validOrderRes.json()) as { record: { id: number } };
+
+    const updateOrderRes = await fetch(`${baseUrl}/api/projects/${project.id}/entities/Order/${order.id}`, {
+      method: "PATCH",
+      headers: authHeaders(token),
+      body: JSON.stringify({ courierId: missingCourierId }),
+    });
+    assert.equal(updateOrderRes.status, 400, "updating a record to reference a nonexistent courier must be rejected with a real 400, not a 500");
+    assert.equal(((await updateOrderRes.json()) as { code?: string }).code, "INVALID_RELATION_TARGET");
+
+    const getOrderRes = await fetch(`${baseUrl}/api/projects/${project.id}/entities/Order`, { headers: authHeaders(token) });
+    const { records: orders } = (await getOrderRes.json()) as { records: { id: number; courierId: number }[] };
+    const survivingOrder = orders.find((o) => o.id === order.id);
+    assert.equal(survivingOrder?.courierId, courier.id, "the rejected update must not have partially applied -- the order must still reference its original, valid courier");
+  });
+});
+
+/**
  * Regression test for a real gap round 312's Explore survey found in
  * `diffAndMigrate`'s "new_column" branch (migrate.ts): a relation field
  * added to an *entity that already existed* -- the ordinary shape of a
