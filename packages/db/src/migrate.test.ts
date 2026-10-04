@@ -234,6 +234,87 @@ test("diffAndMigrate reports a type_changed entry (without altering the column) 
   assert.equal(customers[0].status, "New");
 });
 
+/**
+ * Regression test: diffAndMigrate's prevField branch compared only
+ * `prevField.type !== field.type`, so a relation field that keeps the same
+ * name and type ("relation") but has its `relationTo` repointed to a
+ * *different, still-existing* entity (a very plausible refine like "treat
+ * couriers as drivers now") fell through the same `continue` as "nothing
+ * changed" -- reporting zero changes even though the column's actual FK
+ * (bound at CREATE/ALTER time, see generateCreateTableStatements) still
+ * points at the OLD entity's table. This is the same class of gap
+ * "type_changed" above already covers for a field's own type, just for a
+ * relation field's target -- and it's the exact gap round 275's
+ * checkpointDiff.ts fieldSignature() already had to account for
+ * client-side (it folds relationTo into the signature precisely so this
+ * kind of change isn't invisible there either), but the live migration
+ * path itself never got the matching fix until now.
+ */
+test("diffAndMigrate reports a relation_target_changed entry (without repointing the FK) when a relation field's relationTo changes to a different existing entity", () => {
+  const db = openDatabase(":memory:");
+  applyMigrations(db, "proj1", spec);
+  const customerEntity = spec.entities[0];
+  const alice = insertRecord(db, "proj1", customerEntity, { name: "Alice", status: "New" });
+
+  const nextSpec: ProductSpec = {
+    ...spec,
+    entities: [
+      spec.entities[0],
+      { name: "Vendor", fields: [{ name: "name", type: "text", required: true }] },
+      {
+        ...spec.entities[1],
+        fields: [
+          spec.entities[1].fields[0],
+          { name: "customerId", type: "relation", required: false, relationTo: "Vendor" },
+        ],
+      },
+    ],
+  };
+  const changes = diffAndMigrate(db, "proj1", spec, nextSpec);
+  assert.deepEqual(changes, [
+    { type: "new_table", table: "entity_proj1_Vendor" },
+    {
+      type: "relation_target_changed",
+      table: "entity_proj1_Order",
+      column: "customerId",
+      fromRelationTo: "Customer",
+      toRelationTo: "Vendor",
+    },
+  ]);
+
+  // The real proof the FK itself was NOT repointed: it's still bound to
+  // Customer, not Vendor, so inserting an Order that references the real,
+  // just-created Vendor record is wrongly rejected... A filler Vendor row
+  // is inserted first so the real one's id (2) can't coincide by luck with
+  // the Customer table's own existing id (1, Alice's) -- the whole point
+  // being to prove the FK still only knows about the Customer table, not
+  // to accidentally pass because both tables happen to allocate the same
+  // next id.
+  const vendorEntity = nextSpec.entities[1];
+  insertRecord(db, "proj1", vendorEntity, { name: "filler" });
+  const vendor = insertRecord(db, "proj1", vendorEntity, { name: "Acme Co" });
+  const orderEntity = nextSpec.entities[2];
+  assert.throws(
+    () => insertRecord(db, "proj1", orderEntity, { total: 50, customerId: vendor.id }),
+    /FOREIGN KEY constraint failed/,
+    "a real Vendor record must not be silently rejected by a stale FK still watching Customer -- but today it is",
+  );
+
+  // ...while an id that happens to coincide with the STALE (Customer)
+  // table's rows is silently accepted, even though the current spec says
+  // this field now points at Vendor -- a genuinely corrupted relation
+  // value with no error anywhere.
+  const order = insertRecord(db, "proj1", orderEntity, { total: 75, customerId: alice.id });
+  assert.equal(order.customerId, alice.id);
+
+  // The column's real FK in SQLite must be completely untouched -- this
+  // test would still pass even if the FK silently stayed bound to the old
+  // table forever, which is exactly the point: reporting the change is not
+  // the same as applying it (same documented limitation as type_changed).
+  const fkList = db.prepare('PRAGMA foreign_key_list("entity_proj1_Order")').all() as { table: string }[];
+  assert.deepEqual(fkList.map((fk) => fk.table), ["entity_proj1_Customer"]);
+});
+
 test("diffAndMigrate is safe to call twice with the same additive change (idempotent, never throws)", () => {
   // Reproduces the real failure class this hardening prevents: SQLite
   // throws "duplicate column name" on a second ALTER TABLE ADD COLUMN for

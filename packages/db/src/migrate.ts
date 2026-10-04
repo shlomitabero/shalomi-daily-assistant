@@ -62,12 +62,15 @@ function existingColumns(db: ForgeDatabase, table: string): Set<string> {
 }
 
 export interface MigrationChange {
-  type: "new_table" | "new_column" | "type_changed";
+  type: "new_table" | "new_column" | "type_changed" | "relation_target_changed";
   table: string;
   column?: string;
   /** Only set for "type_changed": the field's old and new declared type, for a message that says what actually changed. */
   fromType?: string;
   toType?: string;
+  /** Only set for "relation_target_changed": the field's old and new relationTo entity name. */
+  fromRelationTo?: string;
+  toRelationTo?: string;
 }
 
 /**
@@ -128,6 +131,32 @@ export function diffAndMigrate(
             column: assertSafeIdentifier(field.name, "column"),
             fromType: prevField.type,
             toType: field.type,
+          });
+        } else if (
+          field.type === "relation" &&
+          prevField.type === "relation" &&
+          prevField.relationTo !== field.relationTo
+        ) {
+          // Same gap as "type_changed" above, but for a relation field's
+          // *target* rather than its own type: the column's REFERENCES
+          // clause (generateCreateTableStatements, the "new_column" branch
+          // below) is bound to whatever relationTo was when the column was
+          // created, and SQLite can't retroactively repoint a FK any more
+          // than it can retype a column. Without this, a refine that keeps
+          // a relation field's name and type but repoints relationTo to a
+          // different, still-existing entity (e.g. "treat couriers as
+          // drivers now") leaves the live spec claiming a target the
+          // database's FK still doesn't actually watch -- real records of
+          // the new target get wrongly rejected as INVALID_RELATION_TARGET,
+          // or (if an id happens to coincide with the stale target table)
+          // silently accepted with no FK protection at all, breaking the
+          // dangling-id invariant twin.ts's own insight logic relies on.
+          changes.push({
+            type: "relation_target_changed",
+            table,
+            column: assertSafeIdentifier(field.name, "column"),
+            fromRelationTo: prevField.relationTo,
+            toRelationTo: field.relationTo,
           });
         }
         continue;

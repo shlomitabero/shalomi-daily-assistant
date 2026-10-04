@@ -269,6 +269,7 @@ export async function* runBuildPipeline(
     };
   }
   const typeChanges = changes.filter((c) => c.type === "type_changed");
+  const relationTargetChanges = changes.filter((c) => c.type === "relation_target_changed");
   yield {
     agent: "Database",
     status: "success",
@@ -276,6 +277,9 @@ export async function* runBuildPipeline(
       `${changes.length} schema change(s) applied (${changes.filter((c) => c.type === "new_table").length} new tables, ${changes.filter((c) => c.type === "new_column").length} new columns). Nothing was dropped.` +
       (typeChanges.length > 0
         ? ` Note: ${typeChanges.map((c) => `${c.table}.${c.column} (${c.fromType} → ${c.toType})`).join(", ")} kept the original database column type — existing data was not converted.`
+        : "") +
+      (relationTargetChanges.length > 0
+        ? ` Note: ${relationTargetChanges.map((c) => `${c.table}.${c.column} (${c.fromRelationTo} → ${c.toRelationTo})`).join(", ")} kept pointing at the original related table — existing data was not re-linked.`
         : ""),
     detail: changes,
   };
