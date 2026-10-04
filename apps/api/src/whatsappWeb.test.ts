@@ -376,6 +376,54 @@ test("connect() logs out the real socket immediately if the session was replaced
   assert.equal(manager.getStatus("proj1").status, "disconnected");
 });
 
+/**
+ * Regression test for a real race found by round 379's Explore survey:
+ * the opposite direction from the "connect() waits for a concurrent
+ * disconnect()'s auth-dir cleanup" test above. That one defends a
+ * connect() landing while a PRIOR disconnect()'s own cleanup is still
+ * removing the auth dir. Nothing defended the reverse: a disconnect()
+ * landing while a connect() is still inside its OWN createSocket() call
+ * -- exactly when useMultiFileAuthState reads/writes that same directory
+ * -- used to start removing it immediately, racing those file operations.
+ * Confirms removeAuthDir is now deferred until the in-flight connect()
+ * attempt has genuinely finished, while disconnect() itself still returns
+ * promptly (its own synchronous session.delete() already made
+ * getStatus() report "disconnected" -- that must never depend on how
+ * long the OTHER, in-flight connect() attempt takes).
+ */
+test("disconnect() waits for a concurrent connect()'s still-in-flight createSocket() call before removing the auth dir from disk", async () => {
+  const db = openDatabase(":memory:");
+  ensureProjectsTable(db);
+  ensureWhatsAppConnectionsTable(db);
+  ensureWhatsAppMessagesTable(db);
+
+  const fake = createFakeSocket();
+  let resolveCreateSocket!: (value: { sock: WhatsAppSocket; saveCreds: () => Promise<void> }) => void;
+  let removeAuthDirCalls = 0;
+  const manager = new WhatsAppWebManager({
+    db,
+    sessionsRootDir: "/tmp/forge-whatsapp-test-sessions-disconnect-race",
+    createSocket: () => new Promise((resolve) => { resolveCreateSocket = resolve; }),
+    qrToDataUrl: async (qr) => `data:image/png;base64,FAKE(${qr})`,
+    removeAuthDir: async () => {
+      removeAuthDirCalls++;
+    },
+  });
+
+  const connectPromise = manager.connect("proj1");
+  const disconnectPromise = manager.disconnect("proj1");
+
+  await disconnectPromise;
+  assert.equal(manager.getStatus("proj1").status, "disconnected", "disconnect() must still report disconnected right away");
+  assert.equal(removeAuthDirCalls, 0, "removeAuthDir must not run while createSocket() is still in flight for this project");
+
+  resolveCreateSocket({ sock: fake.sock, saveCreds: async () => {} });
+  await connectPromise;
+  // Give the now-unblocked cleanup chain a real turn of the event loop.
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(removeAuthDirCalls, 1, "removeAuthDir must run once the in-flight connect() attempt has actually finished");
+});
+
 test("a stale close event from a disconnected socket does not clobber a newer session created by a fresh connect()", async () => {
   const { manager, createdSockets } = setupManager();
   await manager.connect("proj1");

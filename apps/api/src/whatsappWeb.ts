@@ -125,6 +125,8 @@ export class WhatsAppWebManager {
   private readonly sessions = new Map<string, ManagedSession>();
   /** Tracks an in-flight authDir cleanup per project -- see cleanupAuthDir and its use in connect(). */
   private readonly pendingCleanup = new Map<string, Promise<void>>();
+  /** Tracks an in-flight connect() attempt's own createSocket() call per project -- see connect() and its use in cleanupAuthDir. */
+  private readonly pendingConnect = new Map<string, Promise<void>>();
 
   constructor(options: WhatsAppWebManagerOptions) {
     this.db = options.db;
@@ -147,9 +149,24 @@ export class WhatsAppWebManager {
    * starts useMultiFileAuthState() on the very directory this removal is
    * still deleting files from. Tracking the removal here lets connect()
    * wait for it to finish first, instead of racing it.
+   *
+   * The opposite race also needs guarding: a disconnect() that lands
+   * while a connect() for the same project is still inside its OWN
+   * createSocket() call (useMultiFileAuthState reads/writes the auth dir
+   * as part of that call, before connect() ever gets a chance to react)
+   * must not start removing that directory out from under it. Waiting on
+   * pendingConnect here, before touching the disk, closes that window --
+   * done inside cleanupAuthDir rather than inside disconnect() itself so
+   * disconnect()'s own synchronous session.delete() above (and thus
+   * getStatus() reporting "disconnected") is never delayed by how long
+   * a *different* connect() attempt happens to take.
    */
   private cleanupAuthDir(projectId: string): Promise<void> {
-    const task = this.removeAuthDir(this.authDirFor(projectId)).catch(() => {});
+    const pendingConnect = this.pendingConnect.get(projectId);
+    const task = (pendingConnect ?? Promise.resolve())
+      .catch(() => {})
+      .then(() => this.removeAuthDir(this.authDirFor(projectId)))
+      .catch(() => {});
     this.pendingCleanup.set(projectId, task);
     void task.finally(() => {
       if (this.pendingCleanup.get(projectId) === task) this.pendingCleanup.delete(projectId);
@@ -181,6 +198,20 @@ export class WhatsAppWebManager {
     const session: ManagedSession = { sock: null, status: "connecting", qrDataUrl: null, phoneNumber: null, error: null };
     this.sessions.set(projectId, session);
 
+    // Tracked in pendingConnect for the exact duration of createSocket()
+    // (and its own event-handler wiring just after) -- see cleanupAuthDir's
+    // own comment for why a disconnect() landing in this window must wait
+    // for it before touching the auth dir on disk.
+    const task = this.runConnectAttempt(projectId, session);
+    this.pendingConnect.set(projectId, task);
+    void task.finally(() => {
+      if (this.pendingConnect.get(projectId) === task) this.pendingConnect.delete(projectId);
+    });
+    await task;
+    return this.getStatus(projectId);
+  }
+
+  private async runConnectAttempt(projectId: string, session: ManagedSession): Promise<void> {
     try {
       const { sock, saveCreds } = await this.createSocket(this.authDirFor(projectId));
       if (this.sessions.get(projectId) !== session) {
@@ -191,7 +222,7 @@ export class WhatsAppWebManager {
         // linked to the real WhatsApp account indefinitely with no code
         // path left able to close it -- log it out immediately instead.
         await sock.logout().catch(() => {});
-        return this.getStatus(projectId);
+        return;
       }
       session.sock = sock;
       // Every handler below is wired with a real `.catch`, not a bare
@@ -218,7 +249,6 @@ export class WhatsAppWebManager {
       session.status = "disconnected";
       session.error = (err as Error).message;
     }
-    return this.getStatus(projectId);
   }
 
   /**
@@ -307,7 +337,15 @@ export class WhatsAppWebManager {
     }
     this.sessions.delete(projectId);
     recordWhatsAppDisconnected(this.db, projectId);
-    await this.cleanupAuthDir(projectId);
+    // Not awaited: cleanupAuthDir itself now waits for any in-flight
+    // connect() (pendingConnect) before touching the auth dir on disk --
+    // see its own comment -- and that can take as long as createSocket()
+    // does. disconnect() must stay as fast as it already is above (the
+    // synchronous session.delete() is what makes getStatus() report
+    // "disconnected" right away); it was never meant to block its own
+    // caller on how long the actual directory removal takes, any more
+    // than it already didn't before this round.
+    void this.cleanupAuthDir(projectId);
   }
 
   async sendMessage(projectId: string, to: string, body: string): Promise<WhatsAppSendResult> {
