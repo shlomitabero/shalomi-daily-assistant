@@ -24086,6 +24086,125 @@ notification, AI-label language mismatch, checkpoint pruning,
 overflow-wrap / duplicate `enumValues` / relation-picker flash /
 `listRecords` pagination, `calendarIcs.ts`'s UTF-16-vs-UTF-8 fold).
 
+### Round 387: Business Twin's redundant `listRecords` calls closed; a new, higher-risk wake-retry candidate found and deliberately deferred
+
+A fresh Explore survey (general, not re-covering any closed topic) found
+two real candidates. The stronger-looking one on paper was deliberately
+**not** implemented this round, after independent verification showed its
+obvious fix would directly regress a standing top-priority issue.
+
+**Investigated and deferred (not implemented): `fetchWithWakeRetry`
+(`apps/web/src/wakeRetry.ts`) retries any network-level fetch failure for
+every HTTP method, including POST/PATCH/DELETE, with no idempotency key
+anywhere server-side.** Its own comment states the reasoning: "a
+connection failure means the request was never received by the server at
+all -- nothing to duplicate." That's true for the literal Render
+cold-start case (the connection can't even be established because the
+service isn't listening yet), but not true in general -- a connection can
+also drop *after* the server fully processed a request but before the
+response reaches the client (a proxy hiccup, a flaky mobile connection
+mid-session), and every mutating call in `apps/web/src/api.ts` (createRecord,
+createProject, login/signup, sendWhatsAppMessage, CSV import's
+`Promise.allSettled` of up to thousands of concurrent `createRecord`
+calls) goes through this same retry path with no idempotency-key dedup to
+catch a resulting duplicate. This is a real, verified gap (confirmed by
+reading `wakeRetry.ts` and every call site in `api.ts` directly, not just
+taking the survey's framing on faith).
+
+**Why it was NOT fixed this round**: the "obvious" fix -- skip the retry
+for non-idempotent methods -- would disable retry-on-cold-start for every
+mutating request. Render's free-tier cold start is this app's single most
+sensitive standing issue (round 163, still awaiting שלומי's confirmation,
+271+ rounds old): a user's very first action after a cold visit is
+frequently a POST (login, signup, "create project from idea"), and this
+"fix" would silently reintroduce round 163's exact symptom for every one
+of those actions, just scoped to mutations instead of all requests. The
+real fix needs a server-side idempotency-key mechanism (client generates
+a stable key per logical request, same key across retries of that one
+attempt; server deduplicates and returns the cached response on a repeat)
+so cold-start retry safety is preserved for every method while duplicate
+writes are eliminated -- a meaningfully larger, riskier scope (new DB
+table/cache, every mutating route touched) that deserves its own
+dedicated round with careful design, not a rushed fix that risks
+regressing the project's most-flagged standing bug. Flagged as a new
+open candidate for a future round.
+
+**✅ Implemented and closed: Business Twin's up to 7x redundant
+per-entity DB round-trips.** `apps/api/src/twin.ts`'s `computeBusinessTwin`
+called `listRecords(db, project.id, entity)` independently from 6 separate
+helpers (relation coverage, the relation hub, duplicate detection, numeric
+aggregates, enum distribution, activity staleness) plus a separate
+`countRecords()` call for the per-entity stat row -- an entity with a
+relation field, text display field, number field, and enum field all at
+once (common in this app's own seeded domain entities) triggered up to 7
+full-table SELECTs for that one entity on every single Business Twin
+open. Verified directly (read every helper in `twin.ts`, confirmed
+`listRecords`/`countRecords` both do a real `SELECT * FROM table` /
+`SELECT COUNT(*)`, confirmed the route is a plain `GET
+/projects/:id/twin` hit once per panel open, confirmed via grep that
+Business Twin has no equivalent in `codegen.ts` at all so no port is
+needed). **Fix**: build a `Map<string, EntityRecord[]>` once at the top of
+`computeBusinessTwin`, fetch each entity's records exactly once into it,
+and thread it into every helper instead of each calling `listRecords`
+itself -- the same `recordsByEntity`-cache pattern already used by
+`backup.ts`'s `recordIndexByEntity` (round 385). The per-entity record
+count is now derived from that same array's `.length` instead of a
+separate `countRecords()` call, since both always scan the identical set
+of rows -- removing a 7th redundant round-trip, not just the other 6.
+Since `computeRelationCoverageObservations`, `computeDuplicateObservations`,
+`computeActivityObservations`, `computeNumericAggregateObservations`, and
+`computeEnumDistributionObservations` are module-private (only
+`computeBusinessTwin` itself is exported/tested), their signatures could
+be changed freely with zero external impact; `computeRelationHubObservation`
+keeps its `db` parameter since it still needs one single-row `getRecord`
+lookup for its dangling-reference check.
+
+**Measured, not assumed** (standalone timing script, not committed, per
+round 385/386's established convention): 15 entities x 3,000 records each,
+every field type present on the relation-linked entities. Before: ~600-730ms
+per `computeBusinessTwin` call (3 runs). After: ~210-270ms (3 runs) -- a
+real ~2.5-3x reduction from one DB round-trip per entity instead of up to
+seven. The win scales with entity count, records-per-entity, and real
+(non-in-memory) DB latency, so a production SQLite-on-disk project would
+see a larger relative gain than this in-memory benchmark shows.
+
+**Tests**: added one large-dataset correctness test to `twin.test.ts`
+(1,200 linked records across two entities, every observation category --
+relation hub, relation coverage, duplicate detection, numeric aggregate,
+enum distribution, per-entity counts -- firing at once against the shared
+cache) verifying every single output stays correct, not just "the twin
+has some output." This is the one genuine correctness risk a shared-array
+cache introduces (a bug in one helper corrupting what a different helper
+reads), the same category of risk round 386's cross-contamination test
+targeted for its own WeakMap cache.
+
+**Regression-proof**: backed up `twin.ts`+`twin.test.ts`, reverted
+`twin.ts` to HEAD, kept the new test. All 24 tests in `twin.test.ts`
+passed even against the reverted code -- the same honest, expected
+limitation as rounds 385/386: this is a pure performance fix with
+byte-identical output, so a correctness-only test suite cannot
+distinguish fixed from unfixed. The real evidence is the separate timing
+measurement above, not this test run. Restored `twin.ts` from backup,
+confirmed byte-identical via `diff -q`, then reran the full build + full
+suite clean.
+
+Full suite green: **1352 tests** (`@forge/shared` 13, `@forge/spec-engine`
+93, `@forge/db` 99, `@forge/api` 379 (+1 new), `@forge/web` 768 unchanged)
+via `npm test` at the repo root, plus a clean full monorepo `npm run
+build`. Pushed as commit `ec12449`.
+
+**Topic status**: Business Twin's redundant `listRecords` calls (open
+since round 379) is closed. New open candidate: `wakeRetry.ts`'s
+retry-on-any-method duplicate-write risk, needs a server-side
+idempotency-key design -- a future round, not a quick fix, given the
+regression risk to round 163's cold-start resilience. Everything else
+still open from round 379-386 remains open and unchanged (export staleness
+marker, collaborator invite notification, AI-label language mismatch,
+checkpoint pruning, `sanitizeZipEntryName` collision, render.yaml disk
+stanza, print overflow-wrap / duplicate `enumValues` / relation-picker
+flash / `listRecords` pagination, `calendarIcs.ts`'s UTF-16-vs-UTF-8
+fold).
+
 ## Phase 4
 
 - Template/agent marketplace
