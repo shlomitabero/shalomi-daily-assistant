@@ -23748,6 +23748,123 @@ notification, AI-label language mismatch, checkpoint pruning,
 SESSION_EXPIRED reactive gap, Business Twin 6x `listRecords`,
 `sanitizeZipEntryName` collision, render.yaml disk stanza).
 
+### Round 384: no client-side reaction to a revoked/expired session (SESSION_EXPIRED/AUTH_REQUIRED)
+
+A fresh Explore survey targeted the four areas this round's own queued
+candidates pointed at (auth session refresh flow, project clone edge
+cases, Kanban column customization persistence, dashboard accuracy after
+bulk delete). Three came back clean on direct code reading: project
+clone (`apps/api/src/routes/projects.ts` lines 416-444) deliberately
+copies only `name`/`description`/`spec`, documented in the route's own
+comment and already exercised across rounds 121/122; Kanban's only real
+per-user customization (board-column collapse state,
+`collapsedBoardColumnsPreference.ts`) is already persisted to
+`localStorage` and restored on mount -- column *order* itself is derived
+from the field's own declared `enumValues`, not draggable, so there's
+nothing to lose; Business Twin (`apps/api/src/twin.ts`) always computes
+live via `countRecords`/`listRecords`, no caching, so a dashboard opened
+after a bulk delete is never stale.
+
+The fourth, auth session refresh, surfaced the round-380-queued
+**SESSION_EXPIRED reactive gap**, now verified with the exact mechanism
+rather than just the prior round's description. I independently
+confirmed by reading the real code (not trusting the subagent's claims):
+`apps/api/src/auth/middleware.ts`'s `requireAuth` (lines 29-45) already
+attaches `AUTH_REQUIRED` (missing header) or `SESSION_EXPIRED` (invalid/
+expired token) to every 401 it throws, and
+`apps/web/src/i18n/language.ts` lines 77-78/595-596 already carry real
+translated copy for both ("ההתחברות שלכם פגה. התחברו שוב." / "Your
+session has expired. Please sign in again.") -- strong evidence this was
+meant to be wired up but never was. `apps/web/src/api.ts`'s `request()`
+(confirmed at the time: lines 150-166) only ever used `code` to build
+that one request's own translated `Error` message, then discarded it --
+nothing upstream of a single `await someApiCall()` call site could ever
+know the session itself was gone. `App.tsx`'s only session check was the
+one-shot mount effect (lines 652-661: `me()` on mount -> `setUser`); once
+that resolved, `user` state was never re-validated or cleared again for
+the rest of the session.
+
+Concrete failure scenario: a user is signed in and has the app open in
+one tab; they open DevTools or another device and trigger "sign out
+everywhere" (password change, or an explicit revoke), or their 30-day
+session token simply expires while the tab stays open. Their very next
+action in the original tab -- clicking into any entity, sending a
+WhatsApp message, exporting a project -- gets back a 401 whose message
+*does* say "your session expired, please sign in again" inside whatever
+panel made that one call, but `user` stays set: the rest of the
+authenticated UI (project tabs, other panels, the whole sidebar) keeps
+rendering normally with a token that will now fail on every subsequent
+request, and the stale token stays in `localStorage`. The only way out is
+noticing that one message and manually clicking Logout.
+
+**Fix** (`apps/web/src/api.ts`, `apps/web/src/App.tsx`): added
+`subscribeAuthExpired`/`notifyAuthExpired` to `api.ts`, mirroring the
+file's own existing `subscribeWakeStatus`/`notifyWaking` pattern used for
+the cold-start "waking up" banner. All four of this file's distinct
+request paths that build a `{error, code}` body from a failed response --
+`request()`, `downloadBlob()` (exportProject/backupProject),
+`streamPipeline()` (streamBuild/streamRefine), and
+`sendWhatsAppMessage()`'s own normalize-without-throwing branch -- now
+call `notifyAuthExpired()` whenever that code is `SESSION_EXPIRED` or
+`AUTH_REQUIRED`, verified by grepping every `res.json().catch(...)` site
+in the file (4 total) rather than assuming `request()` alone covered it.
+`App.tsx` subscribes once in a new mount-time `useEffect` and, when
+fired, runs `clearToken(); setUser(null); setProject(null);
+setView("home");` -- the identical sequence `handleAccountDeleted`
+already uses elsewhere in the same file, just reactive instead of tied to
+a specific user action, forcing the existing `if (!user) return
+<AuthScreen />` branch to take over immediately instead of leaving a dead
+session rendering.
+
+The exported standalone app (`codegen.ts`) has no login system at all
+(confirmed via `grep -n "SESSION_EXPIRED\|AUTH_REQUIRED\|requireAuth" apps/api/src/codegen.ts`
+returning nothing) -- a deliberate, documented exception to this
+project's usual live+codegen.ts dual-port convention, since there is
+genuinely no auth layer there to react from.
+
+**Tests**: `apps/web/src/api.test.ts` (+7: `SESSION_EXPIRED` fires the
+listener via `request()`, `AUTH_REQUIRED` fires it too, an unrelated code
+like `BUILD_REQUIRED` never fires it, the returned unsubscribe function
+actually stops delivery, and one test each confirming the other three
+request paths -- `downloadBlob` via `exportProject`, `streamPipeline` via
+`streamBuild`, and `sendWhatsAppMessage`'s own normalize branch -- also
+fire it, not just `request()`). `apps/web/src/App.test.ts` (+1,
+extract-regex + esbuild `transformSync` + `new Function` with mocked
+`useEffect`/`subscribeAuthExpired`/`clearToken`/setters, this file's
+established convention for testing App.tsx's internal effects/handlers
+without a full render): confirms the effect subscribes, does nothing
+before the listener fires, and on firing clears the token and sets
+`user`/`project`/`view` to `null`/`null`/`"home"` respectively.
+
+**Regression-proof**: backed up the 2 implementation files (`api.ts`,
+`App.tsx`, both pre-existing tracked files) and `git checkout --`
+reverted them to HEAD while keeping the new/modified test files.
+`api.test.ts` failed at the whole-file level with a `SyntaxError: ...
+does not provide an export named 'subscribeAuthExpired'` -- the round-381
+module-load-crash confirmation pattern, a stronger signal than a
+per-assertion failure. `App.test.ts` had exactly 1 of its 52 tests fail
+(the new one; the regex found nothing in the reverted source), the other
+51 passing untouched. Restored both files from backup, confirmed
+byte-identical via `diff -q`, then reran the full build + full suite
+clean.
+
+Full suite green: **1345 tests** (`@forge/shared` 13, `@forge/spec-engine`
+93, `@forge/db` 99, `@forge/api` 375 unchanged, `@forge/web` 765 (+8 new))
+via `npm test` at the repo root, plus a clean full monorepo `npm run
+build`. Pushed as commit `9043777`.
+
+**Topic status**: this fix is closed. Still open from prior rounds (no
+new ones surfaced this round beyond what's listed here): auth-session
+hard-expiry itself (deferred -- the 30-day fixed TTL with no sliding
+renewal looks like a deliberate simplicity choice, not re-opened without
+new evidence it's actually a problem), export staleness marker (381),
+collaborator invite notification (381), AI-label language mismatch
+(380), checkpoint pruning (380), Business Twin 6x `listRecords` (379),
+`sanitizeZipEntryName` collision (379), render.yaml disk stanza (378,
+judgment call), print overflow-wrap / duplicate `enumValues` /
+relation-picker flash / `listRecords` pagination (375, 377, weak
+priority), `calendarIcs.ts`'s UTF-16-vs-UTF-8 fold (367).
+
 ## Phase 4
 
 - Template/agent marketplace
