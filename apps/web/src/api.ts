@@ -48,6 +48,31 @@ export function createWakeRefCounter(notify: (waking: boolean) => void): (waking
 
 const notifyWakingRefCounted = createWakeRefCounter(notifyWaking);
 
+type AuthExpiredListener = () => void;
+const authExpiredListeners = new Set<AuthExpiredListener>();
+
+/**
+ * Lets App.tsx force a sign-out (back to the login screen) the moment ANY
+ * request reports the session is gone -- a 401 SESSION_EXPIRED/AUTH_REQUIRED
+ * previously only ever surfaced as that one request's own translated
+ * inline error text (requireAuth already attaches the code, and
+ * i18n/language.ts already carries the translated copy for it -- neither
+ * was ever read past the point of building that one message). `user`
+ * state stayed set and the rest of the authenticated UI kept rendering
+ * with a now-useless stored token, so a session revoked from another
+ * device/tab (password change, "sign out everywhere") or one that simply
+ * expired left the person stuck until they happened to notice and
+ * manually hit Logout.
+ */
+export function subscribeAuthExpired(listener: AuthExpiredListener): () => void {
+  authExpiredListeners.add(listener);
+  return () => authExpiredListeners.delete(listener);
+}
+
+function notifyAuthExpired(): void {
+  for (const listener of authExpiredListeners) listener();
+}
+
 /**
  * A generous ceiling on the *whole* request, retries included -- meant to be
  * comfortably above the server's own 60s Anthropic-call timeout (see
@@ -159,6 +184,8 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   });
   if (!res.ok) {
     const body = await res.json().catch(() => ({ error: `Request failed (${res.status})`, code: "REQUEST_FAILED" }));
+    const code = (body as { code?: string }).code;
+    if (code === "SESSION_EXPIRED" || code === "AUTH_REQUIRED") notifyAuthExpired();
     throw new Error(resolveErrorMessage(body as { error?: string; code?: string }));
   }
   if (res.status === 204) return undefined as T;
@@ -330,6 +357,8 @@ async function streamPipeline(
   });
   if (!res.ok || !res.body) {
     const errorBody = await res.json().catch(() => ({ error: `Request failed (${res.status})`, code: "REQUEST_FAILED" }));
+    const code = (errorBody as { code?: string }).code;
+    if (code === "SESSION_EXPIRED" || code === "AUTH_REQUIRED") notifyAuthExpired();
     throw new Error(resolveErrorMessage(errorBody as { error?: string; code?: string }));
   }
   const reader = res.body.getReader();
@@ -403,6 +432,8 @@ async function downloadBlob(path: string, downloadName: string): Promise<void> {
   });
   if (!res.ok) {
     const body = await res.json().catch(() => ({ error: `Request failed (${res.status})`, code: "REQUEST_FAILED" }));
+    const code = (body as { code?: string }).code;
+    if (code === "SESSION_EXPIRED" || code === "AUTH_REQUIRED") notifyAuthExpired();
     throw new Error(resolveErrorMessage(body as { error?: string; code?: string }));
   }
   const blob = await res.blob();
@@ -580,6 +611,7 @@ export async function sendWhatsAppMessage(projectId: string, to: string, message
   // needing to know which failure path produced the response.
   const body = (await res.json().catch(() => ({}))) as { ok?: boolean; error?: string; code?: string };
   if (typeof body.ok === "boolean") return body as WhatsAppSendResult;
+  if (body.code === "SESSION_EXPIRED" || body.code === "AUTH_REQUIRED") notifyAuthExpired();
   return { ok: false, error: resolveErrorMessage(body) };
 }
 

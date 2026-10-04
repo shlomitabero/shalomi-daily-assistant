@@ -18,6 +18,7 @@ import {
   me,
   streamBuild,
   streamRefine,
+  subscribeAuthExpired,
   subscribeWakeStatus,
   type WhatsAppMessageLogEntry,
 } from "./api.js";
@@ -658,6 +659,29 @@ function AppContent() {
       .then(({ user }) => setUser(user))
       .catch(() => clearToken())
       .finally(() => setCheckingSession(false));
+  }, []);
+
+  /**
+   * Forces a sign-out (back to the login screen) the moment ANY request
+   * reports the session is gone -- a 401 SESSION_EXPIRED/AUTH_REQUIRED
+   * (e.g. the token expired, or was revoked from another tab/device via
+   * "sign out everywhere" or a password change) previously only ever
+   * surfaced as that one request's own translated inline error text,
+   * wherever it happened to be made from. `user` stayed set and the rest
+   * of the authenticated UI kept rendering with a now-useless stored
+   * token, leaving the person stuck until they happened to notice and
+   * manually hit Logout. Mirrors handleAccountDeleted's own
+   * clearToken+reset-to-home sequence below, just reactively instead of
+   * after a specific user action, and without a redundant server call
+   * (the session is already gone server-side).
+   */
+  useEffect(() => {
+    return subscribeAuthExpired(() => {
+      clearToken();
+      setUser(null);
+      setProject(null);
+      setView("home");
+    });
   }, []);
 
   /**

@@ -1647,3 +1647,70 @@ test("App's handleReorderEntityTab reorders entity tabs on drop and persists via
   assert.equal(noProject.persistedOrder, null, "must be a no-op with no project open at all, not throw on project.id");
   assert.equal(noProject.dragOverCleared, true, "the drag-over highlight must still clear even when there's no project");
 });
+
+/**
+ * New in this round: a 401 SESSION_EXPIRED/AUTH_REQUIRED (the session
+ * expired, or was revoked from another tab/device via "sign out
+ * everywhere" or a password change) previously only ever surfaced as
+ * whichever one request happened to hit it showing its own translated
+ * inline error -- `user` stayed set and the rest of the authenticated UI
+ * kept rendering with a now-useless stored token. api.ts's
+ * subscribeAuthExpired (see api.test.ts) is the hook; this confirms
+ * App.tsx's own mount-time effect actually subscribes to it and, when
+ * fired, runs the same clearToken+reset-to-home sequence
+ * handleAccountDeleted already uses elsewhere in this file -- forcing the
+ * `if (!user) return <AuthScreen />` branch instead of leaving the person
+ * stuck on a dead session.
+ */
+test("App's subscribeAuthExpired effect clears the token and resets user/project/view to force the login screen", () => {
+  const appSrc = readFileSync(new URL("./App.tsx", import.meta.url), "utf8");
+  const effectMatch = appSrc.match(/ {2}useEffect\(\(\) => \{\n {4}return subscribeAuthExpired\(\(\) => \{[\s\S]*?\n {2}\}, \[\]\);\n/);
+  assert.ok(effectMatch, "expected to find the subscribeAuthExpired effect in App.tsx");
+  const { code } = transformSync(effectMatch![0], { loader: "ts" });
+
+  let subscribedListener: (() => void) | undefined;
+  let tokenCleared = false;
+  let userSet: unknown = "untouched";
+  let projectSet: unknown = "untouched";
+  let viewSet: unknown = "untouched";
+
+  const fn = new Function(
+    "useEffect",
+    "subscribeAuthExpired",
+    "clearToken",
+    "setUser",
+    "setProject",
+    "setView",
+    `${code}`,
+  ) as (
+    useEffect: (effect: () => void, deps: unknown[]) => void,
+    subscribeAuthExpired: (listener: () => void) => () => void,
+    clearToken: () => void,
+    setUser: (v: unknown) => void,
+    setProject: (v: unknown) => void,
+    setView: (v: unknown) => void,
+  ) => void;
+
+  fn(
+    (effect) => effect(),
+    (listener) => {
+      subscribedListener = listener;
+      return () => undefined;
+    },
+    () => {
+      tokenCleared = true;
+    },
+    (v) => (userSet = v),
+    (v) => (projectSet = v),
+    (v) => (viewSet = v),
+  );
+
+  assert.ok(subscribedListener, "the effect must call subscribeAuthExpired with a real listener");
+  assert.equal(tokenCleared, false, "must not touch anything before the listener actually fires");
+
+  subscribedListener!();
+  assert.equal(tokenCleared, true, "must call clearToken once the session is reported gone");
+  assert.equal(userSet, null, "must clear user so the `if (!user) return <AuthScreen />` branch takes over");
+  assert.equal(projectSet, null, "must clear the open project too, not leave stale project state behind");
+  assert.equal(viewSet, "home", "must reset view to home so a later re-login lands on the home screen, not a dead view");
+});

@@ -1,6 +1,16 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { backupProject, createWakeRefCounter, exportProject, listProjects, REQUEST_TIMEOUT_MS, safeDownloadName, sendWhatsAppMessage, streamBuild } from "./api.js";
+import {
+  backupProject,
+  createWakeRefCounter,
+  exportProject,
+  listProjects,
+  REQUEST_TIMEOUT_MS,
+  safeDownloadName,
+  sendWhatsAppMessage,
+  streamBuild,
+  subscribeAuthExpired,
+} from "./api.js";
 import { DEFAULT_DELAYS_MS } from "./wakeRetry.js";
 
 test("safeDownloadName keeps Hebrew (and other Unicode) project names intact, instead of collapsing them to the fallback", () => {
@@ -184,6 +194,138 @@ test("sendWhatsAppMessage normalizes the shared {error, code} error-middleware s
   // The raw English error text is never shown directly -- it's translated
   // via the code, same as every other server error in this app.
   assert.equal(result.error, "WhatsApp got disconnected. Reconnect and try again.");
+});
+
+/**
+ * requireAuth (apps/api/src/auth/middleware.ts) already attaches a real
+ * SESSION_EXPIRED/AUTH_REQUIRED code to every 401 it produces, and
+ * i18n/language.ts already carries translated copy for both -- but until
+ * now nothing ever read the code past the point of building that one
+ * request's own error message. A session revoked from another tab/device
+ * (password change, "sign out everywhere") or one that simply expired
+ * left `user` set and the rest of the authenticated UI rendering with a
+ * now-useless token, visible only as whichever single panel's own inline
+ * error happened to say "please sign in again" -- the person was stuck
+ * there until they noticed and manually hit Logout. subscribeAuthExpired
+ * is the hook App.tsx uses to force a real sign-out instead, the moment
+ * ANY request hits one of these two codes.
+ */
+test("subscribeAuthExpired's listener fires when a request() call (e.g. listProjects) gets a 401 SESSION_EXPIRED", async () => {
+  let fired = 0;
+  const unsubscribe = subscribeAuthExpired(() => {
+    fired += 1;
+  });
+  try {
+    await assert.rejects(() =>
+      withFakeFetch(new Response(JSON.stringify({ error: "Invalid or expired session", code: "SESSION_EXPIRED" }), { status: 401 }), () =>
+        listProjects(),
+      ),
+    );
+    assert.equal(fired, 1);
+  } finally {
+    unsubscribe();
+  }
+});
+
+test("subscribeAuthExpired's listener fires on AUTH_REQUIRED too, not just SESSION_EXPIRED", async () => {
+  let fired = 0;
+  const unsubscribe = subscribeAuthExpired(() => {
+    fired += 1;
+  });
+  try {
+    await assert.rejects(() =>
+      withFakeFetch(new Response(JSON.stringify({ error: "Missing Authorization header", code: "AUTH_REQUIRED" }), { status: 401 }), () =>
+        listProjects(),
+      ),
+    );
+    assert.equal(fired, 1);
+  } finally {
+    unsubscribe();
+  }
+});
+
+test("subscribeAuthExpired's listener never fires for an unrelated error code (e.g. a 409 BUILD_REQUIRED), only the two session-related ones", async () => {
+  let fired = 0;
+  const unsubscribe = subscribeAuthExpired(() => {
+    fired += 1;
+  });
+  try {
+    await assert.rejects(() =>
+      withFakeFetch(new Response(JSON.stringify({ error: "Build the project before exporting its code", code: "BUILD_REQUIRED" }), { status: 409 }), () =>
+        listProjects(),
+      ),
+    );
+    assert.equal(fired, 0);
+  } finally {
+    unsubscribe();
+  }
+});
+
+test("subscribeAuthExpired's returned unsubscribe function actually stops delivery to that listener", async () => {
+  let fired = 0;
+  const unsubscribe = subscribeAuthExpired(() => {
+    fired += 1;
+  });
+  unsubscribe();
+  await assert.rejects(() =>
+    withFakeFetch(new Response(JSON.stringify({ error: "Invalid or expired session", code: "SESSION_EXPIRED" }), { status: 401 }), () =>
+      listProjects(),
+    ),
+  );
+  assert.equal(fired, 0);
+});
+
+test("subscribeAuthExpired also fires for a binary-download request (exportProject), not just plain JSON requests", async () => {
+  let fired = 0;
+  const unsubscribe = subscribeAuthExpired(() => {
+    fired += 1;
+  });
+  try {
+    await assert.rejects(() =>
+      withFakeDocument(() =>
+        withFakeFetch(new Response(JSON.stringify({ error: "Invalid or expired session", code: "SESSION_EXPIRED" }), { status: 401 }), () =>
+          exportProject("proj1", "My CRM App"),
+        ),
+      ),
+    );
+    assert.equal(fired, 1);
+  } finally {
+    unsubscribe();
+  }
+});
+
+test("subscribeAuthExpired also fires for a streaming request (streamBuild)", async () => {
+  let fired = 0;
+  const unsubscribe = subscribeAuthExpired(() => {
+    fired += 1;
+  });
+  try {
+    await assert.rejects(() =>
+      withFakeFetch(new Response(JSON.stringify({ error: "Invalid or expired session", code: "SESSION_EXPIRED" }), { status: 401 }), () =>
+        streamBuild("proj1", () => undefined),
+      ),
+    );
+    assert.equal(fired, 1);
+  } finally {
+    unsubscribe();
+  }
+});
+
+test("subscribeAuthExpired also fires for sendWhatsAppMessage's own normalize-without-throwing path", async () => {
+  let fired = 0;
+  const unsubscribe = subscribeAuthExpired(() => {
+    fired += 1;
+  });
+  try {
+    const result = await withFakeFetch(
+      new Response(JSON.stringify({ error: "Invalid or expired session", code: "SESSION_EXPIRED" }), { status: 401 }),
+      () => sendWhatsAppMessage("proj1", "972501234567", "hi"),
+    );
+    assert.equal(result.ok, false);
+    assert.equal(fired, 1);
+  } finally {
+    unsubscribe();
+  }
 });
 
 /**
