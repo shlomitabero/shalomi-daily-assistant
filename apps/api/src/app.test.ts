@@ -4439,6 +4439,151 @@ test("deleting a project while a refine is in flight is rejected with 409, inste
 });
 
 /**
+ * Regression test for a real bug found by round 380's Explore survey: the
+ * spec review screen's correction routes (entity/field label rename, and
+ * add/remove/rename for roles and assumptions -- 8 routes total) never
+ * checked activePipelines at all, despite each one having the exact same
+ * read-project.spec-then-write-it-back shape /build/refine/answers/restore
+ * are already guarded against. A slow /refine already in flight computes
+ * its own nextSpec from the pre-rename spec and only writes it back once
+ * the whole pipeline finishes -- so without this guard, renaming a field's
+ * label while a refine is running gets silently reverted (or, depending on
+ * timing, silently clobbers the refine's own result instead) with no error
+ * to either side. Exercises just one representative route (entity-label
+ * rename); the other 7 share the identical fix at the identical call site
+ * shape, verified by direct code reading rather than one test apiece.
+ */
+test("renaming an entity's label while a refine is in flight is rejected with 409, instead of racing the in-flight pipeline's own spec write", async () => {
+  const gated = createGatedProvider();
+  await withServer(
+    async (baseUrl) => {
+      const token = await signup(baseUrl);
+      const createRes = await fetch(`${baseUrl}/api/projects`, {
+        method: "POST",
+        headers: authHeaders(token),
+        body: JSON.stringify({ description: "A CRM with customers and deals." }),
+      });
+      const { project } = (await createRes.json()) as { project: { id: string } };
+
+      const buildRes = await fetch(`${baseUrl}/api/projects/${project.id}/build`, {
+        method: "POST",
+        headers: authHeaders(token),
+      });
+      assert.equal(buildRes.status, 200);
+      await collectSSE(buildRes);
+
+      // Arm the gate only now -- build must run at full speed.
+      gated.arm();
+      const refinePromise = fetch(`${baseUrl}/api/projects/${project.id}/refine`, {
+        method: "POST",
+        headers: authHeaders(token),
+        body: JSON.stringify({ instruction: "Also track invoices for customers." }),
+      });
+      refinePromise.catch(() => {});
+      await gated.waitUntilStarted();
+
+      const labelRes = await fetch(`${baseUrl}/api/projects/${project.id}/entities/Customer/label`, {
+        method: "PATCH",
+        headers: authHeaders(token),
+        body: JSON.stringify({ label: "לקוח VIP" }),
+      });
+      let labelBody: { code?: string } = {};
+      try {
+        labelBody = (await labelRes.json()) as { code?: string };
+      } finally {
+        gated.release();
+      }
+      assert.equal(labelRes.status, 409);
+      assert.equal(labelBody.code, "PIPELINE_IN_PROGRESS");
+
+      const refineRes = await refinePromise;
+      assert.equal(refineRes.status, 200);
+      const refineEvents = await collectSSE(refineRes);
+      assert.ok(refineEvents.every((e) => e.status !== "failed"));
+
+      // Once the refine has genuinely finished, renaming the same label must succeed normally.
+      const labelAgainRes = await fetch(`${baseUrl}/api/projects/${project.id}/entities/Customer/label`, {
+        method: "PATCH",
+        headers: authHeaders(token),
+        body: JSON.stringify({ label: "לקוח VIP" }),
+      });
+      assert.equal(labelAgainRes.status, 200);
+    },
+    { provider: gated.provider },
+  );
+});
+
+/**
+ * Same bug class as the test above, but for the OTHER four routes that
+ * never checked activePipelines: adding/removing a whole screen ("entity")
+ * or a single field on the spec review screen, before the project is ever
+ * built. These are gated to project.status !== "built" (see their own
+ * ENTITY_ADD_AFTER_BUILD/etc. comments), so the only in-flight pipeline they
+ * can actually race with is one that leaves the project unbuilt while it
+ * runs -- /build itself never calls the AI/heuristic provider at all (the
+ * spec was already generated at project-creation time, so /build just reuses
+ * project.spec as-is), so it has no async point this test's gated-provider
+ * harness can pause it on; /answers, used here instead, does call
+ * generateSpec(provider) on a still-unbuilt project, giving this test a real
+ * window where activePipelines is set but project.status isn't "built" yet
+ * -- the exact race window the four pre-build routes needed to be guarded
+ * against.
+ */
+test("adding a new entity while an in-progress /answers call is still generating a new spec is rejected with 409, instead of racing its own spec write", async () => {
+  const gated = createGatedProvider();
+  await withServer(
+    async (baseUrl) => {
+      const token = await signup(baseUrl);
+      const createRes = await fetch(`${baseUrl}/api/projects`, {
+        method: "POST",
+        headers: authHeaders(token),
+        body: JSON.stringify({ description: "A CRM with customers and deals." }),
+      });
+      const { project } = (await createRes.json()) as { project: { id: string } };
+
+      // Arm only now -- project creation itself must run at full speed.
+      gated.arm();
+      const answersPromise = fetch(`${baseUrl}/api/projects/${project.id}/answers`, {
+        method: "POST",
+        headers: authHeaders(token),
+        body: JSON.stringify({ additionalRequest: "Also track invoices for customers." }),
+      });
+      answersPromise.catch(() => {});
+      await gated.waitUntilStarted();
+
+      const addEntityRes = await fetch(`${baseUrl}/api/projects/${project.id}/entities`, {
+        method: "POST",
+        headers: authHeaders(token),
+        body: JSON.stringify({ label: "Shipment" }),
+      });
+      let addEntityBody: { code?: string } = {};
+      try {
+        addEntityBody = (await addEntityRes.json()) as { code?: string };
+      } finally {
+        gated.release();
+      }
+      assert.equal(addEntityRes.status, 409);
+      assert.equal(addEntityBody.code, "PIPELINE_IN_PROGRESS");
+
+      const answersRes = await answersPromise;
+      assert.equal(answersRes.status, 200);
+
+      // Once /answers has genuinely finished, the project is still unbuilt
+      // (answers never calls markProjectBuilt), so adding an entity now
+      // must succeed normally -- the guard rejects only the concurrent
+      // call, it doesn't wedge the route shut afterward.
+      const addEntityAgainRes = await fetch(`${baseUrl}/api/projects/${project.id}/entities`, {
+        method: "POST",
+        headers: authHeaders(token),
+        body: JSON.stringify({ label: "Shipment" }),
+      });
+      assert.equal(addEntityAgainRes.status, 200);
+    },
+    { provider: gated.provider },
+  );
+});
+
+/**
  * updateRecord (packages/db/src/repository.ts) reads the current row
  * (getRecord), merges the caller's partial `data` into it, then writes the
  * merged result back -- a read-then-write shape structurally identical to

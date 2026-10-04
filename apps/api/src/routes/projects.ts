@@ -951,6 +951,14 @@ export function createProjectsRouter(db: ForgeDatabase, provider: SpecProvider |
     "/projects/:id/entities/:entityName/label",
     asyncRoute(async (req, res) => {
       const project = requireProjectAccess(db, req.params.id, req.userId!);
+      // Same read-project.spec-then-write-it-back shape /build, /refine,
+      // /answers, and checkpoint-restore are already guarded against (see
+      // their own comments) -- a slow /refine already in flight computes
+      // its nextSpec from the pre-rename spec and silently reverts this
+      // rename the moment it finishes writing, with no error to either side.
+      if (activePipelines.has(project.id)) {
+        throw new HttpError(409, "A build or refine is already running for this project", "PIPELINE_IN_PROGRESS");
+      }
       const entity = findEntity(project, req.params.entityName);
       const parsed = RenameEntityLabelSchema.safeParse(req.body);
       if (!parsed.success) {
@@ -979,6 +987,11 @@ export function createProjectsRouter(db: ForgeDatabase, provider: SpecProvider |
     "/projects/:id/entities/:entityName/fields/:fieldName/label",
     asyncRoute(async (req, res) => {
       const project = requireProjectAccess(db, req.params.id, req.userId!);
+      // Same activePipelines guard as the entity-label route above, for the
+      // same reason -- see its own comment.
+      if (activePipelines.has(project.id)) {
+        throw new HttpError(409, "A build or refine is already running for this project", "PIPELINE_IN_PROGRESS");
+      }
       const entity = findEntity(project, req.params.entityName);
       const field = findField(entity, req.params.fieldName);
       const parsed = RenameFieldLabelSchema.safeParse(req.body);
@@ -1031,6 +1044,13 @@ export function createProjectsRouter(db: ForgeDatabase, provider: SpecProvider |
     "/projects/:id/roles",
     asyncRoute(async (req, res) => {
       const project = requireProjectAccess(db, req.params.id, req.userId!);
+      // Same activePipelines guard as the entity/field-label routes above --
+      // this is another direct read-project.spec-then-write-it-back edit,
+      // the exact shape /build/refine/answers/restore are already guarded
+      // against.
+      if (activePipelines.has(project.id)) {
+        throw new HttpError(409, "A build or refine is already running for this project", "PIPELINE_IN_PROGRESS");
+      }
       const parsed = AddRoleSchema.safeParse(req.body);
       if (!parsed.success) {
         throw new HttpError(400, formatValidationError(parsed.error), "VALIDATION_ERROR");
@@ -1045,6 +1065,10 @@ export function createProjectsRouter(db: ForgeDatabase, provider: SpecProvider |
     "/projects/:id/assumptions",
     asyncRoute(async (req, res) => {
       const project = requireProjectAccess(db, req.params.id, req.userId!);
+      // Same activePipelines guard as /roles above -- see its own comment.
+      if (activePipelines.has(project.id)) {
+        throw new HttpError(409, "A build or refine is already running for this project", "PIPELINE_IN_PROGRESS");
+      }
       const parsed = AddAssumptionSchema.safeParse(req.body);
       if (!parsed.success) {
         throw new HttpError(400, formatValidationError(parsed.error), "VALIDATION_ERROR");
@@ -1059,6 +1083,10 @@ export function createProjectsRouter(db: ForgeDatabase, provider: SpecProvider |
     "/projects/:id/roles/:index",
     asyncRoute(async (req, res) => {
       const project = requireProjectAccess(db, req.params.id, req.userId!);
+      // Same activePipelines guard as /roles POST above -- see its own comment.
+      if (activePipelines.has(project.id)) {
+        throw new HttpError(409, "A build or refine is already running for this project", "PIPELINE_IN_PROGRESS");
+      }
       const index = parseListIndex(req.params.index, project.spec.roles, "ROLE_NOT_FOUND");
       if (project.spec.roles.length <= 1) {
         throw new HttpError(400, "Cannot remove the last remaining role -- at least one role is required", "VALIDATION_ERROR");
@@ -1073,6 +1101,10 @@ export function createProjectsRouter(db: ForgeDatabase, provider: SpecProvider |
     "/projects/:id/assumptions/:index",
     asyncRoute(async (req, res) => {
       const project = requireProjectAccess(db, req.params.id, req.userId!);
+      // Same activePipelines guard as /roles POST above -- see its own comment.
+      if (activePipelines.has(project.id)) {
+        throw new HttpError(409, "A build or refine is already running for this project", "PIPELINE_IN_PROGRESS");
+      }
       const index = parseListIndex(req.params.index, project.spec.assumptions, "ASSUMPTION_NOT_FOUND");
       const nextSpec = { ...project.spec, assumptions: project.spec.assumptions.filter((_, i) => i !== index) };
       const updated = updateProjectSpec(db, project.id, nextSpec);
@@ -1094,6 +1126,10 @@ export function createProjectsRouter(db: ForgeDatabase, provider: SpecProvider |
     "/projects/:id/roles/:index",
     asyncRoute(async (req, res) => {
       const project = requireProjectAccess(db, req.params.id, req.userId!);
+      // Same activePipelines guard as /roles POST above -- see its own comment.
+      if (activePipelines.has(project.id)) {
+        throw new HttpError(409, "A build or refine is already running for this project", "PIPELINE_IN_PROGRESS");
+      }
       const index = parseListIndex(req.params.index, project.spec.roles, "ROLE_NOT_FOUND");
       const parsed = AddRoleSchema.safeParse(req.body);
       if (!parsed.success) {
@@ -1109,6 +1145,10 @@ export function createProjectsRouter(db: ForgeDatabase, provider: SpecProvider |
     "/projects/:id/assumptions/:index",
     asyncRoute(async (req, res) => {
       const project = requireProjectAccess(db, req.params.id, req.userId!);
+      // Same activePipelines guard as /roles POST above -- see its own comment.
+      if (activePipelines.has(project.id)) {
+        throw new HttpError(409, "A build or refine is already running for this project", "PIPELINE_IN_PROGRESS");
+      }
       const index = parseListIndex(req.params.index, project.spec.assumptions, "ASSUMPTION_NOT_FOUND");
       const parsed = AddAssumptionSchema.safeParse(req.body);
       if (!parsed.success) {
@@ -1149,6 +1189,15 @@ export function createProjectsRouter(db: ForgeDatabase, provider: SpecProvider |
       const project = requireProjectAccess(db, req.params.id, req.userId!);
       if (project.status === "built") {
         throw new HttpError(409, "Cannot remove a screen after the project has already been built", "ENTITY_REMOVAL_AFTER_BUILD");
+      }
+      // Same activePipelines guard /build itself already has (see its own
+      // comment) -- an in-flight /build on this still-unbuilt project reads
+      // project.spec at its own start and only writes its result back once
+      // the whole pipeline finishes, so this removal would otherwise be
+      // silently reverted (or, worse, removing an entity the pipeline is
+      // mid-migration on) the moment that build completes.
+      if (activePipelines.has(project.id)) {
+        throw new HttpError(409, "A build or refine is already running for this project", "PIPELINE_IN_PROGRESS");
       }
       if (!project.spec.entities.some((e) => e.name === req.params.entityName)) {
         throw new HttpError(404, "No such screen in this project's spec", "ENTITY_NOT_FOUND");
@@ -1200,6 +1249,11 @@ export function createProjectsRouter(db: ForgeDatabase, provider: SpecProvider |
       if (project.status === "built") {
         throw new HttpError(409, "Cannot add a screen after the project has already been built", "ENTITY_ADD_AFTER_BUILD");
       }
+      // Same activePipelines guard as the entity-removal route above -- see
+      // its own comment.
+      if (activePipelines.has(project.id)) {
+        throw new HttpError(409, "A build or refine is already running for this project", "PIPELINE_IN_PROGRESS");
+      }
       const parsed = AddEntitySchema.safeParse(req.body);
       if (!parsed.success) {
         throw new HttpError(400, formatValidationError(parsed.error), "VALIDATION_ERROR");
@@ -1240,6 +1294,11 @@ export function createProjectsRouter(db: ForgeDatabase, provider: SpecProvider |
       if (project.status === "built") {
         throw new HttpError(409, "Cannot add a field after the project has already been built", "FIELD_ADD_AFTER_BUILD");
       }
+      // Same activePipelines guard as the entity-removal route above -- see
+      // its own comment.
+      if (activePipelines.has(project.id)) {
+        throw new HttpError(409, "A build or refine is already running for this project", "PIPELINE_IN_PROGRESS");
+      }
       const entity = findEntity(project, req.params.entityName);
       const parsed = AddFieldSchema.safeParse(req.body);
       if (!parsed.success) {
@@ -1271,6 +1330,11 @@ export function createProjectsRouter(db: ForgeDatabase, provider: SpecProvider |
       const project = requireProjectAccess(db, req.params.id, req.userId!);
       if (project.status === "built") {
         throw new HttpError(409, "Cannot remove a field after the project has already been built", "FIELD_REMOVE_AFTER_BUILD");
+      }
+      // Same activePipelines guard as the entity-removal route above -- see
+      // its own comment.
+      if (activePipelines.has(project.id)) {
+        throw new HttpError(409, "A build or refine is already running for this project", "PIPELINE_IN_PROGRESS");
       }
       const entity = findEntity(project, req.params.entityName);
       findField(entity, req.params.fieldName);
