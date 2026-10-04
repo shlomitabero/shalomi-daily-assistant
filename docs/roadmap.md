@@ -23983,6 +23983,109 @@ stanza, print overflow-wrap / duplicate `enumValues` / relation-picker
 flash / `listRecords` pagination, `calendarIcs.ts`'s UTF-16-vs-UTF-8
 fold).
 
+### Round 386: `relationDisplayLabel`'s O(N\*M) relation lookup -- the candidate round 385 deferred, closed with a simpler fix than scoped
+
+Round 385's own roadmap entry flagged `relationDisplayLabel`'s
+`records.find(...)` pattern (`apps/web/src/entityFormatting.ts`, mirrored
+in `apps/api/src/codegen.ts`) as a real bug of the same O(N\*M) class as
+`backup.ts`'s, but assumed fixing it would require "threading a pre-built
+index through every call site" across `EntityPanel.tsx`, `calendarIcs.ts`,
+and `codegen.ts`'s `EntityView.jsx` template -- a large refactor, deferred
+to its own future round rather than attempted as a quick follow-on.
+
+This round's trigger suggested reconsidering it "if it feels ready, after
+grepping every call site first." Grepping every `relatedRecords` usage in
+both `EntityPanel.tsx` and `codegen.ts` (not trusting round 385's own
+framing on faith) showed something round 385 hadn't checked: every call
+site passes the *same* `relatedRecords[entityName]` array reference
+throughout a single render/data-refresh cycle -- that array is fetched
+once per refresh and reused, never rebuilt per call. That one fact changes
+the fix completely: instead of threading an index through every call site
+(signature changes everywhere, in both the live app and the exported
+codegen mirror), a cache keyed on the array's own identity does the job
+with **zero signature or call-site changes anywhere**.
+
+**The fix**: in both `apps/web/src/entityFormatting.ts` and
+`apps/api/src/codegen.ts` (identical port, plain JS, no backticks in new
+comments -- round 385's own lesson about codegen.ts's outer template
+literal applied preemptively, and no TS-parse error occurred as a
+result), added:
+
+```ts
+const relationIndexCache = new WeakMap<EntityRecord[], Map<number, EntityRecord>>();
+function relationIndexFor(records: EntityRecord[]): Map<number, EntityRecord> {
+  let index = relationIndexCache.get(records);
+  if (!index) {
+    index = new Map(records.map((r) => [Number(r.id), r]));
+    relationIndexCache.set(records, index);
+  }
+  return index;
+}
+```
+
+`relationDisplayLabel`'s body changed from `records.find((r) =>
+Number(r.id) === Number(value))` to `relationIndexFor(records).get(Number(value))`.
+First lookup against a given array builds an O(M) index once; every later
+lookup against that same array reference is O(1). A later data refresh
+fetches a new array, so the cache invalidates itself automatically via
+`WeakMap` identity semantics -- no manual cache clearing needed, and no
+risk of serving stale entries after a refresh.
+
+**The one real correctness risk this caching strategy introduces** (unlike
+round 385's `backup.ts` fix, which builds a fresh `Map` per request with no
+cross-request caching at all): two *different* record arrays that happen to
+share the same stored `id` values must never have their cached results
+cross-contaminate. Added a dedicated test in
+`apps/web/src/entityFormatting.test.ts` proving exactly this -- two
+distinct arrays with overlapping ids resolve independently, and
+re-querying the first array after querying the second still resolves
+correctly against its own data.
+
+**codegen.test.ts regex-extraction fallout** (the round 383/384/385
+lesson recurring yet again: "when a shared helper's dependencies change,
+grep for every regex-extraction test that extracts it and update the
+injected dependency set, not just the regex pattern"): the existing
+`matchesSearch` and `sortRecordsMulti` tests both extract
+`relationDisplayLabel` via regex but hadn't been updated to also extract
+its new `relationIndexFor`/`relationIndexCache` dependency -- both failed
+with `ReferenceError: relationIndexFor is not defined` until fixed by
+extracting the combined cache+function block and injecting it into both
+tests' `new Function(...)` calls. A brand-new dedicated cache test hit the
+same class of gap one level deeper: it failed with `ReferenceError:
+pickDisplayField is not defined`, because `recordDisplayLabel` (needed to
+resolve the final label) itself depends on `pickDisplayField`/
+`DISPLAY_FIELD_NAME_HINTS`, which hadn't been extracted for this
+particular test either. Fixed by extracting and injecting those too.
+
+**Regression-proof**: backed up the 2 changed implementation files and
+`git checkout --` reverted them to HEAD while keeping the modified test
+files. `entityFormatting.test.ts` passed 126/126 even reverted -- the
+same honest, expected limitation as round 385: the pre-fix `.find()` scan
+is functionally *correct*, just slow, and since the old code never had a
+cache at all, even the dedicated cross-contamination test can't
+distinguish fixed from unfixed (there's nothing to contaminate without a
+cache). `codegen.test.ts` had exactly 3 failures, all tracing to
+`assert.ok` on the regex-extraction check failing because
+`relationIndexFor` doesn't exist in the reverted file -- a real,
+meaningful confirmation, unlike the web-side limitation. Restored both
+files from backup, confirmed byte-identical via `diff -q`, then reran the
+full build + full suite clean.
+
+Full suite green: **1351 tests** (`@forge/shared` 13, `@forge/spec-engine`
+93, `@forge/db` 99, `@forge/api` 378 (+1 new), `@forge/web` 768 (+3 new))
+via `npm test` at the repo root, plus a clean full monorepo `npm run
+build`. Pushed as commit `68ad95e`.
+
+**Topic status**: this fix is closed -- `relationDisplayLabel`'s O(N\*M)
+pattern, previously an open candidate from round 385, is resolved in both
+`entityFormatting.ts` and `codegen.ts`, with zero call-site changes.
+Everything else still open from round 384/385 remains open and unchanged
+(auth-session hard-expiry, export staleness marker, collaborator invite
+notification, AI-label language mismatch, checkpoint pruning,
+`sanitizeZipEntryName` collision, render.yaml disk stanza, print
+overflow-wrap / duplicate `enumValues` / relation-picker flash /
+`listRecords` pagination, `calendarIcs.ts`'s UTF-16-vs-UTF-8 fold).
+
 ## Phase 4
 
 - Template/agent marketplace
