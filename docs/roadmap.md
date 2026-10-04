@@ -24613,6 +24613,103 @@ scheduling-conflict/double-booking detector for date-bearing entities
 `projectId` changing mid-fetch (low real-world likelihood -- the panel is
 a modal keyed to one open project).
 
+### Round 393: topbar's go-home link could silently unmount an active refine's own BuildProgress mid-stream
+
+**Survey**: a fresh Explore subagent was explicitly steered away from the
+localStorage-preference and WhatsApp message-log areas rounds 390-392
+had just worked through, and surveyed `apps/api/src/routes/projects.ts`,
+`packages/db/src`, `apps/web/src/entityFormatting.ts`, and
+`apps/web/src/pipeline.ts` instead. Its top pick -- an index-based race
+between two concurrent DELETE/PATCH requests on `project.spec.roles`/
+`assumptions` silently removing the wrong item -- did **not** survive
+independent verification: `apps/api/src/server.ts` runs a single Node
+process with no clustering, `packages/db/src/connection.ts` uses
+`node:sqlite`'s `DatabaseSync` (fully synchronous), and the six
+roles/assumptions route handlers (`apps/api/src/routes/projects.ts`
+lines 1116-1198) contain no `await` anywhere in their bodies. An `async`
+function with zero internal `await` points runs synchronously to full
+completion -- including the DB write and `res.json()` -- before Node's
+single JS thread can start any other request's handler, so the
+described interleaving is impossible in this codebase as it stands.
+Confirmed by reading `requireProjectAccess`, `asyncRoute`, and every one
+of the six route bodies directly, not by trusting the subagent's framing.
+Its own runner-up #2 (CSV import refusing a required relation field) was
+also checked against `docs/roadmap.md`'s own history and turned out to
+be the original CSV-import round's own deliberate, already-documented
+scoping decision ("an honest 'not supported yet' rather than silently
+producing broken records"), not an unaddressed gap. Runner-up #1 (a QA
+smoke-test row left behind if required-field validation unexpectedly
+passes) was independently confirmed real but strictly contingent on a
+separate, not-currently-existing validation bug -- `coerceValue` in
+`packages/db/src/repository.ts` throws synchronously inside
+`insertRecord`'s own `.map()` before any `stmt.run(...)` happens, so
+today's validation is airtight and nothing is actually left behind.
+
+**The bug actually fixed**: independently traced a different, genuinely
+real gap while checking the EntityPanel drag-drop concern round 391 had
+flagged as too low-confidence to pursue (which, on inspection here, isn't
+a bug either -- React re-syncs each render's event-handler props onto the
+same DOM node, so there's no stale-closure window). The topbar's
+brand-logo "go home" link (`apps/web/src/App.tsx`, the `brand-row-link`
+button) was already deliberately disabled while a full-page build is
+streaming (`view === "building"`), with its own comment explaining
+`BuildProgress`'s design only ever offers an exit on failure and this
+link must not silently offer a second, unguarded one. But a refine runs
+its own **compact** `BuildProgress` inline on the `"preview"` view --
+`view` never becomes `"building"` for a refine -- so the existing
+condition's `view !== "building"` check never covered it. The logo
+stayed clickable throughout an active refine; clicking it
+(`handleGoHome`) wipes `project` and swaps `view` away, unmounting that
+compact `BuildProgress` while its `streamRefine()` request is still in
+flight -- exactly the silent, unguarded exit the existing check exists to
+prevent, just reached from a view it didn't consider. No test anywhere
+covered this at all before this round.
+
+**The fix**: extracted the condition into a standalone, exported
+`canNavigateHome(view, refineRunning)` function (mirroring
+`isEditableEventTarget`'s own plain-pure-function-importable-directly-
+into-App.test.ts convention, rather than the regex-extraction dance
+needed for closures over component state) and added `refineRunning` to
+it. The JSX now calls `canNavigateHome(view, refineRunning)` instead of
+repeating the condition inline.
+
+**Tests**: a plain unit test covering all four `view` values crossed with
+both `refineRunning` states (seven assertions, including a deliberately
+broader rule -- `refineRunning` blocks every view, not just `"preview"`,
+so a future view that can also host a live refine doesn't silently slip
+through unconsidered), plus a static-wiring regex test confirming the
+real JSX actually calls `canNavigateHome(view, refineRunning)` rather than
+some other condition that could quietly drift from it.
+
+**Regression-proof**: backed up `App.tsx` and `App.test.ts`, `git checkout
+--` reverted only `App.tsx` to HEAD while keeping the new test. The whole
+test file failed outright with `SyntaxError: The requested module
+'./App.js' does not provide an export named 'canNavigateHome'` -- a clean
+module-load crash, the established strong-confirmation signal for this
+class of fix. Restored `App.tsx` from backup, confirmed byte-identical
+via `diff -q`, then reran the full build + full suite clean.
+
+Full suite green: **1357 tests** (`@forge/shared` 13, `@forge/spec-engine`
+93, `@forge/db` 100, `@forge/api` 379, all unchanged; `@forge/web` 773,
++2 new tests) via `npm test` at the repo root, plus a clean full monorepo
+`npm run build`. Pushed as commit `8754b2d`.
+
+**Topic status**: this fix is closed. The index-based roles/assumptions
+race is now confirmed NOT a bug in this codebase (single synchronous-DB
+process, no `await` in those six handlers) -- do not re-flag it. The CSV
+import required-relation-field refusal is confirmed a deliberate,
+already-documented design decision from CSV import's own original round
+-- do not re-flag it either. The QA-smoke-test leftover-row concern
+remains a real but speculative, contingent-on-another-bug observation,
+not pursued. Everything else still open from rounds 378-392 remains open
+and unchanged (`wakeRetry.ts`'s retry-on-any-method duplicate-write risk,
+export staleness marker, collaborator invite notification, AI-label
+language mismatch, checkpoint pruning, `sanitizeZipEntryName` collision,
+render.yaml disk stanza, print overflow-wrap / duplicate `enumValues` /
+relation-picker flash / `listRecords` pagination, `calendarIcs.ts`'s
+UTF-16-vs-UTF-8 fold, the scheduling-conflict/double-booking detector,
+`BusinessTwinPanel.tsx`'s `loadTwin()` request-id guard).
+
 ## Phase 4
 
 - Template/agent marketplace
