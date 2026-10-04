@@ -159,6 +159,62 @@ test("a connection.update with connection: close drops the session back to disco
   assert.equal(stored?.connectedAt, null);
 });
 
+/**
+ * Regression test for a real bug found by round 382's Explore survey: a QR
+ * code that times out before being scanned (Baileys closes the socket with
+ * a non-401 status once it exhausts its own QR-refresh budget, confirmed by
+ * reading Baileys' own socket.js) previously closed with no explanation at
+ * all -- handleConnectionUpdate's close branch unconditionally deleted the
+ * session from the manager's map, and getStatus() unconditionally returns
+ * error: null the instant a project has no live session, so whatever error
+ * might have been set was immediately unreachable anyway. The user just saw
+ * the QR silently vanish and a bare "disconnected" state with zero hint why.
+ */
+test("a QR code that times out before being scanned (a non-401 close while still awaiting one) surfaces a real explanation instead of silently reverting to disconnected", async () => {
+  const { manager, createdSockets } = setupManager();
+  await manager.connect("proj1");
+  createdSockets[0].emitConnectionUpdate({ qr: "raw-qr-string" });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(manager.getStatus("proj1").status, "qr");
+
+  // Baileys' own "timedOut"/"connectionLost" status for a QR that was
+  // never scanned in time -- definitely not the 401 "logged out" code.
+  createdSockets[0].emitConnectionUpdate({ connection: "close", lastDisconnect: { error: { output: { statusCode: 408 } } } });
+
+  const state = manager.getStatus("proj1");
+  assert.equal(state.status, "disconnected");
+  assert.equal(state.qrDataUrl, null);
+  assert.ok(state.error, "expected a real explanation, not a silent revert to disconnected");
+  assert.match(state.error!, /qr/i);
+
+  // The next connect() call must still work normally against this
+  // left-in-place session -- the fix doesn't wedge the project shut.
+  const reconnectState = await manager.connect("proj1");
+  assert.equal(reconnectState.status, "connecting");
+});
+
+/**
+ * Same bug class, the other branch: a connection that WAS fully open and
+ * then drops (a non-401 close after "open", not while still awaiting a
+ * QR scan) must get a real explanation too, but a different, accurate one
+ * -- "the QR code expired" would be misleading for a session that was
+ * never waiting on a QR scan in the first place.
+ */
+test("a connection that drops after being fully connected (not a QR timeout) surfaces a different, accurate explanation", async () => {
+  const { manager, createdSockets } = setupManager();
+  await manager.connect("proj1");
+  createdSockets[0].sock.user = { id: "972501234567:12@s.whatsapp.net" };
+  createdSockets[0].emitConnectionUpdate({ connection: "open" });
+  assert.equal(manager.getStatus("proj1").status, "connected");
+
+  createdSockets[0].emitConnectionUpdate({ connection: "close", lastDisconnect: { error: { output: { statusCode: 515 } } } });
+
+  const state = manager.getStatus("proj1");
+  assert.equal(state.status, "disconnected");
+  assert.ok(state.error, "expected a real explanation, not a silent revert to disconnected");
+  assert.doesNotMatch(state.error!, /qr/i, "a session that was never waiting on a QR scan must not blame a QR code");
+});
+
 test("sendMessage succeeds once connected, addressing the real WhatsApp JID format", async () => {
   const { manager, createdSockets } = setupManager();
   await manager.connect("proj1");

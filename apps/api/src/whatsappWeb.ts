@@ -87,6 +87,17 @@ export interface BaileysMessagesUpsert {
 /** WhatsApp/Baileys' own documented status code for "this device was logged out (unlinked) from the phone", as opposed to a merely transient network close. */
 const LOGGED_OUT_STATUS_CODE = 401;
 
+/**
+ * User-facing explanations for a non-logged-out close (see
+ * handleConnectionUpdate's own close branch). Baileys gives a fresh QR
+ * code a limited number of refreshes before giving up and closing the
+ * socket with a "timedOut"/"connectionLost" status (408) if nobody scans
+ * it in time -- previously indistinguishable from any other disconnect,
+ * surfacing as a bare "disconnected" state with no explanation at all.
+ */
+const QR_EXPIRED_MESSAGE = "The QR code expired before it was scanned. Click Connect to get a new one.";
+const CONNECTION_LOST_MESSAGE = "The WhatsApp connection was lost. Click Connect to reconnect.";
+
 async function defaultCreateSocket(authDir: string): Promise<{ sock: WhatsAppSocket; saveCreds: () => Promise<void> }> {
   const { default: makeWASocket, useMultiFileAuthState } = await import("@whiskeysockets/baileys");
   const { state, saveCreds } = await useMultiFileAuthState(authDir);
@@ -293,10 +304,29 @@ export class WhatsAppWebManager {
 
     if (update.connection === "close") {
       const loggedOut = update.lastDisconnect?.error?.output?.statusCode === LOGGED_OUT_STATUS_CODE;
-      this.sessions.delete(projectId);
-      recordWhatsAppDisconnected(this.db, projectId);
       if (loggedOut) {
+        this.sessions.delete(projectId);
+        recordWhatsAppDisconnected(this.db, projectId);
         await this.cleanupAuthDir(projectId);
+      } else {
+        // Keep the session in the map (the same thing runConnectAttempt's
+        // own catch block already does on a connect failure) instead of
+        // deleting it the way the logged-out branch above does --
+        // getStatus() unconditionally returns error: null the instant a
+        // project has no live session (see its own comment), so deleting
+        // it here would silently discard whatever explanation is set
+        // below. That was the actual bug: a QR code timing out before
+        // being scanned closed with a non-401 status, fell into this
+        // branch, got deleted, and reverted straight to a bare
+        // "disconnected" with zero explanation. The next connect() call
+        // still works fine against a session left in "disconnected"
+        // status -- see connect()'s own `existing.status !== "disconnected"`
+        // check -- it just overwrites this one with a fresh session object.
+        const wasAwaitingQr = session.status === "qr" || session.status === "connecting";
+        session.status = "disconnected";
+        session.qrDataUrl = null;
+        session.error = wasAwaitingQr ? QR_EXPIRED_MESSAGE : CONNECTION_LOST_MESSAGE;
+        recordWhatsAppDisconnected(this.db, projectId);
       }
     }
   }
