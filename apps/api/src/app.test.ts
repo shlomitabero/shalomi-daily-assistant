@@ -1287,6 +1287,93 @@ test("renaming a project you have no access to still 404s, the same as any other
   });
 });
 
+/**
+ * Regression test for a real gap found by round 381's Explore survey: a
+ * project's description -- unlike its name -- had no edit route at all,
+ * even though it's silently re-sent as AI context on every future /refine
+ * and /answers call. Mirrors the rename-project test above exactly, one
+ * level down (description instead of name).
+ */
+test("the owner can edit a project's description, and a collaborator can too since they have identical full access", async () => {
+  await withServer(async (baseUrl) => {
+    const ownerToken = await signup(baseUrl, "desc-owner1@example.com");
+    const collabToken = await signup(baseUrl, "desc-collab1@example.com");
+    const createRes = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: authHeaders(ownerToken),
+      body: JSON.stringify({ description: "A CRM with customers and deals, typo: paymints." }),
+    });
+    const { project } = (await createRes.json()) as { project: { id: string } };
+    await fetch(`${baseUrl}/api/projects/${project.id}/collaborators`, {
+      method: "POST",
+      headers: authHeaders(ownerToken),
+      body: JSON.stringify({ email: "desc-collab1@example.com" }),
+    });
+
+    const ownerEditRes = await fetch(`${baseUrl}/api/projects/${project.id}/description`, {
+      method: "PATCH",
+      headers: authHeaders(ownerToken),
+      body: JSON.stringify({ description: "A CRM with customers and deals, with payments." }),
+    });
+    assert.equal(ownerEditRes.status, 200);
+    const { project: editedByOwner } = (await ownerEditRes.json()) as { project: { description: string } };
+    assert.equal(editedByOwner.description, "A CRM with customers and deals, with payments.");
+
+    const collabEditRes = await fetch(`${baseUrl}/api/projects/${project.id}/description`, {
+      method: "PATCH",
+      headers: authHeaders(collabToken),
+      body: JSON.stringify({ description: "Edited by the collaborator instead." }),
+    });
+    assert.equal(collabEditRes.status, 200);
+    const { project: editedByCollab } = (await collabEditRes.json()) as { project: { description: string } };
+    assert.equal(editedByCollab.description, "Edited by the collaborator instead.");
+  });
+});
+
+test("editing a project's description rejects an empty or whitespace-only value instead of silently accepting it", async () => {
+  await withServer(async (baseUrl) => {
+    const ownerToken = await signup(baseUrl, "desc-owner2@example.com");
+    const createRes = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: authHeaders(ownerToken),
+      body: JSON.stringify({ description: "A CRM with customers and deals." }),
+    });
+    const { project } = (await createRes.json()) as { project: { id: string; description: string } };
+
+    const blankRes = await fetch(`${baseUrl}/api/projects/${project.id}/description`, {
+      method: "PATCH",
+      headers: authHeaders(ownerToken),
+      body: JSON.stringify({ description: "   " }),
+    });
+    assert.equal(blankRes.status, 400);
+
+    // Confirm the rejected request never touched the stored description.
+    const getRes = await fetch(`${baseUrl}/api/projects/${project.id}`, { headers: authHeaders(ownerToken) });
+    const { project: unchanged } = (await getRes.json()) as { project: { description: string } };
+    assert.equal(unchanged.description, project.description);
+  });
+});
+
+test("editing a project's description on a project you have no access to still 404s, the same as any other project route", async () => {
+  await withServer(async (baseUrl) => {
+    const ownerToken = await signup(baseUrl, "desc-owner3@example.com");
+    const outsiderToken = await signup(baseUrl, "desc-outsider3@example.com");
+    const createRes = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: authHeaders(ownerToken),
+      body: JSON.stringify({ description: "A CRM with customers and deals." }),
+    });
+    const { project } = (await createRes.json()) as { project: { id: string } };
+
+    const editRes = await fetch(`${baseUrl}/api/projects/${project.id}/description`, {
+      method: "PATCH",
+      headers: authHeaders(outsiderToken),
+      body: JSON.stringify({ description: "Hijacked description" }),
+    });
+    assert.equal(editRes.status, 404);
+  });
+});
+
 test("the owner can rename an entity's display label, and a collaborator can too -- the entity's real name/table is untouched", async () => {
   await withServer(async (baseUrl) => {
     const ownerToken = await signup(baseUrl, "entity-label-owner1@example.com");

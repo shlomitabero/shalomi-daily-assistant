@@ -22,6 +22,7 @@ import {
   listProjectsForOwner,
   listProjectsForUser,
   updateProjectName,
+  updateProjectDescription,
 } from "./projects.js";
 
 const validSpec: ProductSpec = {
@@ -149,6 +150,25 @@ test("updateProjectName changes only the name, leaving every other field (spec, 
   assert.equal(renamed.ownerId, project.ownerId);
   assert.equal(renamed.status, project.status);
   assert.deepEqual(renamed.spec, project.spec);
+});
+
+test("updateProjectDescription changes only the description, leaving every other field (name, spec, status, ownerId) untouched", () => {
+  const db = openDatabase(":memory:");
+  ensureProjectsTable(db);
+  const project = insertProject(db, {
+    id: "p1",
+    ownerId: "owner1",
+    name: "My Business",
+    description: "track customer payments by mistake, meant appointments",
+    spec: validSpec,
+  });
+
+  const updated = updateProjectDescription(db, project.id, "A CRM to track customer appointments.");
+  assert.equal(updated.description, "A CRM to track customer appointments.");
+  assert.equal(updated.name, project.name);
+  assert.equal(updated.ownerId, project.ownerId);
+  assert.equal(updated.status, project.status);
+  assert.deepEqual(updated.spec, project.spec);
 });
 
 test("deleteProject removes the project row, its real generated data table, checkpoints, collaborators, and WhatsApp history -- not just some of them", () => {

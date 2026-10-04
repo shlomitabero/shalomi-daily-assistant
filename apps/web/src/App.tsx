@@ -32,6 +32,7 @@ import { CollaboratorsPanel } from "./CollaboratorsPanel.js";
 import { ChangePasswordPanel } from "./ChangePasswordPanel.js";
 import { DeleteAccountPanel } from "./DeleteAccountPanel.js";
 import { ProjectNameEditor } from "./ProjectNameEditor.js";
+import { ProjectDescriptionEditor } from "./ProjectDescriptionEditor.js";
 import { ShortcutsPanel } from "./ShortcutsPanel.js";
 import { isAnyDialogOpen } from "./useDialogFocusTrap.js";
 import { AddAssumptionForm, AddEntityForm, AddRoleForm, AssumptionItem, EntitySummaryItem, RoleChip } from "./SpecListItemRemover.js";
@@ -1397,6 +1398,12 @@ function AppContent() {
               {specProviderLabel(specProvider, t)}
             </p>
           )}
+
+          <section>
+            <h2>{t("spec.description.heading")}</h2>
+            <p className="muted small">{t("spec.description.hint")}</p>
+            <ProjectDescriptionEditor project={project} onChanged={setProject} />
+          </section>
 
           <section>
             <h2>{t("spec.roles.heading")}</h2>

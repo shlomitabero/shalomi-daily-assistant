@@ -144,6 +144,25 @@ export function updateProjectName(db: ForgeDatabase, id: string, name: string): 
 }
 
 /**
+ * A project's description (the free text typed on the home screen) was
+ * otherwise set exactly once, at creation, with no way to ever fix it --
+ * unlike the name, which got its own updateProjectName above. That's a
+ * real gap: the stored description isn't just cosmetic, it's silently
+ * re-sent as context on every future /refine and /answers call (see
+ * pipeline.ts's and projects.ts's own `combinedDescription` construction),
+ * so a typo or wrong requirement in it keeps compounding into every AI
+ * call forever, with no way to correct it short of abandoning the project.
+ * The caller is responsible for validating `description` (non-empty after
+ * trimming) before calling this, the same contract updateProjectName has.
+ */
+export function updateProjectDescription(db: ForgeDatabase, id: string, description: string): Project {
+  db.prepare("UPDATE projects SET description = ? WHERE id = ?").run(description, id);
+  const project = getProject(db, id);
+  if (!project) throw new Error(`Project ${id} not found`);
+  return project;
+}
+
+/**
  * Permanently deletes a project and everything that belongs only to it:
  * its real generated data tables (one per entity, via tableNameFor -- the
  * same naming migrate.ts uses to create them), Time Machine checkpoints,

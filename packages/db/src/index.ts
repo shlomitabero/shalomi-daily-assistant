@@ -24,6 +24,7 @@ export {
   markProjectBuilt,
   updateProjectSpec,
   updateProjectName,
+  updateProjectDescription,
   deleteProject,
 } from "./projects.js";
 export {

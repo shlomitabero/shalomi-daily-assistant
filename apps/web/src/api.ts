@@ -223,6 +223,10 @@ export function renameProject(projectId: string, name: string): Promise<{ projec
   return request(`/projects/${projectId}/name`, { method: "PATCH", body: JSON.stringify({ name }) });
 }
 
+export function updateProjectDescription(projectId: string, description: string): Promise<{ project: Project }> {
+  return request(`/projects/${projectId}/description`, { method: "PATCH", body: JSON.stringify({ description }) });
+}
+
 export function renameEntityLabel(projectId: string, entityName: string, label: string): Promise<{ project: Project }> {
   return request(`/projects/${projectId}/entities/${entityName}/label`, { method: "PATCH", body: JSON.stringify({ label }) });
 }

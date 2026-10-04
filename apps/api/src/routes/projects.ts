@@ -13,6 +13,7 @@ import {
   diffAndMigrate,
   updateProjectSpec,
   updateProjectName,
+  updateProjectDescription,
   deleteProject,
   insertRecord,
   listRecords,
@@ -78,6 +79,10 @@ const AddCollaboratorSchema = z.object({
 
 const RenameProjectSchema = z.object({
   name: z.string().trim().min(1, "name is required"),
+});
+
+const UpdateProjectDescriptionSchema = z.object({
+  description: z.string().trim().min(1, "description is required"),
 });
 
 const RenameEntityLabelSchema = z.object({
@@ -375,6 +380,35 @@ export function createProjectsRouter(db: ForgeDatabase, provider: SpecProvider |
         throw new HttpError(400, formatValidationError(parsed.error), "VALIDATION_ERROR");
       }
       const updated = updateProjectName(db, project.id, parsed.data.name);
+      res.json({ project: updated });
+    }),
+  );
+
+  /**
+   * A project's description -- the free text typed on the home screen --
+   * was otherwise set exactly once, at creation, with no way to ever fix
+   * it, unlike the name route right above. That's a real gap: the
+   * description isn't just cosmetic display text, it's silently re-sent as
+   * context on every future /refine and /answers call (see this file's own
+   * `combinedDescription` construction in both of those routes), so a typo
+   * or wrong requirement in the original description keeps compounding
+   * into every future AI call, with no way to correct it short of starting
+   * over. requireProjectAccess (not requireProjectOwner), matching every
+   * other spec-review-screen edit a collaborator can already make. No
+   * activePipelines guard needed: unlike the 12 routes round 380 added one
+   * to, this never reads-then-writes project.spec -- the description
+   * column is never touched anywhere else in the app after insertProject,
+   * so there is no read-modify-write race for it to lose.
+   */
+  router.patch(
+    "/projects/:id/description",
+    asyncRoute(async (req, res) => {
+      const project = requireProjectAccess(db, req.params.id, req.userId!);
+      const parsed = UpdateProjectDescriptionSchema.safeParse(req.body);
+      if (!parsed.success) {
+        throw new HttpError(400, formatValidationError(parsed.error), "VALIDATION_ERROR");
+      }
+      const updated = updateProjectDescription(db, project.id, parsed.data.description);
       res.json({ project: updated });
     }),
   );
