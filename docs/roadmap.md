@@ -24278,6 +24278,80 @@ invite notification, AI-label language mismatch, checkpoint pruning,
 overflow-wrap / duplicate `enumValues` / relation-picker flash /
 `listRecords` pagination, `calendarIcs.ts`'s UTF-16-vs-UTF-8 fold).
 
+### Round 389: `deleteProject` no longer orphans a data table for an entity removed before deletion
+
+A fresh Explore survey (excluding every closed topic, including round
+388's own WhatsApp Reply button and the deliberately-deferred
+`wakeRetry.ts` candidate) found a real, deterministic data-leak bug in
+`packages/db/src/projects.ts`'s `deleteProject`, verified by direct
+reading of both `deleteProject` and `migrate.ts`'s `diffAndMigrate`
+rather than taken on the survey's word alone.
+
+**The bug**: `deleteProject` dropped a real data table only for each
+entity in `project.spec.entities` -- the project's *current* spec at the
+moment of deletion. `migrate.ts`'s `diffAndMigrate` is deliberately
+additive-only (its own comment: "Never drops or renames anything, even
+if a field or entity was removed from the new spec"), so a perfectly
+ordinary sequence -- build a project, refine it to add a new entity (its
+table gets created, real data gets inserted into it), refine it again
+to remove that same entity from the spec -- leaves that entity's own
+real table, with real rows, sitting in the database with nothing
+pointing at it. No race condition needed (that's the already-closed
+"DELETE-vs-pipeline race" item from round 378); this is a plain,
+reproducible sequence that any real refine-then-refine-again session can
+trigger. Deleting the project afterward never touched that orphaned
+table at all, because `deleteProject`'s own entity loop only ever saw
+the names still in the final spec.
+
+**The fix**: every successful build or refine inserts exactly one
+checkpoint carrying its resulting spec (`pipeline.ts`'s own
+`insertCheckpoint` call, the only call site in the codebase) --
+confirmed directly, not assumed. That means the union of every
+checkpoint's own entity names, plus the current spec's, is the complete
+set of tables a project could ever have created. `deleteProject` now
+reads that checkpoint history via `listCheckpoints` *before*
+`deleteCheckpointsForProject` removes it, builds that union as a `Set`,
+and drops a table for every name in it -- not just the ones the final
+spec still lists. No port needed in `codegen.ts`: confirmed via grep
+that the exported standalone app has no multi-project concept and no
+`deleteProject`/`DROP TABLE` logic of its own at all.
+
+**Tests**: added a new test to `projects.test.ts` that reproduces the
+exact real sequence via raw `diffAndMigrate` + `insertCheckpoint` calls
+(the same calls `pipeline.ts` itself makes, not a contrived fixture) --
+build, refine-add an `Order` entity with a real inserted row, refine-remove
+it from the spec again, then delete the project -- and asserts both that
+`Order`'s table still existed right before the delete (sanity check: the
+additive-only migration genuinely never touched it) and that it's gone
+afterward, alongside the existing assertion that the entity still in the
+final spec is also dropped as before. All 9 tests in `projects.test.ts`
+pass.
+
+**Regression-proof**: backed up `projects.ts` and `projects.test.ts`,
+`git checkout --` reverted `projects.ts` to HEAD while keeping the new
+test. This is a real correctness bug (not a performance-only fix), so the
+revert produced a genuine, meaningful failure, not the honest limitation
+rounds 385-387 had to document: the new test failed with "Missing
+expected exception" on the assertion that `Order`'s table must be gone --
+proving the old code really did leave it behind, exactly as the bug
+report predicted -- while the other 8 tests in the file still passed.
+Restored `projects.ts` from backup, confirmed byte-identical via `diff
+-q`, then reran the full build + full suite clean.
+
+Full suite green: **1354 tests** (`@forge/shared` 13, `@forge/spec-engine`
+93, `@forge/db` 100 (+1 new), `@forge/api` 379 unchanged, `@forge/web`
+769 unchanged) via `npm test` at the repo root, plus a clean full
+monorepo `npm run build`. Pushed as commit `6e3ee70`.
+
+**Topic status**: this fix is closed. Everything else still open from
+rounds 378-388 remains open and unchanged (`wakeRetry.ts`'s
+retry-on-any-method duplicate-write risk -- needs its own idempotency-key
+design round, not a quick fix -- export staleness marker, collaborator
+invite notification, AI-label language mismatch, checkpoint pruning,
+`sanitizeZipEntryName` collision, render.yaml disk stanza, print
+overflow-wrap / duplicate `enumValues` / relation-picker flash /
+`listRecords` pagination, `calendarIcs.ts`'s UTF-16-vs-UTF-8 fold).
+
 ## Phase 4
 
 - Template/agent marketplace
