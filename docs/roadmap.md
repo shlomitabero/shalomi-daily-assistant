@@ -23244,6 +23244,97 @@ weak-priority candidates from rounds 375 and 377 (print-layout
 unbounded `listRecords`). Round 379 should do its own fresh survey unless
 one of these is specifically chosen.
 
+### Round 379: fix WhatsApp `disconnect()` racing a still-in-flight `connect()`'s own `createSocket()` call
+
+A fresh Explore subagent surveyed WhatsApp disconnect/reconnect edge
+cases, Business Twin insight accuracy at scale, export ZIP file-size/
+entry-count limits, Calendar recurring/multi-day event edge cases, and
+session/token cleanup edge cases, re-confirming every topic closed in
+rounds 375-378 is still closed. It surfaced three candidates:
+
+1. **Chosen**: `WhatsAppWebManager` already defended one direction of a
+   connect/disconnect race — a new `connect()` would wait (via the
+   existing `pendingCleanup` map) for a *prior* `disconnect()`'s own
+   auth-dir removal to finish before starting `useMultiFileAuthState()`
+   on the same directory. The reverse was undefended: `disconnect()`
+   landing while a `connect()` call's own `createSocket()` (which
+   itself calls Baileys' `useMultiFileAuthState()` against the same
+   directory) was still in flight could have `cleanupAuthDir()` delete
+   the auth directory out from under the in-progress `createSocket()`
+   call, corrupting or losing the session Baileys was concurrently
+   reading/writing.
+2. Business Twin's insight computation issues up to 6x redundant
+   `listRecords` calls per twin with no caching — a real performance
+   concern, not a correctness bug. **Deferred** as a future optimization
+   candidate, not implemented this round.
+3. A minor `sanitizeZipEntryName` collision note in `backup.ts` (two
+   distinct entity names could theoretically sanitize to the same ZIP
+   entry name). **Deferred**, low priority, not implemented this round.
+
+Independently re-verified candidate 1 by reading the entirety of
+`whatsappWeb.ts`, including the existing `pendingCleanup` mechanism's own
+doc comment, `connect()`'s stale-session check, `disconnect()`'s body,
+and confirming `defaultCreateSocket()` calls `useMultiFileAuthState(authDir)`
+inside `createSocket()` itself — the race is real.
+
+**Rejected first design** (caught via manual trace-through *before*
+implementing, not via a failing test): having `disconnect()` directly
+`await` a new `pendingConnect` map before proceeding. This would have
+deadlocked the existing test "connect() logs out the real socket
+immediately if the session was replaced... while createSocket() was
+still in flight", which calls `await manager.disconnect(...)` strictly
+*before* ever resolving the gated `createSocket()` promise later in the
+same test — and it would have violated the documented invariant that
+`disconnect()`'s synchronous session-map deletion, not its full async
+completion, is what makes `getStatus()` report "disconnected"
+immediately.
+
+**Fix implemented**: added a `pendingConnect` map tracking each
+project's in-flight `connect()` attempt (via a new private
+`runConnectAttempt()` extracted from `connect()`'s old try/catch body).
+`cleanupAuthDir()` now chains `removeAuthDir()` after any pending
+connect attempt settles (via `.then()`, never blocking the caller), and
+`disconnect()`'s final `await this.cleanupAuthDir(...)` became
+`void this.cleanupAuthDir(...)` — fire-and-forget — so `disconnect()`
+still synchronously marks the project disconnected and returns
+immediately, regardless of how long some *other* in-flight `connect()`
+attempt's cleanup wait takes.
+
+Files: `apps/api/src/whatsappWeb.ts` (new `pendingConnect` map,
+`runConnectAttempt()` extraction, rewritten `cleanupAuthDir()`,
+fire-and-forget cleanup call in `disconnect()`), `apps/api/src/whatsappWeb.test.ts`
+(1 new test: starts a `connect()` with a gated `createSocket()`, calls
+`disconnect()` while it's still pending, asserts `getStatus()` reports
+disconnected immediately and `removeAuthDir()` has NOT run yet, then
+resolves `createSocket()` and confirms `removeAuthDir()` runs exactly
+once after the attempt settles).
+
+Deliberate-break-and-restore: backed up both changed files to the
+scratchpad, reverted only `whatsappWeb.ts` to HEAD, ran
+`whatsappWeb.test.ts` directly and confirmed exactly 1 of 17 failures
+(the new test; all 16 pre-existing tests still passed), restored from
+backup, confirmed byte-identical via `diff -q`, then re-ran the full
+suite and a clean build one final time before committing.
+
+Full suite green: **1314 tests** (`@forge/shared` 13, `@forge/spec-engine`
+93, `@forge/db` 98, `@forge/api` 367 (+1 new), `@forge/web` 743, all
+unchanged except api) via `npm test` at the repo root, plus a clean full
+monorepo `npm run build`. Pushed as commit `b7af041`.
+
+**Durable lesson added**: before choosing a concurrency-guard design,
+trace through the exact await/resolve ordering of every existing test
+that could plausibly interact with the change — not just confirm the bug
+is real. A design that looks correct in isolation can deadlock a test
+whose gated promise is resolved *after* the call your fix would make
+block on it.
+
+**Topic status**: this fix is closed. Business Twin's 6x redundant
+`listRecords` calls and the `sanitizeZipEntryName` collision note are
+now queued as available-but-not-implemented candidates, alongside the
+render.yaml/README persistent-disk gap (round 378) and the four
+weak-priority candidates from rounds 375/377. Round 380 should do its
+own fresh survey unless one of these is specifically chosen.
+
 ## Phase 4
 
 - Template/agent marketplace
