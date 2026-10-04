@@ -33,6 +33,18 @@ export function togglePinned(projectId: string): Set<string> {
   return new Set(ids);
 }
 
+/**
+ * Unconditionally removes one project from the pinned set -- unlike
+ * togglePinned above, which flips whichever state it's currently in. Used
+ * when the project itself is deleted (projectPreferenceCleanup.ts), since
+ * nothing else ever removes an id from this store once it's pinned.
+ */
+export function removePinnedProject(projectId: string): Set<string> {
+  const ids = readStoredIds().filter((id) => id !== projectId);
+  writeStoredIds(ids);
+  return new Set(ids);
+}
+
 /** Pinned projects first, unpinned after -- each group keeping its own original relative order, so pinning never reshuffles anything beyond moving pinned items to the front. */
 export function sortByPinned<T extends { id: string }>(projects: T[], pinnedIds: Set<string>): T[] {
   const pinned = projects.filter((p) => pinnedIds.has(p.id));

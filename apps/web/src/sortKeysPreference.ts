@@ -62,3 +62,13 @@ export function setSortKeys(projectId: string, entityName: string, keys: SortKey
   writeStore(store);
   return keys;
 }
+
+/** Removes every stored sort-key choice for this project, across all of its entities -- see columnWidths.ts's purgeColumnWidthsForProject for the full rationale. */
+export function purgeSortKeysForProject(projectId: string): void {
+  const store = readStore();
+  const prefix = `${projectId}:`;
+  for (const key of Object.keys(store)) {
+    if (key.startsWith(prefix)) delete store[key];
+  }
+  writeStore(store);
+}

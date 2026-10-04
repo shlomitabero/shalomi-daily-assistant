@@ -75,6 +75,22 @@ export function clearColumnWidths(projectId: string, entityName: string): Record
 }
 
 /**
+ * Removes every stored width for this project, across all of its
+ * entities, regardless of entity name -- unlike clearColumnWidths above,
+ * which needs one specific entity. Used when the whole project is deleted
+ * (projectPreferenceCleanup.ts): nothing else ever clears this store, so
+ * without this a deleted project's entries sit here forever.
+ */
+export function purgeColumnWidthsForProject(projectId: string): void {
+  const store = readStore();
+  const prefix = `${projectId}:`;
+  for (const key of Object.keys(store)) {
+    if (key.startsWith(prefix)) delete store[key];
+  }
+  writeStore(store);
+}
+
+/**
  * The actual drag math behind dragging a column's resize handle: how far the
  * mouse has moved since the drag started, added to the column's width at
  * that moment, clamped to a sane range. In a right-to-left layout (Hebrew),

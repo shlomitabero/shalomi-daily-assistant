@@ -45,3 +45,13 @@ export function toggleFieldVisibility(projectId: string, entityName: string, fie
   writeStore(store);
   return hidden;
 }
+
+/** Removes every stored hidden-fields set for this project, across all of its entities -- see columnWidths.ts's purgeColumnWidthsForProject for the full rationale. */
+export function purgeHiddenFieldsForProject(projectId: string): void {
+  const store = readStore();
+  const prefix = `${projectId}:`;
+  for (const key of Object.keys(store)) {
+    if (key.startsWith(prefix)) delete store[key];
+  }
+  writeStore(store);
+}

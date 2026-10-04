@@ -47,6 +47,16 @@ export function setColumnOrder(projectId: string, entityName: string, order: str
   return order;
 }
 
+/** Removes every stored column order for this project, across all of its entities -- see columnWidths.ts's purgeColumnWidthsForProject for the full rationale. */
+export function purgeColumnOrderForProject(projectId: string): void {
+  const store = readStore();
+  const prefix = `${projectId}:`;
+  for (const key of Object.keys(store)) {
+    if (key.startsWith(prefix)) delete store[key];
+  }
+  writeStore(store);
+}
+
 /**
  * Applies a persisted (possibly stale) column order to the entity's current
  * real field list: a field the order mentions keeps its persisted relative

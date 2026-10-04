@@ -701,8 +701,13 @@ test("App's openExistingProject routes a built project to the live preview and a
  * untouched (no API call, myProjects list unchanged), while confirming
  * must call the real deleteProject API function and then remove exactly
  * the deleted project from myProjects, leaving every other project alone.
- * Extracts the real function from App.tsx the same way the openPanel and
- * openExistingProject tests above do, rather than reimplementing its logic.
+ * Also confirms this round's own fix: a successful delete must call
+ * purgeProjectPreferences with the deleted project's id, since nothing
+ * else ever cleans up its pinned/column/filter/sort/recent-search entries
+ * in localStorage (projectPreferenceCleanup.ts) -- previously they sat
+ * there forever. Extracts the real function from App.tsx the same way
+ * the openPanel and openExistingProject tests above do, rather than
+ * reimplementing its logic.
  */
 test("App's handleDeleteProject only calls the API and updates myProjects after window.confirm returns true, and leaves everything untouched when the user cancels", async () => {
   const appSrc = readFileSync(new URL("./App.tsx", import.meta.url), "utf8");
@@ -721,6 +726,7 @@ test("App's handleDeleteProject only calls the API and updates myProjects after 
       error: "not-yet-called",
     };
     const confirmCalls: string[] = [];
+    const purgeCalls: string[] = [];
     const fn = new Function(
       "window",
       "t",
@@ -728,6 +734,7 @@ test("App's handleDeleteProject only calls the API and updates myProjects after 
       "setDeletingId",
       "setError",
       "setMyProjects",
+      "purgeProjectPreferences",
       `${code}\nreturn handleDeleteProject;`,
     )(
       { confirm: (message: string) => (confirmCalls.push(message), opts.confirmReturns) },
@@ -736,8 +743,9 @@ test("App's handleDeleteProject only calls the API and updates myProjects after 
       (v: string | null) => (state.deletingId = v),
       (v: string | null) => (state.error = v),
       (updater: (prev: Project[]) => Project[]) => (state.myProjects = updater(state.myProjects)),
+      (id: string) => purgeCalls.push(id),
     ) as (p: Project) => Promise<void>;
-    return { fn, state, confirmCalls };
+    return { fn, state, confirmCalls, purgeCalls };
   }
 
   const target = makeProject([makeEntity("Customer")]);
@@ -757,6 +765,7 @@ test("App's handleDeleteProject only calls the API and updates myProjects after 
   assert.equal(deleteApiCalls, 0, "declining the confirm must never call the delete API");
   assert.deepEqual(declined.state.myProjects, [target, other], "myProjects must be untouched when cancelled");
   assert.equal(declined.state.deletingId, "not-yet-called", "setDeletingId must never be called when cancelled");
+  assert.deepEqual(declined.purgeCalls, [], "declining the confirm must never purge any client-side preferences");
 
   // Confirming must call the real API function and remove only the deleted project.
   deleteApiCalls = 0;
@@ -774,6 +783,11 @@ test("App's handleDeleteProject only calls the API and updates myProjects after 
   assert.deepEqual(confirmed.state.myProjects, [other], "only the deleted project should be removed from the list");
   assert.equal(confirmed.state.deletingId, null, "deletingId must be cleared again once the delete finishes");
   assert.equal(confirmed.state.error, null);
+  assert.deepEqual(
+    confirmed.purgeCalls,
+    ["delete-me"],
+    "a successful delete must also purge the deleted project's own client-side preferences (pinned, column widths/order/..., recent searches) -- otherwise they sit in localStorage forever",
+  );
 });
 
 /**
@@ -801,6 +815,7 @@ test("App's handleBulkDeleteProjects removes only the projects that actually suc
       error: "not-yet-called",
     };
     const confirmCalls: string[] = [];
+    const purgeCalls: string[] = [];
     // visibleSelectedProjectIds is what App.tsx's own useMemo would have
     // computed from `selectedProjectIds` and `visibleMyProjects` at call
     // time -- here that's every currently-known project (initialMyProjects),
@@ -813,6 +828,7 @@ test("App's handleBulkDeleteProjects removes only the projects that actually suc
       "setError",
       "setMyProjects",
       "setSelectedProjectIds",
+      "purgeProjectPreferences",
       `${code}\nreturn handleBulkDeleteProjects;`,
     )(
       { confirm: (message: string) => (confirmCalls.push(message), opts.confirmReturns) },
@@ -822,8 +838,9 @@ test("App's handleBulkDeleteProjects removes only the projects that actually suc
       (v: string | null) => (state.error = v),
       (updater: (prev: Project[]) => Project[]) => (state.myProjects = updater(state.myProjects)),
       (next: Set<string>) => (state.selectedProjectIds = next),
+      (id: string) => purgeCalls.push(id),
     ) as () => Promise<void>;
-    return { fn, state, confirmCalls };
+    return { fn, state, confirmCalls, purgeCalls };
   }
 
   const a = makeProject([makeEntity("Customer")]);
@@ -844,6 +861,7 @@ test("App's handleBulkDeleteProjects removes only the projects that actually suc
   await declined.fn();
   assert.equal(deleteApiCalls, 0, "declining the confirm must never call the delete API");
   assert.deepEqual(declined.state.myProjects, [a, b, c], "myProjects must be untouched when cancelled");
+  assert.deepEqual(declined.purgeCalls, [], "declining the confirm must never purge any client-side preferences");
 
   // Confirming with one real failure (project "b") must still remove "a", and
   // must keep only "b" (the one that actually failed) selected afterward.
@@ -859,6 +877,11 @@ test("App's handleBulkDeleteProjects removes only the projects that actually suc
   });
   await confirmed.fn();
   assert.deepEqual(attempted.sort(), ["a", "b"], "must attempt every selected id, not stop at the first failure");
+  assert.deepEqual(
+    confirmed.purgeCalls,
+    ["a"],
+    "only the project that actually succeeded (a) should have its client-side preferences purged -- b failed server-side and must keep its preferences in case the delete is retried",
+  );
   assert.equal(deleteApiCalls, 2);
   assert.deepEqual(confirmed.state.myProjects, [b, c], "only the project that actually succeeded (a) should be removed -- b (failed) and c (never selected) must remain");
   assert.deepEqual([...confirmed.state.selectedProjectIds], ["b"], "only the id that actually failed to delete should remain selected");
@@ -890,6 +913,7 @@ test("App's handleBulkDeleteProjects only ever deletes visible+selected projects
   // Both "a" and "b" are raw-selected, but only "a" is currently visible
   // (as if "b" is hidden by a status filter or search term).
   const attempted: string[] = [];
+  const purgeCalls: string[] = [];
   const state = { myProjects: [a, b] as Project[], selectedProjectIds: null as Set<string> | null };
   const fn = new Function(
     "window",
@@ -899,6 +923,7 @@ test("App's handleBulkDeleteProjects only ever deletes visible+selected projects
     "setError",
     "setMyProjects",
     "setSelectedProjectIds",
+    "purgeProjectPreferences",
     `${code}\nreturn handleBulkDeleteProjects;`,
   )(
     { confirm: () => true },
@@ -910,11 +935,13 @@ test("App's handleBulkDeleteProjects only ever deletes visible+selected projects
     () => {},
     (updater: (prev: Project[]) => Project[]) => (state.myProjects = updater(state.myProjects)),
     (next: Set<string>) => (state.selectedProjectIds = next),
+    (id: string) => purgeCalls.push(id),
   ) as () => Promise<void>;
 
   await fn();
   assert.deepEqual(attempted, ["a"], "must attempt to delete only the visible+selected project, never the hidden-but-raw-selected one");
   assert.deepEqual(state.myProjects, [b], "only the visible+selected project (a) must actually be removed -- the hidden one (b) must remain untouched");
+  assert.deepEqual(purgeCalls, ["a"], "must purge client-side preferences only for the visible+selected project actually deleted, never the hidden one");
 });
 
 /**

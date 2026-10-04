@@ -40,6 +40,7 @@ import { AddAssumptionForm, AddEntityForm, AddRoleForm, AssumptionItem, EntitySu
 import { applyColumnOrder, reorderColumns } from "./columnOrder.js";
 import { getEntityTabOrder, setEntityTabOrder } from "./entityTabOrder.js";
 import { getPinnedIds, sortByPinned, togglePinned } from "./pinnedProjects.js";
+import { purgeProjectPreferences } from "./projectPreferenceCleanup.js";
 import {
   addRecentProjectSearch,
   clearRecentProjectSearches,
@@ -817,6 +818,7 @@ function AppContent() {
     try {
       await deleteProject(p.id);
       setMyProjects((prev) => prev.filter((existing) => existing.id !== p.id));
+      purgeProjectPreferences(p.id);
     } catch (err) {
       setError((err as Error).message);
     } finally {
@@ -845,6 +847,7 @@ function AppContent() {
     const failedIds = ids.filter((_, i) => results[i].status === "rejected");
     const succeededIds = new Set(ids.filter((_, i) => results[i].status === "fulfilled"));
     setMyProjects((prev) => prev.filter((p) => !succeededIds.has(p.id)));
+    for (const id of succeededIds) purgeProjectPreferences(id);
     setSelectedProjectIds(new Set(failedIds));
     if (failedIds.length > 0) {
       const firstFailure = results.find((r): r is PromiseRejectedResult => r.status === "rejected")!;

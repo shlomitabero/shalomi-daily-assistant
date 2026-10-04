@@ -51,3 +51,13 @@ export function setGroupByField(projectId: string, entityName: string, fieldName
   writeStore(store);
   return fieldName;
 }
+
+/** Removes every stored group-by choice for this project, across all of its entities -- see columnWidths.ts's purgeColumnWidthsForProject for the full rationale. */
+export function purgeGroupByFieldForProject(projectId: string): void {
+  const store = readStore();
+  const prefix = `${projectId}:`;
+  for (const key of Object.keys(store)) {
+    if (key.startsWith(prefix)) delete store[key];
+  }
+  writeStore(store);
+}

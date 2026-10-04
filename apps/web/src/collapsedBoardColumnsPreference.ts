@@ -56,3 +56,13 @@ export function setCollapsedBoardColumns(projectId: string, entityName: string, 
   writeStore(store);
   return deduped;
 }
+
+/** Removes every stored collapsed-column set for this project, across all of its entities -- see columnWidths.ts's purgeColumnWidthsForProject for the full rationale. */
+export function purgeCollapsedBoardColumnsForProject(projectId: string): void {
+  const store = readStore();
+  const prefix = `${projectId}:`;
+  for (const key of Object.keys(store)) {
+    if (key.startsWith(prefix)) delete store[key];
+  }
+  writeStore(store);
+}

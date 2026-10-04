@@ -52,3 +52,13 @@ export function setCollapsedGroups(projectId: string, entityName: string, keys: 
   writeStore(store);
   return deduped;
 }
+
+/** Removes every stored collapsed-group set for this project, across all of its entities -- see columnWidths.ts's purgeColumnWidthsForProject for the full rationale. */
+export function purgeCollapsedGroupsForProject(projectId: string): void {
+  const store = readStore();
+  const prefix = `${projectId}:`;
+  for (const key of Object.keys(store)) {
+    if (key.startsWith(prefix)) delete store[key];
+  }
+  writeStore(store);
+}
