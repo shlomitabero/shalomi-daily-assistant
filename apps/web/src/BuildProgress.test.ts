@@ -219,6 +219,40 @@ test("BuildProgress shows each agent's own real success message, not a generic c
 });
 
 /**
+ * Regression test for a real gap found by round 377's Explore survey:
+ * pipeline.ts's computeImpact now reports entities a refine dropped from
+ * the spec (see pipeline.test.ts), but that's only useful if the live AI
+ * Team screen's own Architect detail panel actually shows it, not just
+ * the newEntities/changedEntities this panel already rendered before.
+ */
+test("BuildProgress's Architect detail panel reports an entity the refine dropped, once expanded", async () => {
+  await withJsdom(async () => {
+    const events: AgentStepEvent[] = [
+      { agent: "Architect", status: "running", message: "…" },
+      {
+        agent: "Architect",
+        status: "success",
+        message: "Impact: +0 new entities (none), 0 existing entities gaining fields. Warning: 1 entities are no longer in the spec (Deal).",
+        detail: { newEntities: [], changedEntities: [], removedEntities: [{ name: "Deal", label: "Deal" }] },
+      },
+    ];
+    renderBuildProgress(events);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const steps = [...document.querySelectorAll(".agent-step")];
+    const architectStep = steps.find((s) => s.textContent?.includes("Product Planner"));
+    const toggle = architectStep?.querySelector(".detail-toggle") as HTMLButtonElement | null;
+    assert.ok(toggle, "expected a details toggle for the Architect step once it succeeds with a detail payload");
+    fireEvent.click(toggle!);
+
+    const detailList = architectStep?.querySelector(".detail-list");
+    assert.ok(detailList, "expected the detail list to render once expanded");
+    assert.match(detailList!.textContent ?? "", /Deal/);
+    assert.match(detailList!.textContent ?? "", /no longer in the spec/);
+  });
+});
+
+/**
  * New in this round: the subtitle's "step N of M" text already carried
  * this same fraction, but only as text a reader had to do the division on
  * themselves. Confirms a real filled progress bar renders in the DOM with

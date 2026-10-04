@@ -146,6 +146,7 @@ function StatusIcon({ status }: { status: AgentStepEvent["status"] }) {
 interface ImpactDetail {
   newEntities: { name: string; label: string }[];
   changedEntities: { name: string; label: string; newFieldNames: string[] }[];
+  removedEntities?: { name: string; label: string }[];
 }
 
 interface MigrationChangeDetail {
@@ -166,8 +167,8 @@ function AgentDetail({ agent, detail }: { agent: AgentStepEvent["agent"]; detail
   const { t } = useTranslation();
 
   if (agent === "Architect" && detail) {
-    const { newEntities, changedEntities } = detail as ImpactDetail;
-    if (newEntities.length === 0 && changedEntities.length === 0) {
+    const { newEntities, changedEntities, removedEntities } = detail as ImpactDetail;
+    if (newEntities.length === 0 && changedEntities.length === 0 && (removedEntities ?? []).length === 0) {
       return <p className="muted small">{t("build.detail.architect.noChange")}</p>;
     }
     return (
@@ -183,6 +184,11 @@ function AgentDetail({ agent, detail }: { agent: AgentStepEvent["agent"]; detail
             <strong>{e.label}</strong>
             {t("build.detail.architect.gainedFields")}
             {e.newFieldNames.join(", ")}
+          </li>
+        ))}
+        {(removedEntities ?? []).map((e) => (
+          <li key={e.name}>
+            <strong>{e.label}</strong> {t("build.detail.architect.entityRemoved")}
           </li>
         ))}
       </ul>

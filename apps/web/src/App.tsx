@@ -151,6 +151,7 @@ export function removeRefineHistoryEntry(entries: RefineHistoryEntry[], id: stri
 interface ArchitectImpactDetail {
   newEntities: { name: string; label: string }[];
   changedEntities: { name: string; label: string; newFieldNames: string[] }[];
+  removedEntities?: { name: string; label: string }[];
 }
 
 /**
@@ -288,6 +289,9 @@ export function summarizeRefineImpact(events: AgentStepEvent[], t: (key: string)
   }
   for (const e of detail.changedEntities) {
     parts.push(`${e.label}${t("build.detail.architect.gainedFields")}${e.newFieldNames.join(", ")}`);
+  }
+  for (const e of detail.removedEntities ?? []) {
+    parts.push(`${e.label} ${t("build.detail.architect.entityRemoved")}`);
   }
   return parts.length > 0 ? parts.join(" · ") : t("preview.refineHistory.noChange");
 }

@@ -50,13 +50,31 @@ const SENSITIVE_FIELD_HINTS: (string | RegExp)[] = [
 interface ImpactSummary {
   newEntityNames: string[];
   newEntities: { name: string; label: string }[];
-  changedEntities: { name: string; label: string; newFieldNames: string[] }[];
+  changedEntities: { name: string; label: string; newFieldNames: string[]; removedFieldNames: string[] }[];
+  removedEntityNames: string[];
+  removedEntities: { name: string; label: string }[];
 }
 
+/**
+ * A refine instruction like "rename Customer to Client" or "remove deals
+ * tracking, focus on invoices" regenerates the whole spec from plain prose
+ * (AnthropicSpecProvider.generate only ever receives description text, never
+ * the previous spec's structure) -- a very plausible way for the AI to
+ * simply omit an entity/field from the next spec rather than literally
+ * renaming it in place. Migrations are additive-only (see migrate.ts), so
+ * nothing is actually destroyed -- but the moment this build finishes, that
+ * entity/field becomes unreachable through the UI/API, and without this,
+ * nothing in the live build stream ever said so: the Architect's own
+ * message only ever reported what was newly ADDED. The only way to
+ * discover a removal was to later open Time Machine and manually diff two
+ * checkpoints with checkpointDiff.ts's own (separate, client-side)
+ * removedEntities logic -- after the fact, not in the moment it happened.
+ */
 function computeImpact(previousSpec: ProductSpec | undefined, nextSpec: ProductSpec): ImpactSummary {
   const previousEntities = new Map((previousSpec?.entities ?? []).map((e) => [e.name, e]));
+  const nextEntityNames = new Set(nextSpec.entities.map((e) => e.name));
   const newEntities: { name: string; label: string }[] = [];
-  const changedEntities: { name: string; label: string; newFieldNames: string[] }[] = [];
+  const changedEntities: { name: string; label: string; newFieldNames: string[]; removedFieldNames: string[] }[] = [];
 
   for (const entity of nextSpec.entities) {
     const prev = previousEntities.get(entity.name);
@@ -65,23 +83,40 @@ function computeImpact(previousSpec: ProductSpec | undefined, nextSpec: ProductS
       continue;
     }
     const prevFieldNames = new Set(prev.fields.map((f) => f.name));
+    const nextFieldNames = new Set(entity.fields.map((f) => f.name));
     const newFields = entity.fields.filter((f) => !prevFieldNames.has(f.name));
-    if (newFields.length > 0) {
+    const removedFields = prev.fields.filter((f) => !nextFieldNames.has(f.name));
+    if (newFields.length > 0 || removedFields.length > 0) {
       changedEntities.push({
         name: entity.name,
         label: entity.label ?? entity.name,
         newFieldNames: newFields.map((f) => f.label ?? f.name),
+        removedFieldNames: removedFields.map((f) => f.label ?? f.name),
       });
     }
   }
-  return { newEntityNames: newEntities.map((e) => e.name), newEntities, changedEntities };
+
+  const removedEntities = (previousSpec?.entities ?? [])
+    .filter((e) => !nextEntityNames.has(e.name))
+    .map((e) => ({ name: e.name, label: e.label ?? e.name }));
+
+  return {
+    newEntityNames: newEntities.map((e) => e.name),
+    newEntities,
+    changedEntities,
+    removedEntityNames: removedEntities.map((e) => e.name),
+    removedEntities,
+  };
 }
 
 function architectEvent(previousSpec: ProductSpec | undefined, nextSpec: ProductSpec): AgentStepEvent {
   const impact = computeImpact(previousSpec, nextSpec);
   const message = previousSpec
     ? `Impact: +${impact.newEntityNames.length} new entities (${impact.newEntityNames.join(", ") || "none"}), ` +
-      `${impact.changedEntities.length} existing entities gaining fields.`
+      `${impact.changedEntities.length} existing entities gaining fields.` +
+      (impact.removedEntityNames.length > 0
+        ? ` Warning: ${impact.removedEntityNames.length} entities are no longer in the spec (${impact.removedEntityNames.join(", ")}) -- their data is kept but is no longer reachable through the app.`
+        : "")
     : `Designed ${nextSpec.entities.length} tables for ${nextSpec.roles.length} roles.`;
   return { agent: "Architect", status: "success", message, detail: impact };
 }

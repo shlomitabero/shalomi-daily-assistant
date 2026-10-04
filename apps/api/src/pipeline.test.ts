@@ -296,17 +296,107 @@ test("the Architect step's impact summary is re-emitted with the corrected spec 
     const architectSuccesses = events.filter((e) => e.agent === "Architect" && e.status === "success");
     assert.equal(architectSuccesses.length, 2, "the Architect step must report again once the spec is corrected");
 
-    type ImpactDetail = { changedEntities: { name: string; newFieldNames: string[] }[] };
+    type ImpactDetail = { changedEntities: { name: string; newFieldNames: string[]; removedFieldNames: string[] }[] };
     const finalImpact = architectSuccesses[architectSuccesses.length - 1].detail as ImpactDetail;
     assert.deepEqual(
       finalImpact.changedEntities,
-      [{ name: "Customer", label: "Customer", newFieldNames: ["notes"] }],
+      [{ name: "Customer", label: "Customer", newFieldNames: ["notes"], removedFieldNames: [] }],
       "the re-emitted Architect detail must reflect the corrected field, not the broken one that was never actually built",
     );
   } finally {
     process.env.ANTHROPIC_API_KEY = originalKey;
     globalThis.fetch = originalFetch;
   }
+});
+
+/**
+ * Regression test for a real gap found by round 377's Explore survey: a
+ * refine instruction (e.g. "rename Customer to Client" or "remove deals
+ * tracking") regenerates the whole spec from plain prose -- the AI
+ * provider never receives the previous spec's structure -- so it's a very
+ * plausible way for an entity to simply be omitted from the next spec
+ * rather than literally renamed/removed in place. Migrations are
+ * additive-only, so the entity's table/data survive, but it becomes
+ * unreachable through the UI/API the moment this build finishes. Before
+ * this fix, computeImpact's own detail/message only ever reported what
+ * was newly ADDED -- nothing in the live build stream ever warned about
+ * this. Confirms the real pipeline (not a reimplementation) now reports it
+ * in both the Architect event's message and its structured detail.
+ */
+test("a refine that drops an existing entity is reported as a removed entity in the Architect's impact summary, not silently", async () => {
+  const db = openDatabase(":memory:");
+  ensureProjectsTable(db);
+  ensureCheckpointsTable(db);
+  const previousSpec: ProductSpec = {
+    summary: "test",
+    personas: [],
+    roles: ["Admin"],
+    screens: [],
+    assumptions: [],
+    openQuestions: [],
+    entities: [
+      { name: "Customer", label: "Customer", fields: [{ name: "name", type: "text", required: true }] },
+      { name: "Deal", label: "Deal", fields: [{ name: "amount", type: "number", required: true }] },
+    ],
+  };
+  const nextSpec: ProductSpec = {
+    ...previousSpec,
+    entities: [previousSpec.entities[0]],
+  };
+  applyMigrations(db, "proj1", previousSpec);
+  const project = insertProject(db, {
+    id: "proj1",
+    ownerId: "user1",
+    name: "test",
+    description: "test",
+    spec: previousSpec,
+  });
+
+  const events = await collect(runBuildPipeline(db, project, { previousSpec, nextSpec, changeLabel: "Refine: drop deals" }));
+  const architectSuccess = events.find((e) => e.agent === "Architect" && e.status === "success");
+  assert.ok(architectSuccess);
+
+  assert.match(architectSuccess!.message, /Warning: 1 entities are no longer in the spec \(Deal\)/);
+
+  type ImpactDetail = { removedEntityNames: string[]; removedEntities: { name: string; label: string }[] };
+  const detail = architectSuccess!.detail as ImpactDetail;
+  assert.deepEqual(detail.removedEntityNames, ["Deal"]);
+  assert.deepEqual(detail.removedEntities, [{ name: "Deal", label: "Deal" }]);
+});
+
+/**
+ * Companion to the test above: an INITIAL build has no previousSpec, so
+ * there is nothing to have removed -- computeImpact must never report a
+ * phantom removal just because previousSpec is undefined.
+ */
+test("an initial build (no previous spec) never reports a removed entity", async () => {
+  const db = openDatabase(":memory:");
+  ensureProjectsTable(db);
+  ensureCheckpointsTable(db);
+  const spec: ProductSpec = {
+    summary: "test",
+    personas: [],
+    roles: ["Admin"],
+    screens: [],
+    assumptions: [],
+    openQuestions: [],
+    entities: [{ name: "Customer", label: "Customer", fields: [{ name: "name", type: "text", required: true }] }],
+  };
+  const project = insertProject(db, {
+    id: "proj1",
+    ownerId: "user1",
+    name: "test",
+    description: "test",
+    spec,
+  });
+
+  const events = await collect(runBuildPipeline(db, project, { nextSpec: spec, changeLabel: "Initial build" }));
+  const architectSuccess = events.find((e) => e.agent === "Architect" && e.status === "success");
+  assert.ok(architectSuccess);
+  assert.doesNotMatch(architectSuccess!.message, /Warning/);
+
+  type ImpactDetail = { removedEntityNames: string[] };
+  assert.deepEqual((architectSuccess!.detail as ImpactDetail).removedEntityNames, []);
 });
 
 test("Debug Agent reports failure clearly when its own fix attempt is also invalid", async () => {

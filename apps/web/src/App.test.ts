@@ -50,6 +50,32 @@ test("summarizeRefineImpact returns the no-summary key when no successful Archit
   assert.equal(summarizeRefineImpact(events, t), "preview.refineHistory.noSummary");
 });
 
+/**
+ * Regression test for a real gap found by round 377's Explore survey:
+ * pipeline.ts's computeImpact now reports entities the refine dropped
+ * from the spec (see pipeline.test.ts), but that detail is useless if
+ * nothing in the UI ever reads it. Confirms the refine-history chat
+ * summary (not just the live AI Team screen's own detail panel) surfaces
+ * a removed entity, not just newEntities/changedEntities.
+ */
+test("summarizeRefineImpact reports an entity the refine dropped from the spec, not just what it added or changed", () => {
+  const events: AgentStepEvent[] = [
+    {
+      agent: "Architect",
+      status: "success",
+      message: "…",
+      detail: {
+        newEntities: [],
+        changedEntities: [],
+        removedEntities: [{ name: "Deal", label: "Deal" }],
+      },
+    },
+  ];
+  const summary = summarizeRefineImpact(events, t);
+  assert.match(summary, /Deal/);
+  assert.match(summary, /build\.detail\.architect\.entityRemoved/);
+});
+
 function question(text: string): OpenQuestion {
   return { question: text, options: ["Yes", "No"] };
 }
