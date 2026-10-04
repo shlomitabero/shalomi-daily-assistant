@@ -24205,6 +24205,79 @@ stanza, print overflow-wrap / duplicate `enumValues` / relation-picker
 flash / `listRecords` pagination, `calendarIcs.ts`'s UTF-16-vs-UTF-8
 fold).
 
+### Round 388: Add a Reply button to inbound WhatsApp messages
+
+A fresh Explore survey (excluding every closed topic, including round
+387's own Business Twin fix and the deliberately-deferred `wakeRetry.ts`
+candidate) found a real, concrete UX gap in `apps/web/src/WhatsAppPanel.tsx`'s
+message log, verified by direct reading rather than taken on the
+survey's word.
+
+**The gap**: every log row rendered a delete button, and -- only for a
+failed outbound message -- a Retry button. An *inbound* message (a real
+customer's WhatsApp text) had no way to reply to it at all: the only
+path was scrolling up to the separate "send test message" form and
+manually copying the sender's phone number out of the log entry by
+hand. `handleRecentNumberClick` (already in the file) does exactly the
+needed `setTestTo(n)` call, but was only wired to the recent-numbers
+chips, never to an inbound log row itself. For a feature whose entire
+purpose is acting as a lightweight WhatsApp inbox, "see a customer's
+message but can't quickly reply to it" is a genuine, obvious gap, not a
+contrived one.
+
+**Fix**: added `handleReplyToMessage(m)` (`apps/web/src/WhatsAppPanel.tsx`),
+a one-line sibling of `handleRecentNumberClick` that calls
+`setTestTo(m.fromNumber)` -- the message's own sender, never `toNumber`
+(this project's own WhatsApp number). Added a "Reply" button to every
+inbound (`m.direction === "in"`) log row, shown only while connected
+(`s === "connected"`, the same gating the existing Retry button already
+uses, since sending requires an active connection), reusing the existing
+`secondary small` button class with no new CSS. Pure UI addition -- no
+schema change, no new API route, reuses the exact same `sendWhatsAppMessage`
+plumbing the test-send form already has. Added `whatsapp.log.reply` to
+both the Hebrew and English locale tables (`apps/web/src/i18n/language.ts`).
+
+Confirmed via `grep -n "WhatsApp" apps/api/src/codegen.ts` (round 384's
+lesson: check a domain actually exists in the exported app before
+assuming a port is needed) that the WhatsApp integration has no
+equivalent in codegen.ts's exported standalone app at all -- so this is
+live-app only, no port required.
+
+**Tests**: added a new test to `WhatsAppPanel.test.ts` mirroring the
+existing `prefillTo` test's render-and-interact convention (seed an
+inbound message via the mocked `/messages` GET, render the real
+component, click the real Reply button via `fireEvent`, assert the real
+"to" input updates, then submit the form and confirm the actual POST
+body uses the replied-to number) -- proving it's real component state
+wired to a real send, not a dead button. All 28 tests in
+`WhatsAppPanel.test.ts` pass.
+
+**Regression-proof**: backed up the 3 changed files
+(`WhatsAppPanel.tsx`, `WhatsAppPanel.test.ts`, `i18n/language.ts`),
+`git checkout --` reverted `WhatsAppPanel.tsx` and `language.ts` to
+HEAD while keeping the new test. Unlike rounds 385-387's pure-performance
+fixes, this is a real feature addition, so the revert produced a genuine,
+meaningful failure (not the honest-limitation pattern those rounds
+had to document): the new test failed with `0 !== 1` -- "expected exactly
+one real Reply button on the inbound row" -- while the other 27 tests
+in the file still passed. Restored both files from backup, confirmed
+byte-identical via `diff -q`, then reran the full build + full suite
+clean.
+
+Full suite green: **1353 tests** (`@forge/shared` 13, `@forge/spec-engine`
+93, `@forge/db` 99, `@forge/api` 379 unchanged, `@forge/web` 769 (+1 new))
+via `npm test` at the repo root, plus a clean full monorepo `npm run
+build`. Pushed as commit `559568f`.
+
+**Topic status**: this fix is closed. Everything else still open from
+rounds 379-387 remains open and unchanged (`wakeRetry.ts`'s
+retry-on-any-method duplicate-write risk -- needs its own idempotency-key
+design round, not a quick fix -- export staleness marker, collaborator
+invite notification, AI-label language mismatch, checkpoint pruning,
+`sanitizeZipEntryName` collision, render.yaml disk stanza, print
+overflow-wrap / duplicate `enumValues` / relation-picker flash /
+`listRecords` pagination, `calendarIcs.ts`'s UTF-16-vs-UTF-8 fold).
+
 ## Phase 4
 
 - Template/agent marketplace
