@@ -316,6 +316,24 @@ export function isEditableEventTarget(target: EventTarget | null): boolean {
 }
 
 /**
+ * The topbar's brand-logo "go home" link was already deliberately
+ * unclickable during a full-page build (view === "building") -- its own
+ * comment reasons BuildProgress's design only ever offers a way out on
+ * failure, and this link shouldn't silently disagree by giving a second,
+ * unguarded exit. That reasoning applies equally to a refine's own
+ * COMPACT BuildProgress, rendered inline on the "preview" view while
+ * refineRunning is true -- but the condition never checked refineRunning,
+ * so the logo stayed clickable throughout an active refine. Clicking it
+ * (handleGoHome) wipes `project` and swaps the view away, unmounting that
+ * compact BuildProgress while its streamRefine() request is still in
+ * flight -- the exact silent, unguarded exit the "building" check was
+ * written to prevent, just reached from a different view.
+ */
+export function canNavigateHome(view: "home" | "spec" | "building" | "preview", refineRunning: boolean): boolean {
+  return view !== "home" && view !== "building" && !refineRunning;
+}
+
+/**
  * A real OS-level alert for a WhatsApp message that arrives while the tab
  * is backgrounded -- the topbar unread badge (round 288/289) is invisible
  * then, which is exactly the moment a live WhatsApp channel most needs one.
@@ -1157,10 +1175,12 @@ function AppContent() {
               </>
             );
             // Deliberately not clickable while a build/refine is actively
-            // streaming (view === "building") -- BuildProgress's own design
-            // only ever offers a way out on failure, and this shouldn't
-            // silently disagree with that by giving a second, unguarded exit.
-            return view !== "home" && view !== "building" ? (
+            // streaming (view === "building", or a refine's own compact
+            // BuildProgress on "preview" -- see canNavigateHome's own
+            // comment) -- BuildProgress's own design only ever offers a way
+            // out on failure, and this shouldn't silently disagree with that
+            // by giving a second, unguarded exit.
+            return canNavigateHome(view, refineRunning) ? (
               <button type="button" className="brand-row brand-row-link" onClick={handleGoHome} title={t("topbar.goHome")}>
                 {brandContent}
               </button>

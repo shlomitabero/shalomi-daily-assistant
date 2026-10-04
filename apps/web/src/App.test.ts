@@ -5,6 +5,7 @@ import { transformSync } from "esbuild";
 import type { AgentStepEvent, Entity, Field, OpenQuestion, Project } from "@forge/shared";
 import type { WhatsAppMessageLogEntry } from "./api.js";
 import {
+  canNavigateHome,
   countAnsweredOpenQuestions,
   filterAndSortProjects,
   filterProjectsByStatus,
@@ -1284,6 +1285,42 @@ test("isEditableEventTarget recognizes INPUT/TEXTAREA/SELECT and contentEditable
     "a contentEditable div must count as editable even though its tagName isn't a form control",
   );
   assert.equal(isEditableEventTarget(fakeTarget({ tagName: "input" })), false, "a lowercase tagName must not match -- real DOM elements always report it uppercase");
+});
+
+/**
+ * Regression test: the topbar's brand-logo "go home" link was already
+ * deliberately disabled during a full-page build (view === "building"),
+ * but the condition never checked refineRunning -- so during a refine
+ * (view stays "preview", refineRunning is true, and a COMPACT
+ * BuildProgress streams inline on that same screen) the logo stayed
+ * clickable, letting handleGoHome unmount that compact BuildProgress
+ * while its streamRefine() request was still in flight. Covers every
+ * view, not just the two that mattered before, so a future new view
+ * doesn't silently slip through unconsidered either.
+ */
+test("canNavigateHome blocks the go-home link on \"home\" and \"building\", and on any view while a refine is running", () => {
+  assert.equal(canNavigateHome("home", false), false, "already home -- nothing to navigate to");
+  assert.equal(canNavigateHome("building", false), false, "a full-page build is actively streaming");
+  assert.equal(canNavigateHome("spec", false), true, "spec review has no streaming BuildProgress to interrupt");
+  assert.equal(canNavigateHome("preview", false), true, "an idle preview screen is safe to leave");
+  assert.equal(canNavigateHome("preview", true), false, "a refine's own compact BuildProgress is streaming on this exact view");
+  assert.equal(canNavigateHome("spec", true), false, "refineRunning must block every view, not just preview, in case a future view can also host a live refine");
+  assert.equal(canNavigateHome("building", true), false, "both guards agreeing is still blocked");
+});
+
+/**
+ * Static-wiring test: confirms the real brand-logo link in App.tsx's JSX
+ * actually calls canNavigateHome(view, refineRunning) to decide whether to
+ * render a clickable <button> vs. plain unclickable text, rather than some
+ * other condition that silently drifts from canNavigateHome's own rules.
+ */
+test("App's brand-logo link renders as a real button only when canNavigateHome(view, refineRunning) is true", () => {
+  const appSrc = readFileSync(new URL("./App.tsx", import.meta.url), "utf8");
+  assert.match(
+    appSrc,
+    /return canNavigateHome\(view, refineRunning\) \? \(\s*<button type="button" className="brand-row brand-row-link" onClick=\{handleGoHome\}/,
+    "expected the brand-logo link to be gated on canNavigateHome(view, refineRunning)",
+  );
 });
 
 /**
