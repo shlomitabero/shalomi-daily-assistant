@@ -23162,6 +23162,88 @@ rejected/deduplicated. The two relation-field-picker candidates from
 round 375 also remain open. Round 378 should do its own fresh survey
 unless one of these is specifically chosen.
 
+### Round 378: deleting a project while a build/refine is in flight raced the pipeline and could orphan SQLite tables permanently
+
+Per round 377's own instruction, ran a genuinely fresh Explore survey:
+collaborator permission-change edge cases, project-deletion cascading
+cleanup, dark mode/theme edge cases in newer panels, export ZIP README/
+render.yaml content accuracy, and Kanban drag-and-drop edge cases.
+
+Two areas came up empty:
+- **Collaborator permission changes**: sharing is deliberately flat
+  (owner vs. collaborator = identical full access, documented in
+  `collaborators.ts`'s own module comment) -- there is no granular
+  role/permission to change at all. Add/remove are both idempotent,
+  self-leave is correctly gated, and "last owner leaves" isn't a
+  reachable state since the owner is never a collaborator row.
+- **Dark mode / Kanban drag-and-drop**: checked `BusinessTwinPanel.tsx`,
+  `HistoryPanel.tsx`, and every raw hex/`rgb()` color in `styles.css`
+  outside the theme-variable blocks -- the handful found are either
+  deliberate (a WhatsApp QR code needs a real white quiet-zone
+  regardless of theme) or harmless overlays. All three named Kanban
+  drag-and-drop scenarios (same-column drop, dragging while the record
+  is filtered out, rapid successive drags) are already explicitly
+  handled with no corruption.
+
+One area surfaced a real finding set aside as a documentation/config gap,
+not implemented this round since it requires a product/hosting-advice
+judgment call rather than a pure code fix: the generated `render.yaml`
+(`apps/api/src/codegen.ts`) recommends Render's free plan with no `disk:`
+stanza, while the generated README tells the user `data.sqlite` can be
+"back[ed] up like any file" -- but Render's web services (free or paid,
+without an explicit disk mount) run on an ephemeral filesystem, so every
+redeploy or inactivity-driven spin-down silently wipes the database,
+directly contradicting the README's own claim. Logged as a candidate for
+a future round if a hosting-recommendation change is specifically wanted.
+
+**The fix (the candidate implemented)**: every mutating route that can
+race with a long-running pipeline (`/build`, `/refine`, `/answers`,
+checkpoint restore) already checks the in-memory `activePipelines` Set
+and rejects with 409 `PIPELINE_IN_PROGRESS` -- `DELETE /projects/:id` was
+the one mutating route that never had this guard, despite being the most
+destructive case. Independently traced the exact failure mode: a running
+pipeline (`runBuildPipeline`) keeps creating entity tables
+(`diffAndMigrate`) and inserting seed/checkpoint rows for a project id
+entirely independently of any other request, with no way to cancel it
+mid-flight. Deleting the project out from under it doesn't stop it --
+`deleteProject` drops the project row and every table it currently knows
+about, but the pipeline's own later writes either throw once
+`updateProjectSpec` can't find the row anymore (after its own SSE
+response headers were already sent, so the client just sees that stream
+die with no error), or, worse, successfully re-create an entity table
+that is now permanently orphaned with no project row ever pointing at it
+again -- a genuine disk-space leak nothing else in this app ever cleans
+up.
+
+**Fix**: added the same `activePipelines.has(project.id)` check the
+other four routes already use, before tearing anything down.
+
+Tests: 1 new in `app.test.ts`, reusing the existing `createGatedProvider`
+harness (the same technique round 370's restore-vs-refine race test
+used) to deterministically force a refine mid-flight, then confirming a
+concurrent delete is rejected with 409/`PIPELINE_IN_PROGRESS`, the
+project still genuinely exists afterward, the in-flight refine completes
+normally, and deleting again once it's truly done succeeds.
+
+Deliberate-break-and-restore: backed up both changed files to the
+scratchpad, reverted only `routes/projects.ts` to HEAD, ran the `api`
+workspace's tests directly and confirmed exactly the 1 expected failure
+(the new test), restored from backup, confirmed byte-identical via
+`diff -q`, then re-ran the full suite and a clean build one final time
+before committing.
+
+Full suite green: **1313 tests** (`@forge/shared` 13, `@forge/spec-engine`
+93 unchanged, `@forge/db` 98 unchanged, `@forge/api` 366 (+1 new),
+`@forge/web` 743 unchanged) via `npm test` at the repo root, plus a clean
+full monorepo `npm run build`. Pushed as commit `336cc51`.
+
+**Topic status**: this fix is closed. The render.yaml/README persistent-
+disk gap from this round remains open and un-queued, alongside the four
+weak-priority candidates from rounds 375 and 377 (print-layout
+`overflow-wrap`, duplicate `enumValues`, relation-field-picker flash,
+unbounded `listRecords`). Round 379 should do its own fresh survey unless
+one of these is specifically chosen.
+
 ## Phase 4
 
 - Template/agent marketplace
