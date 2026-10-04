@@ -1,5 +1,5 @@
 import type { Entity, EntityRecord, Project } from "@forge/shared";
-import { countRecords, getRecord, listRecords, type ForgeDatabase } from "@forge/db";
+import { getRecord, listRecords, type ForgeDatabase } from "@forge/db";
 import { isHebrewText } from "@forge/spec-engine";
 import { pickDisplayField, recordDisplayLabel } from "./displayField.js";
 
@@ -66,7 +66,7 @@ export interface BusinessTwin {
  * the honest count so a real person can decide whether that's expected.
  */
 function computeRelationCoverageObservations(
-  db: ForgeDatabase,
+  recordsByEntity: Map<string, EntityRecord[]>,
   project: Project,
   hebrew: boolean,
 ): { text: string; entityName: string }[] {
@@ -74,7 +74,7 @@ function computeRelationCoverageObservations(
   for (const entity of project.spec.entities) {
     const relationFields = entity.fields.filter((f) => f.type === "relation");
     if (relationFields.length === 0) continue;
-    const records = listRecords(db, project.id, entity);
+    const records = recordsByEntity.get(entity.name) ?? [];
     if (records.length === 0) continue;
 
     for (const field of relationFields) {
@@ -103,6 +103,7 @@ function computeRelationCoverageObservations(
  */
 function computeRelationHubObservation(
   db: ForgeDatabase,
+  recordsByEntity: Map<string, EntityRecord[]>,
   project: Project,
   hebrew: boolean,
 ): { text: string; entityName: string; recordId: number } | null {
@@ -115,7 +116,7 @@ function computeRelationHubObservation(
       (f) => f.type === "relation" && f.relationTo && entities.some((e) => e.name === f.relationTo),
     );
     if (relationFields.length === 0) continue;
-    const sourceRecords = listRecords(db, project.id, sourceEntity);
+    const sourceRecords = recordsByEntity.get(sourceEntity.name) ?? [];
     if (sourceRecords.length === 0) continue;
 
     for (const field of relationFields) {
@@ -216,7 +217,7 @@ function computeRelationHubObservation(
  * the observation text still matches a real record.
  */
 function computeDuplicateObservations(
-  db: ForgeDatabase,
+  recordsByEntity: Map<string, EntityRecord[]>,
   project: Project,
   hebrew: boolean,
 ): { text: string; entityName: string }[] {
@@ -224,7 +225,7 @@ function computeDuplicateObservations(
   for (const entity of project.spec.entities) {
     const displayField = pickDisplayField(entity);
     if (!displayField || displayField.type !== "text") continue;
-    const records = listRecords(db, project.id, entity);
+    const records = recordsByEntity.get(entity.name) ?? [];
     if (records.length < 2) continue;
 
     const groupsByNormalizedLabel = new Map<string, { count: number; displayLabel: string }>();
@@ -271,7 +272,7 @@ const DAY_MS = 24 * 60 * 60 * 1000;
  * computeBusinessTwin's own "unused" block for the identical reasoning.
  */
 function computeActivityObservations(
-  db: ForgeDatabase,
+  recordsByEntity: Map<string, EntityRecord[]>,
   project: Project,
   hebrew: boolean,
 ): { observations: string[]; jumpableObservations: { text: string; entityName: string }[] } {
@@ -282,7 +283,7 @@ function computeActivityObservations(
   const staleEntities: { name: string; label: string }[] = [];
 
   for (const entity of project.spec.entities) {
-    const records = listRecords(db, project.id, entity);
+    const records = recordsByEntity.get(entity.name) ?? [];
     if (records.length === 0) continue;
 
     let newestAgeMs = Infinity;
@@ -328,7 +329,7 @@ function computeActivityObservations(
  * computeDuplicateObservations both already use.
  */
 function computeNumericAggregateObservations(
-  db: ForgeDatabase,
+  recordsByEntity: Map<string, EntityRecord[]>,
   project: Project,
   hebrew: boolean,
 ): { text: string; entityName: string }[] {
@@ -336,7 +337,7 @@ function computeNumericAggregateObservations(
   for (const entity of project.spec.entities) {
     const numberFields = entity.fields.filter((f) => f.type === "number");
     if (numberFields.length === 0) continue;
-    const records = listRecords(db, project.id, entity);
+    const records = recordsByEntity.get(entity.name) ?? [];
     if (records.length === 0) continue;
 
     const entityLabel = entity.label ?? entity.name;
@@ -377,7 +378,7 @@ function computeNumericAggregateObservations(
  * own single-candidate case.
  */
 function computeEnumDistributionObservations(
-  db: ForgeDatabase,
+  recordsByEntity: Map<string, EntityRecord[]>,
   project: Project,
   hebrew: boolean,
 ): { text: string; entityName: string }[] {
@@ -385,7 +386,7 @@ function computeEnumDistributionObservations(
   for (const entity of project.spec.entities) {
     const enumFields = entity.fields.filter((f) => f.type === "enum" && f.enumValues && f.enumValues.length > 0);
     if (enumFields.length === 0) continue;
-    const records = listRecords(db, project.id, entity);
+    const records = recordsByEntity.get(entity.name) ?? [];
     if (records.length === 0) continue;
 
     const entityLabel = entity.label ?? entity.name;
@@ -417,10 +418,28 @@ function computeEnumDistributionObservations(
 
 export function computeBusinessTwin(db: ForgeDatabase, project: Project): BusinessTwin {
   const hebrew = isHebrewText(project.description);
+
+  // Every observation below (relation coverage, the relation hub, duplicate
+  // detection, numeric aggregates, enum distributions, activity staleness)
+  // used to call listRecords(db, project.id, entity) independently for the
+  // same entity -- up to 6 full-table SELECTs per entity, on every single
+  // Business Twin open, for a project with relation+text+number+enum fields
+  // all on the same entity. Fetched once per entity here instead and handed
+  // to every helper below, the same recordsByEntity-cache pattern already
+  // used by backup.ts's recordIndexByEntity and GlobalSearchPanel.tsx. The
+  // per-entity record count (entities[].count below) is derived from this
+  // same array's length rather than a separate countRecords() query --
+  // listRecords and countRecords always scan the identical set of rows, so
+  // this removes a 7th redundant round-trip per entity, not just the other 6.
+  const recordsByEntity = new Map<string, EntityRecord[]>();
+  for (const entity of project.spec.entities) {
+    recordsByEntity.set(entity.name, listRecords(db, project.id, entity));
+  }
+
   const entities: BusinessTwinEntityStat[] = project.spec.entities.map((entity) => ({
     name: entity.name,
     label: entity.label ?? entity.name,
-    count: countRecords(db, project.id, entity),
+    count: recordsByEntity.get(entity.name)?.length ?? 0,
   }));
 
   const totalRecords = entities.reduce((sum, e) => sum + e.count, 0);
@@ -463,12 +482,12 @@ export function computeBusinessTwin(db: ForgeDatabase, project: Project): Busine
         entityName: e.name,
       });
     }
-    mostLinkedRecord = computeRelationHubObservation(db, project, hebrew);
-    jumpableObservations.push(...computeRelationCoverageObservations(db, project, hebrew));
-    jumpableObservations.push(...computeDuplicateObservations(db, project, hebrew));
-    jumpableObservations.push(...computeNumericAggregateObservations(db, project, hebrew));
-    jumpableObservations.push(...computeEnumDistributionObservations(db, project, hebrew));
-    const activity = computeActivityObservations(db, project, hebrew);
+    mostLinkedRecord = computeRelationHubObservation(db, recordsByEntity, project, hebrew);
+    jumpableObservations.push(...computeRelationCoverageObservations(recordsByEntity, project, hebrew));
+    jumpableObservations.push(...computeDuplicateObservations(recordsByEntity, project, hebrew));
+    jumpableObservations.push(...computeNumericAggregateObservations(recordsByEntity, project, hebrew));
+    jumpableObservations.push(...computeEnumDistributionObservations(recordsByEntity, project, hebrew));
+    const activity = computeActivityObservations(recordsByEntity, project, hebrew);
     observations.push(...activity.observations);
     jumpableObservations.push(...activity.jumpableObservations);
   }

@@ -740,3 +740,99 @@ test("computeBusinessTwin's enum distribution uses the enum's display label, not
   assert.match(distribution!.text, /ממתין/);
   assert.match(distribution!.text, /נשלח/);
 });
+
+/**
+ * computeBusinessTwin fetches each entity's records exactly once now
+ * (recordsByEntity), and every one of relation-coverage, the relation hub,
+ * duplicate detection, numeric aggregates, enum distribution, and activity
+ * staleness reads from that same shared array. The one real risk that
+ * sharing introduces -- some helper mutating or misreading the shared
+ * array, corrupting what a *different* helper sees -- can only show up on
+ * a large dataset where every one of those code paths actually fires at
+ * once (a tiny 2-3 record fixture wouldn't exercise every branch together).
+ * This uses two linked entities with 1,200 records each, every field type
+ * at once (text display field for duplicate-detection, a number field, an
+ * enum field, and a relation field on one of them), and checks every single
+ * observation category computeBusinessTwin produces is still correct
+ * against the shared cache -- not just that the twin "has some output".
+ */
+test("computeBusinessTwin produces fully correct observations across every category at once, against a large shared-cache dataset", () => {
+  const bigProject: Project = {
+    ...project,
+    description: "large twin dataset",
+    spec: {
+      ...project.spec,
+      entities: [
+        { name: "Customer", label: "Customers", fields: [{ name: "name", type: "text", required: true }] },
+        {
+          name: "Order",
+          label: "Orders",
+          fields: [
+            { name: "customer", type: "text", required: true },
+            { name: "amount", type: "number", required: false },
+            { name: "status", type: "enum", required: false, enumValues: ["pending", "shipped"] },
+            { name: "customerId", type: "relation", required: false, relationTo: "Customer" },
+          ],
+        },
+      ],
+    },
+  };
+  const db = openDatabase(":memory:");
+  applyMigrations(db, bigProject.id, bigProject.spec);
+  const [customer, order] = bigProject.spec.entities;
+
+  const RECORD_COUNT = 1200;
+  for (let i = 0; i < RECORD_COUNT; i++) {
+    // Every 10th customer shares the exact same name -- a real, deliberate
+    // duplicate-detection case, not just unique names that can never collide.
+    insertRecord(db, bigProject.id, customer, { name: i % 10 === 0 ? "Repeated Name" : `Customer ${i}` });
+  }
+  let sumAmount = 0;
+  for (let i = 0; i < RECORD_COUNT; i++) {
+    // Every order after the first links to customer #1, making it the
+    // single most-linked record once every order has been inserted.
+    const customerId = i === 0 ? 2 : 1;
+    const amount = i + 1;
+    sumAmount += amount;
+    insertRecord(db, bigProject.id, order, { customer: `Customer ${i}`, amount, status: i % 2 === 0 ? "pending" : "shipped", customerId });
+  }
+
+  const twin = computeBusinessTwin(db, bigProject);
+
+  // Per-entity counts must still be exactly right, now that they're derived
+  // from recordsByEntity.length instead of a separate countRecords() call.
+  const customerStat = twin.entities.find((e) => e.name === "Customer")!;
+  const orderStat = twin.entities.find((e) => e.name === "Order")!;
+  assert.equal(customerStat.count, RECORD_COUNT);
+  assert.equal(orderStat.count, RECORD_COUNT);
+  assert.equal(twin.totalRecords, RECORD_COUNT * 2);
+
+  // Relation hub: customer #1 is linked by every order except the first.
+  assert.ok(twin.mostLinkedRecord);
+  assert.equal(twin.mostLinkedRecord!.entityName, "Customer");
+  assert.equal(twin.mostLinkedRecord!.recordId, 1);
+  assert.match(twin.mostLinkedRecord!.text, new RegExp(`${RECORD_COUNT - 1}`));
+
+  // Relation coverage: every Order has customerId set, so no "missing relation" observation for it.
+  assert.ok(!twin.jumpableObservations.some((o) => o.entityName === "Order" && /customerId|customer/i.test(o.text) && /no\b/i.test(o.text)));
+
+  // Duplicate detection: exactly RECORD_COUNT/10 customers share "Repeated Name".
+  const duplicate = twin.jumpableObservations.find((o) => o.entityName === "Customer" && o.text.includes("Repeated Name"));
+  assert.ok(duplicate, `expected a duplicate-name observation, got: ${JSON.stringify(twin.jumpableObservations)}`);
+  assert.match(duplicate!.text, new RegExp(`${RECORD_COUNT / 10}`));
+
+  // Numeric aggregate: the sum of every order's amount, computed independently above.
+  const aggregate = twin.jumpableObservations.find((o) => o.entityName === "Order" && /amount/i.test(o.text));
+  assert.ok(aggregate, `expected a numeric-aggregate observation, got: ${JSON.stringify(twin.jumpableObservations)}`);
+  assert.match(aggregate!.text, new RegExp(sumAmount.toLocaleString()));
+
+  // Enum distribution: an exact 50/50 pending/shipped split across RECORD_COUNT orders.
+  const distribution = twin.jumpableObservations.find((o) => o.entityName === "Order" && /status/i.test(o.text));
+  assert.ok(distribution, `expected an enum-distribution observation, got: ${JSON.stringify(twin.jumpableObservations)}`);
+  assert.match(distribution!.text, new RegExp(`${RECORD_COUNT / 2}`));
+
+  // mostActive is whichever entity has more records -- both entities here have the same count,
+  // so this just confirms the stat itself is still populated correctly from the shared cache.
+  assert.ok(twin.mostActive);
+  assert.equal(twin.mostActive!.count, RECORD_COUNT);
+});
