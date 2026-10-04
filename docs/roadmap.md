@@ -24710,6 +24710,106 @@ relation-picker flash / `listRecords` pagination, `calendarIcs.ts`'s
 UTF-16-vs-UTF-8 fold, the scheduling-conflict/double-booking detector,
 `BusinessTwinPanel.tsx`'s `loadTwin()` request-id guard).
 
+### Round 394: creating/updating a record with a relation value that no longer exists crashed with an unexplained 500
+
+**Survey**: a fresh Explore subagent was given round 393's hard-won
+concurrency lesson up front (single Node process, synchronous `node:sqlite`,
+"a race is only real if you can point to an actual `await` between the
+read and the write") so it wouldn't waste the round re-proposing another
+impossible race. It surveyed collaborator/auth routes, checkpoints,
+spec-engine, codegen.ts, and several panels not recently touched, and
+reported back with an already-reproduced finding (it built a small test
+harness and hit the live route directly before reporting). Independent
+verification before implementing: read `coerceValue`
+(`packages/db/src/repository.ts` lines 31-66) directly and confirmed it
+only checks a `relation` field's value is numeric (lines 40-46) -- it
+never checks the referenced row actually exists. Confirmed
+`PRAGMA foreign_keys = ON` in `packages/db/src/connection.ts` line 10, and
+read both the POST and PATCH entity-record routes in
+`apps/api/src/routes/projects.ts` to confirm neither had a try/catch
+around `insertRecord`/`updateRecord`, unlike the DELETE route for the same
+path.
+
+**The bug**: a relation field's real foreign-key check happens only at
+the SQLite level, which throws a bare `Error("FOREIGN KEY constraint
+failed")` -- not a `ValidationError`. `apps/api/src/app.ts`'s generic
+error handler (lines 49-65) only special-cases `HttpError`,
+`ValidationError`, and `NotFoundError`; anything else falls through to a
+plain 500 "Internal server error". The DELETE route for
+`/projects/:id/entities/:entityName/:recordId` already translates this
+exact constraint into an actionable 409 (round 292's own fix, with its
+own regression test and doc comment), but that translation was never
+extended to the POST (create) and PATCH (update) routes for the same
+path -- submitting a record whose relation field points at a row that no
+longer exists hit the untranslated case and surfaced as an unexplained
+500. This is reachable through the real UI, not just raw API misuse:
+`EntityPanel.tsx` builds a relation field's `<select>` options from
+`relatedRecords` fetched earlier in the component's lifecycle; if the
+referenced record is deleted in the meantime (by another collaborator, or
+this same browser's own deferred-delete undo window) before the user
+submits a create or edit that still references it, the request hits this
+exact path.
+
+**The fix**: wrapped both `insertRecord` and `updateRecord` calls in the
+POST and PATCH entity-record routes in a try/catch that checks for
+`err.message === "FOREIGN KEY constraint failed"` and translates it into
+a 400 `INVALID_RELATION_TARGET` naming the actual problem, mirroring the
+DELETE route's own established pattern exactly (same message-matching
+condition, same doc-comment style explaining why this is reachable).
+
+**codegen.ts (exported standalone app)**: checked before assuming this
+needed porting there too (the round-384 lesson). `codegen.ts`'s own
+generated POST/PATCH entity-record routes already wrap
+`insertRecord`/`updateRecord`-equivalent logic in a generic
+`catch (err) { res.status(400).json({ error: err.message }); }` --
+meaning they already return 400, not 500, for this exact case; the only
+gap there is a less-specific raw `"FOREIGN KEY constraint failed"`
+message instead of a friendly one. Since the severity that makes this a
+real bug (an unexplained 500) doesn't exist in the exported app, this was
+not ported -- it would be cosmetic message-wording only, not a
+correctness fix.
+
+**Tests**: a new regression test mirroring round 292's own DELETE test
+exactly (same `withServer`/`signup`/`authHeaders`/`collectSSE` harness,
+same "courier delivery" project fixture), covering both routes in one
+test: POST with a nonexistent `courierId` rejected with 400
+`INVALID_RELATION_TARGET`, then a valid create to get a real order, then
+PATCH-ing that same order to a nonexistent `courierId` also rejected with
+400 `INVALID_RELATION_TARGET` -- and confirming the rejected update didn't
+partially apply (the order still has its original, valid `courierId`
+afterward).
+
+**Regression-proof**: backed up `projects.ts` and `app.test.ts`, `git
+checkout --` reverted only `projects.ts` to HEAD while keeping the new
+test. The new test failed with the exact predicted mismatch --
+`500 !== 400` on the create-with-invalid-relation assertion -- proving
+the old code really did produce the unexplained 500. Restored
+`projects.ts` from backup, confirmed byte-identical via `diff -q`, then
+reran the full build + full suite clean.
+
+Full suite green: **1358 tests** (`@forge/shared` 13, `@forge/spec-engine`
+93, `@forge/db` 100, `@forge/web` 773, all unchanged; `@forge/api` 380,
++1 new) via `npm test` at the repo root, plus a clean full monorepo
+`npm run build`. Pushed as commit `cc9336d`.
+
+**Topic status**: this fix is closed. Everything else still open from
+rounds 378-393 remains open and unchanged (`wakeRetry.ts`'s
+retry-on-any-method duplicate-write risk, export staleness marker,
+collaborator invite notification, AI-label language mismatch, checkpoint
+pruning, `sanitizeZipEntryName` collision, render.yaml disk stanza, print
+overflow-wrap / duplicate `enumValues` / relation-picker flash /
+`listRecords` pagination, `calendarIcs.ts`'s UTF-16-vs-UTF-8 fold, the
+scheduling-conflict/double-booking detector, `BusinessTwinPanel.tsx`'s
+`loadTwin()` request-id guard). Three runner-up candidates from this
+round's survey were not pursued: `buildImportRecords`'s enum
+by-value-then-by-label resolution (`entityFormatting.ts:1075-1078`,
+theoretical collision risk, no contrived case observed), a staleness
+guard gap in `GlobalSearchPanel.tsx`'s `handleShowAll` (unlike `runSearch`'s
+own `searchRequestId`, low impact), and a genuine but self-inflicted
+`await`-point in `DELETE /auth/account`'s per-project WhatsApp-disconnect
+loop (same user, same token, mid-irreversible-delete -- not a cross-user
+issue).
+
 ## Phase 4
 
 - Template/agent marketplace
