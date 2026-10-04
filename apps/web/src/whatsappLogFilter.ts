@@ -38,3 +38,12 @@ export function setWhatsAppLogFilter(projectId: string, filter: WhatsAppLogFilte
   }
   return filter;
 }
+
+/** Same purge-on-project-delete pattern as whatsappRecentNumbers.ts's clearRecentWhatsAppNumbers -- see projectPreferenceCleanup.ts for why this exists. */
+export function clearWhatsAppLogFilter(projectId: string): void {
+  try {
+    localStorage.removeItem(storageKey(projectId));
+  } catch {
+    // localStorage can be unavailable (private mode) -- nothing to clear.
+  }
+}

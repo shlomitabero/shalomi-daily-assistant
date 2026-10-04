@@ -57,3 +57,13 @@ export function setViewMode(projectId: string, entityName: string, mode: Persist
   writeStore(store);
   return mode;
 }
+
+/** Same purge-on-project-delete pattern as groupByPreference.ts/columnWidths.ts and siblings -- see projectPreferenceCleanup.ts for why this exists. */
+export function purgeViewModeForProject(projectId: string): void {
+  const store = readStore();
+  const prefix = `${projectId}:`;
+  for (const key of Object.keys(store)) {
+    if (key.startsWith(prefix)) delete store[key];
+  }
+  writeStore(store);
+}

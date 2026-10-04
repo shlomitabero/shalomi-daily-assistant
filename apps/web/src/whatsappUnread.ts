@@ -29,6 +29,15 @@ export function setWhatsAppLastSeenId(projectId: string, messageId: string): voi
   }
 }
 
+/** Same purge-on-project-delete pattern as whatsappLogFilter.ts's clearWhatsAppLogFilter -- see projectPreferenceCleanup.ts for why this exists. */
+export function clearWhatsAppLastSeenId(projectId: string): void {
+  try {
+    localStorage.removeItem(storageKey(projectId));
+  } catch {
+    // localStorage can be unavailable (private mode) -- nothing to clear.
+  }
+}
+
 /**
  * Messages arrive DESC-ordered (newest first -- see WhatsAppPanel's own
  * handleLoadMore doc comment), so this walks from the newest message and
