@@ -4777,15 +4777,16 @@ test("the exported EntityView's matchesSearch resolves a relation field to its r
   const displayFieldHintsSrc = entityViewJsx.match(/const DISPLAY_FIELD_NAME_HINTS = .*;\n/)?.[0];
   const pickDisplayFieldSrc = entityViewJsx.match(/export function pickDisplayField\([\s\S]*?\n\}\n/)?.[0]?.replace("export ", "");
   const recordDisplayLabelSrc = entityViewJsx.match(/export function recordDisplayLabel\([\s\S]*?\n\}\n/)?.[0]?.replace("export ", "");
+  const relationIndexSrc = entityViewJsx.match(/const relationIndexCache = new WeakMap\(\);\nfunction relationIndexFor\(records\) \{[\s\S]*?\n\}\n/)?.[0];
   const relationDisplayLabelSrc = entityViewJsx.match(/function relationDisplayLabel\([\s\S]*?\n\}\n/)?.[0];
   const matchesSearchSrc = entityViewJsx.match(/export function matchesSearch\([\s\S]*?\n\}\n/)?.[0]?.replace("export ", "");
   assert.ok(
-    allEntitiesSrc && displayFieldHintsSrc && pickDisplayFieldSrc && recordDisplayLabelSrc && relationDisplayLabelSrc && matchesSearchSrc,
-    "expected to find ALL_ENTITIES/DISPLAY_FIELD_NAME_HINTS/pickDisplayField/recordDisplayLabel/relationDisplayLabel/matchesSearch in generated output",
+    allEntitiesSrc && displayFieldHintsSrc && pickDisplayFieldSrc && recordDisplayLabelSrc && relationIndexSrc && relationDisplayLabelSrc && matchesSearchSrc,
+    "expected to find ALL_ENTITIES/DISPLAY_FIELD_NAME_HINTS/pickDisplayField/recordDisplayLabel/relationIndexFor/relationDisplayLabel/matchesSearch in generated output",
   );
 
   const matchesSearch = new Function(
-    `${allEntitiesSrc}\n${displayFieldHintsSrc}\n${pickDisplayFieldSrc}\n${recordDisplayLabelSrc}\n${relationDisplayLabelSrc}\n${matchesSearchSrc}\nreturn matchesSearch;`,
+    `${allEntitiesSrc}\n${displayFieldHintsSrc}\n${pickDisplayFieldSrc}\n${recordDisplayLabelSrc}\n${relationIndexSrc}\n${relationDisplayLabelSrc}\n${matchesSearchSrc}\nreturn matchesSearch;`,
   )() as (record: unknown, fields: unknown[], query: string, relatedRecords: unknown) => boolean;
 
   const orderFields = [{ name: "item", type: "text" }, { name: "courierId", type: "relation", relationTo: "Courier" }];
@@ -4834,6 +4835,7 @@ test("the exported EntityView's sortRecordsMulti resolves a relation field to it
   const displayFieldHintsSrc = entityViewJsx.match(/const DISPLAY_FIELD_NAME_HINTS = .*;\n/)?.[0];
   const pickDisplayFieldSrc = entityViewJsx.match(/export function pickDisplayField\([\s\S]*?\n\}\n/)?.[0]?.replace("export ", "");
   const recordDisplayLabelSrc = entityViewJsx.match(/export function recordDisplayLabel\([\s\S]*?\n\}\n/)?.[0]?.replace("export ", "");
+  const relationIndexSrc = entityViewJsx.match(/const relationIndexCache = new WeakMap\(\);\nfunction relationIndexFor\(records\) \{[\s\S]*?\n\}\n/)?.[0];
   const relationDisplayLabelSrc = entityViewJsx.match(/function relationDisplayLabel\([\s\S]*?\n\}\n/)?.[0];
   const compareValuesSrc = entityViewJsx.match(/function compareValues\([\s\S]*?\n\}\n/)?.[0];
   const resolveSortValueSrc = entityViewJsx.match(/function resolveSortValue\([\s\S]*?\n\}\n/)?.[0];
@@ -4843,15 +4845,16 @@ test("the exported EntityView's sortRecordsMulti resolves a relation field to it
       displayFieldHintsSrc &&
       pickDisplayFieldSrc &&
       recordDisplayLabelSrc &&
+      relationIndexSrc &&
       relationDisplayLabelSrc &&
       compareValuesSrc &&
       resolveSortValueSrc &&
       sortRecordsMultiSrc,
-    "expected to find ALL_ENTITIES/DISPLAY_FIELD_NAME_HINTS/pickDisplayField/recordDisplayLabel/relationDisplayLabel/compareValues/resolveSortValue/sortRecordsMulti in generated output",
+    "expected to find ALL_ENTITIES/DISPLAY_FIELD_NAME_HINTS/pickDisplayField/recordDisplayLabel/relationIndexFor/relationDisplayLabel/compareValues/resolveSortValue/sortRecordsMulti in generated output",
   );
 
   const sortRecordsMulti = new Function(
-    `${allEntitiesSrc}\n${displayFieldHintsSrc}\n${pickDisplayFieldSrc}\n${recordDisplayLabelSrc}\n${relationDisplayLabelSrc}\n${compareValuesSrc}\n${resolveSortValueSrc}\n${sortRecordsMultiSrc}\nreturn sortRecordsMulti;`,
+    `${allEntitiesSrc}\n${displayFieldHintsSrc}\n${pickDisplayFieldSrc}\n${recordDisplayLabelSrc}\n${relationIndexSrc}\n${relationDisplayLabelSrc}\n${compareValuesSrc}\n${resolveSortValueSrc}\n${sortRecordsMultiSrc}\nreturn sortRecordsMulti;`,
   )() as (records: { id: number }[], sortKeys: { field: string; direction: string }[], fields: unknown[], relatedRecords: unknown) => { id: number }[];
 
   const orderFields = [{ name: "item", type: "text" }, { name: "courierId", type: "relation", relationTo: "Courier" }];
@@ -4873,6 +4876,51 @@ test("the exported EntityView's sortRecordsMulti resolves a relation field to it
     [3, 2, 1],
     "alphabetical by resolved courier name (Abe, Mona, Zed), not numeric by the raw stored id (1, 2, 3)",
   );
+});
+
+/**
+ * Round 386: the exported app's own relationDisplayLabel had the exact
+ * same O(N*M) records.find(...) scan round 385 fixed in this file's
+ * backup route, just with far more call sites (matchesSearch/
+ * sortRecordsMulti above, plus table/board/calendar cell rendering and
+ * CSV export). Fixed with a WeakMap cache keyed on the records array's
+ * own identity (relationIndexFor above), reused across an entire
+ * render/export pass without any call site changing. Confirms the real
+ * generated relationDisplayLabel still resolves correctly, and -- the
+ * actual risk this caching strategy introduces -- that it never
+ * cross-contaminates between two different record arrays that happen to
+ * share the same stored id (two different data refreshes), by calling
+ * it against two different arrays and then back against the first.
+ */
+test("the exported EntityView's relationDisplayLabel resolves correctly and its cache never cross-contaminates between two different record arrays sharing the same id", () => {
+  const entityViewJsx = generateExportFiles(project).find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+
+  const displayFieldHintsSrc = entityViewJsx.match(/const DISPLAY_FIELD_NAME_HINTS = .*;\n/)?.[0];
+  const pickDisplayFieldSrc = entityViewJsx.match(/export function pickDisplayField\([\s\S]*?\n\}\n/)?.[0]?.replace("export ", "");
+  const recordDisplayLabelSrc = entityViewJsx.match(/export function recordDisplayLabel\([\s\S]*?\n\}\n/)?.[0]?.replace("export ", "");
+  const relationIndexSrc = entityViewJsx.match(/const relationIndexCache = new WeakMap\(\);\nfunction relationIndexFor\(records\) \{[\s\S]*?\n\}\n/)?.[0];
+  const relationDisplayLabelSrc = entityViewJsx.match(/function relationDisplayLabel\([\s\S]*?\n\}\n/)?.[0];
+  assert.ok(
+    displayFieldHintsSrc && pickDisplayFieldSrc && recordDisplayLabelSrc && relationIndexSrc && relationDisplayLabelSrc,
+    "expected to find DISPLAY_FIELD_NAME_HINTS/pickDisplayField/recordDisplayLabel/relationIndexFor/relationDisplayLabel in generated output",
+  );
+
+  const relationDisplayLabel = new Function(
+    "ALL_ENTITIES",
+    `${displayFieldHintsSrc}\n${pickDisplayFieldSrc}\n${recordDisplayLabelSrc}\n${relationIndexSrc}\n${relationDisplayLabelSrc}\nreturn relationDisplayLabel;`,
+  )([{ name: "Courier", fields: [{ name: "name", type: "text" }] }]) as (
+    field: { relationTo: string },
+    value: unknown,
+    relatedRecords: Record<string, { id: number; name: string }[]>,
+  ) => string;
+
+  const field = { relationTo: "Courier" };
+  const arrayA = [{ id: 1, name: "Avi from A" }];
+  const arrayB = [{ id: 1, name: "Bar from B" }];
+  assert.equal(relationDisplayLabel(field, 1, { Courier: arrayA }), "Avi from A");
+  assert.equal(relationDisplayLabel(field, 1, { Courier: arrayB }), "Bar from B");
+  assert.equal(relationDisplayLabel(field, 1, { Courier: arrayA }), "Avi from A", "re-querying the first array must still resolve to its own record");
+  assert.equal(relationDisplayLabel(field, 999, { Courier: arrayA }), "#999", "no matching record falls back to the raw id");
 });
 
 // Ported from the Forge AI live preview's EntityPanel.tsx (round 206):

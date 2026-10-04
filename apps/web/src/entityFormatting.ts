@@ -735,6 +735,40 @@ export function recordDisplayLabel(entity: Entity, record: EntityRecord): string
 export type RelatedRecordsByEntity = Record<string, EntityRecord[]>;
 
 /**
+ * relationDisplayLabel is called once per relation field per row -- a
+ * table of N records with a relation field pointing at an entity with M
+ * records calls it N times, and every call used to `records.find(...)` a
+ * full linear scan of that *entire* M-length array, O(N*M) total (see
+ * round 385's identical fix for backup.ts's own copy of this exact
+ * pattern). Unlike backup.ts, no single call site here owns "the whole
+ * operation" to build an index once up front -- this function is called
+ * from many independent places (table/board/calendar cell rendering, CSV
+ * export, global search, sorting) across EntityPanel.tsx, calendarIcs.ts,
+ * and this file itself. Rather than threading a pre-built index through
+ * every one of those call sites, this caches the id->record Map per
+ * *array instance* in a WeakMap: `relatedRecords[entityName]` is fetched
+ * once per data refresh (see EntityPanel.tsx's own `relatedRecords`
+ * state) and that exact same array reference is then passed to every
+ * call within that refresh cycle, so the first call pays the O(M) cost
+ * of building the index and every subsequent call against the same
+ * array is O(1) -- turning the whole render/export pass into O(N+M)
+ * without changing this function's signature or any caller at all. The
+ * WeakMap keys on the array object itself, so a later data refresh that
+ * replaces the array (a genuinely new reference) naturally invalidates
+ * the cache instead of ever serving stale results, and the old entry is
+ * garbage-collected once nothing else references that array.
+ */
+const relationIndexCache = new WeakMap<EntityRecord[], Map<number, EntityRecord>>();
+function relationIndexFor(records: EntityRecord[]): Map<number, EntityRecord> {
+  let index = relationIndexCache.get(records);
+  if (!index) {
+    index = new Map(records.map((r) => [Number(r.id), r]));
+    relationIndexCache.set(records, index);
+  }
+  return index;
+}
+
+/**
  * Resolves a relation field's stored id into the human label it should
  * display, using whichever related entity/records are available -- the
  * related entity may legitimately be absent from this project's spec (an
@@ -751,7 +785,7 @@ export function relationDisplayLabel(
   const targetEntity = field.relationTo ? allEntities.find((e) => e.name === field.relationTo) : undefined;
   const records = field.relationTo ? relatedRecords[field.relationTo] : undefined;
   if (!targetEntity || !records) return `#${value}`;
-  const match = records.find((r) => Number(r.id) === Number(value));
+  const match = relationIndexFor(records).get(Number(value));
   return match ? recordDisplayLabel(targetEntity, match) : `#${value}`;
 }
 

@@ -1273,6 +1273,30 @@ export function recordDisplayLabel(entity, record) {
   return String(value);
 }
 
+// relationDisplayLabel is called once per relation field per row (table/
+// board/calendar cells, CSV export, sorting, search) -- it used to scan
+// the related entity's entire record array with records.find(...) on
+// every single call, O(N*M) total for N rows and M related records (the
+// same pattern round 385 fixed in this file's own backup route). Rather
+// than threading a pre-built index through every call site, this caches
+// the id->record Map per records array instance in a WeakMap: the same
+// relatedRecords[entityName] array reference is reused across an entire
+// render/export pass (see this component's own relatedRecords state,
+// fetched once per refresh), so only the first call against a given
+// array pays the O(M) index-build cost -- every later call against that
+// same array is O(1). Keying on the array object itself means a later
+// refresh that replaces the array naturally invalidates the cache
+// instead of ever serving stale data.
+const relationIndexCache = new WeakMap();
+function relationIndexFor(records) {
+  let index = relationIndexCache.get(records);
+  if (!index) {
+    index = new Map(records.map((r) => [Number(r.id), r]));
+    relationIndexCache.set(records, index);
+  }
+  return index;
+}
+
 // Resolves a relation field's stored id into the human label it should
 // display. The related entity may legitimately be absent from this
 // project's spec (an optional relation whose target wasn't part of the
@@ -1283,7 +1307,7 @@ function relationDisplayLabel(field, value, relatedRecords) {
   const targetEntity = field.relationTo ? ALL_ENTITIES.find((e) => e.name === field.relationTo) : null;
   const records = field.relationTo ? relatedRecords[field.relationTo] : null;
   if (!targetEntity || !records) return \`#\${value}\`;
-  const match = records.find((r) => Number(r.id) === Number(value));
+  const match = relationIndexFor(records).get(Number(value));
   return match ? recordDisplayLabel(targetEntity, match) : \`#\${value}\`;
 }
 

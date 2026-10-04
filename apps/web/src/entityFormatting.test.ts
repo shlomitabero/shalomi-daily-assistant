@@ -31,6 +31,7 @@ import {
   pickDisplayField,
   recordDisplayLabel,
   recordsToCsv,
+  relationDisplayLabel,
   restoreRecordAt,
   searchEntityRecords,
   selectedOrAllRecords,
@@ -951,6 +952,60 @@ test("recordDisplayLabel shows the display field's value, falling back to #id wh
   assert.equal(recordDisplayLabel(courier, { id: 5, name: "Yossi Cohen", phone: "" }), "Yossi Cohen");
   assert.equal(recordDisplayLabel(courier, { id: 7, name: "", phone: "050-1" }), "#7");
   assert.equal(recordDisplayLabel({ name: "Empty", fields: [] }, { id: 9 }), "#9");
+});
+
+const courierEntity: Entity = {
+  name: "Courier",
+  fields: [{ name: "name", type: "text", required: true }],
+};
+const orderCourierField: Field = { name: "courierId", type: "relation", required: false, relationTo: "Courier" };
+
+test("relationDisplayLabel resolves a relation field to the related record's display label, and falls back to #id when there's no match or no related entity/records at all", () => {
+  const couriers = [{ id: 42, name: "Avi Mizrahi" }];
+  assert.equal(relationDisplayLabel(orderCourierField, 42, [courierEntity], { Courier: couriers }), "Avi Mizrahi");
+  assert.equal(relationDisplayLabel(orderCourierField, 999, [courierEntity], { Courier: couriers }), "#999", "no matching record");
+  assert.equal(relationDisplayLabel(orderCourierField, 42, [], { Courier: couriers }), "#42", "target entity missing from allEntities");
+  assert.equal(relationDisplayLabel(orderCourierField, 42, [courierEntity], {}), "#42", "no records at all for the related entity");
+  assert.equal(relationDisplayLabel(orderCourierField, null, [courierEntity], { Courier: couriers }), "", "a null value is blank, not '#null'");
+});
+
+/**
+ * Regression test for round 386: relationDisplayLabel is called once per
+ * relation field per row (table/board/calendar cells, CSV export, sorting,
+ * global search) -- a table of N records with a relation field pointing at
+ * an entity with M records used to call `records.find(...)` a full linear
+ * scan of that entire M-length array, N separate times, O(N*M) total (the
+ * exact same pattern round 385 fixed in backup.ts's own copy, just with
+ * many more call sites here). Fixed with a WeakMap cache keyed on the
+ * `records` array's own identity, built the first time a given array is
+ * seen and reused for every subsequent lookup against that same array --
+ * no call site changed, no signature changed. This proves the cache keys
+ * correctly on array *identity*, not on relationTo's entity name or any
+ * other derived key: two different array instances (simulating two
+ * different data refreshes, or two different relation fields that happen
+ * to point at entities sharing an id) must never cross-contaminate, and a
+ * large dataset (2000 couriers) must still resolve correctly at both
+ * extremes -- the first id inserted and the last, the position a
+ * corrupted or short-circuited cache would most likely get wrong.
+ */
+test("relationDisplayLabel's internal cache never cross-contaminates between two different record arrays, even when they share the same stored ids", () => {
+  const arrayA = [{ id: 1, name: "Avi from A" }];
+  const arrayB = [{ id: 1, name: "Bar from B" }];
+  assert.equal(relationDisplayLabel(orderCourierField, 1, [courierEntity], { Courier: arrayA }), "Avi from A");
+  assert.equal(relationDisplayLabel(orderCourierField, 1, [courierEntity], { Courier: arrayB }), "Bar from B");
+  // Re-querying the first array again afterward must still resolve to its own record, not the second array's.
+  assert.equal(relationDisplayLabel(orderCourierField, 1, [courierEntity], { Courier: arrayA }), "Avi from A");
+});
+
+test("relationDisplayLabel resolves correctly across a large dataset (thousands of records), not just a tiny fixture", () => {
+  const courierCount = 2000;
+  const couriers = Array.from({ length: courierCount }, (_, i) => ({ id: i + 1, name: `Courier ${i}` }));
+  assert.equal(relationDisplayLabel(orderCourierField, 1, [courierEntity], { Courier: couriers }), "Courier 0", "the first id inserted");
+  assert.equal(
+    relationDisplayLabel(orderCourierField, courierCount, [courierEntity], { Courier: couriers }),
+    `Courier ${courierCount - 1}`,
+    "the last id inserted",
+  );
 });
 
 test("parseCsv splits plain comma-separated rows, dropping a single trailing blank line", () => {
