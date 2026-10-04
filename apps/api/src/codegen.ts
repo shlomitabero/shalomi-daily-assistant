@@ -1839,6 +1839,17 @@ function findDateField(fields) {
   return named || dateFields[0];
 }
 
+// Picks the field that pairs with startField as a date *range*'s own end
+// (e.g. Rental's startDate/endDate) -- matches by name hint, among the
+// entity's OTHER date fields, never matching startField back to itself.
+// Returns null for the overwhelmingly common case of a plain point-in-time
+// date field with no end.
+const END_DATE_FIELD_NAME_HINTS = ["enddate", "returndate", "checkoutdate", "untildate", "todate"];
+function findEndDateField(fields, startField) {
+  const otherDateFields = fields.filter((f) => f.type === "date" && f.name !== startField.name);
+  return otherDateFields.find((f) => END_DATE_FIELD_NAME_HINTS.includes(f.name.toLowerCase())) || null;
+}
+
 function isSameCalendarDay(a, b) {
   return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
 }
@@ -1882,7 +1893,7 @@ function formatDateForInput(date) {
 // so every week is a full row. Each day carries the records whose date
 // field falls on that calendar date; a record with an unparseable date is
 // simply never matched, not an error.
-function buildCalendarMonth(records, field, year, month) {
+function buildCalendarMonth(records, field, year, month, endField) {
   const firstOfMonth = new Date(year, month, 1);
   const gridStart = new Date(year, month, 1 - firstOfMonth.getDay());
   const days = [];
@@ -1892,8 +1903,18 @@ function buildCalendarMonth(records, field, year, month) {
     const dayRecords = records.filter((r) => {
       const raw = r[field.name];
       if (raw === null || raw === undefined || raw === "") return false;
-      const recordDate = parseFieldDate(String(raw));
-      return !Number.isNaN(recordDate.getTime()) && isSameCalendarDay(recordDate, date);
+      const startDate = parseFieldDate(String(raw));
+      if (Number.isNaN(startDate.getTime())) return false;
+      if (endField) {
+        const rawEnd = r[endField.name];
+        if (rawEnd !== null && rawEnd !== undefined && rawEnd !== "") {
+          const endDate = parseFieldDate(String(rawEnd));
+          if (!Number.isNaN(endDate.getTime()) && endDate.getTime() >= startDate.getTime()) {
+            return date.getTime() >= startDate.getTime() && date.getTime() <= endDate.getTime();
+          }
+        }
+      }
+      return isSameCalendarDay(startDate, date);
     });
     days.push({ date, inCurrentMonth: date.getMonth() === month, records: dayRecords });
   }
@@ -1946,9 +1967,9 @@ function foldIcsLine(line) {
 // every field other than the date/label fields becomes a "Label: value"
 // line in DESCRIPTION, and a relation field resolves to its real display
 // label rather than a raw id.
-function buildCalendarIcs(entity, dateField, labelField, records, relatedRecords, now) {
+function buildCalendarIcs(entity, dateField, labelField, records, relatedRecords, now, endField) {
   const dtstamp = formatIcsTimestamp(now || new Date());
-  const descriptionFields = entity.fields.filter((f) => f.name !== dateField.name && f.name !== labelField.name);
+  const descriptionFields = entity.fields.filter((f) => f.name !== dateField.name && f.name !== labelField.name && f.name !== (endField && endField.name));
   const lines = ["BEGIN:VCALENDAR", "VERSION:2.0", \`PRODID:-//Forge AI//\${icsEscapeText(entity.label || entity.name)}//EN\`, "CALSCALE:GREGORIAN"];
   for (const record of records) {
     const raw = record[dateField.name];
@@ -1959,6 +1980,17 @@ function buildCalendarIcs(entity, dateField, labelField, records, relatedRecords
     if (Number.isNaN(start.getTime())) continue;
     const end = new Date(start);
     end.setDate(end.getDate() + 1);
+    if (endField) {
+      const rawEnd = record[endField.name];
+      const endMatch = rawEnd === null || rawEnd === undefined || rawEnd === "" ? null : /^(\\d{4})-(\\d{2})-(\\d{2})/.exec(String(rawEnd));
+      if (endMatch) {
+        const explicitEnd = new Date(Number(endMatch[1]), Number(endMatch[2]) - 1, Number(endMatch[3]));
+        if (!Number.isNaN(explicitEnd.getTime()) && explicitEnd.getTime() >= start.getTime()) {
+          end.setTime(explicitEnd.getTime());
+          end.setDate(end.getDate() + 1);
+        }
+      }
+    }
     const labelRaw = labelField.type === "enum" ? ((labelField.enumLabels && labelField.enumLabels[record[labelField.name]]) || record[labelField.name]) : record[labelField.name];
     const summary = String(labelRaw ?? entity.label ?? entity.name);
     const descriptionLines = descriptionFields
@@ -1988,10 +2020,10 @@ function buildCalendarIcs(entity, dateField, labelField, records, relatedRecords
 // shape every entity gets. Each day cell shows a chip per record landing on
 // that date (click to edit), with a "+N more" overflow instead of an
 // ever-growing cell.
-function CalendarView({ entity, dateField, records, month, onPrevMonth, onNextMonth, onToday, onEdit, onDayClick, onReschedule, moveErrorId }) {
+function CalendarView({ entity, dateField, endDateField, records, month, onPrevMonth, onNextMonth, onToday, onEdit, onDayClick, onReschedule, moveErrorId }) {
   const year = month.getFullYear();
   const monthIndex = month.getMonth();
-  const days = useMemo(() => buildCalendarMonth(records, dateField, year, monthIndex), [records, dateField, year, monthIndex]);
+  const days = useMemo(() => buildCalendarMonth(records, dateField, year, monthIndex, endDateField), [records, dateField, endDateField, year, monthIndex]);
   const [dragOverDay, setDragOverDay] = useState(null);
   const [expandedDays, setExpandedDays] = useState(new Set());
   const monthLabel = month.toLocaleDateString(undefined, { month: "long", year: "numeric" });
@@ -2339,6 +2371,7 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
   const boardField = useMemo(() => findBoardField(entity.fields), [entity.fields]);
   const filterableEnumFields = useMemo(() => findFilterableEnumFields(entity.fields), [entity.fields]);
   const dateField = useMemo(() => findDateField(entity.fields), [entity.fields]);
+  const endDateField = useMemo(() => (dateField ? findEndDateField(entity.fields, dateField) : null), [entity.fields, dateField]);
   const relationTargets = useMemo(() => {
     const names = entity.fields.filter((f) => f.type === "relation" && f.relationTo).map((f) => f.relationTo);
     return [...new Set(names)].filter((name) => ALL_ENTITIES.some((e) => e.name === name));
@@ -2634,9 +2667,9 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
   // genuinely empty, not just when the whole entity has no records.
   const icsMonthRecords = useMemo(() => {
     if (!dateField) return [];
-    const days = buildCalendarMonth(visibleRecords, dateField, calendarMonth.getFullYear(), calendarMonth.getMonth());
+    const days = buildCalendarMonth(visibleRecords, dateField, calendarMonth.getFullYear(), calendarMonth.getMonth(), endDateField);
     return days.filter((d) => d.inCurrentMonth).flatMap((d) => d.records);
-  }, [visibleRecords, dateField, calendarMonth]);
+  }, [visibleRecords, dateField, endDateField, calendarMonth]);
 
   // Scrolls the just-highlighted row into view once it's actually in the
   // rendered table -- runs after visibleRecords updates too, since the row
@@ -2983,15 +3016,19 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
     setBulkEditValue(field && field.type === "boolean" ? false : "");
   }
 
-  async function handleMove(id, fieldName, value) {
+  async function handleMoveFields(id, fields) {
     setError(null);
     try {
-      await updateRecord(entity.name, id, { [fieldName]: value });
+      await updateRecord(entity.name, id, fields);
       await refresh();
     } catch (err) {
       setError(err.message);
       setMoveErrorId(id);
     }
+  }
+
+  async function handleMove(id, fieldName, value) {
+    await handleMoveFields(id, { [fieldName]: value });
   }
 
   // Double-clicking a table cell (any field except relation, see
@@ -3056,13 +3093,31 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
   // The calendar view's own drag-and-drop, the direct sibling of
   // handleCardDrop above -- dragging a record's chip onto a different day
   // reschedules it there without opening the edit form. Reuses the same
-  // handleMove PATCH+refresh, just addressed by the date field's own name
-  // and a freshly-formatted "YYYY-MM-DD" value. Mirrors the live preview's
-  // own EntityPanel.tsx (round 211).
+  // handleMoveFields PATCH+refresh, just addressed by the date field's own
+  // name and a freshly-formatted "YYYY-MM-DD" value. For a ranged entity
+  // (e.g. Rental's startDate/endDate), shifts endDate by the same number of
+  // days so the booking's real duration survives the drag instead of
+  // silently becoming an invalid (end before start) range. Mirrors the
+  // live preview's own EntityPanel.tsx (round 211, extended round 383).
   function handleCalendarDrop(record, dateFieldName, date) {
     const value = formatDateForInput(date);
     if (String(record[dateFieldName] ?? "") === value) return;
-    void handleMove(record.id, dateFieldName, value);
+    const fields = { [dateFieldName]: value };
+    if (endDateField && dateField && dateFieldName === dateField.name) {
+      const rawOldStart = record[dateFieldName];
+      const rawEnd = record[endDateField.name];
+      if (rawOldStart !== null && rawOldStart !== undefined && rawOldStart !== "" && rawEnd !== null && rawEnd !== undefined && rawEnd !== "") {
+        const oldStart = parseFieldDate(String(rawOldStart));
+        const oldEnd = parseFieldDate(String(rawEnd));
+        if (!Number.isNaN(oldStart.getTime()) && !Number.isNaN(oldEnd.getTime()) && oldEnd.getTime() >= oldStart.getTime()) {
+          const deltaDays = Math.round((date.getTime() - oldStart.getTime()) / (24 * 60 * 60 * 1000));
+          const newEnd = new Date(oldEnd);
+          newEnd.setDate(newEnd.getDate() + deltaDays);
+          fields[endDateField.name] = formatDateForInput(newEnd);
+        }
+      }
+    }
+    void handleMoveFields(record.id, fields);
   }
 
   // Persists the current search box value to this entity's recent list once
@@ -3128,7 +3183,7 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
   function handleExportIcs() {
     if (!dateField) return;
     const labelField = calendarLabelField(entity, dateField);
-    const ics = buildCalendarIcs(entity, dateField, labelField, icsMonthRecords, relatedRecords);
+    const ics = buildCalendarIcs(entity, dateField, labelField, icsMonthRecords, relatedRecords, new Date(), endDateField);
     const blob = new Blob([ics], { type: "text/calendar;charset=utf-8" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
@@ -3597,6 +3652,7 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
             <CalendarView
               entity={entity}
               dateField={dateField}
+              endDateField={endDateField}
               records={visibleRecords}
               month={calendarMonth}
               onPrevMonth={() => setCalendarMonth((m) => new Date(m.getFullYear(), m.getMonth() - 1, 1))}

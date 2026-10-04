@@ -51,6 +51,13 @@ function foldIcsLine(line: string): string {
  * search/filter is on), so the exported file matches the screen. Every
  * field other than the date/label fields becomes a "Label: value" line in
  * DESCRIPTION, so an event isn't just a bare name once it's out of this app.
+ *
+ * When `endField` is given and holds a valid date on/after the record's
+ * start (e.g. a Rental's endDate), the event spans through that day instead
+ * of always being a single day long -- RFC 5545's all-day DTEND is
+ * exclusive, so it's set to one day *after* the end field's own date, not
+ * the end date itself. A missing/invalid/earlier-than-start end value falls
+ * back to the previous single-day behavior.
  */
 export function buildCalendarIcs(
   entity: Entity,
@@ -60,9 +67,12 @@ export function buildCalendarIcs(
   allEntities: Entity[],
   relatedRecords: RelatedRecordsByEntity,
   now: Date = new Date(),
+  endField?: Field | null,
 ): string {
   const dtstamp = formatIcsTimestamp(now);
-  const descriptionFields = entity.fields.filter((f) => f.name !== dateField.name && f.name !== labelField.name);
+  const descriptionFields = entity.fields.filter(
+    (f) => f.name !== dateField.name && f.name !== labelField.name && f.name !== endField?.name,
+  );
   const lines: string[] = [
     "BEGIN:VCALENDAR",
     "VERSION:2.0",
@@ -79,6 +89,18 @@ export function buildCalendarIcs(
     if (Number.isNaN(start.getTime())) continue;
     const end = new Date(start);
     end.setDate(end.getDate() + 1);
+    if (endField) {
+      const rawEnd = record[endField.name];
+      const endMatch = rawEnd === null || rawEnd === undefined || rawEnd === "" ? null : /^(\d{4})-(\d{2})-(\d{2})/.exec(String(rawEnd));
+      if (endMatch) {
+        const [, ey, em, ed] = endMatch;
+        const explicitEnd = new Date(Number(ey), Number(em) - 1, Number(ed));
+        if (!Number.isNaN(explicitEnd.getTime()) && explicitEnd.getTime() >= start.getTime()) {
+          end.setTime(explicitEnd.getTime());
+          end.setDate(end.getDate() + 1);
+        }
+      }
+    }
     const labelRaw = labelField.type === "enum" ? (labelField.enumLabels?.[String(record[labelField.name])] ?? record[labelField.name]) : record[labelField.name];
     const summary = String(labelRaw ?? entity.label ?? entity.name);
     const descriptionLines = descriptionFields

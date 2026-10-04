@@ -28,6 +28,7 @@ import {
   computeNextFocusedRowId,
   findBoardField,
   findDateField,
+  findEndDateField,
   findFilterableEnumFields,
   findPhoneField,
   formatDateForInput,
@@ -47,6 +48,7 @@ import {
   LOCALE,
   matchesSearch,
   parseCsv,
+  parseFieldDate,
   recordDisplayLabel,
   relationDisplayLabel,
   recordsToCsv,
@@ -446,6 +448,7 @@ function BoardCard({
 function CalendarView({
   entity,
   dateField,
+  endDateField,
   records,
   month,
   lang,
@@ -460,6 +463,7 @@ function CalendarView({
 }: {
   entity: Entity;
   dateField: Field;
+  endDateField?: Field | null;
   records: EntityRecord[];
   month: Date;
   lang: Lang;
@@ -475,8 +479,8 @@ function CalendarView({
   const year = month.getFullYear();
   const monthIndex = month.getMonth();
   const days = useMemo(
-    () => buildCalendarMonth(records, dateField, year, monthIndex),
-    [records, dateField, year, monthIndex],
+    () => buildCalendarMonth(records, dateField, year, monthIndex, endDateField),
+    [records, dateField, endDateField, year, monthIndex],
   );
   const [dragOverDay, setDragOverDay] = useState<string | null>(null);
   const [expandedDays, setExpandedDays] = useState<Set<string>>(new Set());
@@ -860,6 +864,7 @@ export function EntityPanel({
   const boardField = useMemo(() => findBoardField(entity.fields), [entity.fields]);
   const filterableEnumFields = useMemo(() => findFilterableEnumFields(entity.fields), [entity.fields]);
   const dateField = useMemo(() => findDateField(entity.fields), [entity.fields]);
+  const endDateField = useMemo(() => (dateField ? findEndDateField(entity.fields, dateField) : null), [entity.fields, dateField]);
   const phoneField = useMemo(() => findPhoneField(entity.fields), [entity.fields]);
   const relationTargets = useMemo(() => {
     const names = entity.fields
@@ -1272,9 +1277,9 @@ export function EntityPanel({
   /** Exactly the records the calendar grid's current month is showing -- the same computation handleExportIcs uses, kept separate so the export button can disable itself when the visible month is genuinely empty, not just when the whole entity has no records. */
   const icsMonthRecords = useMemo(() => {
     if (!dateField) return [];
-    const days = buildCalendarMonth(visibleRecords, dateField, calendarMonth.getFullYear(), calendarMonth.getMonth());
+    const days = buildCalendarMonth(visibleRecords, dateField, calendarMonth.getFullYear(), calendarMonth.getMonth(), endDateField);
     return days.filter((d) => d.inCurrentMonth).flatMap((d) => d.records);
-  }, [visibleRecords, dateField, calendarMonth]);
+  }, [visibleRecords, dateField, endDateField, calendarMonth]);
 
   // Grouping the plain table by a small-value-space field (enum/boolean) --
   // distinct from the Kanban board view (which always groups by exactly one
@@ -1795,7 +1800,7 @@ export function EntityPanel({
   function handleExportIcs() {
     if (!dateField) return;
     const labelField = calendarChipLabelField(entity, dateField);
-    const ics = buildCalendarIcs(entity, dateField, labelField, icsMonthRecords, allEntities, relatedRecords);
+    const ics = buildCalendarIcs(entity, dateField, labelField, icsMonthRecords, allEntities, relatedRecords, new Date(), endDateField);
     downloadCalendarIcs(ics, entity.name);
   }
 
@@ -1854,15 +1859,19 @@ export function EntityPanel({
     }
   }
 
-  async function handleMove(id: number, fieldName: string, value: string) {
+  async function handleMoveFields(id: number, fields: Record<string, string>) {
     setError(null);
     try {
-      await updateRecord(projectId, entity.name, id, { [fieldName]: value });
+      await updateRecord(projectId, entity.name, id, fields);
       await refresh();
     } catch (err) {
       setError((err as Error).message);
       setMoveErrorId(id);
     }
+  }
+
+  async function handleMove(id: number, fieldName: string, value: string) {
+    await handleMoveFields(id, { [fieldName]: value });
   }
 
   /**
@@ -1893,14 +1902,36 @@ export function EntityPanel({
    * view's handleCardDrop above -- dragging a record's chip onto a
    * different day reschedules it there (e.g. moving an appointment from
    * Tuesday to Thursday) without opening the edit form. Reuses the exact
-   * same handleMove PATCH+refresh, just addressed by the date field's own
-   * name and a freshly-formatted "YYYY-MM-DD" value instead of a board
+   * same handleMoveFields PATCH+refresh, just addressed by the date field's
+   * own name and a freshly-formatted "YYYY-MM-DD" value instead of a board
    * enum value.
+   *
+   * For a ranged entity (e.g. Rental's startDate/endDate), dragging only
+   * the start day while leaving endDate untouched could push start past
+   * end -- an invalid range that buildCalendarMonth/buildCalendarIcs would
+   * then silently stop treating as a range at all. Shifting endDate by the
+   * same number of days keeps the booking's actual duration, which is what
+   * dragging a multi-day event on a real calendar app does too.
    */
   function handleCalendarDrop(record: EntityRecord, dateFieldName: string, date: Date) {
     const value = formatDateForInput(date);
     if (String(record[dateFieldName] ?? "") === value) return;
-    void handleMove(record.id as number, dateFieldName, value);
+    const fields: Record<string, string> = { [dateFieldName]: value };
+    if (endDateField && dateField && dateFieldName === dateField.name) {
+      const rawOldStart = record[dateFieldName];
+      const rawEnd = record[endDateField.name];
+      if (rawOldStart !== null && rawOldStart !== undefined && rawOldStart !== "" && rawEnd !== null && rawEnd !== undefined && rawEnd !== "") {
+        const oldStart = parseFieldDate(String(rawOldStart));
+        const oldEnd = parseFieldDate(String(rawEnd));
+        if (!Number.isNaN(oldStart.getTime()) && !Number.isNaN(oldEnd.getTime()) && oldEnd.getTime() >= oldStart.getTime()) {
+          const deltaDays = Math.round((date.getTime() - oldStart.getTime()) / (24 * 60 * 60 * 1000));
+          const newEnd = new Date(oldEnd);
+          newEnd.setDate(newEnd.getDate() + deltaDays);
+          fields[endDateField.name] = formatDateForInput(newEnd);
+        }
+      }
+    }
+    void handleMoveFields(record.id as number, fields);
   }
 
   /**
@@ -2473,6 +2504,7 @@ export function EntityPanel({
             <CalendarView
               entity={entity}
               dateField={dateField}
+              endDateField={endDateField}
               records={visibleRecords}
               month={calendarMonth}
               lang={lang}

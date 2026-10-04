@@ -557,6 +557,27 @@ export function findDateField(fields: Field[]): Field | null {
   return named ?? dateFields[0];
 }
 
+const END_DATE_FIELD_NAME_HINTS = ["enddate", "returndate", "checkoutdate", "untildate", "todate"];
+
+/**
+ * Picks the field that pairs with `startField` as a date *range*'s own end,
+ * if the entity has one -- the built-in domain library's own "Rental"
+ * entity (startDate/endDate) is exactly the shape this exists for: without
+ * it, a 5-night rental only ever appeared on the calendar on its first day,
+ * and exporting it to a real calendar app produced a single-day event that
+ * silently lost the whole point of knowing when the item comes back.
+ * Matches by name hint only (the same simple convention DATE_FIELD_NAME_HINTS,
+ * PHONE_FIELD_NAME_HINTS, and DISPLAY_FIELD_NAME_HINTS in this file already
+ * use), among the entity's OTHER date fields -- never matches startField
+ * back to itself. Returns null for an entity with no such pairing, which is
+ * the overwhelmingly common case (a plain point-in-time "Appointment" has
+ * no end date, and must keep behaving exactly as before).
+ */
+export function findEndDateField(fields: Field[], startField: Field): Field | null {
+  const otherDateFields = fields.filter((f) => f.type === "date" && f.name !== startField.name);
+  return otherDateFields.find((f) => END_DATE_FIELD_NAME_HINTS.includes(f.name.toLowerCase())) ?? null;
+}
+
 // Mirrors apps/api/src/whatsapp.ts's own PHONE_FIELD_NAME_HINTS exactly (a
 // duplicated constant, not a shared import -- the same live/exported-app
 // duplication convention DATE_FIELD_NAME_HINTS above already follows).
@@ -623,7 +644,7 @@ export function isSameMonth(a: Date, b: Date): boolean {
  * *local* Date, the same construction the grid cells use, keeps both sides
  * in the same timezone so the comparison means what it looks like it means.
  */
-function parseFieldDate(raw: string): Date {
+export function parseFieldDate(raw: string): Date {
   const match = DATE_FORMAT.exec(raw);
   if (match) {
     const [, yearStr, monthStr, dayStr] = match;
@@ -640,8 +661,20 @@ function parseFieldDate(raw: string): Date {
  * week is a full row. Each day carries the records whose `field` value
  * falls on that calendar date; a record with an unparseable date value is
  * simply never matched, not an error.
+ *
+ * When `endField` is given, a record also matches every day strictly
+ * between its start and end (inclusive) instead of only its start day -- so
+ * a 5-night Rental shows up across its whole stay, not just check-in. A
+ * record whose end is missing/unparseable, or earlier than its own start
+ * (an invalid range), falls back to the plain single-day start match.
  */
-export function buildCalendarMonth(records: EntityRecord[], field: Field, year: number, month: number): CalendarDay[] {
+export function buildCalendarMonth(
+  records: EntityRecord[],
+  field: Field,
+  year: number,
+  month: number,
+  endField?: Field | null,
+): CalendarDay[] {
   const firstOfMonth = new Date(year, month, 1);
   const gridStart = new Date(year, month, 1 - firstOfMonth.getDay());
   const days: CalendarDay[] = [];
@@ -651,8 +684,18 @@ export function buildCalendarMonth(records: EntityRecord[], field: Field, year: 
     const dayRecords = records.filter((r) => {
       const raw = r[field.name];
       if (raw === null || raw === undefined || raw === "") return false;
-      const recordDate = parseFieldDate(String(raw));
-      return !Number.isNaN(recordDate.getTime()) && isSameDay(recordDate, date);
+      const startDate = parseFieldDate(String(raw));
+      if (Number.isNaN(startDate.getTime())) return false;
+      if (endField) {
+        const rawEnd = r[endField.name];
+        if (rawEnd !== null && rawEnd !== undefined && rawEnd !== "") {
+          const endDate = parseFieldDate(String(rawEnd));
+          if (!Number.isNaN(endDate.getTime()) && endDate.getTime() >= startDate.getTime()) {
+            return date.getTime() >= startDate.getTime() && date.getTime() <= endDate.getTime();
+          }
+        }
+      }
+      return isSameDay(startDate, date);
     });
     days.push({ date, inCurrentMonth: date.getMonth() === month, records: dayRecords });
   }

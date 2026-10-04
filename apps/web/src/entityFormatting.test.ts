@@ -10,6 +10,7 @@ import {
   computeNextFocusedRowId,
   findBoardField,
   findDateField,
+  findEndDateField,
   findPhoneField,
   formatDateForInput,
   formatDateValue,
@@ -594,6 +595,31 @@ test("findDateField returns null for an entity with no date field", () => {
   assert.equal(findDateField(fields), null);
 });
 
+test("findEndDateField finds the matching end-of-range field, matching the domain library's own Rental entity (startDate/endDate)", () => {
+  const fields: Field[] = [
+    { name: "itemName", type: "text", required: true },
+    { name: "startDate", type: "date", required: true },
+    { name: "endDate", type: "date", required: true },
+  ];
+  const start = findDateField(fields)!;
+  assert.equal(start.name, "startDate");
+  assert.equal(findEndDateField(fields, start)?.name, "endDate");
+});
+
+test("findEndDateField returns null for an entity with only one date field", () => {
+  const fields: Field[] = [{ name: "scheduledDate", type: "date", required: true }];
+  const start = findDateField(fields)!;
+  assert.equal(findEndDateField(fields, start), null);
+});
+
+test("findEndDateField never matches the start field back to itself", () => {
+  const fields: Field[] = [{ name: "endDate", type: "date", required: true }];
+  // endDate is the only date field, so findDateField picks it as the start.
+  const start = findDateField(fields)!;
+  assert.equal(start.name, "endDate");
+  assert.equal(findEndDateField(fields, start), null);
+});
+
 test("buildCalendarMonth returns a fixed 6-week grid (42 days) starting on a Sunday and ending on a Saturday", () => {
   const field: Field = { name: "date", type: "date", required: true };
   const days = buildCalendarMonth([], field, 2026, 8); // September 2026 (0-indexed month)
@@ -644,6 +670,50 @@ test("buildCalendarMonth silently skips records with a missing or unparseable da
     days.reduce((sum, d) => sum + d.records.length, 0),
     0,
   );
+});
+
+test("buildCalendarMonth matches a record to every day in its [start, end] range when an endField is given", () => {
+  const start: Field = { name: "startDate", type: "date", required: true };
+  const end: Field = { name: "endDate", type: "date", required: true };
+  const records = [{ id: 1, startDate: "2026-09-10", endDate: "2026-09-12" }];
+  const days = buildCalendarMonth(records, start, 2026, 8, end);
+  for (const day of [9, 10, 11, 12, 13]) {
+    const cell = days.find((d) => d.inCurrentMonth && d.date.getDate() === day)!;
+    const expected = day >= 10 && day <= 12;
+    assert.equal(cell.records.length, expected ? 1 : 0, `day ${day}`);
+  }
+});
+
+test("buildCalendarMonth falls back to a single-day match when the endField value is missing", () => {
+  const start: Field = { name: "startDate", type: "date", required: true };
+  const end: Field = { name: "endDate", type: "date", required: true };
+  const records = [{ id: 1, startDate: "2026-09-10", endDate: null }];
+  const days = buildCalendarMonth(records, start, 2026, 8, end);
+  const day10 = days.find((d) => d.inCurrentMonth && d.date.getDate() === 10)!;
+  const day11 = days.find((d) => d.inCurrentMonth && d.date.getDate() === 11)!;
+  assert.equal(day10.records.length, 1);
+  assert.equal(day11.records.length, 0);
+});
+
+test("buildCalendarMonth falls back to a single-day match when endField is before startField (an invalid range)", () => {
+  const start: Field = { name: "startDate", type: "date", required: true };
+  const end: Field = { name: "endDate", type: "date", required: true };
+  const records = [{ id: 1, startDate: "2026-09-10", endDate: "2026-09-05" }];
+  const days = buildCalendarMonth(records, start, 2026, 8, end);
+  const day10 = days.find((d) => d.inCurrentMonth && d.date.getDate() === 10)!;
+  const day5 = days.find((d) => d.inCurrentMonth && d.date.getDate() === 5)!;
+  assert.equal(day10.records.length, 1);
+  assert.equal(day5.records.length, 0);
+});
+
+test("buildCalendarMonth without an endField argument still behaves exactly as before (single-day match only)", () => {
+  const start: Field = { name: "startDate", type: "date", required: true };
+  const records = [{ id: 1, startDate: "2026-09-10", endDate: "2026-09-12" }];
+  const days = buildCalendarMonth(records, start, 2026, 8);
+  const day10 = days.find((d) => d.inCurrentMonth && d.date.getDate() === 10)!;
+  const day11 = days.find((d) => d.inCurrentMonth && d.date.getDate() === 11)!;
+  assert.equal(day10.records.length, 1);
+  assert.equal(day11.records.length, 0);
 });
 
 // Regression test: `new Date("2026-09-15")` parses that date-only string as

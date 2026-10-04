@@ -14,6 +14,16 @@ const entity: Entity = {
   fields: [dateField, nameField, notesField, courierField],
 };
 
+const startDateField: Field = { name: "startDate", label: "תאריך התחלה", type: "date", required: true };
+const endDateField: Field = { name: "endDate", label: "תאריך סיום", type: "date", required: true };
+const itemNameField: Field = { name: "itemName", label: "שם הפריט", type: "text", required: true };
+
+const rentalEntity: Entity = {
+  name: "Rental",
+  label: "השכרה",
+  fields: [itemNameField, startDateField, endDateField],
+};
+
 function parseEvents(ics: string): string[] {
   return ics.split("BEGIN:VEVENT").slice(1).map((chunk) => "BEGIN:VEVENT" + chunk.split("END:VEVENT")[0] + "END:VEVENT");
 }
@@ -77,6 +87,35 @@ test("buildCalendarIcs skips a record with a missing or unparseable date value i
   const events = parseEvents(ics);
   assert.equal(events.length, 1, "only the record with a real parseable date should produce a VEVENT");
   assert.match(events[0], /SUMMARY:Good date/);
+});
+
+test("buildCalendarIcs spans DTEND through a record's own end-date field (one day after it, RFC 5545's exclusive end), matching the domain library's Rental entity", () => {
+  const records: EntityRecord[] = [{ id: 1, itemName: "Drill", startDate: "2026-03-10", endDate: "2026-03-12" }];
+  const ics = buildCalendarIcs(rentalEntity, startDateField, itemNameField, records, [], {}, new Date(), endDateField);
+  const events = parseEvents(ics);
+  assert.equal(events.length, 1);
+  assert.match(events[0], /DTSTART;VALUE=DATE:20260310/);
+  assert.match(events[0], /DTEND;VALUE=DATE:20260313/, "a 3-day rental's DTEND must be the day after its real end date, not start+1");
+});
+
+test("buildCalendarIcs falls back to the previous single-day-plus-one DTEND when the end-date field is missing", () => {
+  const records: EntityRecord[] = [{ id: 1, itemName: "Ladder", startDate: "2026-03-10", endDate: null }];
+  const ics = buildCalendarIcs(rentalEntity, startDateField, itemNameField, records, [], {}, new Date(), endDateField);
+  const events = parseEvents(ics);
+  assert.match(events[0], /DTEND;VALUE=DATE:20260311/);
+});
+
+test("buildCalendarIcs falls back to the previous single-day-plus-one DTEND when the end-date field is before the start date (an invalid range)", () => {
+  const records: EntityRecord[] = [{ id: 1, itemName: "Bad range", startDate: "2026-03-10", endDate: "2026-03-01" }];
+  const ics = buildCalendarIcs(rentalEntity, startDateField, itemNameField, records, [], {}, new Date(), endDateField);
+  const events = parseEvents(ics);
+  assert.match(events[0], /DTEND;VALUE=DATE:20260311/);
+});
+
+test("buildCalendarIcs excludes the end-date field itself from DESCRIPTION, same as the date and label fields", () => {
+  const records: EntityRecord[] = [{ id: 1, itemName: "Drill", startDate: "2026-03-10", endDate: "2026-03-12" }];
+  const ics = buildCalendarIcs(rentalEntity, startDateField, itemNameField, records, [], {}, new Date(), endDateField);
+  assert.doesNotMatch(ics, /תאריך סיום:/, "the end-date field is already DTEND, it must never also appear in DESCRIPTION");
 });
 
 test("buildCalendarIcs escapes commas, semicolons, backslashes, and newlines in TEXT values per RFC 5545", () => {

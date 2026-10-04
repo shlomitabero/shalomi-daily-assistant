@@ -1084,7 +1084,7 @@ test("the exported EntityView's calendar record chips are drag-and-drop-able ont
   assert.ok(dropSrc, "expected to find handleCalendarDrop in generated output");
   assert.match(dropSrc!, /const value = formatDateForInput\(date\);/);
   assert.match(dropSrc!, /if \(String\(record\[dateFieldName\] \?\? ""\) === value\) return;/);
-  assert.match(dropSrc!, /void handleMove\(record\.id, dateFieldName, value\);/);
+  assert.match(dropSrc!, /void handleMoveFields\(record\.id, fields\);/);
 
   const stylesCss = files.find((f) => f.path === "web/src/styles.css")!.content;
   assert.match(stylesCss, /\.calendar-day-drag-over/);
@@ -1092,24 +1092,88 @@ test("the exported EntityView's calendar record chips are drag-and-drop-able ont
   // Executes the real generated formatDateForInput + handleCalendarDrop
   // (extracted from real codegen output, not reimplemented), the same
   // "run the real generated code" standard this file's other pure-function
-  // tests use.
+  // tests use. This Appointment entity has only one date field, so
+  // endDateField is null and the duration-preserving branch (covered
+  // separately below for a Rental-shaped entity) never runs.
   const formatDateSrc = entityViewJsx.match(/function formatDateForInput\(date\) \{[\s\S]*?\n\}\n/)?.[0];
   assert.ok(formatDateSrc, "expected to find formatDateForInput in generated output");
 
-  const calls: Array<{ id: unknown; fieldName: string; value: string }> = [];
+  const calls: Array<{ id: unknown; fields: Record<string, string> }> = [];
   const handleCalendarDrop = new Function(
-    "handleMove",
+    "handleMoveFields",
+    "dateField",
+    "endDateField",
     `${formatDateSrc}\n${dropSrc}\nreturn handleCalendarDrop;`,
-  )((id: unknown, fieldName: string, value: string) => {
-    calls.push({ id, fieldName, value });
-  }) as (record: { id: number; date: string }, dateFieldName: string, date: Date) => void;
+  )(
+    (id: unknown, fields: Record<string, string>) => {
+      calls.push({ id, fields });
+    },
+    { name: "date" },
+    null,
+  ) as (record: { id: number; date: string }, dateFieldName: string, date: Date) => void;
 
   handleCalendarDrop({ id: 7, date: "2026-09-15" }, "date", new Date(2026, 8, 20)); // September 20, 2026
-  assert.deepEqual(calls, [{ id: 7, fieldName: "date", value: "2026-09-20" }], "a genuine reschedule must call the real handleMove with the new day");
+  assert.deepEqual(calls, [{ id: 7, fields: { date: "2026-09-20" } }], "a genuine reschedule must call the real handleMoveFields with the new day");
 
   calls.length = 0;
   handleCalendarDrop({ id: 7, date: "2026-09-15" }, "date", new Date(2026, 8, 15)); // dropped back on the same day
-  assert.deepEqual(calls, [], "dropping a chip back onto the day it's already on must never call handleMove");
+  assert.deepEqual(calls, [], "dropping a chip back onto the day it's already on must never call handleMoveFields");
+});
+
+/**
+ * New in this round: a ranged entity (e.g. Rental's startDate/endDate) must
+ * shift its end date by the same number of days when dragged to a new day,
+ * preserving the booking's duration -- without this, dragging only the
+ * start date could push it past the stored end date, producing an invalid
+ * (end before start) range that buildCalendarMonth/buildCalendarIcs would
+ * then silently stop treating as a range at all.
+ */
+test("the exported EntityView's handleCalendarDrop shifts a ranged entity's end-date field by the same delta, preserving duration", () => {
+  const withRange: Project = {
+    ...project,
+    spec: {
+      ...project.spec,
+      entities: [
+        ...project.spec.entities,
+        {
+          name: "Rental",
+          label: "השכרה",
+          fields: [
+            { name: "itemName", label: "שם הפריט", type: "text", required: true },
+            { name: "startDate", label: "תאריך התחלה", type: "date", required: true },
+            { name: "endDate", label: "תאריך סיום", type: "date", required: true },
+          ],
+        },
+      ],
+    },
+  };
+  const entityViewJsx = generateExportFiles(withRange).find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+
+  const dropSrc = entityViewJsx.match(/function handleCalendarDrop\(record, dateFieldName, date\) \{[\s\S]*?\n {2}\}\n/)?.[0];
+  const formatDateSrc = entityViewJsx.match(/function formatDateForInput\(date\) \{[\s\S]*?\n\}\n/)?.[0];
+  const parseFieldDateSrc = entityViewJsx.match(/const CALENDAR_DATE_FORMAT[\s\S]*?\nfunction parseFieldDate\(raw\) \{[\s\S]*?\n\}\n/)?.[0];
+  assert.ok(dropSrc && formatDateSrc && parseFieldDateSrc, "expected to find handleCalendarDrop/formatDateForInput/parseFieldDate in generated output");
+
+  const calls: Array<{ id: unknown; fields: Record<string, string> }> = [];
+  const handleCalendarDrop = new Function(
+    "handleMoveFields",
+    "dateField",
+    "endDateField",
+    `${formatDateSrc}\n${parseFieldDateSrc}\n${dropSrc}\nreturn handleCalendarDrop;`,
+  )(
+    (id: unknown, fields: Record<string, string>) => {
+      calls.push({ id, fields });
+    },
+    { name: "startDate" },
+    { name: "endDate" },
+  ) as (record: { id: number; startDate: string; endDate: string }, dateFieldName: string, date: Date) => void;
+
+  handleCalendarDrop({ id: 9, startDate: "2026-03-10", endDate: "2026-03-12" }, "startDate", new Date(2026, 2, 12)); // 2 days later
+  assert.deepEqual(
+    calls,
+    [{ id: 9, fields: { startDate: "2026-03-12", endDate: "2026-03-14" } }],
+    "endDate must shift by the same 2-day delta as startDate, keeping the 2-night duration",
+  );
 });
 
 /**
@@ -1155,7 +1219,7 @@ test("the exported CalendarView places a record on its correct calendar day even
 
   const dateHelperSrc = entityViewJsx.match(/const CALENDAR_DATE_FORMAT[\s\S]*?\nfunction parseFieldDate\(raw\) \{[\s\S]*?\n\}\n/)?.[0];
   const sameDaySrc = entityViewJsx.match(/function isSameCalendarDay\(a, b\) \{[\s\S]*?\n\}\n/)?.[0];
-  const buildMonthSrc = entityViewJsx.match(/function buildCalendarMonth\(records, field, year, month\) \{[\s\S]*?\n\}\n/)?.[0];
+  const buildMonthSrc = entityViewJsx.match(/function buildCalendarMonth\(records, field, year, month, endField\) \{[\s\S]*?\n\}\n/)?.[0];
   assert.ok(dateHelperSrc && sameDaySrc && buildMonthSrc, "expected to find parseFieldDate/isSameCalendarDay/buildCalendarMonth in generated output");
 
   const buildCalendarMonth = new Function(`${dateHelperSrc}\n${sameDaySrc}\n${buildMonthSrc}\nreturn buildCalendarMonth;`)();
@@ -1436,7 +1500,7 @@ test("the exported EntityView's real generated buildCalendarIcs produces a genui
   const escSrc = entityViewJsx.match(/function icsEscapeText\(value\) \{[\s\S]*?\n\}\n/)?.[0];
   const foldSrc = entityViewJsx.match(/function foldIcsLine\(line\) \{[\s\S]*?\n\}\n/)?.[0];
   const buildSrc = entityViewJsx.match(
-    /function buildCalendarIcs\(entity, dateField, labelField, records, relatedRecords, now\) \{[\s\S]*?\n\}\n/,
+    /function buildCalendarIcs\(entity, dateField, labelField, records, relatedRecords, now, endField\) \{[\s\S]*?\n\}\n/,
   )?.[0];
   assert.ok(
     pickDisplaySrc && labelFieldSrc && pad2Src && dateSrc && tsSrc && escSrc && foldSrc && buildSrc,
@@ -1516,7 +1580,7 @@ test("the exported EntityView's real generated buildCalendarIcs resolves an enum
   const escSrc = entityViewJsx.match(/function icsEscapeText\(value\) \{[\s\S]*?\n\}\n/)?.[0];
   const foldSrc = entityViewJsx.match(/function foldIcsLine\(line\) \{[\s\S]*?\n\}\n/)?.[0];
   const buildSrc = entityViewJsx.match(
-    /function buildCalendarIcs\(entity, dateField, labelField, records, relatedRecords, now\) \{[\s\S]*?\n\}\n/,
+    /function buildCalendarIcs\(entity, dateField, labelField, records, relatedRecords, now, endField\) \{[\s\S]*?\n\}\n/,
   )?.[0];
   assert.ok(
     pickDisplaySrc && labelFieldSrc && pad2Src && dateSrc && tsSrc && escSrc && foldSrc && buildSrc,
@@ -1847,10 +1911,11 @@ test("the exported EntityView's handleDuplicate/handleMove surface a failed requ
   const pickDisplayFieldSrc = entityViewJsx.match(/export function pickDisplayField\(entity\) \{[\s\S]*?\n\}\n/)?.[0]?.replace("export ", "");
   const recordDisplayLabelSrc = entityViewJsx.match(/export function recordDisplayLabel\(entity, record\) \{[\s\S]*?\n\}\n/)?.[0]?.replace("export ", "");
   const handleDuplicateSrc = entityViewJsx.match(/async function handleDuplicate\(id\) \{[\s\S]*?\n  \}\n/)?.[0];
+  const handleMoveFieldsSrc = entityViewJsx.match(/async function handleMoveFields\(id, fields\) \{[\s\S]*?\n  \}\n/)?.[0];
   const handleMoveSrc = entityViewJsx.match(/async function handleMove\(id, fieldName, value\) \{[\s\S]*?\n  \}\n/)?.[0];
   assert.ok(
-    displayFieldHintsSrc && pickDisplayFieldSrc && recordDisplayLabelSrc && handleDuplicateSrc && handleMoveSrc,
-    "expected to find DISPLAY_FIELD_NAME_HINTS/pickDisplayField/recordDisplayLabel/handleDuplicate/handleMove in generated output",
+    displayFieldHintsSrc && pickDisplayFieldSrc && recordDisplayLabelSrc && handleDuplicateSrc && handleMoveFieldsSrc && handleMoveSrc,
+    "expected to find DISPLAY_FIELD_NAME_HINTS/pickDisplayField/recordDisplayLabel/handleDuplicate/handleMoveFields/handleMove in generated output",
   );
 
   const entity = project.spec.entities[0];
@@ -1871,7 +1936,7 @@ test("the exported EntityView's handleDuplicate/handleMove surface a failed requ
       "createRecord",
       "updateRecord",
       "refresh",
-      `${displayFieldHintsSrc}\n${pickDisplayFieldSrc}\n${recordDisplayLabelSrc}\n${handlerSrc}\nreturn ${handlerSrc.match(/^async function (\w+)/)![1]};`,
+      `${displayFieldHintsSrc}\n${pickDisplayFieldSrc}\n${recordDisplayLabelSrc}\n${handleMoveFieldsSrc}\n${handlerSrc}\nreturn ${handlerSrc.match(/^async function (\w+)/)![1]};`,
     )(
       { confirm: () => true },
       entity,
@@ -4924,9 +4989,13 @@ test("the exported EntityView marks the specific row/card/chip with a move-error
   const files = generateExportFiles(project);
   const entityViewJsx = files.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
 
-  const handleMoveSrc = entityViewJsx.match(/async function handleMove\([\s\S]*?\n  \}\n/)?.[0];
-  assert.ok(handleMoveSrc, "expected to find handleMove in generated output");
-  assert.match(handleMoveSrc!, /setMoveErrorId\(id\)/, "handleMove's catch block must set moveErrorId");
+  // handleMove delegates to handleMoveFields (added round 383 to let
+  // handleCalendarDrop shift a ranged entity's end-date field alongside its
+  // start), which is where the real try/catch + setMoveErrorId now lives.
+  const handleMoveFieldsSrc = entityViewJsx.match(/async function handleMoveFields\([\s\S]*?\n  \}\n/)?.[0];
+  assert.ok(handleMoveFieldsSrc, "expected to find handleMoveFields in generated output");
+  assert.match(handleMoveFieldsSrc!, /setMoveErrorId\(id\)/, "handleMoveFields's catch block must set moveErrorId");
+  assert.match(entityViewJsx, /async function handleMove\(id, fieldName, value\) \{\s*await handleMoveFields\(id, \{ \[fieldName\]: value \}\);\s*\}/);
 
   const commitInlineEditSrc = entityViewJsx.match(/async function commitInlineEdit\(\)[\s\S]*?\n  \}\n/)?.[0];
   assert.ok(commitInlineEditSrc, "expected to find commitInlineEdit in generated output");
