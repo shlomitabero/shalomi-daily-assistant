@@ -23434,6 +23434,105 @@ print overflow-wrap, duplicate `enumValues`, relation-picker flash).
 Round 381 should do its own fresh survey unless one of these is
 specifically chosen.
 
+### Round 381: a genuine user escalation, then a real edit path for a project's description
+
+Before this round's autonomous work, שלומי sent a real message (a
+screenshot of a Render "deploy failed for forge-ai" email) reporting the
+live site might be down, and asked for it to be handled directly. That
+took priority over the Routine per its own standing rule. Investigated
+as thoroughly as possible without any Render dashboard/log access from
+this environment (also network-blocked from reaching the live site
+directly): ran a byte-for-byte reproduction of Render's own `render.yaml`
+commands locally -- a clean `npm ci` (not just `npm install`, to rule out
+a lockfile/dependency-resolution issue), a clean `npm run build`, and an
+actual `node --experimental-sqlite dist/server.js` boot with no
+`ANTHROPIC_API_KEY` set (the worst case), confirmed serving a real 200 on
+`/` and a correctly-auth-gated 401 on `/api/projects`. Everything was
+clean; the specific "GlobalSearch missing useEffect" claim in the
+screenshot's own (likely app-generated) summary didn't match either copy
+of `GlobalSearch` (live or codegen.ts), both already had their hooks.
+Concluded the email was almost certainly stale, reported findings back in
+plain language per שלומי's explicit request to stop the technical detail
+and "just handle it," and noted that pushing a fresh, verified-clean
+commit (which happens automatically via Render's own push-triggered
+auto-deploy) was the most concrete available remedy, since there was no
+reproducible bug to fix in code.
+
+With that resolved, a fresh Explore subagent survey (new territory:
+export codegen staleness, WhatsApp send-failure UX, collaborator
+invite-email content, Business Twin staleness after CSV import, project
+description editing) ranked three findings. WhatsApp send-failure UX and
+Business Twin staleness were both found to be already well-handled
+(real retry affordance with a visible button already in WhatsAppPanel.tsx;
+Business Twin already recomputes fresh on every call with a manual
+refresh button) -- not gaps. Of the three real findings, "no collaborator
+invite notification" was set aside: it's the same "invite-by-email"
+topic a much earlier round already checked and rejected as too large (no
+mailer/SMTP exists anywhere in this app at all; building one is
+infrastructure, not a bounded fix). "Export staleness marker" was also
+real but weaker/smaller. **Chosen**: a project's `description` -- the
+free text typed on the home screen before creation -- was otherwise set
+exactly once, at creation, with no way to ever fix it, unlike the name
+(`updateProjectName`/`PATCH /projects/:id/name`, round unknown-but-old)
+and unlike every role/entity/field/assumption on the same spec-review
+screen, all of which already have a real click-to-edit path. Independently
+confirmed via grep: `project.description` never appears anywhere in
+App.tsx outside the unrelated home-screen draft-composing state, so it
+isn't even shown to the user after creation, let alone editable. Worse,
+it's silently re-sent as AI context on every future `/refine` and
+`/answers` call (`combinedDescription` in routes/projects.ts), so a typo
+or wrong requirement in the original description keeps compounding into
+every future AI call forever.
+
+**Fix**: added `updateProjectDescription` (packages/db/src/projects.ts,
+mirroring `updateProjectName` exactly) and `PATCH /projects/:id/description`
+(requireProjectAccess, same collaborator-equal access as every other
+spec-review edit). No `activePipelines` guard needed, unlike the 12
+routes round 380 added one to -- the `description` column is never
+read-then-written by any pipeline, only `insertProject` touches it
+otherwise, so there's no read-modify-write race to guard against.
+`ProjectDescriptionEditor.tsx` is a direct mirror of `ProjectNameEditor.tsx`
+(click to edit, save on blur, Escape cancels, same `cancelling` ref guard
+against the real-browser blur-on-unmount race that component's own
+comment documents), swapping the single-line `<input>` for a `<textarea>`.
+Wired into the spec-review screen in its own new section, right under the
+AI-generated summary. 3 new i18n keys added to both Hebrew and English,
+kept symmetric (513 keys each, verified via a quick Node script comparing
+both key sets).
+
+Tests: `packages/db/src/projects.test.ts` (1 new), `apps/api/src/app.test.ts`
+(3 new: owner+collaborator edit, blank-value rejection, no-access 404),
+`apps/web/src/ProjectDescriptionEditor.test.ts` (3 new, mirroring
+`ProjectNameEditor.test.ts`'s structure plus one extra for the
+blank-draft-cancels-silently case).
+
+Regression-proofed across all three layers at once: reverted every
+changed implementation file to HEAD (and moved the new component file
+aside entirely, since it has no HEAD version to revert to) while keeping
+every new test in place. The db-layer and web-component test files each
+failed at module load with a clear "missing export"/"module not found"
+error -- a stronger confirmation than a per-assertion failure, since it
+proves the function/component genuinely doesn't exist without the fix.
+The API-layer test file failed exactly 2 of its 3 new tests directly; the
+third (expecting 404 for a no-access request) passed even with the route
+missing, since a nonexistent route also 404s -- an expected, honestly-noted
+limit of that one assertion's own semantics, not a flaw in the fix.
+Restored all files from backup, confirmed byte-identical via `diff -q`,
+then reran the full suite and a clean build one final time before
+committing.
+
+Full suite green: **1323 tests** (`@forge/shared` 13, `@forge/spec-engine`
+93, `@forge/db` 99 (+1 new), `@forge/api` 372 (+3 new), `@forge/web` 746
+(+3 new)) via `npm test` at the repo root, plus a clean full monorepo
+`npm run build`. Pushed as commit `1efb501`.
+
+**Topic status**: this fix is closed. Export-staleness marker and
+no-collaborator-invite-notification are now queued as candidates (the
+latter overlapping the already-rejected "invite-by-email" topic -- only
+worth revisiting if שלומי explicitly asks for real email infrastructure).
+These join the existing open candidates from prior rounds. Round 382
+should do its own fresh survey unless one of these is specifically chosen.
+
 ## Phase 4
 
 - Template/agent marketplace
