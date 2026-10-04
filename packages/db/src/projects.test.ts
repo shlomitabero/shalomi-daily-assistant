@@ -4,7 +4,7 @@ import type { ProductSpec } from "@forge/shared";
 import { openDatabase } from "./connection.js";
 import { ensureProjectCollaboratorsTable, addCollaborator, isCollaborator } from "./collaborators.js";
 import { ensureCheckpointsTable, insertCheckpoint, listCheckpoints } from "./checkpoints.js";
-import { applyMigrations } from "./migrate.js";
+import { applyMigrations, diffAndMigrate } from "./migrate.js";
 import { insertRecord } from "./repository.js";
 import {
   ensureWhatsAppConnectionsTable,
@@ -23,6 +23,7 @@ import {
   listProjectsForUser,
   updateProjectName,
   updateProjectDescription,
+  updateProjectSpec,
 } from "./projects.js";
 
 const validSpec: ProductSpec = {
@@ -238,4 +239,76 @@ test("deleteProject removes the project row, its real generated data table, chec
   assert.notEqual(getWhatsAppConnection(db, other.id), undefined, "the other project's WhatsApp connection must survive");
   const otherCount = db.prepare(`SELECT COUNT(*) as c FROM "entity_keep_me_Customer"`).get() as { c: number };
   assert.equal(otherCount.c, 1, "the other project's real data table and its row must survive");
+});
+
+/**
+ * migrate.ts's diffAndMigrate is deliberately additive-only -- it never
+ * drops a table for an entity removed from the spec (see its own comment).
+ * deleteProject used to drop tables only for project.spec.entities, the
+ * *current* spec -- so a real build -> refine (adds Order) -> refine
+ * (removes Order from the spec again) -> delete project sequence left
+ * Order's own real data table, with real rows, permanently orphaned: no
+ * project row pointing at it, and deleteProject's own entity loop never
+ * saw its name because it had already been refined back out of the spec.
+ * Every successful build/refine inserts exactly one checkpoint with its
+ * resulting spec (pipeline.ts), so this reproduces the exact real
+ * sequence via raw diffAndMigrate + insertCheckpoint calls, the same way
+ * the actual pipeline does it, rather than asserting against a contrived
+ * fixture.
+ */
+test("deleteProject drops the real data table of an entity that was added then later removed from the spec, not just the entities still in the current spec", () => {
+  const db = openDatabase(":memory:");
+  ensureProjectsTable(db);
+  ensureCheckpointsTable(db);
+  ensureProjectCollaboratorsTable(db);
+  ensureWhatsAppConnectionsTable(db);
+  ensureWhatsAppMessagesTable(db);
+
+  const buildSpec: ProductSpec = validSpec;
+  const project = insertProject(db, {
+    id: "proj-orphan",
+    ownerId: "owner1",
+    name: "Project with a removed entity",
+    description: "test",
+    spec: buildSpec,
+  });
+  diffAndMigrate(db, project.id, undefined, buildSpec);
+  insertCheckpoint(db, { id: "cp-build", projectId: project.id, label: "build", spec: buildSpec });
+
+  // Refine #1: adds a real "Order" entity. Its table gets created and real
+  // data gets inserted into it, exactly like a real user would do before
+  // ever refining it back out.
+  const specWithOrder: ProductSpec = {
+    ...buildSpec,
+    entities: [...buildSpec.entities, { name: "Order", fields: [{ name: "total", type: "number", required: true }] }],
+  };
+  diffAndMigrate(db, project.id, buildSpec, specWithOrder);
+  insertRecord(db, project.id, specWithOrder.entities[1], { total: 42 });
+  insertCheckpoint(db, { id: "cp-refine1", projectId: project.id, label: "refine: add Order", spec: specWithOrder });
+
+  // Refine #2: removes Order from the spec again. diffAndMigrate is
+  // additive-only, so the real table (and its row) is left untouched --
+  // only the spec itself stops listing it.
+  diffAndMigrate(db, project.id, specWithOrder, buildSpec);
+  insertCheckpoint(db, { id: "cp-refine2", projectId: project.id, label: "refine: remove Order", spec: buildSpec });
+  const finalProject = updateProjectSpec(db, project.id, buildSpec);
+
+  assert.doesNotThrow(
+    () => db.prepare(`SELECT COUNT(*) as c FROM "entity_proj_orphan_Order"`).get(),
+    "sanity check: Order's real table must still exist (and still have its row) before delete -- migrations never drop it",
+  );
+
+  deleteProject(db, finalProject);
+
+  assert.equal(getProject(db, project.id), undefined, "the project row itself should be gone");
+  assert.throws(
+    () => db.prepare(`SELECT * FROM "entity_proj_orphan_Customer"`).all(),
+    /no such table/,
+    "the entity still in the final spec must be dropped as before",
+  );
+  assert.throws(
+    () => db.prepare(`SELECT * FROM "entity_proj_orphan_Order"`).all(),
+    /no such table/,
+    "Order's table must ALSO be dropped even though it was removed from the spec before deletion -- it's not an orphan left behind",
+  );
 });

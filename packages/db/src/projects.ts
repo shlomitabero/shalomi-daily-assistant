@@ -2,7 +2,7 @@ import type { Project, ProductSpec } from "@forge/shared";
 import { ProductSpecSchema } from "@forge/shared";
 import type { ForgeDatabase } from "./connection.js";
 import { tableNameFor, quoteIdentifier } from "./identifiers.js";
-import { deleteCheckpointsForProject } from "./checkpoints.js";
+import { deleteCheckpointsForProject, listCheckpoints } from "./checkpoints.js";
 import { removeAllCollaborators } from "./collaborators.js";
 import { deleteWhatsAppData } from "./whatsapp.js";
 
@@ -172,10 +172,29 @@ export function updateProjectDescription(db: ForgeDatabase, id: string, descript
  * that with the user, and (for WhatsApp) torn down any *live* socket via
  * WhatsAppWebManager.disconnect first, since that in-memory state lives in
  * apps/api, outside this package's reach.
+ *
+ * Drops tables for every entity that ever appeared in this project's
+ * history -- its current spec AND every checkpoint's own spec -- not just
+ * project.spec.entities. migrate.ts's diffAndMigrate is deliberately
+ * additive-only (see its own comment: "Never drops or renames anything,
+ * even if a field or entity was removed from the new spec"), so a real
+ * sequence like build -> refine (adds Entity) -> refine (removes Entity
+ * from the spec again) -> delete project leaves that entity's own data
+ * table, with real rows, untouched by the current spec's own list and
+ * orphaned forever with no project row left pointing at it. Every
+ * successful build/refine inserts exactly one checkpoint with its
+ * resulting spec (pipeline.ts's own insertCheckpoint call), so the union
+ * of every checkpoint's entities plus the current spec's own is the
+ * complete set of tables this project could ever have created -- read
+ * before deleteCheckpointsForProject below removes that very history.
  */
 export function deleteProject(db: ForgeDatabase, project: Project): void {
-  for (const entity of project.spec.entities) {
-    const table = tableNameFor(project.id, entity.name);
+  const entityNames = new Set(project.spec.entities.map((e) => e.name));
+  for (const checkpoint of listCheckpoints(db, project.id)) {
+    for (const entity of checkpoint.spec.entities) entityNames.add(entity.name);
+  }
+  for (const entityName of entityNames) {
+    const table = tableNameFor(project.id, entityName);
     db.exec(`DROP TABLE IF EXISTS ${quoteIdentifier(table)}`);
   }
   deleteCheckpointsForProject(db, project.id);
