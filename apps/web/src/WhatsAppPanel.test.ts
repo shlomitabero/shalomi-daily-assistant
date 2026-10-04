@@ -298,6 +298,7 @@ test("WhatsAppPanel's startConnectedPolling also refreshes the message log each 
     "MAX_CONSECUTIVE_CONNECTED_POLL_FAILURES",
     "CONNECTED_POLL_INTERVAL_MS",
     "projectId",
+    "mergeFreshMessages",
     `${code}\nreturn { stopConnectedPolling, startConnectedPolling };`,
   )(
     connectedPollRef,
@@ -316,6 +317,11 @@ test("WhatsAppPanel's startConnectedPolling also refreshes the message log each 
     5,
     10000,
     "proj1",
+    (prev: WhatsAppMessageLogEntry[], fresh: WhatsAppMessageLogEntry[]) => {
+      const existingIds = new Set(prev.map((m) => m.id));
+      const newOnes = fresh.filter((m) => !existingIds.has(m.id));
+      return newOnes.length === 0 ? prev : [...newOnes, ...prev];
+    },
   ) as { stopConnectedPolling: () => void; startConnectedPolling: () => void };
 
   startConnectedPolling();
@@ -2364,6 +2370,118 @@ test("WhatsAppPanel's 'Load older messages' button appends the next page without
       assert.ok(
         countLabelAfter?.textContent?.includes("3") && !countLabelAfter.textContent.includes("+"),
         `expected the count to read a plain "3" once nothing more is left, got "${countLabelAfter?.textContent}"`,
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
+ * Regression test: handleSendTest used to refresh the log with a plain
+ * `setMessages(messages)` using the newest-page response (offset 0) --
+ * a full replace, not a merge. Once a user had clicked "Load older
+ * messages" at least once, sending a test message silently threw away
+ * every older page that call had loaded (and made "Load older messages"
+ * reappear, as if nothing had ever been paged in), even though the server
+ * itself still had all of it. The fix merges the fresh newest-page
+ * response into the existing list the same way startConnectedPolling's
+ * own background refresh already did (prepend only the truly-new ids),
+ * instead of replacing it, and leaves hasMoreMessages untouched (a
+ * same-size newest-page fetch can't tell you anything about history
+ * beyond what's already loaded).
+ */
+test("WhatsAppPanel's handleSendTest preserves older pages loaded via 'Load older messages' instead of replacing them with just the newest page", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    function makeMsg(id: string, body: string, direction: "in" | "out" = "in"): WhatsAppMessageLogEntry {
+      return {
+        id,
+        direction,
+        fromNumber: "972521112233",
+        toNumber: "972501234567",
+        body,
+        matchedLabel: null,
+        matchedEntityName: null,
+        matchedRecordId: null,
+        status: direction === "in" ? "received" : "sent",
+        createdAt: new Date().toISOString(),
+      };
+    }
+    const m1 = makeMsg("m1", "Newest before send");
+    const m2 = makeMsg("m2", "Second before send");
+    const m3 = makeMsg("m3", "Oldest, loaded via Load More");
+    const m4 = makeMsg("m4", "Just sent", "out");
+    let sent = false;
+    globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/integrations/whatsapp/status") {
+        return new Response(
+          JSON.stringify({ status: "connected", phoneNumber: "972501234567", qrDataUrl: null, error: null }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      if (method === "GET" && input.startsWith("/api/projects/proj1/integrations/whatsapp/messages")) {
+        if (input.endsWith("offset=2")) {
+          return new Response(JSON.stringify({ messages: [m3], hasMore: false }), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          });
+        }
+        if (!input.includes("offset=")) {
+          // The "newest page" response: once sent, the brand-new message
+          // (m4) now occupies the newest slot alongside m1 -- a real fetch
+          // of offset 0 would return both, not just the delta.
+          const page = sent ? [m4, m1] : [m1, m2];
+          return new Response(JSON.stringify({ messages: page, hasMore: true }), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          });
+        }
+        throw new Error(`unexpected offset in ${input}`);
+      }
+      if (method === "POST" && input === "/api/projects/proj1/integrations/whatsapp/send") {
+        sent = true;
+        return new Response(JSON.stringify({ ok: true }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+
+    try {
+      render(
+        React.createElement(
+          ThemeProvider,
+          null,
+          React.createElement(
+            LanguageProvider,
+            null,
+            React.createElement(WhatsAppPanel, { projectId: "proj1", projectName: "Test Project", onClose: () => {}, onJumpToEntity: () => {}, onJumpToRecord: () => {} }),
+          ),
+        ),
+      );
+
+      await waitForCondition(() => document.querySelectorAll(".whatsapp-log-list li").length === 2);
+      const loadMoreButton = Array.from(document.querySelectorAll("button")).find((b) => b.textContent === "Load older messages");
+      assert.ok(loadMoreButton, "expected a 'Load older messages' button while hasMore is true");
+      fireEvent.click(loadMoreButton!);
+      await waitForCondition(() => document.querySelectorAll(".whatsapp-log-list li").length === 3);
+
+      const inputs = document.querySelectorAll('.whatsapp-test-form input[type="text"]');
+      fireEvent.change(inputs[0] as HTMLInputElement, { target: { value: "972521112233" } });
+      fireEvent.change(inputs[1] as HTMLInputElement, { target: { value: "Just sent" } });
+      fireEvent.submit(document.querySelector("form.whatsapp-test-form")!);
+
+      await waitForCondition(() => document.querySelectorAll(".whatsapp-log-list li").length === 4);
+      const bodies = Array.from(document.querySelectorAll(".whatsapp-log-body")).map((el) => el.textContent);
+      assert.deepEqual(
+        bodies,
+        ["Just sent", "Newest before send", "Second before send", "Oldest, loaded via Load More"],
+        "sending must prepend the new message while keeping every older page already loaded, not replace the log with just the newest page",
+      );
+
+      assert.ok(
+        Array.from(document.querySelectorAll("button")).every((b) => b.textContent !== "Load older messages"),
+        "'Load older messages' must not reappear after sending -- hasMoreMessages reflects what was already loaded, not a fresh same-size newest-page fetch",
       );
     } finally {
       globalThis.fetch = originalFetch;

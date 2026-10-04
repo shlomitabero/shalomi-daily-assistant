@@ -86,6 +86,25 @@ const CONNECTED_POLL_INTERVAL_MS = 10000;
 // with no indication anything is wrong.
 const MAX_CONSECUTIVE_CONNECTED_POLL_FAILURES = 5;
 
+/**
+ * Folds a freshly-fetched newest-page response into whatever's already
+ * loaded, instead of replacing it outright -- a plain `setMessages(fresh)`
+ * after sending/retrying a message silently threw away any older pages the
+ * user had already paged back through via "Load older messages"
+ * (handleLoadMore), making them vanish from view (and the button reappear)
+ * even though nothing was actually lost server-side. `freshPage` always
+ * overlaps with the newest end of `prev` (both are the same DESC-ordered
+ * log), so only the ids not already present are new.
+ */
+function mergeFreshMessages(
+  prev: WhatsAppMessageLogEntry[],
+  freshPage: WhatsAppMessageLogEntry[],
+): WhatsAppMessageLogEntry[] {
+  const existingIds = new Set(prev.map((m) => m.id));
+  const newOnes = freshPage.filter((m) => !existingIds.has(m.id));
+  return newOnes.length === 0 ? prev : [...newOnes, ...prev];
+}
+
 export function WhatsAppPanel({
   projectId,
   projectName,
@@ -233,11 +252,7 @@ export function WhatsAppPanel({
         try {
           const { messages: freshPage } = await listWhatsAppMessages(projectId);
           if (cancelled) return;
-          setMessages((prev) => {
-            const existingIds = new Set(prev.map((m) => m.id));
-            const newOnes = freshPage.filter((m) => !existingIds.has(m.id));
-            return newOnes.length === 0 ? prev : [...newOnes, ...prev];
-          });
+          setMessages((prev) => mergeFreshMessages(prev, freshPage));
         } catch {
           // A single failed message-refresh isn't worth surfacing an error
           // for -- the connection-status check above already covers real
@@ -397,9 +412,8 @@ export function WhatsAppPanel({
       setSendResult(
         result.ok ? { ok: true, text: t("whatsapp.send.success") } : { ok: false, text: result.error ?? t("whatsapp.send.genericError") },
       );
-      const { messages, hasMore } = await listWhatsAppMessages(projectId);
-      setMessages(messages);
-      setHasMoreMessages(hasMore);
+      const { messages: freshPage } = await listWhatsAppMessages(projectId);
+      setMessages((prev) => mergeFreshMessages(prev, freshPage));
     } catch (err) {
       setSendResult({ ok: false, text: (err as Error).message });
     } finally {
@@ -480,9 +494,8 @@ export function WhatsAppPanel({
       // send) -- in that case the message log is unchanged, so show the
       // reason directly instead of leaving the button silently reset.
       if (!result.ok) setRetryError(result.error ?? t("whatsapp.log.retryError"));
-      const { messages, hasMore } = await listWhatsAppMessages(projectId);
-      setMessages(messages);
-      setHasMoreMessages(hasMore);
+      const { messages: freshPage } = await listWhatsAppMessages(projectId);
+      setMessages((prev) => mergeFreshMessages(prev, freshPage));
     } catch (err) {
       setRetryError((err as Error).message);
     } finally {
