@@ -23611,6 +23611,143 @@ pruning, SESSION_EXPIRED reactive gap, Business Twin 6x `listRecords`,
 weak-priority leftovers). Round 383 should do its own fresh survey
 unless one of these is specifically chosen.
 
+### Round 383: Calendar view and ICS export were blind to multi-day date ranges (e.g. Rental's startDate/endDate)
+
+A fresh Explore survey plus my own direct reading of
+`apps/web/src/entityFormatting.ts` (530-660), `apps/web/src/calendarIcs.ts`
+(full file), and `apps/web/src/EntityPanel.tsx`'s `CalendarView`/
+`handleCalendarDrop`/`handleMove` confirmed a real, concrete gap:
+`findDateField` always picks exactly one date field per entity, so an
+entity with a date *range* (start + end) was invisible as a range
+anywhere in the calendar stack. Grepping
+`packages/spec-engine/src/domainEntities.ts` for `type: "date"` found the
+built-in **Rental** entity (lines 639-654) genuinely has both `startDate`
+and `endDate` -- this is not a hypothetical, a real shipped domain entity
+hits it. Concretely:
+
+- `buildCalendarMonth` only ever matched a record to its single start
+  day (`isSameDay`), so a 5-night rental showed up on the calendar grid
+  on check-in day only, with no visual presence for the other 4 nights.
+- `calendarIcs.ts`'s `buildCalendarIcs` always set `DTEND = start + 1
+  day`, regardless of any end-date field -- exporting a multi-night
+  booking to a real calendar app (Google/Apple Calendar) produced a
+  single-day event, silently losing the actual stay duration. This is a
+  genuine data-correctness bug, not a cosmetic one: the user's own phone
+  calendar would show the wrong thing.
+- `EntityPanel.tsx`'s drag-to-reschedule (`handleCalendarDrop`) only ever
+  moved a record's single date field, so dragging a ranged record's start
+  day without the gap being addressed would eventually let a drag push
+  `startDate` past the already-untouched `endDate`, producing an invalid
+  inverted range.
+
+An auth-session hard-expiry candidate the same survey surfaced was
+deliberately deferred (looks possibly intentional, needs a human product
+call, not a clear bug) -- noted below for a future round to pick up only
+if re-confirmed as a real gap.
+
+**Implementation** (`apps/web/src/entityFormatting.ts`,
+`apps/web/src/calendarIcs.ts`, `apps/web/src/EntityPanel.tsx`,
+`apps/api/src/codegen.ts`):
+
+- Added `findEndDateField(fields, startField)` (+ `END_DATE_FIELD_NAME_HINTS`:
+  `enddate`/`returndate`/`checkoutdate`/`untildate`/`todate`) to
+  `entityFormatting.ts`, matching the file's existing simple hint-based
+  style (same pattern as `findDateField`/`findPhoneField`), deliberately
+  not a "clever" generic inference system. Exported `parseFieldDate`
+  (previously module-private) so `EntityPanel.tsx` can compute a
+  duration-preserving day delta without re-implementing date parsing.
+- Extended `buildCalendarMonth` with an optional `endField` parameter: a
+  record now matches every day in `[start, end]` inclusive when both
+  dates parse and `end >= start`, falling back to the original
+  single-day match otherwise (missing end value, unparseable end, or an
+  already-invalid end-before-start range) -- consistent with the file's
+  existing "unparseable date is just never matched" philosophy, never an
+  error.
+- Extended `calendarIcs.ts`'s `buildCalendarIcs` with the same optional
+  `endField`: `DTEND` becomes `end + 1 day` (RFC 5545's exclusive end)
+  when the end field holds a valid date on/after `start`, else falls back
+  to the previous always-`start + 1 day` behavior. The end field is also
+  excluded from the `DESCRIPTION` lines (it's already represented by
+  `DTEND`), mirroring how `dateField`/`labelField` are already excluded.
+- `EntityPanel.tsx`: computes `endDateField` alongside the existing
+  `dateField` via `useMemo`, threads it through both `buildCalendarMonth`
+  call sites and the `buildCalendarIcs` call site, and through
+  `CalendarView`'s new `endDateField` prop. Refactored `handleMove` into
+  a thin wrapper around a new `handleMoveFields(id, fields)` so
+  `handleCalendarDrop` can PATCH more than one field in a single request:
+  when a ranged record is dragged to a new day, `endDate` shifts by the
+  same number of days as `startDate`, preserving the booking's real
+  duration instead of risking an inverted range.
+- `codegen.ts`: ported the identical logic to the plain-JS generated-app
+  mirror -- `findEndDateField`/`END_DATE_FIELD_NAME_HINTS`,
+  `buildCalendarMonth`'s range matching, `buildCalendarIcs`'s real-DTEND
+  logic, `CalendarView`'s new `endDateField` prop, and
+  `handleMove`/`handleMoveFields`/`handleCalendarDrop`'s duration-
+  preserving drag -- at the exact call sites (`findDateField` usage near
+  line 2373, the `icsMonthRecords` `buildCalendarMonth` call near 2669,
+  `handleExportIcs`'s `buildCalendarIcs` call, and the `<CalendarView`
+  JSX), continuing this project's established "live + codegen.ts" dual-
+  port convention for every user-facing live-preview feature.
+
+**Tests**: `apps/web/src/entityFormatting.test.ts` (+7: 3 for
+`findEndDateField` including the domain-library Rental fixture and a
+never-matches-itself case, 4 for `buildCalendarMonth`'s range matching
+including both fallback cases and a no-endField-argument backward-
+compatibility check), `apps/web/src/calendarIcs.test.ts` (+4: real DTEND
+span, missing-end fallback, invalid-range fallback, DESCRIPTION
+exclusion), `apps/api/src/codegen.test.ts` (+2: a new
+duration-preserving-drag test executing the real generated
+`handleCalendarDrop` via the project's own regex-extraction-and-`eval`
+convention, plus fixing 3 existing regex extractions whose literal
+function-signature patterns no longer matched after `buildCalendarMonth`/
+`buildCalendarIcs` gained a new trailing parameter and `handleMove`
+became a `handleMoveFields` wrapper -- a direct instance of this
+project's round-376 durable lesson that a regex-extraction test's pattern
+is coupled to a generated function's exact signature text, not just its
+name).
+
+**Regression-proof**: backed up the 4 implementation files (all
+pre-existing, tracked files -- no untracked-file revert complication this
+round), `git checkout --`-reverted them to HEAD while keeping the new/
+modified test files in place, and confirmed exactly the expected
+failures: `entityFormatting.test.ts` failed at the whole-file level with
+a `SyntaxError: ... does not provide an export named 'findEndDateField'`
+(the round-381 "module-load-crash as regression-proof confirmation"
+pattern -- a stronger signal than a per-assertion failure, since it
+proves the function genuinely doesn't exist), `calendarIcs.test.ts` had
+exactly 2 of its 4 new tests fail (the 2 fallback-path tests passed
+anyway, since the fallback behavior is identical to the pre-fix
+behavior -- expected, not a gap), and `codegen.test.ts` had exactly 7
+failures, all traced to the specific signature/behavior changes
+(`buildCalendarMonth`/`buildCalendarIcs` regex mismatches,
+`handleMoveFields` not existing, the new duration-preserving-drag test
+itself). Restored all 4 files from backup, confirmed byte-identical via
+`diff -q`, then reran the full build + full suite clean.
+
+Full suite green: **1337 tests** (`@forge/shared` 13, `@forge/db` 99,
+`@forge/spec-engine` 93, `@forge/api` 375 (+7 new), `@forge/web` 757 (+11
+new)) via `npm test` at the repo root, plus a clean full monorepo `npm
+run build`. (One run hit an unrelated pre-existing timing flake in
+`apps/api/src/auth/password.test.ts`'s concurrent-bcrypt-hashing
+assertion -- confirmed as a flake, not a regression, by rerunning that
+file alone clean, and by the dedicated `@forge/api`-only run passing
+375/375 before and after.) Pushed as commit `d4244cf`.
+
+**Deliberately out of scope**: no "event continues" visual chip treatment
+for a day that's mid-range (every matched day renders the same plain
+chip) -- an explicit scope-reduction to keep the diff bounded to the
+real correctness gap (calendar visibility + ICS duration), not a visual
+polish pass.
+
+**Topic status**: this fix is closed. Deferred for a future round's own
+fresh survey: the auth-session hard-expiry candidate this round's survey
+also surfaced (needs re-confirmation it's actually a bug, not intentional
+behavior, before anyone implements a fix), plus the still-queued list
+from round 382 (export staleness marker, collaborator invite
+notification, AI-label language mismatch, checkpoint pruning,
+SESSION_EXPIRED reactive gap, Business Twin 6x `listRecords`,
+`sanitizeZipEntryName` collision, render.yaml disk stanza).
+
 ## Phase 4
 
 - Template/agent marketplace
