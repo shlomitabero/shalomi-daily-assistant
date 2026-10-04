@@ -13,6 +13,7 @@ import { getSortKeys, setSortKeys } from "./sortKeysPreference.js";
 import { addEntityRecentSearch, getEntityRecentSearches } from "./entityRecentSearches.js";
 import { addRecentHistorySearch, getRecentHistorySearches } from "./historyRecentSearches.js";
 import { getPinnedIds, togglePinned } from "./pinnedProjects.js";
+import { getEntityTabOrder, setEntityTabOrder } from "./entityTabOrder.js";
 import { getViewMode, setViewMode } from "./viewModePreference.js";
 import { addRecentSearch, getRecentSearches } from "./recentSearches.js";
 import { addRecentWhatsAppNumber, getRecentWhatsAppNumbers } from "./whatsappRecentNumbers.js";
@@ -44,7 +45,7 @@ async function withJsdom(fn: () => void | Promise<void>): Promise<void> {
 }
 
 /**
- * Deleting a project never touched any of the sixteen separate
+ * Deleting a project never touched any of the seventeen separate
  * localStorage preference stores keyed by projectId -- each one grows
  * forever for any user who creates and deletes projects over time. This
  * seeds real data into every single one of them for TWO different
@@ -77,6 +78,7 @@ test("purgeProjectPreferences removes exactly one project's entries from every p
     setWhatsAppLogFilter("abc", "failed");
     setWhatsAppLastSeenId("abc", "msg-abc");
     togglePinned("abc");
+    setEntityTabOrder("abc", ["Deal", "Customer"]);
 
     // Seed "proj2" -- an unrelated project that must survive untouched.
     setColumnWidth("proj2", entity, "name", 300);
@@ -96,6 +98,7 @@ test("purgeProjectPreferences removes exactly one project's entries from every p
     setWhatsAppLogFilter("proj2", "in");
     setWhatsAppLastSeenId("proj2", "msg-proj2");
     togglePinned("proj2");
+    setEntityTabOrder("proj2", ["Customer", "Deal"]);
 
     // Seed "abc-other" -- a DIFFERENT project whose id starts with "abc",
     // the one case where naive prefix matching (without the colon) could
@@ -117,6 +120,7 @@ test("purgeProjectPreferences removes exactly one project's entries from every p
     setWhatsAppLogFilter("abc-other", "out");
     setWhatsAppLastSeenId("abc-other", "msg-abc-other");
     togglePinned("abc-other");
+    setEntityTabOrder("abc-other", ["Task", "Deal"]);
 
     purgeProjectPreferences("abc");
 
@@ -138,6 +142,7 @@ test("purgeProjectPreferences removes exactly one project's entries from every p
     assert.equal(getWhatsAppLogFilter("abc"), "all", "whatsappLogFilter must be purged");
     assert.equal(getWhatsAppLastSeenId("abc"), null, "whatsappLastSeenId must be purged");
     assert.equal(getPinnedIds().has("abc"), false, "pinnedProjects must be purged");
+    assert.deepEqual(getEntityTabOrder("abc"), [], "entityTabOrder must be purged");
 
     // "proj2" -- a wholly unrelated project -- is completely untouched.
     assert.deepEqual(getColumnWidths("proj2", entity), { name: 300 }, "columnWidths must survive for an unrelated project");
@@ -157,6 +162,7 @@ test("purgeProjectPreferences removes exactly one project's entries from every p
     assert.equal(getWhatsAppLogFilter("proj2"), "in", "whatsappLogFilter must survive");
     assert.equal(getWhatsAppLastSeenId("proj2"), "msg-proj2", "whatsappLastSeenId must survive");
     assert.equal(getPinnedIds().has("proj2"), true, "pinnedProjects must survive");
+    assert.deepEqual(getEntityTabOrder("proj2"), ["Customer", "Deal"], "entityTabOrder must survive for an unrelated project");
 
     // "abc-other" -- a DIFFERENT project that merely shares "abc" as a
     // prefix of its id -- must ALSO survive completely untouched. If the
@@ -179,5 +185,6 @@ test("purgeProjectPreferences removes exactly one project's entries from every p
     assert.equal(getWhatsAppLogFilter("abc-other"), "out", "whatsappLogFilter must survive for a prefix-sharing project id");
     assert.equal(getWhatsAppLastSeenId("abc-other"), "msg-abc-other", "whatsappLastSeenId must survive for a prefix-sharing project id");
     assert.equal(getPinnedIds().has("abc-other"), true, "pinnedProjects must survive for a prefix-sharing project id");
+    assert.deepEqual(getEntityTabOrder("abc-other"), ["Task", "Deal"], "entityTabOrder must survive for a prefix-sharing project id");
   });
 });

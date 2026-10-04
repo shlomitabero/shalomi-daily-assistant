@@ -50,3 +50,10 @@ export function setEntityTabOrder(projectId: string, order: string[]): string[] 
   writeStore(store);
   return order;
 }
+
+/** Unconditionally removes one project's entry. Used when the project itself is deleted (projectPreferenceCleanup.ts), mirroring removePinnedProject's shape (pinnedProjects.ts) since this store is also keyed directly by projectId, not `${projectId}:${entityName}`. */
+export function purgeEntityTabOrderForProject(projectId: string): void {
+  const store = readStore();
+  delete store[projectId];
+  writeStore(store);
+}
