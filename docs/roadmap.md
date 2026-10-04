@@ -24352,6 +24352,111 @@ invite notification, AI-label language mismatch, checkpoint pruning,
 overflow-wrap / duplicate `enumValues` / relation-picker flash /
 `listRecords` pagination, `calendarIcs.ts`'s UTF-16-vs-UTF-8 fold).
 
+### Round 390: deleting a project never purged its own client-side preferences -- ten separate localStorage stores grew forever
+
+**Survey**: a fresh Explore subagent surveyed the codebase for untouched bug
+classes and open opportunities, flagging several candidates: (1) the
+client-side localStorage preference stores keyed by `projectId` that
+`handleDeleteProject`/`handleBulkDeleteProjects` in `App.tsx` never clean
+up; (2) CSV import running with unbounded parallelism per row. Independent
+verification before picking a fix: read every one of the 9 nested-store
+modules' own `readStore()`/`writeStore()`/`keyFor()` implementations
+directly (not trusting the subagent's list at face value), confirmed
+`App.tsx`'s two delete handlers truly never touch any of these stores, and
+confirmed via `grep -c "pinnedProjects\|projectId" apps/api/src/codegen.ts`
+-> 0 that the exported standalone app has no multi-project concept at all,
+so this bug class is scoped entirely to the live multi-tenant web app with
+no codegen.ts port needed. The CSV-import-parallelism finding was
+explicitly **not** pursued: it's a deliberate codebase convention used
+consistently elsewhere (e.g. bulk-delete's own `Promise.allSettled`), not a
+one-off bug. Also re-confirmed round 389's checkpoint-restore bug class
+doesn't recur elsewhere in `diffAndMigrate`, and that rounds 385-387's
+caching fixes still hold.
+
+**The bug**: ten separate localStorage stores -- `pinnedProjects.ts`
+(`forge.pinnedProjects`, a flat id array), `historyRecentSearches.ts` (one
+key per project), and eight others keyed by `${projectId}:${entityName}`
+inside one JSON blob per module (`columnWidths.ts`, `columnOrder.ts`,
+`columnVisibility.ts`, `fieldFiltersPreference.ts`, `groupByPreference.ts`,
+`collapsedBoardColumnsPreference.ts`, `collapsedGroupsPreference.ts`,
+`sortKeysPreference.ts`, `entityRecentSearches.ts`) -- never get cleaned up
+when the project they belong to is deleted server-side. Every project a
+user creates, builds up a few preferences for, and deletes leaves its
+entries behind forever, growing every one of these stores without bound
+for anyone who uses the app for long enough.
+
+**The fix**: added one purge function per nested-store module
+(`purgeColumnWidthsForProject`, `purgeColumnOrderForProject`,
+`purgeHiddenFieldsForProject`, `purgeFieldFiltersForProject`,
+`purgeGroupByFieldForProject`, `purgeCollapsedBoardColumnsForProject`,
+`purgeCollapsedGroupsForProject`, `purgeSortKeysForProject`,
+`purgeEntityRecentSearchesForProject`) -- each reads the store, deletes
+every key starting with `${projectId}:`, writes it back. Added
+`removePinnedProject(projectId)` to `pinnedProjects.ts` (unconditional,
+unlike the existing `togglePinned`). `historyRecentSearches.ts`'s existing
+`clearRecentHistorySearches(projectId)` already removed its one
+per-project key entirely, so it's reused as-is. A new orchestrator module,
+`projectPreferenceCleanup.ts`, imports all ten and exposes one
+`purgeProjectPreferences(projectId)` that calls them all -- keeps
+`App.tsx`'s import list minimal and the cleanup logic in one testable
+place. Wired into `App.tsx`'s `handleDeleteProject` and
+`handleBulkDeleteProjects`, called once per project right after its
+server-side delete actually succeeds (never on a declined confirm or a
+failed delete).
+
+**Tests**: one new integration test file, `projectPreferenceCleanup.test.ts`,
+seeds real data into all ten stores for three project ids -- "abc" (the one
+being deleted), "proj2" (an unrelated survivor), and "abc-other" (a
+different project whose id merely starts with "abc", the one case where
+naive prefix matching without the `${projectId}:` colon separator could
+wrongly treat it as "abc"'s own data) -- calls the real
+`purgeProjectPreferences("abc")` once, and asserts via every module's real
+public getter (not mocks) that "abc" is gone everywhere while both "proj2"
+and "abc-other" are fully intact everywhere. This is the key correctness
+proof that the colon-separated keying has no false-positive risk.
+
+Wiring `purgeProjectPreferences` into `App.tsx`'s two delete handlers broke
+3 existing tests in `App.test.ts` -- the same durable lesson recurring yet
+again from rounds 383-388: a handler's regex-extraction-and-run test
+harness (`new Function(paramNames..., code)(mockArgs...)`) throws
+`ReferenceError` the instant the handler gains a new external dependency
+the harness doesn't inject. Fixed all three by adding
+`"purgeProjectPreferences"` to each test's parameter list plus a tracking
+mock, with new assertions proving the purge fires with exactly the right
+id(s) on success and never fires when the confirm dialog is declined or a
+delete fails server-side.
+
+**Regression-proof**: backed up all 14 changed/added files to the
+scratchpad. `git checkout --` reverted the 10 tracked preference-module
+files plus `App.tsx` (keeping `App.test.ts` and the two new files as-is).
+Confirmed the exact expected failure pattern:
+`projectPreferenceCleanup.test.ts` failed outright with `SyntaxError: The
+requested module './collapsedBoardColumnsPreference.js' does not provide
+an export named 'purgeCollapsedBoardColumnsForProject'` (the orchestrator's
+own import breaking first), and the same 3 `App.test.ts` tests failed
+again (`purgeCalls` stayed empty instead of matching the expected ids).
+Restored all 14 files from backup, confirmed byte-identical via `diff -q`,
+then reran the full build + full suite clean.
+
+Full suite green: **1355 tests** (`@forge/shared` 13, `@forge/spec-engine`
+93, `@forge/db` 100, `@forge/api` 379, all unchanged; `@forge/web` 770,
++1 new `projectPreferenceCleanup.test.ts`) via `npm test` at the repo root,
+plus a clean full monorepo `npm run build`. Pushed as commit `1005bdd`.
+
+**Topic status**: this fix is closed. Everything else still open from
+rounds 378-389 remains open and unchanged (`wakeRetry.ts`'s
+retry-on-any-method duplicate-write risk, export staleness marker,
+collaborator invite notification, AI-label language mismatch, checkpoint
+pruning, `sanitizeZipEntryName` collision, render.yaml disk stanza, print
+overflow-wrap / duplicate `enumValues` / relation-picker flash /
+`listRecords` pagination, `calendarIcs.ts`'s UTF-16-vs-UTF-8 fold).
+
+**Standing open items, reconfirmed, not re-asked**: round 163's cold-start
+fix is still awaiting שלומי's own confirmation it resolved the issue she
+reported. Round 381's Render "deploy failed for forge-ai" email was
+investigated exhaustively with no reproducible code bug found; still
+awaiting her confirmation the live site works for her.
+
 ## Phase 4
 
 - Template/agent marketplace
