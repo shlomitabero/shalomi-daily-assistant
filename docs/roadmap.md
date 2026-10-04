@@ -23335,6 +23335,105 @@ render.yaml/README persistent-disk gap (round 378) and the four
 weak-priority candidates from rounds 375/377. Round 380 should do its
 own fresh survey unless one of these is specifically chosen.
 
+### Round 380: guard 12 more spec-editing routes against racing an in-flight build/refine/answers
+
+A fresh Explore subagent surveyed refine-conversation-history growth,
+Time Machine checkpoint storage growth, concurrent multi-collaborator
+edits, i18n fallback edge cases in AI/heuristic-generated labels, and
+auth token refresh timing. It ranked four findings; the top one was
+chosen, the other three queued as candidates (see below).
+
+**Chosen and independently re-verified**: `/build`, `/refine`,
+`/answers`, checkpoint-restore, and `DELETE /projects/:id` already
+check `activePipelines` before mutating a project's spec, because each
+reads `project.spec`, computes a new spec, then writes it back with no
+version/CAS check -- a slow pipeline already in flight computes its
+own `nextSpec` from the pre-edit spec and overwrites (or is
+overwritten by) the other write the moment it finishes, with no error
+to either side. Reading `apps/api/src/routes/projects.ts` end to end
+confirmed 12 more routes with the exact same read-spec-then-write-spec
+shape that were never guarded: the entity-label and field-label rename
+routes, all 6 roles/assumptions add/remove/rename routes, and the
+whole-entity and single-field add/remove routes. The first 8 are
+available regardless of build status (so they can race `/refine` on a
+built project, or `/build`/`/answers` on an unbuilt one); the last 4
+are already restricted to `project.status !== "built"`, so in practice
+they can only race `/build` or `/answers` on a still-unbuilt project.
+
+**Fix**: the identical `if (activePipelines.has(project.id)) throw 409
+PIPELINE_IN_PROGRESS` guard the 5 already-fixed routes use, added to
+each of the 12, placed after any existing status check (mirroring
+`/build`'s own check ordering).
+
+**A genuine mid-implementation catch, not just a planning-stage one**:
+the first attempt at a regression test raced entity-add against an
+in-flight `/build` call using the existing `createGatedProvider`
+harness (the same technique used for every prior `activePipelines`
+regression test) -- and hung forever in CI, eating a 10-minute
+background-task limit with zero output, because of a second mistake
+layered on top: the diagnostic command piped through `| tail -60`,
+which buffers until the process exits, so the hang produced literally
+no visible output to debug from. Re-running the exact same command
+with output redirected straight to a log file (no pipe) revealed real
+progress up to test #122 (the *other* new test, which passed), then
+nothing -- isolating the hang to the second test specifically. The
+root cause: `/build` never calls the AI/heuristic provider at all when
+building a project for the first time -- the spec was already
+generated at project-creation time, so `/build` just reuses
+`project.spec` as-is and the `createGatedProvider` harness's pause
+point (inside `provider.generate`) is never reached, so
+`waitUntilStarted()` never resolves. Fixed by racing against `/answers`
+instead, which does call `generateSpec(provider)` on a still-unbuilt
+project, giving the same race window (`activePipelines` set, status
+still not `"built"`) without that dead end.
+
+Files: `apps/api/src/routes/projects.ts` (12 new guard checks),
+`apps/api/src/app.test.ts` (2 new tests: entity-label rename racing an
+in-flight `/refine`, representative of the 8 always-available routes;
+and entity-add racing an in-flight `/answers` call, representative of
+the 4 pre-build-only routes).
+
+Deliberate-break-and-restore: backed up both changed files to the
+scratchpad, reverted only `routes/projects.ts` to HEAD, ran
+`app.test.ts` directly and confirmed exactly 2 of 128 failures (the
+two new tests; all 126 pre-existing tests still passed), restored from
+backup, confirmed byte-identical via `diff -q`, then re-ran the full
+suite and a clean build one final time before committing.
+
+Full suite green: **1316 tests** (`@forge/shared` 13, `@forge/spec-engine`
+93, `@forge/db` 98, `@forge/api` 369 (+2 new), `@forge/web` 743, all
+unchanged except api) via `npm test` at the repo root, plus a clean full
+monorepo `npm run build`. Pushed as commit `79e31b2`.
+
+**Durable lesson added**: when writing a concurrency-guard regression
+test with `createGatedProvider`, first confirm the route you're racing
+against actually calls `provider.generate` at all -- `/build` on a
+first-time (never-before-built) project does not, since the spec was
+already generated at project-creation time. Racing against a route
+that never reaches the gate hangs `waitUntilStarted()` forever. Also:
+when a backgrounded command's diagnostic pipes through `tail`/`head`,
+a genuine hang produces zero visible output (the pipe buffers until
+the process exits) -- redirect straight to a log file instead so a
+real hang is at least diagnosable from partial output.
+
+**Topic status**: this fix is closed. The other three Explore findings
+from this round are queued as new candidates: (1) AI/heuristic-generated
+entity/field labels follow the *project description's* language,
+independent of the UI chrome language -- a real mixed-language result
+when they differ, distinct from the already-closed static-dictionary
+i18n work. (2) Time Machine checkpoints have no automatic pruning
+(only manual one-at-a-time deletion), unlike sessions' own
+`deleteExpiredSessions` -- unbounded growth for a long-lived,
+frequently-refined project. (3) No automatic client-side reaction to
+a `SESSION_EXPIRED`/`AUTH_REQUIRED` error code -- the user must notice
+the translated error text and manually log out; minor since the token
+is opaque (not a JWT), so the client can't know expiry ahead of time
+anyway. These join the existing open candidates (render.yaml disk,
+Business Twin 6x `listRecords`, `sanitizeZipEntryName` collision,
+print overflow-wrap, duplicate `enumValues`, relation-picker flash).
+Round 381 should do its own fresh survey unless one of these is
+specifically chosen.
+
 ## Phase 4
 
 - Template/agent marketplace
