@@ -1,0 +1,224 @@
+import "./jsdomWarmup.js";
+import assert from "node:assert/strict";
+import { test } from "node:test";
+import { JSDOM } from "jsdom";
+import React from "react";
+import { cleanup, fireEvent, render } from "@testing-library/react";
+import { isAnyDialogOpen, useDialogFocusTrap } from "./useDialogFocusTrap.js";
+
+/**
+ * Real DOM test infrastructure for this project (previously nonexistent --
+ * every prior round's TSX-handler tests extracted plain functions and ran
+ * them via new Function, never a real render). Swaps the jsdom window/
+ * document onto the global scope for the duration of one test, the same
+ * pattern jest-environment-jsdom and vitest's jsdom environment use: React
+ * and @testing-library/react only touch `document` lazily inside their own
+ * runtime (render/events/cleanup), not at module-import time, so setting
+ * these globals right before calling render() is enough for a real DOM
+ * render, real focus(), and real keyboard events to all work exactly as
+ * they would in a browser.
+ */
+async function withJsdom<T>(fn: () => T): Promise<T> {
+  const dom = new JSDOM("<!doctype html><html><body></body></html>", { url: "http://localhost/" });
+  const { window } = dom;
+  const replacements: Record<string, unknown> = {
+    window,
+    document: window.document,
+    navigator: window.navigator,
+    HTMLElement: window.HTMLElement,
+    Node: window.Node,
+    KeyboardEvent: window.KeyboardEvent,
+  };
+  // Plain assignment (Object.assign) throws for `navigator`: recent Node
+  // versions define a read-only global `navigator` (its own runtime info,
+  // unrelated to a browser's) via a getter-only property descriptor, not a
+  // writable data property. defineProperty overwrites the descriptor itself
+  // rather than trying to set through it, so it works for every property
+  // uniformly, Node-provided or not.
+  const originalDescriptors: Record<string, PropertyDescriptor | undefined> = {};
+  for (const key of Object.keys(replacements)) {
+    originalDescriptors[key] = Object.getOwnPropertyDescriptor(globalThis, key);
+    Object.defineProperty(globalThis, key, {
+      value: replacements[key],
+      writable: true,
+      configurable: true,
+      enumerable: true,
+    });
+  }
+  try {
+    const result = fn();
+    // React's own event system schedules a re-throw of any error caught
+    // during a dispatched DOM event on the next macrotask (so a bug inside
+    // an event handler doesn't get silently absorbed by whatever synchronous
+    // try/catch invoked the dispatch) -- letting a full tick pass here,
+    // before the jsdom globals below are torn down, is what actually
+    // surfaces that error against a live `window`/`document` instead of a
+    // bare "window is not defined" ReferenceError chasing this function
+    // after it already returned and restored the originals.
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    return result;
+  } finally {
+    cleanup();
+    for (const key of Object.keys(replacements)) {
+      const original = originalDescriptors[key];
+      if (original) Object.defineProperty(globalThis, key, original);
+      else delete (globalThis as Record<string, unknown>)[key];
+    }
+  }
+}
+
+function TestDialog() {
+  const containerRef = useDialogFocusTrap<HTMLDivElement>();
+  return React.createElement(
+    "div",
+    { ref: containerRef, tabIndex: -1 },
+    React.createElement("button", { id: "first" }, "First"),
+    React.createElement("button", { id: "second" }, "Second"),
+    React.createElement("button", { id: "last" }, "Last"),
+  );
+}
+
+function TestDialogWithOnClose({ onClose }: { onClose: () => void }) {
+  const containerRef = useDialogFocusTrap<HTMLDivElement>(onClose);
+  return React.createElement(
+    "div",
+    { ref: containerRef, tabIndex: -1 },
+    React.createElement("button", { id: "first" }, "First"),
+    React.createElement("button", { id: "last" }, "Last"),
+  );
+}
+
+test("useDialogFocusTrap moves focus into the dialog when it mounts, keeps Tab cycling within it, and restores focus on unmount", async () => {
+  await withJsdom(() => {
+    const trigger = document.createElement("button");
+    trigger.id = "trigger";
+    document.body.appendChild(trigger);
+    trigger.focus();
+    assert.equal(document.activeElement, trigger, "sanity check: the trigger must actually be focused before the dialog opens");
+
+    const { unmount } = render(React.createElement(TestDialog));
+
+    const first = document.getElementById("first")!;
+    const last = document.getElementById("last")!;
+    assert.equal(document.activeElement, first, "focus must move into the dialog's first focusable element on mount");
+
+    // Tab on the last element must wrap around to the first, not leak out
+    // to whatever's behind the (visually hidden but still focusable) dialog.
+    last.focus();
+    fireEvent.keyDown(last, { key: "Tab" });
+    assert.equal(document.activeElement, first, "Tab on the last element must wrap around to the first");
+
+    first.focus();
+    fireEvent.keyDown(first, { key: "Tab", shiftKey: true });
+    assert.equal(document.activeElement, last, "Shift+Tab on the first element must wrap around to the last");
+
+    unmount();
+    assert.equal(document.activeElement, trigger, "closing the dialog must return focus to whatever triggered it");
+  });
+});
+
+test("useDialogFocusTrap hides real sibling content from assistive tech while the dialog is mounted, and restores it on unmount", async () => {
+  await withJsdom(() => {
+    // A sibling of @testing-library's own render container -- standing in
+    // for the rest of the app (the topbar, the entity tabs, ...) that sits
+    // behind an overlay panel once one is open.
+    const restOfApp = document.createElement("main");
+    restOfApp.id = "rest-of-app";
+    document.body.appendChild(restOfApp);
+
+    const { unmount } = render(React.createElement(TestDialog));
+
+    assert.equal(
+      restOfApp.getAttribute("aria-hidden"),
+      "true",
+      "content behind the dialog must be aria-hidden while it's open",
+    );
+    assert.ok(restOfApp.hasAttribute("inert"), "content behind the dialog must be inert while it's open");
+
+    unmount();
+
+    assert.equal(restOfApp.hasAttribute("aria-hidden"), false, "aria-hidden must be lifted once the dialog closes");
+    assert.equal(restOfApp.hasAttribute("inert"), false, "inert must be lifted once the dialog closes");
+  });
+});
+
+/**
+ * Regression test for a real gap found by round 290's Explore survey:
+ * Escape closing an open overlay panel used to be App.tsx's own job, via
+ * a single window-level handler that enumerated six of this app's eight
+ * dialogs by hand -- ChangePassword and DeleteAccount were missing from
+ * that list entirely (and that handler only ran while `view === "preview"`,
+ * while both of those two panels are reachable from every view). Moved
+ * Escape-to-close into this shared hook instead, so every dialog built on
+ * it -- all eight, App.tsx's own wiring confirmed separately in
+ * App.test.ts -- gets it uniformly. Confirms Escape calls the real onClose
+ * passed in, and that a dialog given no onClose at all (none of today's
+ * callers omit it, but the parameter is optional) doesn't throw.
+ */
+test("useDialogFocusTrap calls onClose when Escape is pressed inside the dialog", async () => {
+  await withJsdom(() => {
+    let closeCalls = 0;
+    render(React.createElement(TestDialogWithOnClose, { onClose: () => (closeCalls += 1) }));
+
+    const first = document.getElementById("first")!;
+    assert.equal(document.activeElement, first, "sanity check: focus must already be inside the dialog");
+
+    fireEvent.keyDown(first, { key: "Escape" });
+    assert.equal(closeCalls, 1, "Escape while focus is inside the dialog must call the real onClose exactly once");
+  });
+});
+
+test("useDialogFocusTrap does not throw on Escape when no onClose was given", async () => {
+  await withJsdom(() => {
+    render(React.createElement(TestDialog));
+    const first = document.getElementById("first")!;
+    assert.doesNotThrow(() => fireEvent.keyDown(first, { key: "Escape" }));
+  });
+});
+
+/**
+ * Round 365: EntityPanel.tsx's own window-level j/k/n/x/Delete/d keyboard
+ * shortcuts kept firing underneath an open overlay dialog (History,
+ * WhatsApp, Shortcuts, ...) because EntityPanel never unmounts while one
+ * is open (see App.tsx), and those shortcuts were only ever guarded by
+ * isTypingTarget -- which returns false for a plain focused <button>,
+ * exactly where focus lands in a dialog with no text input at all (e.g.
+ * ShortcutsPanel's own Close button). isAnyDialogOpen() is a module-level
+ * counter (not component state) this hook now maintains, so a native
+ * window keydown handler elsewhere in the app can check synchronously
+ * whether ANY dialog built on this hook is currently mounted. Confirms it
+ * starts false, flips true for as long as a dialog built on this hook is
+ * mounted, and reliably returns to false once it unmounts.
+ */
+test("isAnyDialogOpen reflects whether a dialog built on useDialogFocusTrap is currently mounted", async () => {
+  await withJsdom(() => {
+    assert.equal(isAnyDialogOpen(), false, "must start false with no dialog mounted at all");
+
+    const { unmount } = render(React.createElement(TestDialog));
+    assert.equal(isAnyDialogOpen(), true, "must become true the moment a dialog using this hook mounts");
+
+    unmount();
+    assert.equal(isAnyDialogOpen(), false, "must go back to false once that dialog unmounts");
+  });
+});
+
+/**
+ * Companion: a real counter, not a boolean toggle -- two dialogs built on
+ * this hook can legitimately be mounted at once in this app today (a
+ * confirm dialog opened from within an already-open overlay), so closing
+ * only one of them must never make isAnyDialogOpen() report false while
+ * the other is still genuinely open.
+ */
+test("isAnyDialogOpen stays true while a second dialog is still mounted, even after the first one closes", async () => {
+  await withJsdom(() => {
+    const first = render(React.createElement(TestDialog));
+    const second = render(React.createElement(TestDialog));
+    assert.equal(isAnyDialogOpen(), true);
+
+    first.unmount();
+    assert.equal(isAnyDialogOpen(), true, "must stay true while the second dialog is still mounted");
+
+    second.unmount();
+    assert.equal(isAnyDialogOpen(), false, "must only go false once every mounted dialog has unmounted");
+  });
+});

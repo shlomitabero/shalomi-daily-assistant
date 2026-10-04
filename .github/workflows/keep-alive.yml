@@ -1,0 +1,27 @@
+name: Keep Render app awake
+
+# Render's free tier spins the web service down after ~15 minutes with no
+# incoming requests, and the next real visitor then waits up to ~1 minute
+# for it to wake back up (see apps/web's own "waking up" UI and
+# docs/roadmap.md for the full disclosure). Pinging the health endpoint
+# every 10 minutes -- comfortably under that 15-minute window -- keeps the
+# service from ever going to sleep during the hours this workflow runs,
+# at no cost beyond GitHub Actions' own free minutes.
+#
+# This is a mitigation, not a guarantee: GitHub's own scheduled-workflow
+# minimum interval is 5 minutes and actual runs can slip by a few minutes
+# under load, and Render itself can still restart the service for other
+# reasons (a deploy, a host-side issue). A real user hitting a genuine
+# cold start occasionally is still possible; a paid Render plan is the
+# only way to guarantee an always-on server.
+on:
+  schedule:
+    - cron: "*/10 * * * *"
+  workflow_dispatch: {}
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping health endpoint
+        run: curl --fail --silent --show-error --max-time 30 https://forge-ai-m7p7.onrender.com/api/health

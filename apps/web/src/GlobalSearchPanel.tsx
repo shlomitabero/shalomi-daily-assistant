@@ -1,0 +1,458 @@
+import { useEffect, useRef, useState } from "react";
+import type { Entity, EntityRecord } from "@forge/shared";
+import { listRecords } from "./api.js";
+import {
+  recordDisplayLabel,
+  searchEntityRecords,
+  splitHighlightSegments,
+  type EntitySearchResult,
+  type RelatedRecordsByEntity,
+} from "./entityFormatting.js";
+import { useTranslation } from "./i18n/LanguageContext.js";
+import { useDialogFocusTrap } from "./useDialogFocusTrap.js";
+import { addRecentSearch, clearRecentSearches, getRecentSearches, removeRecentSearch } from "./recentSearches.js";
+import { downloadSearchResults, formatSearchResults } from "./searchReport.js";
+
+/**
+ * Mirrors EntityPanel.tsx's own Highlighted wrapper (round 195) around the
+ * same splitHighlightSegments -- a result row here already told you a
+ * record matched, but not where within its own display label the match
+ * actually was, the same gap the per-tab search box had.
+ */
+function Highlighted({ text, query }: { text: string; query: string }) {
+  if (!query.trim()) return <>{text}</>;
+  return (
+    <>
+      {splitHighlightSegments(text, query).map((seg, i) =>
+        seg.matched ? (
+          <mark key={i} className="search-match">
+            {seg.text}
+          </mark>
+        ) : (
+          <span key={i}>{seg.text}</span>
+        ),
+      )}
+    </>
+  );
+}
+
+/**
+ * A single query box that searches every entity in the project at once,
+ * instead of only the currently-open tab (`EntityPanel`'s own search box).
+ * Reuses the exact same `matchesSearch` rule as the per-tab search, via
+ * `searchEntityRecords`, so results here and results in a tab never
+ * disagree about what counts as a match.
+ *
+ * Each result group's own "Jump to" button (onJumpToEntity) only ever
+ * switched to the right entity tab, leaving a person to re-scan the same
+ * table they just searched to find the one row they were actually after --
+ * the exact record they clicked was known the whole time and simply
+ * thrown away. onJumpToRecord makes each individual matched row itself
+ * clickable, carrying its own id through so `EntityPanel` can scroll to
+ * and highlight that specific row once the tab switch lands.
+ */
+export function GlobalSearchPanel({
+  projectId,
+  projectName,
+  entities,
+  onClose,
+  onJumpToEntity,
+  onJumpToRecord,
+}: {
+  projectId: string;
+  projectName: string;
+  entities: Entity[];
+  onClose: () => void;
+  onJumpToEntity: (entityName: string) => void;
+  onJumpToRecord: (entityName: string, recordId: number) => void;
+}) {
+  const { t, lang } = useTranslation();
+  const [query, setQuery] = useState("");
+  const [results, setResults] = useState<EntitySearchResult[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [searched, setSearched] = useState(false);
+  // The query text the currently-shown `results` actually matched, kept
+  // separate from the live `query` input state above: without it, typing
+  // ahead into the box after a search already ran (before hitting submit
+  // again) would immediately start highlighting the new, not-yet-searched
+  // text against results that were matched on the old query.
+  const [highlightQuery, setHighlightQuery] = useState("");
+  const [selectedIndex, setSelectedIndex] = useState<number | null>(null);
+  const [recentSearches, setRecentSearches] = useState<string[]>(() => getRecentSearches(projectId));
+  // A group's "and N more" text used to be a dead end -- the extra matches
+  // were real (totalMatches said so) but nothing on screen could reach
+  // them short of switching tabs and re-typing the same search. Keyed by
+  // entityName so expanding one group's "Show all" never affects another's.
+  const [expandedSamples, setExpandedSamples] = useState<Record<string, EntityRecord[]>>({});
+  const [showAllLoading, setShowAllLoading] = useState<Set<string>>(new Set());
+  const [copyStatus, setCopyStatus] = useState<"idle" | "copied" | "failed">("idle");
+  const dialogRef = useDialogFocusTrap<HTMLDivElement>(onClose);
+  const resultsContainerRef = useRef<HTMLDivElement>(null);
+  // Bumped once per runSearch call, so a stale search whose network round
+  // trip just happens to take longer than a newer one's can recognize
+  // itself as superseded (see the guard right after the await below)
+  // instead of overwriting the newer, still-correct results on screen.
+  const searchRequestId = useRef(0);
+  // Every entity's own records from the most recently *completed* search,
+  // keyed by entity name -- reused as `matchesSearch`'s relatedRecords so a
+  // relation field's search match resolves to its real display label (e.g.
+  // "Dana Levi") instead of a raw foreign-key id, with zero extra network
+  // calls: since this search already fetches every entity's records to
+  // search them, that same result set doubles as the lookup table for
+  // whichever OTHER entity a relation field happens to point at. handleShowAll
+  // reuses it too, since it's a same-query follow-up on results already shown.
+  const lastRecordsByEntityRef = useRef<RelatedRecordsByEntity>({});
+
+  // Promise.allSettled rather than Promise.all: a single entity whose
+  // records fail to load (a transient network blip, a cold-starting
+  // backend) must not blank out results from every OTHER entity that
+  // searched fine -- Promise.all would reject the whole search on that
+  // one failure, showing nothing at all instead of the results a user
+  // with, say, 9 working entity tables and 1 flaky one would still want.
+  async function runSearch(q: string) {
+    if (!q.trim()) {
+      setResults([]);
+      setSearched(false);
+      setHighlightQuery("");
+      setSelectedIndex(null);
+      return;
+    }
+    const requestId = ++searchRequestId.current;
+    setLoading(true);
+    setError(null);
+    const settled = await Promise.allSettled(
+      entities.map(async (entity) => {
+        const { records } = await listRecords(projectId, entity.name);
+        return [entity.name, records] as const;
+      }),
+    );
+    // A later call to runSearch (the user editing/resubmitting the query
+    // before this one's own network round trip finished) has already
+    // bumped searchRequestId past what this call captured -- applying
+    // this call's results now would silently replace the newer, correct
+    // ones on screen with stale ones for a query the user has already
+    // moved past.
+    if (searchRequestId.current !== requestId) return;
+    const recordsByEntity: RelatedRecordsByEntity = {};
+    for (const result of settled) {
+      if (result.status === "fulfilled") {
+        const [name, records] = result.value;
+        recordsByEntity[name] = records;
+      }
+    }
+    lastRecordsByEntityRef.current = recordsByEntity;
+    const succeeded = entities
+      .map((entity) =>
+        recordsByEntity[entity.name]
+          ? searchEntityRecords(entity, recordsByEntity[entity.name], q, 5, entities, recordsByEntity)
+          : null,
+      )
+      .filter((r): r is EntitySearchResult => r !== null);
+    setResults(succeeded);
+    setSearched(true);
+    setHighlightQuery(q);
+    setSelectedIndex(null);
+    const failures = settled.filter((r): r is PromiseRejectedResult => r.status === "rejected");
+    if (failures.length > 0) {
+      setError(
+        failures.length === entities.length
+          ? (failures[0].reason as Error).message
+          : t("search.partialFailure", { failed: failures.length, total: entities.length }),
+      );
+    }
+    setLoading(false);
+  }
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    setExpandedSamples({});
+    setRecentSearches(addRecentSearch(projectId, query));
+    await runSearch(query);
+  }
+
+  async function handleRecentSearchClick(q: string) {
+    setQuery(q);
+    setExpandedSamples({});
+    setRecentSearches(addRecentSearch(projectId, q));
+    await runSearch(q);
+  }
+
+  /**
+   * Fetches this one entity's records again (a cheap, idempotent GET --
+   * the same request runSearch already made) and re-filters them with no
+   * sample cap, so "Show all" reveals every real match instead of just the
+   * first 5. Keyed per entity in expandedSamples rather than reusing
+   * `results` in place, so a still-collapsed group elsewhere is untouched.
+   */
+  async function handleShowAll(entityName: string) {
+    const entity = entities.find((e) => e.name === entityName);
+    if (!entity) return;
+    setShowAllLoading((prev) => new Set(prev).add(entityName));
+    try {
+      const { records } = await listRecords(projectId, entityName);
+      const full = searchEntityRecords(
+        entity,
+        records,
+        highlightQuery,
+        records.length,
+        entities,
+        lastRecordsByEntityRef.current,
+      );
+      setExpandedSamples((prev) => ({ ...prev, [entityName]: full?.sample ?? [] }));
+    } finally {
+      setShowAllLoading((prev) => {
+        const next = new Set(prev);
+        next.delete(entityName);
+        return next;
+      });
+    }
+  }
+
+  function handleClearRecentSearches() {
+    clearRecentSearches(projectId);
+    setRecentSearches([]);
+  }
+
+  function handleRemoveRecentSearch(q: string) {
+    setRecentSearches(removeRecentSearch(projectId, q));
+  }
+
+  function handleDownload() {
+    downloadSearchResults(
+      formatSearchResults(results, entities, expandedSamples, highlightQuery, projectName, lang, t),
+      projectName,
+    );
+  }
+
+  /**
+   * Same "Copy report" companion action every other read-heavy panel in
+   * this app already has (Business Twin round 222, WhatsApp log round
+   * 223, Time Machine round 224) for its own Download button -- Global
+   * Search was the one panel that searches across every entity in a
+   * project at once and had no way to take that result set anywhere at
+   * all, not even a Download button, let alone a Copy one.
+   */
+  async function handleCopy() {
+    try {
+      await navigator.clipboard.writeText(
+        formatSearchResults(results, entities, expandedSamples, highlightQuery, projectName, lang, t),
+      );
+      setCopyStatus("copied");
+    } catch {
+      setCopyStatus("failed");
+    }
+  }
+
+  useEffect(() => {
+    if (copyStatus === "idle") return;
+    const timer = setTimeout(() => setCopyStatus("idle"), 2000);
+    return () => clearTimeout(timer);
+  }, [copyStatus]);
+
+  function recordPreview(entity: Entity, record: EntityRecord): string {
+    return recordDisplayLabel(entity, record);
+  }
+
+  // Mirrors EntityPanel.tsx's own focusedRowId scroll effect (round 260):
+  // with more result groups than fit in the panel's own scrollable height,
+  // arrow-key navigation could move the highlight below the fold with zero
+  // visual cue, and Enter would then jump to a group the user couldn't see
+  // was even selected.
+  useEffect(() => {
+    if (selectedIndex == null) return;
+    const group = resultsContainerRef.current?.querySelector(`[data-group-index="${selectedIndex}"]`);
+    group?.scrollIntoView?.({ behavior: "smooth", block: "nearest" });
+  }, [selectedIndex]);
+
+  /**
+   * Down/Up move a highlight across the result groups (not individual
+   * records -- "jump" always lands on an entity tab, so the group is the
+   * unit that matters), and Enter jumps to whichever group is highlighted.
+   * Enter with nothing highlighted still submits the form as a normal
+   * search, so this never changes behavior for someone who just types and
+   * hits Enter once.
+   */
+  function handleInputKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
+    if (e.key === "Escape" && query.length > 0) {
+      e.preventDefault();
+      setQuery("");
+      return;
+    }
+    if (results.length === 0) return;
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      setSelectedIndex((prev) => (prev === null ? 0 : Math.min(prev + 1, results.length - 1)));
+    } else if (e.key === "ArrowUp") {
+      e.preventDefault();
+      setSelectedIndex((prev) => (prev === null ? results.length - 1 : Math.max(prev - 1, 0)));
+    } else if (e.key === "Enter" && selectedIndex !== null) {
+      e.preventDefault();
+      onJumpToEntity(results[selectedIndex].entityName);
+    }
+  }
+
+  return (
+    <div className="history-overlay">
+      <div className="history-panel search-panel" ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby="search-panel-title">
+        <div className="history-header">
+          <h2 id="search-panel-title">{t("search.title")}</h2>
+          <div className="history-header-actions">
+            {!loading && results.length > 0 && (
+              <button type="button" className="secondary" onClick={handleCopy} aria-live="polite" aria-atomic="true">
+                {copyStatus === "copied"
+                  ? t("search.copy.copied")
+                  : copyStatus === "failed"
+                    ? t("search.copy.failed")
+                    : t("search.copy")}
+              </button>
+            )}
+            {!loading && results.length > 0 && (
+              <button type="button" className="secondary" onClick={handleDownload}>
+                {t("search.download")}
+              </button>
+            )}
+            <button type="button" className="secondary" onClick={onClose}>
+              {t("history.close")}
+            </button>
+          </div>
+        </div>
+        <p className="muted small">{t("search.description")}</p>
+
+        <form className="global-search-form" onSubmit={handleSubmit}>
+          <input
+            type="text"
+            autoFocus
+            className="global-search-input"
+            placeholder={t("search.placeholder")}
+            aria-label={t("search.placeholder")}
+            value={query}
+            data-escape-handled-locally={query.length > 0 ? "" : undefined}
+            onChange={(e) => setQuery(e.target.value)}
+            onKeyDown={handleInputKeyDown}
+          />
+          {query.length > 0 && (
+            <button
+              type="button"
+              className="secondary small global-search-clear-query"
+              aria-label={t("search.query.clear")}
+              onClick={() => setQuery("")}
+            >
+              ✕
+            </button>
+          )}
+          <button type="submit" disabled={!query.trim()}>
+            {t("search.submit")}
+          </button>
+        </form>
+
+        {error && (
+          <div className="error-retry-row">
+            <p className="error" role="status">
+              {error}
+            </p>
+            <button type="button" className="secondary small" onClick={() => runSearch(highlightQuery)}>
+              {t("search.retry")}
+            </button>
+          </div>
+        )}
+        {loading && (
+          <p className="muted" role="status">
+            {t("entity.loading")}
+          </p>
+        )}
+
+        {!loading && !searched && !error && (
+          <>
+            <p className="muted">{t("search.noQuery")}</p>
+            {recentSearches.length > 0 && (
+              <div className="global-search-recent">
+                <div className="global-search-recent-header">
+                  <span className="muted small">{t("search.recent.heading")}</span>
+                  <button type="button" className="link-button small" onClick={handleClearRecentSearches}>
+                    {t("search.recent.clear")}
+                  </button>
+                </div>
+                <div className="chips">
+                  {recentSearches.map((q) => (
+                    <span className="chip chip-removable" key={q}>
+                      <button type="button" className="chip-text" onClick={() => handleRecentSearchClick(q)}>
+                        {q}
+                      </button>
+                      <button
+                        type="button"
+                        className="chip-remove"
+                        title={t("search.recent.remove")}
+                        aria-label={t("search.recent.remove", { query: q })}
+                        onClick={() => handleRemoveRecentSearch(q)}
+                      >
+                        ×
+                      </button>
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
+          </>
+        )}
+        {!loading && searched && results.length === 0 && !error && <p className="muted">{t("search.noResults")}</p>}
+
+        {!loading && results.length > 0 && <p className="muted small">{t("search.keyboardHint")}</p>}
+
+        {!loading && results.length > 0 && (
+          <div className="global-search-results" ref={resultsContainerRef}>
+            {results.map((result, i) => {
+              const displayed = expandedSamples[result.entityName] ?? result.sample;
+              const remaining = result.totalMatches - displayed.length;
+              return (
+                <div
+                  key={result.entityName}
+                  data-group-index={i}
+                  className={
+                    i === selectedIndex ? "global-search-group global-search-group-selected" : "global-search-group"
+                  }
+                >
+                  <div className="global-search-group-header">
+                    <span className="global-search-entity-label">{result.entityLabel}</span>
+                    <span className="muted small">{t("search.resultCount", { count: result.totalMatches })}</span>
+                    <button type="button" className="secondary small" onClick={() => onJumpToEntity(result.entityName)}>
+                      {t("search.jumpTo")}
+                    </button>
+                  </div>
+                  <ul className="global-search-hits">
+                    {displayed.map((record) => (
+                      <li key={String(record.id)}>
+                        <button
+                          type="button"
+                          className="link-button global-search-hit-button"
+                          onClick={() => onJumpToRecord(result.entityName, record.id as number)}
+                        >
+                          <Highlighted
+                            text={recordPreview(entities.find((e) => e.name === result.entityName)!, record)}
+                            query={highlightQuery}
+                          />
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                  {remaining > 0 && (
+                    <button
+                      type="button"
+                      className="link-button small global-search-show-all"
+                      disabled={showAllLoading.has(result.entityName)}
+                      onClick={() => handleShowAll(result.entityName)}
+                    >
+                      {showAllLoading.has(result.entityName)
+                        ? t("search.showAll.busy")
+                        : t("search.showAll", { count: remaining })}
+                    </button>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
