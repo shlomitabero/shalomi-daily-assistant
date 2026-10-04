@@ -411,6 +411,20 @@ export function WhatsAppPanel({
     setTestTo(n);
   }
 
+  /**
+   * An inbound message had no way to reply to it directly -- only a
+   * delete button (and, for a failed outbound message, Retry). Seeing a
+   * customer's message but having to scroll up and manually copy their
+   * number into the test-send "to" field is exactly the kind of friction
+   * a real WhatsApp inbox shouldn't have. Reuses the same setTestTo call
+   * handleRecentNumberClick already makes; the recipient of a reply is
+   * always the message's own sender (fromNumber), never toNumber (that's
+   * this project's own WhatsApp number).
+   */
+  function handleReplyToMessage(m: WhatsAppMessageLogEntry) {
+    setTestTo(m.fromNumber);
+  }
+
   function handleRemoveRecentNumber(n: string) {
     setRecentNumbers(removeRecentWhatsAppNumber(projectId, n));
   }
@@ -849,6 +863,11 @@ export function WhatsAppPanel({
                         </button>
                       )}
                     </>
+                  )}
+                  {m.direction === "in" && s === "connected" && (
+                    <button type="button" className="secondary small" onClick={() => handleReplyToMessage(m)}>
+                      {t("whatsapp.log.reply")}
+                    </button>
                   )}
                   <button
                     type="button"

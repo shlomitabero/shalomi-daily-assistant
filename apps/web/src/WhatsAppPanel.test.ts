@@ -589,6 +589,88 @@ test("WhatsAppPanel's prefillTo prop pre-fills the real test-send 'to' input, wh
 });
 
 /**
+ * New in this round: an inbound message had no way to reply to it
+ * directly -- only a delete button (and, for a failed outbound message,
+ * Retry) -- forcing the user to scroll up and copy the sender's number by
+ * hand into the test-send "to" field. A new "Reply" button on every
+ * inbound log row fills the real "to" input with that message's own
+ * fromNumber, reusing the exact same state (and send path) as the
+ * existing recent-numbers chips. Confirms it's real component state, not
+ * a dead button: after clicking Reply, typing a message and submitting
+ * sends to the replied-to number, not whatever was there before.
+ */
+test("WhatsAppPanel's Reply button on an inbound message fills the real test-send 'to' input with that message's sender, and sending afterward uses it", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    const messages: WhatsAppMessageLogEntry[] = [
+      {
+        id: "m1",
+        direction: "in",
+        fromNumber: "972521112233",
+        toNumber: "972501234567",
+        body: "Hi, do you have this in stock?",
+        matchedLabel: null,
+        matchedEntityName: null,
+        matchedRecordId: null,
+        status: "received",
+        createdAt: new Date().toISOString(),
+      },
+    ];
+    let capturedSendBody: string | undefined;
+    globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/integrations/whatsapp/status") {
+        return new Response(
+          JSON.stringify({ status: "connected", phoneNumber: "972501234567", qrDataUrl: null, error: null }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      if (method === "GET" && input === "/api/projects/proj1/integrations/whatsapp/messages") {
+        return new Response(JSON.stringify({ messages }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      if (method === "POST" && input === "/api/projects/proj1/integrations/whatsapp/send") {
+        capturedSendBody = init!.body as string;
+        return new Response(JSON.stringify({ ok: true }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+    try {
+      render(
+        React.createElement(
+          ThemeProvider,
+          null,
+          React.createElement(LanguageProvider, null, React.createElement(WhatsAppPanel, { projectId: "proj1", projectName: "Test Project", onClose: () => {}, onJumpToEntity: () => {}, onJumpToRecord: () => {} })),
+        ),
+      );
+      await waitForCondition(() => document.querySelectorAll(".whatsapp-log-list li").length === 1);
+
+      const toInputBefore = document.querySelector('.whatsapp-test-form input[type="text"]') as HTMLInputElement;
+      assert.equal(toInputBefore.value, "", "the 'to' input must start empty -- nothing prefilled this time");
+
+      const logRow = document.querySelector(".whatsapp-log-in") as HTMLElement;
+      assert.ok(logRow, "expected the inbound message's own row");
+      const replyButtons = [...logRow.querySelectorAll("button")].filter((b) => b.textContent === "Reply");
+      assert.equal(replyButtons.length, 1, "expected exactly one real Reply button on the inbound row");
+      fireEvent.click(replyButtons[0]);
+
+      const toInputAfter = document.querySelector('.whatsapp-test-form input[type="text"]') as HTMLInputElement;
+      assert.equal(toInputAfter.value, "972521112233", "clicking Reply must fill the real 'to' input with the message's own sender number");
+
+      const messageInput = document.querySelectorAll('.whatsapp-test-form input[type="text"]')[1] as HTMLInputElement;
+      fireEvent.change(messageInput, { target: { value: "Yes, it's in stock!" } });
+      fireEvent.submit(document.querySelector("form.whatsapp-test-form")!);
+
+      await waitForCondition(() => typeof capturedSendBody === "string");
+      const parsed = JSON.parse(capturedSendBody!);
+      assert.equal(parsed.to, "972521112233", "sending after Reply must use the replied-to sender, not a stale or empty value");
+      assert.equal(parsed.message, "Yes, it's in stock!");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * Regression test for round 289's WhatsApp unread-badge feature
  * (whatsappUnread.ts + App.tsx's topbar poll): the badge reads its "last
  * seen" marker purely from localStorage, written by this panel -- if the
