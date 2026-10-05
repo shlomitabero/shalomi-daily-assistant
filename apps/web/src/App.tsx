@@ -1175,9 +1175,21 @@ function AppContent() {
    * one of its sessions (including this one) are already gone by this
    * point, so unlike handleLogout above this never calls the API's own
    * logout() (there's no session left to revoke, and the token is already
-   * dead) -- just the same local-state cleanup, straight back to the auth screen.
+   * dead). Also purges every deleted project's own client-side preference
+   * entries (round 403 -- this used to only reset local UI state, same as
+   * handleLogout, leaving this account's localStorage entries behind
+   * forever, the one "a project is gone" path purgeProjectPreferences's
+   * own two existing callers, handleDeleteProject/handleBulkDeleteProjects,
+   * never covered), then resets local UI state straight back to the auth screen.
    */
-  function handleAccountDeleted() {
+  function handleAccountDeleted(ownedProjectIds: string[]) {
+    // DELETE /auth/account deletes every one of these server-side via the
+    // exact same cascade handleDeleteProject/handleBulkDeleteProjects use
+    // for a single/several projects -- but unlike those two, this path
+    // never called purgeProjectPreferences, so this account's own entries
+    // in all eighteen localStorage preference stores (projectPreferenceCleanup.ts)
+    // sat there forever. Round 403's own fix.
+    for (const id of ownedProjectIds) purgeProjectPreferences(id);
     clearToken();
     setShowDeleteAccount(false);
     setUser(null);

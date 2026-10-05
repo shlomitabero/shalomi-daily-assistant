@@ -21,13 +21,21 @@ export function DeleteAccountPanel({
   email: string;
   userId: string;
   onClose: () => void;
-  onDeleted: () => void;
+  onDeleted: (ownedProjectIds: string[]) => void;
 }) {
   const { t } = useTranslation();
   const [confirmText, setConfirmText] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [projectSummary, setProjectSummary] = useState<{ owned: number; shared: number } | null>(null);
+  // The same real project ids projectSummary's own "owned" count is derived
+  // from, kept around (round 403) so a successful delete can hand them back
+  // to App.tsx -- the server deletes every one of these the same way
+  // handleDeleteProject/handleBulkDeleteProjects do, but has no way to also
+  // sweep this browser's own localStorage preference stores for them
+  // (projectPreferenceCleanup.ts); App.tsx needs the actual ids, not just
+  // the count, to do that itself.
+  const [ownedProjectIds, setOwnedProjectIds] = useState<string[]>([]);
   const dialogRef = useDialogFocusTrap<HTMLDivElement>(onClose);
 
   // Fetches the real project list itself (rather than trusting App.tsx's own
@@ -38,8 +46,9 @@ export function DeleteAccountPanel({
   useEffect(() => {
     listProjects()
       .then(({ projects }) => {
-        const owned = projects.filter((p) => p.ownerId === userId).length;
-        setProjectSummary({ owned, shared: projects.length - owned });
+        const owned = projects.filter((p) => p.ownerId === userId);
+        setProjectSummary({ owned: owned.length, shared: projects.length - owned.length });
+        setOwnedProjectIds(owned.map((p) => p.id));
       })
       .catch(() => setProjectSummary(null));
   }, [userId]);
@@ -54,7 +63,7 @@ export function DeleteAccountPanel({
     setError(null);
     try {
       await deleteAccount();
-      onDeleted();
+      onDeleted(ownedProjectIds);
     } catch (err) {
       setError((err as Error).message);
       setBusy(false);

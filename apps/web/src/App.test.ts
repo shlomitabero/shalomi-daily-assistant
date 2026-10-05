@@ -1477,6 +1477,121 @@ test("App's handleGoHome resets view/project/selectedAnswers/additionalRequest A
 });
 
 /**
+ * Round 403: DELETE /auth/account deletes every project the account owns
+ * server-side via the exact same cascade handleDeleteProject/
+ * handleBulkDeleteProjects use -- but unlike those two, handleAccountDeleted
+ * never called purgeProjectPreferences, so this account's own entries in
+ * every one of projectPreferenceCleanup.ts's localStorage stores sat there
+ * forever. Confirms purgeProjectPreferences is now called once per owned
+ * project id DeleteAccountPanel hands back, before the existing local
+ * UI-state reset runs.
+ */
+test("App's handleAccountDeleted purges client-side preferences for every owned project id, then resets local UI state", () => {
+  const appSrc = readFileSync(new URL("./App.tsx", import.meta.url), "utf8");
+  const handlerMatch = appSrc.match(/ {2}function handleAccountDeleted\(ownedProjectIds: string\[\]\) \{[\s\S]*?\n {2}\}\n/);
+  assert.ok(handlerMatch, "expected to find handleAccountDeleted in App.tsx");
+  const { code } = transformSync(handlerMatch![0], { loader: "ts" });
+
+  const state: {
+    purgeCalls: string[];
+    tokenCleared: boolean;
+    showDeleteAccount: boolean;
+    user: unknown;
+    project: unknown;
+    view: string | null;
+  } = {
+    purgeCalls: [],
+    tokenCleared: false,
+    showDeleteAccount: true,
+    user: { id: "user1" },
+    project: { id: "p1" },
+    view: "preview",
+  };
+  const noop = () => {};
+  const fn = new Function(
+    "purgeProjectPreferences",
+    "clearToken",
+    "setShowDeleteAccount",
+    "setUser",
+    "setProject",
+    "setView",
+    "setDescription",
+    "clearIdeaDraft",
+    "setError",
+    "setActiveEntity",
+    "setSelectedAnswers",
+    "setAdditionalRequest",
+    "setRefineText",
+    "setRefineHistory",
+    "setRefineHistorySearch",
+    `${code}\nreturn handleAccountDeleted;`,
+  )(
+    (id: string) => state.purgeCalls.push(id),
+    () => (state.tokenCleared = true),
+    (v: boolean) => (state.showDeleteAccount = v),
+    (v: unknown) => (state.user = v),
+    (v: unknown) => (state.project = v),
+    (v: string) => (state.view = v),
+    noop,
+    noop,
+    noop,
+    noop,
+    noop,
+    noop,
+    noop,
+    noop,
+    noop,
+  ) as (ownedProjectIds: string[]) => void;
+
+  fn(["p1", "p2", "p3"]);
+
+  assert.deepEqual(state.purgeCalls, ["p1", "p2", "p3"], "must purge preferences for every owned project id, in order, once each");
+  assert.equal(state.tokenCleared, true, "must still clear the now-dead token");
+  assert.equal(state.showDeleteAccount, false, "must still close the panel");
+  assert.equal(state.user, null, "must still clear the deleted user");
+  assert.equal(state.project, null, "must still clear the deleted project");
+  assert.equal(state.view, "home", "must still navigate back to the auth/home screen");
+
+  const noneOwned = { purgeCalls: [] as string[] };
+  const fnNoneOwned = new Function(
+    "purgeProjectPreferences",
+    "clearToken",
+    "setShowDeleteAccount",
+    "setUser",
+    "setProject",
+    "setView",
+    "setDescription",
+    "clearIdeaDraft",
+    "setError",
+    "setActiveEntity",
+    "setSelectedAnswers",
+    "setAdditionalRequest",
+    "setRefineText",
+    "setRefineHistory",
+    "setRefineHistorySearch",
+    `${code}\nreturn handleAccountDeleted;`,
+  )(
+    (id: string) => noneOwned.purgeCalls.push(id),
+    noop,
+    noop,
+    noop,
+    noop,
+    noop,
+    noop,
+    noop,
+    noop,
+    noop,
+    noop,
+    noop,
+    noop,
+    noop,
+    noop,
+  ) as (ownedProjectIds: string[]) => void;
+  fnNoneOwned([]);
+  assert.deepEqual(noneOwned.purgeCalls, [], "an account that owned no projects must never call purgeProjectPreferences at all");
+});
+
+/**
  * New in this round: FieldLabelEditor.tsx's own record-form rendering
  * already marks a required field with a trailing " *" once a project is
  * built -- but the spec-review screen's entity summary, the one place a
