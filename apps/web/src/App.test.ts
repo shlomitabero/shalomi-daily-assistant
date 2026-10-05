@@ -13,6 +13,7 @@ import {
   formatEntityFieldSummary,
   formatMyProjectsCount,
   enhanceProviderLabel,
+  extractRefineProviderName,
   formatOpenQuestionsProgress,
   formatProjectCreatedDate,
   formatRefineTimestamp,
@@ -207,6 +208,34 @@ test("summarizeRefineImpact prefers the LAST successful Architect event, not the
   const summary = summarizeRefineImpact(events, t);
   assert.match(summary, /orderNote/);
   assert.doesNotMatch(summary, /DROP TABLE/);
+});
+
+/**
+ * Regression test for round 406: /refine calls the exact same
+ * generateSpec() as project creation and the enhance step, but discarded
+ * its providerName entirely until now -- pipeline.ts's runBuildPipeline
+ * attaches it to the very first ("Architect"/"running") event's own
+ * `detail`, and this is the client-side counterpart that reads it back
+ * out of a completed refine's raw event list.
+ */
+test("extractRefineProviderName reads providerName off the first Architect/running event's detail", () => {
+  const events: AgentStepEvent[] = [
+    { agent: "Architect", status: "running", message: "…", detail: { providerName: "anthropic-fallback" } },
+    { agent: "Architect", status: "success", message: "…", detail: { newEntities: [], changedEntities: [] } },
+  ];
+  assert.equal(extractRefineProviderName(events), "anthropic-fallback");
+});
+
+test("extractRefineProviderName returns null when the first event has no detail at all (a plain /build run, which never passes providerName)", () => {
+  const events: AgentStepEvent[] = [
+    { agent: "Architect", status: "running", message: "…" },
+    { agent: "Architect", status: "success", message: "…", detail: { newEntities: [], changedEntities: [] } },
+  ];
+  assert.equal(extractRefineProviderName(events), null);
+});
+
+test("extractRefineProviderName returns null for an empty event list instead of throwing", () => {
+  assert.equal(extractRefineProviderName([]), null);
 });
 
 /**
@@ -534,9 +563,9 @@ test("formatRefineTimestamp renders a real locale-formatted date+time, in each l
  * applied to this screen's own unbounded, never-cleared list.
  */
 test("filterRefineHistory narrows by a case-insensitive substring match on the instruction text", () => {
-  const invoices = { id: "r1", instruction: "Add invoice tracking", summary: "s", completedAt: "2026-01-01" };
-  const coupons = { id: "r2", instruction: "Add a coupons entity", summary: "s", completedAt: "2026-01-02" };
-  const reviews = { id: "r3", instruction: "Track customer reviews", summary: "s", completedAt: "2026-01-03" };
+  const invoices = { id: "r1", instruction: "Add invoice tracking", summary: "s", completedAt: "2026-01-01", providerName: null };
+  const coupons = { id: "r2", instruction: "Add a coupons entity", summary: "s", completedAt: "2026-01-02", providerName: null };
+  const reviews = { id: "r3", instruction: "Track customer reviews", summary: "s", completedAt: "2026-01-03", providerName: null };
   const entries = [invoices, coupons, reviews];
 
   assert.deepEqual(
@@ -558,9 +587,9 @@ test("filterRefineHistory narrows by a case-insensitive substring match on the i
 
 test("removeRefineHistoryEntry drops only the matching entry, leaving the rest (and their order) untouched", () => {
   const entries = [
-    { id: "r1", instruction: "Add invoice tracking", summary: "s", completedAt: "2026-01-01" },
-    { id: "r2", instruction: "Add a coupons entity", summary: "s", completedAt: "2026-01-02" },
-    { id: "r3", instruction: "Track customer reviews", summary: "s", completedAt: "2026-01-03" },
+    { id: "r1", instruction: "Add invoice tracking", summary: "s", completedAt: "2026-01-01", providerName: null },
+    { id: "r2", instruction: "Add a coupons entity", summary: "s", completedAt: "2026-01-02", providerName: null },
+    { id: "r3", instruction: "Track customer reviews", summary: "s", completedAt: "2026-01-03", providerName: null },
   ];
 
   assert.deepEqual(
@@ -1339,6 +1368,57 @@ test("App's handleBuildComplete falls back to the first entity when the previous
 });
 
 /**
+ * Regression test for round 406: when a refine actually completes
+ * (refineRunning true, a pending instruction set), handleBuildComplete's
+ * new history entry must carry the providerName extractRefineProviderName
+ * pulled off this refine's own raw event list -- not silently drop it the
+ * way this whole round's survey found it doing before the fix.
+ */
+test("App's handleBuildComplete records the refine's own providerName (via extractRefineProviderName) on the new history entry", () => {
+  const appSrc = readFileSync(new URL("./App.tsx", import.meta.url), "utf8");
+  const handlerMatch = appSrc.match(/ {2}function handleBuildComplete\(builtProject: Project\) \{[\s\S]*?\n {2}\}\n/);
+  assert.ok(handlerMatch, "expected to find handleBuildComplete in App.tsx");
+  const { code } = transformSync(handlerMatch![0], { loader: "ts" });
+
+  const historyEntries: Array<{ providerName: string | null }> = [];
+  const fn = new Function(
+    "refineRunning",
+    "pendingRefineInstruction",
+    "refineEvents",
+    "t",
+    "summarizeRefineImpact",
+    "extractRefineProviderName",
+    "setRefineHistory",
+    "setProject",
+    "setActiveEntity",
+    "setRefineText",
+    "setAdditionalRequest",
+    "setRefineRunning",
+    "setView",
+    `${code}\nreturn handleBuildComplete;`,
+  )(
+    true,
+    { current: "add a discount field" },
+    { current: [{ agent: "Architect", status: "running", message: "…", detail: { providerName: "anthropic-fallback" } }] },
+    (key: string) => key,
+    summarizeRefineImpact,
+    extractRefineProviderName,
+    (updater: (prev: Array<{ providerName: string | null }>) => Array<{ providerName: string | null }>) => {
+      historyEntries.push(...updater([]));
+    },
+    () => {},
+    () => {},
+    () => {},
+    () => {},
+    () => {},
+    () => {},
+  ) as (builtProject: Project) => void;
+
+  fn(makeProject([makeEntity("Customer")]));
+  assert.deepEqual(historyEntries.map((e) => e.providerName), ["anthropic-fallback"]);
+});
+
+/**
  * New in this round: the spec-review screen (the "Here's what we
  * understood" step between describing an idea and building it) had no way
  * back to the home screen at all -- only forward, via "Build the app".
@@ -1947,10 +2027,10 @@ test("App's handleRemoveRefineHistoryEntry removes only the targeted entry via t
   assert.ok(handlerMatch, "expected to find handleRemoveRefineHistoryEntry in App.tsx");
   const { code } = transformSync(handlerMatch![0], { loader: "ts" });
 
-  type Entry = { id: string; instruction: string; summary: string; completedAt: string };
+  type Entry = { id: string; instruction: string; summary: string; completedAt: string; providerName: string | null };
   const entries: Entry[] = [
-    { id: "r1", instruction: "Add invoice tracking", summary: "s", completedAt: "2026-01-01" },
-    { id: "r2", instruction: "Add a coupons entity", summary: "s", completedAt: "2026-01-02" },
+    { id: "r1", instruction: "Add invoice tracking", summary: "s", completedAt: "2026-01-01", providerName: null },
+    { id: "r2", instruction: "Add a coupons entity", summary: "s", completedAt: "2026-01-02", providerName: null },
   ];
   let updated: Entry[] | null = null;
   const fn = new Function(

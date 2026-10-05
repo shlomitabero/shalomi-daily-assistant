@@ -248,6 +248,13 @@ export interface PipelineOptions {
   previousSpec?: ProductSpec;
   nextSpec: ProductSpec;
   changeLabel: string;
+  // Only /refine passes this (the generateSpec() call it made just before
+  // starting this pipeline); /build has no such call (it builds whatever
+  // spec the project already has), so this stays undefined there. Carried
+  // on the very first event's own `detail` below rather than as a new event
+  // shape, so every existing SSE consumer (which assumes every frame is an
+  // AgentStepEvent) keeps working unchanged.
+  providerName?: string;
 }
 
 /**
@@ -261,10 +268,21 @@ export async function* runBuildPipeline(
   project: Project,
   options: PipelineOptions,
 ): AsyncGenerator<AgentStepEvent> {
-  const { previousSpec, changeLabel } = options;
+  const { previousSpec, changeLabel, providerName } = options;
   let nextSpec = options.nextSpec;
 
-  yield { agent: "Architect", status: "running", message: "Designing schema from the product spec…" };
+  yield {
+    agent: "Architect",
+    status: "running",
+    message: "Designing schema from the product spec…",
+    // Spread rather than `detail: providerName ? {...} : undefined` --
+    // the latter would set an own `detail` key (value undefined) on every
+    // /build event too, changing this object's own enumerable key set
+    // even when there's no providerName to carry, which a strict
+    // assert.deepEqual elsewhere could end up distinguishing from today's
+    // shape.
+    ...(providerName ? { detail: { providerName } } : {}),
+  };
   yield architectEvent(previousSpec, nextSpec);
 
   yield { agent: "Database", status: "running", message: "Applying migration…" };

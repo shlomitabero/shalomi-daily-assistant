@@ -124,6 +124,7 @@ interface RefineHistoryEntry {
   instruction: string;
   summary: string;
   completedAt: string;
+  providerName: string | null;
 }
 
 /** A refine history entry's own completion time, locale-formatted -- separated out (rather than inlined in the JSX) purely so it's directly unit-testable, matching this file's own formatProjectCreatedDate convention. */
@@ -314,6 +315,24 @@ export function summarizeRefineImpact(events: AgentStepEvent[], t: (key: string)
     parts.push(`${e.label} ${t("build.detail.architect.entityRemoved")}`);
   }
   return parts.length > 0 ? parts.join(" · ") : t("preview.refineHistory.noChange");
+}
+
+/**
+ * Pulls the AI-vs-heuristic provider signal (pipeline.ts's own
+ * PipelineOptions.providerName) back out of a completed refine's raw event
+ * list. Unlike summarizeRefineImpact above, this reads the very first event
+ * (always `{agent: "Architect", status: "running"}`, emitted exactly once
+ * per pipeline run) rather than the last "success" one -- a Debug-recovered
+ * refine re-emits a second Architect success event, but never a second
+ * "running" one, so there's nothing to disambiguate here. Round 402 closed
+ * this exact gap (generateSpec()'s honest signal silently discarded) for
+ * the enhance step; /refine calls the identical generateSpec() and had the
+ * identical gap, just with no render location of its own before now.
+ */
+export function extractRefineProviderName(events: AgentStepEvent[]): string | null {
+  const first = events.find((e) => e.agent === "Architect" && e.status === "running");
+  const detail = first?.detail as { providerName?: string } | undefined;
+  return detail?.providerName ?? null;
 }
 
 /**
@@ -1123,6 +1142,7 @@ function AppContent() {
         instruction: pendingRefineInstruction.current,
         summary: summarizeRefineImpact(refineEvents.current, t),
         completedAt: new Date().toISOString(),
+        providerName: extractRefineProviderName(refineEvents.current),
       };
       setRefineHistory((prev) => [...prev, entry]);
     }
@@ -1741,6 +1761,11 @@ function AppContent() {
                             </button>
                           </div>
                           <p className="muted small">{entry.summary}</p>
+                          {specProviderLabel(entry.providerName, t) && (
+                            <p className={entry.providerName === "anthropic-fallback" ? "error" : "muted small"}>
+                              {specProviderLabel(entry.providerName, t)}
+                            </p>
+                          )}
                           <p className="refine-history-time muted small">{formatRefineTimestamp(entry.completedAt, lang)}</p>
                         </li>
                       ))}

@@ -657,11 +657,12 @@ export function createProjectsRouter(db: ForgeDatabase, provider: SpecProvider |
       try {
         const { instruction } = parsed.data;
         const combinedDescription = `${project.description}\n\nAdditional requirement: ${instruction}`;
-        const { spec: nextSpec } = await generateSpec(combinedDescription, provider);
+        const { spec: nextSpec, providerName } = await generateSpec(combinedDescription, provider);
         await streamPipeline(res, db, project, {
           previousSpec: project.spec,
           nextSpec,
           changeLabel: isHebrewText(instruction) ? `שיפור: ${instruction}` : `Refine: ${instruction}`,
+          providerName,
         });
       } finally {
         activePipelines.delete(project.id);

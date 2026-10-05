@@ -597,6 +597,48 @@ test("an initial build (no previous spec) never reports a removed entity", async
   assert.deepEqual((architectSuccess!.detail as ImpactDetail).removedEntityNames, []);
 });
 
+/**
+ * Regression test for round 406: /refine's own generateSpec() call
+ * produces a providerName (routes/projects.ts) that previously had nowhere
+ * to go once handed to this generator -- it's now carried on the very
+ * first ("Architect"/"running") event's own `detail`, so the client can
+ * read it back out of the raw SSE stream without a second event shape.
+ */
+test("runBuildPipeline attaches providerName to the first Architect/running event's detail when options.providerName is set", async () => {
+  const db = openDatabase(":memory:");
+  ensureProjectsTable(db);
+  ensureCheckpointsTable(db);
+  const spec: ProductSpec = { summary: "test", personas: [], roles: ["Admin"], screens: [], assumptions: [], openQuestions: [], entities: [{ name: "Customer", fields: [{ name: "name", type: "text", required: true }] }] };
+  const project = insertProject(db, { id: "proj1", ownerId: "user1", name: "test", description: "test", spec });
+
+  const events = await collect(
+    runBuildPipeline(db, project, { nextSpec: spec, changeLabel: "Refine: add a field", providerName: "anthropic-fallback" }),
+  );
+  const firstEvent = events[0];
+  assert.equal(firstEvent.agent, "Architect");
+  assert.equal(firstEvent.status, "running");
+  assert.deepEqual(firstEvent.detail, { providerName: "anthropic-fallback" });
+});
+
+/**
+ * /build never calls generateSpec() at all (it builds whatever spec the
+ * project already has), so it never passes options.providerName -- this
+ * confirms that case leaves the first event exactly as it was before this
+ * round, with no `detail` key at all (not even one holding `undefined`),
+ * matching every other "running"-status event in this file.
+ */
+test("runBuildPipeline's first event has no detail key at all when options.providerName is omitted", async () => {
+  const db = openDatabase(":memory:");
+  ensureProjectsTable(db);
+  ensureCheckpointsTable(db);
+  const spec: ProductSpec = { summary: "test", personas: [], roles: ["Admin"], screens: [], assumptions: [], openQuestions: [], entities: [{ name: "Customer", fields: [{ name: "name", type: "text", required: true }] }] };
+  const project = insertProject(db, { id: "proj1", ownerId: "user1", name: "test", description: "test", spec });
+
+  const events = await collect(runBuildPipeline(db, project, { nextSpec: spec, changeLabel: "Initial build" }));
+  const firstEvent = events[0];
+  assert.deepEqual(firstEvent, { agent: "Architect", status: "running", message: "Designing schema from the product spec…" });
+});
+
 test("Debug Agent reports failure clearly when its own fix attempt is also invalid", async () => {
   const db = openDatabase(":memory:");
   ensureProjectsTable(db);
