@@ -711,46 +711,89 @@ test("maybeNotifyNewWhatsAppMessages does nothing at all on the first-ever check
  * preview, but a project that was only ever created/answered but never
  * built has no real database behind it yet, so it must open to the spec
  * review screen instead -- opening a draft straight to "preview" would
- * show a live-preview screen with no working CRUD behind it. Extracts the
- * real function from App.tsx (not a reimplementation) the same way the
+ * show a live-preview screen with no working CRUD behind it. Also covers
+ * round 401's own addition: opening a project someone else owns must mark
+ * it "seen" (sharedProjectSeen.ts), so the home screen's "New share" chip
+ * (round 401) disappears once the invited collaborator has actually
+ * looked at it -- but opening a project the signed-in user owns themself
+ * must never touch that store at all, since round 401's chip only ever
+ * applies to someone else's project in the first place. Extracts the real
+ * function from App.tsx (not a reimplementation) the same way the
  * openPanel test above does.
  */
-test("App's openExistingProject routes a built project to the live preview and a draft project back to spec review", () => {
+test("App's openExistingProject routes a built project to the live preview and a draft project back to spec review, and marks a shared (not owned) project as seen", () => {
   const appSrc = readFileSync(new URL("./App.tsx", import.meta.url), "utf8");
   const handlerMatch = appSrc.match(/ {2}function openExistingProject\(p: Project\) \{[\s\S]*?\n {2}\}\n/);
   assert.ok(handlerMatch, "expected to find openExistingProject in App.tsx");
   const { code } = transformSync(handlerMatch![0], { loader: "ts" });
 
-  function run(project: Project) {
-    const state: { project: Project | null; activeEntity: string | null; view: string | null; specProvider: string | null } = {
+  function run(project: Project, currentUser: { id: string } | null) {
+    const state: {
+      project: Project | null;
+      activeEntity: string | null;
+      view: string | null;
+      specProvider: string | null;
+      markSeenCalls: string[];
+    } = {
       project: null,
       activeEntity: null,
       view: null,
       specProvider: "unset",
+      markSeenCalls: [],
     };
     const fn = new Function(
       "setProject",
       "setActiveEntity",
       "setSpecProvider",
       "setView",
+      "user",
+      "markSharedProjectSeen",
+      "setSeenSharedIds",
       `${code}\nreturn openExistingProject;`,
     )(
       (p: Project) => (state.project = p),
       (name: string | null) => (state.activeEntity = name),
       (v: string | null) => (state.specProvider = v),
       (v: string) => (state.view = v),
+      currentUser,
+      (id: string) => {
+        state.markSeenCalls.push(id);
+        return new Set([id]);
+      },
+      (_s: Set<string>) => {},
     ) as (p: Project) => void;
     fn(project);
     return state;
   }
 
+  const owner = { id: "user-owner" };
+  const collaborator = { id: "user-collaborator" };
+
   const builtProject = makeProject([makeEntity("Customer")]);
   builtProject.status = "built";
-  assert.deepEqual(run(builtProject), { project: builtProject, activeEntity: "Customer", view: "preview", specProvider: null });
+  builtProject.ownerId = owner.id;
+  const builtResult = run(builtProject, owner);
+  assert.deepEqual(
+    { project: builtResult.project, activeEntity: builtResult.activeEntity, view: builtResult.view, specProvider: builtResult.specProvider },
+    { project: builtProject, activeEntity: "Customer", view: "preview", specProvider: null },
+  );
+  assert.deepEqual(builtResult.markSeenCalls, [], "opening a project you own yourself must never call markSharedProjectSeen");
 
   const draftProject = makeProject([makeEntity("Customer")]);
   draftProject.status = "draft";
-  assert.deepEqual(run(draftProject), { project: draftProject, activeEntity: "Customer", view: "spec", specProvider: null });
+  draftProject.ownerId = owner.id;
+  const draftResult = run(draftProject, owner);
+  assert.deepEqual(
+    { project: draftResult.project, activeEntity: draftResult.activeEntity, view: draftResult.view, specProvider: draftResult.specProvider },
+    { project: draftProject, activeEntity: "Customer", view: "spec", specProvider: null },
+  );
+  assert.deepEqual(draftResult.markSeenCalls, [], "opening a draft project you own yourself must never call markSharedProjectSeen either");
+
+  const sharedProject = makeProject([makeEntity("Customer")]);
+  sharedProject.status = "built";
+  sharedProject.ownerId = owner.id;
+  const sharedResult = run(sharedProject, collaborator);
+  assert.deepEqual(sharedResult.markSeenCalls, [sharedProject.id], "opening a project someone else owns must mark it seen with its own id");
 });
 
 /**

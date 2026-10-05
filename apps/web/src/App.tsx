@@ -40,6 +40,7 @@ import { AddAssumptionForm, AddEntityForm, AddRoleForm, AssumptionItem, EntitySu
 import { applyColumnOrder, reorderColumns } from "./columnOrder.js";
 import { getEntityTabOrder, setEntityTabOrder } from "./entityTabOrder.js";
 import { getPinnedIds, sortByPinned, togglePinned } from "./pinnedProjects.js";
+import { getSeenSharedProjectIds, markSharedProjectSeen } from "./sharedProjectSeen.js";
 import { purgeProjectPreferences } from "./projectPreferenceCleanup.js";
 import {
   addRecentProjectSearch,
@@ -436,6 +437,7 @@ function AppContent() {
   const [showShortcuts, setShowShortcuts] = useState(false);
   const [myProjects, setMyProjects] = useState<Project[]>([]);
   const [pinnedIds, setPinnedIds] = useState<Set<string>>(() => getPinnedIds());
+  const [seenSharedIds, setSeenSharedIds] = useState<Set<string>>(() => getSeenSharedProjectIds());
   const [projectSortMode, setProjectSortModeState] = useState<ProjectSortMode>(() => getProjectSortMode());
   const [projectSearch, setProjectSearch] = useState("");
   const [recentProjectSearches, setRecentProjectSearches] = useState<string[]>(() => getRecentProjectSearches());
@@ -802,6 +804,7 @@ function AppContent() {
     setActiveEntity(p.spec.entities[0]?.name ?? null);
     setSpecProvider(null);
     setView(p.status === "built" ? "preview" : "spec");
+    if (user && p.ownerId !== user.id) setSeenSharedIds(markSharedProjectSeen(p.id));
   }
 
   /**
@@ -1364,6 +1367,9 @@ function AppContent() {
                       <button type="button" className="my-project-open" onClick={() => openExistingProject(p)}>
                         <strong>{p.name}</strong>
                         {p.ownerId !== user.id && <span className="chip">{t("home.myProjects.shared")}</span>}
+                        {p.ownerId !== user.id && !seenSharedIds.has(p.id) && (
+                          <span className="chip chip-new">{t("home.myProjects.newShare")}</span>
+                        )}
                         {p.status === "draft" && <span className="chip">{t("home.myProjects.draft")}</span>}
                         <span className="my-project-created muted small">
                           {t("home.myProjects.createdOn", { date: formatProjectCreatedDate(p.createdAt, lang) })}

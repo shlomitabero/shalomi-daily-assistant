@@ -644,6 +644,13 @@ button.danger:hover:not(:disabled) {
   font-weight: 500;
 }
 
+.chip-new {
+  background: var(--warning-soft);
+  color: var(--warning);
+  border-color: var(--warning);
+  font-weight: 700;
+}
+
 .chip-button {
   cursor: pointer;
   transition: border-color 0.12s ease, background 0.12s ease;
