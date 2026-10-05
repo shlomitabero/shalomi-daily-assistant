@@ -252,3 +252,85 @@ test("a field named after a SQL reserved keyword (e.g. 'order') works end-to-end
   deleteRecord(db, "proj1", withReservedFields, created.id as number);
   assert.equal(getRecord(db, "proj1", withReservedFields, created.id as number), undefined);
 });
+
+/**
+ * Regression test for round 408: coerceValue's required-field check only
+ * ever tested for the literal empty string (`raw === ""`), so a
+ * whitespace-only value (" ", "\t\n", …) skipped it entirely and fell
+ * straight into `Number(raw)` for a "number"/"relation" field --
+ * `Number(" ")` is a genuine JS quirk (`0`, not `NaN`), so the field
+ * silently got a real stored `0` instead of the ValidationError every
+ * other "no real value given" case already throws.
+ */
+test("insertRecord rejects a whitespace-only value for a required number field, instead of silently coercing it to 0", () => {
+  const invoice: Entity = {
+    name: "Invoice",
+    fields: [
+      { name: "label", type: "text", required: true },
+      { name: "amount", type: "number", required: true },
+    ],
+  };
+  const db = openDatabase(":memory:");
+  applyMigrations(db, "proj1", { ...spec, entities: [invoice] });
+
+  for (const whitespace of [" ", "\t", "\n", "  \t  "]) {
+    assert.throws(
+      () => insertRecord(db, "proj1", invoice, { label: "Rent", amount: whitespace }),
+      ValidationError,
+      `expected ${JSON.stringify(whitespace)} to be rejected, not coerced to 0`,
+    );
+  }
+
+  const created = insertRecord(db, "proj1", invoice, { label: "Rent", amount: 500 });
+  assert.equal(created.amount, 500);
+});
+
+/**
+ * Same bug, but for a required "relation" field: before the fix, a
+ * whitespace-only value coerced to foreign key `0` and hit the real
+ * `REFERENCES ... (id)` constraint (migrate.ts), throwing a bare SQLite
+ * "FOREIGN KEY constraint failed" error instead of the same clean
+ * ValidationError every other invalid-input path produces.
+ */
+test("insertRecord rejects a whitespace-only value for a required relation field with a clean ValidationError, not a raw foreign-key error", () => {
+  const customerEntity: Entity = { name: "Customer", fields: [{ name: "name", type: "text", required: true }] };
+  const order: Entity = {
+    name: "Order",
+    fields: [
+      { name: "total", type: "number", required: true },
+      { name: "customerId", type: "relation", required: true, relationTo: "Customer" },
+    ],
+  };
+  const db = openDatabase(":memory:");
+  applyMigrations(db, "proj1", { ...spec, entities: [customerEntity, order] });
+
+  assert.throws(
+    () => insertRecord(db, "proj1", order, { total: 10, customerId: "  " }),
+    ValidationError,
+    "a whitespace-only relation value must be rejected as a missing required field, not hit the FK constraint as a fabricated id 0",
+  );
+});
+
+/**
+ * The same whitespace-only value must also be treated as "nothing given"
+ * for a field that ISN'T required -- not stored as a fabricated 0 (for a
+ * number) or as the literal whitespace string itself (for text), matching
+ * entityFormatting.ts's own CSV import convention of trimming before
+ * checking for emptiness.
+ */
+test("insertRecord treats a whitespace-only value as null for an optional number field and an optional text field alike", () => {
+  const note: Entity = {
+    name: "Note",
+    fields: [
+      { name: "title", type: "text", required: true },
+      { name: "priority", type: "number", required: false },
+      { name: "body", type: "text", required: false },
+    ],
+  };
+  const db = openDatabase(":memory:");
+  applyMigrations(db, "proj1", { ...spec, entities: [note] });
+
+  const created = insertRecord(db, "proj1", note, { title: "Reminder", priority: "   ", body: "\t" });
+  assert.equal(created.priority, null, "a whitespace-only optional number must become null, not a fabricated 0");
+  assert.equal(created.body, null, "a whitespace-only optional text value must become null too, not the literal whitespace string");
+});

@@ -29,7 +29,15 @@ function isValidDateString(value: string): boolean {
 }
 
 function coerceValue(field: Field, raw: unknown): string | number | null {
-  if (raw === undefined || raw === null || raw === "") {
+  // A whitespace-only string (" ", "\t\n", …) is not caught by `raw === ""`,
+  // so it used to fall straight through to the type-specific coercion below
+  // -- for a required `number`/`relation` field, `Number(" ")` is `0` (a
+  // genuine JS quirk, not a NaN), so the required-field check never fired
+  // and a real zero/foreign-key-0 got silently stored for input that was,
+  // in substance, empty. Matches entityFormatting.ts's own CSV import,
+  // which already trims each cell before checking for emptiness.
+  const isEmpty = raw === undefined || raw === null || raw === "" || (typeof raw === "string" && raw.trim() === "");
+  if (isEmpty) {
     if (field.required) {
       throw new ValidationError(`Field "${field.name}" is required`);
     }

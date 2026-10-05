@@ -359,7 +359,8 @@ function isValidDate(value) {
 }
 
 function coerce(field, value) {
-  if (value === undefined || value === null || value === "") {
+  const isEmpty = value === undefined || value === null || value === "" || (typeof value === "string" && value.trim() === "");
+  if (isEmpty) {
     if (field.required) throw new Error(\`Field "\${field.name}" is required\`);
     return null;
   }

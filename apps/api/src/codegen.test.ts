@@ -283,6 +283,91 @@ test("generated server.js rejects a date field value that isn't a real, well-for
 });
 
 /**
+ * Regression test: the exported standalone app's own coerce() -- same
+ * copy-pasted logic as packages/db/src/repository.ts's coerceValue, round
+ * 408 found and fixed in both places -- only checked a value against the
+ * literal empty string `""`, not a whitespace-only one. `Number(" ")` is a
+ * genuine JS quirk: `0`, not `NaN`. So a required "number" field given a
+ * single space as its value skipped the required check entirely and
+ * silently stored a real `0`, instead of being rejected the same way an
+ * actually-empty value already is. Reproduced here against a real spawned
+ * server, the same standard the date-field and foreign-key tests above
+ * already use for this exact function.
+ */
+test("generated server.js rejects a whitespace-only value for a required number field instead of silently storing it as 0", async () => {
+  const numberProject: Project = {
+    ...project,
+    spec: {
+      ...project.spec,
+      entities: [
+        {
+          name: "Invoice",
+          fields: [
+            { name: "label", type: "text", required: true },
+            { name: "amount", type: "number", required: true },
+          ],
+        },
+      ],
+    },
+  };
+  const files = generateExportFiles(numberProject);
+  const serverJs = files.find((f) => f.path === "server.js")!.content;
+
+  const dir = mkdtempSync(path.join(tmpdir(), "codegen-whitespace-test-"));
+  const repoRoot = path.resolve(import.meta.dirname, "../../..");
+  symlinkSync(path.join(repoRoot, "node_modules"), path.join(dir, "node_modules"));
+  writeFileSync(path.join(dir, "server.js"), serverJs);
+
+  const port = 44000 + Math.floor(Math.random() * 5000);
+  const child = spawn(process.execPath, ["--experimental-sqlite", "server.js"], {
+    cwd: dir,
+    env: { ...process.env, PORT: String(port) },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  let stderr = "";
+  child.stderr.on("data", (chunk) => {
+    stderr += chunk.toString();
+  });
+
+  try {
+    const deadline = Date.now() + 5000;
+    let lastErr: unknown;
+    while (Date.now() < deadline) {
+      if (child.exitCode !== null) {
+        throw new Error(`server.js exited early (code ${child.exitCode}):\n${stderr}`);
+      }
+      try {
+        await fetch(`http://localhost:${port}/api/entities`);
+        break;
+      } catch (err) {
+        lastErr = err;
+        await new Promise((r) => setTimeout(r, 100));
+      }
+    }
+    if (child.exitCode !== null) throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
+
+    const whitespaceRes = await fetch(`http://localhost:${port}/api/Invoice`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ label: "Rent", amount: " " }),
+    });
+    assert.equal(whitespaceRes.status, 400, "a whitespace-only value for a required number field must be rejected, not silently coerced to 0");
+
+    const validRes = await fetch(`http://localhost:${port}/api/Invoice`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ label: "Rent", amount: 500 }),
+    });
+    assert.equal(validRes.status, 201);
+    const valid = await validRes.json();
+    assert.equal(valid.record.amount, 500);
+  } finally {
+    child.kill();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
  * New in this round: the exported standalone app's own server.js never
  * enabled PRAGMA foreign_keys and never emitted a REFERENCES clause for a
  * relation field, unlike the live Forge AI backend's connection.ts +
