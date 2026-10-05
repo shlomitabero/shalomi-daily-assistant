@@ -29,7 +29,7 @@ import {
   findBoardField,
   findDateField,
   findEndDateField,
-  findFilterableEnumFields,
+  findFilterableFields,
   findPhoneField,
   formatDateForInput,
   formatDateValue,
@@ -862,7 +862,7 @@ export function EntityPanel({
   const formRef = useRef<HTMLFormElement>(null);
   const tableScrollRef = useRef<HTMLDivElement>(null);
   const boardField = useMemo(() => findBoardField(entity.fields), [entity.fields]);
-  const filterableEnumFields = useMemo(() => findFilterableEnumFields(entity.fields), [entity.fields]);
+  const filterableFields = useMemo(() => findFilterableFields(entity.fields), [entity.fields]);
   const dateField = useMemo(() => findDateField(entity.fields), [entity.fields]);
   const endDateField = useMemo(() => (dateField ? findEndDateField(entity.fields, dateField) : null), [entity.fields, dateField]);
   const phoneField = useMemo(() => findPhoneField(entity.fields), [entity.fields]);
@@ -2225,7 +2225,7 @@ export function EntityPanel({
             <span className="muted small entity-record-count">
               {formatEntityRecordCount(visibleRecords.length, records.length, t)}
             </span>
-            {filterableEnumFields.map((f) => (
+            {filterableFields.map((f) => (
               <select
                 key={f.name}
                 className="entity-status-filter"
@@ -2240,14 +2240,21 @@ export function EntityPanel({
                 }
               >
                 <option value="">{t("entity.filter.allValues", { field: f.label ?? f.name })}</option>
-                {(f.enumValues ?? []).map((v) => (
-                  <option key={v} value={v}>
-                    {f.enumLabels?.[v] ?? v}
-                  </option>
-                ))}
+                {f.type === "boolean" ? (
+                  <>
+                    <option value="true">{t("entity.groupBy.yes")}</option>
+                    <option value="false">{t("entity.groupBy.no")}</option>
+                  </>
+                ) : (
+                  (f.enumValues ?? []).map((v) => (
+                    <option key={v} value={v}>
+                      {f.enumLabels?.[v] ?? v}
+                    </option>
+                  ))
+                )}
               </select>
             ))}
-            {filterableEnumFields.length > 0 && Object.values(fieldFilters).some(Boolean) && (
+            {filterableFields.length > 0 && Object.values(fieldFilters).some(Boolean) && (
               <button
                 type="button"
                 className="secondary small entity-clear-filters"

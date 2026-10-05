@@ -692,9 +692,10 @@ test("the exported EntityView's table toolbar has one filter dropdown per qualif
   const entityViewJsx = files.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
 
   assert.match(entityViewJsx, /function findFilterableEnumFields\(fields\) \{/);
-  assert.match(entityViewJsx, /const filterableEnumFields = useMemo\(\(\) => findFilterableEnumFields\(entity\.fields\), \[entity\.fields\]\);/);
+  assert.match(entityViewJsx, /function findFilterableFields\(fields\) \{/);
+  assert.match(entityViewJsx, /const filterableFields = useMemo\(\(\) => findFilterableFields\(entity\.fields\), \[entity\.fields\]\);/);
   assert.match(entityViewJsx, /const \[fieldFilters, setFieldFilters\] = useState\(\(\) => getPersistedFieldFilters\(entity\.name\)\);/);
-  assert.match(entityViewJsx, /\{filterableEnumFields\.map\(\(f\) => \(/);
+  assert.match(entityViewJsx, /\{filterableFields\.map\(\(f\) => \(/);
   assert.match(entityViewJsx, /className="entity-status-filter"/);
   // The filter must actually apply to visibleRecords, not just render inert dropdowns
   assert.match(
@@ -704,6 +705,48 @@ test("the exported EntityView's table toolbar has one filter dropdown per qualif
   // The exported CSS carries the matching filter-dropdown styling too
   const stylesCss = files.find((f) => f.path === "web/src/styles.css")!.content;
   assert.match(stylesCss, /\.entity-status-filter/);
+});
+
+/**
+ * Regression test for a real bug found by a round-400 Explore survey: the
+ * live preview's EntityPanel.tsx now also offers a filter dropdown for
+ * boolean fields (not just enum, see entityFormatting.test.ts and
+ * EntityPanel.test.ts), rendering Yes/No options -- confirms the exported
+ * standalone app's own plain-JS copy of this toolbar carries the same
+ * boolean branch, not just the enum-only behavior findFilterableEnumFields
+ * alone would produce.
+ */
+test("the exported EntityView's filter dropdown also covers a boolean field, rendering Yes/No options", () => {
+  const boolProject: Project = {
+    ...project,
+    spec: {
+      ...project.spec,
+      entities: [
+        {
+          name: "Task",
+          label: "Task",
+          fields: [
+            { name: "name", label: "Name", type: "text", required: true },
+            { name: "status", label: "Status", type: "enum", required: true, enumValues: ["todo", "done"] },
+            { name: "isUrgent", label: "Is Urgent", type: "boolean", required: false },
+          ],
+        },
+      ],
+    },
+  };
+  const files = generateExportFiles(boolProject);
+  const entityViewJsx = files.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+
+  assert.match(entityViewJsx, /f\.type === "boolean"/);
+  assert.match(entityViewJsx, /<option value="true">Yes<\/option>/);
+  assert.match(entityViewJsx, /<option value="false">No<\/option>/);
+  // findFilterableFields must union in boolean fields alongside the
+  // enum-only findFilterableEnumFields, not replace it -- findBoardField
+  // (Kanban column picking) still depends on the enum-only function.
+  assert.match(
+    entityViewJsx,
+    /function findFilterableFields\(fields\) \{\s*\n\s*return \[\.\.\.findFilterableEnumFields\(fields\), \.\.\.fields\.filter\(\(f\) => f\.type === "boolean"\)\];/,
+  );
 });
 
 /**

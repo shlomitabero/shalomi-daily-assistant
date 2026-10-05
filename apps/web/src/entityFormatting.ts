@@ -473,6 +473,24 @@ export function findFilterableEnumFields(fields: Field[]): Field[] {
 }
 
 /**
+ * Every field EntityPanel's own per-field filter dropdown should offer --
+ * findFilterableEnumFields's own enum fields, plus every boolean field.
+ * isGroupableField (above) already treats enum and boolean as the same
+ * "small fixed value space" category for table *grouping*; this toolbar
+ * *filter* grew out of the same enum-only predicate findBoardField uses
+ * (round 286) and never widened to match, even though a boolean field's
+ * two values (Yes/No) are exactly the kind of workable, human-scannable
+ * value space the filter was built for -- a person with an "IsActive" or
+ * "IsBillable" field could group the table by it but never narrow it down
+ * to just the true (or false) rows. findFilterableEnumFields itself is
+ * left untouched since findBoardField (Kanban column grouping, inherently
+ * a different, enum-shaped question) depends on its exact enum-only scope.
+ */
+export function findFilterableFields(fields: Field[]): Field[] {
+  return [...findFilterableEnumFields(fields), ...fields.filter((f) => f.type === "boolean")];
+}
+
+/**
  * Picks the enum field an entity's records should be grouped into columns
  * by, if any -- this is what turns a "Deal" or "Order" entity into a real
  * Kanban board instead of the same table shape every entity gets. Prefers

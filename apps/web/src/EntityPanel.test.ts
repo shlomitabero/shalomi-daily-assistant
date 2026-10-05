@@ -1093,6 +1093,96 @@ test("EntityPanel renders one filter dropdown per qualifying enum field, not jus
   });
 });
 
+const TASK_WITH_BOOLEAN_ENTITY: Entity = {
+  name: "Task",
+  label: "Task",
+  fields: [
+    { name: "name", label: "Name", type: "text", required: true },
+    {
+      name: "status",
+      label: "Status",
+      type: "enum",
+      required: true,
+      enumValues: ["todo", "done"],
+      enumLabels: { todo: "To do", done: "Done" },
+    },
+    { name: "isUrgent", label: "Is Urgent", type: "boolean", required: false },
+  ],
+};
+
+/**
+ * Regression test for a real bug found by a round-400 Explore survey:
+ * isGroupableField (entityFormatting.ts) already treats enum and boolean
+ * fields as the same "small fixed value space" category for table
+ * grouping, but the toolbar's own per-field filter dropdown (round 286)
+ * grew out of findBoardField's enum-only scope and never widened to match
+ * -- a boolean field like "Is Urgent" could be grouped by, but never used
+ * to filter the table down to just the true (or false) rows. Confirms a
+ * filter dropdown now renders for the boolean field too, offering Yes/No
+ * options (not raw true/false), that it actually narrows the table, and
+ * that it combines with the enum filter via AND just like round 286's own
+ * two-enum-field test already proves for two enum fields.
+ */
+test("EntityPanel renders a filter dropdown for a boolean field too, offering Yes/No, and it combines with an enum filter via AND", async () => {
+  await withJsdom(async () => {
+    const store: EntityRecord[] = [
+      { id: 1, name: "Write report", status: "todo", isUrgent: false },
+      { id: 2, name: "Fix outage", status: "todo", isUrgent: true },
+      { id: 3, name: "Ship release", status: "done", isUrgent: true },
+    ];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = mockTaskRecordsFetch(store) as typeof fetch;
+    try {
+      render(
+        React.createElement(
+          ThemeProvider,
+          null,
+          React.createElement(
+            LanguageProvider,
+            null,
+            React.createElement(EntityPanel, {
+              projectId: "proj1",
+              entity: TASK_WITH_BOOLEAN_ENTITY,
+              allEntities: [TASK_WITH_BOOLEAN_ENTITY],
+              onEntityRenamed: () => {},
+            }),
+          ),
+        ),
+      );
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 3);
+
+      const filterSelects = document.querySelectorAll(".entity-status-filter") as NodeListOf<HTMLSelectElement>;
+      assert.equal(filterSelects.length, 2, "expected one filter dropdown for Status and one for the boolean Is Urgent field");
+      const [statusSelect, urgentSelect] = filterSelects;
+      assert.match(urgentSelect.textContent ?? "", /Yes/, "boolean filter options must read Yes/No, not raw true/false");
+      assert.match(urgentSelect.textContent ?? "", /No/);
+      assert.doesNotMatch(urgentSelect.textContent ?? "", /\btrue\b|\bfalse\b/i, "must never show the raw boolean value as an option label");
+
+      fireEvent.change(urgentSelect, { target: { value: "true" } });
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 2);
+      assert.match(document.querySelector("table tbody")!.textContent ?? "", /Fix outage/);
+      assert.match(document.querySelector("table tbody")!.textContent ?? "", /Ship release/);
+
+      fireEvent.change(statusSelect, { target: { value: "done" } });
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 1);
+      assert.match(
+        document.querySelector("table tbody")!.textContent ?? "",
+        /Ship release/,
+        "with both filters active, only the row matching BOTH isUrgent=true AND status=done must remain",
+      );
+
+      fireEvent.change(urgentSelect, { target: { value: "false" } });
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 0);
+
+      fireEvent.change(statusSelect, { target: { value: "" } });
+      fireEvent.change(urgentSelect, { target: { value: "" } });
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 3);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
 /**
  * New in this round: the toolbar's real record count (visibleRecords.length
  * vs records.length -- both already computed, neither ever shown) had no

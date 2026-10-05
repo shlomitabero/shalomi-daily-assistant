@@ -1789,6 +1789,16 @@ function findFilterableEnumFields(fields) {
   return fields.filter((f) => f.type === "enum" && f.enumValues && f.enumValues.length >= 2 && f.enumValues.length <= 8);
 }
 
+// Every field the entity table's own per-field filter dropdown should
+// offer -- findFilterableEnumFields's own enum fields, plus every boolean
+// field (a boolean's two values are the same workable, human-scannable
+// value space the enum filter was built for). findFilterableEnumFields
+// itself stays enum-only, since findBoardField above depends on that exact
+// scope for Kanban column grouping.
+function findFilterableFields(fields) {
+  return [...findFilterableEnumFields(fields), ...fields.filter((f) => f.type === "boolean")];
+}
+
 // Picks the enum field an entity's records should be grouped into board
 // columns by, if any -- prefers a field literally named status/stage, falls
 // back to the first workable enum field (2-8 values), and returns null for
@@ -2401,7 +2411,7 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
   // still-correct records already on screen.
   const refreshRequestId = useRef(0);
   const boardField = useMemo(() => findBoardField(entity.fields), [entity.fields]);
-  const filterableEnumFields = useMemo(() => findFilterableEnumFields(entity.fields), [entity.fields]);
+  const filterableFields = useMemo(() => findFilterableFields(entity.fields), [entity.fields]);
   const dateField = useMemo(() => findDateField(entity.fields), [entity.fields]);
   const endDateField = useMemo(() => (dateField ? findEndDateField(entity.fields, dateField) : null), [entity.fields, dateField]);
   const relationTargets = useMemo(() => {
@@ -3443,7 +3453,7 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
                 ✕
               </button>
             )}
-            {filterableEnumFields.map((f) => (
+            {filterableFields.map((f) => (
               <select
                 key={f.name}
                 className="entity-status-filter"
@@ -3458,14 +3468,21 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
                 }
               >
                 <option value="">{"All " + (f.label || f.name)}</option>
-                {(f.enumValues || []).map((v) => (
-                  <option key={v} value={v}>
-                    {(f.enumLabels && f.enumLabels[v]) || v}
-                  </option>
-                ))}
+                {f.type === "boolean" ? (
+                  <>
+                    <option value="true">Yes</option>
+                    <option value="false">No</option>
+                  </>
+                ) : (
+                  (f.enumValues || []).map((v) => (
+                    <option key={v} value={v}>
+                      {(f.enumLabels && f.enumLabels[v]) || v}
+                    </option>
+                  ))
+                )}
               </select>
             ))}
-            {filterableEnumFields.length > 0 && Object.values(fieldFilters).some(Boolean) && (
+            {filterableFields.length > 0 && Object.values(fieldFilters).some(Boolean) && (
               <button
                 type="button"
                 className="entity-clear-filters"

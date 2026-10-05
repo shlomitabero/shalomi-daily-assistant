@@ -11,6 +11,7 @@ import {
   findBoardField,
   findDateField,
   findEndDateField,
+  findFilterableFields,
   findPhoneField,
   formatDateForInput,
   formatDateValue,
@@ -1481,6 +1482,33 @@ test("isGroupableField allows only enum and boolean fields", () => {
   for (const type of ["text", "longtext", "number", "date", "relation"] as Field["type"][]) {
     assert.equal(isGroupableField({ name: "f", type } as Field), false, `expected ${type} to NOT be groupable`);
   }
+});
+
+/**
+ * Regression test for a real bug found by a round-400 Explore survey:
+ * isGroupableField above already treats enum and boolean as the same
+ * "small fixed value space" category for table grouping, but
+ * findFilterableEnumFields (used by EntityPanel's per-field filter
+ * dropdown) only ever returned enum fields -- a boolean field like
+ * "isBillable" could be grouped by but never filtered on. Confirms
+ * findFilterableFields returns a boolean field alongside a qualifying
+ * enum field, in enum-then-boolean order, while still excluding a
+ * too-large enum (same >8-value exclusion findFilterableEnumFields
+ * itself already enforces) and a plain text/number/date field.
+ */
+test("findFilterableFields returns every qualifying enum field plus every boolean field, unlike enum-only findFilterableEnumFields", () => {
+  const fields: Field[] = [
+    { name: "name", type: "text", required: true },
+    { name: "status", type: "enum", required: true, enumValues: ["todo", "done"] },
+    { name: "isUrgent", type: "boolean", required: false },
+    { name: "tooManyValues", type: "enum", required: false, enumValues: ["a", "b", "c", "d", "e", "f", "g", "h", "i"] },
+    { name: "dueDate", type: "date", required: false },
+  ];
+  assert.deepEqual(
+    findFilterableFields(fields).map((f) => f.name),
+    ["status", "isUrgent"],
+    "must include the qualifying enum field and the boolean field, in that order, excluding text/date/too-large-enum",
+  );
 });
 
 test("groupRecordsByField groups by an enum field in the field's own declared order, with an 'other' bucket for a stale value no longer in enumValues", () => {
