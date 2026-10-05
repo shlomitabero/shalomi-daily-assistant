@@ -169,15 +169,36 @@ export function diffAndMigrate(
   nextSpec.entities.forEach((entity, index) => {
     const table = tableNameFor(projectId, entity.name);
     const prevEntity = previousEntities.get(entity.name);
+    const currentColumns = existingColumns(db, table);
 
-    if (!prevEntity) {
+    if (!prevEntity && currentColumns.size === 0) {
       db.exec(statements[index]);
       changes.push({ type: "new_table", table });
       return;
     }
 
-    const prevFieldsByName = new Map(prevEntity.fields.map((f) => [f.name, f]));
-    const currentColumns = existingColumns(db, table);
+    // An entity absent from previousSpec (no prevEntity) but whose table
+    // already physically exists is a name reused after the entity was
+    // removed on an earlier refine and re-added here under the same name --
+    // previousSpec is only ever the IMMEDIATELY preceding spec, so an
+    // entity's own in-between removal is invisible from this call, but the
+    // physical table survives it (additive-only migrations never drop a
+    // table, same as physicalColumnShape's own gap for a single reused
+    // column below). Without this check, CREATE TABLE IF NOT EXISTS above
+    // would be a silent no-op and `return` would skip the field loop
+    // entirely, forever leaving out any field the re-added entity now
+    // claims that the stale table doesn't already have -- surfacing as a
+    // raw "no such column" SQLite error on the first insert/update, not a
+    // reported migration change. Falling through to the same per-field diff
+    // as an ordinary existing entity, with an empty prevFieldsByName when
+    // there's no prevEntity to source it from, makes every field take the
+    // "reused, compare against physical reality" path physicalShapeByColumn
+    // already provides for a single reused column -- so a benign reuse
+    // (identical shape to before removal) stays silent, and a real
+    // mismatch is reported and its column actually added, just like it
+    // would be if the field itself (not the whole entity) had been the
+    // thing reused.
+    const prevFieldsByName = new Map((prevEntity?.fields ?? []).map((f) => [f.name, f]));
     const physicalShapeByColumn = physicalColumnShape(db, table);
     for (const field of entity.fields) {
       const prevField = prevFieldsByName.get(field.name);

@@ -505,6 +505,92 @@ test("diffAndMigrate reports a relation_missing_fk entry when a removed boolean 
   assert.equal(order.isUrgent, 999999, "a dangling, nonexistent Customer id is silently accepted -- the exact gap this change type now reports");
 });
 
+/**
+ * Regression test: the entity-level twin of the field-reuse gaps above.
+ * previousSpec is only ever the spec immediately before THIS ONE
+ * diffAndMigrate call, so an entity removed on one refine and re-added
+ * under the same name on a LATER refine has no prevEntity here, even
+ * though its physical table (additive-only, never dropped) survived the
+ * whole round trip untouched. Before this fix, the `!prevEntity` branch
+ * unconditionally treated this as a brand-new entity: CREATE TABLE IF NOT
+ * EXISTS silently no-opped against the still-existing table, and the early
+ * `return` skipped the per-field diff loop entirely -- so a field the
+ * re-added entity needs that the stale table doesn't already have was
+ * never added, and the very next insert/update for it threw a raw SQLite
+ * "no such column" error instead of failing at migration time with a
+ * reported, user-visible change.
+ */
+test("diffAndMigrate adds a field a re-added entity needs, instead of silently skipping it because the entity itself was reused", () => {
+  const db = openDatabase(":memory:");
+  const baseSpec: ProductSpec = {
+    ...spec,
+    entities: [...spec.entities, { name: "Courier", fields: [{ name: "name", type: "text", required: true }] }],
+  };
+  applyMigrations(db, "proj1", baseSpec);
+
+  // Refine 1: remove Courier from the spec entirely. The physical table
+  // survives untouched -- additive-only.
+  const midSpec: ProductSpec = { ...spec };
+  const removalChanges = diffAndMigrate(db, "proj1", baseSpec, midSpec);
+  assert.deepEqual(removalChanges, [], "removing an entity from the spec reports no change at all -- the additive-only engine never drops the table");
+  const columnsAfterRemoval = db.prepare('PRAGMA table_info("entity_proj1_Courier")').all() as { name: string }[];
+  assert.ok(columnsAfterRemoval.length > 0, "additive-only migration must never physically drop the table");
+
+  // Refine 2: re-add Courier under the same name, now with an extra field
+  // ("phone") the stale table doesn't have.
+  const nextSpec: ProductSpec = {
+    ...midSpec,
+    entities: [
+      ...midSpec.entities,
+      {
+        name: "Courier",
+        fields: [{ name: "name", type: "text", required: true }, { name: "phone", type: "text", required: false }],
+      },
+    ],
+  };
+  const changes = diffAndMigrate(db, "proj1", midSpec, nextSpec);
+  assert.deepEqual(
+    changes,
+    [
+      { type: "new_column", table: "entity_proj1_Courier", column: "name" },
+      { type: "new_column", table: "entity_proj1_Courier", column: "phone" },
+    ],
+    "a re-added entity must be diffed field-by-field against physical reality, not blindly reported as new_table",
+  );
+
+  // The real proof: "phone" must actually be a queryable column now, not
+  // just reported -- a write using it must not throw.
+  const courierEntity = nextSpec.entities[nextSpec.entities.length - 1];
+  const courier = insertRecord(db, "proj1", courierEntity, { name: "Dana", phone: "050-1234567" });
+  assert.equal(courier.phone, "050-1234567");
+});
+
+// Regression test: the benign twin of the above -- an entity removed then
+// re-added under the same name with the SAME fields must stay silent on
+// type/relation mismatches (there are none), never spuriously report
+// new_table. Every field still reports new_column (consistent with how a
+// reused column already behaves elsewhere in this file), just not a bogus
+// new_table for the whole entity.
+test("diffAndMigrate does not report new_table for a re-added entity whose table already physically exists", () => {
+  const db = openDatabase(":memory:");
+  const baseSpec: ProductSpec = {
+    ...spec,
+    entities: [...spec.entities, { name: "Courier", fields: [{ name: "name", type: "text", required: true }] }],
+  };
+  applyMigrations(db, "proj1", baseSpec);
+
+  const midSpec: ProductSpec = { ...spec };
+  diffAndMigrate(db, "proj1", baseSpec, midSpec);
+
+  // Re-add Courier exactly as it was.
+  const changes = diffAndMigrate(db, "proj1", midSpec, baseSpec);
+  assert.deepEqual(changes, [{ type: "new_column", table: "entity_proj1_Courier", column: "name" }]);
+  assert.ok(
+    !changes.some((c) => c.type === "new_table"),
+    "the table already exists physically -- reporting new_table here would be wrong and would mislead anything downstream that treats new_table as 'needs seeding from scratch'",
+  );
+});
+
 test("diffAndMigrate is safe to call twice with the same additive change (idempotent, never throws)", () => {
   // Reproduces the real failure class this hardening prevents: SQLite
   // throws "duplicate column name" on a second ALTER TABLE ADD COLUMN for
