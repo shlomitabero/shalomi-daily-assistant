@@ -913,6 +913,24 @@ export function EntityPanel({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [entity.name, records.length]);
 
+  /**
+   * A record mid-undo-window (handleDelete/handleBulkDelete's own
+   * pendingDeleteRef) still genuinely exists server-side -- its real
+   * DELETE is deliberately deferred, see commitPendingDelete's own comment
+   * -- so `listRecords` still returns it. Without this filter, refresh()
+   * (called by seven unrelated handlers below: create/edit, duplicate,
+   * bulk-duplicate, bulk-update, CSV import, board-move, inline-edit) would
+   * silently resurrect a row the user just deleted and is still looking at
+   * an "Undo" toast for, the moment any of those unrelated actions runs
+   * during that same window -- then the deferred DELETE fires for real
+   * once the window closes, leaving a ghost row in view that no longer
+   * exists on the server. Worse, clicking Undo afterwards would re-splice
+   * the same record in via restoreRecordAt (which has no de-duplication of
+   * its own), producing two rows for one id. Excluding pending-delete ids
+   * here keeps every refresh() consistent with what the user actually sees
+   * (already-"deleted" rows stay gone) regardless of which handler
+   * triggered it.
+   */
   async function refresh() {
     const requestId = ++refreshRequestId.current;
     setLoading(true);
@@ -920,7 +938,8 @@ export function EntityPanel({
     try {
       const { records } = await listRecords(projectId, entity.name);
       if (refreshRequestId.current !== requestId) return;
-      setRecords(records);
+      const pendingIds = new Set(pendingDeleteRef.current?.entries.map((e) => e.id) ?? []);
+      setRecords(pendingIds.size === 0 ? records : records.filter((r) => !pendingIds.has(r.id as number)));
     } catch (err) {
       if (refreshRequestId.current !== requestId) return;
       setLoadError((err as Error).message);

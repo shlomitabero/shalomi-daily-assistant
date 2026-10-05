@@ -2476,7 +2476,8 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
     try {
       const { records } = await listRecords(entity.name);
       if (refreshRequestId.current !== requestId) return;
-      setRecords(records);
+      const pendingIds = new Set(pendingDeleteRef.current?.entries.map((e) => e.id) ?? []);
+      setRecords(pendingIds.size === 0 ? records : records.filter((r) => !pendingIds.has(r.id)));
     } catch (err) {
       if (refreshRequestId.current !== requestId) return;
       setLoadError(err.message);

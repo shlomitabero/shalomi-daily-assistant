@@ -2980,6 +2980,7 @@ test("the exported EntityView's refresh ignores a stale, still-in-flight refresh
     "entity",
     "setRecords",
     "setLoadError",
+    "pendingDeleteRef",
     `${refreshSrc}\nreturn refresh;`,
   )(
     refreshRequestId,
@@ -2997,6 +2998,7 @@ test("the exported EntityView's refresh ignores a stale, still-in-flight refresh
       capturedRecordsByCall.push(records);
     },
     () => {},
+    { current: null },
   ) as () => Promise<void>;
 
   const stalePromise = fn();
@@ -3562,6 +3564,118 @@ test("the exported EntityView's single-record Delete button's confirm dialog tel
         'Delete "Acme Corp"? You can undo this for a few seconds after deleting.',
         "the real confirm dialog must tell the truth about the undo window that actually follows, not claim it can't be undone",
       );
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (originalConfirm) (globalThis.window as unknown as { confirm: () => boolean }).confirm = originalConfirm;
+    cleanup();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
+ * New in this round (422), ported from the identical fix in
+ * apps/web/src/EntityPanel.tsx: a record still inside its undo window
+ * (handleDelete's own pendingDeleteRef above) genuinely still exists
+ * server-side -- only the real DELETE is deferred -- so refresh() (shared
+ * by several unrelated handlers: create/edit, duplicate, bulk-update, CSV
+ * import, board-move, inline cell edit) used to silently resurrect it the
+ * instant any of those ran during that same window, since listRecords
+ * still returned it. Commits a real inline cell edit on an unrelated row
+ * (the same real PATCH + refresh() path exercised elsewhere in this file)
+ * while another row's own delete is still inside its undo window, against
+ * the real generated EntityView component, and confirms the deleted row
+ * does NOT reappear.
+ */
+test("the exported EntityView's refresh() triggered by an unrelated action (inline cell edit) during a pending delete's undo window must not resurrect the deleted row", async () => {
+  const files = generateExportFiles(project);
+  const dir = writeGeneratedWebComponent(files);
+  const store = [
+    { id: 1, name: "Acme Corp", status: "New" },
+    { id: 2, name: "Globex", status: "New" },
+  ];
+  const deletedIds: number[] = [];
+  const originalFetch = globalThis.fetch;
+  const originalConfirm = globalThis.window?.confirm;
+  globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
+    const method = init?.method ?? "GET";
+    if (method === "GET" && input === "/api/Customer") {
+      return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    const patchMatch = /^\/api\/Customer\/(\d+)$/.exec(input);
+    if (method === "PATCH" && patchMatch) {
+      const record = store.find((r) => r.id === Number(patchMatch[1]))!;
+      Object.assign(record, JSON.parse(init!.body as string));
+      return new Response(JSON.stringify({ record }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    const deleteMatch = /^\/api\/Customer\/(\d+)$/.exec(input);
+    if (method === "DELETE" && deleteMatch) {
+      deletedIds.push(Number(deleteMatch[1]));
+      return new Response(null, { status: 204 });
+    }
+    throw new Error(`unexpected request ${method} ${input}`);
+  }) as typeof fetch;
+  (globalThis.window as unknown as { confirm: () => boolean }).confirm = () => true;
+
+  try {
+    await withRealLocalStorage(async () => {
+      const { EntityView } = await import(path.join(dir, "web", "src", "components", "EntityView.jsx"));
+      const customerEntity = project.spec.entities.find((e) => e.name === "Customer")!;
+      const props = {
+        entity: customerEntity,
+        highlightRecordId: null,
+        onHighlightHandled: () => {},
+        onJumpToRecord: () => {},
+        onRecordCountChange: () => {},
+      };
+
+      const { container } = render(React.createElement(EntityView, props));
+      for (let i = 0; i < 40; i++) {
+        if (container.querySelectorAll("tbody tr").length === 2) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+      assert.equal(container.querySelectorAll("tbody tr").length, 2, "expected both records to have loaded");
+
+      // Deliberately real timers: the test only needs to stay inside the
+      // 5s undo window, never advance past it, so the real UNDO_WINDOW_MS
+      // setTimeout simply never fires during this test's own execution.
+      const deleteButtons = Array.from(container.querySelectorAll("button")).filter((b) => b.textContent === "Delete");
+      await act(async () => {
+        fireEvent.click(deleteButtons[0]);
+      });
+      assert.equal(container.querySelectorAll("tbody tr").length, 1, "Acme Corp must disappear from view immediately");
+      assert.equal(deletedIds.length, 0, "the real DELETE must not have fired yet -- still inside the undo window");
+
+      // Globex's own name cell -- the only remaining row's first data column.
+      const nameCell = container.querySelectorAll("tbody td")[1] as HTMLTableCellElement;
+      assert.equal(nameCell.textContent, "Globex");
+      await act(async () => {
+        fireEvent.doubleClick(nameCell);
+      });
+      const input = nameCell.querySelector("input") as HTMLInputElement;
+      assert.ok(input, "expected a real inline edit input to open in the cell");
+      await act(async () => {
+        fireEvent.change(input, { target: { value: "Globex Corp" } });
+        fireEvent.keyDown(input, { key: "Enter" });
+      });
+
+      for (let i = 0; i < 40; i++) {
+        if (container.querySelectorAll("tbody td")[1]?.textContent === "Globex Corp") break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+      assert.equal(container.querySelectorAll("tbody td")[1]?.textContent, "Globex Corp", "the inline edit must have committed");
+
+      assert.equal(
+        container.querySelectorAll("tbody tr").length,
+        1,
+        "the inline edit's own refresh() must not have resurrected Acme Corp, which is still only inside its undo window",
+      );
+      assert.ok(container.querySelector(".entity-undo-toast"), "the Undo toast for Acme Corp must still be showing");
+      assert.equal(deletedIds.length, 0, "Acme Corp's real DELETE still must not have fired");
     });
   } finally {
     globalThis.fetch = originalFetch;

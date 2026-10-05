@@ -566,6 +566,7 @@ test("EntityPanel's refresh ignores a stale, still-in-flight refresh's records o
     "entity",
     "setRecords",
     "setLoadError",
+    "pendingDeleteRef",
     `${code}\nreturn refresh;`,
   )(
     refreshRequestId,
@@ -584,6 +585,7 @@ test("EntityPanel's refresh ignores a stale, still-in-flight refresh's records o
       capturedRecordsByCall.push(records);
     },
     () => {},
+    { current: null },
   ) as () => Promise<void>;
 
   const stalePromise = fn();
@@ -3086,6 +3088,116 @@ test("EntityPanel's pending delete actually calls the real delete API once the u
       assert.equal(document.querySelector(".entity-undo-toast"), null, "the toast must clear itself once the delete actually commits");
     } finally {
       t.mock.timers.reset();
+      globalThis.fetch = originalFetch;
+      globalThis.window.confirm = originalConfirm;
+    }
+  });
+});
+
+/**
+ * New in this round (422): a deleted-but-still-pending row (inside the
+ * undo window above) genuinely still exists server-side -- only the real
+ * DELETE is deferred. refresh() is shared by several unrelated handlers
+ * (create/edit, duplicate, bulk-update, CSV import, board-move, inline
+ * cell edit) that have no idea a delete is pending, so any one of them
+ * running during that same window used to silently resurrect the
+ * "deleted" row the instant its own refresh() re-fetched from the server.
+ * Commits a real inline cell edit on an unrelated row (the same real
+ * PATCH + refresh() path exercised above) while record 1's own delete is
+ * still inside its undo window, and confirms record 1 does NOT reappear.
+ */
+test("EntityPanel's refresh() triggered by an unrelated action (inline cell edit) during a pending delete's undo window must not resurrect the deleted row", async () => {
+  await withJsdom(async () => {
+    const store: EntityRecord[] = [
+      { id: 1, createdAt: "x", name: "Acme Corp", status: "new" },
+      { id: 2, createdAt: "x", name: "Globex", status: "new" },
+    ];
+    const deletedIds: number[] = [];
+    const originalFetch = globalThis.fetch;
+    const originalConfirm = globalThis.window.confirm;
+    globalThis.fetch = mockRecordsFetch(store, (id) => deletedIds.push(id)) as typeof fetch;
+    globalThis.window.confirm = (() => true) as typeof window.confirm;
+    try {
+      renderEntityPanel();
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 2);
+
+      // Deliberately real timers (no t.mock.timers.enable here): the test
+      // only needs to stay inside the 5s undo window, never advance past
+      // it, so the real UNDO_WINDOW_MS setTimeout simply never fires
+      // during this test's own fast, synchronous-ish execution.
+      const deleteButtons = Array.from(document.querySelectorAll(".danger")) as HTMLButtonElement[];
+      fireEvent.click(deleteButtons[0]);
+      assert.equal(document.querySelectorAll("table tbody tr").length, 1, "Acme Corp must disappear from view immediately");
+      assert.equal(deletedIds.length, 0, "the real DELETE must not have fired yet -- still inside the undo window");
+
+      // Globex's own name cell -- the only remaining row's first data column.
+      const nameCell = document.querySelectorAll("table tbody td")[1] as HTMLTableCellElement;
+      assert.equal(nameCell.textContent, "Globex");
+      fireEvent.doubleClick(nameCell);
+      const input = nameCell.querySelector('input[type="text"]') as HTMLInputElement;
+      fireEvent.change(input, { target: { value: "Globex Corp" } });
+      fireEvent.keyDown(input, { key: "Enter" });
+
+      await waitForCondition(() => document.querySelectorAll("table tbody td")[1]?.textContent === "Globex Corp");
+
+      assert.equal(
+        document.querySelectorAll("table tbody tr").length,
+        1,
+        "the inline edit's own refresh() must not have resurrected Acme Corp, which is still only inside its undo window",
+      );
+      assert.ok(document.querySelector(".entity-undo-toast"), "the Undo toast for Acme Corp must still be showing");
+      assert.equal(deletedIds.length, 0, "Acme Corp's real DELETE still must not have fired");
+    } finally {
+      globalThis.fetch = originalFetch;
+      globalThis.window.confirm = originalConfirm;
+    }
+  });
+});
+
+/**
+ * The other half: if a refresh() happened to run during the undo window
+ * (as above) and the user THEN clicks Undo, restoreRecordAt (which has no
+ * de-duplication of its own) must not end up splicing in a second copy of
+ * the row that refresh() already correctly left untouched/excluded --
+ * there must be exactly one row for the deleted-then-undone record, not
+ * two.
+ */
+test("EntityPanel's Undo after an unrelated refresh() happened during the undo window restores exactly one row, never a duplicate", async () => {
+  await withJsdom(async () => {
+    const store: EntityRecord[] = [
+      { id: 1, createdAt: "x", name: "Acme Corp", status: "new" },
+      { id: 2, createdAt: "x", name: "Globex", status: "new" },
+    ];
+    const deletedIds: number[] = [];
+    const originalFetch = globalThis.fetch;
+    const originalConfirm = globalThis.window.confirm;
+    globalThis.fetch = mockRecordsFetch(store, (id) => deletedIds.push(id)) as typeof fetch;
+    globalThis.window.confirm = (() => true) as typeof window.confirm;
+    try {
+      renderEntityPanel();
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 2);
+
+      // Deliberately real timers here too -- see the sibling test above.
+      const deleteButtons = Array.from(document.querySelectorAll(".danger")) as HTMLButtonElement[];
+      fireEvent.click(deleteButtons[0]);
+
+      const nameCell = document.querySelectorAll("table tbody td")[1] as HTMLTableCellElement;
+      fireEvent.doubleClick(nameCell);
+      const input = nameCell.querySelector('input[type="text"]') as HTMLInputElement;
+      fireEvent.change(input, { target: { value: "Globex Corp" } });
+      fireEvent.keyDown(input, { key: "Enter" });
+      await waitForCondition(() => document.querySelectorAll("table tbody td")[1]?.textContent === "Globex Corp");
+
+      const toast = document.querySelector(".entity-undo-toast");
+      assert.ok(toast, "the Undo toast for Acme Corp must still be showing after the unrelated refresh");
+      fireEvent.click(toast!.querySelector("button") as HTMLButtonElement);
+
+      const rows = Array.from(document.querySelectorAll("table tbody tr"));
+      assert.equal(rows.length, 2, "Undo must restore exactly one Acme Corp row alongside Globex -- never a duplicate");
+      const acmeRows = rows.filter((r) => /Acme Corp/.test(r.textContent ?? ""));
+      assert.equal(acmeRows.length, 1, "there must be exactly one Acme Corp row, not two");
+      assert.equal(deletedIds.length, 0, "undoing must have genuinely cancelled the real delete");
+    } finally {
       globalThis.fetch = originalFetch;
       globalThis.window.confirm = originalConfirm;
     }
