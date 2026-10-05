@@ -57,6 +57,7 @@ const checkpoint: Checkpoint = {
   id: "cp1",
   projectId: "proj1",
   label: "Initial build",
+  kind: "build",
   spec: { summary: "s", personas: [], roles: ["Admin"], entities: [], screens: [], assumptions: [], openQuestions: [] },
   createdAt: new Date().toISOString(),
 };

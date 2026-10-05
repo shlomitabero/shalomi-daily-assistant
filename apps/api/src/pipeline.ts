@@ -423,7 +423,18 @@ export async function* runBuildPipeline(
 
   updateProjectSpec(db, project.id, nextSpec);
   markProjectBuilt(db, project.id);
-  insertCheckpoint(db, { id: randomUUID(), projectId: project.id, label: changeLabel, spec: nextSpec });
+  // previousSpec is only ever set by the /refine route (undefined for
+  // /build -- see routes/projects.ts's two streamPipeline call sites), so
+  // it's already the one unambiguous, rename-proof signal for which kind
+  // of checkpoint this is; see CheckpointSchema's own doc-comment for why
+  // this can no longer be re-derived from `label` later.
+  insertCheckpoint(db, {
+    id: randomUUID(),
+    projectId: project.id,
+    label: changeLabel,
+    kind: previousSpec ? "refine" : "build",
+    spec: nextSpec,
+  });
   const finalProject = getProject(db, project.id)!;
 
   yield {

@@ -53,11 +53,17 @@ async function waitForCondition(check: () => boolean, maxTicks = 40): Promise<vo
   throw new Error("waitForCondition: condition never became true");
 }
 
-function makeCheckpoint(id: string, label: string): Checkpoint {
+// kind defaults to inferring from the label's own old "Refine:"/"שיפור:"
+// prefix purely for this file's own fixture convenience (every label here
+// still follows that convention) -- production code never does this
+// anymore; see checkpointDiff.ts's getCheckpointType and its own test file
+// for the regression coverage proving a rename can no longer change kind.
+function makeCheckpoint(id: string, label: string, kind: Checkpoint["kind"] = label.startsWith("Refine:") || label.startsWith("שיפור:") ? "refine" : "build"): Checkpoint {
   return {
     id,
     projectId: "proj1",
     label,
+    kind,
     spec: {
       summary: "s",
       personas: [],
@@ -1573,6 +1579,7 @@ test("HistoryPanel's diff panel shows a real, rendered message when a checkpoint
       id: "cp1",
       projectId: "proj1",
       label: "Initial build",
+      kind: "build",
       spec: {
         summary: "s",
         personas: [],

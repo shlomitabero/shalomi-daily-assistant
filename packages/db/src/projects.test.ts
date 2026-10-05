@@ -243,7 +243,7 @@ test("deleteProject removes the project row, its real generated data table, chec
   });
   applyMigrations(db, project.id, project.spec);
   const record = insertRecord(db, project.id, project.spec.entities[0], { name: "a real customer" });
-  insertCheckpoint(db, { id: "cp1", projectId: project.id, label: "build", spec: project.spec });
+  insertCheckpoint(db, { id: "cp1", projectId: project.id, label: "build", kind: "build", spec: project.spec });
   addCollaborator(db, project.id, "collaborator1");
   recordWhatsAppConnected(db, project.id, "15551234567");
   insertWhatsAppMessage(db, {
@@ -267,7 +267,7 @@ test("deleteProject removes the project row, its real generated data table, chec
   });
   applyMigrations(db, other.id, other.spec);
   insertRecord(db, other.id, other.spec.entities[0], { name: "a customer that must survive" });
-  insertCheckpoint(db, { id: "cp-other", projectId: other.id, label: "build", spec: other.spec });
+  insertCheckpoint(db, { id: "cp-other", projectId: other.id, label: "build", kind: "build", spec: other.spec });
   addCollaborator(db, other.id, "collaborator1");
   recordWhatsAppConnected(db, other.id, "15559999999");
 
@@ -327,7 +327,7 @@ test("deleteProject drops the real data table of an entity that was added then l
     spec: buildSpec,
   });
   diffAndMigrate(db, project.id, undefined, buildSpec);
-  insertCheckpoint(db, { id: "cp-build", projectId: project.id, label: "build", spec: buildSpec });
+  insertCheckpoint(db, { id: "cp-build", projectId: project.id, label: "build", kind: "build", spec: buildSpec });
 
   // Refine #1: adds a real "Order" entity. Its table gets created and real
   // data gets inserted into it, exactly like a real user would do before
@@ -338,13 +338,13 @@ test("deleteProject drops the real data table of an entity that was added then l
   };
   diffAndMigrate(db, project.id, buildSpec, specWithOrder);
   insertRecord(db, project.id, specWithOrder.entities[1], { total: 42 });
-  insertCheckpoint(db, { id: "cp-refine1", projectId: project.id, label: "refine: add Order", spec: specWithOrder });
+  insertCheckpoint(db, { id: "cp-refine1", projectId: project.id, label: "refine: add Order", kind: "refine", spec: specWithOrder });
 
   // Refine #2: removes Order from the spec again. diffAndMigrate is
   // additive-only, so the real table (and its row) is left untouched --
   // only the spec itself stops listing it.
   diffAndMigrate(db, project.id, specWithOrder, buildSpec);
-  insertCheckpoint(db, { id: "cp-refine2", projectId: project.id, label: "refine: remove Order", spec: buildSpec });
+  insertCheckpoint(db, { id: "cp-refine2", projectId: project.id, label: "refine: remove Order", kind: "refine", spec: buildSpec });
   const finalProject = updateProjectSpec(db, project.id, buildSpec);
 
   assert.doesNotThrow(
@@ -399,7 +399,7 @@ test("deleteProject still drops the real data table of an entity from a checkpoi
     spec: buildSpec,
   });
   diffAndMigrate(db, project.id, undefined, buildSpec);
-  insertCheckpoint(db, { id: "cp-build", projectId: project.id, label: "build", spec: buildSpec });
+  insertCheckpoint(db, { id: "cp-build", projectId: project.id, label: "build", kind: "build", spec: buildSpec });
 
   // Refine: adds a real "Order" entity, with a real row. Its own checkpoint
   // is written directly (not via insertCheckpoint) with no `roles` field --
@@ -496,7 +496,7 @@ test("deleteProject still drops the real data table, checkpoints, collaborators,
   // against today's (stricter) schema.
   applyMigrations(db, "proj-stale-own", buildSpec);
   insertRecord(db, "proj-stale-own", buildSpec.entities[0], { name: "Dana" });
-  insertCheckpoint(db, { id: "cp-stale-own", projectId: "proj-stale-own", label: "build", spec: buildSpec });
+  insertCheckpoint(db, { id: "cp-stale-own", projectId: "proj-stale-own", label: "build", kind: "build", spec: buildSpec });
   addCollaborator(db, "proj-stale-own", "collaborator1");
   recordWhatsAppConnected(db, "proj-stale-own", "15559999999");
 

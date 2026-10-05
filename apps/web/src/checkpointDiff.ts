@@ -145,18 +145,20 @@ export function filterCheckpoints(checkpoints: Checkpoint[], search: string): Ch
 export type CheckpointType = "build" | "refine";
 
 /**
- * Every checkpoint's own label already encodes which kind of change made
- * it, exactly like the WhatsApp log's own message.direction field encodes
- * incoming vs. outgoing -- but here it's baked into the label text itself
- * rather than a separate column (see apps/api/src/routes/projects.ts's
- * changeLabel: "Initial build"/"בנייה ראשונית" for a fresh build, or
- * "Refine: <instruction>"/"שיפור: <instruction>" for every refine after
- * it). Read from the label with startsWith rather than persisted
- * separately, since the label is the only place this distinction already
- * lives and every checkpoint ever created already carries it correctly.
+ * A checkpoint's `kind` is set once, at creation (pipeline.ts), from the
+ * pipeline's own unambiguous knowledge of whether it came from /build or
+ * /refine -- it used to be re-derived here from the checkpoint's own label
+ * via startsWith("Refine:")/startsWith("שיפור:"), but CheckpointLabelEditor
+ * lets a user freely rename any checkpoint's label to arbitrary text (its
+ * own advertised use case: "give an important one a name that's actually
+ * memorable"), which silently reclassified a renamed refine as a "build"
+ * (or vice versa, by coincidence) the moment its label no longer matched
+ * either prefix. Reading the persisted field instead means a rename can
+ * never again change what HistoryPanel's build/refine filter thinks this
+ * checkpoint is.
  */
 export function getCheckpointType(checkpoint: Checkpoint): CheckpointType {
-  return checkpoint.label.startsWith("Refine:") || checkpoint.label.startsWith("שיפור:") ? "refine" : "build";
+  return checkpoint.kind;
 }
 
 /**

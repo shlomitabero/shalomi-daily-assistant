@@ -17,10 +17,31 @@ export function ensureCheckpointsTable(db: ForgeDatabase): void {
       id TEXT PRIMARY KEY,
       projectId TEXT NOT NULL,
       label TEXT NOT NULL,
+      kind TEXT NOT NULL DEFAULT 'build',
       spec_json TEXT NOT NULL,
       createdAt TEXT NOT NULL
     )
   `);
+  // A table created by an older version of this app has no `kind` column at
+  // all -- additive-only, same discipline migrate.ts uses for every
+  // per-project entity table, so a pre-existing checkpoints table is never
+  // dropped or recreated here. ADD COLUMN gives every existing row the
+  // column's own 'build' default, then this one-time UPDATE backfills
+  // "refine" using the exact same label-prefix heuristic getCheckpointType
+  // itself used to live-classify a checkpoint before this column existed --
+  // the best information available for data written before today. A
+  // checkpoint already renamed away from its original "Refine: .../שיפור:
+  // ..." prefix before this migration ever runs can't be recovered
+  // correctly by this one-time backfill -- an honest, unavoidable limit of
+  // reconstructing history from the only signal that ever existed for it.
+  // Every checkpoint created after this point gets its `kind` set directly
+  // at insertCheckpoint instead, never derived from (or vulnerable to a
+  // later rename of) its label again.
+  const hasKindColumn = (db.prepare("PRAGMA table_info(checkpoints)").all() as { name: string }[]).some((c) => c.name === "kind");
+  if (!hasKindColumn) {
+    db.exec("ALTER TABLE checkpoints ADD COLUMN kind TEXT NOT NULL DEFAULT 'build'");
+    db.exec(`UPDATE checkpoints SET kind = 'refine' WHERE label LIKE 'Refine:%' OR label LIKE 'שיפור:%'`);
+  }
 }
 
 function rowToCheckpoint(row: Record<string, unknown>): Checkpoint {
@@ -28,6 +49,7 @@ function rowToCheckpoint(row: Record<string, unknown>): Checkpoint {
     id: row.id as string,
     projectId: row.projectId as string,
     label: row.label as string,
+    kind: row.kind as "build" | "refine",
     spec: ProductSpecSchema.parse(JSON.parse(row.spec_json as string)),
     createdAt: row.createdAt as string,
   };
@@ -54,12 +76,12 @@ function tryRowToCheckpoint(row: Record<string, unknown>): Checkpoint | undefine
 
 export function insertCheckpoint(
   db: ForgeDatabase,
-  checkpoint: { id: string; projectId: string; label: string; spec: ProductSpec },
+  checkpoint: { id: string; projectId: string; label: string; kind: "build" | "refine"; spec: ProductSpec },
 ): Checkpoint {
   const createdAt = new Date().toISOString();
   db.prepare(
-    "INSERT INTO checkpoints (id, projectId, label, spec_json, createdAt) VALUES (?, ?, ?, ?, ?)",
-  ).run(checkpoint.id, checkpoint.projectId, checkpoint.label, JSON.stringify(checkpoint.spec), createdAt);
+    "INSERT INTO checkpoints (id, projectId, label, kind, spec_json, createdAt) VALUES (?, ?, ?, ?, ?, ?)",
+  ).run(checkpoint.id, checkpoint.projectId, checkpoint.label, checkpoint.kind, JSON.stringify(checkpoint.spec), createdAt);
   return { ...checkpoint, createdAt };
 }
 
@@ -145,7 +167,11 @@ export function getCheckpoint(db: ForgeDatabase, id: string): Checkpoint | undef
  * deleteWhatsAppMessage's own convention in whatsapp.ts), so a checkpoint
  * id belonging to a different project can never be renamed through this
  * call. Throws NotFoundError for an id that doesn't exist in this
- * project's own history.
+ * project's own history. Deliberately touches only `label` -- `kind` is
+ * set once at insertCheckpoint and never revisited here, so renaming a
+ * checkpoint (even to text that happens to look like the other kind's own
+ * default label) can never change how HistoryPanel's build/refine filter
+ * classifies it.
  */
 export function renameCheckpoint(db: ForgeDatabase, projectId: string, checkpointId: string, label: string): Checkpoint {
   const result = db.prepare("UPDATE checkpoints SET label = ? WHERE id = ? AND projectId = ?").run(label, checkpointId, projectId);

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { AgentStepEvent, Project, ProductSpec } from "@forge/shared";
-import { applyMigrations, countRecords, ensureCheckpointsTable, ensureProjectsTable, insertProject, listRecords, openDatabase } from "@forge/db";
+import { applyMigrations, countRecords, ensureCheckpointsTable, ensureProjectsTable, insertProject, listCheckpoints, listRecords, openDatabase } from "@forge/db";
 import { runBuildPipeline, runQaChecks, runSecurityScan } from "./pipeline.js";
 
 const brokenSpec: ProductSpec = {
@@ -225,6 +225,51 @@ test("re-running the pipeline for the same project doesn't re-seed a table that 
   const countAfterRetry = countRecords(db, project.id, customer);
   assert.equal(countAfterRetry, countAfterFirstBuild, "retrying the same build must not duplicate the sample records");
   assert.equal(listRecords(db, project.id, customer).length, countAfterFirstBuild);
+});
+
+/**
+ * Regression test: the checkpoint's own `kind` (CheckpointSchema) is what
+ * getCheckpointType (checkpointDiff.ts) now reads directly instead of
+ * re-deriving it from the checkpoint's label -- a user-renameable field
+ * (CheckpointLabelEditor) that used to be the only signal, and silently
+ * misclassified a renamed checkpoint. This confirms the real wiring: an
+ * actual build's checkpoint is inserted with kind "build" and an actual
+ * refine's checkpoint is inserted with kind "refine", driven by whether
+ * previousSpec is set on the very call that created it (routes/projects.ts
+ * never sets it for /build, always sets it to project.spec for /refine) --
+ * not just the isolated insertCheckpoint/getCheckpointType unit behavior
+ * already covered in packages/db/src/checkpoints.test.ts and
+ * apps/web/src/checkpointDiff.test.ts.
+ */
+test("a real build's checkpoint is inserted with kind 'build' and a real refine's checkpoint is inserted with kind 'refine'", async () => {
+  const spec: ProductSpec = {
+    summary: "test",
+    personas: [],
+    roles: ["Admin"],
+    screens: [],
+    assumptions: [],
+    openQuestions: [],
+    entities: [{ name: "Customer", label: "Customers", fields: [{ name: "name", type: "text", required: true }] }],
+  };
+  const db = openDatabase(":memory:");
+  ensureProjectsTable(db);
+  ensureCheckpointsTable(db);
+  const project = insertProject(db, { id: "proj1", ownerId: "user1", name: "test", description: "test", spec });
+
+  await collect(runBuildPipeline(db, project, { nextSpec: spec, changeLabel: "Initial build" }));
+  const afterBuild = listCheckpoints(db, project.id);
+  assert.equal(afterBuild.length, 1);
+  assert.equal(afterBuild[0].kind, "build", "an initial build's own checkpoint must be kind 'build'");
+
+  const refinedSpec: ProductSpec = {
+    ...spec,
+    entities: [...spec.entities, { name: "Order", fields: [{ name: "total", type: "number", required: true }] }],
+  };
+  await collect(runBuildPipeline(db, project, { previousSpec: spec, nextSpec: refinedSpec, changeLabel: "Refine: add orders" }));
+  const afterRefine = listCheckpoints(db, project.id);
+  assert.equal(afterRefine.length, 2);
+  assert.equal(afterRefine[0].kind, "refine", "the refine's own checkpoint (newest first) must be kind 'refine', regardless of what its label says");
+  assert.equal(afterRefine[1].kind, "build", "the original build's checkpoint must still be kind 'build'");
 });
 
 /**

@@ -246,6 +246,15 @@ export const CheckpointSchema = z.object({
   id: z.string(),
   projectId: z.string(),
   label: z.string(),
+  /**
+   * Set once, at creation, from the pipeline's own unambiguous knowledge of
+   * whether this snapshot came from /build or /refine -- never re-derived
+   * from `label` the way it used to be, since CheckpointLabelEditor lets a
+   * user freely rename a checkpoint to arbitrary text (including text that
+   * no longer starts with "Refine:"/"שיפור:", or that happens to start with
+   * one by coincidence), which would otherwise silently reclassify it.
+   */
+  kind: z.enum(["build", "refine"]),
   spec: ProductSpecSchema,
   createdAt: z.string(),
 });

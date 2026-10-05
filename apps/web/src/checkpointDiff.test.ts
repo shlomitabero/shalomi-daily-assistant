@@ -18,8 +18,8 @@ function makeSpec(entities: ProductSpec["entities"]): ProductSpec {
   return { summary: "s", personas: [], roles: ["Admin"], entities, screens: [], assumptions: [], openQuestions: [] };
 }
 
-function makeCheckpoint(label: string): Checkpoint {
-  return { id: label, projectId: "p1", label, spec: makeSpec([]), createdAt: "2026-01-01T00:00:00.000Z" };
+function makeCheckpoint(label: string, kind: Checkpoint["kind"] = "build"): Checkpoint {
+  return { id: label, projectId: "p1", label, kind, spec: makeSpec([]), createdAt: "2026-01-01T00:00:00.000Z" };
 }
 
 test("computeCheckpointDiff reports an entity present now but missing from the checkpoint as removed", () => {
@@ -301,23 +301,43 @@ test("filterCheckpoints returns an empty list when nothing matches, instead of f
   assert.deepEqual(filterCheckpoints(checkpoints, "zzz-no-such-checkpoint"), []);
 });
 
-test("getCheckpointType reads 'build' vs 'refine' from a checkpoint's own label, in both English and Hebrew", () => {
-  assert.equal(getCheckpointType(makeCheckpoint("Initial build")), "build");
-  assert.equal(getCheckpointType(makeCheckpoint("Refine: add invoice tracking")), "refine");
-  assert.equal(getCheckpointType(makeCheckpoint("בנייה ראשונית")), "build");
-  assert.equal(getCheckpointType(makeCheckpoint("שיפור: הוספת מעקב חשבוניות")), "refine");
+test("getCheckpointType reads a checkpoint's own persisted kind, not its label", () => {
+  assert.equal(getCheckpointType(makeCheckpoint("Initial build", "build")), "build");
+  assert.equal(getCheckpointType(makeCheckpoint("Refine: add invoice tracking", "refine")), "refine");
+  assert.equal(getCheckpointType(makeCheckpoint("בנייה ראשונית", "build")), "build");
+  assert.equal(getCheckpointType(makeCheckpoint("שיפור: הוספת מעקב חשבוניות", "refine")), "refine");
+});
+
+/**
+ * Regression test for the real bug this round closed: CheckpointLabelEditor
+ * lets a user freely rename ANY checkpoint's label (its own advertised use
+ * case -- "give an important one a name that's actually memorable"), and
+ * getCheckpointType used to re-derive "build"/"refine" from that same label
+ * via startsWith, so renaming a refine checkpoint away from its
+ * "Refine: ..." prefix silently reclassified it as a build (and the
+ * reverse, renaming to text that happens to start with "Refine:", would
+ * have misclassified a build as a refine). kind is now set once at
+ * creation and never touched by a rename, so both directions must stay
+ * correctly classified by kind regardless of what the label says.
+ */
+test("getCheckpointType keeps classifying by kind even after the checkpoint's label has been renamed to not match either prefix", () => {
+  const renamedRefine = makeCheckpoint("before the pricing overhaul", "refine");
+  assert.equal(getCheckpointType(renamedRefine), "refine", "a renamed refine checkpoint must still read as 'refine', not fall back to 'build' because its label no longer starts with Refine:");
+
+  const buildRenamedToLookLikeARefine = makeCheckpoint("Refine: this is actually the original build, just renamed", "build");
+  assert.equal(getCheckpointType(buildRenamedToLookLikeARefine), "build", "a build checkpoint renamed to text that happens to start with 'Refine:' must still read as 'build', not be fooled by the coincidental prefix");
 });
 
 test("filterCheckpointsByType('all') returns every checkpoint unchanged", () => {
-  const checkpoints = [makeCheckpoint("Initial build"), makeCheckpoint("Refine: add invoice tracking")];
+  const checkpoints = [makeCheckpoint("Initial build", "build"), makeCheckpoint("Refine: add invoice tracking", "refine")];
   assert.deepEqual(filterCheckpointsByType(checkpoints, "all"), checkpoints);
 });
 
 test("filterCheckpointsByType('build') keeps only the initial build, dropping every refine", () => {
   const checkpoints = [
-    makeCheckpoint("Initial build"),
-    makeCheckpoint("Refine: add invoice tracking"),
-    makeCheckpoint("Refine: add customer notes"),
+    makeCheckpoint("Initial build", "build"),
+    makeCheckpoint("Refine: add invoice tracking", "refine"),
+    makeCheckpoint("Refine: add customer notes", "refine"),
   ];
   assert.deepEqual(
     filterCheckpointsByType(checkpoints, "build").map((c) => c.label),
@@ -327,9 +347,9 @@ test("filterCheckpointsByType('build') keeps only the initial build, dropping ev
 
 test("filterCheckpointsByType('refine') keeps only refines, dropping the initial build", () => {
   const checkpoints = [
-    makeCheckpoint("Initial build"),
-    makeCheckpoint("Refine: add invoice tracking"),
-    makeCheckpoint("Refine: add customer notes"),
+    makeCheckpoint("Initial build", "build"),
+    makeCheckpoint("Refine: add invoice tracking", "refine"),
+    makeCheckpoint("Refine: add customer notes", "refine"),
   ];
   assert.deepEqual(
     filterCheckpointsByType(checkpoints, "refine").map((c) => c.label),
@@ -339,9 +359,9 @@ test("filterCheckpointsByType('refine') keeps only refines, dropping the initial
 
 test("filterCheckpointsByType composes with filterCheckpoints' own text search, narrowing to exactly what matches both", () => {
   const checkpoints = [
-    makeCheckpoint("Initial build"),
-    makeCheckpoint("Refine: add invoice tracking"),
-    makeCheckpoint("Refine: add customer notes"),
+    makeCheckpoint("Initial build", "build"),
+    makeCheckpoint("Refine: add invoice tracking", "refine"),
+    makeCheckpoint("Refine: add customer notes", "refine"),
   ];
   const searched = filterCheckpoints(checkpoints, "add");
   assert.deepEqual(
@@ -351,7 +371,7 @@ test("filterCheckpointsByType composes with filterCheckpoints' own text search, 
 });
 
 test("filterCheckpointsByType returns an empty list, not everything, when no checkpoint matches the type", () => {
-  const checkpoints = [makeCheckpoint("Initial build")];
+  const checkpoints = [makeCheckpoint("Initial build", "build")];
   assert.deepEqual(filterCheckpointsByType(checkpoints, "refine"), []);
 });
 
@@ -382,6 +402,7 @@ test("formatCheckpointHistory includes the project name, each checkpoint's own l
       id: "cp2",
       projectId: "p1",
       label: "Refine: add invoice tracking",
+      kind: "refine",
       spec: makeSpec([
         { name: "Customer", label: "Customers", fields: [{ name: "name", type: "text", required: true }] },
         { name: "Invoice", label: "Invoices", fields: [{ name: "total", type: "number", required: true }] },
@@ -392,6 +413,7 @@ test("formatCheckpointHistory includes the project name, each checkpoint's own l
       id: "cp1",
       projectId: "p1",
       label: "Initial build",
+      kind: "build",
       spec: currentSpec,
       createdAt: "2026-03-01T09:00:00.000Z",
     },
@@ -414,6 +436,7 @@ test("formatCheckpointHistory marks exactly the checkpoint matching the current 
       id: "cp2",
       projectId: "p1",
       label: "Refine: add invoice tracking",
+      kind: "refine",
       spec: makeSpec([
         { name: "Customer", label: "Customers", fields: [{ name: "name", type: "text", required: true }] },
         { name: "Invoice", label: "Invoices", fields: [{ name: "total", type: "number", required: true }] },
@@ -424,6 +447,7 @@ test("formatCheckpointHistory marks exactly the checkpoint matching the current 
       id: "cp1",
       projectId: "p1",
       label: "Initial build",
+      kind: "build",
       spec: currentSpec,
       createdAt: "2026-03-01T09:00:00.000Z",
     },
@@ -449,7 +473,7 @@ test("formatCheckpointHistory renders in Hebrew when given the Hebrew translator
   const t = (key: string, params?: Record<string, string | number>) => translate("he", key, params);
   const currentSpec = makeSpec([{ name: "Customer", fields: [] }]);
   const checkpoints: Checkpoint[] = [
-    { id: "cp1", projectId: "p1", label: "בנייה ראשונית", spec: currentSpec, createdAt: "2026-03-01T09:00:00.000Z" },
+    { id: "cp1", projectId: "p1", label: "בנייה ראשונית", kind: "build", spec: currentSpec, createdAt: "2026-03-01T09:00:00.000Z" },
   ];
   const report = formatCheckpointHistory(checkpoints, currentSpec, "חנות הפרחים", "he", t);
 
@@ -460,7 +484,7 @@ test("formatCheckpointHistory renders in Hebrew when given the Hebrew translator
 test("resolveCompareSpec returns currentSpec when compareTargetId is null, keeping the original 'vs current' behavior unchanged", () => {
   const currentSpec = makeSpec([{ name: "Customer", fields: [] }]);
   const checkpoints: Checkpoint[] = [
-    { id: "cp1", projectId: "p1", label: "Initial build", spec: makeSpec([{ name: "Order", fields: [] }]), createdAt: "2026-01-01T00:00:00.000Z" },
+    { id: "cp1", projectId: "p1", label: "Initial build", kind: "build", spec: makeSpec([{ name: "Order", fields: [] }]), createdAt: "2026-01-01T00:00:00.000Z" },
   ];
   assert.equal(resolveCompareSpec(checkpoints, null, currentSpec), currentSpec);
 });
@@ -469,8 +493,8 @@ test("resolveCompareSpec returns the matching checkpoint's own spec when a real 
   const currentSpec = makeSpec([{ name: "Customer", fields: [] }]);
   const olderSpec = makeSpec([{ name: "Order", fields: [] }]);
   const checkpoints: Checkpoint[] = [
-    { id: "cp-older", projectId: "p1", label: "Initial build", spec: olderSpec, createdAt: "2026-01-01T00:00:00.000Z" },
-    { id: "cp-newer", projectId: "p1", label: "Refine: add invoices", spec: currentSpec, createdAt: "2026-01-02T00:00:00.000Z" },
+    { id: "cp-older", projectId: "p1", label: "Initial build", kind: "build", spec: olderSpec, createdAt: "2026-01-01T00:00:00.000Z" },
+    { id: "cp-newer", projectId: "p1", label: "Refine: add invoices", kind: "refine", spec: currentSpec, createdAt: "2026-01-02T00:00:00.000Z" },
   ];
   assert.equal(resolveCompareSpec(checkpoints, "cp-older", currentSpec), olderSpec);
 });
@@ -483,7 +507,7 @@ test("resolveCompareSpec falls back to currentSpec instead of throwing when the 
 test("formatCompareTarget names the current app state by default, and the real checkpoint label once one is chosen", () => {
   const t = (key: string, params?: Record<string, string | number>) => translate("en", key, params);
   const checkpoints: Checkpoint[] = [
-    { id: "cp1", projectId: "p1", label: "Initial build", spec: makeSpec([]), createdAt: "2026-01-01T00:00:00.000Z" },
+    { id: "cp1", projectId: "p1", label: "Initial build", kind: "build", spec: makeSpec([]), createdAt: "2026-01-01T00:00:00.000Z" },
   ];
   assert.equal(formatCompareTarget(checkpoints, null, t), "Current app state");
   assert.equal(formatCompareTarget(checkpoints, "cp1", t), "Initial build");
