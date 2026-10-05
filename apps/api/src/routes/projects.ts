@@ -222,6 +222,32 @@ function parseListIndex(raw: string, list: string[], notFoundCode: string): numb
 }
 
 /**
+ * Unlike entities/fields (addressed by their own stable `name`, see the
+ * routes below), roles and assumptions are plain strings with no identity
+ * beyond their array position -- a role/assumption chip's :index is
+ * whatever the client last rendered. Two of these requests can overlap (a
+ * user clicking two different chips' remove/rename in quick succession,
+ * each firing before the first one's response re-renders the list with
+ * shifted indices), and since each handler below re-reads the current spec
+ * fresh and applies its own :index synchronously with no await in between,
+ * the second request's index can silently land on a different entry than
+ * the one actually clicked once the first request's mutation has already
+ * shifted the array -- removing/renaming the wrong role or assumption with
+ * no error shown anywhere. `expect` carries the exact string value the
+ * client had in hand when it captured that index, so a request whose
+ * target already moved can be rejected instead of silently corrupting a
+ * different entry. Optional only so that direct API callers (including
+ * this repo's own existing tests) that don't send it keep working
+ * unchanged -- this app's own web client (SpecListItemRemover.tsx) always
+ * sends it.
+ */
+function assertIndexStillMatches(list: string[], index: number, expect: unknown, notFoundCode: string): void {
+  if (typeof expect === "string" && list[index] !== expect) {
+    throw new HttpError(409, "This item was already changed by another update -- refresh and try again", notFoundCode);
+  }
+}
+
+/**
  * 404s (rather than 403s) on a project this user has no access to -- either
  * it doesn't exist, or it belongs to someone else and this user isn't a
  * collaborator on it -- to avoid leaking existence either way. A
@@ -1145,6 +1171,7 @@ export function createProjectsRouter(db: ForgeDatabase, provider: SpecProvider |
         throw new HttpError(409, "A build or refine is already running for this project", "PIPELINE_IN_PROGRESS");
       }
       const index = parseListIndex(req.params.index, project.spec.roles, "ROLE_NOT_FOUND");
+      assertIndexStillMatches(project.spec.roles, index, (req.body as { expect?: unknown })?.expect, "ROLE_STALE_INDEX");
       if (project.spec.roles.length <= 1) {
         throw new HttpError(400, "Cannot remove the last remaining role -- at least one role is required", "VALIDATION_ERROR");
       }
@@ -1163,6 +1190,12 @@ export function createProjectsRouter(db: ForgeDatabase, provider: SpecProvider |
         throw new HttpError(409, "A build or refine is already running for this project", "PIPELINE_IN_PROGRESS");
       }
       const index = parseListIndex(req.params.index, project.spec.assumptions, "ASSUMPTION_NOT_FOUND");
+      assertIndexStillMatches(
+        project.spec.assumptions,
+        index,
+        (req.body as { expect?: unknown })?.expect,
+        "ASSUMPTION_STALE_INDEX",
+      );
       const nextSpec = { ...project.spec, assumptions: project.spec.assumptions.filter((_, i) => i !== index) };
       const updated = updateProjectSpec(db, project.id, nextSpec);
       res.json({ project: updated });
@@ -1188,6 +1221,7 @@ export function createProjectsRouter(db: ForgeDatabase, provider: SpecProvider |
         throw new HttpError(409, "A build or refine is already running for this project", "PIPELINE_IN_PROGRESS");
       }
       const index = parseListIndex(req.params.index, project.spec.roles, "ROLE_NOT_FOUND");
+      assertIndexStillMatches(project.spec.roles, index, (req.body as { expect?: unknown })?.expect, "ROLE_STALE_INDEX");
       const parsed = AddRoleSchema.safeParse(req.body);
       if (!parsed.success) {
         throw new HttpError(400, formatValidationError(parsed.error), "VALIDATION_ERROR");
@@ -1207,6 +1241,12 @@ export function createProjectsRouter(db: ForgeDatabase, provider: SpecProvider |
         throw new HttpError(409, "A build or refine is already running for this project", "PIPELINE_IN_PROGRESS");
       }
       const index = parseListIndex(req.params.index, project.spec.assumptions, "ASSUMPTION_NOT_FOUND");
+      assertIndexStillMatches(
+        project.spec.assumptions,
+        index,
+        (req.body as { expect?: unknown })?.expect,
+        "ASSUMPTION_STALE_INDEX",
+      );
       const parsed = AddAssumptionSchema.safeParse(req.body);
       if (!parsed.success) {
         throw new HttpError(400, formatValidationError(parsed.error), "VALIDATION_ERROR");

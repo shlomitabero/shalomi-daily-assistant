@@ -288,12 +288,26 @@ export function deleteProject(projectId: string): Promise<void> {
   return request(`/projects/${projectId}`, { method: "DELETE" });
 }
 
-export function removeRole(projectId: string, index: number): Promise<{ project: Project }> {
-  return request(`/projects/${projectId}/roles/${index}`, { method: "DELETE" });
+/**
+ * `expect` is the exact role/assumption string the caller had on screen
+ * when it captured `index` -- roles/assumptions have no identity beyond
+ * array position, unlike entities/fields (addressed by name below), so two
+ * of these calls overlapping (the user clicking two different chips before
+ * either response lands) could otherwise have the second one silently
+ * land on whatever entry the first one's removal shifted into that same
+ * index. The server rejects the request (409) if `expect` no longer
+ * matches instead of mutating the wrong entry -- see assertIndexStillMatches
+ * in apps/api/src/routes/projects.ts.
+ */
+export function removeRole(projectId: string, index: number, expect: string): Promise<{ project: Project }> {
+  return request(`/projects/${projectId}/roles/${index}`, { method: "DELETE", body: JSON.stringify({ expect }) });
 }
 
-export function removeAssumption(projectId: string, index: number): Promise<{ project: Project }> {
-  return request(`/projects/${projectId}/assumptions/${index}`, { method: "DELETE" });
+export function removeAssumption(projectId: string, index: number, expect: string): Promise<{ project: Project }> {
+  return request(`/projects/${projectId}/assumptions/${index}`, {
+    method: "DELETE",
+    body: JSON.stringify({ expect }),
+  });
 }
 
 export function addRole(projectId: string, role: string): Promise<{ project: Project }> {
@@ -304,14 +318,27 @@ export function addAssumption(projectId: string, assumption: string): Promise<{ 
   return request(`/projects/${projectId}/assumptions`, { method: "POST", body: JSON.stringify({ assumption }) });
 }
 
-export function renameRole(projectId: string, index: number, role: string): Promise<{ project: Project }> {
-  return request(`/projects/${projectId}/roles/${index}`, { method: "PATCH", body: JSON.stringify({ role }) });
+export function renameRole(
+  projectId: string,
+  index: number,
+  role: string,
+  expect: string,
+): Promise<{ project: Project }> {
+  return request(`/projects/${projectId}/roles/${index}`, {
+    method: "PATCH",
+    body: JSON.stringify({ role, expect }),
+  });
 }
 
-export function renameAssumption(projectId: string, index: number, assumption: string): Promise<{ project: Project }> {
+export function renameAssumption(
+  projectId: string,
+  index: number,
+  assumption: string,
+  expect: string,
+): Promise<{ project: Project }> {
   return request(`/projects/${projectId}/assumptions/${index}`, {
     method: "PATCH",
-    body: JSON.stringify({ assumption }),
+    body: JSON.stringify({ assumption, expect }),
   });
 }
 

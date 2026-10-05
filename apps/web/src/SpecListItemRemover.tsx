@@ -126,8 +126,8 @@ export function RoleChip({
   onRemoved: (project: Project) => void;
 }) {
   const { t } = useTranslation();
-  const { busy, error, handleRemove } = useRemovableSpecItem(() => removeRole(projectId, index), onRemoved);
-  const rename = useRenamableSpecItem(role, (value) => renameRole(projectId, index, value), onRenamed);
+  const { busy, error, handleRemove } = useRemovableSpecItem(() => removeRole(projectId, index, role), onRemoved);
+  const rename = useRenamableSpecItem(role, (value) => renameRole(projectId, index, value, role), onRenamed);
 
   if (rename.editing) {
     return (
@@ -194,8 +194,15 @@ export function AssumptionItem({
   onRemoved: (project: Project) => void;
 }) {
   const { t } = useTranslation();
-  const { busy, error, handleRemove } = useRemovableSpecItem(() => removeAssumption(projectId, index), onRemoved);
-  const rename = useRenamableSpecItem(assumption, (value) => renameAssumption(projectId, index, value), onRenamed);
+  const { busy, error, handleRemove } = useRemovableSpecItem(
+    () => removeAssumption(projectId, index, assumption),
+    onRemoved,
+  );
+  const rename = useRenamableSpecItem(
+    assumption,
+    (value) => renameAssumption(projectId, index, value, assumption),
+    onRenamed,
+  );
 
   if (rename.editing) {
     return (

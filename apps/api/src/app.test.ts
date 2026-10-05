@@ -2031,6 +2031,155 @@ test("renaming an assumption on a project you have no access to still 404s, the 
 });
 
 /**
+ * New in this round (421): roles/assumptions are addressed by plain array
+ * index (unlike entities/fields, addressed by their own stable name), so
+ * two overlapping remove/rename requests -- a user clicking two different
+ * chips before either response lands -- could previously have the second
+ * request's index silently land on whatever entry the first request's
+ * removal shifted into that same slot, mutating the wrong role/assumption
+ * with no error at all. These repro the exact race end-to-end (not just
+ * unit-test the guard function) and confirm the fix: the client now always
+ * sends the exact string it had on screen as `expect`, and the server
+ * rejects the second, now-stale request (409) instead of silently acting
+ * on the wrong entry.
+ */
+test("deleting a role at a now-stale index is rejected (409) instead of silently removing the wrong role", async () => {
+  await withServer(async (baseUrl) => {
+    const token = await signup(baseUrl, "role-stale-index1@example.com");
+    const createRes = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({
+        description: "A CRM with customers and deals, used by a sales manager and a customer portal for self-service.",
+      }),
+    });
+    const { project } = (await createRes.json()) as { project: { id: string; spec: { roles: string[] } } };
+    assert.ok(project.spec.roles.length >= 3);
+    const [first, second] = project.spec.roles;
+
+    // Simulates the exact race: two chips' remove buttons are clicked
+    // before either response lands, so both requests were built against
+    // the original list -- index 0 ("first") and index 1 ("second").
+    const firstRemoval = await fetch(`${baseUrl}/api/projects/${project.id}/roles/0`, {
+      method: "DELETE",
+      headers: authHeaders(token),
+      body: JSON.stringify({ expect: first }),
+    });
+    assert.equal(firstRemoval.status, 200);
+
+    // Without the fix, this would delete whatever now sits at index 1
+    // (no longer "second" -- the first removal already shifted it to
+    // index 0) instead of being told its target has moved.
+    const secondRemoval = await fetch(`${baseUrl}/api/projects/${project.id}/roles/1`, {
+      method: "DELETE",
+      headers: authHeaders(token),
+      body: JSON.stringify({ expect: second }),
+    });
+    assert.equal(secondRemoval.status, 409);
+    assert.equal(((await secondRemoval.json()) as { code?: string }).code, "ROLE_STALE_INDEX");
+
+    const getRes = await fetch(`${baseUrl}/api/projects/${project.id}`, { headers: authHeaders(token) });
+    const { project: afterBoth } = (await getRes.json()) as { project: { spec: { roles: string[] } } };
+    assert.ok(afterBoth.spec.roles.includes(second), "the role the user actually clicked to remove must survive the rejected stale request");
+    assert.equal(afterBoth.spec.roles.length, project.spec.roles.length - 1, "only the first, non-stale removal actually happened");
+  });
+});
+
+test("DELETE/PATCH roles and assumptions without an `expect` field still work unchanged (back-compat for direct API callers)", async () => {
+  await withServer(async (baseUrl) => {
+    const token = await signup(baseUrl, "role-no-expect1@example.com");
+    const createRes = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ description: "A CRM with customers and deals." }),
+    });
+    const { project } = (await createRes.json()) as { project: { id: string; spec: { roles: string[]; assumptions: string[] } } };
+
+    const renameRes = await fetch(`${baseUrl}/api/projects/${project.id}/roles/0`, {
+      method: "PATCH",
+      headers: authHeaders(token),
+      body: JSON.stringify({ role: "Renamed, no expect sent" }),
+    });
+    assert.equal(renameRes.status, 200);
+
+    const removeRes = await fetch(`${baseUrl}/api/projects/${project.id}/assumptions/0`, {
+      method: "DELETE",
+      headers: authHeaders(token),
+    });
+    assert.equal(removeRes.status, 200);
+  });
+});
+
+test("renaming a role at a now-stale index is rejected (409) instead of silently renaming the wrong role", async () => {
+  await withServer(async (baseUrl) => {
+    const token = await signup(baseUrl, "role-stale-rename1@example.com");
+    const createRes = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({
+        description: "A CRM with customers and deals, used by a sales manager and a customer portal for self-service.",
+      }),
+    });
+    const { project } = (await createRes.json()) as { project: { id: string; spec: { roles: string[] } } };
+    assert.ok(project.spec.roles.length >= 3);
+    const [first, second] = project.spec.roles;
+
+    const firstRemoval = await fetch(`${baseUrl}/api/projects/${project.id}/roles/0`, {
+      method: "DELETE",
+      headers: authHeaders(token),
+      body: JSON.stringify({ expect: first }),
+    });
+    assert.equal(firstRemoval.status, 200);
+
+    const staleRename = await fetch(`${baseUrl}/api/projects/${project.id}/roles/1`, {
+      method: "PATCH",
+      headers: authHeaders(token),
+      body: JSON.stringify({ role: "Oops wrong one", expect: second }),
+    });
+    assert.equal(staleRename.status, 409);
+    assert.equal(((await staleRename.json()) as { code?: string }).code, "ROLE_STALE_INDEX");
+
+    const getRes = await fetch(`${baseUrl}/api/projects/${project.id}`, { headers: authHeaders(token) });
+    const { project: afterBoth } = (await getRes.json()) as { project: { spec: { roles: string[] } } };
+    assert.ok(afterBoth.spec.roles.includes(second), "the role the user actually clicked to rename must survive untouched");
+    assert.ok(!afterBoth.spec.roles.includes("Oops wrong one"), "the stale-indexed rename must not have been applied to any role");
+  });
+});
+
+test("deleting an assumption at a now-stale index is rejected (409) instead of silently removing the wrong assumption", async () => {
+  await withServer(async (baseUrl) => {
+    const token = await signup(baseUrl, "assumption-stale-index1@example.com");
+    const createRes = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ description: "A CRM with customers and deals." }),
+    });
+    const { project } = (await createRes.json()) as { project: { id: string; spec: { assumptions: string[] } } };
+    assert.ok(project.spec.assumptions.length >= 2, "the heuristic engine always generates at least 3 default assumptions");
+    const [first, second] = project.spec.assumptions;
+
+    const firstRemoval = await fetch(`${baseUrl}/api/projects/${project.id}/assumptions/0`, {
+      method: "DELETE",
+      headers: authHeaders(token),
+      body: JSON.stringify({ expect: first }),
+    });
+    assert.equal(firstRemoval.status, 200);
+
+    const staleRemoval = await fetch(`${baseUrl}/api/projects/${project.id}/assumptions/1`, {
+      method: "DELETE",
+      headers: authHeaders(token),
+      body: JSON.stringify({ expect: second }),
+    });
+    assert.equal(staleRemoval.status, 409);
+    assert.equal(((await staleRemoval.json()) as { code?: string }).code, "ASSUMPTION_STALE_INDEX");
+
+    const getRes = await fetch(`${baseUrl}/api/projects/${project.id}`, { headers: authHeaders(token) });
+    const { project: afterBoth } = (await getRes.json()) as { project: { spec: { assumptions: string[] } } };
+    assert.ok(afterBoth.spec.assumptions.includes(second), "the assumption the user actually clicked to remove must survive the rejected stale request");
+  });
+});
+
+/**
  * New in this round: the spec review screen's "entities" list (the
  * screens about to be built) had no correction path at all, unlike roles
  * and assumptions above -- an unwanted screen the heuristic invented could

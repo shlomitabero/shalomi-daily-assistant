@@ -285,10 +285,10 @@ test("a role chip surfaces a real removal error (e.g. the last-role guard) inste
 test("clicking a role chip's text opens an inline edit, and saving it calls the real PATCH endpoint by index", async () => {
   await withJsdom(async () => {
     const originalFetch = globalThis.fetch;
-    let patchBody: { role: string } | undefined;
+    let patchBody: { role: string; expect?: string } | undefined;
     globalThis.fetch = (async (input: string, init?: RequestInit) => {
       if (init?.method === "PATCH" && input === "/api/projects/proj1/roles/1") {
-        patchBody = JSON.parse(init.body as string) as { role: string };
+        patchBody = JSON.parse(init.body as string) as { role: string; expect?: string };
         const renamed = { ...baseProject, spec: { ...baseProject.spec, roles: ["Admin", patchBody.role] } };
         return new Response(JSON.stringify({ project: renamed }), { status: 200, headers: { "content-type": "application/json" } });
       }
@@ -308,7 +308,7 @@ test("clicking a role chip's text opens an inline edit, and saving it calls the 
       fireEvent.blur(input);
 
       await waitForCondition(() => renamedProjects.length === 1);
-      assert.deepEqual(patchBody, { role: "Warehouse Manager" });
+      assert.deepEqual(patchBody, { role: "Warehouse Manager", expect: "Manager" });
       assert.deepEqual(renamedProjects[0].spec.roles, ["Admin", "Warehouse Manager"]);
       assert.equal(document.querySelector(".chip-rename-edit"), null, "must return to display mode after a successful save");
     } finally {
@@ -402,10 +402,10 @@ test("clicking an assumption's remove button calls the real DELETE endpoint by i
 test("clicking an assumption's text opens an inline edit, and saving it calls the real PATCH endpoint by index", async () => {
   await withJsdom(async () => {
     const originalFetch = globalThis.fetch;
-    let patchBody: { assumption: string } | undefined;
+    let patchBody: { assumption: string; expect?: string } | undefined;
     globalThis.fetch = (async (input: string, init?: RequestInit) => {
       if (init?.method === "PATCH" && input === "/api/projects/proj1/assumptions/1") {
-        patchBody = JSON.parse(init.body as string) as { assumption: string };
+        patchBody = JSON.parse(init.body as string) as { assumption: string; expect?: string };
         const renamed = {
           ...baseProject,
           spec: { ...baseProject.spec, assumptions: ["First assumption", patchBody.assumption] },
@@ -428,7 +428,7 @@ test("clicking an assumption's text opens an inline edit, and saving it calls th
       fireEvent.blur(input);
 
       await waitForCondition(() => renamedProjects.length === 1);
-      assert.deepEqual(patchBody, { assumption: "Only one warehouse" });
+      assert.deepEqual(patchBody, { assumption: "Only one warehouse", expect: "Second assumption" });
       assert.deepEqual(renamedProjects[0].spec.assumptions, ["First assumption", "Only one warehouse"]);
       assert.equal(document.querySelector(".assumption-rename-edit"), null, "must return to display mode after a successful save");
     } finally {
