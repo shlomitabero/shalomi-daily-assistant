@@ -4175,6 +4175,73 @@ test("the exported GlobalSearch's runSearch ignores a stale, still-in-flight sea
   );
 });
 
+/**
+ * Regression test (round 412; the exported app's GlobalSearch.jsx is a
+ * deliberate duplicate of the live-preview GlobalSearchPanel.tsx's
+ * handleShowAll, same as runSearch above): handleShowAll made its own
+ * async fetch into shared setExpandedSamples state with no guard against
+ * a newer search completing first, even though runSearch right next to it
+ * already guards the identical race via searchRequestId. Holds "Show
+ * all"'s own listRecords call open past a newer search's completion
+ * (bumping searchRequestId), then only resolves it afterward, to prove
+ * the late arrival can't merge a stale sample into expandedSamples. Runs
+ * the real generated matchesSearch/handleShowAll.
+ */
+test("the exported GlobalSearch's handleShowAll ignores a stale, still-in-flight fetch once a newer search has already completed", async () => {
+  const files = generateExportFiles(project);
+  const globalSearchJsx = files.find((f) => f.path === "web/src/components/GlobalSearch.jsx")!.content;
+  const entityViewJsx = files.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+
+  const matchesSearchSrc = entityViewJsx.match(/export function matchesSearch\([\s\S]*?\n\}\n/)?.[0]?.replace("export ", "");
+  const handleShowAllSrc = globalSearchJsx.match(/ {2}async function handleShowAll\(entityName\) \{[\s\S]*?\n {2}\}\n/)?.[0];
+  assert.ok(matchesSearchSrc && handleShowAllSrc, "expected to find matchesSearch/handleShowAll in generated output");
+
+  const entityA = { name: "Alpha", label: "Alpha", fields: [] };
+
+  let resolveShowAllCall!: () => void;
+  const showAllCallHeld = new Promise<void>((resolve) => {
+    resolveShowAllCall = resolve;
+  });
+  const expandedSamplesCalls: unknown[] = [];
+  const searchRequestId = { current: 0 };
+
+  const fn = new Function(
+    "entities",
+    "listRecords",
+    "searchRequestId",
+    "setShowAllLoading",
+    "query",
+    "lastRecordsByEntityRef",
+    "setExpandedSamples",
+    `${matchesSearchSrc}\n${handleShowAllSrc}\nreturn handleShowAll;`,
+  )(
+    [entityA],
+    async () => {
+      await showAllCallHeld; // "Show all"'s own network call stays open
+      return { records: [{ id: 1, name: "stale-shown-record" }] };
+    },
+    searchRequestId,
+    () => {},
+    "stale query",
+    { current: {} },
+    (updater: (prev: Record<string, unknown>) => Record<string, unknown>) => {
+      expandedSamplesCalls.push(updater({}));
+    },
+  ) as (entityName: string) => Promise<void>;
+
+  const showAllPromise = fn("Alpha");
+  await Promise.resolve(); // let "Show all" actually start and reach its held-open listRecords call
+  searchRequestId.current += 1; // a newer search completed while "Show all" was still in flight
+  resolveShowAllCall();
+  await showAllPromise;
+
+  assert.equal(
+    expandedSamplesCalls.length,
+    0,
+    "a Show all fetch superseded by a newer search must never write its stale sample into expandedSamples",
+  );
+});
+
 test("the exported App.jsx renders a real 'Backup All Data' link pointing at the generated server's own /api/backup endpoint", () => {
   const files = generateExportFiles(project);
   const appJsx = files.find((f) => f.path === "web/src/App.jsx")!.content;

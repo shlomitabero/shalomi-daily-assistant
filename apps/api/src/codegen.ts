@@ -4071,12 +4071,19 @@ export function GlobalSearch({ entities, onClose, onJumpToEntity, onJumpToRecord
   // sample cap, so "Show all" reveals every real match instead of just the
   // first 5. Keyed per entity in expandedSamples rather than reusing
   // results in place, so a still-collapsed group elsewhere is untouched.
+  // Guarded by searchRequestId the same way runSearch guards its own
+  // network round trip: without it, a new search started while this fetch
+  // is still in flight resolves into expandedSamples anyway, merging a
+  // sample matched against the OLD query into results now showing the NEW
+  // one.
   async function handleShowAll(entityName) {
     const entity = entities.find((e) => e.name === entityName);
     if (!entity) return;
+    const requestId = searchRequestId.current;
     setShowAllLoading((prev) => new Set(prev).add(entityName));
     try {
       const { records } = await listRecords(entityName);
+      if (searchRequestId.current !== requestId) return;
       const full = records.filter((r) => matchesSearch(r, entity.fields, query, lastRecordsByEntityRef.current));
       setExpandedSamples((prev) => ({ ...prev, [entityName]: full }));
     } finally {

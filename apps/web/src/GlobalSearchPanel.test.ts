@@ -234,6 +234,76 @@ test("GlobalSearchPanel's runSearch ignores a stale, still-in-flight search's re
   );
 });
 
+/**
+ * Regression test (round 412; flagged as a runner-up but not pursued back
+ * in round 394): handleShowAll had no equivalent guard to runSearch's own
+ * searchRequestId check, even though it makes the exact same kind of
+ * async fetch into shared state (expandedSamples). Holds "Show all"'s own
+ * listRecords call open past a newer search's own completion (bumping
+ * searchRequestId), then only resolves it afterward, to prove the late
+ * arrival can't merge a stale sample into results the user has already
+ * moved past.
+ */
+test("GlobalSearchPanel's handleShowAll ignores a stale, still-in-flight fetch once a newer search has already completed", async () => {
+  const handlerMatch = globalSearchPanelSrc.match(/ {2}async function handleShowAll\(entityName: string\) \{[\s\S]*?\n {2}\}\n/);
+  assert.ok(handlerMatch, "expected to find handleShowAll in GlobalSearchPanel.tsx");
+  const { code } = transformSync(handlerMatch![0], { loader: "ts" });
+
+  const entityA = { name: "Alpha", label: "Alpha", fields: [] };
+
+  function fakeSearchEntityRecords(entity: { name: string; label: string }, records: unknown[]) {
+    return { entityName: entity.name, entityLabel: entity.label, totalMatches: records.length, sample: records };
+  }
+
+  let resolveShowAllCall!: () => void;
+  const showAllCallHeld = new Promise<void>((resolve) => {
+    resolveShowAllCall = resolve;
+  });
+
+  const expandedSamplesCalls: unknown[] = [];
+  const searchRequestId = { current: 0 };
+
+  const fn = new Function(
+    "entities",
+    "projectId",
+    "listRecords",
+    "searchEntityRecords",
+    "highlightQuery",
+    "lastRecordsByEntityRef",
+    "setShowAllLoading",
+    "setExpandedSamples",
+    "searchRequestId",
+    `${code}\nreturn handleShowAll;`,
+  )(
+    [entityA],
+    "proj1",
+    async () => {
+      await showAllCallHeld; // "Show all"'s own network call stays open
+      return { records: [{ id: 1, name: "stale-shown-record" }] };
+    },
+    fakeSearchEntityRecords,
+    "stale query",
+    { current: {} },
+    () => {},
+    (updater: (prev: Record<string, unknown>) => Record<string, unknown>) => {
+      expandedSamplesCalls.push(updater({}));
+    },
+    searchRequestId,
+  ) as (entityName: string) => Promise<void>;
+
+  const showAllPromise = fn("Alpha");
+  await Promise.resolve(); // let "Show all" actually start and reach its held-open listRecords call
+  searchRequestId.current += 1; // a newer search completed while "Show all" was still in flight
+  resolveShowAllCall();
+  await showAllPromise;
+
+  assert.equal(
+    expandedSamplesCalls.length,
+    0,
+    "a Show all fetch superseded by a newer search must never write its stale sample into expandedSamples",
+  );
+});
+
 /** Same jsdom-swap technique as useDialogFocusTrap.test.ts/EntityPanel.test.ts. */
 async function withJsdom<T>(fn: () => Promise<T> | T): Promise<T> {
   const dom = new JSDOM("<!doctype html><html><body></body></html>", { url: "http://localhost/" });

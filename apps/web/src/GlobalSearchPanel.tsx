@@ -184,13 +184,25 @@ export function GlobalSearchPanel({
    * sample cap, so "Show all" reveals every real match instead of just the
    * first 5. Keyed per entity in expandedSamples rather than reusing
    * `results` in place, so a still-collapsed group elsewhere is untouched.
+   *
+   * Guarded by searchRequestId the same way runSearch guards its own
+   * network round trip (round 412; flagged but not pursued back in round
+   * 394): without it, a new search started while this fetch is still in
+   * flight (the user editing/resubmitting the query before this "Show
+   * all" round trip finishes) resolves into expandedSamples anyway,
+   * merging a sample matched against the OLD query into results now
+   * showing the NEW one -- wrong records, a `remaining` count that no
+   * longer matches `totalMatches`, and "jump to record" targets that
+   * don't correspond to anything the on-screen search actually matched.
    */
   async function handleShowAll(entityName: string) {
     const entity = entities.find((e) => e.name === entityName);
     if (!entity) return;
+    const requestId = searchRequestId.current;
     setShowAllLoading((prev) => new Set(prev).add(entityName));
     try {
       const { records } = await listRecords(projectId, entityName);
+      if (searchRequestId.current !== requestId) return;
       const full = searchEntityRecords(
         entity,
         records,
