@@ -2,7 +2,7 @@ import type { Project, ProductSpec } from "@forge/shared";
 import { ProductSpecSchema } from "@forge/shared";
 import type { ForgeDatabase } from "./connection.js";
 import { tableNameFor, quoteIdentifier } from "./identifiers.js";
-import { deleteCheckpointsForProject, listCheckpoints } from "./checkpoints.js";
+import { deleteCheckpointsForProject, listAllCheckpointedEntityNames } from "./checkpoints.js";
 import { removeAllCollaborators } from "./collaborators.js";
 import { deleteWhatsAppData } from "./whatsapp.js";
 
@@ -194,12 +194,16 @@ export function updateProjectDescription(db: ForgeDatabase, id: string, descript
  * of every checkpoint's entities plus the current spec's own is the
  * complete set of tables this project could ever have created -- read
  * before deleteCheckpointsForProject below removes that very history.
+ * Uses listAllCheckpointedEntityNames rather than listCheckpoints: the
+ * latter silently excludes a checkpoint whose *other* fields no longer
+ * satisfy today's (stricter) ProductSpecSchema, which would leave that
+ * checkpoint's own entities out of this accounting and their tables
+ * orphaned forever -- the exact bug this doc-comment describes, just one
+ * step removed (see listAllCheckpointedEntityNames's own doc-comment).
  */
 export function deleteProject(db: ForgeDatabase, project: Project): void {
   const entityNames = new Set(project.spec.entities.map((e) => e.name));
-  for (const checkpoint of listCheckpoints(db, project.id)) {
-    for (const entity of checkpoint.spec.entities) entityNames.add(entity.name);
-  }
+  for (const entityName of listAllCheckpointedEntityNames(db, project.id)) entityNames.add(entityName);
   for (const entityName of entityNames) {
     const table = tableNameFor(project.id, entityName);
     db.exec(`DROP TABLE IF EXISTS ${quoteIdentifier(table)}`);

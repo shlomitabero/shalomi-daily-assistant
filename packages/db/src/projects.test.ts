@@ -365,3 +365,72 @@ test("deleteProject drops the real data table of an entity that was added then l
     "Order's table must ALSO be dropped even though it was removed from the spec before deletion -- it's not an orphan left behind",
   );
 });
+
+/**
+ * round 409: the fix above (reading every checkpoint's entities) used
+ * listCheckpoints, which silently excludes any checkpoint row whose
+ * *other* fields (roles, summary, ...) no longer satisfy today's
+ * ProductSpecSchema -- the right behavior for a user-facing history list
+ * (see checkpoints.ts's own tryRowToCheckpoint), but wrong here: it would
+ * drop that checkpoint's entities from deleteProject's own accounting,
+ * leaving their real tables orphaned all over again -- a narrower repeat
+ * of the exact bug the test above already closed. This checkpoint row is
+ * inserted directly via raw SQL (bypassing insertCheckpoint, which would
+ * itself require a valid spec) to stand in for a checkpoint written by an
+ * older app version: its spec_json has no `roles` at all, which fails
+ * today's `roles: z.array(z.string()).min(1)`, but its `entities` array
+ * is perfectly readable.
+ */
+test("deleteProject still drops the real data table of an entity from a checkpoint whose stored spec no longer parses against today's schema", () => {
+  const db = openDatabase(":memory:");
+  ensureProjectsTable(db);
+  ensureCheckpointsTable(db);
+  ensureProjectCollaboratorsTable(db);
+  ensureWhatsAppConnectionsTable(db);
+  ensureWhatsAppMessagesTable(db);
+
+  const buildSpec: ProductSpec = validSpec;
+  const project = insertProject(db, {
+    id: "proj-stale-cp",
+    ownerId: "owner1",
+    name: "Project with a stale checkpoint",
+    description: "test",
+    spec: buildSpec,
+  });
+  diffAndMigrate(db, project.id, undefined, buildSpec);
+  insertCheckpoint(db, { id: "cp-build", projectId: project.id, label: "build", spec: buildSpec });
+
+  // Refine: adds a real "Order" entity, with a real row. Its own checkpoint
+  // is written directly (not via insertCheckpoint) with no `roles` field --
+  // standing in for a checkpoint written before `roles` existed/was
+  // required, which fails ProductSpecSchema.parse today.
+  const specWithOrder: ProductSpec = {
+    ...buildSpec,
+    entities: [...buildSpec.entities, { name: "Order", fields: [{ name: "total", type: "number", required: true }] }],
+  };
+  diffAndMigrate(db, project.id, buildSpec, specWithOrder);
+  insertRecord(db, project.id, specWithOrder.entities[1], { total: 42 });
+  db.prepare(
+    "INSERT INTO checkpoints (id, projectId, label, spec_json, createdAt) VALUES (?, ?, ?, ?, ?)",
+  ).run("cp-stale", project.id, "refine: add Order", JSON.stringify({ summary: "test", entities: specWithOrder.entities }), new Date().toISOString());
+
+  assert.equal(
+    listCheckpoints(db, project.id).some((c) => c.id === "cp-stale"),
+    false,
+    "sanity check: the stale checkpoint must actually fail to parse and be excluded from listCheckpoints, or this test isn't exercising the gap",
+  );
+
+  // Refine back out: Order leaves the spec again, its table and row left
+  // untouched by the (additive-only) migration, exactly like the test above.
+  diffAndMigrate(db, project.id, specWithOrder, buildSpec);
+  const finalProject = updateProjectSpec(db, project.id, buildSpec);
+
+  deleteProject(db, finalProject);
+
+  assert.equal(getProject(db, project.id), undefined, "the project row itself should be gone");
+  assert.throws(
+    () => db.prepare(`SELECT * FROM "entity_proj_stale_cp_Order"`).all(),
+    /no such table/,
+    "Order's table must be dropped even though the only checkpoint that ever mentioned it fails to parse under today's schema",
+  );
+});

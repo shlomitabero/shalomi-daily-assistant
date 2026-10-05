@@ -77,6 +77,44 @@ export function listCheckpoints(db: ForgeDatabase, projectId: string): Checkpoin
   return rows.map(tryRowToCheckpoint).filter((c): c is Checkpoint => c !== undefined);
 }
 
+/**
+ * deleteProject (projects.ts) needs every entity name this project's
+ * checkpoint history could ever have produced a real data table for, so
+ * it can drop tables for entities later removed from the spec (migrate.ts
+ * is additive-only -- see deleteProject's own doc-comment). Going through
+ * listCheckpoints for that would be wrong: tryRowToCheckpoint deliberately
+ * excludes a checkpoint whose *other* fields (roles, summary, ...) no
+ * longer satisfy a ProductSpecSchema that has only gotten stricter since
+ * the checkpoint was written (see that schema's own doc-comment) -- the
+ * right behavior for a user-facing history list, but it would silently
+ * drop that checkpoint's entities from deleteProject's accounting too,
+ * leaving their real tables permanently orphaned. Extracting entity names
+ * only needs `entities` to be an array of objects with a string `name` --
+ * far weaker than the full schema -- so this reads spec_json directly
+ * instead of going through rowToCheckpoint/ProductSpecSchema.parse.
+ */
+export function listAllCheckpointedEntityNames(db: ForgeDatabase, projectId: string): string[] {
+  const rows = db
+    .prepare("SELECT spec_json FROM checkpoints WHERE projectId = ?")
+    .all(projectId) as { spec_json: string }[];
+  const names = new Set<string>();
+  for (const row of rows) {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(row.spec_json);
+    } catch {
+      continue;
+    }
+    const entities = (parsed as { entities?: unknown })?.entities;
+    if (!Array.isArray(entities)) continue;
+    for (const entity of entities) {
+      const name = (entity as { name?: unknown })?.name;
+      if (typeof name === "string") names.add(name);
+    }
+  }
+  return [...names];
+}
+
 export function getCheckpoint(db: ForgeDatabase, id: string): Checkpoint | undefined {
   const row = db.prepare("SELECT * FROM checkpoints WHERE id = ?").get(id) as
     | Record<string, unknown>
