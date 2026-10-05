@@ -315,6 +315,131 @@ test("diffAndMigrate reports a relation_target_changed entry (without repointing
   assert.deepEqual(fkList.map((fk) => fk.table), ["entity_proj1_Customer"]);
 });
 
+/**
+ * Regression test: a field removed from an entity on one refine and then
+ * re-added under the SAME NAME but a different type on a LATER refine has
+ * no prevField in prevFieldsByName (that map only ever comes from the
+ * spec immediately before this one, and the field wasn't there). It used
+ * to fall straight into the "new_column" branch, which saw the physical
+ * column already existed (this migration engine is additive-only -- it
+ * never actually drops the column when a field is removed from the spec)
+ * and skipped the ALTER, silently reporting a clean "new_column" with zero
+ * indication that the reused column's real SQL type (still INTEGER, with
+ * its old FK) disagrees with what the spec now claims ("text"). The fix
+ * reads the column's real shape straight from SQLite's own catalog and
+ * reports the same "type_changed" entry it already would if the field had
+ * never left the spec.
+ */
+test("diffAndMigrate reports a type_changed entry when a field removed then re-added under the same name comes back with a different, cross-bucket type", () => {
+  const db = openDatabase(":memory:");
+  applyMigrations(db, "proj1", spec);
+  const customerEntity = spec.entities[0];
+  insertRecord(db, "proj1", customerEntity, { name: "Alice", status: "New" });
+
+  // Refine 1: drop the "customerId" relation field from Order entirely.
+  const midSpec: ProductSpec = {
+    ...spec,
+    entities: [spec.entities[0], { ...spec.entities[1], fields: [spec.entities[1].fields[0]] }],
+  };
+  const removalChanges = diffAndMigrate(db, "proj1", spec, midSpec);
+  assert.deepEqual(removalChanges, [], "removing a field from the spec reports no change at all -- the additive-only engine never drops the column");
+
+  // The physical column must still be there, untouched -- additive-only.
+  const columnsAfterRemoval = db.prepare('PRAGMA table_info("entity_proj1_Order")').all() as { name: string }[];
+  assert.ok(columnsAfterRemoval.some((c) => c.name === "customerId"), "additive-only migration must never physically drop the column");
+
+  // Refine 2: re-add a field also named "customerId", but as plain text --
+  // a different SQL-type bucket (TEXT) than the stale column's real one
+  // (INTEGER, left over from when it was a relation).
+  const nextSpec: ProductSpec = {
+    ...midSpec,
+    entities: [
+      midSpec.entities[0],
+      {
+        ...midSpec.entities[1],
+        fields: [midSpec.entities[1].fields[0], { name: "customerId", type: "text", required: false }],
+      },
+    ],
+  };
+  const changes = diffAndMigrate(db, "proj1", midSpec, nextSpec);
+  assert.deepEqual(changes, [
+    { type: "type_changed", table: "entity_proj1_Order", column: "customerId", fromType: "relation", toType: "text" },
+    { type: "new_column", table: "entity_proj1_Order", column: "customerId" },
+  ]);
+
+  // The real column must be completely untouched by this report -- still
+  // INTEGER, still FK-bound to Customer, exactly like the pre-existing
+  // type_changed test above proves for the same-name-never-left case.
+  const columnInfo = db.prepare('PRAGMA table_info("entity_proj1_Order")').all() as { name: string; type: string }[];
+  const customerIdColumn = columnInfo.find((c) => c.name === "customerId")!;
+  assert.equal(customerIdColumn.type, "INTEGER");
+  const fkList = db.prepare('PRAGMA foreign_key_list("entity_proj1_Order")').all() as { table: string }[];
+  assert.deepEqual(fkList.map((fk) => fk.table), ["entity_proj1_Customer"]);
+});
+
+// Regression test: the benign twin of the above -- a field removed then
+// re-added under the same name with the SAME type must stay silent (just
+// the baseline "new_column" every brand-new-to-this-diff field already
+// gets), never a spurious type_changed/relation_target_changed. Proves the
+// new stale-column check only fires on a genuine mismatch, not on every
+// reuse of a name.
+test("diffAndMigrate stays silent (no spurious type_changed) when a removed field is re-added under the same name with the same type", () => {
+  const db = openDatabase(":memory:");
+  applyMigrations(db, "proj1", spec);
+
+  const midSpec: ProductSpec = {
+    ...spec,
+    entities: [spec.entities[0], { ...spec.entities[1], fields: [spec.entities[1].fields[0]] }],
+  };
+  diffAndMigrate(db, "proj1", spec, midSpec);
+
+  // Re-add "customerId" exactly as it was: relation to Customer.
+  const changes = diffAndMigrate(db, "proj1", midSpec, spec);
+  assert.deepEqual(changes, [{ type: "new_column", table: "entity_proj1_Order", column: "customerId" }]);
+
+  const fkList = db.prepare('PRAGMA foreign_key_list("entity_proj1_Order")').all() as { table: string }[];
+  assert.deepEqual(fkList.map((fk) => fk.table), ["entity_proj1_Customer"]);
+});
+
+// Regression test: the relation_target_changed twin of the type_changed
+// test above -- a relation field removed then re-added under the same
+// name, still a relation, but now pointing at a DIFFERENT existing entity.
+// Both the stale column and the new field are INTEGER (same SQL-type
+// bucket), so this only shows up by actually comparing the stale FK's real
+// target table against what the field now claims.
+test("diffAndMigrate reports a relation_target_changed entry when a removed relation field is re-added pointing at a different entity", () => {
+  const db = openDatabase(":memory:");
+  applyMigrations(db, "proj1", spec);
+
+  const midSpec: ProductSpec = {
+    ...spec,
+    entities: [spec.entities[0], { ...spec.entities[1], fields: [spec.entities[1].fields[0]] }],
+  };
+  diffAndMigrate(db, "proj1", spec, midSpec);
+
+  const nextSpec: ProductSpec = {
+    ...midSpec,
+    entities: [
+      midSpec.entities[0],
+      { name: "Vendor", fields: [{ name: "name", type: "text", required: true }] },
+      {
+        ...midSpec.entities[1],
+        fields: [midSpec.entities[1].fields[0], { name: "customerId", type: "relation", required: false, relationTo: "Vendor" }],
+      },
+    ],
+  };
+  const changes = diffAndMigrate(db, "proj1", midSpec, nextSpec);
+  assert.deepEqual(changes, [
+    { type: "new_table", table: "entity_proj1_Vendor" },
+    { type: "relation_target_changed", table: "entity_proj1_Order", column: "customerId", fromRelationTo: "Customer", toRelationTo: "Vendor" },
+    { type: "new_column", table: "entity_proj1_Order", column: "customerId" },
+  ]);
+
+  // The real FK must still be untouched -- bound to Customer, not Vendor.
+  const fkList = db.prepare('PRAGMA foreign_key_list("entity_proj1_Order")').all() as { table: string }[];
+  assert.deepEqual(fkList.map((fk) => fk.table), ["entity_proj1_Customer"]);
+});
+
 test("diffAndMigrate is safe to call twice with the same additive change (idempotent, never throws)", () => {
   // Reproduces the real failure class this hardening prevents: SQLite
   // throws "duplicate column name" on a second ALTER TABLE ADD COLUMN for

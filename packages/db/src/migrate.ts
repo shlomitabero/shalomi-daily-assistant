@@ -61,6 +61,63 @@ function existingColumns(db: ForgeDatabase, table: string): Set<string> {
   return new Set(rows.map((r) => r.name));
 }
 
+/**
+ * A field removed from an entity and later re-added under the same name --
+ * e.g. a relation field dropped, then a differently-typed field also named
+ * "assignee" added back on a later refine -- has no prevField in
+ * prevFieldsByName below: that map only ever comes from the IMMEDIATELY
+ * preceding spec, and the field wasn't there. So it falls past both the
+ * type_changed and relation_target_changed checks above it (both require
+ * prevField to be truthy) straight into the "new_column" branch -- but the
+ * physical column was never dropped (this migration engine is additive-only
+ * by design), so `currentColumns.has(columnName)` is true and the ALTER is
+ * skipped, silently reusing a stale column whose real SQL type/REFERENCES
+ * clause can mismatch what nextSpec now claims. Reading that straight from
+ * SQLite's own catalog -- the one source of truth that survived the field's
+ * absence from the spec -- lets the field loop below report the same kind
+ * of change (type_changed/relation_target_changed) it already would have if
+ * the field had never left the spec at all.
+ */
+function physicalColumnShape(db: ForgeDatabase, table: string): Map<string, { sqlType: string; fkTable?: string }> {
+  const columns = db.prepare(`PRAGMA table_info(${quoteIdentifier(table)})`).all() as { name: string; type: string }[];
+  const foreignKeys = db.prepare(`PRAGMA foreign_key_list(${quoteIdentifier(table)})`).all() as { from: string; table: string }[];
+  const shapeByColumn = new Map<string, { sqlType: string; fkTable?: string }>();
+  for (const column of columns) {
+    const fk = foreignKeys.find((f) => f.from === column.name);
+    shapeByColumn.set(column.name, { sqlType: column.type, fkTable: fk?.table });
+  }
+  return shapeByColumn;
+}
+
+/**
+ * Best-effort reverse lookup from a physical table name back to the entity
+ * name a user-facing message should show, for a stale relation column whose
+ * actual REFERENCES target has to be read from physicalColumnShape above
+ * (there's no Field left anywhere to read a relationTo string from). Checks
+ * both specs' own entity names since the referenced entity could have been
+ * renamed or removed from either one; falls back to the raw table name
+ * (still accurate, just less readable) rather than "undefined" when neither
+ * spec's entities account for it.
+ */
+function entityNameForTable(projectId: string, candidateEntityNames: Iterable<string>, table: string): string {
+  for (const name of candidateEntityNames) {
+    if (tableNameFor(projectId, name) === table) return name;
+  }
+  return table;
+}
+
+/** Reverses sqlTypeFor's own mapping for a column with no surviving Field to read field.type from -- only ever used for a user-facing message string, not for any decision logic. */
+function fieldTypeLabelForSqlType(sqlType: string, hasForeignKey: boolean): string {
+  switch (sqlType) {
+    case "REAL":
+      return "number";
+    case "INTEGER":
+      return hasForeignKey ? "relation" : "boolean";
+    default:
+      return "text";
+  }
+}
+
 export interface MigrationChange {
   type: "new_table" | "new_column" | "type_changed" | "relation_target_changed";
   table: string;
@@ -121,6 +178,7 @@ export function diffAndMigrate(
 
     const prevFieldsByName = new Map(prevEntity.fields.map((f) => [f.name, f]));
     const currentColumns = existingColumns(db, table);
+    const physicalShapeByColumn = physicalColumnShape(db, table);
     for (const field of entity.fields) {
       const prevField = prevFieldsByName.get(field.name);
       if (prevField) {
@@ -162,6 +220,37 @@ export function diffAndMigrate(
         continue;
       }
       const columnName = assertSafeIdentifier(field.name, "column");
+      // A column that already exists here despite having no prevField is a
+      // name reused after an earlier removal (see physicalColumnShape's own
+      // doc-comment) -- compare what's physically there against what field
+      // now claims, the same way the prevField branch above compares two
+      // Field definitions, and report the same two change shapes when they
+      // genuinely disagree. A benign reuse (same name, same type) stays
+      // silent, exactly like it would if the field had simply never left.
+      if (currentColumns.has(columnName)) {
+        const shape = physicalShapeByColumn.get(columnName);
+        const expectedSqlType = sqlTypeFor(field);
+        if (shape && shape.sqlType !== expectedSqlType) {
+          changes.push({
+            type: "type_changed",
+            table,
+            column: columnName,
+            fromType: fieldTypeLabelForSqlType(shape.sqlType, shape.fkTable !== undefined),
+            toType: field.type,
+          });
+        } else if (field.type === "relation" && shape) {
+          const expectedFkTable = field.relationTo && entityNames.has(field.relationTo) ? tableNameFor(projectId, field.relationTo) : undefined;
+          if (shape.fkTable && expectedFkTable && shape.fkTable !== expectedFkTable) {
+            changes.push({
+              type: "relation_target_changed",
+              table,
+              column: columnName,
+              fromRelationTo: entityNameForTable(projectId, [...previousEntities.keys(), ...entityNames], shape.fkTable),
+              toRelationTo: field.relationTo,
+            });
+          }
+        }
+      }
       // Whether to physically run the ALTER (has SQLite already got this
       // column?) and whether to report it as a change (is it new relative
       // to previousSpec?) are separate questions -- a column can be
