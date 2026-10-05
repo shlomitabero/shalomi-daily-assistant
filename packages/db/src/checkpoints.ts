@@ -93,24 +93,38 @@ export function listCheckpoints(db: ForgeDatabase, projectId: string): Checkpoin
  * far weaker than the full schema -- so this reads spec_json directly
  * instead of going through rowToCheckpoint/ProductSpecSchema.parse.
  */
+/**
+ * Shared by listAllCheckpointedEntityNames below and projects.ts's own
+ * deleteProject, which needs the exact same tolerant extraction for a
+ * project's own spec_json (not just its checkpoints) for the identical
+ * reason: a project row can fail full ProductSpecSchema.parse too (see
+ * projects.ts's tryRowToProject), and deleteProject can't afford to miss
+ * entities just because the rest of the stored spec no longer validates.
+ */
+export function extractEntityNamesFromSpecJson(specJson: string): string[] {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(specJson);
+  } catch {
+    return [];
+  }
+  const entities = (parsed as { entities?: unknown })?.entities;
+  if (!Array.isArray(entities)) return [];
+  const names: string[] = [];
+  for (const entity of entities) {
+    const name = (entity as { name?: unknown })?.name;
+    if (typeof name === "string") names.push(name);
+  }
+  return names;
+}
+
 export function listAllCheckpointedEntityNames(db: ForgeDatabase, projectId: string): string[] {
   const rows = db
     .prepare("SELECT spec_json FROM checkpoints WHERE projectId = ?")
     .all(projectId) as { spec_json: string }[];
   const names = new Set<string>();
   for (const row of rows) {
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(row.spec_json);
-    } catch {
-      continue;
-    }
-    const entities = (parsed as { entities?: unknown })?.entities;
-    if (!Array.isArray(entities)) continue;
-    for (const entity of entities) {
-      const name = (entity as { name?: unknown })?.name;
-      if (typeof name === "string") names.add(name);
-    }
+    for (const name of extractEntityNamesFromSpecJson(row.spec_json)) names.add(name);
   }
   return [...names];
 }

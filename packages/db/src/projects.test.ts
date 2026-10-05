@@ -19,6 +19,7 @@ import {
   deleteProject,
   getProject,
   insertProject,
+  listOwnedProjectIds,
   listProjectsForOwner,
   listProjectsForUser,
   updateProjectName,
@@ -272,7 +273,7 @@ test("deleteProject removes the project row, its real generated data table, chec
 
   assert.equal(record.id > 0, true, "sanity check: the record was really inserted before deleting");
 
-  deleteProject(db, project);
+  deleteProject(db, project.id);
 
   assert.equal(getProject(db, project.id), undefined, "the project row itself should be gone");
   assert.deepEqual(listCheckpoints(db, project.id), [], "checkpoints should be gone");
@@ -351,7 +352,7 @@ test("deleteProject drops the real data table of an entity that was added then l
     "sanity check: Order's real table must still exist (and still have its row) before delete -- migrations never drop it",
   );
 
-  deleteProject(db, finalProject);
+  deleteProject(db, finalProject.id);
 
   assert.equal(getProject(db, project.id), undefined, "the project row itself should be gone");
   assert.throws(
@@ -425,7 +426,7 @@ test("deleteProject still drops the real data table of an entity from a checkpoi
   diffAndMigrate(db, project.id, specWithOrder, buildSpec);
   const finalProject = updateProjectSpec(db, project.id, buildSpec);
 
-  deleteProject(db, finalProject);
+  deleteProject(db, finalProject.id);
 
   assert.equal(getProject(db, project.id), undefined, "the project row itself should be gone");
   assert.throws(
@@ -433,4 +434,93 @@ test("deleteProject still drops the real data table of an entity from a checkpoi
     /no such table/,
     "Order's table must be dropped even though the only checkpoint that ever mentioned it fails to parse under today's schema",
   );
+});
+
+/**
+ * round 411: DELETE /auth/account (apps/api/src/routes/auth.ts) used to
+ * compute which projects to clean up via listProjectsForUser -- the exact
+ * same "tolerant listing used where completeness is needed" gap round 409
+ * already closed for checkpoints, just one level up. A project row can
+ * fail ProductSpecSchema.parse too (tryRowToProject's own comment: a real,
+ * expected case for an older project, not a hypothetical), and
+ * listProjectsForUser/listProjectsForOwner silently exclude it -- fine for
+ * a user-facing list, wrong for a cleanup that must see every row. This
+ * project is written directly via raw SQL (bypassing insertProject, which
+ * would itself require a valid spec) with no `roles` field, standing in
+ * for a project written by an older app version.
+ */
+test("listOwnedProjectIds still returns a project whose stored spec no longer parses against today's schema, unlike listProjectsForOwner", () => {
+  const db = openDatabase(":memory:");
+  ensureProjectsTable(db);
+
+  insertProject(db, { id: "proj-good", ownerId: "owner1", name: "Good project", description: "test", spec: validSpec });
+  db.prepare(
+    "INSERT INTO projects (id, ownerId, name, description, spec_json, status, createdAt) VALUES (?, ?, ?, ?, ?, ?, ?)",
+  ).run("proj-stale", "owner1", "Stale project", "test", JSON.stringify({ summary: "test", entities: validSpec.entities }), "draft", new Date().toISOString());
+
+  assert.deepEqual(
+    listProjectsForOwner(db, "owner1").map((p) => p.id),
+    ["proj-good"],
+    "sanity check: listProjectsForOwner must actually exclude the stale project, or this test isn't exercising the gap",
+  );
+  assert.deepEqual(
+    listOwnedProjectIds(db, "owner1").slice().sort(),
+    ["proj-good", "proj-stale"],
+    "listOwnedProjectIds must see the stale project too -- it never parses spec_json at all, so it can't miss a row this way",
+  );
+});
+
+/**
+ * The other half of round 411's fix: deleteProject itself used to take a
+ * parsed Project (needing project.spec.entities), which made it just as
+ * unable to clean up a project whose own spec fails to parse as the
+ * listing gap above was. It now takes a bare project id and reads this
+ * project's own spec_json the same tolerant way a checkpoint's is read
+ * (extractEntityNamesFromSpecJson), so it can finish the job even when
+ * getProject itself would throw for this exact row.
+ */
+test("deleteProject still drops the real data table, checkpoints, collaborators, and WhatsApp history of a project whose own stored spec no longer parses against today's schema", () => {
+  const db = openDatabase(":memory:");
+  ensureProjectsTable(db);
+  ensureCheckpointsTable(db);
+  ensureProjectCollaboratorsTable(db);
+  ensureWhatsAppConnectionsTable(db);
+  ensureWhatsAppMessagesTable(db);
+
+  const buildSpec: ProductSpec = validSpec;
+  // No FOREIGN KEY ties any of these to a real `projects` row (confirmed
+  // by reading collaborators.ts/whatsapp.ts's own table schemas), so all
+  // of this project's real data can be created before its own `projects`
+  // row is ever written below -- standing in for a project whose spec was
+  // perfectly valid when it was built, but has since stopped parsing
+  // against today's (stricter) schema.
+  applyMigrations(db, "proj-stale-own", buildSpec);
+  insertRecord(db, "proj-stale-own", buildSpec.entities[0], { name: "Dana" });
+  insertCheckpoint(db, { id: "cp-stale-own", projectId: "proj-stale-own", label: "build", spec: buildSpec });
+  addCollaborator(db, "proj-stale-own", "collaborator1");
+  recordWhatsAppConnected(db, "proj-stale-own", "15559999999");
+
+  db.prepare(
+    "INSERT INTO projects (id, ownerId, name, description, spec_json, status, createdAt) VALUES (?, ?, ?, ?, ?, ?, ?)",
+  ).run("proj-stale-own", "owner1", "Stale project", "test", JSON.stringify({ summary: "test", entities: buildSpec.entities }), "draft", new Date().toISOString());
+
+  // sanity check: this project's own spec_json must actually fail to
+  // re-parse, or this test isn't exercising the gap.
+  assert.throws(() => getProject(db, "proj-stale-own"));
+
+  deleteProject(db, "proj-stale-own");
+
+  assert.equal(
+    db.prepare("SELECT * FROM projects WHERE id = ?").get("proj-stale-own"),
+    undefined,
+    "the project row itself should be gone even though its own spec never parsed",
+  );
+  assert.throws(
+    () => db.prepare(`SELECT * FROM "entity_proj_stale_own_Customer"`).all(),
+    /no such table/,
+    "the real data table must be dropped even though deleteProject could never construct a valid Project for this row",
+  );
+  assert.deepEqual(listCheckpoints(db, "proj-stale-own"), [], "checkpoints should be gone too");
+  assert.equal(isCollaborator(db, "proj-stale-own", "collaborator1"), false, "collaborator grant should be gone too");
+  assert.equal(getWhatsAppConnection(db, "proj-stale-own"), undefined, "WhatsApp connection row should be gone too");
 });

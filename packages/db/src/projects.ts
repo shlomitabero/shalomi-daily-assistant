@@ -2,7 +2,7 @@ import type { Project, ProductSpec } from "@forge/shared";
 import { ProductSpecSchema } from "@forge/shared";
 import type { ForgeDatabase } from "./connection.js";
 import { tableNameFor, quoteIdentifier } from "./identifiers.js";
-import { deleteCheckpointsForProject, listAllCheckpointedEntityNames } from "./checkpoints.js";
+import { deleteCheckpointsForProject, extractEntityNamesFromSpecJson, listAllCheckpointedEntityNames } from "./checkpoints.js";
 import { removeAllCollaborators } from "./collaborators.js";
 import { deleteWhatsAppData } from "./whatsapp.js";
 
@@ -200,16 +200,44 @@ export function updateProjectDescription(db: ForgeDatabase, id: string, descript
  * checkpoint's own entities out of this accounting and their tables
  * orphaned forever -- the exact bug this doc-comment describes, just one
  * step removed (see listAllCheckpointedEntityNames's own doc-comment).
+ *
+ * Takes a bare `projectId` rather than a parsed `Project`, and reads this
+ * project's own spec_json the same tolerant way (extractEntityNamesFromSpecJson,
+ * not ProductSpecSchema.parse): a project row can fail full re-parse too
+ * (tryRowToProject's own comment -- the schema can only get stricter over
+ * time), and DELETE /auth/account's own cleanup (apps/api/src/routes/
+ * auth.ts) must reach every project this user owns, including one whose
+ * spec no longer validates -- going through getProject/listProjectsForUser
+ * for that would silently skip it, leaving its tables, checkpoints, and
+ * WhatsApp data (and the project row itself) permanently orphaned under a
+ * deleted user id right after that same request reports success.
  */
-export function deleteProject(db: ForgeDatabase, project: Project): void {
-  const entityNames = new Set(project.spec.entities.map((e) => e.name));
-  for (const entityName of listAllCheckpointedEntityNames(db, project.id)) entityNames.add(entityName);
+export function deleteProject(db: ForgeDatabase, projectId: string): void {
+  const row = db.prepare("SELECT spec_json FROM projects WHERE id = ?").get(projectId) as
+    | { spec_json: string }
+    | undefined;
+  const entityNames = new Set(row ? extractEntityNamesFromSpecJson(row.spec_json) : []);
+  for (const entityName of listAllCheckpointedEntityNames(db, projectId)) entityNames.add(entityName);
   for (const entityName of entityNames) {
-    const table = tableNameFor(project.id, entityName);
+    const table = tableNameFor(projectId, entityName);
     db.exec(`DROP TABLE IF EXISTS ${quoteIdentifier(table)}`);
   }
-  deleteCheckpointsForProject(db, project.id);
-  removeAllCollaborators(db, project.id);
-  deleteWhatsAppData(db, project.id);
-  db.prepare("DELETE FROM projects WHERE id = ?").run(project.id);
+  deleteCheckpointsForProject(db, projectId);
+  removeAllCollaborators(db, projectId);
+  deleteWhatsAppData(db, projectId);
+  db.prepare("DELETE FROM projects WHERE id = ?").run(projectId);
+}
+
+/**
+ * Raw query -- selects only the `id` column, so (unlike listProjectsForUser)
+ * it never needs to parse spec_json and can never silently miss a project
+ * whose stored spec fails ProductSpecSchema.parse (see tryRowToProject's
+ * own comment: a project written by an older app version is a real,
+ * expected case, not a hypothetical). DELETE /auth/account needs exactly
+ * this: every project id this user owns, with no possibility of one
+ * silently falling through a tolerant listing meant for display.
+ */
+export function listOwnedProjectIds(db: ForgeDatabase, ownerId: string): string[] {
+  const rows = db.prepare("SELECT id FROM projects WHERE ownerId = ?").all(ownerId) as { id: string }[];
+  return rows.map((r) => r.id);
 }

@@ -11,7 +11,7 @@ import {
   deleteProject,
   findUserByEmail,
   getPasswordHash,
-  listProjectsForUser,
+  listOwnedProjectIds,
   removeAllCollaborationsForUser,
   updatePasswordHash,
   DuplicateEmailError,
@@ -175,15 +175,24 @@ export function createAuthRouter(db: ForgeDatabase, whatsapp: WhatsAppWebManager
    * working immediately). Only ever acts on req.userId! -- the id
    * requireAuth itself proved this session belongs to -- never a
    * client-supplied id, so there's no cross-user deletion surface here at all.
+   *
+   * Uses listOwnedProjectIds, not listProjectsForUser: the latter silently
+   * excludes any project whose stored spec fails to re-parse against
+   * today's (stricter) ProductSpecSchema (tryRowToProject's own comment --
+   * a real, expected case for an older project). This cleanup can't afford
+   * that: a project this route fails to see is never passed to
+   * deleteProject, so its tables/checkpoints/WhatsApp data (and the
+   * project row itself) outlive the user row this request is about to
+   * delete -- permanently orphaned, with the request still reporting
+   * success. listOwnedProjectIds never parses spec_json at all, so it
+   * can't miss a project this way.
    */
   router.delete("/auth/account", requireAuth(db), async (req, res, next) => {
     try {
-      const ownedProjects = listProjectsForUser(db, req.userId!).filter(
-        (project) => project.ownerId === req.userId,
-      );
-      for (const project of ownedProjects) {
-        await whatsapp.disconnect(project.id).catch(() => {});
-        deleteProject(db, project);
+      const ownedProjectIds = listOwnedProjectIds(db, req.userId!);
+      for (const projectId of ownedProjectIds) {
+        await whatsapp.disconnect(projectId).catch(() => {});
+        deleteProject(db, projectId);
       }
       removeAllCollaborationsForUser(db, req.userId!);
       deleteAllSessionsForUser(db, req.userId!);

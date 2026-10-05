@@ -21,6 +21,7 @@ export {
   getProject,
   listProjectsForOwner,
   listProjectsForUser,
+  listOwnedProjectIds,
   markProjectBuilt,
   updateProjectSpec,
   updateProjectName,

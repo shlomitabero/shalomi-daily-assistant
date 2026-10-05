@@ -482,7 +482,7 @@ export function createProjectsRouter(db: ForgeDatabase, provider: SpecProvider |
         throw new HttpError(409, "A build or refine is already running for this project", "PIPELINE_IN_PROGRESS");
       }
       await whatsapp.disconnect(project.id).catch(() => {});
-      deleteProject(db, project);
+      deleteProject(db, project.id);
       res.status(204).end();
     }),
   );
