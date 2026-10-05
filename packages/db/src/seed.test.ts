@@ -4,7 +4,7 @@ import type { Entity } from "@forge/shared";
 import { openDatabase } from "./connection.js";
 import { applyMigrations } from "./migrate.js";
 import { insertRecord } from "./repository.js";
-import { generateSeedRecords } from "./seed.js";
+import { generateSeedRecords, orderForSeeding } from "./seed.js";
 
 const customer: Entity = {
   name: "Customer",
@@ -324,6 +324,74 @@ test("the generic fallback entity (Item, used when no domain keyword matches) se
   assert.ok(
     !["Dana Levi", "Yossi Cohen", "Michal Abraham"].includes(record.name as string),
     `Item's name field should not be seeded as a person name, got: ${record.name}`,
+  );
+});
+
+/**
+ * Regression test: orderForSeeding is the fix for the gap seedValueFor's
+ * own "relation" case documents (a required relation field's best-effort
+ * id=1 guess is only correct if its target already has a real row 1).
+ * A spec listing the dependent entity before its target -- an entirely
+ * ordinary data model an AI-generated or refined spec can easily produce --
+ * must come out reordered so the target is seeded first.
+ */
+test("orderForSeeding moves a required relation's target entity before its dependent, even when the spec lists them the other way around", () => {
+  const invoice: Entity = {
+    name: "Invoice",
+    fields: [{ name: "customerId", type: "relation", relationTo: "Customer", required: true }],
+  };
+  const customerEntity: Entity = { name: "Customer", fields: [{ name: "name", type: "text", required: true }] };
+  assert.deepEqual(
+    orderForSeeding([invoice, customerEntity]).map((e) => e.name),
+    ["Customer", "Invoice"],
+  );
+});
+
+test("orderForSeeding leaves entities with no required-relation dependency between them in their original relative order", () => {
+  const a: Entity = { name: "A", fields: [{ name: "name", type: "text", required: true }] };
+  const b: Entity = { name: "B", fields: [{ name: "name", type: "text", required: true }] };
+  const c: Entity = { name: "C", fields: [{ name: "name", type: "text", required: true }] };
+  assert.deepEqual(
+    orderForSeeding([a, b, c]).map((e) => e.name),
+    ["A", "B", "C"],
+  );
+});
+
+test("orderForSeeding doesn't reorder an OPTIONAL relation's target -- only a required one actually needs a real row to point at", () => {
+  const order: Entity = {
+    name: "Order",
+    fields: [{ name: "courierId", type: "relation", relationTo: "Courier", required: false }],
+  };
+  const courier: Entity = { name: "Courier", fields: [{ name: "name", type: "text", required: true }] };
+  assert.deepEqual(
+    orderForSeeding([order, courier]).map((e) => e.name),
+    ["Order", "Courier"],
+  );
+});
+
+test("orderForSeeding falls back to the original order instead of looping forever when two entities require each other (a genuine cycle)", () => {
+  const a: Entity = {
+    name: "A",
+    fields: [{ name: "bId", type: "relation", relationTo: "B", required: true }],
+  };
+  const b: Entity = {
+    name: "B",
+    fields: [{ name: "aId", type: "relation", relationTo: "A", required: true }],
+  };
+  assert.deepEqual(
+    orderForSeeding([a, b]).map((e) => e.name),
+    ["A", "B"],
+  );
+});
+
+test("orderForSeeding doesn't loop forever on a self-relation (e.g. Employee.managerId -> Employee)", () => {
+  const employee: Entity = {
+    name: "Employee",
+    fields: [{ name: "managerId", type: "relation", relationTo: "Employee", required: true }],
+  };
+  assert.deepEqual(
+    orderForSeeding([employee]).map((e) => e.name),
+    ["Employee"],
   );
 });
 

@@ -227,6 +227,69 @@ test("re-running the pipeline for the same project doesn't re-seed a table that 
   assert.equal(listRecords(db, project.id, customer).length, countAfterFirstBuild);
 });
 
+/**
+ * Regression test: a required relation field is seeded with a best-effort
+ * `id=1` guess (packages/db/src/seed.ts's seedValueFor) -- correct only if
+ * its target entity already has a real row 1 by the time it's attempted.
+ * Before this round, the Seed Data step seeded entities in whatever order
+ * they appear in the spec, with no notion of dependency order at all. A
+ * spec listing the dependent entity FIRST (e.g. [Invoice, Customer], with
+ * Invoice.customerId a required relation to Customer -- an entirely
+ * ordinary, correct data model; an AI-generated or refined spec can easily
+ * produce this even though the built-in domain library never does) made
+ * every one of Invoice's own seed inserts throw a real FK-constraint
+ * violation (Customer had zero rows yet). Worse, the pipeline's Seed Data
+ * step never stopped the build on that failure, so by the time QA's
+ * required-field smoke test ran, Customer had since been seeded by its own
+ * later turn in the original loop -- making the SAME guessed id=1 succeed
+ * there and masking the fact that Invoice's own table was left with zero
+ * demo rows, silently defeating the entire point of seeding.
+ */
+test("seeding a spec that lists a dependent entity before its required relation target still seeds both tables, not just the target", async () => {
+  const spec: ProductSpec = {
+    summary: "test",
+    personas: [],
+    roles: ["Admin"],
+    screens: [],
+    assumptions: [],
+    openQuestions: [],
+    entities: [
+      {
+        name: "Invoice",
+        fields: [
+          { name: "amount", type: "number", required: true },
+          { name: "customerId", type: "relation", relationTo: "Customer", required: true },
+        ],
+      },
+      { name: "Customer", fields: [{ name: "name", type: "text", required: true }] },
+    ],
+  };
+  const db = openDatabase(":memory:");
+  ensureProjectsTable(db);
+  ensureCheckpointsTable(db);
+  const project = insertProject(db, {
+    id: "proj1",
+    ownerId: "user1",
+    name: "test",
+    description: "test",
+    spec,
+  });
+  const [invoice, customer] = spec.entities;
+
+  const events = await collect(runBuildPipeline(db, project, { nextSpec: spec, changeLabel: "Initial build" }));
+  const forgeEvent = events.find((e) => e.agent === "Forge");
+  assert.ok(forgeEvent && forgeEvent.status === "success", "the build should still succeed overall");
+
+  const seedEvent = events.find((e) => e.agent === "Seed Data" && e.status !== "running");
+  assert.equal(seedEvent!.status, "success", "seeding must not report any failed inserts");
+
+  assert.ok(countRecords(db, project.id, invoice) > 0, "Invoice must actually have seeded rows, not be left empty");
+  assert.ok(countRecords(db, project.id, customer) > 0, "Customer must also have its own seeded rows");
+
+  const qaEvent = events.find((e) => e.agent === "QA" && e.status !== "running");
+  assert.equal(qaEvent!.status, "success", "QA must still pass once seeding genuinely succeeds");
+});
+
 test("the Architect step's impact summary is re-emitted with the corrected spec after a Debug Agent recovery, not left stale", async () => {
   // requestSpecFix is free to rename/add/remove entities and fields while
   // fixing the error -- the Architect event already streamed to the

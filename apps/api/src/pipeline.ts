@@ -9,6 +9,7 @@ import {
   insertRecord,
   listRecords,
   markProjectBuilt,
+  orderForSeeding,
   tableNameFor,
   updateProjectSpec,
   ValidationError,
@@ -362,8 +363,8 @@ export async function* runBuildPipeline(
   // seeding before a later step (QA) failed. Without this check, a retry
   // re-inserts a full duplicate round of sample rows into tables that
   // already have them.
-  const entitiesToSeed = nextSpec.entities.filter(
-    (e) => newEntityNames.has(tableNameFor(project.id, e.name)) && countRecords(db, project.id, e) === 0,
+  const entitiesToSeed = orderForSeeding(
+    nextSpec.entities.filter((e) => newEntityNames.has(tableNameFor(project.id, e.name)) && countRecords(db, project.id, e) === 0),
   );
   let seededCount = 0;
   const seedErrors: string[] = [];

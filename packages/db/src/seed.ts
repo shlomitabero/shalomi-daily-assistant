@@ -101,10 +101,14 @@ function seedValueFor(field: Field, entity: Entity, index: number): unknown {
     case "enum":
       return field.enumValues?.[index % (field.enumValues?.length ?? 1)] ?? null;
     case "relation":
-      // Best-effort guess (row 1) when the field is required; there's no
-      // guaranteed insert order across entities yet, so this can be wrong
-      // for a genuinely required cross-entity relation — a real limitation,
-      // not hidden here.
+      // Best-effort guess (row 1) when the field is required. orderForSeeding
+      // below arranges the batch so the target entity is seeded first
+      // whenever it's being seeded in the same batch, making this guess
+      // correct for the ordinary case -- but it's still just a guess:
+      // a relation to an entity that already has rows from an earlier,
+      // unrelated build keeps whatever row 1 happens to be there, and a
+      // same-entity (self) relation, or a genuine cycle between two
+      // required relations, is left exactly as unaddressed as before.
       return field.required ? 1 : null;
     case "longtext":
       return isHebrew
@@ -206,6 +210,59 @@ function textSeedValueFor(fieldName: string, entityName: string, isHebrew: boole
       // fall back to a labeled placeholder rather than guessing wrong.
       return isHebrew ? `${entityName} - ${fieldName} ${index + 1}` : `${entityName} ${fieldName} ${index + 1}`;
   }
+}
+
+/**
+ * Orders a batch of entities being seeded together so a required relation
+ * field's best-effort `id=1` guess (seedValueFor above) actually lands on a
+ * real row instead of a dangling foreign key -- e.g. an AI-generated or
+ * refined spec listing entities as [Invoice, Customer] with
+ * Invoice.customerId a required relation to Customer (an entirely ordinary,
+ * correct data model the built-in domain library just never happens to
+ * produce, per that guess's own doc-comment). Without this, seeding
+ * Invoice first throws a real FK-constraint violation on every attempt
+ * (Customer has zero rows yet) -- and the pipeline's own seed step doesn't
+ * stop the build on that failure, so by the time QA's required-field smoke
+ * test runs, Customer has since been seeded by its own later turn in the
+ * loop, making the SAME guessed id=1 succeed there and mask that Invoice's
+ * table is left with zero demo rows, the one thing seeding exists to
+ * prevent. A plain topological sort by required-relation target, falling
+ * back to the given order for anything left in a cycle (including a
+ * self-relation, e.g. Employee.managerId -> Employee, which this
+ * deliberately leaves exactly as fragile as it already was rather than
+ * attempting a same-entity ordering this guess-based generator can't
+ * actually satisfy anyway).
+ */
+export function orderForSeeding(entities: Entity[]): Entity[] {
+  const names = new Set(entities.map((e) => e.name));
+  const requiredTargets = new Map<string, Set<string>>();
+  for (const entity of entities) {
+    const targets = new Set<string>();
+    for (const field of entity.fields) {
+      if (field.type === "relation" && field.required && field.relationTo && field.relationTo !== entity.name && names.has(field.relationTo)) {
+        targets.add(field.relationTo);
+      }
+    }
+    requiredTargets.set(entity.name, targets);
+  }
+
+  const ordered: Entity[] = [];
+  const placed = new Set<string>();
+  const remaining = [...entities];
+  while (remaining.length > 0) {
+    const readyIndex = remaining.findIndex((e) => [...requiredTargets.get(e.name)!].every((target) => placed.has(target)));
+    if (readyIndex === -1) {
+      // A cycle (or a required relation to an entity outside this batch
+      // that will never show up as "placed") -- append what's left in its
+      // original relative order rather than looping forever.
+      ordered.push(...remaining);
+      break;
+    }
+    const [entity] = remaining.splice(readyIndex, 1);
+    placed.add(entity.name);
+    ordered.push(entity);
+  }
+  return ordered;
 }
 
 /**

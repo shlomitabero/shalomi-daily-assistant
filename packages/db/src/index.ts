@@ -62,7 +62,7 @@ export {
   deleteCheckpoint,
   deleteCheckpointsForProject,
 } from "./checkpoints.js";
-export { generateSeedRecords } from "./seed.js";
+export { generateSeedRecords, orderForSeeding } from "./seed.js";
 export { tableNameFor, assertSafeIdentifier } from "./identifiers.js";
 export {
   ensureWhatsAppConnectionsTable,
