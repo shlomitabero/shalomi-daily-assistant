@@ -4993,6 +4993,35 @@ test("the exported EntityView's matchesSearch resolves a relation field to its r
 });
 
 /**
+ * New in this round: the exported app's own matchesSearch had the same
+ * number-field gap the live preview's did -- a number field's table cell
+ * (EntityView.jsx) renders through .toLocaleString(), adding thousands
+ * separators (1500 -> "1,500"), but matchesSearch fell through to the
+ * field's own plain String(value) ("1500"), so typing back the exact
+ * digits shown on screen, comma included, found nothing in an exported/
+ * standalone app either. Runs the real generated matchesSearch alone --
+ * the number branch needs none of the relation helpers the test above
+ * depends on.
+ */
+test("the exported EntityView's matchesSearch matches a number field's locale-formatted display (with thousands separators), not just its raw digits", () => {
+  const entityViewJsx = generateExportFiles(project).find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+  const matchesSearchSrc = entityViewJsx.match(/export function matchesSearch\([\s\S]*?\n\}\n/)?.[0]?.replace("export ", "");
+  assert.ok(matchesSearchSrc, "expected to find matchesSearch in generated output");
+
+  const matchesSearch = new Function(`${matchesSearchSrc}\nreturn matchesSearch;`)() as (
+    record: unknown,
+    fields: unknown[],
+    query: string,
+  ) => boolean;
+
+  const fields = [{ name: "total", type: "number" }];
+  const record = { total: 1500 };
+  assert.equal(matchesSearch(record, fields, "1500"), true);
+  assert.equal(matchesSearch(record, fields, "1,500"), true);
+  assert.equal(matchesSearch(record, fields, "9999"), false);
+});
+
+/**
  * New in this round: the exported app's own sortRecordsMulti had the same
  * gap as matchesSearch above -- a relation column's cell shows the related
  * record's resolved label, but clicking that header sorted by the raw

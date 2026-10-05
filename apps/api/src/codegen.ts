@@ -1468,6 +1468,14 @@ function Cell({ field, value, relationLabel, onJumpToRecord }) {
 // shown right there on screen finds nothing. relatedRecords is optional so
 // a caller with no relation data on hand yet still gets the previous,
 // id-only behavior instead of a required-but-unavailable argument.
+//
+// A number field has the same gap for a different reason: the table cell
+// (EntityView.jsx) renders it through .toLocaleString(), adding thousands
+// separators (1500 -> "1,500") -- but this matched against the field's own
+// plain String(value) ("1500"), so typing back the exact digits shown on
+// screen, comma included, found nothing. Checked against both the plain
+// and the formatted string (space-joined), so either "1500" or "1,500"
+// still finds the same row.
 export function matchesSearch(record, fields, query, relatedRecords) {
   const trimmed = query.trim().toLowerCase();
   if (!trimmed) return true;
@@ -1479,7 +1487,9 @@ export function matchesSearch(record, fields, query, relatedRecords) {
         ? f.enumLabels[value]
         : f.type === "relation" && relatedRecords
           ? relationDisplayLabel(f, value, relatedRecords)
-          : String(value);
+          : f.type === "number" && typeof value === "number"
+            ? \`\${value} \${value.toLocaleString()}\`
+            : String(value);
     return String(display).toLowerCase().includes(trimmed);
   });
 }

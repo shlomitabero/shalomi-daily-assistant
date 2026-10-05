@@ -145,7 +145,7 @@ export function GlobalSearchPanel({
     const succeeded = entities
       .map((entity) =>
         recordsByEntity[entity.name]
-          ? searchEntityRecords(entity, recordsByEntity[entity.name], q, 5, entities, recordsByEntity)
+          ? searchEntityRecords(entity, recordsByEntity[entity.name], q, 5, entities, recordsByEntity, lang)
           : null,
       )
       .filter((r): r is EntitySearchResult => r !== null);
@@ -210,6 +210,7 @@ export function GlobalSearchPanel({
         records.length,
         entities,
         lastRecordsByEntityRef.current,
+        lang,
       );
       setExpandedSamples((prev) => ({ ...prev, [entityName]: full?.sample ?? [] }));
     } finally {

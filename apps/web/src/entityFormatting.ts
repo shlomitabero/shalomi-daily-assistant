@@ -195,6 +195,15 @@ export function sumNumericFields(records: EntityRecord[], fields: Field[]): Reco
  * `allEntities`/`relatedRecords` are optional so a caller with no relation
  * data on hand yet (or a plain unit test) still gets the previous,
  * id-only behavior instead of a required-but-unavailable argument.
+ *
+ * A `number` field has the same gap for a different reason: the table cell
+ * actually shown on screen (EntityPanel.tsx) renders it through
+ * `formatNumberValue`, which adds locale thousands separators (1500 ->
+ * "1,500") -- but this matched against the field's own plain `String(value)`
+ * ("1500"), so a user typing back the exact digits they can see on screen,
+ * comma included, got zero matches for a value they're looking right at.
+ * Checked against both the plain and the formatted string (space-joined),
+ * so a search for either "1500" or "1,500" still finds the same row.
  */
 export function matchesSearch(
   record: EntityRecord,
@@ -202,6 +211,7 @@ export function matchesSearch(
   query: string,
   allEntities?: Entity[],
   relatedRecords?: RelatedRecordsByEntity,
+  lang: Lang = "en",
 ): boolean {
   const trimmed = query.trim().toLowerCase();
   if (!trimmed) return true;
@@ -213,7 +223,9 @@ export function matchesSearch(
         ? (field.enumLabels?.[String(value)] ?? String(value))
         : field.type === "relation" && allEntities && relatedRecords
           ? relationDisplayLabel(field, value, allEntities, relatedRecords)
-          : String(value);
+          : field.type === "number" && typeof value === "number"
+            ? `${value} ${formatNumberValue(value, lang)}`
+            : String(value);
     return display.toLowerCase().includes(trimmed);
   });
 }
@@ -356,9 +368,10 @@ export function searchEntityRecords(
   limit = 5,
   allEntities?: Entity[],
   relatedRecords?: RelatedRecordsByEntity,
+  lang: Lang = "en",
 ): EntitySearchResult | null {
   if (!query.trim()) return null;
-  const matches = records.filter((r) => matchesSearch(r, entity.fields, query, allEntities, relatedRecords));
+  const matches = records.filter((r) => matchesSearch(r, entity.fields, query, allEntities, relatedRecords, lang));
   if (matches.length === 0) return null;
   return {
     entityName: entity.name,

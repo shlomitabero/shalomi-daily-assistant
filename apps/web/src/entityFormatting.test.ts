@@ -182,6 +182,30 @@ test("matchesSearch degrades gracefully to the raw id for a relation whose targe
 });
 
 /**
+ * Regression test: a number field's table cell actually shown on screen
+ * (EntityPanel.tsx) renders through formatNumberValue, which adds locale
+ * thousands separators (1500 -> "1,500") -- but matchesSearch fell through
+ * to the field's own plain String(value) ("1500"), so a user typing back
+ * the exact digits they can see on screen, comma included, got zero
+ * matches for a record they're looking right at. Both the plain and the
+ * formatted representation must still match, so neither a pre-existing
+ * habit of typing bare digits nor the new comma-formatted search breaks.
+ */
+test("matchesSearch matches a number field's locale-formatted display (with thousands separators), not just its raw digits", () => {
+  const fields: Field[] = [{ name: "total", type: "number", required: true }];
+  const record = { total: 1500 };
+  assert.ok(matchesSearch(record, fields, "1500", undefined, undefined, "en"));
+  assert.ok(matchesSearch(record, fields, "1,500", undefined, undefined, "en"));
+  assert.ok(!matchesSearch(record, fields, "9999", undefined, undefined, "en"));
+});
+
+test("matchesSearch's number-field comma-matching defaults to \"en\" when no lang is given, instead of throwing", () => {
+  const fields: Field[] = [{ name: "total", type: "number", required: true }];
+  const record = { total: 1500 };
+  assert.ok(matchesSearch(record, fields, "1,500"));
+});
+
+/**
  * New in this round: matchesSearch already tells the table a record
  * matched, but nothing showed *where* within a cell's own text -- a real
  * everyday annoyance the moment a search term is short/common and you

@@ -55,6 +55,7 @@ test("GlobalSearchPanel's runSearch shows results from every entity that succeed
     "setSelectedIndex",
     "searchRequestId",
     "lastRecordsByEntityRef",
+    "lang",
     `${code}\nreturn runSearch;`,
   )(
     [entityA, entityB, entityC],
@@ -77,6 +78,7 @@ test("GlobalSearchPanel's runSearch shows results from every entity that succeed
     () => {},
     { current: 0 },
     { current: {} },
+    "en",
   ) as (q: string) => Promise<void>;
 
   await fn("match");
@@ -115,6 +117,7 @@ test("GlobalSearchPanel's runSearch still surfaces the raw error message when ev
     "setSelectedIndex",
     "searchRequestId",
     "lastRecordsByEntityRef",
+    "lang",
     `${code}\nreturn runSearch;`,
   )(
     [entityA],
@@ -134,6 +137,7 @@ test("GlobalSearchPanel's runSearch still surfaces the raw error message when ev
     () => {},
     { current: 0 },
     { current: {} },
+    "en",
   ) as (q: string) => Promise<void>;
 
   await fn("match");
@@ -190,6 +194,7 @@ test("GlobalSearchPanel's runSearch ignores a stale, still-in-flight search's re
     "setSelectedIndex",
     "searchRequestId",
     "lastRecordsByEntityRef",
+    "lang",
     `${code}\nreturn runSearch;`,
   )(
     [entityA],
@@ -214,6 +219,7 @@ test("GlobalSearchPanel's runSearch ignores a stale, still-in-flight search's re
     () => {},
     searchRequestId,
     { current: {} },
+    "en",
   ) as (q: string) => Promise<void>;
 
   const stalePromise = fn("first query");
@@ -273,6 +279,7 @@ test("GlobalSearchPanel's handleShowAll ignores a stale, still-in-flight fetch o
     "setShowAllLoading",
     "setExpandedSamples",
     "searchRequestId",
+    "lang",
     `${code}\nreturn handleShowAll;`,
   )(
     [entityA],
@@ -289,6 +296,7 @@ test("GlobalSearchPanel's handleShowAll ignores a stale, still-in-flight fetch o
       expandedSamplesCalls.push(updater({}));
     },
     searchRequestId,
+    "en",
   ) as (entityName: string) => Promise<void>;
 
   const showAllPromise = fn("Alpha");

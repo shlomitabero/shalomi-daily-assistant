@@ -1256,12 +1256,12 @@ export function EntityPanel({
   }
 
   const visibleRecords = useMemo(() => {
-    const matched = records.filter((r) => matchesSearch(r, entity.fields, search, allEntities, relatedRecords));
+    const matched = records.filter((r) => matchesSearch(r, entity.fields, search, allEntities, relatedRecords, lang));
     const filtered = matched.filter((r) =>
       Object.entries(fieldFilters).every(([fieldName, value]) => !value || String(r[fieldName] ?? "") === value),
     );
     return sortRecordsMulti(filtered, sortKeys, entity.fields, allEntities, relatedRecords);
-  }, [records, entity.fields, search, fieldFilters, sortKeys, allEntities, relatedRecords]);
+  }, [records, entity.fields, search, fieldFilters, sortKeys, allEntities, relatedRecords, lang]);
 
   // Totals row under the table -- sums each visible number-type column over
   // visibleRecords (the same already-filtered/sorted set the body renders),
