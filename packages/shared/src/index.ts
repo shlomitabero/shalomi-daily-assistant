@@ -114,13 +114,51 @@ export const FieldSchema = z
 
 export type Field = z.infer<typeof FieldSchema>;
 
-export const EntitySchema = z.object({
-  name: z.string().min(1),
-  /** Human-facing name shown in the UI (e.g. Hebrew). Falls back to `name` when absent. */
-  label: z.string().optional(),
-  description: z.string().optional(),
-  fields: z.array(FieldSchema).min(1),
-});
+/**
+ * SQLite compares column names case-insensitively too, the same underlying
+ * reason findCaseInsensitiveDuplicateEntityNames above exists -- confirmed
+ * directly against this project's actual SQLite binding: `CREATE TABLE t
+ * ("Email" TEXT, "email" TEXT)` throws "duplicate column name: email", and
+ * (for an already-existing column) `ALTER TABLE t ADD COLUMN "Email" TEXT`
+ * throws "duplicate column name: Email" the same way. routes/projects.ts's
+ * `deriveFieldName` (the manual "add field" UI path) already de-duplicates
+ * case-insensitively against an entity's existing fields, so this gap is
+ * specific to an AI- or heuristic-generated spec, which has no equivalent
+ * guard -- a /refine that regenerates an entity from prose alone (see
+ * pipeline.ts's own `computeImpact` comment on that same blind spot) can
+ * emit two same-entity fields differing only by case. Unlike the
+ * entity-name case, two fields can only collide within the *same* entity
+ * (fields are scoped per-table, not per-spec), so this is checked on
+ * EntitySchema itself rather than ProductSpecSchema. Caught here, at the
+ * one point every spec is validated, for the same reason: better a spec
+ * falls back to the heuristic provider than reach either database layer
+ * with an unreconcilable pair of column names.
+ */
+function findCaseInsensitiveDuplicateFieldNames(fields: { name: string }[]): string[] {
+  const seen = new Set<string>();
+  const dupes: string[] = [];
+  for (const field of fields) {
+    const key = field.name.toLowerCase();
+    if (seen.has(key)) {
+      dupes.push(field.name);
+    } else {
+      seen.add(key);
+    }
+  }
+  return dupes;
+}
+
+export const EntitySchema = z
+  .object({
+    name: z.string().min(1),
+    /** Human-facing name shown in the UI (e.g. Hebrew). Falls back to `name` when absent. */
+    label: z.string().optional(),
+    description: z.string().optional(),
+    fields: z.array(FieldSchema).min(1),
+  })
+  .refine((entity) => findCaseInsensitiveDuplicateFieldNames(entity.fields).length === 0, (entity) => ({
+    message: `Entity "${entity.name}" has field name(s) that collide when compared case-insensitively, which SQLite column names cannot distinguish: ${findCaseInsensitiveDuplicateFieldNames(entity.fields).join(", ")} -- choose distinct names`,
+  }));
 
 export type Entity = z.infer<typeof EntitySchema>;
 

@@ -139,3 +139,49 @@ test("EntitySchema rejects an entity with zero fields", () => {
   const result = EntitySchema.safeParse({ name: "Empty", fields: [] });
   assert.ok(!result.success);
 });
+
+/**
+ * round 410: the entity-name-level checks above (case-insensitive and
+ * sanitized-identifier collisions) have no field-level counterpart, even
+ * though SQLite compares column names case-insensitively too -- the exact
+ * same failure class, just one level down. routes/projects.ts's own
+ * deriveFieldName (the manual "add field" UI path) already de-duplicates
+ * case-insensitively, so this gap is specific to an AI/heuristic-generated
+ * spec, which has no equivalent guard before reaching migrate.ts's
+ * CREATE TABLE / ALTER TABLE ADD COLUMN.
+ */
+test("EntitySchema rejects two fields on the same entity whose names collide case-insensitively", () => {
+  const result = EntitySchema.safeParse({
+    name: "Customer",
+    fields: [
+      { name: "email", type: "text", required: true },
+      { name: "Email", type: "text", required: false },
+    ],
+  });
+  assert.ok(!result.success, "two same-entity field names differing only by case must be rejected");
+  assert.match(result.error.issues[0].message, /collide when compared case-insensitively/);
+});
+
+test("EntitySchema accepts fields with genuinely distinct names", () => {
+  const result = EntitySchema.safeParse({
+    name: "Customer",
+    fields: [
+      { name: "email", type: "text", required: true },
+      { name: "phone", type: "text", required: false },
+    ],
+  });
+  assert.ok(result.success);
+});
+
+test("ProductSpecSchema still accepts the exact same field name reused across two different entities", () => {
+  // Fields are scoped per-table, not per-spec -- "name" on both Customer
+  // and Vendor is two entirely separate columns in two separate tables,
+  // not a collision at all.
+  const result = ProductSpecSchema.safeParse(
+    baseSpec([
+      { name: "Customer", fields: [{ name: "name", type: "text", required: true }] },
+      { name: "Vendor", fields: [{ name: "name", type: "text", required: true }] },
+    ]),
+  );
+  assert.ok(result.success);
+});
