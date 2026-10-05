@@ -109,12 +109,15 @@ function notifyAuthExpired(): void {
 export const REQUEST_TIMEOUT_MS = 220_000;
 
 /**
- * Wraps fetchWithWakeRetry so that if every retry is exhausted (the
- * backend is genuinely unreachable, not just cold-starting), the caller
- * sees a translated message instead of the browser's raw, untranslated
- * network-error text (e.g. "Failed to fetch"). Also bounds the total wait
- * with REQUEST_TIMEOUT_MS so a hung request fails clearly instead of
- * spinning forever.
+ * Wraps fetchWithWakeRetry so that if the connection never succeeds within
+ * REQUEST_TIMEOUT_MS (the backend is genuinely unreachable, not just
+ * cold-starting), the caller sees a translated message instead of the
+ * browser's raw, untranslated network-error text (e.g. "Failed to fetch").
+ * Passing this controller's own signal is what makes REQUEST_TIMEOUT_MS the
+ * real retry ceiling: fetchWithWakeRetry keeps retrying past its own fixed
+ * DEFAULT_DELAYS_MS array for as long as this signal hasn't fired yet (see
+ * that file's own comment) -- so the full 220s budget actually gets used
+ * for a slow cold start, not just DEFAULT_DELAYS_MS's smaller ~101s sum.
  */
 async function fetchApi(input: string, init?: RequestInit): Promise<Response> {
   const controller = new AbortController();

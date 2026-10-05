@@ -24,6 +24,18 @@ export interface WakeRetryOptions {
  * double Render's own stated worst case -- while staying comfortably
  * under fetchApi's own REQUEST_TIMEOUT_MS outer ceiling (see api.ts's own
  * comment for that budget's full math).
+ *
+ * This array is a backoff *shape*, not a hard retry ceiling: once it's
+ * exhausted, a caller that supplied its own AbortSignal (every real call
+ * through api.ts does) keeps retrying using this array's last delay,
+ * repeated, until that signal itself fires -- see the loop below. A fixed
+ * small array that silently became the real ceiling is exactly the bug
+ * שלומי reported again after this file was already widened once before:
+ * the server has grown a lot since round 163 (auth, the build pipeline,
+ * WhatsApp/baileys), so a cold boot occasionally runs past this array's
+ * own ~101s sum while still comfortably inside api.ts's 220s budget --
+ * and the old code threw a hard failure right there instead of using the
+ * budget it was actually given.
  */
 export const DEFAULT_DELAYS_MS = [3000, 5000, 8000, 12000, 18000, 25000, 30000];
 
@@ -47,6 +59,13 @@ export async function fetchWithWakeRetry(
   const delays = options.delaysMs ?? DEFAULT_DELAYS_MS;
   const fetchImpl = options.fetchImpl ?? fetch;
   const sleep = options.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
+  // Whether the caller handed us its own deadline. When it did (every real
+  // call through api.ts does, via fetchApi's REQUEST_TIMEOUT_MS
+  // AbortController), that deadline -- not this file's own fixed delay
+  // array -- is the real retry ceiling; see DEFAULT_DELAYS_MS's own
+  // comment for why a caller-less exhaustion still has to give up on its
+  // own (nothing else ever would).
+  const hasCallerDeadline = init?.signal != null;
   let waking = false;
   try {
     for (let attempt = 0; ; attempt++) {
@@ -60,12 +79,16 @@ export async function fetchWithWakeRetry(
         // would burn through the whole retry backoff sleeping for no
         // reason, on top of whatever the caller's own timeout already was.
         if (init?.signal?.aborted) throw err;
-        if (attempt >= delays.length) throw err;
+        if (attempt >= delays.length && !hasCallerDeadline) throw err;
         if (!waking) {
           waking = true;
           options.onWaking?.(true);
         }
-        await sleep(delays[attempt]);
+        // Past the array's own last entry, keep retrying at that same
+        // cadence -- the caller's own AbortSignal (checked above, every
+        // time around this loop) is what actually ends this, not running
+        // out of array entries.
+        await sleep(delays[attempt] ?? delays[delays.length - 1]);
       }
     }
   } finally {
