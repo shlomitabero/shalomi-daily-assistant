@@ -1592,6 +1592,50 @@ test("App's handleAccountDeleted purges client-side preferences for every owned 
 });
 
 /**
+ * Round 404: self-service "leave project" (CollaboratorsPanel's own
+ * handleLeave, wired here via the onLeft prop) ends in the exact same
+ * state for this user as the three paths rounds 390/392/403 already
+ * purge for -- no access to this project from this browser ever again --
+ * but was never wired into purgeProjectPreferences, a 4th convergent
+ * "project is gone" path round 403's own fix missed. Extracts the real
+ * inline onLeft callback straight out of its JSX attribute (the same
+ * "slice between JSX attributes" technique round 350 established, here
+ * applied to a prop value instead of a plain string), rather than
+ * reimplementing it.
+ */
+test("App's CollaboratorsPanel onLeft callback purges the left project's own client-side preferences before navigating home", () => {
+  const appSrc = readFileSync(new URL("./App.tsx", import.meta.url), "utf8");
+  const handlerMatch = appSrc.match(/ {14}onLeft=\{(\(\) => \{[\s\S]*?\n {14}\})\}\n/);
+  assert.ok(handlerMatch, "expected to find the CollaboratorsPanel onLeft callback in App.tsx");
+  const { code } = transformSync(handlerMatch![1], { loader: "ts" });
+
+  const state: { purgeCalls: string[]; showCollaborators: boolean; goHomeCalls: number } = {
+    purgeCalls: [],
+    showCollaborators: true,
+    goHomeCalls: 0,
+  };
+  const project = { id: "shared-project-1" };
+  const fn = new Function(
+    "purgeProjectPreferences",
+    "setShowCollaborators",
+    "handleGoHome",
+    "project",
+    `return ${code}`,
+  )(
+    (id: string) => state.purgeCalls.push(id),
+    (v: boolean) => (state.showCollaborators = v),
+    () => (state.goHomeCalls += 1),
+    project,
+  ) as () => void;
+
+  fn();
+
+  assert.deepEqual(state.purgeCalls, ["shared-project-1"], "must purge preferences for exactly the project just left");
+  assert.equal(state.showCollaborators, false, "must still close the collaborators panel");
+  assert.equal(state.goHomeCalls, 1, "must still navigate home the same way it always did");
+});
+
+/**
  * New in this round: FieldLabelEditor.tsx's own record-form rendering
  * already marks a required field with a trailing " *" once a project is
  * built -- but the spec-review screen's entity summary, the one place a

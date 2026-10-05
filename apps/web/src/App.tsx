@@ -1872,6 +1872,14 @@ function AppContent() {
               currentUserId={user?.id}
               onClose={() => setShowCollaborators(false)}
               onLeft={() => {
+                // Self-service "leave project" (CollaboratorsPanel's own
+                // handleLeave) ends in the exact same state for this user as
+                // the three paths round 390/392/403 already purge for
+                // (owner delete, bulk delete, account delete): no access to
+                // this project from this browser ever again -- but was
+                // never wired into that sweep, a 4th convergent path to
+                // "project gone" that round 403's own fix missed. Round 404.
+                purgeProjectPreferences(project.id);
                 setShowCollaborators(false);
                 handleGoHome();
               }}
