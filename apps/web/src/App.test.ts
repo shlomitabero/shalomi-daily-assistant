@@ -824,15 +824,17 @@ test("maybeNotifyNewWhatsAppMessages does nothing at all on the first-ever check
  * review screen instead -- opening a draft straight to "preview" would
  * show a live-preview screen with no working CRUD behind it. Also covers
  * round 401's own addition: opening a project someone else owns must mark
- * it "seen" (sharedProjectSeen.ts), so the home screen's "New share" chip
- * (round 401) disappears once the invited collaborator has actually
- * looked at it -- but opening a project the signed-in user owns themself
- * must never touch that store at all, since round 401's chip only ever
- * applies to someone else's project in the first place. Extracts the real
- * function from App.tsx (not a reimplementation) the same way the
- * openPanel test above does.
+ * it "seen" (sharedProjectSeen.ts) with its own `sharedAt`, so the home
+ * screen's "New share" chip (round 401, corrected in round 405 to compare
+ * timestamps rather than a flat id so a removed-then-re-invited
+ * collaborator sees it as new again) disappears once the invited
+ * collaborator has actually looked at it -- but opening a project the
+ * signed-in user owns themself must never touch that store at all, since
+ * round 401's chip only ever applies to someone else's project in the
+ * first place. Extracts the real function from App.tsx (not a
+ * reimplementation) the same way the openPanel test above does.
  */
-test("App's openExistingProject routes a built project to the live preview and a draft project back to spec review, and marks a shared (not owned) project as seen", () => {
+test("App's openExistingProject routes a built project to the live preview and a draft project back to spec review, and marks a shared (not owned) project as seen with its sharedAt", () => {
   const appSrc = readFileSync(new URL("./App.tsx", import.meta.url), "utf8");
   const handlerMatch = appSrc.match(/ {2}function openExistingProject\(p: Project\) \{[\s\S]*?\n {2}\}\n/);
   assert.ok(handlerMatch, "expected to find openExistingProject in App.tsx");
@@ -845,7 +847,7 @@ test("App's openExistingProject routes a built project to the live preview and a
       view: string | null;
       specProvider: string | null;
       enhanceProvider: string | null;
-      markSeenCalls: string[];
+      markSeenCalls: Array<[string, string]>;
     } = {
       project: null,
       activeEntity: null,
@@ -862,7 +864,7 @@ test("App's openExistingProject routes a built project to the live preview and a
       "setView",
       "user",
       "markSharedProjectSeen",
-      "setSeenSharedIds",
+      "setSeenShared",
       `${code}\nreturn openExistingProject;`,
     )(
       (p: Project) => (state.project = p),
@@ -871,11 +873,11 @@ test("App's openExistingProject routes a built project to the live preview and a
       (v: string | null) => (state.enhanceProvider = v),
       (v: string) => (state.view = v),
       currentUser,
-      (id: string) => {
-        state.markSeenCalls.push(id);
-        return new Set([id]);
+      (id: string, sharedAt: string) => {
+        state.markSeenCalls.push([id, sharedAt]);
+        return new Map([[id, sharedAt]]);
       },
-      (_s: Set<string>) => {},
+      (_m: Map<string, string>) => {},
     ) as (p: Project) => void;
     fn(project);
     return state;
@@ -919,8 +921,23 @@ test("App's openExistingProject routes a built project to the live preview and a
   const sharedProject = makeProject([makeEntity("Customer")]);
   sharedProject.status = "built";
   sharedProject.ownerId = owner.id;
+  sharedProject.sharedAt = "2026-03-01T00:00:00.000Z";
   const sharedResult = run(sharedProject, collaborator);
-  assert.deepEqual(sharedResult.markSeenCalls, [sharedProject.id], "opening a project someone else owns must mark it seen with its own id");
+  assert.deepEqual(
+    sharedResult.markSeenCalls,
+    [[sharedProject.id, "2026-03-01T00:00:00.000Z"]],
+    "opening a project someone else owns must mark it seen with its own id and current sharedAt",
+  );
+
+  const sharedProjectNoTimestamp = makeProject([makeEntity("Customer")]);
+  sharedProjectNoTimestamp.status = "built";
+  sharedProjectNoTimestamp.ownerId = owner.id;
+  const noTimestampResult = run(sharedProjectNoTimestamp, collaborator);
+  assert.deepEqual(
+    noTimestampResult.markSeenCalls,
+    [],
+    "a shared project with no sharedAt (shouldn't happen for a real collaborator row, but must never crash) must not call markSharedProjectSeen",
+  );
 });
 
 /**

@@ -29,6 +29,13 @@ function rowToProject(row: Record<string, unknown>): Project {
     spec: ProductSpecSchema.parse(JSON.parse(row.spec_json as string)),
     status: row.status as Project["status"],
     createdAt: row.createdAt as string,
+    // Only listProjectsForUser's query selects this column; every other
+    // caller's row simply lacks the key (undefined). Even there, an owned
+    // project's LEFT JOIN side never matches, so the driver hands back SQL
+    // NULL rather than leaving the key absent -- normalize that to
+    // undefined too, matching the schema's `.optional()` (not `.nullable()`)
+    // and letting JSON.stringify omit the key entirely for owned projects.
+    sharedAt: (row.sharedAt as string | null | undefined) ?? undefined,
   };
 }
 
@@ -105,7 +112,7 @@ export function listProjectsForOwner(db: ForgeDatabase, ownerId: string): Projec
 export function listProjectsForUser(db: ForgeDatabase, userId: string): Project[] {
   const rows = db
     .prepare(
-      `SELECT projects.* FROM projects
+      `SELECT projects.*, project_collaborators.addedAt AS sharedAt FROM projects
        LEFT JOIN project_collaborators ON project_collaborators.projectId = projects.id AND project_collaborators.userId = ?
        WHERE projects.ownerId = ? OR project_collaborators.userId = ?
        ORDER BY projects.createdAt DESC, projects.rowid DESC`,

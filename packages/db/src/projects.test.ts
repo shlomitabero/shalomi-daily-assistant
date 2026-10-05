@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { ProductSpec } from "@forge/shared";
 import { openDatabase } from "./connection.js";
-import { ensureProjectCollaboratorsTable, addCollaborator, isCollaborator } from "./collaborators.js";
+import { ensureProjectCollaboratorsTable, addCollaborator, removeCollaborator, isCollaborator } from "./collaborators.js";
 import { ensureCheckpointsTable, insertCheckpoint, listCheckpoints } from "./checkpoints.js";
 import { applyMigrations, diffAndMigrate } from "./migrate.js";
 import { insertRecord } from "./repository.js";
@@ -132,6 +132,59 @@ test("listProjectsForUser returns each project exactly once even when the user i
     ["p1"],
     "should not list the same project twice",
   );
+});
+
+test("listProjectsForUser exposes the collaborator's own addedAt as sharedAt on a shared project, and leaves it undefined on a project this user owns", () => {
+  // Round 405: the web app's "New share" chip (sharedProjectSeen.ts) needs
+  // a per-grant timestamp to tell one share from the next, not just
+  // whether the project id was ever opened before -- this is the field it
+  // reads.
+  const db = openDatabase(":memory:");
+  ensureProjectsTable(db);
+  ensureProjectCollaboratorsTable(db);
+  const owned = insertProject(db, { id: "owned", ownerId: "alice", name: "Alice's project", description: "test", spec: validSpec });
+  const shared = insertProject(db, { id: "shared", ownerId: "bob", name: "Bob's project", description: "test", spec: validSpec });
+  addCollaborator(db, shared.id, "alice");
+
+  const projects = listProjectsForUser(db, "alice");
+  const ownedResult = projects.find((p) => p.id === owned.id);
+  const sharedResult = projects.find((p) => p.id === shared.id);
+  assert.equal(ownedResult?.sharedAt, undefined, "a project alice owns herself must never carry a sharedAt");
+  assert.equal(typeof sharedResult?.sharedAt, "string", "a project alice collaborates on must carry the collaborator row's own addedAt as sharedAt");
+});
+
+test("listProjectsForUser reports a fresh, later sharedAt once a removed collaborator is re-invited to the same project", (t) => {
+  // The exact bug round 405 fixes: without this, a collaborator who was
+  // removed and later re-added would never see the home screen's "New
+  // share" chip again, because the old flat "ever seen this project id"
+  // marker (round 401) had no way to tell the second invite apart from
+  // the first. Mocking Date (same technique as BuildProgress.test.ts's
+  // elapsed-timer test) makes the two addedAt values deterministically
+  // different, rather than relying on real wall-clock time to advance
+  // between two synchronous calls -- the exact createdAt-tie risk this
+  // same file already calls out for listProjectsForOwner above.
+  const db = openDatabase(":memory:");
+  ensureProjectsTable(db);
+  ensureProjectCollaboratorsTable(db);
+  const project = insertProject(db, { id: "p1", ownerId: "bob", name: "test", description: "test", spec: validSpec });
+
+  t.mock.timers.enable({ apis: ["Date"] });
+  try {
+    addCollaborator(db, project.id, "alice");
+    const firstSharedAt = listProjectsForUser(db, "alice").find((p) => p.id === project.id)?.sharedAt;
+    assert.equal(typeof firstSharedAt, "string");
+
+    removeCollaborator(db, project.id, "alice");
+    assert.deepEqual(listProjectsForUser(db, "alice").map((p) => p.id), [], "alice must lose access once removed");
+
+    t.mock.timers.tick(1000);
+    addCollaborator(db, project.id, "alice");
+    const secondSharedAt = listProjectsForUser(db, "alice").find((p) => p.id === project.id)?.sharedAt;
+    assert.equal(typeof secondSharedAt, "string");
+    assert.notEqual(secondSharedAt, firstSharedAt, "re-inviting after a removal must produce a new sharedAt, not resurrect the original grant's timestamp");
+  } finally {
+    t.mock.timers.reset();
+  }
 });
 
 test("updateProjectName changes only the name, leaving every other field (spec, description, status, ownerId) untouched", () => {

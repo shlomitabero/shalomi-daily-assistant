@@ -185,6 +185,13 @@ export const ProjectSchema = z.object({
   spec: ProductSpecSchema,
   status: z.enum(["draft", "built"]),
   createdAt: z.string(),
+  // Only present for a project the requesting user is a collaborator on
+  // (not the owner): the project_collaborators row's own addedAt for that
+  // specific grant (see listProjectsForUser). Lets the client distinguish
+  // one share from the next -- a collaborator removed and later re-added
+  // gets a fresh addedAt, so the home screen's "New share" chip
+  // (sharedProjectSeen.ts) can tell that apart from a share already seen.
+  sharedAt: z.string().optional(),
 });
 
 export type Project = z.infer<typeof ProjectSchema>;
