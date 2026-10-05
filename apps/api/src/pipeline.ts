@@ -334,6 +334,7 @@ export async function* runBuildPipeline(
   }
   const typeChanges = changes.filter((c) => c.type === "type_changed");
   const relationTargetChanges = changes.filter((c) => c.type === "relation_target_changed");
+  const relationMissingFkChanges = changes.filter((c) => c.type === "relation_missing_fk");
   yield {
     agent: "Database",
     status: "success",
@@ -344,6 +345,9 @@ export async function* runBuildPipeline(
         : "") +
       (relationTargetChanges.length > 0
         ? ` Note: ${relationTargetChanges.map((c) => `${c.table}.${c.column} (${c.fromRelationTo} → ${c.toRelationTo})`).join(", ")} kept pointing at the original related table — existing data was not re-linked.`
+        : "") +
+      (relationMissingFkChanges.length > 0
+        ? ` Note: ${relationMissingFkChanges.map((c) => `${c.table}.${c.column} (→ ${c.toRelationTo})`).join(", ")} is a relation field reusing a column that was never linked to anything — existing and new values in it are not protected against pointing at a record that doesn't exist.`
         : ""),
     detail: changes,
   };

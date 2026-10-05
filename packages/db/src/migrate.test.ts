@@ -440,6 +440,71 @@ test("diffAndMigrate reports a relation_target_changed entry when a removed rela
   assert.deepEqual(fkList.map((fk) => fk.table), ["entity_proj1_Customer"]);
 });
 
+/**
+ * Regression test: the mirror-image gap of the type_changed test above, in
+ * the relation branch specifically. A field removed then re-added under the
+ * same name as a *relation* was already checked against a stale FK pointing
+ * at the wrong table (relation_target_changed, above) -- but if the reused
+ * column never had a FK at all (e.g. it used to be a plain "boolean", which
+ * shares relation's own INTEGER SQL bucket), the type_changed check stays
+ * silent (same bucket, no mismatch) AND the relation_target_changed check
+ * stays silent (its own condition requires a real fromRelationTo, i.e.
+ * `shape.fkTable` truthy, to compare against). The column keeps zero
+ * referential-integrity protection forever -- SQLite can't add a FOREIGN KEY
+ * to an existing column any more than it can retype one -- which is exactly
+ * the "dangling id can't happen through this app's own code paths" invariant
+ * twin.ts's own insight logic documents and relies on, silently false for
+ * this one column with nothing reported to explain why.
+ */
+test("diffAndMigrate reports a relation_missing_fk entry when a removed boolean field is re-added as a relation, reusing a column that never had a FK", () => {
+  const db = openDatabase(":memory:");
+  const baseSpec: ProductSpec = {
+    ...spec,
+    entities: [
+      spec.entities[0],
+      { ...spec.entities[1], fields: [spec.entities[1].fields[0], { name: "isUrgent", type: "boolean", required: false }] },
+    ],
+  };
+  applyMigrations(db, "proj1", baseSpec);
+
+  // Refine 1: drop "isUrgent" entirely. The physical INTEGER column (no FK)
+  // survives untouched -- additive-only.
+  const midSpec: ProductSpec = {
+    ...baseSpec,
+    entities: [baseSpec.entities[0], { ...baseSpec.entities[1], fields: [baseSpec.entities[1].fields[0]] }],
+  };
+  const removalChanges = diffAndMigrate(db, "proj1", baseSpec, midSpec);
+  assert.deepEqual(removalChanges, []);
+
+  // Refine 2: re-add a field also named "isUrgent", but now a relation to
+  // Customer -- same INTEGER bucket as boolean, so no type_changed.
+  const nextSpec: ProductSpec = {
+    ...midSpec,
+    entities: [
+      midSpec.entities[0],
+      {
+        ...midSpec.entities[1],
+        fields: [midSpec.entities[1].fields[0], { name: "isUrgent", type: "relation", required: false, relationTo: "Customer" }],
+      },
+    ],
+  };
+  const changes = diffAndMigrate(db, "proj1", midSpec, nextSpec);
+  assert.deepEqual(changes, [
+    { type: "relation_missing_fk", table: "entity_proj1_Order", column: "isUrgent", toRelationTo: "Customer" },
+    { type: "new_column", table: "entity_proj1_Order", column: "isUrgent" },
+  ]);
+
+  // The real proof of the documented gap: the column has no FK at all, so a
+  // completely nonexistent Customer id is accepted with no error -- unlike
+  // every relation field created fresh, which would throw FOREIGN KEY
+  // constraint failed for the same write.
+  const fkList = db.prepare('PRAGMA foreign_key_list("entity_proj1_Order")').all() as { table: string }[];
+  assert.deepEqual(fkList, [], "the reused column must still have zero FK -- SQLite can't add one to an existing column, same documented limitation as type_changed/relation_target_changed");
+  const orderEntity = nextSpec.entities[1];
+  const order = insertRecord(db, "proj1", orderEntity, { total: 10, isUrgent: 999999 });
+  assert.equal(order.isUrgent, 999999, "a dangling, nonexistent Customer id is silently accepted -- the exact gap this change type now reports");
+});
+
 test("diffAndMigrate is safe to call twice with the same additive change (idempotent, never throws)", () => {
   // Reproduces the real failure class this hardening prevents: SQLite
   // throws "duplicate column name" on a second ALTER TABLE ADD COLUMN for

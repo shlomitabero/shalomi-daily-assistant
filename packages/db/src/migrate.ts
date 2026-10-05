@@ -119,13 +119,13 @@ function fieldTypeLabelForSqlType(sqlType: string, hasForeignKey: boolean): stri
 }
 
 export interface MigrationChange {
-  type: "new_table" | "new_column" | "type_changed" | "relation_target_changed";
+  type: "new_table" | "new_column" | "type_changed" | "relation_target_changed" | "relation_missing_fk";
   table: string;
   column?: string;
   /** Only set for "type_changed": the field's old and new declared type, for a message that says what actually changed. */
   fromType?: string;
   toType?: string;
-  /** Only set for "relation_target_changed": the field's old and new relationTo entity name. */
+  /** Only set for "relation_target_changed": the field's old and new relationTo entity name. Only set for "relation_missing_fk": the relationTo the field claims, with no "from" since the reused column never had any FK to begin with. */
   fromRelationTo?: string;
   toRelationTo?: string;
 }
@@ -246,6 +246,26 @@ export function diffAndMigrate(
               table,
               column: columnName,
               fromRelationTo: entityNameForTable(projectId, [...previousEntities.keys(), ...entityNames], shape.fkTable),
+              toRelationTo: field.relationTo,
+            });
+          } else if (!shape.fkTable && expectedFkTable) {
+            // The reused column shares relation's own INTEGER bucket (so the
+            // type_changed check above stays silent) but never had a FK at
+            // all -- e.g. it was a plain boolean before being removed, or a
+            // relation to a target that no longer resolves. SQLite can't add
+            // a FOREIGN KEY to an existing column any more than it can
+            // retype one, so unlike a brand-new relation column (which gets
+            // a real REFERENCES clause below), this one is left with *zero*
+            // referential-integrity protection forever -- strictly worse
+            // than relation_target_changed's "still watching the wrong
+            // table", since nothing is watched at all. Without this, the
+            // dangling-id invariant twin.ts's own insight logic relies on
+            // ("a bug elsewhere" producing one) would be silently false for
+            // this exact column, with no reported change to explain why.
+            changes.push({
+              type: "relation_missing_fk",
+              table,
+              column: columnName,
               toRelationTo: field.relationTo,
             });
           }
