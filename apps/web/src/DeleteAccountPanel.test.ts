@@ -53,7 +53,11 @@ async function waitForCondition(check: () => boolean, maxTicks = 40): Promise<vo
   throw new Error("waitForCondition: condition never became true");
 }
 
-function renderPanel(opts?: { onClose?: () => void; onDeleted?: (ownedProjectIds: string[]) => void; userId?: string }) {
+function renderPanel(opts?: {
+  onClose?: () => void;
+  onDeleted?: (ownedProjectIds: string[], sharedProjectIds: string[]) => void;
+  userId?: string;
+}) {
   render(
     React.createElement(
       ThemeProvider,
@@ -126,14 +130,15 @@ test("typing the account's own email exactly and submitting calls the real DELET
 
 /**
  * Round 403: onDeleted must hand back the real OWNED project ids (not
- * shared-with-you ones) -- App.tsx needs them to sweep its own
+ * shared-with-you ones, which get their own separate parameter -- see the
+ * round 423 test right below) -- App.tsx needs them to sweep its own
  * projectPreferenceCleanup.ts localStorage stores for each one, since the
  * server-side DELETE /auth/account cascade has no way to touch this
  * browser's localStorage at all. Confirms the same ids projectSummary's
  * own "owned" count is derived from (user1's p1/p2, not someone-else's p3)
- * are exactly what's passed to onDeleted.
+ * are exactly what's passed as the first onDeleted argument.
  */
-test("onDeleted is called with exactly the real owned project ids, excluding any merely-shared-with-you project", async () => {
+test("onDeleted's first argument is exactly the real owned project ids, excluding any merely-shared-with-you project", async () => {
   await withJsdom(async () => {
     const originalFetch = globalThis.fetch;
     const projects = [makeProject("p1", "user1"), makeProject("p2", "user1"), makeProject("p3", "someone-else")];
@@ -144,15 +149,52 @@ test("onDeleted is called with exactly the real owned project ids, excluding any
       throw new Error(`unexpected request ${init?.method ?? "GET"} ${input}`);
     });
 
-    let receivedIds: string[] | null = null;
+    let receivedOwnedIds: string[] | null = null;
     try {
-      renderPanel({ userId: "user1", onDeleted: (ids) => (receivedIds = ids) });
+      renderPanel({ userId: "user1", onDeleted: (ownedIds) => (receivedOwnedIds = ownedIds) });
       await waitForCondition(() => document.querySelector(".delete-account-summary") !== null);
       typeConfirmation("dana@example.com");
       fireEvent.submit(document.querySelector("form")!);
 
-      await waitForCondition(() => receivedIds !== null);
-      assert.deepEqual(receivedIds, ["p1", "p2"], "must pass exactly the owned project ids, never the shared one");
+      await waitForCondition(() => receivedOwnedIds !== null);
+      assert.deepEqual(receivedOwnedIds, ["p1", "p2"], "must pass exactly the owned project ids, never the shared one");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
+ * New in this round (423): DELETE /auth/account also revokes this account's
+ * collaborator grant on every project it merely shares in (via the server's
+ * own removeAllCollaborationsForUser, apps/api/src/routes/auth.ts) -- the
+ * exact same "this browser can never reach this project again" event round
+ * 404's own "leave project" fix already sweeps purgeProjectPreferences for.
+ * Round 403 only ever collected the owned ids, so this account's shared
+ * projects' own localStorage entries across all eighteen projectId-keyed
+ * stores (projectPreferenceCleanup.ts) sat there forever -- confirms
+ * onDeleted's second argument now carries exactly those shared ids.
+ */
+test("onDeleted's second argument is exactly the real shared-with-you project ids, excluding any owned project", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    const projects = [makeProject("p1", "user1"), makeProject("p2", "user1"), makeProject("p3", "someone-else")];
+    globalThis.fetch = withListProjectsStub(projects, async (input: string, init?: RequestInit) => {
+      if (init?.method === "DELETE" && input === "/api/auth/account") {
+        return new Response(null, { status: 204 });
+      }
+      throw new Error(`unexpected request ${init?.method ?? "GET"} ${input}`);
+    });
+
+    let receivedSharedIds: string[] | null = null;
+    try {
+      renderPanel({ userId: "user1", onDeleted: (_owned, shared) => (receivedSharedIds = shared) });
+      await waitForCondition(() => document.querySelector(".delete-account-summary") !== null);
+      typeConfirmation("dana@example.com");
+      fireEvent.submit(document.querySelector("form")!);
+
+      await waitForCondition(() => receivedSharedIds !== null);
+      assert.deepEqual(receivedSharedIds, ["p3"], "must pass exactly the shared project id, never an owned one");
     } finally {
       globalThis.fetch = originalFetch;
     }

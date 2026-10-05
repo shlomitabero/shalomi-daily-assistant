@@ -1668,11 +1668,16 @@ test("App's handleGoHome resets view/project/selectedAnswers/additionalRequest A
  * every one of projectPreferenceCleanup.ts's localStorage stores sat there
  * forever. Confirms purgeProjectPreferences is now called once per owned
  * project id DeleteAccountPanel hands back, before the existing local
- * UI-state reset runs.
+ * UI-state reset runs. Round 423 extended this same handler to also purge
+ * every merely-shared project id (the server's own removeAllCollaborationsForUser
+ * revokes this account's access to those too) -- confirmed below by passing
+ * both arrays and checking both show up in purgeCalls.
  */
-test("App's handleAccountDeleted purges client-side preferences for every owned project id, then resets local UI state", () => {
+test("App's handleAccountDeleted purges client-side preferences for every owned AND shared project id, then resets local UI state", () => {
   const appSrc = readFileSync(new URL("./App.tsx", import.meta.url), "utf8");
-  const handlerMatch = appSrc.match(/ {2}function handleAccountDeleted\(ownedProjectIds: string\[\]\) \{[\s\S]*?\n {2}\}\n/);
+  const handlerMatch = appSrc.match(
+    / {2}function handleAccountDeleted\(ownedProjectIds: string\[\], sharedProjectIds: string\[\]\) \{[\s\S]*?\n {2}\}\n/,
+  );
   assert.ok(handlerMatch, "expected to find handleAccountDeleted in App.tsx");
   const { code } = transformSync(handlerMatch![0], { loader: "ts" });
 
@@ -1725,11 +1730,15 @@ test("App's handleAccountDeleted purges client-side preferences for every owned 
     noop,
     noop,
     noop,
-  ) as (ownedProjectIds: string[]) => void;
+  ) as (ownedProjectIds: string[], sharedProjectIds: string[]) => void;
 
-  fn(["p1", "p2", "p3"]);
+  fn(["p1", "p2", "p3"], ["p4", "p5"]);
 
-  assert.deepEqual(state.purgeCalls, ["p1", "p2", "p3"], "must purge preferences for every owned project id, in order, once each");
+  assert.deepEqual(
+    state.purgeCalls,
+    ["p1", "p2", "p3", "p4", "p5"],
+    "must purge preferences for every owned project id AND every shared project id, in order, once each",
+  );
   assert.equal(state.tokenCleared, true, "must still clear the now-dead token");
   assert.equal(state.showDeleteAccount, false, "must still close the panel");
   assert.equal(state.user, null, "must still clear the deleted user");
@@ -1770,9 +1779,13 @@ test("App's handleAccountDeleted purges client-side preferences for every owned 
     noop,
     noop,
     noop,
-  ) as (ownedProjectIds: string[]) => void;
-  fnNoneOwned([]);
-  assert.deepEqual(noneOwned.purgeCalls, [], "an account that owned no projects must never call purgeProjectPreferences at all");
+  ) as (ownedProjectIds: string[], sharedProjectIds: string[]) => void;
+  fnNoneOwned([], []);
+  assert.deepEqual(
+    noneOwned.purgeCalls,
+    [],
+    "an account that owned no projects and shared in none either must never call purgeProjectPreferences at all",
+  );
 });
 
 /**

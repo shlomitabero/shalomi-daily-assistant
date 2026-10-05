@@ -1203,7 +1203,7 @@ function AppContent() {
    * own two existing callers, handleDeleteProject/handleBulkDeleteProjects,
    * never covered), then resets local UI state straight back to the auth screen.
    */
-  function handleAccountDeleted(ownedProjectIds: string[]) {
+  function handleAccountDeleted(ownedProjectIds: string[], sharedProjectIds: string[]) {
     // DELETE /auth/account deletes every one of these server-side via the
     // exact same cascade handleDeleteProject/handleBulkDeleteProjects use
     // for a single/several projects -- but unlike those two, this path
@@ -1211,6 +1211,15 @@ function AppContent() {
     // in all eighteen localStorage preference stores (projectPreferenceCleanup.ts)
     // sat there forever. Round 403's own fix.
     for (const id of ownedProjectIds) purgeProjectPreferences(id);
+    // Round 423: the server side of DELETE /auth/account also calls
+    // removeAllCollaborationsForUser, revoking this account's access to
+    // every project it merely collaborates on (not deleting those projects
+    // themselves, just this account's own grant on them) -- the exact same
+    // "this browser can never reach this project again" event the
+    // Collaborators panel's own onLeft callback below already sweeps for a
+    // single project (round 404). Round 403 only ever passed the owned ids
+    // here, so a shared project's own preference entries sat here forever.
+    for (const id of sharedProjectIds) purgeProjectPreferences(id);
     clearToken();
     setShowDeleteAccount(false);
     setUser(null);

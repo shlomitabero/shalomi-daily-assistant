@@ -21,7 +21,7 @@ export function DeleteAccountPanel({
   email: string;
   userId: string;
   onClose: () => void;
-  onDeleted: (ownedProjectIds: string[]) => void;
+  onDeleted: (ownedProjectIds: string[], sharedProjectIds: string[]) => void;
 }) {
   const { t } = useTranslation();
   const [confirmText, setConfirmText] = useState("");
@@ -36,6 +36,16 @@ export function DeleteAccountPanel({
   // (projectPreferenceCleanup.ts); App.tsx needs the actual ids, not just
   // the count, to do that itself.
   const [ownedProjectIds, setOwnedProjectIds] = useState<string[]>([]);
+  // Round 423: DELETE /auth/account also calls removeAllCollaborationsForUser
+  // server-side (apps/api/src/routes/auth.ts), revoking this account's
+  // access to every project it merely collaborates on -- the exact same
+  // "this browser can never reach this project again" event round 404's
+  // own "leave project" fix already sweeps purgeProjectPreferences for.
+  // Round 403 only ever collected/passed the *owned* ids (the ones actually
+  // deleted), so every shared project's own localStorage entries across all
+  // eighteen projectId-keyed stores sat here forever, unlike the single-
+  // project "leave" path.
+  const [sharedProjectIds, setSharedProjectIds] = useState<string[]>([]);
   const dialogRef = useDialogFocusTrap<HTMLDivElement>(onClose);
 
   // Fetches the real project list itself (rather than trusting App.tsx's own
@@ -47,8 +57,10 @@ export function DeleteAccountPanel({
     listProjects()
       .then(({ projects }) => {
         const owned = projects.filter((p) => p.ownerId === userId);
-        setProjectSummary({ owned: owned.length, shared: projects.length - owned.length });
+        const shared = projects.filter((p) => p.ownerId !== userId);
+        setProjectSummary({ owned: owned.length, shared: shared.length });
         setOwnedProjectIds(owned.map((p) => p.id));
+        setSharedProjectIds(shared.map((p) => p.id));
       })
       .catch(() => setProjectSummary(null));
   }, [userId]);
@@ -63,7 +75,7 @@ export function DeleteAccountPanel({
     setError(null);
     try {
       await deleteAccount();
-      onDeleted(ownedProjectIds);
+      onDeleted(ownedProjectIds, sharedProjectIds);
     } catch (err) {
       setError((err as Error).message);
       setBusy(false);
