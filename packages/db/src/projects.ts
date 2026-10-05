@@ -2,7 +2,7 @@ import type { Project, ProductSpec } from "@forge/shared";
 import { ProductSpecSchema } from "@forge/shared";
 import type { ForgeDatabase } from "./connection.js";
 import { tableNameFor, quoteIdentifier } from "./identifiers.js";
-import { deleteCheckpointsForProject, extractEntityNamesFromSpecJson, listAllCheckpointedEntityNames } from "./checkpoints.js";
+import { deleteCheckpointsForProject, extractEntityNamesFromSpecJson, listAllCheckpointedEntityNames, listHistoricalEntityNames } from "./checkpoints.js";
 import { removeAllCollaborators } from "./collaborators.js";
 import { deleteWhatsAppData } from "./whatsapp.js";
 
@@ -201,6 +201,17 @@ export function updateProjectDescription(db: ForgeDatabase, id: string, descript
  * orphaned forever -- the exact bug this doc-comment describes, just one
  * step removed (see listAllCheckpointedEntityNames's own doc-comment).
  *
+ * Also unions listHistoricalEntityNames: deleting a single checkpoint
+ * (round 216, an ordinary cleanup action) can remove the only checkpoint
+ * whose own spec still mentioned an entity later refined out of the
+ * current spec, with no other remaining checkpoint mentioning it either --
+ * at that point listAllCheckpointedEntityNames alone has already forgotten
+ * it, and this project's own deletion would otherwise leave that one
+ * table permanently orphaned with nothing anywhere left pointing at it.
+ * listHistoricalEntityNames reads a durable, append-only ledger written at
+ * every insertCheckpoint call instead, so it survives any single
+ * checkpoint being deleted in between.
+ *
  * Takes a bare `projectId` rather than a parsed `Project`, and reads this
  * project's own spec_json the same tolerant way (extractEntityNamesFromSpecJson,
  * not ProductSpecSchema.parse): a project row can fail full re-parse too
@@ -218,6 +229,7 @@ export function deleteProject(db: ForgeDatabase, projectId: string): void {
     | undefined;
   const entityNames = new Set(row ? extractEntityNamesFromSpecJson(row.spec_json) : []);
   for (const entityName of listAllCheckpointedEntityNames(db, projectId)) entityNames.add(entityName);
+  for (const entityName of listHistoricalEntityNames(db, projectId)) entityNames.add(entityName);
   for (const entityName of entityNames) {
     const table = tableNameFor(projectId, entityName);
     db.exec(`DROP TABLE IF EXISTS ${quoteIdentifier(table)}`);

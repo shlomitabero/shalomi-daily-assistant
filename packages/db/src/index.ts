@@ -61,6 +61,9 @@ export {
   renameCheckpoint,
   deleteCheckpoint,
   deleteCheckpointsForProject,
+  listAllCheckpointedEntityNames,
+  listHistoricalEntityNames,
+  extractEntityNamesFromSpecJson,
 } from "./checkpoints.js";
 export { generateSeedRecords, orderForSeeding } from "./seed.js";
 export { tableNameFor, assertSafeIdentifier } from "./identifiers.js";

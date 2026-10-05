@@ -2,7 +2,16 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { ProductSpec } from "@forge/shared";
 import { openDatabase } from "./connection.js";
-import { ensureCheckpointsTable, getCheckpoint, insertCheckpoint, listCheckpoints, renameCheckpoint } from "./checkpoints.js";
+import {
+  deleteCheckpoint,
+  deleteCheckpointsForProject,
+  ensureCheckpointsTable,
+  getCheckpoint,
+  insertCheckpoint,
+  listCheckpoints,
+  listHistoricalEntityNames,
+  renameCheckpoint,
+} from "./checkpoints.js";
 import { NotFoundError } from "./repository.js";
 
 const validSpec: ProductSpec = {
@@ -183,4 +192,99 @@ test("ensureCheckpointsTable adds a missing kind column to a pre-existing table 
   // idempotence migrate.ts's own ALTER TABLE ADD COLUMN path requires.
   assert.doesNotThrow(() => ensureCheckpointsTable(db));
   assert.equal(getCheckpoint(db, "old-refine-en")!.kind, "refine", "re-running the migration must not re-derive or disturb an already-backfilled kind");
+});
+
+/**
+ * Regression test for the real bug round 420 fixed: listAllCheckpointedEntityNames
+ * re-derives a project's entity history live from whichever checkpoints
+ * still happen to exist, so deleting a single checkpoint (an ordinary,
+ * advertised cleanup action) can make it forget an entity name forever,
+ * even though that entity genuinely had a real data table at some point.
+ * listHistoricalEntityNames reads a durable, append-only ledger instead,
+ * written once at insertCheckpoint and never pruned by deleteCheckpoint.
+ */
+test("listHistoricalEntityNames still remembers an entity name after the one checkpoint that mentioned it is deleted", () => {
+  const db = openDatabase(":memory:");
+  ensureCheckpointsTable(db);
+  const specWithOrder: ProductSpec = {
+    ...validSpec,
+    entities: [...validSpec.entities, { name: "Order", fields: [{ name: "total", type: "number", required: true }] }],
+  };
+  insertCheckpoint(db, { id: "cp1", projectId: "proj1", label: "build", kind: "build", spec: validSpec });
+  insertCheckpoint(db, { id: "cp2", projectId: "proj1", label: "refine: add Order", kind: "refine", spec: specWithOrder });
+
+  deleteCheckpoint(db, "proj1", "cp2");
+
+  assert.deepEqual(
+    listHistoricalEntityNames(db, "proj1").sort(),
+    ["Customer", "Order"],
+    "Order must still be remembered even though cp2 -- the only checkpoint that ever mentioned it -- is gone",
+  );
+});
+
+test("listHistoricalEntityNames is scoped per project -- one project's history never leaks into another's", () => {
+  const db = openDatabase(":memory:");
+  ensureCheckpointsTable(db);
+  insertCheckpoint(db, { id: "cp1", projectId: "proj1", label: "build", kind: "build", spec: validSpec });
+  const otherSpec: ProductSpec = { ...validSpec, entities: [{ name: "Vendor", fields: [] }] };
+  insertCheckpoint(db, { id: "cp2", projectId: "proj2", label: "build", kind: "build", spec: otherSpec });
+
+  assert.deepEqual(listHistoricalEntityNames(db, "proj1"), ["Customer"]);
+  assert.deepEqual(listHistoricalEntityNames(db, "proj2"), ["Vendor"]);
+});
+
+test("deleteCheckpointsForProject clears this project's own history ledger too, without touching another project's", () => {
+  const db = openDatabase(":memory:");
+  ensureCheckpointsTable(db);
+  insertCheckpoint(db, { id: "cp1", projectId: "proj1", label: "build", kind: "build", spec: validSpec });
+  const otherSpec: ProductSpec = { ...validSpec, entities: [{ name: "Vendor", fields: [] }] };
+  insertCheckpoint(db, { id: "cp2", projectId: "proj2", label: "build", kind: "build", spec: otherSpec });
+
+  deleteCheckpointsForProject(db, "proj1");
+
+  assert.deepEqual(listHistoricalEntityNames(db, "proj1"), [], "proj1's own ledger rows must be gone");
+  assert.deepEqual(listHistoricalEntityNames(db, "proj2"), ["Vendor"], "proj2's ledger must be completely untouched");
+});
+
+/**
+ * Regression test for ensureCheckpointsTable's backfill of
+ * checkpoint_entity_history itself: a database that predates this table
+ * has real checkpoints (and a real project) whose entity names were never
+ * recorded anywhere but the spec_json text itself. Stands in for that by
+ * creating the checkpoints and projects tables directly via raw SQL (no
+ * ledger table at all yet) before calling ensureCheckpointsTable.
+ */
+test("ensureCheckpointsTable backfills checkpoint_entity_history from both pre-existing checkpoints and each project's own current spec", () => {
+  const db = openDatabase(":memory:");
+  db.exec(`
+    CREATE TABLE checkpoints (
+      id TEXT PRIMARY KEY,
+      projectId TEXT NOT NULL,
+      label TEXT NOT NULL,
+      spec_json TEXT NOT NULL,
+      createdAt TEXT NOT NULL
+    )
+  `);
+  db.exec(`CREATE TABLE projects (id TEXT PRIMARY KEY, spec_json TEXT NOT NULL)`);
+  const checkpointSpec: ProductSpec = { ...validSpec, entities: [{ name: "Order", fields: [] }] };
+  db.prepare("INSERT INTO checkpoints (id, projectId, label, spec_json, createdAt) VALUES (?, ?, ?, ?, ?)").run(
+    "old-cp",
+    "proj1",
+    "Initial build",
+    JSON.stringify(checkpointSpec),
+    "2026-01-01T00:00:00.000Z",
+  );
+  // The project's own CURRENT spec mentions a different entity than any
+  // checkpoint does -- e.g. a refine whose own checkpoint write predates
+  // this ledger's existence in an even older app version.
+  const currentSpec: ProductSpec = { ...validSpec, entities: [{ name: "Invoice", fields: [] }] };
+  db.prepare("INSERT INTO projects (id, spec_json) VALUES (?, ?)").run("proj1", JSON.stringify(currentSpec));
+
+  ensureCheckpointsTable(db);
+
+  assert.deepEqual(
+    listHistoricalEntityNames(db, "proj1").sort(),
+    ["Invoice", "Order"],
+    "the backfill must capture entity names from both the pre-existing checkpoint and the project's own current spec",
+  );
 });

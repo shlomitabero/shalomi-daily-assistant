@@ -3,7 +3,7 @@ import { test } from "node:test";
 import type { ProductSpec } from "@forge/shared";
 import { openDatabase } from "./connection.js";
 import { ensureProjectCollaboratorsTable, addCollaborator, removeCollaborator, isCollaborator } from "./collaborators.js";
-import { ensureCheckpointsTable, insertCheckpoint, listCheckpoints } from "./checkpoints.js";
+import { ensureCheckpointsTable, insertCheckpoint, listCheckpoints, deleteCheckpoint } from "./checkpoints.js";
 import { applyMigrations, diffAndMigrate } from "./migrate.js";
 import { insertRecord } from "./repository.js";
 import {
@@ -364,6 +364,81 @@ test("deleteProject drops the real data table of an entity that was added then l
     () => db.prepare(`SELECT * FROM "entity_proj_orphan_Order"`).all(),
     /no such table/,
     "Order's table must ALSO be dropped even though it was removed from the spec before deletion -- it's not an orphan left behind",
+  );
+});
+
+/**
+ * round 420: the fix above (round 409's listAllCheckpointedEntityNames)
+ * re-derives this project's entity history live from whichever checkpoints
+ * still exist right now -- but deleteCheckpoint (round 216) is a real,
+ * advertised, ordinary cleanup action ("an experimental refine that went
+ * nowhere"), and nothing about it considers deleteProject's own later
+ * reliance on checkpoint history as the sole record of entities since
+ * removed from the spec. If the ONE checkpoint that still mentioned Order
+ * is deleted before the project itself is, listAllCheckpointedEntityNames
+ * can no longer see "Order" anywhere -- the exact same orphaned-table bug
+ * the test above closed, reopened by a completely different, unrelated
+ * feature acting on the very history deleteProject depends on.
+ * listHistoricalEntityNames (the durable ledger written at every
+ * insertCheckpoint, never pruned by deleteCheckpoint) is the fix: this
+ * test is identical to the one above except the build checkpoint -- the
+ * only one ever to mention Order -- is explicitly deleted before deleting
+ * the project.
+ */
+test("deleteProject still drops a real data table even when the one checkpoint that ever mentioned it was itself deleted first", () => {
+  const db = openDatabase(":memory:");
+  ensureProjectsTable(db);
+  ensureCheckpointsTable(db);
+  ensureProjectCollaboratorsTable(db);
+  ensureWhatsAppConnectionsTable(db);
+  ensureWhatsAppMessagesTable(db);
+
+  const buildSpec: ProductSpec = validSpec;
+  const project = insertProject(db, {
+    id: "proj-pruned",
+    ownerId: "owner1",
+    name: "Project whose own history gets pruned",
+    description: "test",
+    spec: buildSpec,
+  });
+  diffAndMigrate(db, project.id, undefined, buildSpec);
+  insertCheckpoint(db, { id: "cp-build", projectId: project.id, label: "build", kind: "build", spec: buildSpec });
+
+  const specWithOrder: ProductSpec = {
+    ...buildSpec,
+    entities: [...buildSpec.entities, { name: "Order", fields: [{ name: "total", type: "number", required: true }] }],
+  };
+  diffAndMigrate(db, project.id, buildSpec, specWithOrder);
+  insertRecord(db, project.id, specWithOrder.entities[1], { total: 42 });
+  insertCheckpoint(db, { id: "cp-refine1", projectId: project.id, label: "refine: add Order", kind: "refine", spec: specWithOrder });
+
+  // Refine back out: only "cp-refine1" (and nothing else yet) still
+  // mentions Order in its own spec_json.
+  diffAndMigrate(db, project.id, specWithOrder, buildSpec);
+  insertCheckpoint(db, { id: "cp-refine2", projectId: project.id, label: "refine: remove Order", kind: "refine", spec: buildSpec });
+  const finalProject = updateProjectSpec(db, project.id, buildSpec);
+
+  // The real, user-facing single-checkpoint-delete action -- an ordinary
+  // cleanup of the one checkpoint that ever mentioned Order.
+  deleteCheckpoint(db, project.id, "cp-refine1");
+  assert.deepEqual(
+    listCheckpoints(db, project.id).map((c) => c.id).sort(),
+    ["cp-build", "cp-refine2"],
+    "sanity check: cp-refine1 (the only mention of Order) is really gone from the checkpoint history",
+  );
+
+  assert.doesNotThrow(
+    () => db.prepare(`SELECT COUNT(*) as c FROM "entity_proj_pruned_Order"`).get(),
+    "sanity check: Order's real table must still exist (and still have its row) before delete -- migrations never drop it, and deleting a checkpoint never touches real data tables",
+  );
+
+  deleteProject(db, finalProject.id);
+
+  assert.equal(getProject(db, project.id), undefined, "the project row itself should be gone");
+  assert.throws(
+    () => db.prepare(`SELECT * FROM "entity_proj_pruned_Order"`).all(),
+    /no such table/,
+    "Order's table must still be dropped, even though the one checkpoint that ever mentioned it was deleted before the project was",
   );
 });
 

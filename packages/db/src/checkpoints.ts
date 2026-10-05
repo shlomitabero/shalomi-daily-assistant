@@ -42,6 +42,60 @@ export function ensureCheckpointsTable(db: ForgeDatabase): void {
     db.exec("ALTER TABLE checkpoints ADD COLUMN kind TEXT NOT NULL DEFAULT 'build'");
     db.exec(`UPDATE checkpoints SET kind = 'refine' WHERE label LIKE 'Refine:%' OR label LIKE 'שיפור:%'`);
   }
+
+  // A durable, append-only record of every entity name a project's spec has
+  // ever contained -- written once at insertCheckpoint and never pruned by
+  // deleteCheckpoint, unlike listAllCheckpointedEntityNames below, which
+  // re-derives the same thing live from whichever checkpoints still happen
+  // to exist. deleteProject (projects.ts) needs the entity name for every
+  // real table it must drop; deleting a *single* checkpoint (round 216,
+  // an ordinary, advertised cleanup action -- "an experimental refine that
+  // went nowhere") can remove the only checkpoint whose spec_json still
+  // mentioned an entity later refined out of the spec, with no other
+  // checkpoint or the current spec mentioning it either -- at that point
+  // listAllCheckpointedEntityNames alone can no longer see it, and that
+  // entity's real table becomes permanently orphaned the moment the whole
+  // project is later deleted (confirmed via a direct repro: build with
+  // Customer+Order, refine away Order, delete the build checkpoint, delete
+  // the project -- the Order table survives with nothing left anywhere
+  // referencing it). This table is the fix: once an entity name is ever
+  // written here, it survives for as long as the project itself does.
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS checkpoint_entity_history (
+      projectId TEXT NOT NULL,
+      entityName TEXT NOT NULL,
+      PRIMARY KEY (projectId, entityName)
+    )
+  `);
+  // Backfill for data written before this table existed -- every checkpoint
+  // still on file plus every project's own current spec, which the ledger
+  // would otherwise never have learned about if its own build/refine
+  // happened before this round. Re-run (idempotent via INSERT OR IGNORE)
+  // on every startup rather than gated behind "table just created": cheap
+  // at this app's scale, and self-healing if the ledger and the checkpoints
+  // table ever drifted apart for any other reason.
+  // The `projects` table may not exist yet when this runs in isolation (a
+  // unit test that calls ensureCheckpointsTable without ensureProjectsTable
+  // first); real app startup (store.ts) always creates it first, but the
+  // backfill degrades to checkpoints-only rather than throwing either way.
+  const hasProjectsTable = db
+    .prepare(`SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'projects'`)
+    .get();
+  const allSpecRows = db
+    .prepare(
+      hasProjectsTable
+        ? `SELECT projectId, spec_json FROM checkpoints
+           UNION ALL
+           SELECT id AS projectId, spec_json FROM projects`
+        : `SELECT projectId, spec_json FROM checkpoints`,
+    )
+    .all() as { projectId: string; spec_json: string }[];
+  const insertHistoryEntry = db.prepare("INSERT OR IGNORE INTO checkpoint_entity_history (projectId, entityName) VALUES (?, ?)");
+  for (const row of allSpecRows) {
+    for (const entityName of extractEntityNamesFromSpecJson(row.spec_json)) {
+      insertHistoryEntry.run(row.projectId, entityName);
+    }
+  }
 }
 
 function rowToCheckpoint(row: Record<string, unknown>): Checkpoint {
@@ -82,6 +136,13 @@ export function insertCheckpoint(
   db.prepare(
     "INSERT INTO checkpoints (id, projectId, label, kind, spec_json, createdAt) VALUES (?, ?, ?, ?, ?, ?)",
   ).run(checkpoint.id, checkpoint.projectId, checkpoint.label, checkpoint.kind, JSON.stringify(checkpoint.spec), createdAt);
+  // Durable ledger entry (see ensureCheckpointsTable's own doc-comment) --
+  // written here, at the one point this entity name is known to be real,
+  // so it survives this checkpoint being individually deleted later.
+  const insertHistoryEntry = db.prepare("INSERT OR IGNORE INTO checkpoint_entity_history (projectId, entityName) VALUES (?, ?)");
+  for (const entity of checkpoint.spec.entities) {
+    insertHistoryEntry.run(checkpoint.projectId, entity.name);
+  }
   return { ...checkpoint, createdAt };
 }
 
@@ -151,6 +212,23 @@ export function listAllCheckpointedEntityNames(db: ForgeDatabase, projectId: str
   return [...names];
 }
 
+/**
+ * The durable twin of listAllCheckpointedEntityNames above (see
+ * ensureCheckpointsTable's own doc-comment for why the two differ):
+ * listAllCheckpointedEntityNames only ever sees entity names from
+ * checkpoints that still exist right now, so a deleted single checkpoint
+ * (round 216) can make it forget an entity name forever, even though
+ * that entity genuinely had a real data table at some point. This reads
+ * the append-only ledger instead -- every entity name this project's spec
+ * has EVER contained, independent of which checkpoints happen to still be
+ * around. deleteProject (projects.ts) unions both, plus the current spec,
+ * so losing any one source is never by itself enough to orphan a table.
+ */
+export function listHistoricalEntityNames(db: ForgeDatabase, projectId: string): string[] {
+  const rows = db.prepare("SELECT entityName FROM checkpoint_entity_history WHERE projectId = ?").all(projectId) as { entityName: string }[];
+  return rows.map((r) => r.entityName);
+}
+
 export function getCheckpoint(db: ForgeDatabase, id: string): Checkpoint | undefined {
   const row = db.prepare("SELECT * FROM checkpoints WHERE id = ?").get(id) as
     | Record<string, unknown>
@@ -181,9 +259,17 @@ export function renameCheckpoint(db: ForgeDatabase, projectId: string, checkpoin
   return getCheckpoint(db, checkpointId)!;
 }
 
-/** Part of deleteProject's cleanup (projects.ts) -- a deleted project's history has nothing left to restore. */
+/**
+ * Part of deleteProject's cleanup (projects.ts) -- a deleted project's
+ * history has nothing left to restore. Also clears this project's own rows
+ * from checkpoint_entity_history: deleteProject has already read it (and
+ * every other source) into its own entityNames set by the time this runs,
+ * so nothing is lost by clearing it here, and leaving it behind would let
+ * the ledger grow forever with rows for projects that no longer exist.
+ */
 export function deleteCheckpointsForProject(db: ForgeDatabase, projectId: string): void {
   db.prepare("DELETE FROM checkpoints WHERE projectId = ?").run(projectId);
+  db.prepare("DELETE FROM checkpoint_entity_history WHERE projectId = ?").run(projectId);
 }
 
 /**
