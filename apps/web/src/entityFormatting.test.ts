@@ -523,6 +523,67 @@ test("sortRecordsMulti resolves a relation key to its display label too, composi
   );
 });
 
+/**
+ * Regression test: an enum field's table cell (EntityPanel.tsx) renders
+ * `field.enumLabels?.[value] ?? value` -- the translated label, not the
+ * raw stored enum value -- and matchesSearch already resolves it the same
+ * way, but sortRecords never did. The fixture deliberately uses raw enum
+ * values whose alphabetical order is the OPPOSITE of their labels'
+ * alphabetical order (raw "P1" < "P3" ascending, but label "High" > "Low"
+ * ascending), so a version that still sorts by the raw value would produce
+ * a different, detectably wrong order instead of accidentally passing.
+ */
+test("sortRecords sorts an enum field by its translated label, not the raw stored enum value", () => {
+  const fields: Field[] = [
+    { name: "priority", type: "enum", required: true, enumValues: ["P1", "P3"], enumLabels: { P1: "Low", P3: "High" } },
+  ];
+  const records = [
+    { id: 1, priority: "P1" }, // "Low"
+    { id: 2, priority: "P3" }, // "High"
+  ];
+  const sorted = sortRecords(records, "priority", "asc", fields);
+  assert.deepEqual(
+    sorted.map((r) => r.id),
+    [2, 1],
+    "ascending by label puts \"High\" before \"Low\", the opposite of ascending by the raw \"P1\"/\"P3\" codes",
+  );
+});
+
+test("sortRecords falls back to the raw enum value when a value has no enumLabels entry, instead of sorting by undefined", () => {
+  const fields: Field[] = [{ name: "priority", type: "enum", required: true, enumValues: ["low", "high"] }];
+  const records = [
+    { id: 1, priority: "high" },
+    { id: 2, priority: "low" },
+  ];
+  const sorted = sortRecords(records, "priority", "asc", fields);
+  assert.deepEqual(sorted.map((r) => r.priority), ["high", "low"]);
+});
+
+test("sortRecordsMulti resolves an enum key to its translated label too, composing correctly with a non-enum tiebreaker key", () => {
+  const fields: Field[] = [
+    { name: "priority", type: "enum", required: true, enumValues: ["P1", "P3"], enumLabels: { P1: "Low", P3: "High" } },
+    { name: "total", type: "number", required: true },
+  ];
+  const records = [
+    { id: 1, priority: "P1", total: 50 }, // "Low"
+    { id: 2, priority: "P3", total: 10 }, // "High"
+    { id: 3, priority: "P3", total: 20 }, // "High"
+  ];
+  const sorted = sortRecordsMulti(
+    records,
+    [
+      { field: "priority", direction: "asc" },
+      { field: "total", direction: "asc" },
+    ],
+    fields,
+  );
+  assert.deepEqual(
+    sorted.map((r) => r.id),
+    [2, 3, 1],
+    "\"High\" (resolved label) sorts first, tie-broken by total ascending, then \"Low\"",
+  );
+});
+
 test("findBoardField prefers a field literally named status/stage over other enum fields", () => {
   const fields: Field[] = [
     { name: "priority", type: "enum", required: true, enumValues: ["Low", "High"] },

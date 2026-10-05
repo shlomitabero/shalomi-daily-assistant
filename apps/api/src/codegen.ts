@@ -1516,9 +1516,16 @@ function compareValues(a, b) {
 // clicking that header sorts by an internal number no one can see, which
 // looks broken/random. Mirrors the live preview's own entityFormatting.ts
 // resolveSortValue/matchesSearch pattern.
+//
+// An enum field has the same gap: the table cell renders
+// (field.enumLabels && field.enumLabels[value]) || value, and matchesSearch
+// already resolves it the same way, but this never did -- clicking an enum
+// column's header sorted by the raw stored value instead of the label
+// shown on screen.
 function resolveSortValue(fieldName, value, fields, relatedRecords) {
-  const field = fields.find((f) => f.name === fieldName);
-  if (field?.type !== "relation") return value;
+  const field = fields?.find((f) => f.name === fieldName);
+  if (field?.type === "enum") return (field.enumLabels && field.enumLabels[value]) || value;
+  if (field?.type !== "relation" || !relatedRecords) return value;
   return relationDisplayLabel(field, value, relatedRecords);
 }
 
@@ -1532,13 +1539,10 @@ export function sortRecordsMulti(records, sortKeys, fields, relatedRecords) {
   if (sortKeys.length === 0) return records;
   return [...records].sort((a, b) => {
     for (const { field, direction } of sortKeys) {
-      const cmp =
-        fields && relatedRecords
-          ? compareValues(
-              resolveSortValue(field, a[field], fields, relatedRecords),
-              resolveSortValue(field, b[field], fields, relatedRecords),
-            )
-          : compareValues(a[field], b[field]);
+      const cmp = compareValues(
+        resolveSortValue(field, a[field], fields, relatedRecords),
+        resolveSortValue(field, b[field], fields, relatedRecords),
+      );
       if (cmp !== 0) return direction === "desc" ? -cmp : cmp;
     }
     return 0;

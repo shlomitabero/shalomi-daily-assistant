@@ -399,6 +399,17 @@ function compareValues(a: unknown, b: unknown): number {
  * `fields`/`allEntities`/`relatedRecords` params (round 271): a caller
  * with no relation data on hand (or a plain unit test) still gets the
  * previous, raw-value sort instead of a required-but-unavailable argument.
+ *
+ * An enum field has the same gap for the same reason: the table cell
+ * (EntityPanel.tsx) renders `field.enumLabels?.[value] ?? value` -- the
+ * translated/human label, not the raw stored enum value -- and
+ * matchesSearch already resolves it the same way, but this function never
+ * did, so clicking an enum column's header sorted by the raw value instead
+ * (e.g. English codes like "P1"/"P2"/"P3" instead of the Hebrew labels
+ * shown on screen), landing rows in an order unrelated to what's visible.
+ * Unlike relation, this only ever needs `fields` -- an enum's label comes
+ * straight from the field definition, no relatedRecords/allEntities to
+ * resolve against.
  */
 function resolveSortValue(
   fieldName: string,
@@ -407,9 +418,9 @@ function resolveSortValue(
   allEntities?: Entity[],
   relatedRecords?: RelatedRecordsByEntity,
 ): unknown {
-  if (!fields || !allEntities || !relatedRecords) return value;
-  const field = fields.find((f) => f.name === fieldName);
-  if (field?.type !== "relation") return value;
+  const field = fields?.find((f) => f.name === fieldName);
+  if (field?.type === "enum") return field.enumLabels?.[String(value)] ?? value;
+  if (field?.type !== "relation" || !allEntities || !relatedRecords) return value;
   return relationDisplayLabel(field, value, allEntities, relatedRecords);
 }
 

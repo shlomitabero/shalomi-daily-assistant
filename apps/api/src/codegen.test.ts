@@ -3687,11 +3687,13 @@ test("the exported EntityView's handleBulkDelete is wired into the same batch pe
 test("the exported EntityView's sortRecordsMulti sorts by several fields in priority order, breaking ties with later keys", () => {
   const entityViewJsx = generateExportFiles(project).find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
   const compareSrc = entityViewJsx.match(/function compareValues\(a, b\) \{[\s\S]*?\n\}\n/)?.[0];
+  const resolveSortValueSrc = entityViewJsx.match(/function resolveSortValue\([\s\S]*?\n\}\n/)?.[0];
   const sortSrc = entityViewJsx.match(/export function sortRecordsMulti\(records, sortKeys, fields, relatedRecords\) \{[\s\S]*?\n\}\n/)?.[0]?.replace("export ", "");
   assert.ok(compareSrc, "expected to find compareValues in generated output");
+  assert.ok(resolveSortValueSrc, "expected to find resolveSortValue in generated output");
   assert.ok(sortSrc, "expected to find sortRecordsMulti in generated output");
 
-  const sortRecordsMulti = new Function(`${compareSrc}\n${sortSrc}\nreturn sortRecordsMulti;`)() as (
+  const sortRecordsMulti = new Function(`${compareSrc}\n${resolveSortValueSrc}\n${sortSrc}\nreturn sortRecordsMulti;`)() as (
     records: Record<string, unknown>[],
     sortKeys: { field: string; direction: "asc" | "desc" }[],
   ) => Record<string, unknown>[];
@@ -5099,6 +5101,41 @@ test("the exported EntityView's sortRecordsMulti resolves a relation field to it
     sorted.map((r) => r.id),
     [3, 2, 1],
     "alphabetical by resolved courier name (Abe, Mona, Zed), not numeric by the raw stored id (1, 2, 3)",
+  );
+});
+
+/**
+ * New in this round: the exported app's own resolveSortValue had the same
+ * gap for enum fields that round 415 already fixed for matchesSearch --
+ * the table cell renders an enum's translated label, but sorting compared
+ * the raw stored value. The fixture's raw codes ("P1"/"P3") sort in the
+ * OPPOSITE order from their labels ("Low"/"High"), so unfixed code (still
+ * sorting by the raw value) would produce a detectably different order.
+ * The enum branch needs none of the relation helpers the test above
+ * depends on.
+ */
+test("the exported EntityView's sortRecordsMulti sorts an enum field by its translated label, not the raw stored enum value", () => {
+  const entityViewJsx = generateExportFiles(project).find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+
+  const compareValuesSrc = entityViewJsx.match(/function compareValues\([\s\S]*?\n\}\n/)?.[0];
+  const resolveSortValueSrc = entityViewJsx.match(/function resolveSortValue\([\s\S]*?\n\}\n/)?.[0];
+  const sortRecordsMultiSrc = entityViewJsx.match(/export function sortRecordsMulti\([\s\S]*?\n\}\n/)?.[0]?.replace("export ", "");
+  assert.ok(compareValuesSrc && resolveSortValueSrc && sortRecordsMultiSrc, "expected to find compareValues/resolveSortValue/sortRecordsMulti in generated output");
+
+  const sortRecordsMulti = new Function(
+    `${compareValuesSrc}\n${resolveSortValueSrc}\n${sortRecordsMultiSrc}\nreturn sortRecordsMulti;`,
+  )() as (records: { id: number }[], sortKeys: { field: string; direction: string }[], fields: unknown[]) => { id: number }[];
+
+  const fields = [{ name: "priority", type: "enum", enumLabels: { P1: "Low", P3: "High" } }];
+  const records = [
+    { id: 1, priority: "P1" }, // "Low"
+    { id: 2, priority: "P3" }, // "High"
+  ];
+  const sorted = sortRecordsMulti(records, [{ field: "priority", direction: "asc" }], fields);
+  assert.deepEqual(
+    sorted.map((r) => r.id),
+    [2, 1],
+    "ascending by label puts \"High\" before \"Low\", the opposite of ascending by the raw \"P1\"/\"P3\" codes",
   );
 });
 
