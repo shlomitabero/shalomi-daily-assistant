@@ -1095,8 +1095,9 @@ function AppContent() {
       setBusy(true);
       setError(null);
       try {
-        const { project: updated } = await answerQuestions(project.id, answered, request || undefined);
+        const { project: updated, providerName } = await answerQuestions(project.id, answered, request || undefined);
         setProject(updated);
+        if (providerName) setSpecProvider(providerName);
       } catch (err) {
         setError((err as Error).message);
         setBusy(false);
@@ -1648,6 +1649,11 @@ function AppContent() {
           run={(onEvent) => streamBuild(project.id, onEvent)}
           onComplete={handleBuildComplete}
           onBack={() => setView("spec")}
+          specProviderNotice={
+            specProviderLabel(specProvider, t) && (
+              <p className={specProvider === "anthropic-fallback" ? "error" : "muted small"}>{specProviderLabel(specProvider, t)}</p>
+            )
+          }
         />
       )}
 

@@ -74,7 +74,11 @@ function runWithEvents(events: AgentStepEvent[]) {
 // process forever. Two levels of nesting (render()'s own + runWithEvents')
 // work fine, so render() stays a plain, synchronous call with no extra
 // act() wrapper here -- each test instead waits a plain tick afterward.
-function renderBuildProgress(events: AgentStepEvent[], onComplete: (project: unknown) => void = () => {}) {
+function renderBuildProgress(
+  events: AgentStepEvent[],
+  onComplete: (project: unknown) => void = () => {},
+  extraProps: Record<string, unknown> = {},
+) {
   return render(
     React.createElement(
       ThemeProvider,
@@ -88,6 +92,7 @@ function renderBuildProgress(events: AgentStepEvent[], onComplete: (project: unk
           run: runWithEvents(events),
           onComplete,
           onBack: () => {},
+          ...extraProps,
         }),
       ),
     ),
@@ -431,6 +436,51 @@ test("BuildProgress renders a real progress bar that fills as agents complete, w
     const fill = bar!.querySelector(".build-progress-bar-fill") as HTMLElement;
     assert.ok(fill, "expected a fill element inside the progress bar");
     assert.equal(fill.style.width, "17%");
+  });
+});
+
+/**
+ * Regression test for round 407: App.tsx's own `specProviderLabel(...)`
+ * paragraph (round 402, shown on the spec-review screen) now has a second
+ * render location here too, so the /answers route's own providerName
+ * (round 406's discarded-signal pattern, round 407's own fix) is visible
+ * on the one screen left once handleBuild immediately switches away from
+ * spec review. Passed in as an already-rendered node (`specProviderNotice`)
+ * rather than a raw string, so this component needs no i18n keys of its
+ * own and never duplicates specProviderLabel's logic.
+ */
+test("BuildProgress renders the caller's specProviderNotice right under the title when not compact, and never renders it at all when compact", async () => {
+  await withJsdom(async () => {
+    const events: AgentStepEvent[] = [{ agent: "Architect", status: "running", message: "…" }];
+
+    renderBuildProgress(events, () => {}, { specProviderNotice: React.createElement("p", { className: "error" }, "AI provider fell back") });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    assert.ok(document.body.textContent?.includes("AI provider fell back"), "the notice must render when not compact");
+    cleanup();
+
+    render(
+      React.createElement(
+        ThemeProvider,
+        null,
+        React.createElement(
+          LanguageProvider,
+          null,
+          React.createElement(BuildProgress, {
+            compact: true,
+            projectName: "Test Project",
+            run: runWithEvents(events),
+            onComplete: () => {},
+            onBack: () => {},
+            specProviderNotice: React.createElement("p", { className: "error" }, "AI provider fell back"),
+          }),
+        ),
+      ),
+    );
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    assert.ok(
+      !document.body.textContent?.includes("AI provider fell back"),
+      "compact mode (the inline refine view) must never show the title or this notice, matching its existing no-<h1> behavior",
+    );
   });
 });
 

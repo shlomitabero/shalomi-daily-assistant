@@ -599,9 +599,9 @@ export function createProjectsRouter(db: ForgeDatabase, provider: SpecProvider |
       activePipelines.add(project.id);
       try {
         const combinedDescription = `${project.description}\n\n${sections.join("\n\n")}`;
-        const { spec } = await generateSpec(combinedDescription, provider);
+        const { spec, providerName } = await generateSpec(combinedDescription, provider);
         const updated = updateProjectSpec(db, project.id, spec);
-        res.json({ project: updated });
+        res.json({ project: updated, providerName });
       } finally {
         activePipelines.delete(project.id);
       }

@@ -531,6 +531,93 @@ test("App's handleEnhanceAndBuild captures enhanceIdea's own providerName into e
 });
 
 /**
+ * Regression test for round 407: POST /projects/:id/answers calls the
+ * exact same generateSpec() as project creation and /refine (round 406),
+ * but until now its own providerName -- round 406's own open follow-up --
+ * was discarded on the client the same way /refine's was before that
+ * round. Unlike /refine, /answers has no dedicated history to show it in;
+ * instead handleBuild now overwrites the existing specProvider state with
+ * this second generateSpec() call's own result (when the user actually
+ * answered something, since /answers never calls generateSpec() at all in
+ * the no-op case), so it's shown on the very next screen (BuildProgress's
+ * own specProviderNotice) rather than nowhere at all.
+ */
+test("App's handleBuild overwrites specProvider with the /answers call's own providerName when the user answered something, but leaves it untouched (and never calls answerQuestions) when there was nothing to answer", async () => {
+  const appSrc = readFileSync(new URL("./App.tsx", import.meta.url), "utf8");
+  const handlerMatch = appSrc.match(/ {2}async function handleBuild\(\) \{[\s\S]*?\n {2}\}\n/);
+  assert.ok(handlerMatch, "expected to find handleBuild in App.tsx");
+  const { code } = transformSync(handlerMatch![0], { loader: "ts" });
+
+  function run(
+    project: Project,
+    selectedAnswers: Record<string, string>,
+    additionalRequest: string,
+    answerQuestionsFn: (
+      projectId: string,
+      answers: Record<string, string>,
+      additionalRequest?: string,
+    ) => Promise<{ project: Project; providerName?: string }>,
+  ) {
+    const state: { project: Project | null; specProvider: string | null; view: string | null; busy: boolean; error: string | null; calls: number } = {
+      project,
+      specProvider: "anthropic",
+      view: null,
+      busy: false,
+      error: null,
+      calls: 0,
+    };
+    const fn = new Function(
+      "project",
+      "selectedAnswers",
+      "additionalRequest",
+      "setBusy",
+      "setError",
+      "answerQuestions",
+      "setProject",
+      "setSpecProvider",
+      "setView",
+      `${code}\nreturn handleBuild;`,
+    )(
+      state.project,
+      selectedAnswers,
+      additionalRequest,
+      (v: boolean) => (state.busy = v),
+      (v: string | null) => (state.error = v),
+      (...args: [string, Record<string, string>, string | undefined]) => {
+        state.calls += 1;
+        return answerQuestionsFn(...args);
+      },
+      (p: Project) => (state.project = p),
+      (v: string | null) => (state.specProvider = v),
+      (v: string) => (state.view = v),
+    ) as () => Promise<void>;
+    return { fn, state };
+  }
+
+  const project = makeProject([makeEntity("Customer")]);
+  const answeredProject = makeProject([makeEntity("Customer"), makeEntity("Invoice")]);
+
+  const { fn: fnWithAnswers, state: stateWithAnswers } = run(project, { q1: "yes" }, "", async () => ({
+    project: answeredProject,
+    providerName: "anthropic-fallback",
+  }));
+  await fnWithAnswers();
+  assert.equal(stateWithAnswers.calls, 1, "answering a question must call answerQuestions");
+  assert.equal(stateWithAnswers.specProvider, "anthropic-fallback", "the /answers call's own providerName must overwrite the stale specProvider from project creation");
+  assert.equal(stateWithAnswers.project, answeredProject);
+  assert.equal(stateWithAnswers.view, "building");
+
+  const { fn: fnNoAnswers, state: stateNoAnswers } = run(project, {}, "", async () => ({
+    project: answeredProject,
+    providerName: "anthropic-fallback",
+  }));
+  await fnNoAnswers();
+  assert.equal(stateNoAnswers.calls, 0, "nothing was answered, so answerQuestions must never be called at all");
+  assert.equal(stateNoAnswers.specProvider, "anthropic", "with nothing answered, the original specProvider from project creation must be left exactly as it was");
+  assert.equal(stateNoAnswers.view, "building");
+});
+
+/**
  * New in this round: each entry in the refine history chat log (the
  * running record of every "Improve the app" instruction and its real
  * impact) never showed WHEN it happened -- with several refines in the

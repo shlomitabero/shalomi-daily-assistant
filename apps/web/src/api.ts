@@ -328,13 +328,17 @@ export function addEntity(projectId: string, label: string): Promise<{ project: 
  * freely typed), and/or a free-standing request not tied to any specific
  * question, back to the server, which regenerates the spec from them
  * before the build runs — so this actually changes what gets built, not
- * just which chip looks selected.
+ * just which chip looks selected. `providerName` is round 406's own
+ * AI-vs-heuristic honest signal, carried from this route's own
+ * generateSpec() call -- absent (not even the key) when there was nothing
+ * to answer, since the server never calls generateSpec() again in that
+ * no-op case.
  */
 export function answerQuestions(
   projectId: string,
   answers: Record<string, string>,
   additionalRequest?: string,
-): Promise<{ project: Project }> {
+): Promise<{ project: Project; providerName?: string }> {
   return request(`/projects/${projectId}/answers`, {
     method: "POST",
     body: JSON.stringify({ answers, additionalRequest }),

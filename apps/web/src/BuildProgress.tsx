@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import type { ReactNode } from "react";
 import type { AgentStepEvent, Project } from "@forge/shared";
 import { safeDownloadName } from "./api.js";
 import { useTranslation } from "./i18n/LanguageContext.js";
@@ -305,6 +306,7 @@ export function BuildProgress({
   onComplete,
   onBack,
   compact = false,
+  specProviderNotice,
 }: {
   title?: string;
   /** Used only to name the downloaded build-summary file -- see the
@@ -317,6 +319,21 @@ export function BuildProgress({
    * (e.g. in the preview screen's chat pane during a refine) instead of
    * taking over the whole screen. */
   compact?: boolean;
+  /**
+   * The caller's own already-rendered `specProviderLabel(...)` paragraph
+   * (App.tsx), shown right under the title when this is the initial build
+   * and the open-question/additional-request answers the user just
+   * submitted (POST /answers) triggered a second, honest AI-vs-heuristic
+   * generateSpec() call -- round 406 closed this exact gap for /refine, but
+   * /answers has no screen of its own left to show it on once handleBuild
+   * immediately switches to this one, so this is that screen instead. A
+   * plain node rather than a providerName string so this component needs
+   * no i18n keys or label logic of its own, and never duplicates
+   * specProviderLabel's. Undefined for every other caller (refine's own
+   * compact usage included), so nothing renders there, matching the
+   * pre-existing behavior exactly.
+   */
+  specProviderNotice?: ReactNode;
 }) {
   const { t, lang } = useTranslation();
   const [events, setEvents] = useState<AgentStepEvent[]>([]);
@@ -441,6 +458,7 @@ export function BuildProgress({
   return (
     <Wrapper className={compact ? "ai-team ai-team-compact" : "ai-team"}>
       {!compact && <h1>{title}</h1>}
+      {!compact && specProviderNotice}
       <p className={compact ? "muted small" : "muted"}>
         {t("build.subtitle", { current: Math.min(doneCount + 1, visibleAgents.length), total: visibleAgents.length })}
         {" · "}
