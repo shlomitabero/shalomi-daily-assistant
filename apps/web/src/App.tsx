@@ -96,6 +96,14 @@ export function specProviderLabel(providerName: string | null, t: (key: string) 
   return t("spec.provider.heuristic");
 }
 
+/** Same shape as specProviderLabel, for the separate enhance-step provider signal (enhanceProvider). */
+export function enhanceProviderLabel(providerName: string | null, t: (key: string) => string): string | null {
+  if (providerName === null) return null;
+  if (providerName === "anthropic") return t("enhance.provider.ai");
+  if (providerName === "anthropic-fallback") return t("enhance.provider.aiFallback");
+  return t("enhance.provider.heuristic");
+}
+
 /**
  * Clickable starting points on the home screen -- fills the textarea with a
  * fuller example description instead of leaving new users staring at an
@@ -399,6 +407,15 @@ function AppContent() {
   // source of this, and it isn't stored on the project itself, so there's
   // nothing honest to show once you've navigated away and come back).
   const [specProvider, setSpecProvider] = useState<string | null>(null);
+  // Same honest-signal shape as specProvider above, but for the separate
+  // "✨ Enhance & build" idea-rewrite step (enhanceIdea), which has its own
+  // independent AI-or-heuristic provider seam -- previously discarded
+  // entirely (handleEnhanceAndBuild only ever destructured `{ enhanced }`),
+  // so a real AI failure during the rewrite degraded silently into the
+  // crude keyword-matched rewrite with no signal at all, the same gap
+  // specProvider itself used to have for the build step. null whenever the
+  // current draft wasn't created via that enhance step at all.
+  const [enhanceProvider, setEnhanceProvider] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [enhanceBusy, setEnhanceBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -803,6 +820,7 @@ function AppContent() {
     setProject(p);
     setActiveEntity(p.spec.entities[0]?.name ?? null);
     setSpecProvider(null);
+    setEnhanceProvider(null);
     setView(p.status === "built" ? "preview" : "spec");
     if (user && p.ownerId !== user.id) setSeenSharedIds(markSharedProjectSeen(p.id));
   }
@@ -945,6 +963,7 @@ function AppContent() {
       const { project, providerName } = await createProject(description);
       setProject(project);
       setSpecProvider(providerName);
+      setEnhanceProvider(null);
       setView("spec");
     } catch (err) {
       setError((err as Error).message);
@@ -956,18 +975,22 @@ function AppContent() {
   /**
    * The "improve my idea then build" loop: sends the raw idea to the Prompt
    * Architect Agent, shows the rewritten prompt it wrote back in the
-   * textarea (nothing hidden), then immediately runs that AI-written prompt
-   * through the normal create-project pipeline -- the app builds its own
-   * prompt, then builds itself from it.
+   * textarea (nothing hidden -- including the honest signal for whether
+   * the rewrite itself came from real AI or the offline heuristic fell
+   * back to it, round 402, the same gap specProviderLabel closed for the
+   * build step), then immediately runs that AI-written prompt through the
+   * normal create-project pipeline -- the app builds its own prompt, then
+   * builds itself from it.
    */
   async function handleEnhanceAndBuild() {
     if (!description.trim()) return;
     setEnhanceBusy(true);
     setError(null);
     try {
-      const { enhanced } = await enhanceIdea(description);
+      const { enhanced, providerName: enhanceProviderName } = await enhanceIdea(description);
       setDescription(enhanced);
       saveIdeaDraft(enhanced);
+      setEnhanceProvider(enhanceProviderName);
       const { project, providerName } = await createProject(enhanced);
       setProject(project);
       setSpecProvider(providerName);
@@ -989,6 +1012,7 @@ function AppContent() {
     setView("home");
     setProject(null);
     setSpecProvider(null);
+    setEnhanceProvider(null);
     setSelectedAnswers({});
     setAdditionalRequest("");
   }
@@ -1007,6 +1031,7 @@ function AppContent() {
     setView("home");
     setProject(null);
     setSpecProvider(null);
+    setEnhanceProvider(null);
     setSelectedAnswers({});
     setAdditionalRequest("");
     setActiveEntity(null);
@@ -1457,6 +1482,11 @@ function AppContent() {
           {specProviderLabel(specProvider, t) && (
             <p className={specProvider === "anthropic-fallback" ? "error" : "muted small"}>
               {specProviderLabel(specProvider, t)}
+            </p>
+          )}
+          {enhanceProviderLabel(enhanceProvider, t) && (
+            <p className={enhanceProvider === "anthropic-fallback" ? "error" : "muted small"}>
+              {enhanceProviderLabel(enhanceProvider, t)}
             </p>
           )}
 

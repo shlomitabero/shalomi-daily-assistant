@@ -12,6 +12,7 @@ import {
   filterRefineHistory,
   formatEntityFieldSummary,
   formatMyProjectsCount,
+  enhanceProviderLabel,
   formatOpenQuestionsProgress,
   formatProjectCreatedDate,
   formatRefineTimestamp,
@@ -391,6 +392,116 @@ test("specProviderLabel maps each real providerName to its own distinct label, a
 });
 
 /**
+ * Round 402: enhanceIdea's own response carries the exact same honest
+ * providerName signal as createProject's (see enhancePrompt's doc comment
+ * in spec-engine), but handleEnhanceAndBuild only ever destructured
+ * `{ enhanced }` off it, discarding whether the idea rewrite itself came
+ * from real AI or the offline heuristic silently took over -- the same
+ * gap specProviderLabel closed for the later build step, left unfixed one
+ * function below it. enhanceProviderLabel is the pure mapping, mirroring
+ * specProviderLabel's own shape exactly.
+ */
+test("enhanceProviderLabel maps each real providerName to its own distinct label, and null (no enhance step used) to no label at all", () => {
+  assert.equal(enhanceProviderLabel("anthropic", t), "enhance.provider.ai");
+  assert.equal(enhanceProviderLabel("anthropic-fallback", t), "enhance.provider.aiFallback");
+  assert.equal(enhanceProviderLabel("heuristic", t), "enhance.provider.heuristic");
+  assert.equal(
+    enhanceProviderLabel(null, t),
+    null,
+    "a plain (non-enhanced) build never captured this, so there's nothing honest to show -- must not silently claim any provider",
+  );
+  assert.notEqual(
+    enhanceProviderLabel("anthropic", t),
+    enhanceProviderLabel("anthropic-fallback", t),
+    "a real AI failure during the rewrite that silently fell back must never be shown as an indistinguishable success",
+  );
+});
+
+/**
+ * Round 402: handleEnhanceAndBuild makes two separate provider-tagged API
+ * calls (enhanceIdea, then createProject on the rewritten text) -- this
+ * confirms each one's own providerName lands in its own separate state
+ * (enhanceProvider vs specProvider), rather than the enhance step's signal
+ * being silently discarded the way it was before this round. Extracts the
+ * real function from App.tsx the same way the handleDeleteProject test
+ * above does, mocking both API calls.
+ */
+test("App's handleEnhanceAndBuild captures enhanceIdea's own providerName into enhanceProvider, separately from createProject's into specProvider", async () => {
+  const appSrc = readFileSync(new URL("./App.tsx", import.meta.url), "utf8");
+  const handlerMatch = appSrc.match(/ {2}async function handleEnhanceAndBuild\(\) \{[\s\S]*?\n {2}\}\n/);
+  assert.ok(handlerMatch, "expected to find handleEnhanceAndBuild in App.tsx");
+  const { code } = transformSync(handlerMatch![0], { loader: "ts" });
+
+  function run(opts: {
+    enhanceIdeaFn: (idea: string) => Promise<{ enhanced: string; providerName: string }>;
+    createProjectFn: (description: string) => Promise<{ project: Project; providerName: string }>;
+  }) {
+    const state: {
+      description: string;
+      project: Project | null;
+      specProvider: string | null;
+      enhanceProvider: string | null;
+      view: string | null;
+      enhanceBusy: boolean;
+      error: string | null;
+    } = {
+      description: "a crm for my shop",
+      project: null,
+      specProvider: "unset",
+      enhanceProvider: "unset",
+      view: null,
+      enhanceBusy: false,
+      error: null,
+    };
+    const fn = new Function(
+      "description",
+      "setEnhanceBusy",
+      "setError",
+      "enhanceIdea",
+      "setDescription",
+      "saveIdeaDraft",
+      "setEnhanceProvider",
+      "createProject",
+      "setProject",
+      "setSpecProvider",
+      "setView",
+      `${code}\nreturn handleEnhanceAndBuild;`,
+    )(
+      state.description,
+      (v: boolean) => (state.enhanceBusy = v),
+      (v: string | null) => (state.error = v),
+      opts.enhanceIdeaFn,
+      (v: string) => (state.description = v),
+      (_v: string) => {},
+      (v: string | null) => (state.enhanceProvider = v),
+      opts.createProjectFn,
+      (p: Project) => (state.project = p),
+      (v: string | null) => (state.specProvider = v),
+      (v: string) => (state.view = v),
+    ) as () => Promise<void>;
+    return { fn, state };
+  }
+
+  const builtProject = makeProject([makeEntity("Customer")]);
+  const { fn, state } = run({
+    enhanceIdeaFn: async () => ({ enhanced: "a detailed CRM idea", providerName: "anthropic-fallback" }),
+    createProjectFn: async () => ({ project: builtProject, providerName: "anthropic" }),
+  });
+  await fn();
+
+  assert.equal(state.enhanceProvider, "anthropic-fallback", "the enhance step's own providerName must land in enhanceProvider");
+  assert.equal(state.specProvider, "anthropic", "the later createProject call's providerName must land in specProvider, independently of enhanceProvider");
+  assert.notEqual(
+    state.enhanceProvider,
+    state.specProvider,
+    "the two calls' provider signals must never be conflated into one -- each step can independently succeed or fall back",
+  );
+  assert.equal(state.description, "a detailed CRM idea", "the enhanced text must replace the original description");
+  assert.equal(state.project, builtProject);
+  assert.equal(state.view, "spec");
+});
+
+/**
  * New in this round: each entry in the refine history chat log (the
  * running record of every "Improve the app" instruction and its real
  * impact) never showed WHEN it happened -- with several refines in the
@@ -733,18 +844,21 @@ test("App's openExistingProject routes a built project to the live preview and a
       activeEntity: string | null;
       view: string | null;
       specProvider: string | null;
+      enhanceProvider: string | null;
       markSeenCalls: string[];
     } = {
       project: null,
       activeEntity: null,
       view: null,
       specProvider: "unset",
+      enhanceProvider: "unset",
       markSeenCalls: [],
     };
     const fn = new Function(
       "setProject",
       "setActiveEntity",
       "setSpecProvider",
+      "setEnhanceProvider",
       "setView",
       "user",
       "markSharedProjectSeen",
@@ -754,6 +868,7 @@ test("App's openExistingProject routes a built project to the live preview and a
       (p: Project) => (state.project = p),
       (name: string | null) => (state.activeEntity = name),
       (v: string | null) => (state.specProvider = v),
+      (v: string | null) => (state.enhanceProvider = v),
       (v: string) => (state.view = v),
       currentUser,
       (id: string) => {
@@ -774,8 +889,14 @@ test("App's openExistingProject routes a built project to the live preview and a
   builtProject.ownerId = owner.id;
   const builtResult = run(builtProject, owner);
   assert.deepEqual(
-    { project: builtResult.project, activeEntity: builtResult.activeEntity, view: builtResult.view, specProvider: builtResult.specProvider },
-    { project: builtProject, activeEntity: "Customer", view: "preview", specProvider: null },
+    {
+      project: builtResult.project,
+      activeEntity: builtResult.activeEntity,
+      view: builtResult.view,
+      specProvider: builtResult.specProvider,
+      enhanceProvider: builtResult.enhanceProvider,
+    },
+    { project: builtProject, activeEntity: "Customer", view: "preview", specProvider: null, enhanceProvider: null },
   );
   assert.deepEqual(builtResult.markSeenCalls, [], "opening a project you own yourself must never call markSharedProjectSeen");
 
@@ -784,8 +905,14 @@ test("App's openExistingProject routes a built project to the live preview and a
   draftProject.ownerId = owner.id;
   const draftResult = run(draftProject, owner);
   assert.deepEqual(
-    { project: draftResult.project, activeEntity: draftResult.activeEntity, view: draftResult.view, specProvider: draftResult.specProvider },
-    { project: draftProject, activeEntity: "Customer", view: "spec", specProvider: null },
+    {
+      project: draftResult.project,
+      activeEntity: draftResult.activeEntity,
+      view: draftResult.view,
+      specProvider: draftResult.specProvider,
+      enhanceProvider: draftResult.enhanceProvider,
+    },
+    { project: draftProject, activeEntity: "Customer", view: "spec", specProvider: null, enhanceProvider: null },
   );
   assert.deepEqual(draftResult.markSeenCalls, [], "opening a draft project you own yourself must never call markSharedProjectSeen either");
 
@@ -1216,12 +1343,14 @@ test("App's handleBackToHome resets view/project/selectedAnswers/additionalReque
     view: string;
     project: Project | null;
     specProvider: string | null;
+    enhanceProvider: string | null;
     selectedAnswers: Record<string, string>;
     additionalRequest: string;
   } = {
     view: "spec",
     project: makeProject([makeEntity("Customer")]),
     specProvider: "anthropic",
+    enhanceProvider: "anthropic",
     selectedAnswers: { "Which plan?": "Pro" },
     additionalRequest: "also add a discount field",
   };
@@ -1231,6 +1360,7 @@ test("App's handleBackToHome resets view/project/selectedAnswers/additionalReque
     "setView",
     "setProject",
     "setSpecProvider",
+    "setEnhanceProvider",
     "setSelectedAnswers",
     "setAdditionalRequest",
     "setDescription",
@@ -1239,6 +1369,7 @@ test("App's handleBackToHome resets view/project/selectedAnswers/additionalReque
     (v: string) => (state.view = v),
     (p: Project | null) => (state.project = p),
     (v: string | null) => (state.specProvider = v),
+    (v: string | null) => (state.enhanceProvider = v),
     (a: Record<string, string>) => (state.selectedAnswers = a),
     (r: string) => (state.additionalRequest = r),
     () => {
@@ -1251,6 +1382,7 @@ test("App's handleBackToHome resets view/project/selectedAnswers/additionalReque
   assert.equal(state.view, "home", "must navigate back to the home view");
   assert.equal(state.project, null, "must clear the abandoned draft project, not leave it lingering in state");
   assert.equal(state.specProvider, null, "must clear the abandoned draft's own spec-provider info, not leave it lingering for whatever gets created next");
+  assert.equal(state.enhanceProvider, null, "must clear the abandoned draft's own enhance-provider info too (round 402), for the same reason");
   assert.deepEqual(state.selectedAnswers, {}, "must clear answers tied to the abandoned draft's own open questions");
   assert.equal(state.additionalRequest, "", "must clear the additional-request text tied to the abandoned draft");
   assert.equal(setDescriptionCalls, 0, "must never touch description -- the typed idea text should survive going back");
@@ -1279,6 +1411,7 @@ test("App's handleGoHome resets view/project/selectedAnswers/additionalRequest A
     view: string;
     project: Project | null;
     specProvider: string | null;
+    enhanceProvider: string | null;
     selectedAnswers: Record<string, string>;
     additionalRequest: string;
     activeEntity: string | null;
@@ -1289,6 +1422,7 @@ test("App's handleGoHome resets view/project/selectedAnswers/additionalRequest A
     view: "preview",
     project: makeProject([makeEntity("Customer")]),
     specProvider: "anthropic",
+    enhanceProvider: "anthropic",
     selectedAnswers: { "Which plan?": "Pro" },
     additionalRequest: "also add a discount field",
     activeEntity: "Customer",
@@ -1302,6 +1436,7 @@ test("App's handleGoHome resets view/project/selectedAnswers/additionalRequest A
     "setView",
     "setProject",
     "setSpecProvider",
+    "setEnhanceProvider",
     "setSelectedAnswers",
     "setAdditionalRequest",
     "setActiveEntity",
@@ -1314,6 +1449,7 @@ test("App's handleGoHome resets view/project/selectedAnswers/additionalRequest A
     (v: string) => (state.view = v),
     (p: Project | null) => (state.project = p),
     (v: string | null) => (state.specProvider = v),
+    (v: string | null) => (state.enhanceProvider = v),
     (a: Record<string, string>) => (state.selectedAnswers = a),
     (r: string) => (state.additionalRequest = r),
     (e: string | null) => (state.activeEntity = e),
@@ -1330,6 +1466,7 @@ test("App's handleGoHome resets view/project/selectedAnswers/additionalRequest A
   assert.equal(state.view, "home", "must navigate back to the home view from the live preview screen, not just spec review");
   assert.equal(state.project, null, "must clear the project being left behind");
   assert.equal(state.specProvider, null, "must clear the left-behind project's own spec-provider info");
+  assert.equal(state.enhanceProvider, null, "must clear the left-behind project's own enhance-provider info too (round 402)");
   assert.deepEqual(state.selectedAnswers, {}, "must clear answers tied to the left-behind project's own open questions");
   assert.equal(state.additionalRequest, "", "must clear the additional-request text tied to the left-behind project");
   assert.equal(state.activeEntity, null, "must clear the stale active entity tab, or the next project opened could render a blank preview pane");
