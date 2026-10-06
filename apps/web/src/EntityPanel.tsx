@@ -998,10 +998,16 @@ export function EntityPanel({
   }, [projectId, entity.name]);
 
   // Same reasoning as groupFieldName's own effect just above -- which
-  // groups are collapsed is scoped per project+entity too.
+  // groups are collapsed is scoped per project+entity+groupFieldName
+  // (also re-running whenever groupFieldName itself changes): groupRecordsByField's
+  // own group keys are field-independent (every boolean field's two groups
+  // are keyed by the literal strings "true"/"false"), so without
+  // groupFieldName in the key, switching "Group by" from one boolean field
+  // to another carried over the first field's collapsed set onto the
+  // second, silently hiding rows the person never chose to hide there.
   useEffect(() => {
-    setCollapsedGroups(new Set(getCollapsedGroups(projectId, entity.name)));
-  }, [projectId, entity.name]);
+    setCollapsedGroups(new Set(getCollapsedGroups(projectId, entity.name, groupFieldName)));
+  }, [projectId, entity.name, groupFieldName]);
 
   /** Toggles one group's collapsed state and persists the full updated set, mirroring handleFieldFilterChange's write-through-to-storage pattern. */
   function toggleGroupCollapsed(groupKey: string) {
@@ -1009,7 +1015,7 @@ export function EntityPanel({
       const next = new Set(prev);
       if (next.has(groupKey)) next.delete(groupKey);
       else next.add(groupKey);
-      setCollapsedGroupsPreference(projectId, entity.name, [...next]);
+      setCollapsedGroupsPreference(projectId, entity.name, groupFieldName, [...next]);
       return next;
     });
   }

@@ -4916,7 +4916,7 @@ test("EntityPanel's group-header toggle collapses and expands just that one grou
       fireEvent.click(wonToggle);
       await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 3);
       assert.deepEqual(
-        getCollapsedGroups("proj1", "Deal"),
+        getCollapsedGroups("proj1", "Deal", "status"),
         ["won"],
         "the collapsed group key must actually be persisted, not just held in memory",
       );
@@ -4931,6 +4931,77 @@ test("EntityPanel's group-header toggle collapses and expands just that one grou
         wonToggleAfterRemount.getAttribute("aria-expanded"),
         "false",
         "a fresh mount of the same project+entity must restore the persisted collapsed group, not reset to all-expanded",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
+ * Regression test for round 434's finding: collapsedGroupsPreference.ts
+ * scoped its persisted collapsed-group keys by project+entity only, not by
+ * which field the table was grouped by. groupRecordsByField's own group
+ * keys are field-independent -- every boolean field's two groups are keyed
+ * by the literal strings "true"/"false" -- so an entity with two or more
+ * boolean fields (very plausible for an AI-generated spec) leaked its
+ * collapsed state from one field onto another the moment "Group by"
+ * switched between them, hiding records the person never chose to hide
+ * under the newly-selected field at all.
+ */
+test("EntityPanel's collapsed-group state does not leak from one 'Group by' field to a different field with the same group keys", async () => {
+  await withJsdom(async () => {
+    const twoBooleanFieldsEntity: Entity = {
+      name: "Deal",
+      label: "Deal",
+      fields: [
+        { name: "name", label: "Name", type: "text", required: true },
+        { name: "completed", label: "Completed", type: "boolean", required: true },
+        { name: "urgent", label: "Urgent", type: "boolean", required: true },
+      ],
+    };
+    const store: EntityRecord[] = [
+      { id: 1, createdAt: "x", name: "Acme Corp", completed: true, urgent: false },
+      { id: 2, createdAt: "x", name: "Beta Inc", completed: false, urgent: true },
+    ];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = mockRecordsFetch(store) as typeof fetch;
+    try {
+      renderEntityPanel({ entity: twoBooleanFieldsEntity, allEntities: [twoBooleanFieldsEntity] });
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 2);
+
+      const groupBySelect = document.querySelector(".entity-group-by") as HTMLSelectElement;
+      fireEvent.change(groupBySelect, { target: { value: "completed" } });
+      await waitForCondition(() => document.querySelectorAll(".entity-group-header-row").length === 2);
+
+      // Collapse "completed"'s own "No" group (the literal key "false").
+      const completedHeaderRows = Array.from(document.querySelectorAll(".entity-group-header-row"));
+      const completedNoToggle = completedHeaderRows
+        .find((r) => r.textContent?.includes("No"))
+        ?.querySelector(".entity-group-toggle") as HTMLButtonElement;
+      assert.ok(completedNoToggle, "expected a 'No' group header under 'completed'");
+      fireEvent.click(completedNoToggle);
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 3);
+
+      // Switch "Group by" to "urgent" -- a DIFFERENT field the person never
+      // touched, but whose own "No" group shares the exact same key "false".
+      fireEvent.change(groupBySelect, { target: { value: "urgent" } });
+      await waitForCondition(() => document.querySelectorAll(".entity-group-header-row").length === 2);
+
+      const urgentHeaderRows = Array.from(document.querySelectorAll(".entity-group-header-row"));
+      const urgentNoToggle = urgentHeaderRows
+        .find((r) => r.textContent?.includes("No"))
+        ?.querySelector(".entity-group-toggle") as HTMLButtonElement;
+      assert.ok(urgentNoToggle, "expected a 'No' group header under 'urgent'");
+      assert.equal(
+        urgentNoToggle.getAttribute("aria-expanded"),
+        "true",
+        "switching 'Group by' to a different field must not carry over the first field's collapsed-group state",
+      );
+      assert.equal(
+        document.querySelectorAll("table tbody tr").length,
+        4,
+        "both of 'urgent''s groups (1 record each) plus their 2 headers must render fully expanded",
       );
     } finally {
       globalThis.fetch = originalFetch;

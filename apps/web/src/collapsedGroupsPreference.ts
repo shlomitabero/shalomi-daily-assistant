@@ -1,7 +1,7 @@
 const STORAGE_KEY = "forge.collapsedGroups";
 
-function keyFor(projectId: string, entityName: string): string {
-  return `${projectId}:${entityName}`;
+function keyFor(projectId: string, entityName: string, groupFieldName: string): string {
+  return `${projectId}:${entityName}:${groupFieldName}`;
 }
 
 function readStore(): Record<string, string[]> {
@@ -31,21 +31,29 @@ function writeStore(store: Record<string, string[]>): void {
 
 /**
  * Which group keys a person has collapsed in the grouped table view,
- * scoped per project+entity, mirroring fieldFiltersPreference.ts's own
- * keying. Previously there was no way to collapse a group at all -- a
+ * scoped per project+entity+groupFieldName, mirroring fieldFiltersPreference.ts's
+ * own keying. Previously there was no way to collapse a group at all -- a
  * grouped table with a large group (e.g. 50 "Done" records) always
  * rendered every one of its rows, defeating the point of grouping a
  * sizeable table to begin with.
+ *
+ * groupFieldName is part of the key (not just project+entity) because
+ * groupRecordsByField's own group keys are field-independent: every
+ * boolean field's two groups are keyed by the literal strings "true"/
+ * "false", and an enum field's groups are keyed by its raw enum values --
+ * so two boolean fields, or two enum fields sharing a value, would
+ * otherwise collapse each other's groups the moment "Group by" switched
+ * from one to the other.
  */
-export function getCollapsedGroups(projectId: string, entityName: string): string[] {
+export function getCollapsedGroups(projectId: string, entityName: string, groupFieldName: string): string[] {
   const store = readStore();
-  return [...(store[keyFor(projectId, entityName)] ?? [])];
+  return [...(store[keyFor(projectId, entityName, groupFieldName)] ?? [])];
 }
 
 /** Persists the entity's full updated set of collapsed group keys and returns it, so callers can update their own state from the return value instead of re-reading storage. */
-export function setCollapsedGroups(projectId: string, entityName: string, keys: string[]): string[] {
+export function setCollapsedGroups(projectId: string, entityName: string, groupFieldName: string, keys: string[]): string[] {
   const store = readStore();
-  const mapKey = keyFor(projectId, entityName);
+  const mapKey = keyFor(projectId, entityName, groupFieldName);
   const deduped = [...new Set(keys)];
   if (deduped.length === 0) delete store[mapKey];
   else store[mapKey] = deduped;

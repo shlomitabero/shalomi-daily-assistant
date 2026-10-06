@@ -67,7 +67,7 @@ test("purgeProjectPreferences removes exactly one project's entries from every p
     setFieldFilters("abc", entity, { status: "active" });
     setGroupByField("abc", entity, "status");
     setCollapsedBoardColumns("abc", entity, ["done"]);
-    setCollapsedGroups("abc", entity, ["pending"]);
+    setCollapsedGroups("abc", entity, "status", ["pending"]);
     setSortKeys("abc", entity, [{ field: "name", direction: "asc" }]);
     setViewMode("abc", entity, "board");
     addEntityRecentSearch("abc", entity, "dana");
@@ -87,7 +87,7 @@ test("purgeProjectPreferences removes exactly one project's entries from every p
     setFieldFilters("proj2", entity, { status: "closed" });
     setGroupByField("proj2", entity, "owner");
     setCollapsedBoardColumns("proj2", entity, ["archived"]);
-    setCollapsedGroups("proj2", entity, ["active"]);
+    setCollapsedGroups("proj2", entity, "owner", ["active"]);
     setSortKeys("proj2", entity, [{ field: "email", direction: "desc" }]);
     setViewMode("proj2", entity, "calendar");
     addEntityRecentSearch("proj2", entity, "yossi");
@@ -109,7 +109,7 @@ test("purgeProjectPreferences removes exactly one project's entries from every p
     setFieldFilters("abc-other", entity, { status: "other" });
     setGroupByField("abc-other", entity, "priority");
     setCollapsedBoardColumns("abc-other", entity, ["other"]);
-    setCollapsedGroups("abc-other", entity, ["other"]);
+    setCollapsedGroups("abc-other", entity, "priority", ["other"]);
     setSortKeys("abc-other", entity, [{ field: "status", direction: "asc" }]);
     setViewMode("abc-other", entity, "board");
     addEntityRecentSearch("abc-other", entity, "other search");
@@ -131,7 +131,7 @@ test("purgeProjectPreferences removes exactly one project's entries from every p
     assert.deepEqual(getFieldFilters("abc", entity), {}, "fieldFilters must be purged");
     assert.equal(getGroupByField("abc", entity), "", "groupBy must be purged");
     assert.deepEqual(getCollapsedBoardColumns("abc", entity), [], "collapsedBoardColumns must be purged");
-    assert.deepEqual(getCollapsedGroups("abc", entity), [], "collapsedGroups must be purged");
+    assert.deepEqual(getCollapsedGroups("abc", entity, "status"), [], "collapsedGroups must be purged");
     assert.deepEqual(getSortKeys("abc", entity), [], "sortKeys must be purged");
     assert.equal(getViewMode("abc", entity), "table", "viewMode must be purged");
     assert.deepEqual(getEntityRecentSearches("abc", entity), [], "entityRecentSearches must be purged");
@@ -151,7 +151,7 @@ test("purgeProjectPreferences removes exactly one project's entries from every p
     assert.deepEqual(getFieldFilters("proj2", entity), { status: "closed" }, "fieldFilters must survive");
     assert.equal(getGroupByField("proj2", entity), "owner", "groupBy must survive");
     assert.deepEqual(getCollapsedBoardColumns("proj2", entity), ["archived"], "collapsedBoardColumns must survive");
-    assert.deepEqual(getCollapsedGroups("proj2", entity), ["active"], "collapsedGroups must survive");
+    assert.deepEqual(getCollapsedGroups("proj2", entity, "owner"), ["active"], "collapsedGroups must survive");
     assert.deepEqual(getSortKeys("proj2", entity), [{ field: "email", direction: "desc" }], "sortKeys must survive");
     assert.equal(getViewMode("proj2", entity), "calendar", "viewMode must survive");
     assert.deepEqual(getEntityRecentSearches("proj2", entity), ["yossi"], "entityRecentSearches must survive");
@@ -174,7 +174,7 @@ test("purgeProjectPreferences removes exactly one project's entries from every p
     assert.deepEqual(getFieldFilters("abc-other", entity), { status: "other" }, "fieldFilters must survive for a prefix-sharing project id");
     assert.equal(getGroupByField("abc-other", entity), "priority", "groupBy must survive for a prefix-sharing project id");
     assert.deepEqual(getCollapsedBoardColumns("abc-other", entity), ["other"], "collapsedBoardColumns must survive for a prefix-sharing project id");
-    assert.deepEqual(getCollapsedGroups("abc-other", entity), ["other"], "collapsedGroups must survive for a prefix-sharing project id");
+    assert.deepEqual(getCollapsedGroups("abc-other", entity, "priority"), ["other"], "collapsedGroups must survive for a prefix-sharing project id");
     assert.deepEqual(getSortKeys("abc-other", entity), [{ field: "status", direction: "asc" }], "sortKeys must survive for a prefix-sharing project id");
     assert.equal(getViewMode("abc-other", entity), "board", "viewMode must survive for a prefix-sharing project id");
     assert.deepEqual(getEntityRecentSearches("abc-other", entity), ["other search"], "entityRecentSearches must survive for a prefix-sharing project id");
