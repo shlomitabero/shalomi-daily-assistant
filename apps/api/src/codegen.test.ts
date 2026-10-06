@@ -3309,6 +3309,29 @@ test("generateExportFiles includes a real render.yaml matching this repo's own p
   assert.match(readme, /render\.com/i);
 });
 
+// Round 442: the exported ZIP had no marker at all of when it was
+// generated, so a user who re-opens an old export folder months after
+// refining the live project further has no way to tell this downloaded
+// copy is stale relative to the live one -- see round 381's roadmap entry
+// ("export staleness marker"), left open for 61 rounds. generateExportFiles
+// now takes the generation time as an explicit (optional, defaulted)
+// parameter specifically so this is deterministically testable, rather
+// than asserting against whatever `new Date()` happens to return.
+test("generateExportFiles' README embeds the real export date, so the downloaded folder carries its own staleness marker", () => {
+  const exportedAt = new Date("2026-03-14T09:30:00.000Z");
+  const files = generateExportFiles(project, exportedAt);
+  const readme = files.find((f) => f.path === "README.md")!.content;
+  assert.match(readme, /Exported from Forge AI on \*\*2026-03-14\*\*/);
+  assert.match(readme, /re-export it to get those\s*\nlater changes/);
+
+  // A second export a day later must carry a different date -- proves the
+  // marker tracks real export time rather than being a hardcoded string.
+  const laterFiles = generateExportFiles(project, new Date("2026-03-15T09:30:00.000Z"));
+  const laterReadme = laterFiles.find((f) => f.path === "README.md")!.content;
+  assert.match(laterReadme, /Exported from Forge AI on \*\*2026-03-15\*\*/);
+  assert.notEqual(readme, laterReadme);
+});
+
 // Round 117/118 found and fixed the exact same untested boolean-CSV gap
 // in two other independent copies of this formatting logic
 // (apps/api/src/backup.ts and codegen.ts's own server-side

@@ -170,15 +170,18 @@ function renderPackageJson(project: Project): string {
   );
 }
 
-function renderReadme(project: Project): string {
+function renderReadme(project: Project, exportedAt: Date): string {
   const entityList = project.spec.entities
     .map((e) => `- **${e.label ?? e.name}** (\`${e.name}\`) — \`web/src/entities/${e.name}.jsx\``)
     .join("\n");
   return `# ${project.name}
 
-Exported from Forge AI. This is a complete, standalone application —
-running it never talks back to Forge AI, and there is nothing else to
-install beyond what's in \`package.json\`.
+Exported from Forge AI on **${exportedAt.toISOString().slice(0, 10)}**. This
+is a complete, standalone application — running it never talks back to
+Forge AI, and there is nothing else to install beyond what's in
+\`package.json\`. This is a snapshot taken at export time: if you keep
+refining the live project in Forge AI afterward, re-export it to get those
+later changes -- this folder does not update itself.
 
 ## What this is
 
@@ -4894,7 +4897,7 @@ nav button.active .tab-count { background: rgba(255, 255, 255, 0.25); color: inh
 `;
 }
 
-export function generateExportFiles(project: Project): { path: string; content: string }[] {
+export function generateExportFiles(project: Project, exportedAt: Date = new Date()): { path: string; content: string }[] {
   for (const entity of project.spec.entities) {
     assertSafe(entity.name, "entity");
     for (const field of entity.fields) {
@@ -4909,7 +4912,7 @@ export function generateExportFiles(project: Project): { path: string; content: 
 
   return [
     { path: "package.json", content: renderPackageJson(project) },
-    { path: "README.md", content: renderReadme(project) },
+    { path: "README.md", content: renderReadme(project, exportedAt) },
     { path: "render.yaml", content: renderRenderYaml(project) },
     { path: "vite.config.js", content: renderViteConfig() },
     { path: "server.js", content: renderServerJs(project) },
