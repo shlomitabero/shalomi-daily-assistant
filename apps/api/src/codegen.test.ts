@@ -9,7 +9,7 @@ import { transformSync } from "esbuild";
 import { JSDOM } from "jsdom";
 import React from "react";
 import { act, cleanup, fireEvent, render } from "@testing-library/react";
-import type { Project } from "@forge/shared";
+import type { Entity, Project } from "@forge/shared";
 import { generateExportFiles } from "./codegen.js";
 
 const project: Project = {
@@ -6430,6 +6430,117 @@ test("the exported EntityView's collapsed-group state does not leak from one 'Gr
         "both of 'urgent''s groups (1 record each) plus their 2 headers must render fully expanded",
       );
       view.unmount();
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    cleanup();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
+ * New in this round (438): a self-referencing relation field (e.g. a
+ * Category's own "parent category") is schema-legal -- nothing requires
+ * relationTo to differ from the field's own entity -- but the exported
+ * app's own refresh() (this file's hand-duplicated mirror of the live
+ * preview's EntityPanel.tsx) only ever updated `records`, never
+ * `relatedRecords[entity.name]`. For a relation to a *different* entity
+ * this is invisible (creating a record there means switching tabs, which
+ * remounts the component and refetches everything fresh), but a self-
+ * relation has no such remount: a newly created same-entity record stayed
+ * silently missing from every relation picker pointing back at this same
+ * entity. Mirrors the live preview's own fix for the identical gap.
+ */
+test("the exported EntityView's self-referencing relation field picker includes a record created after the panel first loaded", async () => {
+  const categoryEntity: Entity = {
+    name: "Category",
+    label: "Category",
+    fields: [
+      { name: "name", label: "Name", type: "text", required: true },
+      { name: "parentCategoryId", label: "Parent Category", type: "relation", relationTo: "Category", required: false },
+    ],
+  };
+  const categoryProject: Project = {
+    ...project,
+    spec: { ...project.spec, entities: [categoryEntity] },
+  };
+  const files = generateExportFiles(categoryProject);
+  const dir = writeGeneratedWebComponent(files);
+  const originalFetch = globalThis.fetch;
+  const store: { id: number; name: string; parentCategoryId: number | null }[] = [
+    { id: 1, name: "Electronics", parentCategoryId: null },
+  ];
+  let nextId = 2;
+  globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
+    const method = init?.method ?? "GET";
+    if (input === "/api/Category") {
+      if (method === "GET") {
+        return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      if (method === "POST") {
+        const record = { id: nextId++, ...JSON.parse(init!.body as string) };
+        store.push(record);
+        return new Response(JSON.stringify({ record }), { status: 201, headers: { "content-type": "application/json" } });
+      }
+    }
+    throw new Error(`unexpected request ${method} ${input}`);
+  }) as typeof fetch;
+
+  try {
+    await withRealLocalStorage(async () => {
+      const { EntityView } = await import(path.join(dir, "web", "src", "components", "EntityView.jsx"));
+      const props = {
+        entity: categoryEntity,
+        highlightRecordId: null,
+        onHighlightHandled: () => {},
+        onJumpToRecord: () => {},
+        onRecordCountChange: () => {},
+      };
+
+      const { container } = render(React.createElement(EntityView, props));
+      for (let i = 0; i < 40; i++) {
+        if (container.querySelectorAll("tbody tr").length === 1) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+
+      const nameInput = container.querySelector('.record-form input[type="text"]') as HTMLInputElement;
+      const submitButton = container.querySelector(".record-form button[type=submit]") as HTMLButtonElement;
+      await act(async () => {
+        fireEvent.change(nameInput, { target: { value: "Office Supplies" } });
+        fireEvent.click(submitButton);
+      });
+      for (let i = 0; i < 40; i++) {
+        if (container.querySelectorAll("tbody tr").length === 2) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+      assert.equal(container.querySelectorAll("tbody tr").length, 2, "expected the newly created category to appear in the table");
+
+      const electronicsRow = Array.from(container.querySelectorAll("tbody tr")).find((r) =>
+        /Electronics/.test(r.textContent ?? ""),
+      ) as HTMLElement;
+      const editButton = electronicsRow.querySelector(".row-actions button") as HTMLButtonElement;
+      await act(async () => {
+        fireEvent.click(editButton);
+      });
+
+      const parentSelect = container.querySelector(".record-form select") as HTMLSelectElement;
+      assert.ok(parentSelect, "expected the self-relation field to render as a real <select>");
+      for (let i = 0; i < 40; i++) {
+        if (Array.from(parentSelect.options).some((o) => o.textContent === "Office Supplies")) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+
+      const optionLabels = Array.from(parentSelect.options).map((o) => o.textContent);
+      assert.ok(
+        optionLabels.includes("Office Supplies"),
+        `expected the just-created "Office Supplies" category to be a selectable parent, got options: ${optionLabels.join(", ")}`,
+      );
     });
   } finally {
     globalThis.fetch = originalFetch;

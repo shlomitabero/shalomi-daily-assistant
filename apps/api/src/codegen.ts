@@ -2509,7 +2509,19 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
       const { records } = await listRecords(entity.name);
       if (refreshRequestId.current !== requestId) return;
       const pendingIds = new Set(pendingDeleteRef.current?.entries.map((e) => e.id) ?? []);
-      setRecords(pendingIds.size === 0 ? records : records.filter((r) => !pendingIds.has(r.id)));
+      const visible = pendingIds.size === 0 ? records : records.filter((r) => !pendingIds.has(r.id));
+      setRecords(visible);
+      // A self-referencing relation field (e.g. Category.parentCategoryId ->
+      // Category) makes this entity its own relation target. Without this,
+      // relatedRecords[entity.name] would only ever be populated once by
+      // the loadRelated effect above and never kept in sync with a record
+      // this very refresh() just created/edited -- silently hiding a
+      // newly-created record from every relation picker pointing back at
+      // this same entity. Mirrors the live Forge AI preview's own
+      // EntityPanel.tsx fix for the identical gap.
+      if (relationTargets.includes(entity.name)) {
+        setRelatedRecords((prev) => ({ ...prev, [entity.name]: visible }));
+      }
     } catch (err) {
       if (refreshRequestId.current !== requestId) return;
       setLoadError(err.message);

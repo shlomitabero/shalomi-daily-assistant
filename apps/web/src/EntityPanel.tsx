@@ -939,7 +939,22 @@ export function EntityPanel({
       const { records } = await listRecords(projectId, entity.name);
       if (refreshRequestId.current !== requestId) return;
       const pendingIds = new Set(pendingDeleteRef.current?.entries.map((e) => e.id) ?? []);
-      setRecords(pendingIds.size === 0 ? records : records.filter((r) => !pendingIds.has(r.id as number)));
+      const visible = pendingIds.size === 0 ? records : records.filter((r) => !pendingIds.has(r.id as number));
+      setRecords(visible);
+      // A self-referencing relation field (e.g. Category.parentCategoryId ->
+      // Category, Employee.managerId -> Employee -- schema-legal, see
+      // FieldSchema's own relation refine) makes this entity its own
+      // relation target. relatedRecords[entity.name] is otherwise only ever
+      // populated once, by the loadRelated effect above, and never kept in
+      // sync with a record this very refresh() just created/edited --
+      // silently hiding a newly-created record from every relation picker
+      // (and display label) pointing back at this same entity until a full
+      // remount. A relation to a *different* entity doesn't need this: the
+      // only way to create a record there is switching to its own tab,
+      // which remounts this component and refetches everything fresh.
+      if (relationTargets.includes(entity.name)) {
+        setRelatedRecords((prev) => ({ ...prev, [entity.name]: visible }));
+      }
     } catch (err) {
       if (refreshRequestId.current !== requestId) return;
       setLoadError((err as Error).message);

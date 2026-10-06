@@ -4645,6 +4645,84 @@ test("EntityPanel never opens an inline editor for a relation field's cell", asy
 });
 
 /**
+ * New in this round: a *self-referencing* relation field (e.g. a Category's
+ * own "parent category", an Employee's own "manager") is schema-legal --
+ * FieldSchema only requires relationTo to be declared, never that it differ
+ * from the field's own entity -- but relatedRecords (the snapshot every
+ * relation-field <select> and display label is rendered from) is loaded
+ * once by its own effect, keyed on [projectId, relationTargets], and never
+ * refreshed by refresh() itself (the function every create/edit/duplicate/
+ * bulk-update/CSV-import/board-move/inline-edit handler calls). For a
+ * relation pointing at a *different* entity this is invisible in practice,
+ * since creating a record there means switching to that entity's own tab,
+ * which remounts this component (key={entity.name} in App.tsx) and
+ * refetches everything fresh. A self-relation has no such tab switch --
+ * creating a new same-entity record leaves relatedRecords[entity.name]
+ * stale, so the new record is silently missing from every relation picker
+ * (and would render as a bare "#<id>" fallback once picked) until a full
+ * remount. Confirms creating a new Category and then opening another
+ * Category's edit form offers the freshly created one in its "Parent
+ * Category" dropdown.
+ */
+test("EntityPanel's self-referencing relation field picker includes a record created after the panel first loaded", async () => {
+  await withJsdom(async () => {
+    const categoryEntity: Entity = {
+      name: "Category",
+      label: "Category",
+      fields: [
+        { name: "name", label: "Name", type: "text", required: true },
+        { name: "parentCategoryId", label: "Parent Category", type: "relation", relationTo: "Category", required: false },
+      ],
+    };
+    const store: EntityRecord[] = [{ id: 1, createdAt: "x", name: "Electronics", parentCategoryId: null }];
+    let nextId = 2;
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      const method = init?.method ?? "GET";
+      if (input === "/api/projects/proj1/entities/Category") {
+        if (method === "GET") {
+          return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
+        }
+        if (method === "POST") {
+          const record = { id: nextId++, createdAt: "x", ...JSON.parse(init!.body as string) };
+          store.push(record);
+          return new Response(JSON.stringify({ record }), { status: 201, headers: { "content-type": "application/json" } });
+        }
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+    try {
+      renderEntityPanel({ entity: categoryEntity, allEntities: [categoryEntity] });
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 1);
+
+      const nameInput = document.querySelector('.record-form input[type="text"]') as HTMLInputElement;
+      const submitButton = document.querySelector(".record-form button[type=submit]") as HTMLButtonElement;
+      fireEvent.change(nameInput, { target: { value: "Office Supplies" } });
+      fireEvent.click(submitButton);
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 2);
+
+      const electronicsRow = Array.from(document.querySelectorAll("table tbody tr")).find((r) =>
+        /Electronics/.test(r.textContent ?? ""),
+      ) as HTMLElement;
+      const editButton = electronicsRow.querySelector(".row-actions button") as HTMLButtonElement;
+      fireEvent.click(editButton);
+
+      const parentSelect = document.querySelector(".record-form select") as HTMLSelectElement;
+      assert.ok(parentSelect, "expected the self-relation field to render as a <select>");
+      await waitForCondition(() => Array.from(parentSelect.options).some((o) => o.textContent === "Office Supplies"));
+
+      const optionLabels = Array.from(parentSelect.options).map((o) => o.textContent);
+      assert.ok(
+        optionLabels.includes("Office Supplies"),
+        `expected the just-created "Office Supplies" category to be a selectable parent, got options: ${optionLabels.join(", ")}`,
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * New in this round: clicking a relation cell's resolved label now jumps
  * straight to the related record on its own entity's tab, via the same
  * onJumpToRecord callback App.tsx already wires up for Global Search,
