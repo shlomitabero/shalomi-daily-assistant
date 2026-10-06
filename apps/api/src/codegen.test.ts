@@ -1,0 +1,7420 @@
+import "./jsdomWarmup.js";
+import assert from "node:assert/strict";
+import { execFileSync, spawn } from "node:child_process";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import { test } from "node:test";
+import { transformSync } from "esbuild";
+import { JSDOM } from "jsdom";
+import React from "react";
+import { act, cleanup, fireEvent, render } from "@testing-library/react";
+import type { Project } from "@forge/shared";
+import { generateExportFiles } from "./codegen.js";
+
+const project: Project = {
+  id: "proj1",
+  ownerId: "user1",
+  name: "Beauty Clinic Manager",
+  description: "Appointment management for a beauty clinic.",
+  status: "built",
+  createdAt: new Date().toISOString(),
+  spec: {
+    summary: "test",
+    personas: [],
+    roles: ["Admin"],
+    screens: [],
+    assumptions: [],
+    openQuestions: [],
+    entities: [
+      {
+        name: "Customer",
+        label: "לקוחות",
+        fields: [
+          { name: "name", label: "שם", type: "text", required: true },
+          {
+            name: "status",
+            label: "סטטוס",
+            type: "enum",
+            required: true,
+            enumValues: ["New", "Won"],
+            enumLabels: { New: "חדש", Won: "הצליח" },
+          },
+        ],
+      },
+      {
+        name: "Service",
+        label: "שירותים",
+        fields: [{ name: "title", label: "כותרת", type: "text", required: true }],
+      },
+    ],
+  },
+};
+
+test("generateExportFiles produces a real multi-file React (Vite) + Express project", () => {
+  const files = generateExportFiles(project);
+  const paths = files.map((f) => f.path).sort();
+  assert.deepEqual(paths, [
+    ".gitignore",
+    "README.md",
+    "package.json",
+    "render.yaml",
+    "server.js",
+    "vite.config.js",
+    "web/index.html",
+    "web/public/icon.svg",
+    "web/public/manifest.json",
+    "web/public/sw.js",
+    "web/src/App.jsx",
+    "web/src/api.js",
+    "web/src/components/EntityView.jsx",
+    "web/src/components/GlobalSearch.jsx",
+    "web/src/entities/Customer.jsx",
+    "web/src/entities/Service.jsx",
+    "web/src/main.jsx",
+    "web/src/styles.css",
+    "web/src/theme.js",
+  ]);
+});
+
+test("generated package.json is valid JSON with express + react + vite, and start builds before serving", () => {
+  const files = generateExportFiles(project);
+  const pkg = JSON.parse(files.find((f) => f.path === "package.json")!.content);
+  assert.equal(pkg.private, true);
+  assert.ok(pkg.dependencies.express);
+  assert.ok(pkg.dependencies.react);
+  assert.ok(pkg.dependencies["react-dom"]);
+  assert.ok(pkg.devDependencies.vite);
+  assert.ok(pkg.devDependencies["@vitejs/plugin-react"]);
+  // The one-command "npm install && npm start" promise from ADR 0003 still
+  // holds even though there's now a real build step: start builds first.
+  assert.equal(pkg.scripts.start, "vite build && node server.js");
+});
+
+test("generated server.js is syntactically valid JavaScript and serves dist/, not public/", () => {
+  const files = generateExportFiles(project);
+  const serverJs = files.find((f) => f.path === "server.js")!.content;
+  assert.match(serverJs, /express\.static\(path\.join\(__dirname, "dist"\)\)/);
+  const dir = mkdtempSync(path.join(tmpdir(), "codegen-test-"));
+  const filePath = path.join(dir, "server.js");
+  writeFileSync(filePath, serverJs);
+  try {
+    // --check parses without executing -- catches template-string/syntax bugs
+    // in the generated source without needing a real server or dependencies.
+    execFileSync(process.execPath, ["--check", filePath], { stdio: "pipe" });
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("generated server.js embeds the entity metadata with names and labels intact", () => {
+  const files = generateExportFiles(project);
+  const serverJs = files.find((f) => f.path === "server.js")!.content;
+  assert.match(serverJs, /"name": "Customer"/);
+  assert.match(serverJs, /"label": "לקוחות"/);
+  assert.match(serverJs, /"New": "חדש"/);
+});
+
+// Regression test: "Order" (a real Forge AI domain entity, see
+// domainEntities.ts) is a reserved SQL keyword. Before every table/column
+// name in the generated server.js was double-quoted, `CREATE TABLE Order
+// (...)` crashed the whole exported app at startup with a SQL syntax
+// error -- caught not by the syntax-only checks above (esbuild/node --check
+// both parse fine; this is a *runtime* SQL error) but by actually
+// downloading, unzipping, npm-installing, and running a real export with an
+// Order entity. This test reproduces that with a real child process and a
+// real SQLite database, standing in for that manual check going forward.
+test("generated server.js works end-to-end for an entity named after a reserved SQL keyword (e.g. Order)", async () => {
+  const keywordProject: Project = {
+    ...project,
+    spec: {
+      ...project.spec,
+      entities: [
+        {
+          name: "Order",
+          label: "Orders",
+          fields: [
+            { name: "customerName", label: "Customer", type: "text", required: true },
+            { name: "group", label: "Group", type: "text", required: false }, // a column name that's also a keyword
+          ],
+        },
+      ],
+    },
+  };
+  const files = generateExportFiles(keywordProject);
+  const serverJs = files.find((f) => f.path === "server.js")!.content;
+
+  const dir = mkdtempSync(path.join(tmpdir(), "codegen-keyword-test-"));
+  // The generated server.js imports "express" as a bare ESM specifier, which
+  // (unlike CommonJS require) ignores NODE_PATH -- symlink this repo's
+  // hoisted node_modules in instead of a slow real `npm install`.
+  const repoRoot = path.resolve(import.meta.dirname, "../../..");
+  symlinkSync(path.join(repoRoot, "node_modules"), path.join(dir, "node_modules"));
+  writeFileSync(path.join(dir, "server.js"), serverJs);
+
+  const port = 34000 + Math.floor(Math.random() * 5000);
+  const child = spawn(process.execPath, ["--experimental-sqlite", "server.js"], {
+    cwd: dir,
+    env: { ...process.env, PORT: String(port) },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  let stderr = "";
+  child.stderr.on("data", (chunk) => {
+    stderr += chunk.toString();
+  });
+
+  try {
+    // Poll for the server to come up (or crash) instead of a fixed sleep.
+    const deadline = Date.now() + 5000;
+    let lastErr: unknown;
+    while (Date.now() < deadline) {
+      if (child.exitCode !== null) {
+        throw new Error(`server.js exited early (code ${child.exitCode}):\n${stderr}`);
+      }
+      try {
+        const res = await fetch(`http://localhost:${port}/api/Order`);
+        assert.equal(res.status, 200);
+        const body = await res.json();
+        assert.deepEqual(body, { records: [] });
+
+        // Also exercise the keyword column name end-to-end (create + read).
+        const createRes = await fetch(`http://localhost:${port}/api/Order`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ customerName: "Dana", group: "VIP" }),
+        });
+        assert.equal(createRes.status, 201);
+        const created = await createRes.json();
+        assert.equal(created.record.group, "VIP");
+        return;
+      } catch (err) {
+        lastErr = err;
+        await new Promise((r) => setTimeout(r, 100));
+      }
+    }
+    throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
+  } finally {
+    child.kill();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+// Regression test: the exported standalone app's own coerce() function
+// (a separate copy of packages/db/src/repository.ts's coerceValue, since
+// this app has no dependency on Forge AI at runtime) validated every
+// structured field type except "date", the same gap round 62 found and
+// fixed in repository.ts -- a date field silently accepted any string at
+// all and stored it verbatim. Reproduced here against a real generated,
+// spawned server (not just the coerce() source text) so a future edit to
+// this template can't reintroduce the gap without this test catching it.
+test("generated server.js rejects a date field value that isn't a real, well-formed calendar date", async () => {
+  const dateProject: Project = {
+    ...project,
+    spec: {
+      ...project.spec,
+      entities: [
+        {
+          name: "Appointment",
+          fields: [
+            { name: "customerName", type: "text", required: true },
+            { name: "date", type: "date", required: true },
+          ],
+        },
+      ],
+    },
+  };
+  const files = generateExportFiles(dateProject);
+  const serverJs = files.find((f) => f.path === "server.js")!.content;
+
+  const dir = mkdtempSync(path.join(tmpdir(), "codegen-date-test-"));
+  const repoRoot = path.resolve(import.meta.dirname, "../../..");
+  symlinkSync(path.join(repoRoot, "node_modules"), path.join(dir, "node_modules"));
+  writeFileSync(path.join(dir, "server.js"), serverJs);
+
+  const port = 44000 + Math.floor(Math.random() * 5000);
+  const child = spawn(process.execPath, ["--experimental-sqlite", "server.js"], {
+    cwd: dir,
+    env: { ...process.env, PORT: String(port) },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  let stderr = "";
+  child.stderr.on("data", (chunk) => {
+    stderr += chunk.toString();
+  });
+
+  try {
+    const deadline = Date.now() + 5000;
+    let lastErr: unknown;
+    while (Date.now() < deadline) {
+      if (child.exitCode !== null) {
+        throw new Error(`server.js exited early (code ${child.exitCode}):\n${stderr}`);
+      }
+      try {
+        await fetch(`http://localhost:${port}/api/entities`);
+        break;
+      } catch (err) {
+        lastErr = err;
+        await new Promise((r) => setTimeout(r, 100));
+      }
+    }
+    if (child.exitCode !== null) throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
+
+    const validRes = await fetch(`http://localhost:${port}/api/Appointment`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ customerName: "Dana", date: "2026-05-20" }),
+    });
+    assert.equal(validRes.status, 201);
+    const valid = await validRes.json();
+    assert.equal(valid.record.date, "2026-05-20");
+
+    for (const bad of ["not-a-real-date-at-all", "2024/01/15", "2024-13-45", "2024-02-30"]) {
+      const badRes = await fetch(`http://localhost:${port}/api/Appointment`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ customerName: "Dana", date: bad }),
+      });
+      assert.equal(badRes.status, 400, `expected "${bad}" to be rejected as an invalid date`);
+    }
+  } finally {
+    child.kill();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
+ * Regression test: the exported standalone app's own coerce() -- same
+ * copy-pasted logic as packages/db/src/repository.ts's coerceValue, round
+ * 408 found and fixed in both places -- only checked a value against the
+ * literal empty string `""`, not a whitespace-only one. `Number(" ")` is a
+ * genuine JS quirk: `0`, not `NaN`. So a required "number" field given a
+ * single space as its value skipped the required check entirely and
+ * silently stored a real `0`, instead of being rejected the same way an
+ * actually-empty value already is. Reproduced here against a real spawned
+ * server, the same standard the date-field and foreign-key tests above
+ * already use for this exact function.
+ */
+test("generated server.js rejects a whitespace-only value for a required number field instead of silently storing it as 0", async () => {
+  const numberProject: Project = {
+    ...project,
+    spec: {
+      ...project.spec,
+      entities: [
+        {
+          name: "Invoice",
+          fields: [
+            { name: "label", type: "text", required: true },
+            { name: "amount", type: "number", required: true },
+          ],
+        },
+      ],
+    },
+  };
+  const files = generateExportFiles(numberProject);
+  const serverJs = files.find((f) => f.path === "server.js")!.content;
+
+  const dir = mkdtempSync(path.join(tmpdir(), "codegen-whitespace-test-"));
+  const repoRoot = path.resolve(import.meta.dirname, "../../..");
+  symlinkSync(path.join(repoRoot, "node_modules"), path.join(dir, "node_modules"));
+  writeFileSync(path.join(dir, "server.js"), serverJs);
+
+  const port = 44000 + Math.floor(Math.random() * 5000);
+  const child = spawn(process.execPath, ["--experimental-sqlite", "server.js"], {
+    cwd: dir,
+    env: { ...process.env, PORT: String(port) },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  let stderr = "";
+  child.stderr.on("data", (chunk) => {
+    stderr += chunk.toString();
+  });
+
+  try {
+    const deadline = Date.now() + 5000;
+    let lastErr: unknown;
+    while (Date.now() < deadline) {
+      if (child.exitCode !== null) {
+        throw new Error(`server.js exited early (code ${child.exitCode}):\n${stderr}`);
+      }
+      try {
+        await fetch(`http://localhost:${port}/api/entities`);
+        break;
+      } catch (err) {
+        lastErr = err;
+        await new Promise((r) => setTimeout(r, 100));
+      }
+    }
+    if (child.exitCode !== null) throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
+
+    const whitespaceRes = await fetch(`http://localhost:${port}/api/Invoice`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ label: "Rent", amount: " " }),
+    });
+    assert.equal(whitespaceRes.status, 400, "a whitespace-only value for a required number field must be rejected, not silently coerced to 0");
+
+    const validRes = await fetch(`http://localhost:${port}/api/Invoice`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ label: "Rent", amount: 500 }),
+    });
+    assert.equal(validRes.status, 201);
+    const valid = await validRes.json();
+    assert.equal(valid.record.amount, 500);
+  } finally {
+    child.kill();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
+ * New in this round: the exported standalone app's own server.js never
+ * enabled PRAGMA foreign_keys and never emitted a REFERENCES clause for a
+ * relation field, unlike the live Forge AI backend's connection.ts +
+ * migrate.ts (round 108-ish). The real-world effect: deleting a Courier
+ * that an Order still points at via `courierId` silently succeeded in the
+ * exported app, leaving every such Order's relation cell pointing at a
+ * now-deleted row forever (relationDisplayLabel degrades that to a bare
+ * "#<id>" with no indication anything went wrong) -- a real, silent
+ * data-integrity break, the opposite failure mode from "the delete throws
+ * and gets swallowed": here nothing ever throws at all. Reproduced here
+ * against a real spawned server (not just regex on the generated source),
+ * the same standard the keyword/date-field tests above already use.
+ */
+test("generated server.js actually enforces foreign keys: deleting a record another record still references via a relation field is blocked with a real 409, not silently allowed", async () => {
+  const relationProject: Project = {
+    ...project,
+    spec: {
+      ...project.spec,
+      entities: [
+        { name: "Courier", fields: [{ name: "name", type: "text", required: true }] },
+        {
+          name: "Order",
+          fields: [
+            { name: "item", type: "text", required: true },
+            { name: "courierId", type: "relation", required: false, relationTo: "Courier" },
+          ],
+        },
+      ],
+    },
+  };
+  const files = generateExportFiles(relationProject);
+  const serverJs = files.find((f) => f.path === "server.js")!.content;
+  assert.match(serverJs, /db\.exec\("PRAGMA foreign_keys = ON;"\);/);
+  assert.match(
+    serverJs,
+    /const references = field\.type === "relation" && field\.relationTo \? ` REFERENCES \$\{q\(field\.relationTo\)\}\(id\)` : "";\n {4}columns\.push\(`\$\{q\(field\.name\)\} \$\{sqlType\(field\.type\)\}\$\{field\.required \? " NOT NULL" : ""\}\$\{references\}`\);/,
+  );
+
+  const dir = mkdtempSync(path.join(tmpdir(), "codegen-fk-test-"));
+  const repoRoot = path.resolve(import.meta.dirname, "../../..");
+  symlinkSync(path.join(repoRoot, "node_modules"), path.join(dir, "node_modules"));
+  writeFileSync(path.join(dir, "server.js"), serverJs);
+
+  const port = 54000 + Math.floor(Math.random() * 5000);
+  const child = spawn(process.execPath, ["--experimental-sqlite", "server.js"], {
+    cwd: dir,
+    env: { ...process.env, PORT: String(port) },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  let stderr = "";
+  child.stderr.on("data", (chunk) => {
+    stderr += chunk.toString();
+  });
+
+  try {
+    const deadline = Date.now() + 5000;
+    let lastErr: unknown;
+    while (Date.now() < deadline) {
+      if (child.exitCode !== null) throw new Error(`server.js exited early (code ${child.exitCode}):\n${stderr}`);
+      try {
+        await fetch(`http://localhost:${port}/api/entities`);
+        break;
+      } catch (err) {
+        lastErr = err;
+        await new Promise((r) => setTimeout(r, 100));
+      }
+    }
+    if (child.exitCode !== null) throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
+
+    const courierRes = await fetch(`http://localhost:${port}/api/Courier`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ name: "Bob" }),
+    });
+    assert.equal(courierRes.status, 201);
+    const courier = (await courierRes.json()).record;
+
+    const orderRes = await fetch(`http://localhost:${port}/api/Order`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ item: "Package", courierId: courier.id }),
+    });
+    assert.equal(orderRes.status, 201);
+
+    // The real proof: deleting the still-referenced Courier must be blocked
+    // with a clean, actionable 409 -- not a generic 500, and definitely not
+    // a silent 204 that leaves the Order's courierId dangling.
+    const deleteRes = await fetch(`http://localhost:${port}/api/Courier/${courier.id}`, { method: "DELETE" });
+    assert.equal(deleteRes.status, 409);
+    const deleteBody = await deleteRes.json();
+    assert.match(deleteBody.error, /still references it/);
+
+    // And the real proof the row genuinely survived the blocked delete.
+    const stillThereRes = await fetch(`http://localhost:${port}/api/Courier`);
+    const stillThere = (await stillThereRes.json()).records;
+    assert.equal(stillThere.length, 1, "the referenced Courier must still exist after the blocked delete");
+
+    // A Courier nothing references must still delete normally -- the fix
+    // must not have broken the ordinary, unreferenced-record case.
+    const secondCourierRes = await fetch(`http://localhost:${port}/api/Courier`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ name: "Ana" }),
+    });
+    const secondCourier = (await secondCourierRes.json()).record;
+    const okDeleteRes = await fetch(`http://localhost:${port}/api/Courier/${secondCourier.id}`, { method: "DELETE" });
+    assert.equal(okDeleteRes.status, 204, "an unreferenced record must still delete normally");
+  } finally {
+    child.kill();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
+ * Regression test for a sibling of round 311's FK bug, found by round 313's
+ * Explore survey in the live Forge AI backend's own repository.ts and
+ * ported here for consistency: the generated PATCH route re-validated
+ * EVERY field against the entity's current definition on every update
+ * (`{ ...existing, ...req.body }` then coerce() on every field), not just
+ * the field(s) actually being changed. In the live backend that's reachable
+ * via a refine that narrows an enum after records already exist; the
+ * exported app's own schema is frozen after export so that specific path
+ * can't occur here -- but a row can still end up holding a value outside
+ * its own field's declared enumValues if someone edits data.sqlite
+ * directly (the generated README explicitly invites this: "yours: read it,
+ * edit it, deploy it anywhere Node runs"), or restores an older backup.
+ * Before this fix, updating any OTHER field on such a row would fail with
+ * a confusing "Field status must be one of: ..." error even though status
+ * was never touched.
+ */
+test("generated server.js's PATCH route only validates fields actually present in the request body, not every field's already-stored value", async () => {
+  const files = generateExportFiles(project);
+  const serverJs = files.find((f) => f.path === "server.js")!.content;
+
+  const dir = mkdtempSync(path.join(tmpdir(), "codegen-partial-patch-test-"));
+  const repoRoot = path.resolve(import.meta.dirname, "../../..");
+  symlinkSync(path.join(repoRoot, "node_modules"), path.join(dir, "node_modules"));
+  writeFileSync(path.join(dir, "server.js"), serverJs);
+
+  const port = 59000 + Math.floor(Math.random() * 5000);
+  const child = spawn(process.execPath, ["--experimental-sqlite", "server.js"], {
+    cwd: dir,
+    env: { ...process.env, PORT: String(port) },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  let stderr = "";
+  child.stderr.on("data", (chunk) => {
+    stderr += chunk.toString();
+  });
+
+  try {
+    const deadline = Date.now() + 5000;
+    let lastErr: unknown;
+    while (Date.now() < deadline) {
+      if (child.exitCode !== null) throw new Error(`server.js exited early (code ${child.exitCode}):\n${stderr}`);
+      try {
+        await fetch(`http://localhost:${port}/api/entities`);
+        break;
+      } catch (err) {
+        lastErr = err;
+        await new Promise((r) => setTimeout(r, 100));
+      }
+    }
+    if (child.exitCode !== null) throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
+
+    const createRes = await fetch(`http://localhost:${port}/api/Customer`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ name: "Alice", status: "New" }),
+    });
+    assert.equal(createRes.status, 201);
+    const customer = (await createRes.json()).record;
+
+    // Simulate a hand-edited (or restored-from-an-older-backup) row holding
+    // a value this field's current enumValues no longer allows -- a second
+    // real sqlite connection, writing directly while the server is idle,
+    // the same real-world action the generated README itself invites.
+    const { DatabaseSync } = await import("node:sqlite");
+    const directDb = new DatabaseSync(path.join(dir, "data.sqlite"));
+    directDb.prepare(`UPDATE "Customer" SET status = ? WHERE id = ?`).run("Stale", customer.id);
+    directDb.close();
+
+    // Updating a completely different field (name) must succeed, not throw
+    // "Field status must be one of: New, Won" -- status was never touched.
+    const patchRes = await fetch(`http://localhost:${port}/api/Customer/${customer.id}`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ name: "Alice Cohen" }),
+    });
+    assert.equal(patchRes.status, 200, "updating an unrelated field must not fail because of a different, untouched field's stale value");
+    const patched = (await patchRes.json()).record;
+    assert.equal(patched.name, "Alice Cohen");
+    assert.equal(patched.status, "Stale", "the untouched field must keep its stored value exactly as-is, not be reset or dropped");
+
+    // Explicitly setting the field to an invalid value must still be
+    // rejected -- the fix must not weaken validation of a field actually
+    // touched by the request.
+    const badPatchRes = await fetch(`http://localhost:${port}/api/Customer/${customer.id}`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ status: "AlsoStale" }),
+    });
+    assert.equal(badPatchRes.status, 400);
+  } finally {
+    child.kill();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
+ * Regression test, same "real generated code via new Function" standard as
+ * the existing handleBulkDelete test in this file: commitPendingDelete used
+ * to be a bare `.catch(() => {})`, silently discarding a failed deferred
+ * delete -- the row stayed gone from view with no error shown at all. It
+ * must now restore the row and surface the real error, exactly like
+ * handleUndoDelete does for a user-initiated undo.
+ */
+test("the exported EntityView's commitPendingDelete restores the row and surfaces the real error when the deferred delete fails, instead of silently discarding it", async () => {
+  const entityViewJsx = generateExportFiles(project).find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+  const commitPendingDeleteSrc = entityViewJsx.match(/async function commitPendingDelete\(pending\) \{[\s\S]*?\n  \}\n/)?.[0];
+  assert.ok(commitPendingDeleteSrc, "expected to find an async commitPendingDelete in generated output");
+
+  let capturedRecords: unknown;
+  let capturedError: string | undefined;
+  const fn = new Function(
+    "entity",
+    "restoreRecordAt",
+    "setRecords",
+    "setError",
+    "deleteRecord",
+    `${commitPendingDeleteSrc}\nreturn commitPendingDelete;`,
+  )(
+    { name: "Courier" },
+    (records: unknown[], record: unknown, index: number) => {
+      const copy = records.slice();
+      copy.splice(index, 0, record);
+      return copy;
+    },
+    (updater: (prev: unknown[]) => unknown[]) => {
+      capturedRecords = updater(["A", "C"]);
+    },
+    (msg: string) => {
+      capturedError = msg;
+    },
+    async () => {
+      throw new Error("Cannot delete this record -- another record still references it through a relation field");
+    },
+  );
+
+  await fn({ entries: [{ id: 7, record: "B", index: 1 }] });
+
+  assert.deepEqual(capturedRecords, ["A", "B", "C"], "the deleted record must be restored at its original index on failure");
+  assert.equal(capturedError, "Cannot delete this record -- another record still references it through a relation field");
+});
+
+test("every generated .jsx/.js file is syntactically valid, checked with a real parser (esbuild)", async () => {
+  const esbuild = await import("esbuild");
+  const files = generateExportFiles(project);
+  for (const file of files.filter((f) => f.path.endsWith(".jsx") || f.path.endsWith(".js"))) {
+    if (file.path === "server.js") continue; // already checked above with node --check
+    assert.doesNotThrow(
+      () => esbuild.transformSync(file.content, { loader: file.path.endsWith(".jsx") ? "jsx" : "js" }),
+      `${file.path} should be valid JS/JSX`,
+    );
+  }
+});
+
+test("each entity gets its own real component file with its literal field list, not a shared runtime-schema blob", () => {
+  const files = generateExportFiles(project);
+  const customerJsx = files.find((f) => f.path === "web/src/entities/Customer.jsx")!.content;
+  assert.match(customerJsx, /"name": "name"/);
+  assert.match(customerJsx, /"label": "שם"/);
+  assert.match(customerJsx, /EntityView/);
+
+  const serviceJsx = files.find((f) => f.path === "web/src/entities/Service.jsx")!.content;
+  assert.match(serviceJsx, /"name": "title"/);
+  assert.doesNotMatch(serviceJsx, /"name": "name"/); // Customer's fields must not leak into Service's file
+
+  const appJsx = files.find((f) => f.path === "web/src/App.jsx")!.content;
+  assert.match(appJsx, /import CustomerView, \{ entity as CustomerEntity \} from ".\/entities\/Customer\.jsx"/);
+  assert.match(appJsx, /import ServiceView, \{ entity as ServiceEntity \} from ".\/entities\/Service\.jsx"/);
+});
+
+test("a project name with JSX-significant characters doesn't break the generated App.jsx", () => {
+  const tricky: Project = { ...project, name: `My "App" {with} <weird> chars & backtick \`` };
+  const files = generateExportFiles(tricky);
+  const appJsx = files.find((f) => f.path === "web/src/App.jsx")!.content;
+  assert.match(appJsx, /const TITLE = /);
+});
+
+test("generated web/index.html sets RTL when entity labels are Hebrew", () => {
+  const files = generateExportFiles(project);
+  const html = files.find((f) => f.path === "web/index.html")!.content;
+  assert.match(html, /dir="rtl"/);
+  assert.match(html, /lang="he"/);
+});
+
+test("refuses to export an unsafe entity/field name rather than emitting broken SQL or JS", () => {
+  const malicious: Project = {
+    ...project,
+    spec: {
+      ...project.spec,
+      entities: [{ name: "Bad; DROP TABLE x;--", fields: [{ name: "n", type: "text", required: true }] }],
+    },
+  };
+  assert.throws(() => generateExportFiles(malicious));
+});
+
+test("the exported EntityView renders status badges, formatted dates/numbers, search, and sortable columns -- not the old plain table", () => {
+  const files = generateExportFiles(project);
+  const entityViewJsx = files.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+  // Status badge classification (mirrors apps/web/src/entityFormatting.ts)
+  assert.match(entityViewJsx, /badgeTone/);
+  assert.match(entityViewJsx, /badge-\$\{badgeTone\(value\)\}/);
+  // Locale-formatted dates/numbers instead of raw values
+  assert.match(entityViewJsx, /toLocaleDateString/);
+  assert.match(entityViewJsx, /toLocaleString/);
+  // A real search box and click-to-sort headers, not just a static table
+  assert.match(entityViewJsx, /entity-search/);
+  assert.match(entityViewJsx, /matchesSearch/);
+  assert.match(entityViewJsx, /sort-header/);
+  assert.match(entityViewJsx, /toggleSort/);
+  // The old plain-text formatCell helper is gone, replaced by the Cell component
+  assert.doesNotMatch(entityViewJsx, /function formatCell/);
+});
+
+test("the exported EntityView renders a real Kanban board for entities with a status/stage-like enum field", () => {
+  const files = generateExportFiles(project);
+  const entityViewJsx = files.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+  assert.match(entityViewJsx, /findBoardField/);
+  assert.match(entityViewJsx, /groupByField/);
+  assert.match(entityViewJsx, /function BoardCard/);
+  assert.match(entityViewJsx, /board-column/);
+  assert.match(entityViewJsx, /handleMove/);
+  // The exported CSS carries the matching board styling, not just the component code
+  const stylesCss = files.find((f) => f.path === "web/src/styles.css")!.content;
+  assert.match(stylesCss, /\.board-card/);
+  assert.match(stylesCss, /\.view-toggle/);
+});
+
+/**
+ * Regression test for a real bug: the exported app's own groupByField had
+ * the identical gap the live preview's did (see entityFormatting.ts's
+ * groupByField/groupRecordsByField) -- a record whose stored status isn't
+ * one of the field's current declared enumValues (e.g. a legacy value left
+ * behind after a refine renamed the field's options; migrations only ever
+ * ADD columns, never rewrite existing row data) simply vanished from the
+ * Kanban board with no trace, while still showing up fine in table view.
+ * Runs the real generated groupByField, not a reimplementation, confirming
+ * it now collects such a record into a trailing "(other)" column instead.
+ */
+test("the exported EntityView's groupByField collects a record with an unrecognized status into a trailing '(other)' column instead of dropping it", () => {
+  const entityViewJsx = generateExportFiles(project).find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+  const groupByFieldSrc = entityViewJsx.match(/function groupByField\(records, field\) \{[\s\S]*?\n\}\n/)?.[0];
+  assert.ok(groupByFieldSrc, "expected to find groupByField in generated output");
+
+  const groupByField = new Function(`${groupByFieldSrc}\nreturn groupByField;`)() as (
+    records: Record<string, unknown>[],
+    field: { name: string; enumValues?: string[]; enumLabels?: Record<string, string> },
+  ) => { value: string; label: string; records: unknown[]; isOther?: boolean }[];
+
+  const field = { name: "status", enumValues: ["new", "won", "lost"] };
+  const records = [{ id: 1, status: "won" }, { id: 2, status: "archived" }];
+  const columns = groupByField(records, field);
+
+  assert.deepEqual(columns.map((c) => c.value), ["new", "won", "lost", "__other__"]);
+  const other = columns.find((c) => c.value === "__other__")!;
+  assert.equal(other.label, "Other");
+  assert.equal(other.isOther, true);
+  assert.deepEqual(other.records, [{ id: 2, status: "archived" }]);
+  assert.equal(columns.find((c) => c.value === "won")!.isOther, undefined, "a real enum column must never be marked isOther");
+
+  // No legacy value at all -- the "(other)" column must not be rendered.
+  assert.equal(groupByField([{ id: 1, status: "won" }], field).find((c) => c.value === "__other__"), undefined);
+});
+
+/**
+ * Regression test for a real bug found by round 286's Explore survey and
+ * fixed the same round in both the live preview (EntityPanel.tsx) and here:
+ * findBoardField only ever picks ONE enum field per entity, for Kanban
+ * grouping -- but the exported app never had ANY filter-by-enum-field
+ * capability at all before this round (only the live preview's table view
+ * did, since round 130, itself limited to that same single board field).
+ * An entity with two qualifying enum fields (here, both "Status" and
+ * "Priority") now gets one filter dropdown per field in the exported app
+ * too, matching the live preview's own newly-generalized behavior.
+ */
+test("the exported EntityView's table toolbar has one filter dropdown per qualifying enum field, not just the single board field", () => {
+  const twoEnumProject: Project = {
+    ...project,
+    spec: {
+      ...project.spec,
+      entities: [
+        {
+          name: "Task",
+          label: "Task",
+          fields: [
+            { name: "name", label: "Name", type: "text", required: true },
+            { name: "status", label: "Status", type: "enum", required: true, enumValues: ["todo", "done"] },
+            { name: "priority", label: "Priority", type: "enum", required: true, enumValues: ["low", "high"] },
+          ],
+        },
+      ],
+    },
+  };
+  const files = generateExportFiles(twoEnumProject);
+  const entityViewJsx = files.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+
+  assert.match(entityViewJsx, /function findFilterableEnumFields\(fields\) \{/);
+  assert.match(entityViewJsx, /function findFilterableFields\(fields\) \{/);
+  assert.match(entityViewJsx, /const filterableFields = useMemo\(\(\) => findFilterableFields\(entity\.fields\), \[entity\.fields\]\);/);
+  assert.match(entityViewJsx, /const \[fieldFilters, setFieldFilters\] = useState\(\(\) => getPersistedFieldFilters\(entity\.name\)\);/);
+  assert.match(entityViewJsx, /\{filterableFields\.map\(\(f\) => \(/);
+  assert.match(entityViewJsx, /className="entity-status-filter"/);
+  // The filter must actually apply to visibleRecords, not just render inert dropdowns
+  assert.match(
+    entityViewJsx,
+    /Object\.entries\(fieldFilters\)\.every\(\(\[fieldName, value\]\) => !value \|\| String\(r\[fieldName\] \?\? ""\) === value\)/,
+  );
+  // The exported CSS carries the matching filter-dropdown styling too
+  const stylesCss = files.find((f) => f.path === "web/src/styles.css")!.content;
+  assert.match(stylesCss, /\.entity-status-filter/);
+});
+
+/**
+ * Regression test for a real bug found by a round-400 Explore survey: the
+ * live preview's EntityPanel.tsx now also offers a filter dropdown for
+ * boolean fields (not just enum, see entityFormatting.test.ts and
+ * EntityPanel.test.ts), rendering Yes/No options -- confirms the exported
+ * standalone app's own plain-JS copy of this toolbar carries the same
+ * boolean branch, not just the enum-only behavior findFilterableEnumFields
+ * alone would produce.
+ */
+test("the exported EntityView's filter dropdown also covers a boolean field, rendering Yes/No options", () => {
+  const boolProject: Project = {
+    ...project,
+    spec: {
+      ...project.spec,
+      entities: [
+        {
+          name: "Task",
+          label: "Task",
+          fields: [
+            { name: "name", label: "Name", type: "text", required: true },
+            { name: "status", label: "Status", type: "enum", required: true, enumValues: ["todo", "done"] },
+            { name: "isUrgent", label: "Is Urgent", type: "boolean", required: false },
+          ],
+        },
+      ],
+    },
+  };
+  const files = generateExportFiles(boolProject);
+  const entityViewJsx = files.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+
+  assert.match(entityViewJsx, /f\.type === "boolean"/);
+  assert.match(entityViewJsx, /<option value="true">Yes<\/option>/);
+  assert.match(entityViewJsx, /<option value="false">No<\/option>/);
+  // findFilterableFields must union in boolean fields alongside the
+  // enum-only findFilterableEnumFields, not replace it -- findBoardField
+  // (Kanban column picking) still depends on the enum-only function.
+  assert.match(
+    entityViewJsx,
+    /function findFilterableFields\(fields\) \{\s*\n\s*return \[\.\.\.findFilterableEnumFields\(fields\), \.\.\.fields\.filter\(\(f\) => f\.type === "boolean"\)\];/,
+  );
+});
+
+/**
+ * New in this round: table-grouping (isGroupableField/groupRecordsByField)
+ * existed in the live preview since round 219 but was never ported here --
+ * confirmed absent via grep before this round. A real user who downloads
+ * their app loses the ability to cluster the table by an enum/boolean
+ * field the moment they leave the live preview. Ported as a scoped base
+ * feature (the group-by dropdown + grouped table rendering); per-group
+ * numeric subtotals and persisted group-by preference are deliberately
+ * left for a follow-up round, matching how the live preview itself phased
+ * this same feature across several rounds.
+ */
+test("the exported EntityView's table can be grouped by an enum/boolean field, not just filtered", () => {
+  const files = generateExportFiles(project);
+  const entityViewJsx = files.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+
+  assert.match(entityViewJsx, /function isGroupableField\(field\) \{/);
+  assert.match(entityViewJsx, /function groupRecordsByField\(records, field\) \{/);
+  assert.match(entityViewJsx, /const \[groupFieldName, setGroupFieldName\] = useState\(\(\) => getPersistedGroupField\(entity\.name\)\);/);
+  assert.match(entityViewJsx, /const groupableFields = useMemo\(\(\) => entity\.fields\.filter\(isGroupableField\), \[entity\.fields\]\);/);
+  assert.match(entityViewJsx, /const recordGroups = useMemo\(/);
+  // The group-by dropdown itself, gated to table view only
+  assert.match(entityViewJsx, /viewMode === "table" && groupableFields\.length > 0 &&/);
+  assert.match(entityViewJsx, /className="entity-group-by"/);
+  // Row rendering was extracted so both the flat and grouped tbody branches reuse it verbatim
+  assert.match(entityViewJsx, /const renderRow = \(r\) => \(/);
+  assert.match(entityViewJsx, /recordGroups\s*\n\s*\? recordGroups\.map\(\(group\) => \{/);
+  assert.match(entityViewJsx, /className="entity-group-header-row"/);
+  assert.match(entityViewJsx, /group\.records\.map\(renderRow\)/);
+  assert.match(entityViewJsx, /: visibleRecords\.map\(renderRow\)/);
+
+  // The exported CSS carries the matching group-by + group-header styling too
+  const stylesCss = files.find((f) => f.path === "web/src/styles.css")!.content;
+  assert.match(stylesCss, /\.entity-group-by/);
+  assert.match(stylesCss, /\.entity-group-header-row/);
+});
+
+/**
+ * New in this round: round 305's entity-tab record-count badges (GET
+ * /projects/:id/entity-counts in the live Forge AI API, the .tab-count
+ * badge in App.tsx) existed only in the live preview -- confirmed absent
+ * from codegen.ts via grep. A real user who downloads their app saw a
+ * bare label-only nav strip, with no way to tell how much data lives in
+ * each tab, even though the live preview they built it in already shows
+ * that at a glance. Ported as a real GET /api/entity-counts route in the
+ * exported server, fetched once on load, with the ACTIVE tab's own badge
+ * kept live via the same onRecordCountChange effect round 305 used in the
+ * live preview's EntityPanel.tsx.
+ */
+test("the exported app's entity-tabs nav shows a live record-count badge per tab, not just a bare label", () => {
+  const files = generateExportFiles(project);
+
+  const serverJs = files.find((f) => f.path === "server.js")!.content;
+  assert.match(serverJs, /app\.get\("\/api\/entity-counts", \(_req, res\) => \{/);
+  assert.match(serverJs, /counts\[entity\.name\] = db\.prepare\(/);
+
+  const apiJs = files.find((f) => f.path === "web/src/api.js")!.content;
+  assert.match(apiJs, /export function listEntityCounts\(\) \{/);
+  assert.match(apiJs, /return request\("\/entity-counts"\);/);
+
+  const appJsx = files.find((f) => f.path === "web/src/App.jsx")!.content;
+  assert.match(appJsx, /import \{ listEntityCounts \} from "\.\/api\.js";/);
+  assert.match(appJsx, /const \[entityCounts, setEntityCounts\] = useState\(\{\}\);/);
+  assert.match(appJsx, /listEntityCounts\(\)\s*\n\s*\.then\(\(\{ counts \}\) => setEntityCounts\(counts\)\)/);
+  assert.match(appJsx, /entityCounts\[e\.name\] != null && <span className="tab-count">\{entityCounts\[e\.name\]\}<\/span>/);
+  assert.match(appJsx, /onRecordCountChange=\{\(name, count\) =>/);
+
+  const entityViewJsx = files.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+  assert.match(
+    entityViewJsx,
+    /export function EntityView\(\{ entity, highlightRecordId, onHighlightHandled, onJumpToRecord, onRecordCountChange \}\)/,
+  );
+  assert.match(entityViewJsx, /if \(onRecordCountChange\) onRecordCountChange\(entity\.name, records\.length\);/);
+
+  // The per-entity wrapper (entities/<Name>.jsx) must actually forward the
+  // new prop through to EntityView -- a regression here would silently
+  // break the active tab's live badge update without ever showing up in
+  // EntityView.jsx's own source, which still looks correct on its own.
+  const customerEntityJsx = files.find((f) => f.path === "web/src/entities/Customer.jsx")!.content;
+  assert.match(
+    customerEntityJsx,
+    /export default function View\(\{ highlightRecordId, onHighlightHandled, onJumpToRecord, onRecordCountChange \}\)/,
+  );
+  assert.match(customerEntityJsx, /onRecordCountChange=\{onRecordCountChange\}/);
+
+  const stylesCss = files.find((f) => f.path === "web/src/styles.css")!.content;
+  assert.match(stylesCss, /\.tab-count/);
+});
+
+/**
+ * New in this round: round 306 ported the BASE table-grouping feature to
+ * codegen.ts (the group-by dropdown + grouped tbody with group-header
+ * rows), but deliberately deferred per-group numeric subtotals -- the
+ * live preview's own EntityPanel.tsx (round 302) already shows a subtotal
+ * row per group when the table is grouped AND has a numeric field, so a
+ * business owner who downloads their app and groups an Orders/Deals
+ * table by Status loses the ability to compare revenue across groups the
+ * moment they leave the live preview. Confirmed absent from codegen.ts
+ * via grep before this round (only the flat grand-total <tfoot> existed
+ * there).
+ */
+test("the exported EntityView's grouped table shows a per-group numeric subtotal row, not just the grand total", () => {
+  const files = generateExportFiles(project);
+  const entityViewJsx = files.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+
+  assert.match(entityViewJsx, /const groupNumericTotals = useMemo\(\(\) => \{/);
+  assert.match(entityViewJsx, /totals\[group\.key\] = sumNumericFields\(group\.records, visibleFields\);/);
+  assert.match(entityViewJsx, /className="entity-group-totals-row"/);
+  assert.match(entityViewJsx, /Total: \{\(groupNumericTotals\[group\.key\]\[f\.name\] \?\? 0\)\.toLocaleString\(\)\}/);
+
+  const stylesCss = files.find((f) => f.path === "web/src/styles.css")!.content;
+  assert.match(stylesCss, /\.entity-group-totals-row/);
+});
+
+/**
+ * New in this round: the live-preview Kanban board's own "+" add-card
+ * button (startCreateForColumn, round 233) was never ported here -- the
+ * exported app's generated board-column-header only rendered a badge +
+ * count, with no way to add a record already set to that column's value
+ * short of opening the general create form and picking it by hand.
+ */
+test("the exported EntityView's Kanban board has a real '+' button per column that pre-fills the create form with that column's own value", () => {
+  const files = generateExportFiles(project);
+  const entityViewJsx = files.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+
+  assert.match(
+    entityViewJsx,
+    /function startCreateForColumn\(value, field\) \{\s*setEditingId\(null\);\s*setForm\(\{ \.\.\.emptyForm\(entity\), \[field\.name\]: value \}\);\s*\}/,
+  );
+  assert.match(entityViewJsx, /className="board-add-card-btn"/);
+  assert.match(entityViewJsx, /onClick=\{\(\) => startCreateForColumn\(column\.value, boardField\)\}/);
+  // The badge + count must still be grouped together so the new button can
+  // sit on the opposite side of the header via justify-content: space-between.
+  assert.match(entityViewJsx, /<div className="board-column-header-info">/);
+
+  const stylesCss = files.find((f) => f.path === "web/src/styles.css")!.content;
+  assert.match(stylesCss, /\.board-column-header-info/);
+  assert.match(stylesCss, /\.board-add-card-btn/);
+});
+
+test("the exported EntityView renders a real month-calendar view for entities with a date field", () => {
+  const withDate: Project = {
+    ...project,
+    spec: {
+      ...project.spec,
+      entities: [
+        ...project.spec.entities,
+        {
+          name: "Appointment",
+          label: "תורים",
+          fields: [
+            { name: "customerName", label: "שם לקוח", type: "text", required: true },
+            { name: "date", label: "תאריך", type: "date", required: true },
+          ],
+        },
+      ],
+    },
+  };
+  const files = generateExportFiles(withDate);
+  const entityViewJsx = files.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+  assert.match(entityViewJsx, /findDateField/);
+  assert.match(entityViewJsx, /buildCalendarMonth/);
+  assert.match(entityViewJsx, /function CalendarView/);
+  assert.match(entityViewJsx, /calendar-day/);
+  // The exported CSS carries the matching calendar styling, not just the component code
+  const stylesCss = files.find((f) => f.path === "web/src/styles.css")!.content;
+  assert.match(stylesCss, /\.calendar-grid/);
+  assert.match(stylesCss, /\.calendar-record-chip/);
+});
+
+/**
+ * New in this round: the live preview's calendar view has had "click an
+ * empty day to create a record dated that day" since round 160
+ * (startCreateForDate), but the exported codegen app's own CalendarView had
+ * no equivalent -- clicking a day did nothing, and the only way to add a
+ * dated record was scrolling up to the general create form and typing the
+ * date in by hand. Confirms the generated startCreateForDate is wired into
+ * CalendarView's day cells (real onClick, real className, real title), and
+ * separately executes the real generated startCreateForDate/formatDateForInput
+ * (extracted from real codegen output, not reimplemented) to confirm the
+ * pre-filled value is the exact date clicked, not off by a day.
+ */
+test("the exported EntityView's calendar has a real clickable day that pre-fills the create form with that day's own date", () => {
+  const withDate: Project = {
+    ...project,
+    spec: {
+      ...project.spec,
+      entities: [
+        ...project.spec.entities,
+        {
+          name: "Appointment",
+          label: "תורים",
+          fields: [
+            { name: "customerName", label: "שם לקוח", type: "text", required: true },
+            { name: "date", label: "תאריך", type: "date", required: true },
+          ],
+        },
+      ],
+    },
+  };
+  const files = generateExportFiles(withDate);
+  const entityViewJsx = files.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+
+  assert.match(entityViewJsx, /function startCreateForDate\(date, field\) \{\s*setEditingId\(null\);\s*setForm\(\{ \.\.\.emptyForm\(entity\), \[field\.name\]: formatDateForInput\(date\) \}\);\s*\}/);
+  assert.match(entityViewJsx, /onDayClick=\{\(date\) => startCreateForDate\(date, dateField\)\}/);
+  // The day cell's className is now built from a dayClasses array (round
+  // 294's own today-highlight needed a third independent condition, which
+  // no longer fits cleanly as a single ternary) -- still lands on the exact
+  // same "calendar-day-clickable"/"calendar-day-outside" classes this test
+  // has always cared about.
+  assert.match(entityViewJsx, /dayClasses\.push\("calendar-day-clickable"\);/);
+  assert.match(entityViewJsx, /dayClasses\.push\("calendar-day-outside"\);/);
+  assert.match(entityViewJsx, /onClick=\{day\.inCurrentMonth \? \(\) => onDayClick\(day\.date\) : undefined\}/);
+
+  const stylesCss = files.find((f) => f.path === "web/src/styles.css")!.content;
+  assert.match(stylesCss, /\.calendar-day-clickable/);
+
+  const formatDateSrc = entityViewJsx.match(/function formatDateForInput\(date\) \{[\s\S]*?\n\}\n/)?.[0];
+  const startCreateSrc = entityViewJsx.match(/function startCreateForDate\(date, field\) \{[\s\S]*?\n {2}\}\n/)?.[0];
+  assert.ok(formatDateSrc && startCreateSrc, "expected to find formatDateForInput/startCreateForDate in generated output");
+
+  let capturedForm = null;
+  let capturedEditingId = "unset";
+  const startCreateForDate = new Function(
+    "entity",
+    "emptyForm",
+    "setForm",
+    "setEditingId",
+    `${formatDateSrc}\n${startCreateSrc}\nreturn startCreateForDate;`,
+  )({ fields: [] }, () => ({}), (f) => (capturedForm = f), (id) => (capturedEditingId = id));
+
+  startCreateForDate(new Date(2026, 8, 15), { name: "date" }); // September 15, 2026 (month is 0-indexed)
+  assert.equal(capturedEditingId, null, "clicking a day must switch out of edit mode, not silently continue editing a different record");
+  assert.equal(capturedForm.date, "2026-09-15", "the pre-filled date must be the exact day clicked, not off by one due to a UTC/local mismatch");
+});
+
+/**
+ * New in this round: mirrors the live preview's own fix -- the exported
+ * calendar's day cell was a plain, non-focusable `<div onClick=...>`, the
+ * ONLY way to reach onDayClick for a keyboard-only user. Confirms the
+ * generated day cell carries real tabIndex/role/aria-label (structurally,
+ * via regex, per this file's own established CalendarView-testing
+ * convention), then extracts the actual generated onKeyDown expression
+ * and executes it for real (not reimplemented) to prove: Enter and " "
+ * both call onDayClick, every other key is ignored, and -- the same
+ * bubbling hazard the record chip's own onClick already guards against
+ * with stopPropagation -- a keydown whose e.target isn't the day cell
+ * itself (i.e. bubbled up from a focused chip inside it) must never also
+ * fire onDayClick.
+ */
+test("the exported EntityView's calendar day cell is keyboard-focusable, and its real onKeyDown calls onDayClick only for Enter/Space targeted at the cell itself", () => {
+  const withDate: Project = {
+    ...project,
+    spec: {
+      ...project.spec,
+      entities: [
+        ...project.spec.entities,
+        {
+          name: "Appointment",
+          label: "תורים",
+          fields: [
+            { name: "customerName", label: "שם לקוח", type: "text", required: true },
+            { name: "date", label: "תאריך", type: "date", required: true },
+          ],
+        },
+      ],
+    },
+  };
+  const files = generateExportFiles(withDate);
+  const entityViewJsx = files.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+
+  assert.match(entityViewJsx, /tabIndex=\{day\.inCurrentMonth \? 0 : undefined\}/);
+  assert.match(entityViewJsx, /role=\{day\.inCurrentMonth \? "button" : undefined\}/);
+  assert.match(entityViewJsx, /aria-label=\{day\.inCurrentMonth \? "Add a record on this day" : undefined\}/);
+
+  // The slice runs up to the start of the next attribute (onDragOver={),
+  // so it also picks up the closing "}" of onKeyDown's own JSX attribute
+  // brace -- strip exactly that trailing brace, not part of the expression.
+  const onKeyDownExpr = entityViewJsx
+    .slice(entityViewJsx.indexOf("onKeyDown={") + "onKeyDown={".length, entityViewJsx.indexOf("onDragOver={"))
+    .trim()
+    .replace(/\}\s*$/, "")
+    .trim();
+  assert.match(onKeyDownExpr, /day\.inCurrentMonth/, "expected to find the real generated onKeyDown expression");
+
+  const makeHandler = (day: { inCurrentMonth: boolean }, onDayClick: (date: unknown) => void) =>
+    new Function("day", "onDayClick", `return (${onKeyDownExpr});`)(day, onDayClick) as ((e: unknown) => void) | undefined;
+
+  let calledWith: unknown;
+  const onDayClick = (date: unknown) => {
+    calledWith = date;
+  };
+  const day = { inCurrentMonth: true, date: "2026-09-15" };
+  const handler = makeHandler(day, onDayClick);
+  assert.equal(typeof handler, "function", "a day cell inCurrentMonth must get a real onKeyDown function, not undefined");
+
+  function fireKey(key: string, sameTarget: boolean) {
+    let prevented = false;
+    const cell = {};
+    handler!({ key, target: sameTarget ? cell : {}, currentTarget: cell, preventDefault: () => (prevented = true) });
+    return prevented;
+  }
+
+  assert.equal(fireKey("Enter", true), true, "Enter targeted at the cell itself must preventDefault");
+  assert.equal(calledWith, "2026-09-15", "Enter targeted at the cell itself must call onDayClick with that day's own date");
+
+  assert.equal(fireKey(" ", true), true, "Space targeted at the cell itself must preventDefault");
+  assert.equal(calledWith, "2026-09-15", "Space targeted at the cell itself must also call onDayClick");
+
+  calledWith = "untouched";
+  fireKey("Tab", true);
+  assert.equal(calledWith, "untouched", "any other key must never call onDayClick");
+
+  calledWith = "untouched";
+  fireKey("Enter", false);
+  assert.equal(
+    calledWith,
+    "untouched",
+    "Enter whose target is NOT the day cell itself (bubbled from a focused chip inside it) must never call onDayClick",
+  );
+
+  const outsideDay = { inCurrentMonth: false, date: "2026-09-16" };
+  assert.equal(makeHandler(outsideDay, onDayClick), undefined, "a day cell outside the current month must get no onKeyDown handler at all");
+});
+
+/**
+ * New in this round: the exported standalone app's calendar could only
+ * reschedule a record by opening its edit form and retyping the date --
+ * unlike the live Forge AI preview (round 211's own native HTML5
+ * drag-and-drop), dragging a record's chip onto a different day did
+ * nothing at all. Ports the identical drag mechanics -- draggable chips,
+ * drop targets that highlight while dragged over, and a real no-op guard
+ * for dropping a chip back onto the day it's already on -- reusing the
+ * exact same handleMove the Kanban board's own drag-and-drop (round 236)
+ * already calls.
+ */
+test("the exported EntityView's calendar record chips are drag-and-drop-able onto another day, reusing the same handleMove the Kanban board already calls", () => {
+  const withDate: Project = {
+    ...project,
+    spec: {
+      ...project.spec,
+      entities: [
+        ...project.spec.entities,
+        {
+          name: "Appointment",
+          label: "תורים",
+          fields: [
+            { name: "customerName", label: "שם לקוח", type: "text", required: true },
+            { name: "date", label: "תאריך", type: "date", required: true },
+          ],
+        },
+      ],
+    },
+  };
+  const files = generateExportFiles(withDate);
+  const entityViewJsx = files.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+
+  assert.match(entityViewJsx, /const \[dragOverDay, setDragOverDay\] = useState\(null\);/);
+  // The record chip itself must be a real drag source, not just visually styled.
+  assert.match(
+    entityViewJsx,
+    /className=\{record\.id === moveErrorId \? "calendar-record-chip calendar-record-chip-move-error" : "calendar-record-chip"\}\s*draggable\s*onDragStart=\{\(e\) => \{/,
+  );
+  assert.match(entityViewJsx, /e\.dataTransfer\.setData\("text\/plain", String\(record\.id\)\);\s*e\.dataTransfer\.effectAllowed = "move";/);
+  // The day cell itself must be a real drop target, highlighted only while actually dragged over.
+  assert.match(entityViewJsx, /onDragOver=\{\s*day\.inCurrentMonth\s*\?\s*\(e\) => \{\s*e\.preventDefault\(\);\s*setDragOverDay\(dayKey\);\s*\}\s*: undefined\s*\}/);
+  assert.match(
+    entityViewJsx,
+    /onDragLeave=\{\s*day\.inCurrentMonth \? \(\) => setDragOverDay\(\(prev\) => \(prev === dayKey \? null : prev\)\) : undefined\s*\}/,
+  );
+  assert.match(entityViewJsx, /isDragOver = day\.inCurrentMonth && dragOverDay === dayKey;/);
+  assert.match(entityViewJsx, /if \(isDragOver\) dayClasses\.push\("calendar-day-drag-over"\);/);
+  assert.match(entityViewJsx, /onReschedule=\{\(record, date\) => handleCalendarDrop\(record, dateField\.name, date\)\}/);
+
+  // handleCalendarDrop must guard against a real no-op (dropping a chip back onto the day it's already on) before ever calling handleMove.
+  const dropSrc = entityViewJsx.match(/function handleCalendarDrop\(record, dateFieldName, date\) \{[\s\S]*?\n {2}\}\n/)?.[0];
+  assert.ok(dropSrc, "expected to find handleCalendarDrop in generated output");
+  assert.match(dropSrc!, /const value = formatDateForInput\(date\);/);
+  assert.match(dropSrc!, /if \(String\(record\[dateFieldName\] \?\? ""\) === value\) return;/);
+  assert.match(dropSrc!, /void handleMoveFields\(record\.id, fields\);/);
+
+  const stylesCss = files.find((f) => f.path === "web/src/styles.css")!.content;
+  assert.match(stylesCss, /\.calendar-day-drag-over/);
+
+  // Executes the real generated formatDateForInput + handleCalendarDrop
+  // (extracted from real codegen output, not reimplemented), the same
+  // "run the real generated code" standard this file's other pure-function
+  // tests use. This Appointment entity has only one date field, so
+  // endDateField is null and the duration-preserving branch (covered
+  // separately below for a Rental-shaped entity) never runs.
+  const formatDateSrc = entityViewJsx.match(/function formatDateForInput\(date\) \{[\s\S]*?\n\}\n/)?.[0];
+  assert.ok(formatDateSrc, "expected to find formatDateForInput in generated output");
+
+  const calls: Array<{ id: unknown; fields: Record<string, string> }> = [];
+  const handleCalendarDrop = new Function(
+    "handleMoveFields",
+    "dateField",
+    "endDateField",
+    `${formatDateSrc}\n${dropSrc}\nreturn handleCalendarDrop;`,
+  )(
+    (id: unknown, fields: Record<string, string>) => {
+      calls.push({ id, fields });
+    },
+    { name: "date" },
+    null,
+  ) as (record: { id: number; date: string }, dateFieldName: string, date: Date) => void;
+
+  handleCalendarDrop({ id: 7, date: "2026-09-15" }, "date", new Date(2026, 8, 20)); // September 20, 2026
+  assert.deepEqual(calls, [{ id: 7, fields: { date: "2026-09-20" } }], "a genuine reschedule must call the real handleMoveFields with the new day");
+
+  calls.length = 0;
+  handleCalendarDrop({ id: 7, date: "2026-09-15" }, "date", new Date(2026, 8, 15)); // dropped back on the same day
+  assert.deepEqual(calls, [], "dropping a chip back onto the day it's already on must never call handleMoveFields");
+});
+
+/**
+ * New in this round: a ranged entity (e.g. Rental's startDate/endDate) must
+ * shift its end date by the same number of days when dragged to a new day,
+ * preserving the booking's duration -- without this, dragging only the
+ * start date could push it past the stored end date, producing an invalid
+ * (end before start) range that buildCalendarMonth/buildCalendarIcs would
+ * then silently stop treating as a range at all.
+ */
+test("the exported EntityView's handleCalendarDrop shifts a ranged entity's end-date field by the same delta, preserving duration", () => {
+  const withRange: Project = {
+    ...project,
+    spec: {
+      ...project.spec,
+      entities: [
+        ...project.spec.entities,
+        {
+          name: "Rental",
+          label: "השכרה",
+          fields: [
+            { name: "itemName", label: "שם הפריט", type: "text", required: true },
+            { name: "startDate", label: "תאריך התחלה", type: "date", required: true },
+            { name: "endDate", label: "תאריך סיום", type: "date", required: true },
+          ],
+        },
+      ],
+    },
+  };
+  const entityViewJsx = generateExportFiles(withRange).find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+
+  const dropSrc = entityViewJsx.match(/function handleCalendarDrop\(record, dateFieldName, date\) \{[\s\S]*?\n {2}\}\n/)?.[0];
+  const formatDateSrc = entityViewJsx.match(/function formatDateForInput\(date\) \{[\s\S]*?\n\}\n/)?.[0];
+  const parseFieldDateSrc = entityViewJsx.match(/const CALENDAR_DATE_FORMAT[\s\S]*?\nfunction parseFieldDate\(raw\) \{[\s\S]*?\n\}\n/)?.[0];
+  assert.ok(dropSrc && formatDateSrc && parseFieldDateSrc, "expected to find handleCalendarDrop/formatDateForInput/parseFieldDate in generated output");
+
+  const calls: Array<{ id: unknown; fields: Record<string, string> }> = [];
+  const handleCalendarDrop = new Function(
+    "handleMoveFields",
+    "dateField",
+    "endDateField",
+    `${formatDateSrc}\n${parseFieldDateSrc}\n${dropSrc}\nreturn handleCalendarDrop;`,
+  )(
+    (id: unknown, fields: Record<string, string>) => {
+      calls.push({ id, fields });
+    },
+    { name: "startDate" },
+    { name: "endDate" },
+  ) as (record: { id: number; startDate: string; endDate: string }, dateFieldName: string, date: Date) => void;
+
+  handleCalendarDrop({ id: 9, startDate: "2026-03-10", endDate: "2026-03-12" }, "startDate", new Date(2026, 2, 12)); // 2 days later
+  assert.deepEqual(
+    calls,
+    [{ id: 9, fields: { startDate: "2026-03-12", endDate: "2026-03-14" } }],
+    "endDate must shift by the same 2-day delta as startDate, keeping the 2-night duration",
+  );
+});
+
+/**
+ * New in this round: the exported CalendarView's day cells never
+ * distinguished "today" from any other day in the currently-viewed month --
+ * the same gap round 294 fixed in the live preview's own EntityPanel.tsx.
+ * Confirms the generated CalendarView computes isToday via the same
+ * isSameCalendarDay it already uses for record-matching (no duplicated
+ * comparison logic), wires it into a real calendar-day-today class, and
+ * that the exported stylesheet carries the matching highlight rule.
+ */
+test("the exported CalendarView marks today's day cell with calendar-day-today, computed via the same isSameCalendarDay it already uses for record-matching", () => {
+  const entityViewJsx = generateExportFiles(project).find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+
+  assert.match(entityViewJsx, /const isToday = day\.inCurrentMonth && isSameCalendarDay\(day\.date, new Date\(\)\);/);
+  assert.match(entityViewJsx, /if \(isToday\) dayClasses\.push\("calendar-day-today"\);/);
+
+  const stylesCss = generateExportFiles(project).find((f) => f.path === "web/src/styles.css")!.content;
+  assert.match(stylesCss, /\.calendar-day-today \{[^}]*border-color: var\(--accent\)/);
+  assert.match(stylesCss, /\.calendar-day-today \.calendar-day-number \{[^}]*color: var\(--accent\)/);
+
+  // Executes the real generated isSameCalendarDay (extracted from real
+  // codegen output, not reimplemented), the same "run the real generated
+  // code" standard this file's other pure-function tests use.
+  const sameDaySrc = entityViewJsx.match(/function isSameCalendarDay\(a, b\) \{[\s\S]*?\n\}\n/)?.[0];
+  assert.ok(sameDaySrc, "expected to find isSameCalendarDay in generated output");
+  const isSameCalendarDay = new Function(`${sameDaySrc}\nreturn isSameCalendarDay;`)();
+  assert.equal(isSameCalendarDay(new Date(2026, 8, 15), new Date(2026, 8, 15)), true);
+  assert.equal(isSameCalendarDay(new Date(2026, 8, 15), new Date(2026, 8, 16)), false);
+});
+
+// Regression test: `new Date("2026-09-15")` parses that date-only string
+// as UTC midnight, but the generated CalendarView's own grid cells are
+// built with `new Date(year, month, day)` (local midnight) and compared
+// with local getters -- so for any viewer whose local time is behind UTC,
+// a record was silently placed one calendar day earlier than its actual
+// stored date. Executes the real generated buildCalendarMonth/
+// isSameCalendarDay/parseFieldDate functions (extracted from real codegen
+// output, not reimplemented here) under a behind-UTC TZ, the same
+// "run the real generated code" standard the CSV-import date test uses.
+test("the exported CalendarView places a record on its correct calendar day even for a viewer in a timezone behind UTC", () => {
+  const entityViewJsx = generateExportFiles(project).find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+
+  const dateHelperSrc = entityViewJsx.match(/const CALENDAR_DATE_FORMAT[\s\S]*?\nfunction parseFieldDate\(raw\) \{[\s\S]*?\n\}\n/)?.[0];
+  const sameDaySrc = entityViewJsx.match(/function isSameCalendarDay\(a, b\) \{[\s\S]*?\n\}\n/)?.[0];
+  const buildMonthSrc = entityViewJsx.match(/function buildCalendarMonth\(records, field, year, month, endField\) \{[\s\S]*?\n\}\n/)?.[0];
+  assert.ok(dateHelperSrc && sameDaySrc && buildMonthSrc, "expected to find parseFieldDate/isSameCalendarDay/buildCalendarMonth in generated output");
+
+  const buildCalendarMonth = new Function(`${dateHelperSrc}\n${sameDaySrc}\n${buildMonthSrc}\nreturn buildCalendarMonth;`)();
+
+  const originalTz = process.env.TZ;
+  process.env.TZ = "America/New_York";
+  try {
+    const field = { name: "date", type: "date" };
+    const records = [{ id: 1, date: "2026-09-15" }];
+    const days = buildCalendarMonth(records, field, 2026, 8); // September 2026
+    const sep14 = days.find((d) => d.inCurrentMonth && d.date.getDate() === 14);
+    const sep15 = days.find((d) => d.inCurrentMonth && d.date.getDate() === 15);
+    assert.equal(sep15.records.length, 1, "the record must land on the 15th, not shift to the 14th");
+    assert.equal(sep14.records.length, 0);
+  } finally {
+    process.env.TZ = originalTz;
+  }
+});
+
+// The exported CalendarView had prev/next month navigation but no quick way
+// back to the current month once you'd paged away -- the same gap the
+// live-preview app's own EntityPanel.tsx had before round 146 added a
+// "Today" button there. Ports the identical fix here: a real
+// isSameCalendarMonth(a, b) helper (mirroring isSameCalendarDay right above
+// it) drives a Today button's disabled state. Executes the real generated
+// isSameCalendarMonth function, extracted from real codegen output.
+test("the exported CalendarView's isSameCalendarMonth is true only for two dates in the same calendar month and year", () => {
+  const entityViewJsx = generateExportFiles(project).find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+  const sameMonthSrc = entityViewJsx.match(/function isSameCalendarMonth\(a, b\) \{[\s\S]*?\n\}\n/)?.[0];
+  assert.ok(sameMonthSrc, "expected to find isSameCalendarMonth in generated output");
+
+  const isSameCalendarMonth = new Function(`${sameMonthSrc}\nreturn isSameCalendarMonth;`)() as (a: Date, b: Date) => boolean;
+
+  assert.equal(isSameCalendarMonth(new Date(2026, 8, 1), new Date(2026, 8, 30)), true, "same month/year, different day");
+  assert.equal(isSameCalendarMonth(new Date(2026, 8, 30), new Date(2026, 9, 1)), false, "across a month boundary");
+  assert.equal(isSameCalendarMonth(new Date(2025, 8, 15), new Date(2026, 8, 15)), false, "same month but a different year");
+});
+
+// Confirms the Today button is actually wired into CalendarView's JSX
+// (disabled by isCurrentMonth, calling onToday), not just that the helper
+// function above exists in isolation -- the same "static-check the JSX
+// plus execute the real helper" split this file already uses for board/
+// calendar view coverage.
+test("the exported CalendarView renders a Today button wired to onToday and disabled on the current month", () => {
+  const entityViewJsx = generateExportFiles(project).find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+  const calendarViewSource = entityViewJsx.slice(entityViewJsx.indexOf("function CalendarView"), entityViewJsx.indexOf("function CalendarView") + 2000);
+  assert.match(calendarViewSource, /calendar-today-btn/);
+  assert.match(calendarViewSource, /onClick=\{onToday\}/);
+  assert.match(calendarViewSource, /disabled=\{isCurrentMonth\}/);
+  // New in this round: the prev/next month buttons were bare glyphs
+  // ("‹"/"›") with no accessible name at all -- unlike the live preview's
+  // own EntityPanel.tsx, which labels them via aria-label={t("entity.calendar.prev"/"next")}.
+  // codegen.ts has no i18n at all, so these are hardcoded English,
+  // matching the exported app's own existing all-English convention.
+  assert.match(calendarViewSource, /onClick=\{onPrevMonth\} aria-label="Previous month"/);
+  assert.match(calendarViewSource, /onClick=\{onNextMonth\} aria-label="Next month"/);
+
+  const stylesCss = generateExportFiles(project).find((f) => f.path === "web/src/styles.css")!.content;
+  assert.match(stylesCss, /\.calendar-today-btn/);
+});
+
+// Regression test: DATE_FIELD_NAME_HINTS lists "scheduledat" as a
+// recognized hint, but every real date field in the domain library
+// (spec-engine/domainEntities.ts) follows an "XxxDate" naming convention
+// -- including WorkOrder's own "scheduledDate", the field this hint was
+// presumably meant to catch. "scheduledDate".toLowerCase() is
+// "scheduleddate", which the misspelled "scheduledat" hint never
+// matches, so this hint was silently dead in the exported app too (the
+// same duplicated-code gap as the live-preview version). Runs the real
+// generated findDateField, not a reimplementation.
+test("the exported EntityView's findDateField recognizes 'scheduledDate' as a known date-field name, matching the domain library's own WorkOrder entity", () => {
+  const entityViewJsx = generateExportFiles(project).find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+  const findDateFieldSrc = entityViewJsx.match(/const DATE_FIELD_NAME_HINTS[\s\S]*?\nfunction findDateField\(fields\) \{[\s\S]*?\n\}\n/)?.[0];
+  assert.ok(findDateFieldSrc, "expected to find DATE_FIELD_NAME_HINTS/findDateField in generated output");
+
+  const findDateField = new Function(`${findDateFieldSrc}\nreturn findDateField;`)() as (fields: unknown[]) => { name: string } | null;
+  const fields = [
+    { name: "createdNote", type: "date" },
+    { name: "scheduledDate", type: "date" },
+  ];
+  assert.equal(findDateField(fields)?.name, "scheduledDate");
+});
+
+// Regression test: the same UTC-vs-local mismatch as the CalendarView test
+// above, but in the main record table's per-cell date renderer (Cell,
+// reused by the table, the Kanban board, and global search results) --
+// `new Date(value)` parses a stored "YYYY-MM-DD" value as UTC midnight,
+// and toLocaleDateString renders in the viewer's *local* time, so any
+// viewer whose local time is behind UTC would see a date field displayed
+// one calendar day earlier than what's actually stored. Compiles the real
+// generated Cell component's JSX with esbuild (the same transform this
+// repo's own build uses) and actually renders it with a minimal JSX
+// runtime stub, rather than reimplementing or string-matching the logic.
+test("the exported record table's date cell shows the correct calendar day even for a viewer in a timezone behind UTC", () => {
+  const entityViewJsx = generateExportFiles(project).find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+
+  const dateHelperSrc = entityViewJsx.match(/const CALENDAR_DATE_FORMAT[\s\S]*?\nfunction parseFieldDate\(raw\) \{[\s\S]*?\n\}\n/)?.[0];
+  const cellSrc = entityViewJsx.match(/function Cell\(\{ field, value, relationLabel, onJumpToRecord \}\) \{[\s\S]*?\n\}\n/)?.[0];
+  // Cell also calls isDeadlineFieldName/getDateUrgency (round 340) --
+  // needed here too, since this test evals Cell in isolation rather than
+  // importing the whole generated module.
+  const urgencyHelperSrc = entityViewJsx.match(/function isDeadlineFieldName\(fieldName\) \{[\s\S]*?\nfunction getDateUrgency\(value, today\) \{[\s\S]*?\n\}\n/)?.[0];
+  assert.ok(dateHelperSrc && cellSrc && urgencyHelperSrc, "expected to find parseFieldDate/Cell/isDeadlineFieldName+getDateUrgency in generated output");
+
+  const transformed = transformSync(`${urgencyHelperSrc}\n${dateHelperSrc}\n${cellSrc}`, { loader: "jsx", jsxFactory: "h", jsxFragment: "Frag" }).code;
+  const Cell = new Function("h", "Frag", `${transformed}\nreturn Cell;`)(
+    (_type: unknown, _props: unknown, ...children: unknown[]) => (children.length === 1 ? children[0] : children),
+    Symbol("Fragment"),
+  );
+
+  const originalTz = process.env.TZ;
+  process.env.TZ = "America/New_York";
+  try {
+    const rendered = Cell({ field: { type: "date", name: "date" }, value: "2026-03-15" });
+    assert.equal(rendered, "3/15/2026", "must render the 15th, not shift back to the 14th");
+  } finally {
+    process.env.TZ = originalTz;
+  }
+});
+
+test("the exported CalendarView picks its day-chip label via pickDisplayField, not just whichever field happens to come first after the date field", () => {
+  // Mirrors the live-preview fix in apps/web/src/entityFormatting.ts
+  // (calendarChipLabelField): every built-in domain entity happens to
+  // declare its "name"/"title" field before its date field, so "first
+  // field that isn't the date field" has always coincidentally agreed with
+  // the real display field there -- but an AI-generated spec has no such
+  // ordering guarantee. Round 265 extracted this into a shared
+  // calendarLabelField helper (also reused by the new ICS export, which
+  // needs the exact same label field the day chips already show) --
+  // confirms CalendarView calls that helper, and that the helper itself
+  // still reuses pickDisplayField rather than the old blind first-field
+  // fallback.
+  const files = generateExportFiles(project);
+  const entityViewJsx = files.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+  const calendarViewSource = entityViewJsx.slice(entityViewJsx.indexOf("function CalendarView"));
+  assert.match(calendarViewSource, /calendarLabelField\(entity, dateField\)/);
+  const labelFieldSrc = entityViewJsx.match(/function calendarLabelField\(entity, dateField\) \{[\s\S]*?\n\}\n/)?.[0];
+  assert.ok(labelFieldSrc, "expected to find calendarLabelField in generated output");
+  assert.match(labelFieldSrc, /pickDisplayField\(entity\)/);
+});
+
+/**
+ * Regression test for the same real bug this round fixed in the live-preview
+ * version (apps/web/src/EntityPanel.tsx): the exported CalendarView's own
+ * "+N more" overflow was an inert <span> with no click handler, sitting
+ * inside a day cell whose own onClick opens a blank create-record form for
+ * that date. Clicking "+N more" therefore did nothing itself and, because
+ * clicks bubble, silently triggered the day cell's blank-create-form click
+ * instead of ever revealing the hidden 4th+ record -- identical to the
+ * live-preview bug, since every exported app ships this same generated
+ * component. Fixed by turning it into a real button that toggles an
+ * expandedDays Set (showing every record for that day when expanded, with a
+ * "Show less" button to collapse back) and stops the click from bubbling
+ * into the day cell underneath it.
+ */
+test("the exported CalendarView's '+N more' overflow is a real button that reveals every hidden record, not an inert span", () => {
+  const files = generateExportFiles(project);
+  const entityViewJsx = files.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+  const calendarViewSource = entityViewJsx.slice(
+    entityViewJsx.indexOf("function CalendarView"),
+    entityViewJsx.indexOf("function BoardCard"),
+  );
+
+  assert.match(
+    calendarViewSource,
+    /const \[expandedDays, setExpandedDays\] = useState\(new Set\(\)\)/,
+    "CalendarView must track which days are expanded",
+  );
+  assert.match(
+    calendarViewSource,
+    /\(expandedDays\.has\(dayKey\) \? day\.records : day\.records\.slice\(0, 3\)\)\.map/,
+    "the day's chip list must show every record once that day is expanded, not always just the first 3",
+  );
+  const moreButtonSrc = calendarViewSource.match(
+    /day\.records\.length > 3 && \([\s\S]*?<button[\s\S]*?<\/button>\s*\)\)?\}/,
+  )?.[0];
+  assert.ok(moreButtonSrc, "expected the '+N more' overflow to render as a real <button>, not an inert <span>");
+  assert.match(moreButtonSrc!, /className="calendar-record-more"/);
+  assert.match(moreButtonSrc!, /e\.stopPropagation\(\)/, "the overflow button must stop its click from also opening the day cell's blank create-record form");
+  assert.match(moreButtonSrc!, /setExpandedDays/);
+  assert.match(moreButtonSrc!, /"Show less"/);
+
+  const stylesCss = files.find((f) => f.path === "web/src/styles.css")!.content;
+  assert.match(stylesCss, /\.calendar-record-more\s*\{[^}]*cursor: pointer/, "the overflow control must look clickable, not plain text");
+});
+
+test("the exported EntityView renders a real CSV export button backed by RFC-4180-correct CSV building", () => {
+  const files = generateExportFiles(project);
+  const entityViewJsx = files.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+  assert.match(entityViewJsx, /function recordsToCsv/);
+  assert.match(entityViewJsx, /function csvEscape/);
+  // CSV/formula injection guard (CWE-1236): a value starting with =, +, -,
+  // or @ must be prefixed with a leading single quote before the usual
+  // comma/quote wrapping, mirroring the same fix in the live-preview app's
+  // own entityFormatting.ts and the generated server.js's backup endpoint.
+  assert.match(entityViewJsx, /\^\[=\+\\-@\\t\\r\]/);
+  assert.match(entityViewJsx, /handleExportCsv/);
+  assert.match(entityViewJsx, /csv-export-btn/);
+  assert.match(entityViewJsx, /new Blob\(\["\\uFEFF" \+ csv\]/);
+  const stylesCss = files.find((f) => f.path === "web/src/styles.css")!.content;
+  assert.match(stylesCss, /\.csv-export-btn/);
+});
+
+// The live-preview app's calendar view got a real "Export to Calendar
+// (ICS)" button in round 264 (apps/web/src/calendarIcs.ts), but the
+// exported/standalone codegen app's own CalendarView -- ported to codegen
+// back in round 50 -- had no equivalent: someone who deploys their own
+// exported booking app gets a calendar tab with no way to get a month of
+// appointments into their phone's real calendar. Confirms the ICS builder,
+// its RFC 5545 helpers, and the button/handler are all present in the
+// generated output.
+test("the exported EntityView renders a real 'Export to Calendar (ICS)' button backed by a genuine RFC 5545 .ics builder", () => {
+  const withDate: Project = {
+    ...project,
+    spec: {
+      ...project.spec,
+      entities: [
+        ...project.spec.entities,
+        {
+          name: "Appointment",
+          label: "תורים",
+          fields: [
+            { name: "customerName", label: "שם לקוח", type: "text", required: true },
+            { name: "date", label: "תאריך", type: "date", required: true },
+          ],
+        },
+      ],
+    },
+  };
+  const files = generateExportFiles(withDate);
+  const entityViewJsx = files.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+
+  assert.match(entityViewJsx, /function calendarLabelField/);
+  assert.match(entityViewJsx, /function icsEscapeText/);
+  assert.match(entityViewJsx, /function foldIcsLine/);
+  assert.match(entityViewJsx, /function buildCalendarIcs/);
+  assert.match(entityViewJsx, /function handleExportIcs/);
+  assert.match(entityViewJsx, /ics-export-btn/);
+  assert.match(entityViewJsx, /Export to Calendar \(ICS\)/);
+  assert.match(entityViewJsx, /new Blob\(\[ics\], \{ type: "text\/calendar;charset=utf-8" \}\)/);
+
+  const stylesCss = files.find((f) => f.path === "web/src/styles.css")!.content;
+  assert.match(stylesCss, /\.ics-export-btn/);
+});
+
+// Executes the real generated buildCalendarIcs (extracted from real codegen
+// output, not reimplemented) to prove the ported RFC 5545 logic actually
+// works, not just that the source text is present. Covers the two details a
+// naive string-template .ics writer gets wrong: the exclusive-end DTEND for
+// an all-day event (must be the next day, not the same day) and RFC
+// 5545 §3.3.11 TEXT escaping (a comma in a field value must be
+// backslash-escaped or it corrupts the VEVENT's own field boundaries).
+test("the exported EntityView's real generated buildCalendarIcs produces a genuine calendar with a correct exclusive-end DTEND and real TEXT escaping", () => {
+  const withDate: Project = {
+    ...project,
+    spec: {
+      ...project.spec,
+      entities: [
+        ...project.spec.entities,
+        {
+          name: "Appointment",
+          label: "תורים",
+          fields: [
+            { name: "customerName", label: "שם לקוח", type: "text", required: true },
+            { name: "date", label: "תאריך", type: "date", required: true },
+          ],
+        },
+      ],
+    },
+  };
+  const entityViewJsx = generateExportFiles(withDate).find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+
+  const pickDisplaySrc = entityViewJsx.match(/export function pickDisplayField\(entity\) \{[\s\S]*?\n\}\n/)?.[0]?.replace(/^export /, "");
+  const labelFieldSrc = entityViewJsx.match(/function calendarLabelField\(entity, dateField\) \{[\s\S]*?\n\}\n/)?.[0];
+  const pad2Src = entityViewJsx.match(/function icsPad2\(n\) \{[\s\S]*?\n\}\n/)?.[0];
+  const dateSrc = entityViewJsx.match(/function formatIcsDate\(date\) \{[\s\S]*?\n\}\n/)?.[0];
+  const tsSrc = entityViewJsx.match(/function formatIcsTimestamp\(date\) \{[\s\S]*?\n\}\n/)?.[0];
+  const escSrc = entityViewJsx.match(/function icsEscapeText\(value\) \{[\s\S]*?\n\}\n/)?.[0];
+  const foldSrc = entityViewJsx.match(/function foldIcsLine\(line\) \{[\s\S]*?\n\}\n/)?.[0];
+  const buildSrc = entityViewJsx.match(
+    /function buildCalendarIcs\(entity, dateField, labelField, records, relatedRecords, now, endField\) \{[\s\S]*?\n\}\n/,
+  )?.[0];
+  assert.ok(
+    pickDisplaySrc && labelFieldSrc && pad2Src && dateSrc && tsSrc && escSrc && foldSrc && buildSrc,
+    "expected to find every ICS helper function in the real generated output",
+  );
+
+  // No relation field in this test's entity, so a trivial stub is enough --
+  // this test is about buildCalendarIcs' own date/escaping logic, not
+  // relation resolution (already covered by the live-preview's own
+  // calendarIcs.test.ts, which this ported code is byte-for-byte adapted
+  // from).
+  const relationStub = "function relationDisplayLabel() { return ''; }\n";
+  const buildCalendarIcs = new Function(
+    `${pickDisplaySrc}\n${labelFieldSrc}\n${pad2Src}\n${dateSrc}\n${tsSrc}\n${escSrc}\n${foldSrc}\n${relationStub}\n${buildSrc}\nreturn buildCalendarIcs;`,
+  )() as (entity: unknown, dateField: unknown, labelField: unknown, records: unknown[], relatedRecords: unknown, now: Date) => string;
+
+  const entity = {
+    name: "Appointment",
+    label: "תורים",
+    fields: [
+      { name: "customerName", label: "שם לקוח", type: "text" },
+      { name: "date", label: "תאריך", type: "date" },
+    ],
+  };
+  const dateField = entity.fields[1];
+  const labelField = entity.fields[0];
+  const records = [{ id: 5, customerName: "Dana, Levi", date: "2026-03-15" }];
+
+  const ics = buildCalendarIcs(entity, dateField, labelField, records, {}, new Date("2026-01-01T00:00:00Z"));
+
+  assert.match(ics, /^BEGIN:VCALENDAR\r\nVERSION:2\.0/);
+  assert.match(ics, /END:VCALENDAR$/);
+  assert.match(ics, /UID:Appointment-5@forge-ai/);
+  assert.match(ics, /DTSTART;VALUE=DATE:20260315/);
+  assert.match(ics, /DTEND;VALUE=DATE:20260316/, "an all-day single-day event's DTEND must be the next day (exclusive end), not the same day");
+  assert.match(ics, /SUMMARY:Dana\\, Levi/, "a comma in the summary must be backslash-escaped per RFC 5545 §3.3.11");
+});
+
+// Regression test for the enum-field gap fixed this round: the exported
+// app's own buildCalendarIcs (ported from calendarIcs.ts) previously
+// showed an enum field's raw stored value in DESCRIPTION instead of its
+// real Hebrew enumLabels translation, the same gap live-preview's
+// calendarIcs.test.ts covers for the un-exported version.
+test("the exported EntityView's real generated buildCalendarIcs resolves an enum field to its Hebrew enumLabels translation, not the raw stored value", () => {
+  const withStatus: Project = {
+    ...project,
+    spec: {
+      ...project.spec,
+      entities: [
+        ...project.spec.entities,
+        {
+          name: "Appointment",
+          label: "תורים",
+          fields: [
+            { name: "customerName", label: "שם לקוח", type: "text", required: true },
+            { name: "date", label: "תאריך", type: "date", required: true },
+            {
+              name: "status",
+              label: "סטטוס",
+              type: "enum",
+              required: false,
+              enumValues: ["pending", "shipped"],
+              enumLabels: { pending: "ממתין", shipped: "נשלח" },
+            },
+          ],
+        },
+      ],
+    },
+  };
+  const entityViewJsx = generateExportFiles(withStatus).find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+
+  const pickDisplaySrc = entityViewJsx.match(/export function pickDisplayField\(entity\) \{[\s\S]*?\n\}\n/)?.[0]?.replace(/^export /, "");
+  const labelFieldSrc = entityViewJsx.match(/function calendarLabelField\(entity, dateField\) \{[\s\S]*?\n\}\n/)?.[0];
+  const pad2Src = entityViewJsx.match(/function icsPad2\(n\) \{[\s\S]*?\n\}\n/)?.[0];
+  const dateSrc = entityViewJsx.match(/function formatIcsDate\(date\) \{[\s\S]*?\n\}\n/)?.[0];
+  const tsSrc = entityViewJsx.match(/function formatIcsTimestamp\(date\) \{[\s\S]*?\n\}\n/)?.[0];
+  const escSrc = entityViewJsx.match(/function icsEscapeText\(value\) \{[\s\S]*?\n\}\n/)?.[0];
+  const foldSrc = entityViewJsx.match(/function foldIcsLine\(line\) \{[\s\S]*?\n\}\n/)?.[0];
+  const buildSrc = entityViewJsx.match(
+    /function buildCalendarIcs\(entity, dateField, labelField, records, relatedRecords, now, endField\) \{[\s\S]*?\n\}\n/,
+  )?.[0];
+  assert.ok(
+    pickDisplaySrc && labelFieldSrc && pad2Src && dateSrc && tsSrc && escSrc && foldSrc && buildSrc,
+    "expected to find every ICS helper function in the real generated output",
+  );
+
+  const relationStub = "function relationDisplayLabel() { return ''; }\n";
+  const buildCalendarIcs = new Function(
+    `${pickDisplaySrc}\n${labelFieldSrc}\n${pad2Src}\n${dateSrc}\n${tsSrc}\n${escSrc}\n${foldSrc}\n${relationStub}\n${buildSrc}\nreturn buildCalendarIcs;`,
+  )() as (entity: unknown, dateField: unknown, labelField: unknown, records: unknown[], relatedRecords: unknown, now: Date) => string;
+
+  const entity = withStatus.spec.entities.find((e) => e.name === "Appointment")!;
+  const dateField = entity.fields.find((f) => f.name === "date")!;
+  const labelField = entity.fields.find((f) => f.name === "customerName")!;
+  const records = [{ id: 5, customerName: "Dana Levi", date: "2026-03-15", status: "shipped" }];
+
+  const ics = buildCalendarIcs(entity, dateField, labelField, records, {}, new Date("2026-01-01T00:00:00Z"));
+
+  assert.match(ics, /סטטוס: נשלח/);
+  assert.doesNotMatch(ics, /סטטוס: shipped/, "must never leak the raw enum value once a real Hebrew label exists for it");
+});
+
+// The live-preview app's own EntityPanel.tsx got a "Columns" menu (hide/show
+// individual table columns, persisted in localStorage) in round 138, but the
+// exported app's separate CalendarView-style EntityView.jsx never picked it
+// up -- the same live-preview-then-codegen gap round 147 found and fixed for
+// the calendar view's own Today button. Confirms the menu, the
+// visibleFields filtering (applied to the table header/body but NOT to CSV
+// export, matching the live-preview app's own "whole-record action" rule),
+// and the persistence helpers are all actually present in the generated
+// output.
+test("the exported EntityView renders a 'Columns' menu to hide/show individual table columns, ported from the Forge AI live preview", () => {
+  const files = generateExportFiles(project);
+  const entityViewJsx = files.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+  assert.match(entityViewJsx, /function getHiddenColumns/);
+  assert.match(entityViewJsx, /function toggleColumnVisibility/);
+  assert.match(entityViewJsx, /columns-menu-btn/);
+  assert.match(entityViewJsx, /columns-menu-panel/);
+  assert.match(entityViewJsx, /visibleFields/);
+  // The table header/body must use the filtered list...
+  assert.match(entityViewJsx, /\{visibleFields\.map\(\(f\) => \{[\s\S]*?<th/);
+  assert.match(entityViewJsx, /\{visibleFields\.map\(\(f\) => \{[\s\S]*?<td/);
+  // ...but CSV export must still see every field, hidden or not.
+  const handleExportCsvSrc = entityViewJsx.match(/function handleExportCsv\(\) \{[\s\S]*?\n {2}\}\n/)?.[0];
+  assert.ok(handleExportCsvSrc, "expected to find handleExportCsv in generated output");
+  assert.doesNotMatch(handleExportCsvSrc!, /visibleFields/, "CSV export must ignore hidden columns, the same as the live-preview app");
+
+  const stylesCss = files.find((f) => f.path === "web/src/styles.css")!.content;
+  assert.match(stylesCss, /\.columns-menu-panel/);
+});
+
+// Executes the real generated getHiddenColumns/toggleColumnVisibility
+// functions (extracted from real codegen output, not reimplemented) against
+// a fake localStorage, the same "run the real generated code" standard this
+// file's other persistence-backed tests use.
+test("the exported EntityView's getHiddenColumns/toggleColumnVisibility persist per entity via a real localStorage round trip", () => {
+  const entityViewJsx = generateExportFiles(project).find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+  const storageKeySrc = entityViewJsx.match(/const HIDDEN_COLUMNS_STORAGE_KEY[\s\S]*?\nfunction toggleColumnVisibility\(entityName, fieldName\) \{[\s\S]*?\n\}\n/)?.[0];
+  assert.ok(storageKeySrc, "expected to find the hidden-columns persistence helpers in generated output");
+
+  const store: Record<string, string> = {};
+  const fakeLocalStorage = {
+    getItem: (key: string) => store[key] ?? null,
+    setItem: (key: string, value: string) => {
+      store[key] = value;
+    },
+  };
+  const { getHiddenColumns, toggleColumnVisibility } = new Function(
+    "localStorage",
+    `${storageKeySrc}\nreturn { getHiddenColumns, toggleColumnVisibility };`,
+  )(fakeLocalStorage) as {
+    getHiddenColumns: (entityName: string) => Set<string>;
+    toggleColumnVisibility: (entityName: string, fieldName: string) => Set<string>;
+  };
+
+  assert.deepEqual([...getHiddenColumns("Customer")], [], "a never-touched entity starts with no hidden columns");
+
+  const afterFirstToggle = toggleColumnVisibility("Customer", "email");
+  assert.deepEqual([...afterFirstToggle], ["email"]);
+  assert.deepEqual([...getHiddenColumns("Customer")], ["email"], "the hidden state must actually persist to localStorage, not just live in memory");
+  assert.deepEqual([...getHiddenColumns("Deal")], [], "hiding a column on one entity must not affect a different entity");
+
+  const afterSecondToggle = toggleColumnVisibility("Customer", "email");
+  assert.deepEqual([...afterSecondToggle], [], "toggling the same field again must un-hide it");
+});
+
+test("the exported EntityView renders real bulk-select + bulk-delete for table rows", () => {
+  const files = generateExportFiles(project);
+  const entityViewJsx = files.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+  assert.match(entityViewJsx, /toggleSelected/);
+  assert.match(entityViewJsx, /toggleSelectAllVisible/);
+  assert.match(entityViewJsx, /handleBulkDelete/);
+  assert.match(entityViewJsx, /window\.confirm/);
+  assert.match(entityViewJsx, /bulk-actions-bar/);
+  assert.match(entityViewJsx, /el\.indeterminate/);
+  const stylesCss = files.find((f) => f.path === "web/src/styles.css")!.content;
+  assert.match(stylesCss, /\.bulk-actions-bar/);
+  assert.match(stylesCss, /input\[type="checkbox"\]/);
+});
+
+/**
+ * New in this round: the exported standalone app's bulk-actions bar only
+ * ever offered "Delete selected", unlike the live Forge AI preview's own
+ * bar (EntityPanel.tsx round 258/89) which also offers "Duplicate selected"
+ * and a "Set field: ... Apply to N" bulk update. A smoking-gun comment
+ * elsewhere in this same generated file already referenced
+ * "handleBulkDelete/handleBulkDuplicate's own existing behavior" despite
+ * handleBulkDuplicate never actually existing here -- this port makes that
+ * comment true.
+ */
+test("the exported EntityView's bulk-actions bar also supports duplicating and bulk-field-updating selected records, not just deleting them", () => {
+  const files = generateExportFiles(project);
+  const entityViewJsx = files.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+
+  assert.match(entityViewJsx, /const \[bulkEditField, setBulkEditField\] = useState\(""\);/);
+  assert.match(entityViewJsx, /const \[bulkEditValue, setBulkEditValue\] = useState\(""\);/);
+  assert.match(entityViewJsx, /async function handleBulkDuplicate\(\) \{/);
+  assert.match(entityViewJsx, /async function handleBulkUpdate\(\) \{/);
+  assert.match(entityViewJsx, /function handleBulkEditFieldChange\(fieldName\) \{/);
+
+  // The bulk-actions bar itself must render the field picker, the live
+  // FieldInput for the chosen field, and both new action buttons --
+  // filtered through isInlineEditableField so a relation field (whose
+  // "value" is another record's id) can never be picked for a bulk update.
+  assert.match(entityViewJsx, /entity\.fields\.filter\(isInlineEditableField\)\.map\(\(f\) => \(/);
+  assert.match(
+    entityViewJsx,
+    /<FieldInput entity=\{entity\} field=\{entity\.fields\.find\(\(f\) => f\.name === bulkEditField\)\} value=\{bulkEditValue\} onChange=\{setBulkEditValue\} \/>/,
+  );
+  assert.match(entityViewJsx, /onClick=\{handleBulkUpdate\}/);
+  assert.match(entityViewJsx, /onClick=\{handleBulkDuplicate\}/);
+  assert.match(entityViewJsx, /Apply to \{selectedIds\.size\}/);
+  assert.match(entityViewJsx, /📋 Duplicate selected/);
+
+  const stylesCss = files.find((f) => f.path === "web/src/styles.css")!.content;
+  assert.match(stylesCss, /\.bulk-edit-field-label/);
+
+  // handleBulkEditFieldChange must reset bulkEditValue to a type-appropriate
+  // empty value (false for boolean, "" otherwise), the same guard the live
+  // preview's own version has -- otherwise switching the picker from an
+  // enum to a boolean field would try to render a stale string value.
+  const changeSrc = entityViewJsx.match(/function handleBulkEditFieldChange\(fieldName\) \{[\s\S]*?\n  \}\n/)?.[0];
+  assert.ok(changeSrc, "expected to find handleBulkEditFieldChange in generated output");
+  let capturedField: string | undefined;
+  let capturedValue: unknown;
+  const changeFn = new Function(
+    "entity",
+    "setBulkEditField",
+    "setBulkEditValue",
+    `${changeSrc}\nreturn handleBulkEditFieldChange;`,
+  )(
+    { fields: [{ name: "active", type: "boolean" }, { name: "status", type: "enum" }] },
+    (f: string) => (capturedField = f),
+    (v: unknown) => (capturedValue = v),
+  );
+  changeFn("active");
+  assert.equal(capturedField, "active");
+  assert.equal(capturedValue, false, "a boolean field must start from false, not an empty string");
+  changeFn("status");
+  assert.equal(capturedValue, "", "a non-boolean field must start from an empty string");
+});
+
+/**
+ * Regression test, same Promise.allSettled-partial-failure standard as the
+ * existing handleBulkDelete test above: a single rejected duplicate/update
+ * must not hide the ones that DID succeed, and the ones that failed must
+ * stay selected so the user can retry just those.
+ */
+test("the exported EntityView's handleBulkDuplicate and handleBulkUpdate keep only the ids that actually failed selected, on a real partial failure", async () => {
+  const entityViewJsx = generateExportFiles(project).find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+
+  const handleBulkDuplicateSrc = entityViewJsx.match(/async function handleBulkDuplicate\(\) \{[\s\S]*?\n  \}\n/)?.[0];
+  assert.ok(handleBulkDuplicateSrc, "expected to find handleBulkDuplicate in generated output");
+  {
+    let capturedError: string | undefined;
+    let capturedSelectedIds: Set<number> | undefined;
+    let refreshCalled = 0;
+    const createdCopies: Record<string, unknown>[] = [];
+    const fn = new Function(
+      "entity",
+      "records",
+      "selectedIds",
+      "setSelectedIds",
+      "setError",
+      "createRecord",
+      "refresh",
+      `${handleBulkDuplicateSrc}\nreturn handleBulkDuplicate;`,
+    )(
+      { fields: [{ name: "name" }] },
+      [{ id: 1, name: "A" }, { id: 2, name: "B" }, { id: 3, name: "C" }],
+      new Set([1, 2, 3]),
+      (next: Set<number>) => (capturedSelectedIds = next),
+      (msg: string) => (capturedError = msg),
+      async (_entityName: string, copy: Record<string, unknown>) => {
+        createdCopies.push(copy);
+        if (copy.name === "B") throw new Error("record B duplicate failed");
+      },
+      async () => {
+        refreshCalled += 1;
+      },
+    );
+    await fn();
+    assert.deepEqual(
+      createdCopies.map((c) => c.name).sort(),
+      ["A", "B", "C"],
+      "must attempt every selected record's duplicate, not stop at the first failure",
+    );
+    assert.deepEqual([...capturedSelectedIds!].sort(), [2], "only the record whose duplicate actually failed should remain selected");
+    assert.equal(capturedError, "1 of 3 records could not be duplicated.");
+    assert.equal(refreshCalled, 1, "refresh() must still run to reflect the duplicates that succeeded");
+  }
+
+  const handleBulkUpdateSrc = entityViewJsx.match(/async function handleBulkUpdate\(\) \{[\s\S]*?\n  \}\n/)?.[0];
+  assert.ok(handleBulkUpdateSrc, "expected to find handleBulkUpdate in generated output");
+  {
+    let capturedError: string | undefined;
+    let capturedSelectedIds: Set<number> | undefined;
+    let refreshCalled = 0;
+    const updatedIds: number[] = [];
+    const fn = new Function(
+      "entity",
+      "bulkEditField",
+      "bulkEditValue",
+      "selectedIds",
+      "setSelectedIds",
+      "setError",
+      "updateRecord",
+      "refresh",
+      `${handleBulkUpdateSrc}\nreturn handleBulkUpdate;`,
+    )(
+      { name: "Order" },
+      "status",
+      "Shipped",
+      new Set([1, 2, 3]),
+      (next: Set<number>) => (capturedSelectedIds = next),
+      (msg: string) => (capturedError = msg),
+      async (_entityName: string, id: number, patch: Record<string, unknown>) => {
+        updatedIds.push(id);
+        assert.deepEqual(patch, { status: "Shipped" });
+        if (id === 3) throw new Error("record 3 update failed");
+      },
+      async () => {
+        refreshCalled += 1;
+      },
+    );
+    await fn();
+    assert.deepEqual(updatedIds.slice().sort(), [1, 2, 3], "must attempt every selected id's update, not stop at the first failure");
+    assert.deepEqual([...capturedSelectedIds!].sort(), [3], "only the id that actually failed to update should remain selected");
+    assert.equal(capturedError, "1 of 3 records could not be updated.");
+    assert.equal(refreshCalled, 1, "refresh() must still run to reflect the updates that succeeded");
+  }
+
+  // A bulk update with no field chosen must be a real no-op -- no calls at
+  // all, matching the live preview's own `if (!bulkEditField) return;` guard.
+  {
+    let updateRecordCalled = 0;
+    let refreshCalled = 0;
+    const fn = new Function(
+      "entity",
+      "bulkEditField",
+      "bulkEditValue",
+      "selectedIds",
+      "setSelectedIds",
+      "setError",
+      "updateRecord",
+      "refresh",
+      `${handleBulkUpdateSrc}\nreturn handleBulkUpdate;`,
+    )(
+      { name: "Order" },
+      "",
+      "",
+      new Set([1, 2]),
+      () => {},
+      () => {},
+      async () => {
+        updateRecordCalled += 1;
+      },
+      async () => {
+        refreshCalled += 1;
+      },
+    );
+    await fn();
+    assert.equal(updateRecordCalled, 0, "no field chosen must mean no update calls at all");
+    assert.equal(refreshCalled, 0);
+  }
+});
+
+test("the exported EntityView renders a real Duplicate action (table and board views) that copies a record via a real createRecord call", () => {
+  const files = generateExportFiles(project);
+  const entityViewJsx = files.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+  assert.match(entityViewJsx, /async function handleDuplicate\(id\)/);
+  assert.match(entityViewJsx, /await createRecord\(entity\.name, copy\)/);
+  // No confirmation dialog for duplicating, unlike delete -- it creates
+  // data rather than destroying it.
+  const duplicateFnBody = entityViewJsx.slice(
+    entityViewJsx.indexOf("async function handleDuplicate"),
+    entityViewJsx.indexOf("async function handleDuplicate") + 300,
+  );
+  assert.doesNotMatch(duplicateFnBody, /window\.confirm/);
+  // Wired into both the table row actions and the Kanban board card.
+  assert.match(entityViewJsx, /onClick=\{\(\) => handleDuplicate\(r\.id\)\}>Duplicate<\/button>/);
+  assert.match(entityViewJsx, /onDuplicate=\{\(\) => handleDuplicate\(r\.id\)\}/);
+  assert.match(entityViewJsx, /<button onClick=\{onDuplicate\}>Duplicate<\/button>/);
+});
+
+// Regression test: handleDuplicate/handleMove each awaited a real network
+// call (createRecord/updateRecord) with no try/catch at all, unlike
+// handleSubmit and handleImportFile right next to them in this same file,
+// and unlike the live-preview app's own EntityPanel.tsx, where both of
+// these already wrap the same calls in try/catch + setError. A rejected
+// request here (a dropped connection, an unexpected server error, a record
+// already deleted by someone else) became an unhandled promise rejection
+// with zero visible feedback -- the user's click just silently did
+// nothing. Executes the real generated handler functions (extracted from
+// real codegen output, not reimplemented) with a rejecting mock of the
+// underlying API call and asserts setError actually gets called with the
+// rejection's message.
+// (handleDelete/handleBulkDelete are deliberately NOT covered here: since
+// round 194/round 321 they're both optimistic deletes behind a shared undo
+// window -- see the dedicated undo-toast tests below -- and the real
+// deleteRecord call(s) they eventually make, once the window closes, have
+// no UI left to report a failure to directly from the handler itself,
+// exactly like the live preview's own commitPendingDelete.)
+test("the exported EntityView's handleDuplicate/handleMove surface a failed request instead of silently swallowing it", async () => {
+  const entityViewJsx = generateExportFiles(project).find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+
+  const displayFieldHintsSrc = entityViewJsx.match(/const DISPLAY_FIELD_NAME_HINTS = \[[^\]]*\];\n/)?.[0];
+  const pickDisplayFieldSrc = entityViewJsx.match(/export function pickDisplayField\(entity\) \{[\s\S]*?\n\}\n/)?.[0]?.replace("export ", "");
+  const recordDisplayLabelSrc = entityViewJsx.match(/export function recordDisplayLabel\(entity, record\) \{[\s\S]*?\n\}\n/)?.[0]?.replace("export ", "");
+  const handleDuplicateSrc = entityViewJsx.match(/async function handleDuplicate\(id\) \{[\s\S]*?\n  \}\n/)?.[0];
+  const handleMoveFieldsSrc = entityViewJsx.match(/async function handleMoveFields\(id, fields\) \{[\s\S]*?\n  \}\n/)?.[0];
+  const handleMoveSrc = entityViewJsx.match(/async function handleMove\(id, fieldName, value\) \{[\s\S]*?\n  \}\n/)?.[0];
+  assert.ok(
+    displayFieldHintsSrc && pickDisplayFieldSrc && recordDisplayLabelSrc && handleDuplicateSrc && handleMoveFieldsSrc && handleMoveSrc,
+    "expected to find DISPLAY_FIELD_NAME_HINTS/pickDisplayField/recordDisplayLabel/handleDuplicate/handleMoveFields/handleMove in generated output",
+  );
+
+  const entity = project.spec.entities[0];
+  const records = [{ id: 1, name: "Dana", email: "dana@example.com", status: "New" }];
+  const rejection = new Error("network error");
+
+  async function runHandler(handlerSrc: string, invoke: (fn: (...args: unknown[]) => Promise<void>) => Promise<void>) {
+    let capturedError: string | undefined;
+    const fn = new Function(
+      "window",
+      "entity",
+      "records",
+      "selectedIds",
+      "setSelectedIds",
+      "setError",
+      "setMoveErrorId",
+      "deleteRecord",
+      "createRecord",
+      "updateRecord",
+      "refresh",
+      `${displayFieldHintsSrc}\n${pickDisplayFieldSrc}\n${recordDisplayLabelSrc}\n${handleMoveFieldsSrc}\n${handlerSrc}\nreturn ${handlerSrc.match(/^async function (\w+)/)![1]};`,
+    )(
+      { confirm: () => true },
+      entity,
+      records,
+      new Set([1]),
+      () => {},
+      (msg: string) => {
+        capturedError = msg;
+      },
+      () => {},
+      async () => {
+        throw rejection;
+      },
+      async () => {
+        throw rejection;
+      },
+      async () => {
+        throw rejection;
+      },
+      async () => {},
+    );
+    await invoke(fn);
+    return capturedError;
+  }
+
+  assert.equal(await runHandler(handleDuplicateSrc, (fn) => fn(1)), rejection.message, "handleDuplicate must call setError on failure");
+  assert.equal(await runHandler(handleMoveSrc, (fn) => fn(1, "status", "Won")), rejection.message, "handleMove must call setError on failure");
+});
+
+/**
+ * New in this round: bulk delete in the exported app had exactly the same
+ * gap round 320 fixed in the live preview -- window.confirm then every
+ * real DELETE fired immediately with zero recovery, while single-record
+ * delete (round 194's port of the live preview's own round-184 fix)
+ * already had a 5-second undo window right next to it. Mirrors
+ * apps/web/src/EntityPanel.test.ts's own real-DOM bulk-delete-undo tests
+ * exactly, against the real generated EntityView component (not a regex
+ * proxy): renders it, selects every row via the real checkboxes, clicks
+ * the real "Delete selected" button, and confirms every row disappears
+ * immediately with no real DELETE request fired while the undo window is
+ * open, one shared toast names the real count, and clicking Undo restores
+ * every row in its original order while genuinely cancelling every
+ * pending DELETE.
+ */
+test("the exported EntityView's bulk delete removes every selected row immediately and shows one Undo toast for the batch, and clicking Undo restores all of them without ever calling the real delete API", async (t) => {
+  const files = generateExportFiles(project);
+  const dir = writeGeneratedWebComponent(files);
+  const store = [
+    { id: 1, name: "Acme Corp", email: "a@acme.example", status: "New" },
+    { id: 2, name: "Globex", email: "b@globex.example", status: "Won" },
+    { id: 3, name: "Initech", email: "c@initech.example", status: "Lost" },
+  ];
+  const deletedIds: number[] = [];
+  const originalFetch = globalThis.fetch;
+  const originalConfirm = globalThis.window?.confirm;
+  globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
+    const method = init?.method ?? "GET";
+    if (method === "GET" && input === "/api/Customer") {
+      return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    const deleteMatch = /^\/api\/Customer\/(\d+)$/.exec(input);
+    if (method === "DELETE" && deleteMatch) {
+      deletedIds.push(Number(deleteMatch[1]));
+      return new Response(null, { status: 204 });
+    }
+    throw new Error(`unexpected request ${method} ${input}`);
+  }) as typeof fetch;
+  (globalThis.window as unknown as { confirm: () => boolean }).confirm = () => true;
+
+  try {
+    await withRealLocalStorage(async () => {
+      const { EntityView } = await import(path.join(dir, "web", "src", "components", "EntityView.jsx"));
+      const customerEntity = project.spec.entities.find((e) => e.name === "Customer")!;
+      const props = {
+        entity: customerEntity,
+        highlightRecordId: null,
+        onHighlightHandled: () => {},
+        onJumpToRecord: () => {},
+        onRecordCountChange: () => {},
+      };
+
+      const { container } = render(React.createElement(EntityView, props));
+      for (let i = 0; i < 40; i++) {
+        if (container.querySelectorAll("tbody tr").length === 3) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+      assert.equal(container.querySelectorAll("tbody tr").length, 3, "expected all 3 records to have loaded");
+
+      // Enabled only now, AFTER the initial render/fetch has already
+      // settled -- mocking it any earlier stalls the very first render
+      // before this test gets anywhere near its own delete flow (same
+      // lesson as apps/web/src/EntityPanel.test.ts's own delete-undo tests).
+      t.mock.timers.enable({ apis: ["setTimeout"] });
+
+      for (const checkbox of container.querySelectorAll('td.select-col input[type="checkbox"]')) {
+        await act(async () => {
+          fireEvent.click(checkbox);
+        });
+      }
+      const bulkDeleteButton = Array.from(container.querySelectorAll("button")).find((b) => b.textContent?.includes("Delete selected"));
+      assert.ok(bulkDeleteButton, "expected a real 'Delete selected' button once rows are selected");
+
+      await act(async () => {
+        fireEvent.click(bulkDeleteButton!);
+      });
+
+      assert.equal(container.querySelectorAll("tbody tr").length, 0, "all 3 selected rows must disappear immediately");
+      assert.equal(deletedIds.length, 0, "no real DELETE request must have fired yet -- still inside the undo window");
+
+      const toast = container.querySelector(".entity-undo-toast");
+      assert.ok(toast, "expected one Undo toast for the whole batch");
+      assert.match(toast!.textContent ?? "", /3/, "the toast must name the real number of deleted records");
+
+      await act(async () => {
+        fireEvent.click(toast!.querySelector("button") as HTMLButtonElement);
+      });
+
+      assert.equal(container.querySelectorAll("tbody tr").length, 3, "all 3 rows must come back once undone");
+      assert.equal(container.querySelector(".entity-undo-toast"), null, "the toast must disappear once undone");
+      const namesAfterUndo = Array.from(container.querySelectorAll("tbody tr")).map((r) => r.textContent ?? "");
+      assert.ok(
+        /Acme/.test(namesAfterUndo[0]) && /Globex/.test(namesAfterUndo[1]) && /Initech/.test(namesAfterUndo[2]),
+        "all 3 rows must come back in their original order",
+      );
+
+      await act(async () => {
+        t.mock.timers.tick(10_000);
+      });
+      assert.equal(deletedIds.length, 0, "even long after the undo window would have elapsed, undoing must have cancelled every pending delete");
+    });
+  } finally {
+    t.mock.timers.reset();
+    globalThis.fetch = originalFetch;
+    if (originalConfirm) (globalThis.window as unknown as { confirm: () => boolean }).confirm = originalConfirm;
+    cleanup();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
+ * New in this round: once rows are selected in the exported app, the only
+ * ways to leave selection mode were committing a real bulk delete/duplicate
+ * (mutating data just to escape the mode) or unchecking every row one at a
+ * time. Confirms a dedicated "Clear selection" button in the exported
+ * EntityView empties the selection (the bulk-actions-bar disappears, every
+ * checkbox unchecks) without ever calling the API -- not even a refetch.
+ */
+test("the exported EntityView's 'Clear selection' button empties the current selection without touching the API", async () => {
+  const files = generateExportFiles(project);
+  const dir = writeGeneratedWebComponent(files);
+  const store = [
+    { id: 1, name: "Acme Corp", email: "a@acme.example", status: "New" },
+    { id: 2, name: "Globex", email: "b@globex.example", status: "Won" },
+  ];
+  const originalFetch = globalThis.fetch;
+  let getCount = 0;
+  globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
+    const method = init?.method ?? "GET";
+    if (method === "GET" && input === "/api/Customer") {
+      getCount += 1;
+      return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    throw new Error(`unexpected request ${method} ${input}`);
+  }) as typeof fetch;
+
+  try {
+    await withRealLocalStorage(async () => {
+      const { EntityView } = await import(path.join(dir, "web", "src", "components", "EntityView.jsx"));
+      const customerEntity = project.spec.entities.find((e) => e.name === "Customer")!;
+      const props = {
+        entity: customerEntity,
+        highlightRecordId: null,
+        onHighlightHandled: () => {},
+        onJumpToRecord: () => {},
+        onRecordCountChange: () => {},
+      };
+
+      const { container } = render(React.createElement(EntityView, props));
+      for (let i = 0; i < 40; i++) {
+        if (container.querySelectorAll("tbody tr").length === 2) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+      assert.equal(container.querySelectorAll("tbody tr").length, 2, "expected both records to have loaded");
+      const getCountAfterLoad = getCount;
+
+      for (const checkbox of container.querySelectorAll('td.select-col input[type="checkbox"]')) {
+        await act(async () => {
+          fireEvent.click(checkbox);
+        });
+      }
+      assert.ok(container.querySelector(".bulk-actions-bar"), "expected the bulk-actions-bar once rows are selected");
+      assert.equal(
+        Array.from(container.querySelectorAll('td.select-col input[type="checkbox"]')).filter((c) => (c as HTMLInputElement).checked).length,
+        2,
+        "both rows must be checked before clearing",
+      );
+
+      const clearButton = Array.from(container.querySelectorAll(".bulk-actions-bar button")).find((b) => b.textContent === "Clear selection");
+      assert.ok(clearButton, "expected a real 'Clear selection' button once rows are selected");
+
+      await act(async () => {
+        fireEvent.click(clearButton!);
+      });
+
+      assert.equal(container.querySelector(".bulk-actions-bar"), null, "the bulk-actions-bar must disappear once the selection is cleared");
+      assert.equal(
+        Array.from(container.querySelectorAll('td.select-col input[type="checkbox"]')).filter((c) => (c as HTMLInputElement).checked).length,
+        0,
+        "every row's own checkbox must be unchecked again",
+      );
+      assert.equal(container.querySelectorAll("tbody tr").length, 2, "clearing the selection must not delete or hide any record");
+      assert.equal(getCount, getCountAfterLoad, "clearing the selection must be purely local state -- it must never call the API, not even a refetch");
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    cleanup();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
+ * The other half, mirroring the live preview's own equivalent test: NOT
+ * clicking Undo must commit every real DELETE in the batch once the undo
+ * window actually elapses, including a partial failure restoring only the
+ * record whose real delete actually failed and surfacing the translated
+ * partial-failure message -- the same Promise.allSettled resilience
+ * handleBulkDelete used to have on its own, now living inside the shared
+ * commitPendingDelete instead.
+ */
+test("the exported EntityView's pending bulk delete commits every real delete once the undo window elapses, restoring only the one whose delete actually failed", async (t) => {
+  const files = generateExportFiles(project);
+  const dir = writeGeneratedWebComponent(files);
+  const store = [
+    { id: 1, name: "Acme Corp", email: "a@acme.example", status: "New" },
+    { id: 2, name: "Globex", email: "b@globex.example", status: "Won" },
+  ];
+  const deletedIds: number[] = [];
+  const originalFetch = globalThis.fetch;
+  const originalConfirm = globalThis.window?.confirm;
+  globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
+    const method = init?.method ?? "GET";
+    if (method === "GET" && input === "/api/Customer") {
+      return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    if (method === "DELETE" && input === "/api/Customer/1") {
+      deletedIds.push(1);
+      return new Response(null, { status: 204 });
+    }
+    if (method === "DELETE" && input === "/api/Customer/2") {
+      return new Response(JSON.stringify({ error: "another record still refers to it" }), {
+        status: 409,
+        headers: { "content-type": "application/json" },
+      });
+    }
+    throw new Error(`unexpected request ${method} ${input}`);
+  }) as typeof fetch;
+  (globalThis.window as unknown as { confirm: () => boolean }).confirm = () => true;
+
+  try {
+    await withRealLocalStorage(async () => {
+      const { EntityView } = await import(path.join(dir, "web", "src", "components", "EntityView.jsx"));
+      const customerEntity = project.spec.entities.find((e) => e.name === "Customer")!;
+      const props = {
+        entity: customerEntity,
+        highlightRecordId: null,
+        onHighlightHandled: () => {},
+        onJumpToRecord: () => {},
+        onRecordCountChange: () => {},
+      };
+
+      const { container } = render(React.createElement(EntityView, props));
+      for (let i = 0; i < 40; i++) {
+        if (container.querySelectorAll("tbody tr").length === 2) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+      assert.equal(container.querySelectorAll("tbody tr").length, 2, "expected both records to have loaded");
+
+      t.mock.timers.enable({ apis: ["setTimeout"] });
+
+      for (const checkbox of container.querySelectorAll('td.select-col input[type="checkbox"]')) {
+        await act(async () => {
+          fireEvent.click(checkbox);
+        });
+      }
+      const bulkDeleteButton = Array.from(container.querySelectorAll("button")).find((b) => b.textContent?.includes("Delete selected"));
+      await act(async () => {
+        fireEvent.click(bulkDeleteButton!);
+      });
+
+      await act(async () => {
+        t.mock.timers.tick(5000);
+      });
+      t.mock.timers.reset();
+
+      for (let i = 0; i < 40; i++) {
+        if (container.querySelectorAll("tbody tr").length === 1) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+
+      assert.deepEqual(deletedIds, [1], "the record that succeeded must have been deleted for real");
+      assert.equal(container.querySelectorAll("tbody tr").length, 1, "only the record whose real delete failed must be restored");
+      assert.match(container.querySelector("tbody tr")?.textContent ?? "", /Globex/, "the restored row must be the one that actually failed");
+      assert.match(
+        container.querySelector(".error")?.textContent ?? "",
+        /1 of 2 records could not be deleted/,
+        "a partial failure must surface the translated partial-failure message naming the real counts",
+      );
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (originalConfirm) (globalThis.window as unknown as { confirm: () => boolean }).confirm = originalConfirm;
+    cleanup();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
+ * New in this round: porting the live preview's own error+Retry pattern
+ * (round 328, EntityPanel.tsx) to the exported app's EntityView.jsx. Before
+ * this fix, a failed initial load here fell into the empty-state branch
+ * with "No records yet" -- indistinguishable from a genuinely empty table
+ * -- with no way to recover short of reloading the whole page. Uses the
+ * real generated component, a real failing then succeeding fetch, and a
+ * real click on the real Retry button.
+ */
+test("the exported EntityView shows a real error with a Retry button when the initial load fails, instead of the misleading 'No records yet' message", async () => {
+  const files = generateExportFiles(project);
+  const dir = writeGeneratedWebComponent(files);
+  const originalFetch = globalThis.fetch;
+  let callCount = 0;
+  globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
+    const method = init?.method ?? "GET";
+    if (method === "GET" && input === "/api/Customer") {
+      callCount += 1;
+      if (callCount === 1) {
+        return new Response(JSON.stringify({ error: "Server exploded" }), { status: 500, headers: { "content-type": "application/json" } });
+      }
+      return new Response(JSON.stringify({ records: [{ id: 1, name: "Acme Corp", status: "New" }] }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }
+    throw new Error(`unexpected request ${method} ${input}`);
+  }) as typeof fetch;
+
+  try {
+    await withRealLocalStorage(async () => {
+      const { EntityView } = await import(path.join(dir, "web", "src", "components", "EntityView.jsx"));
+      const customerEntity = project.spec.entities.find((e) => e.name === "Customer")!;
+      const props = {
+        entity: customerEntity,
+        highlightRecordId: null,
+        onHighlightHandled: () => {},
+        onJumpToRecord: () => {},
+        onRecordCountChange: () => {},
+      };
+
+      const { container } = render(React.createElement(EntityView, props));
+      for (let i = 0; i < 40; i++) {
+        if (container.querySelector(".error-retry-row")) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+      assert.match(container.querySelector(".error-retry-row p.error")?.textContent ?? "", /Server exploded/);
+      assert.equal(container.querySelector(".error-retry-row p.error")?.getAttribute("role"), "status", "the error message must be announced to screen readers");
+      assert.equal(container.querySelector(".empty-state"), null, "a real load failure must not also show the misleading 'No records yet' empty-state text");
+
+      const retryButton = container.querySelector(".error-retry-row button") as HTMLButtonElement;
+      assert.ok(retryButton, "expected a real Retry button");
+      await act(async () => {
+        fireEvent.click(retryButton);
+      });
+
+      for (let i = 0; i < 40; i++) {
+        if (container.querySelectorAll("tbody tr").length === 1) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+      assert.equal(container.querySelector(".error-retry-row"), null, "the error+Retry row must disappear once the retry succeeds");
+      assert.match(container.querySelector("tbody tr")?.textContent ?? "", /Acme Corp/, "the real record from the successful retry must now render");
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    cleanup();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
+ * New in this round: porting the live preview's own j/k row-navigation
+ * (EntityPanel.tsx) to the exported app's EntityView.jsx. Before this fix,
+ * the exported app's table had zero keyboard way to move between records
+ * without reaching for the mouse -- confirmed via grep: neither
+ * focusedRowId nor computeNextFocusedRowId/isTypingTarget existed anywhere
+ * in the generated output. Uses the real generated component with real
+ * records and real keydown events on window (the live preview's own
+ * handler is attached the same way, not scoped to a container).
+ */
+test("the exported EntityView's j/k/ArrowUp/ArrowDown move a real keyboard focus between table rows, and Enter opens the focused row for editing", async () => {
+  const files = generateExportFiles(project);
+  const dir = writeGeneratedWebComponent(files);
+  const store = [
+    { id: 1, name: "Acme Corp", status: "New" },
+    { id: 2, name: "Globex", status: "Won" },
+    { id: 3, name: "Initech", status: "New" },
+  ];
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
+    const method = init?.method ?? "GET";
+    if (method === "GET" && input === "/api/Customer") {
+      return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    throw new Error(`unexpected request ${method} ${input}`);
+  }) as typeof fetch;
+
+  try {
+    await withRealLocalStorage(async () => {
+      const { EntityView } = await import(path.join(dir, "web", "src", "components", "EntityView.jsx"));
+      const customerEntity = project.spec.entities.find((e) => e.name === "Customer")!;
+      const props = {
+        entity: customerEntity,
+        highlightRecordId: null,
+        onHighlightHandled: () => {},
+        onJumpToRecord: () => {},
+        onRecordCountChange: () => {},
+      };
+
+      const { container } = render(React.createElement(EntityView, props));
+      for (let i = 0; i < 40; i++) {
+        if (container.querySelectorAll("tbody tr").length === 3) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+      assert.equal(container.querySelectorAll("tbody tr").length, 3, "expected all three records to have loaded");
+      assert.equal(container.querySelector(".record-row-focused"), null, "no row should be focused before any key is pressed");
+
+      await act(async () => {
+        fireEvent.keyDown(window, { key: "j" });
+      });
+      let focused = container.querySelector(".record-row-focused");
+      assert.ok(focused, "the first 'j' must focus the first row");
+      assert.equal(focused!.getAttribute("data-record-id"), "1");
+
+      await act(async () => {
+        fireEvent.keyDown(window, { key: "j" });
+      });
+      focused = container.querySelector(".record-row-focused");
+      assert.equal(focused!.getAttribute("data-record-id"), "2", "a second 'j' must move the focus to the next row");
+
+      await act(async () => {
+        fireEvent.keyDown(window, { key: "ArrowUp" });
+      });
+      focused = container.querySelector(".record-row-focused");
+      assert.equal(focused!.getAttribute("data-record-id"), "1", "ArrowUp must move the focus back to the previous row");
+
+      await act(async () => {
+        fireEvent.keyDown(window, { key: "Enter" });
+      });
+      assert.match(container.querySelector("form")?.textContent ?? "", /Save/, "Enter must open the focused row for editing (the form switches from Add to Save)");
+      const nameInput = container.querySelector('input[type="text"]') as HTMLInputElement;
+      assert.equal(nameInput.value, "Acme Corp", "the edit form must be pre-filled with the focused row's own record");
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    cleanup();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
+ * New in this round: porting the live preview's own "x" shortcut
+ * (toggle the focused row's own selection checkbox) to the exported
+ * app's EntityView.jsx. j/k/Enter above let a keyboard-only user
+ * navigate to and open any record, but there was no way to actually
+ * select one for the bulk actions (bulk delete/duplicate/edit) without
+ * reaching for the mouse -- confirmed via grep that toggleSelected was
+ * only ever wired to the checkbox's own onChange.
+ */
+test("the exported EntityView's 'x' shortcut toggles the focused row's own selection checkbox", async () => {
+  const files = generateExportFiles(project);
+  const dir = writeGeneratedWebComponent(files);
+  const store = [
+    { id: 1, name: "Acme Corp", status: "New" },
+    { id: 2, name: "Globex", status: "Won" },
+  ];
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
+    const method = init?.method ?? "GET";
+    if (method === "GET" && input === "/api/Customer") {
+      return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    throw new Error(`unexpected request ${method} ${input}`);
+  }) as typeof fetch;
+
+  try {
+    await withRealLocalStorage(async () => {
+      const { EntityView } = await import(path.join(dir, "web", "src", "components", "EntityView.jsx"));
+      const customerEntity = project.spec.entities.find((e) => e.name === "Customer")!;
+      const props = {
+        entity: customerEntity,
+        highlightRecordId: null,
+        onHighlightHandled: () => {},
+        onJumpToRecord: () => {},
+        onRecordCountChange: () => {},
+      };
+
+      const { container } = render(React.createElement(EntityView, props));
+      for (let i = 0; i < 40; i++) {
+        if (container.querySelectorAll("tbody tr").length === 2) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+      assert.equal(container.querySelectorAll("tbody tr").length, 2, "expected both records to have loaded");
+
+      await act(async () => {
+        fireEvent.keyDown(window, { key: "j" });
+      });
+      const focused = container.querySelector(".record-row-focused") as HTMLElement;
+      assert.equal(focused.getAttribute("data-record-id"), "1", "sanity check: 'j' must have focused the first row");
+      const checkbox = focused.querySelector('input[type="checkbox"]') as HTMLInputElement;
+      assert.ok(checkbox, "expected a real selection checkbox in the focused row");
+      assert.equal(checkbox.checked, false, "the row must start unselected");
+
+      await act(async () => {
+        fireEvent.keyDown(window, { key: "x" });
+      });
+      assert.equal(checkbox.checked, true, "'x' must select the focused row");
+      assert.equal(
+        container.querySelectorAll('tr[data-record-id="2"] input[type="checkbox"]:checked').length,
+        0,
+        "'x' must select only the focused row, not the other one",
+      );
+
+      await act(async () => {
+        fireEvent.keyDown(window, { key: "x" });
+      });
+      assert.equal(checkbox.checked, false, "pressing 'x' again on the same focused row must deselect it");
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    cleanup();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
+ * New in this round: porting the live preview's own Delete/Backspace
+ * shortcut (delete the focused row) to the exported app's EntityView.jsx.
+ * j/k/Enter/x above let a keyboard-only user navigate, open, and select
+ * rows, but deleting one still required reaching for the mouse --
+ * confirmed via grep that handleDelete was only ever wired to the row's
+ * own Delete button's onClick. Reuses handleDelete verbatim (its real
+ * window.confirm dialog and undo-toast machinery), so this confirms
+ * confirm is actually invoked (not bypassed) and only the focused row
+ * disappears.
+ */
+test("the exported EntityView's Delete/Backspace shortcut deletes the focused row via the real confirm dialog", async () => {
+  const files = generateExportFiles(project);
+  const dir = writeGeneratedWebComponent(files);
+  const store = [
+    { id: 1, name: "Acme Corp", status: "New" },
+    { id: 2, name: "Globex", status: "Won" },
+  ];
+  const originalFetch = globalThis.fetch;
+  const originalConfirm = globalThis.window?.confirm;
+  globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
+    const method = init?.method ?? "GET";
+    if (method === "GET" && input === "/api/Customer") {
+      return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    if (method === "DELETE" && input === "/api/Customer/1") {
+      return new Response(null, { status: 204 });
+    }
+    throw new Error(`unexpected request ${method} ${input}`);
+  }) as typeof fetch;
+  let confirmCalls = 0;
+  (globalThis.window as unknown as { confirm: () => boolean }).confirm = () => {
+    confirmCalls += 1;
+    return true;
+  };
+
+  try {
+    await withRealLocalStorage(async () => {
+      const { EntityView } = await import(path.join(dir, "web", "src", "components", "EntityView.jsx"));
+      const customerEntity = project.spec.entities.find((e) => e.name === "Customer")!;
+      const props = {
+        entity: customerEntity,
+        highlightRecordId: null,
+        onHighlightHandled: () => {},
+        onJumpToRecord: () => {},
+        onRecordCountChange: () => {},
+      };
+
+      const { container } = render(React.createElement(EntityView, props));
+      for (let i = 0; i < 40; i++) {
+        if (container.querySelectorAll("tbody tr").length === 2) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+      assert.equal(container.querySelectorAll("tbody tr").length, 2, "expected both records to have loaded");
+
+      await act(async () => {
+        fireEvent.keyDown(window, { key: "j" });
+      });
+      const focused = container.querySelector(".record-row-focused") as HTMLElement;
+      assert.equal(focused.getAttribute("data-record-id"), "1", "sanity check: 'j' must have focused the first row");
+
+      await act(async () => {
+        fireEvent.keyDown(window, { key: "Delete" });
+      });
+      assert.equal(confirmCalls, 1, "the real confirm dialog must actually be invoked, not bypassed");
+      assert.equal(container.querySelectorAll("tbody tr").length, 1, "the focused row must be deleted");
+      assert.equal(
+        container.querySelector('tr[data-record-id="1"]'),
+        null,
+        "the focused row (Acme Corp, id 1) must be the one deleted, not the other row",
+      );
+      assert.ok(container.querySelector('tr[data-record-id="2"]'), "the untouched row must still render");
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (originalConfirm) (globalThis.window as unknown as { confirm: () => boolean }).confirm = originalConfirm;
+    cleanup();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
+ * New in this round: porting the live preview's own "d" shortcut
+ * (duplicate the focused row) to the exported app's EntityView.jsx.
+ * j/k/Enter/x/Delete above let a keyboard-only user navigate, open,
+ * select, and delete rows, but duplicating one still required reaching
+ * for the mouse -- confirmed via grep that handleDuplicate was only
+ * ever wired to the row's own Duplicate button's onClick. Reuses
+ * handleDuplicate verbatim (no confirm dialog, since duplicating only
+ * creates data), so this confirms the real POST fires exactly once with
+ * the focused row's own field values and the new record actually
+ * appears in the table.
+ */
+test("the exported EntityView's 'd' shortcut duplicates the focused row via the real API", async () => {
+  const files = generateExportFiles(project);
+  const dir = writeGeneratedWebComponent(files);
+  const store = [
+    { id: 1, name: "Acme Corp", status: "New" },
+    { id: 2, name: "Globex", status: "Won" },
+  ];
+  const originalFetch = globalThis.fetch;
+  let postCount = 0;
+  const postedBodies: Record<string, unknown>[] = [];
+  globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
+    const method = init?.method ?? "GET";
+    if (method === "GET" && input === "/api/Customer") {
+      return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    if (method === "POST" && input === "/api/Customer") {
+      postCount += 1;
+      const body = JSON.parse(init!.body as string);
+      postedBodies.push(body);
+      const record = { id: 3, ...body };
+      store.push(record);
+      return new Response(JSON.stringify({ record }), { status: 201, headers: { "content-type": "application/json" } });
+    }
+    throw new Error(`unexpected request ${method} ${input}`);
+  }) as typeof fetch;
+
+  try {
+    await withRealLocalStorage(async () => {
+      const { EntityView } = await import(path.join(dir, "web", "src", "components", "EntityView.jsx"));
+      const customerEntity = project.spec.entities.find((e) => e.name === "Customer")!;
+      const props = {
+        entity: customerEntity,
+        highlightRecordId: null,
+        onHighlightHandled: () => {},
+        onJumpToRecord: () => {},
+        onRecordCountChange: () => {},
+      };
+
+      const { container } = render(React.createElement(EntityView, props));
+      for (let i = 0; i < 40; i++) {
+        if (container.querySelectorAll("tbody tr").length === 2) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+      assert.equal(container.querySelectorAll("tbody tr").length, 2, "expected both records to have loaded");
+
+      await act(async () => {
+        fireEvent.keyDown(window, { key: "j" });
+      });
+      const focused = container.querySelector(".record-row-focused") as HTMLElement;
+      assert.equal(focused.getAttribute("data-record-id"), "1", "sanity check: 'j' must have focused the first row");
+
+      await act(async () => {
+        fireEvent.keyDown(window, { key: "d" });
+      });
+      for (let i = 0; i < 40; i++) {
+        if (container.querySelectorAll("tbody tr").length === 3) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+      assert.equal(postCount, 1, "the real duplicate request must fire exactly once");
+      assert.equal(postedBodies[0]?.name, "Acme Corp", "the duplicate must copy the focused row's own values, not the other row's");
+      assert.equal(postedBodies[0]?.status, "New");
+      assert.equal(container.querySelectorAll("tbody tr").length, 3, "the new duplicated record must actually appear in the table");
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    cleanup();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
+ * New in this round: porting the live preview's own Escape shortcut
+ * (clear the table's multi-row selection) to the exported app's
+ * EntityView.jsx. "x" above lets a keyboard-only user build a
+ * selection, but the only way to back out of it required the mouse --
+ * either the "Clear selection" button, or committing an actual bulk
+ * action just to escape the mode. Escape now reuses the exact same
+ * setSelectedIds(new Set()) that button already calls, with zero API
+ * calls.
+ */
+test("the exported EntityView's Escape shortcut clears the table's multi-row selection without calling the API", async () => {
+  const files = generateExportFiles(project);
+  const dir = writeGeneratedWebComponent(files);
+  const store = [
+    { id: 1, name: "Acme Corp", status: "New" },
+    { id: 2, name: "Globex", status: "Won" },
+  ];
+  const originalFetch = globalThis.fetch;
+  let getCount = 0;
+  globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
+    const method = init?.method ?? "GET";
+    if (method === "GET" && input === "/api/Customer") {
+      getCount += 1;
+      return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    throw new Error(`unexpected request ${method} ${input}`);
+  }) as typeof fetch;
+
+  try {
+    await withRealLocalStorage(async () => {
+      const { EntityView } = await import(path.join(dir, "web", "src", "components", "EntityView.jsx"));
+      const customerEntity = project.spec.entities.find((e) => e.name === "Customer")!;
+      const props = {
+        entity: customerEntity,
+        highlightRecordId: null,
+        onHighlightHandled: () => {},
+        onJumpToRecord: () => {},
+        onRecordCountChange: () => {},
+      };
+
+      const { container } = render(React.createElement(EntityView, props));
+      for (let i = 0; i < 40; i++) {
+        if (container.querySelectorAll("tbody tr").length === 2) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+      assert.equal(container.querySelectorAll("tbody tr").length, 2, "expected both records to have loaded");
+      const getCountAfterLoad = getCount;
+
+      await act(async () => {
+        fireEvent.keyDown(window, { key: "j" });
+      });
+      await act(async () => {
+        fireEvent.keyDown(window, { key: "x" });
+      });
+      assert.ok(container.querySelector(".bulk-actions-bar"), "expected the bulk-actions-bar once a row is selected via 'x'");
+
+      await act(async () => {
+        fireEvent.keyDown(window, { key: "Escape" });
+      });
+
+      // Deliberately compared as a boolean, not `assert.equal(element, null,
+      // ...)` -- when that assertion actually fails (the element is still
+      // there), node:assert's default diff formatter tries to inspect the
+      // real DOM element for the error message, which hangs indefinitely on
+      // jsdom's circular/huge node structure. Confirmed empirically: this
+      // exact revert-and-rerun regression-proof hung for 90+ seconds before
+      // being killed, while the boolean form below fails in ~200ms.
+      assert.equal(container.querySelector(".bulk-actions-bar") == null, true, "the bulk-actions-bar must disappear once Escape clears the selection");
+      assert.equal(
+        Array.from(container.querySelectorAll('td.select-col input[type="checkbox"]')).filter((c) => (c as HTMLInputElement).checked).length,
+        0,
+        "every row's own checkbox must be unchecked again",
+      );
+      assert.equal(container.querySelectorAll("tbody tr").length, 2, "clearing the selection must not delete or hide any record");
+      assert.equal(getCount, getCountAfterLoad, "clearing the selection via Escape must never call the API, not even a refetch");
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    cleanup();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
+ * New in this round: porting the live preview's own "n" shortcut
+ * (jump to a blank add-record form) to the exported app's EntityView.jsx.
+ * Unlike j/k/Enter above, this listener is NOT scoped to table view -- the
+ * record-form itself renders above the table/board/calendar switch, so the
+ * shortcut must keep working from any of them. Opens Globex (id 2) for
+ * editing first, so "n" genuinely has an in-progress edit to discard.
+ */
+test("the exported EntityView's 'n' shortcut discards an in-progress edit, resets the form, and focuses its first field", async () => {
+  const files = generateExportFiles(project);
+  const dir = writeGeneratedWebComponent(files);
+  const store = [
+    { id: 1, name: "Acme Corp", status: "New" },
+    { id: 2, name: "Globex", status: "Won" },
+  ];
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
+    const method = init?.method ?? "GET";
+    if (method === "GET" && input === "/api/Customer") {
+      return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    throw new Error(`unexpected request ${method} ${input}`);
+  }) as typeof fetch;
+
+  try {
+    await withRealLocalStorage(async () => {
+      const { EntityView } = await import(path.join(dir, "web", "src", "components", "EntityView.jsx"));
+      const customerEntity = project.spec.entities.find((e) => e.name === "Customer")!;
+      const props = {
+        entity: customerEntity,
+        highlightRecordId: null,
+        onHighlightHandled: () => {},
+        onJumpToRecord: () => {},
+        onRecordCountChange: () => {},
+      };
+
+      const { container } = render(React.createElement(EntityView, props));
+      for (let i = 0; i < 40; i++) {
+        if (container.querySelectorAll("tbody tr").length === 2) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+      assert.equal(container.querySelectorAll("tbody tr").length, 2, "expected both records to have loaded");
+
+      const editButtons = Array.from(container.querySelectorAll("tbody button")) as HTMLButtonElement[];
+      const globexEdit = editButtons.find((b) => b.closest("tr")?.getAttribute("data-record-id") === "2" && /edit/i.test(b.textContent ?? ""));
+      assert.ok(globexEdit, "expected an Edit button on the Globex row");
+      await act(async () => {
+        fireEvent.click(globexEdit!);
+      });
+      const nameInput = container.querySelector('input[type="text"]') as HTMLInputElement;
+      assert.equal(nameInput.value, "Globex", "expected the form to be mid-edit on Globex before 'n' is pressed");
+
+      await act(async () => {
+        fireEvent.keyDown(window, { key: "n" });
+      });
+      assert.equal(nameInput.value, "", "'n' must reset the form back to blank, discarding the in-progress edit");
+      assert.match(container.querySelector("form")?.textContent ?? "", /Add/, "'n' must flip the submit button back to its add-record label");
+      assert.equal(document.activeElement, nameInput, "'n' must focus the form's first field");
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    cleanup();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
+ * Regression test: the exported app's own EntityView.jsx is a deliberate
+ * duplicate of the live-preview EntityPanel.tsx, and its refresh() had
+ * the exact same stale-async-overwrites-newer-setState race this session
+ * already found and fixed in EntityPanel.tsx itself -- refresh() is
+ * called independently from handleSubmit/handleDelete/handleDuplicate/
+ * handleBulkDelete/handleImportFile/handleMove/the mount effect, with no
+ * guard against two calls overlapping. handleDuplicate in particular has
+ * no confirmation dialog, so a user double-clicking "duplicate" on two
+ * rows in quick succession starts two overlapping refresh() calls, and
+ * if the first (now stale) call's listRecords resolved after the second
+ * (newer) call's, its setRecords silently clobbered the newer, correct
+ * table with stale data. Deterministic, not timing-based: holds the
+ * FIRST refresh's listRecords call open past the SECOND refresh's own
+ * completion. Runs the real generated refresh function.
+ */
+test("the exported EntityView's refresh ignores a stale, still-in-flight refresh's records once a newer refresh has already completed", async () => {
+  const entityViewJsx = generateExportFiles(project).find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+  const refreshSrc = entityViewJsx.match(/ {2}async function refresh\(\) \{[\s\S]*?\n {2}\}\n/)?.[0];
+  assert.ok(refreshSrc, "expected to find refresh in generated output");
+
+  let listRecordsCallCount = 0;
+  let resolveFirstCall!: () => void;
+  const firstCallHeld = new Promise<void>((resolve) => {
+    resolveFirstCall = resolve;
+  });
+  const capturedRecordsByCall: unknown[][] = [];
+  const refreshRequestId = { current: 0 };
+
+  const fn = new Function(
+    "refreshRequestId",
+    "setLoading",
+    "listRecords",
+    "entity",
+    "setRecords",
+    "setLoadError",
+    "pendingDeleteRef",
+    `${refreshSrc}\nreturn refresh;`,
+  )(
+    refreshRequestId,
+    () => {},
+    async () => {
+      listRecordsCallCount += 1;
+      if (listRecordsCallCount === 1) {
+        await firstCallHeld; // the stale "first" refresh's own network call stays open
+        return { records: [{ id: 1, name: "stale" }] };
+      }
+      return { records: [{ id: 2, name: "fresh" }] };
+    },
+    { name: "Customer" },
+    (records: unknown[]) => {
+      capturedRecordsByCall.push(records);
+    },
+    () => {},
+    { current: null },
+  ) as () => Promise<void>;
+
+  const stalePromise = fn();
+  await Promise.resolve(); // let the stale call actually start and reach its held-open listRecords call
+  const freshPromise = fn();
+  await freshPromise;
+
+  assert.equal(capturedRecordsByCall.length, 1, "the fresh (second) refresh must have applied its own records");
+  assert.deepEqual(capturedRecordsByCall[0], [{ id: 2, name: "fresh" }]);
+
+  resolveFirstCall();
+  await stalePromise;
+
+  assert.equal(
+    capturedRecordsByCall.length,
+    1,
+    "the stale (first) refresh resolving afterward must never call setRecords again and overwrite the fresh records",
+  );
+});
+
+test("the exported EntityView renders a real picker for relation fields, not a raw numeric ID input", () => {
+  const withRelation: Project = {
+    ...project,
+    spec: {
+      ...project.spec,
+      entities: [
+        ...project.spec.entities,
+        {
+          name: "Courier",
+          label: "Courier",
+          fields: [{ name: "name", label: "Name", type: "text", required: true }],
+        },
+        {
+          name: "Order",
+          label: "Order",
+          fields: [
+            { name: "customerName", label: "Customer", type: "text", required: true },
+            { name: "courierId", label: "Assigned Courier", type: "relation", required: false, relationTo: "Courier" },
+          ],
+        },
+      ],
+    },
+  };
+  const files = generateExportFiles(withRelation);
+
+  // Each entity's own field list carries relationTo, same "real editable
+  // code, not a runtime schema" principle as the rest of that file.
+  const orderJsx = files.find((f) => f.path === "web/src/entities/Order.jsx")!.content;
+  assert.match(orderJsx, /"relationTo": "Courier"/);
+
+  const entityViewJsx = files.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+  assert.match(entityViewJsx, /const ALL_ENTITIES = /);
+  assert.match(entityViewJsx, /function pickDisplayField/);
+  assert.match(entityViewJsx, /function recordDisplayLabel/);
+  assert.match(entityViewJsx, /function relationDisplayLabel/);
+  // The relation branch of FieldInput renders a real <select> of related
+  // records, not the old raw number input.
+  assert.match(entityViewJsx, /relatedEntity && relatedEntityRecords/);
+  assert.match(entityViewJsx, /relatedEntityRecords\.map/);
+  // CSV export also resolves the related record's label, not the raw id.
+  assert.match(entityViewJsx, /function recordsToCsv\(fields, records, relatedRecords\)/);
+});
+
+// The live-preview app's relation cells became a real "jump to the related
+// record" link in round 260 (apps/web/src/EntityPanel.tsx), but the
+// exported/standalone codegen app's own Cell component (used by the table,
+// the Kanban board, AND global search results) still rendered a relation
+// field as static text -- someone who exports their own CRM and clicks a
+// Customer name on an Order row gets nothing, even though the same click
+// works in the live preview they tested first. Ports the identical
+// onClick={() => onJumpToRecord(field.relationTo, Number(value))} pattern,
+// reusing the App-level setActive/setHighlightRecordId wiring already built
+// for Global Search's own jump-to-record (so a relation-cell click and a
+// search-result click land on the exact same highlighted row).
+test("the exported EntityView's relation cells jump to the related record via the same App-level wiring Global Search already uses", () => {
+  const withRelation: Project = {
+    ...project,
+    spec: {
+      ...project.spec,
+      entities: [
+        ...project.spec.entities,
+        {
+          name: "Courier",
+          label: "Courier",
+          fields: [{ name: "name", label: "Name", type: "text", required: true }],
+        },
+        {
+          name: "Order",
+          label: "Order",
+          fields: [
+            { name: "customerName", label: "Customer", type: "text", required: true },
+            { name: "courierId", label: "Assigned Courier", type: "relation", required: false, relationTo: "Courier" },
+          ],
+        },
+      ],
+    },
+  };
+  const files = generateExportFiles(withRelation);
+  const entityViewJsx = files.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+
+  const cellSrc = entityViewJsx.match(/function Cell\(\{ field, value, relationLabel, onJumpToRecord \}\) \{[\s\S]*?\n\}\n/)?.[0];
+  assert.ok(cellSrc, "expected to find the real generated Cell component");
+  assert.match(cellSrc!, /if \(onJumpToRecord && field\.relationTo\) \{/);
+  assert.match(cellSrc!, /<button type="button" className="link-button" onClick=\{\(\) => onJumpToRecord\(field\.relationTo, Number\(value\)\)\}>/);
+  // Without a jump handler (or without a relationTo target), a relation
+  // cell must still fall back to plain, non-clickable text -- the same
+  // guard the live-preview's own Cell uses.
+  assert.match(cellSrc!, /return <>\{label\}<\/>;/);
+
+  // Threaded through every layer that can render a relation cell: the
+  // table, the Kanban board (via BoardCard), the per-entity View wrapper,
+  // and App's own activeEntity.View call -- not just the leaf component.
+  assert.match(entityViewJsx, /function BoardCard\(\{ entity, boardField, record, relatedRecords, hasMoveError, onMove, onEdit, onDuplicate, onDelete, onJumpToRecord \}\)/);
+  assert.match(entityViewJsx, /<Cell\s+field=\{f\}\s+value=\{record\[f\.name\]\}\s+relationLabel=\{[^}]+\}\s+onJumpToRecord=\{onJumpToRecord\}/);
+  assert.match(entityViewJsx, /export function EntityView\(\{ entity, highlightRecordId, onHighlightHandled, onJumpToRecord, onRecordCountChange \}\)/);
+
+  const orderJsx = files.find((f) => f.path === "web/src/entities/Order.jsx")!.content;
+  assert.match(orderJsx, /export default function View\(\{ highlightRecordId, onHighlightHandled, onJumpToRecord, onRecordCountChange \}\)/);
+  assert.match(orderJsx, /onJumpToRecord=\{onJumpToRecord\}/);
+
+  const appJsx = files.find((f) => f.path === "web/src/App.jsx")!.content;
+  assert.match(appJsx, /onJumpToRecord=\{\(name, recordId\) => \{\s*setActive\(name\);\s*setHighlightRecordId\(recordId\);\s*\}\}/);
+});
+
+// Ported from the Forge AI live preview's EntityPanel.tsx Cell (round 261):
+// a longtext field (a Notes or Description column, say) routinely runs
+// longer than any reasonable table/board-column width, and the only way
+// to read the rest was double-clicking into the real edit textarea --
+// which feels like committing to a change just to read one. The exported/
+// standalone app's own Cell (shared by the table and the Kanban board, see
+// the relation-jump test above) had no longtext branch at all and fell
+// through to plain, untruncated-in-markup-but-visually-clipped text with
+// no way to see the full value on hover.
+test("the exported EntityView's Cell renders a longtext field with a native hover tooltip carrying the full untruncated value", () => {
+  const withLongtext: Project = {
+    ...project,
+    spec: {
+      ...project.spec,
+      entities: [
+        ...project.spec.entities,
+        {
+          name: "Note",
+          label: "Note",
+          fields: [
+            { name: "title", label: "Title", type: "text", required: true },
+            { name: "body", label: "Body", type: "longtext", required: false },
+          ],
+        },
+      ],
+    },
+  };
+  const files = generateExportFiles(withLongtext);
+  const entityViewJsx = files.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+
+  const cellSrc = entityViewJsx.match(/function Cell\(\{ field, value, relationLabel, onJumpToRecord \}\) \{[\s\S]*?\n\}\n/)?.[0];
+  assert.ok(cellSrc, "expected to find the real generated Cell component");
+  assert.match(cellSrc!, /if \(field\.type === "longtext"\) \{/);
+  assert.match(cellSrc!, /<span className="longtext-cell" title=\{String\(value\)\}>/);
+  // The board card (BoardCard) and the table both render every non-board
+  // field through this exact same Cell component, so fixing it once here
+  // covers both -- confirmed via the relation-jump test above already
+  // asserting BoardCard's own <Cell .../> call site exists.
+});
+
+/**
+ * New in this round: a text/longtext field's value used to render as
+ * completely inert text everywhere (table, board card, print sheet) --
+ * mirrors the live preview's own new splitLinkSegments
+ * (entityFormatting.ts). Executes the real generated splitLinkSegments
+ * (extracted from real codegen output, not reimplemented), same technique
+ * round 118 introduced for this file (see recordsToCsv/restoreRecordAt
+ * tests above).
+ */
+test("the exported EntityView's splitLinkSegments finds a URL and an email address and gives each its own real href", () => {
+  const entityViewJsx = generateExportFiles(project).find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+  const splitSrc = entityViewJsx.match(/function splitLinkSegments\(text\) \{[\s\S]*?\n\}\n/)?.[0];
+  assert.ok(splitSrc, "expected to find the real generated splitLinkSegments");
+
+  const splitLinkSegments = new Function(`${splitSrc}\nreturn splitLinkSegments;`)() as (
+    text: string,
+  ) => { text: string; href: string | null }[];
+
+  assert.deepEqual(splitLinkSegments("Visit https://example.com for details"), [
+    { text: "Visit ", href: null },
+    { text: "https://example.com", href: "https://example.com" },
+    { text: " for details", href: null },
+  ]);
+  assert.deepEqual(splitLinkSegments("Contact dana@example.com anytime"), [
+    { text: "Contact ", href: null },
+    { text: "dana@example.com", href: "mailto:dana@example.com" },
+    { text: " anytime", href: null },
+  ]);
+  assert.deepEqual(splitLinkSegments("Just a plain note, nothing to link."), [
+    { text: "Just a plain note, nothing to link.", href: null },
+  ]);
+  // Trailing sentence punctuation must not become part of the link.
+  assert.deepEqual(splitLinkSegments("See https://example.com/path."), [
+    { text: "See ", href: null },
+    { text: "https://example.com/path", href: "https://example.com/path" },
+    { text: ".", href: null },
+  ]);
+});
+
+test("the exported EntityView's Cell renders a real clickable <a> for a URL/email embedded in a text or longtext field", () => {
+  const entityViewJsx = generateExportFiles(project).find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+  const cellSrc = entityViewJsx.match(/function Cell\(\{ field, value, relationLabel, onJumpToRecord \}\) \{[\s\S]*?\n\}\n/)?.[0];
+  assert.ok(cellSrc, "expected to find the real generated Cell component");
+  assert.match(cellSrc!, /<LinkifiedText text=\{String\(value\)\} \/>/, "both the longtext and plain-text branches must route through LinkifiedText");
+  assert.match(entityViewJsx, /function LinkifiedText\(\{ text \}\) \{/, "expected the real generated LinkifiedText component");
+  assert.match(entityViewJsx, /className="cell-link"/);
+  assert.match(entityViewJsx, /target="_blank"/);
+});
+
+test("generateExportFiles includes a real render.yaml matching this repo's own proven Render Blueprint structure", () => {
+  const files = generateExportFiles(project);
+  const renderYaml = files.find((f) => f.path === "render.yaml")!.content;
+  assert.match(renderYaml, /^services:\n {2}- type: web\n {4}name: /);
+  assert.match(renderYaml, /runtime: node/);
+  assert.match(renderYaml, /plan: free/);
+  assert.match(renderYaml, /buildCommand: npm install/);
+  assert.match(renderYaml, /startCommand: npm start/);
+
+  const readme = files.find((f) => f.path === "README.md")!.content;
+  assert.match(readme, /## Deploy it/);
+  assert.match(readme, /render\.yaml/);
+  assert.match(readme, /render\.com/i);
+});
+
+// Round 117/118 found and fixed the exact same untested boolean-CSV gap
+// in two other independent copies of this formatting logic
+// (apps/api/src/backup.ts and codegen.ts's own server-side
+// backupFieldDisplayValue). This is a THIRD, separate copy -- the
+// per-entity "Export CSV" button's client-side fieldDisplayValue/
+// recordsToCsv, embedded in the exported app's EntityView.jsx -- and the
+// existing tests above only ever check for the functions' *presence*
+// (regex-matching their signatures), never their actual rendered output
+// for any field type. Extracts and executes the real generated
+// csvEscape/fieldDisplayValue/recordsToCsv (not a reimplementation), the
+// same technique round 118 introduced for this file.
+test("the exported EntityView's own CSV-export formatting renders booleans as TRUE/FALSE and enum values as their translated labels", () => {
+  const files = generateExportFiles(project);
+  const entityViewJsx = files.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+  const csvEscapeSrc = entityViewJsx.match(/function csvEscape\(value\) \{[\s\S]*?\n\}\n/)?.[0];
+  const fieldDisplayValueSrc = entityViewJsx.match(/function fieldDisplayValue\(field, value, relatedRecords\) \{[\s\S]*?\n\}\n/)?.[0];
+  const recordsToCsvSrc = entityViewJsx.match(/function recordsToCsv\(fields, records, relatedRecords\) \{[\s\S]*?\n\}\n/)?.[0];
+  assert.ok(csvEscapeSrc && fieldDisplayValueSrc && recordsToCsvSrc, "expected to find csvEscape/fieldDisplayValue/recordsToCsv in the generated EntityView.jsx");
+
+  const { recordsToCsv } = new Function(`${csvEscapeSrc}\n${fieldDisplayValueSrc}\n${recordsToCsvSrc}\nreturn { recordsToCsv };`)();
+
+  const fields = [
+    { name: "title", label: "Title", type: "text" },
+    { name: "done", label: "Done", type: "boolean" },
+    { name: "status", label: "Status", type: "enum", enumLabels: { New: "New", Won: "Won!" } },
+  ];
+  const records = [
+    { title: "Task A", done: true, status: "Won" },
+    { title: "Task B", done: false, status: "New" },
+  ];
+
+  const csv = recordsToCsv(fields, records, {});
+  const lines = csv.split("\r\n");
+  assert.equal(lines[0], "Title,Done,Status");
+  assert.equal(lines[1], "Task A,TRUE,Won!");
+  assert.equal(lines[2], "Task B,FALSE,New");
+});
+
+/**
+ * New in this round: the exported app's "Export CSV" button had the same
+ * gap the live preview did -- it always exported `visibleRecords` (the
+ * current filtered/sorted table), silently discarding a real bulk-select
+ * checkbox selection instead of exporting just those rows. Confirms
+ * handleExportCsv now routes through the new selectedOrAllRecords, and
+ * separately extracts and *executes* the real generated
+ * selectedOrAllRecords (not a reimplementation) to prove its own behavior:
+ * nothing selected -> the exact visibleRecords reference unchanged;
+ * something selected -> exactly those records pulled from the FULL
+ * (unfiltered) entity, matching handleBulkDelete/handleBulkDuplicate's own
+ * existing "selection survives a changed search box" behavior.
+ */
+test("the exported EntityView's Export CSV routes through selectedOrAllRecords, which itself returns exactly the selection pulled from the full entity", () => {
+  const files = generateExportFiles(project);
+  const entityViewJsx = files.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+
+  const handleExportCsvSrc = entityViewJsx.match(/function handleExportCsv\(\) \{[\s\S]*?\n {2}\}\n/)?.[0];
+  assert.ok(handleExportCsvSrc, "expected to find handleExportCsv in generated output");
+  assert.match(
+    handleExportCsvSrc!,
+    /recordsToCsv\(entity\.fields, selectedOrAllRecords\(records, visibleRecords, selectedIds\), relatedRecords\)/,
+    "handleExportCsv must route through selectedOrAllRecords instead of always exporting visibleRecords directly",
+  );
+
+  const selectedOrAllRecordsSrc = entityViewJsx.match(/function selectedOrAllRecords\(allRecords, visibleRecords, selectedIds\) \{[\s\S]*?\n\}\n/)?.[0];
+  assert.ok(selectedOrAllRecordsSrc, "expected to find selectedOrAllRecords in generated output");
+  const selectedOrAllRecords = new Function(`${selectedOrAllRecordsSrc}\nreturn selectedOrAllRecords;`)();
+
+  const all = [{ id: 1, name: "A" }, { id: 2, name: "B" }, { id: 3, name: "C" }];
+  const visible = [{ id: 1, name: "A" }];
+  assert.equal(selectedOrAllRecords(all, visible, new Set()), visible, "with nothing selected, must return visibleRecords unchanged");
+  assert.deepEqual(
+    selectedOrAllRecords(all, visible, new Set([1, 3])),
+    [{ id: 1, name: "A" }, { id: 3, name: "C" }],
+    "with a selection, must return exactly those records from the FULL entity, even one (id 3) no longer in the current visibleRecords",
+  );
+
+  const exportBtnSrc = entityViewJsx.match(/<button\s+type="button"\s+className="csv-export-btn"[\s\S]*?<\/button>/)?.[0];
+  assert.ok(exportBtnSrc, "expected to find the csv-export-btn button in generated output");
+  assert.match(exportBtnSrc!, /disabled=\{selectedIds\.size === 0 && visibleRecords\.length === 0\}/);
+  assert.match(exportBtnSrc!, /selectedIds\.size > 0/, "the button label must reflect a real selection count");
+});
+
+/**
+ * New in this round: the live preview's EntityPanel got a "Copy" button
+ * (round 322) that writes the table's own CSV straight to the clipboard,
+ * matching the copy-to-clipboard pattern already present on every other
+ * data-bearing panel (History, Business Twin, WhatsApp log). The exported
+ * codegen app's EntityView had handleExportCsv but no handleCopy at all --
+ * confirms the port exists, reuses the exact same selectedOrAllRecords
+ * selection logic as the CSV export (not a reimplementation), and -- unlike
+ * the live preview -- calls the 3-argument recordsToCsv (no lang/allEntities,
+ * since the exported app has no i18n machinery at all).
+ */
+test("the exported EntityView renders a real Copy button that writes the selection's CSV to the clipboard, mirroring handleExportCsv's own selection logic", () => {
+  const files = generateExportFiles(project);
+  const entityViewJsx = files.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+
+  const handleCopySrc = entityViewJsx.match(/async function handleCopy\(\) \{[\s\S]*?\n {2}\}\n/)?.[0];
+  assert.ok(handleCopySrc, "expected to find handleCopy in generated output");
+  assert.match(
+    handleCopySrc!,
+    /recordsToCsv\(entity\.fields, selectedOrAllRecords\(records, visibleRecords, selectedIds\), relatedRecords\)/,
+    "handleCopy must reuse the exact same selection logic as handleExportCsv",
+  );
+  assert.match(handleCopySrc!, /navigator\.clipboard\.writeText\(csv\)/, "handleCopy must actually write to the clipboard");
+  assert.doesNotMatch(handleCopySrc!, /\blang\b/, "the exported app's recordsToCsv call must not pass a lang argument -- it has no i18n");
+
+  const copyBtnSrc = entityViewJsx.match(/<button\s+type="button"\s+className="copy-records-btn"[\s\S]*?<\/button>/)?.[0];
+  assert.ok(copyBtnSrc, "expected to find the copy-records-btn button in generated output");
+  assert.match(copyBtnSrc!, /disabled=\{selectedIds\.size === 0 && visibleRecords\.length === 0\}/);
+  assert.match(copyBtnSrc!, /copyStatus === "copied"/);
+  assert.match(copyBtnSrc!, /copyStatus === "failed"/);
+
+  const stylesCss = files.find((f) => f.path === "web/src/styles.css")!.content;
+  assert.match(stylesCss, /\.copy-records-btn/);
+});
+
+/**
+ * Same feature as above, but rendering the real generated EntityView.jsx
+ * end to end: clicks the real Copy button and confirms the exact CSV text
+ * handed to a stubbed navigator.clipboard.writeText, then confirms the
+ * button's label actually flips to "Copied!" and back to "Copy" after the
+ * real 2s timer elapses -- not just that the source text looks right.
+ */
+test("the exported EntityView's Copy button writes the real CSV to the clipboard and reverts its label after 2s", async (t) => {
+  const files = generateExportFiles(project);
+  const dir = writeGeneratedWebComponent(files);
+  const store = [{ id: 1, name: "Acme Corp", email: "a@acme.example", status: "New" }];
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async (input: string) => {
+    if (input === "/api/Customer") {
+      return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    throw new Error(`unexpected request ${input}`);
+  }) as typeof fetch;
+
+  let writtenText: string | undefined;
+  Object.defineProperty(navigator, "clipboard", {
+    value: { writeText: async (text: string) => void (writtenText = text) },
+    configurable: true,
+  });
+
+  try {
+    await withRealLocalStorage(async () => {
+      const { EntityView } = await import(path.join(dir, "web", "src", "components", "EntityView.jsx"));
+      const customerEntity = project.spec.entities.find((e) => e.name === "Customer")!;
+      const props = {
+        entity: customerEntity,
+        highlightRecordId: null,
+        onHighlightHandled: () => {},
+        onJumpToRecord: () => {},
+        onRecordCountChange: () => {},
+      };
+
+      const { container } = render(React.createElement(EntityView, props));
+      for (let i = 0; i < 40; i++) {
+        if (container.querySelectorAll("tbody tr").length === 1) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+      assert.equal(container.querySelectorAll("tbody tr").length, 1, "expected the record to have loaded");
+
+      // Enabled only after the initial load has already settled -- see the
+      // bulk-delete test above (and the live preview's own lesson) for why
+      // enabling mock timers any earlier stalls this very wait loop.
+      t.mock.timers.enable({ apis: ["setTimeout"] });
+
+      const copyButton = Array.from(container.querySelectorAll("button")).find((b) => b.className === "copy-records-btn");
+      assert.ok(copyButton, "expected a real Copy button");
+      assert.equal(copyButton!.getAttribute("aria-live"), "polite", "the copy button's own changing label must be announced to screen readers, not just silently change visually");
+      assert.equal(copyButton!.getAttribute("aria-atomic"), "true", "the whole button's text must be re-announced, not just the changed part");
+
+      await act(async () => {
+        fireEvent.click(copyButton!);
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+
+      assert.equal(typeof writtenText, "string", "clicking Copy must actually call navigator.clipboard.writeText");
+      assert.match(writtenText!, /Acme Corp/, "the copied text must be the real CSV, not a placeholder");
+      assert.equal(copyButton!.textContent, "✅ Copied!", "must show the real Copied confirmation");
+
+      act(() => {
+        t.mock.timers.tick(2000);
+      });
+      assert.equal(copyButton!.textContent, "📋 Copy", "must revert to the normal label once the delay elapses");
+    });
+  } finally {
+    t.mock.timers.reset();
+    globalThis.fetch = originalFetch;
+    delete (navigator as { clipboard?: unknown }).clipboard;
+    cleanup();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
+ * New in this round: the exported app's table had no footer totals row for
+ * a numeric column, the same gap the live preview had. Extracts and
+ * *executes* the real generated sumNumericFields (not a reimplementation)
+ * to prove its own summing behavior, then confirms the generated
+ * EntityView.jsx actually wires a conditional <tfoot> into the table using
+ * it -- an entity with a number field must render the totals row; an
+ * entity with none (Service, text-only) must not grow an empty one.
+ */
+test("the exported EntityView's table has a conditional totals-row <tfoot> backed by the real generated sumNumericFields", () => {
+  const numberProject: Project = {
+    ...project,
+    spec: {
+      ...project.spec,
+      entities: [
+        {
+          name: "Invoice",
+          label: "חשבוניות",
+          fields: [
+            { name: "client", label: "לקוח", type: "text", required: true },
+            { name: "amount", label: "סכום", type: "number", required: true },
+          ],
+        },
+      ],
+    },
+  };
+  const files = generateExportFiles(numberProject);
+  const entityViewJsx = files.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+
+  const sumNumericFieldsSrc = entityViewJsx.match(/function sumNumericFields\(records, fields\) \{[\s\S]*?\n\}\n/)?.[0];
+  assert.ok(sumNumericFieldsSrc, "expected to find sumNumericFields in generated output");
+  const sumNumericFields = new Function(`${sumNumericFieldsSrc}\nreturn sumNumericFields;`)();
+
+  const fields = [
+    { name: "client", type: "text" },
+    { name: "amount", type: "number" },
+  ];
+  const records = [{ id: 1, amount: 1500 }, { id: 2, amount: 2500 }, { id: 3 }];
+  assert.deepEqual(
+    sumNumericFields(records, fields),
+    { amount: 4000 },
+    "must sum the number field across records and treat a missing value as 0, ignoring the text field entirely",
+  );
+
+  assert.match(
+    entityViewJsx,
+    /\{hasNumericVisibleField && \(\s*<tfoot>/,
+    "the generated table must conditionally render a <tfoot> only when a visible field is numeric",
+  );
+  assert.match(
+    entityViewJsx,
+    /const hasNumericVisibleField = useMemo\(\(\) => visibleFields\.some\(\(f\) => f\.type === "number"\)/,
+    "hasNumericVisibleField must be derived from visibleFields, not the full unfiltered field list",
+  );
+
+  const serviceProject: Project = {
+    ...project,
+    spec: { ...project.spec, entities: [{ name: "Service", label: "שירותים", fields: [{ name: "title", label: "כותרת", type: "text", required: true }] }] },
+  };
+  const serviceFiles = generateExportFiles(serviceProject);
+  const serviceEntityViewJsx = serviceFiles.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+  assert.match(
+    serviceEntityViewJsx,
+    /\{hasNumericVisibleField && \(\s*<tfoot>/,
+    "the conditional guard must still be present in source even for a text-only entity -- it's evaluated at runtime, not per generated file",
+  );
+});
+
+test("the exported EntityView asks for confirmation before deleting a single record, naming it by its own display label, not just count", () => {
+  const files = generateExportFiles(project);
+  const entityViewJsx = files.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+  assert.match(entityViewJsx, /function handleDelete\(id\) \{\s*const index = records\.findIndex/);
+  assert.match(entityViewJsx, /window\.confirm\(`Delete "\$\{label\}"\? You can undo this for a few seconds after deleting\.`\)/);
+});
+
+/**
+ * New in this round: the confirm dialog's own text claimed "This can't be
+ * undone" -- factually false, since handleDelete (confirmed right above)
+ * sets up a real 5-second pendingDelete/Undo-toast immediately afterward,
+ * the exact same mechanism the bulk-delete confirm right below it already
+ * described correctly ("You can undo this for a few seconds after
+ * deleting"). `git log -S"can't be undone"` traces it to a confirm dialog
+ * added (round 73's "Add confirmation dialog to single-row delete") before
+ * single-record undo existed (round 184), never updated once it did.
+ * Confirms the real, rendered Delete button's click genuinely passes the
+ * corrected, truthful message to the real window.confirm -- not just that
+ * the right string exists somewhere in the source.
+ */
+test("the exported EntityView's single-record Delete button's confirm dialog tells the truth about undo being available", async () => {
+  const files = generateExportFiles(project);
+  const dir = writeGeneratedWebComponent(files);
+  const store = [{ id: 1, name: "Acme Corp", status: "New" }];
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
+    const method = init?.method ?? "GET";
+    if (method === "GET" && input === "/api/Customer") {
+      return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    throw new Error(`unexpected request ${method} ${input}`);
+  }) as typeof fetch;
+  const originalConfirm = globalThis.window?.confirm;
+  let capturedMessage: string | undefined;
+  (globalThis.window as unknown as { confirm: (msg: string) => boolean }).confirm = (msg: string) => {
+    capturedMessage = msg;
+    return true;
+  };
+
+  try {
+    await withRealLocalStorage(async () => {
+      const { EntityView } = await import(path.join(dir, "web", "src", "components", "EntityView.jsx"));
+      const customerEntity = project.spec.entities.find((e) => e.name === "Customer")!;
+      const props = {
+        entity: customerEntity,
+        highlightRecordId: null,
+        onHighlightHandled: () => {},
+        onJumpToRecord: () => {},
+        onRecordCountChange: () => {},
+      };
+
+      const { container } = render(React.createElement(EntityView, props));
+      for (let i = 0; i < 40; i++) {
+        if (container.querySelectorAll("tbody tr").length === 1) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+      assert.equal(container.querySelectorAll("tbody tr").length, 1, "expected the record to have loaded");
+
+      const deleteButton = Array.from(container.querySelectorAll("button")).find((b) => b.textContent === "Delete");
+      assert.ok(deleteButton, "expected a real Delete button");
+
+      await act(async () => {
+        fireEvent.click(deleteButton!);
+      });
+
+      assert.equal(
+        capturedMessage,
+        'Delete "Acme Corp"? You can undo this for a few seconds after deleting.',
+        "the real confirm dialog must tell the truth about the undo window that actually follows, not claim it can't be undone",
+      );
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (originalConfirm) (globalThis.window as unknown as { confirm: () => boolean }).confirm = originalConfirm;
+    cleanup();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
+ * New in this round (422), ported from the identical fix in
+ * apps/web/src/EntityPanel.tsx: a record still inside its undo window
+ * (handleDelete's own pendingDeleteRef above) genuinely still exists
+ * server-side -- only the real DELETE is deferred -- so refresh() (shared
+ * by several unrelated handlers: create/edit, duplicate, bulk-update, CSV
+ * import, board-move, inline cell edit) used to silently resurrect it the
+ * instant any of those ran during that same window, since listRecords
+ * still returned it. Commits a real inline cell edit on an unrelated row
+ * (the same real PATCH + refresh() path exercised elsewhere in this file)
+ * while another row's own delete is still inside its undo window, against
+ * the real generated EntityView component, and confirms the deleted row
+ * does NOT reappear.
+ */
+test("the exported EntityView's refresh() triggered by an unrelated action (inline cell edit) during a pending delete's undo window must not resurrect the deleted row", async () => {
+  const files = generateExportFiles(project);
+  const dir = writeGeneratedWebComponent(files);
+  const store = [
+    { id: 1, name: "Acme Corp", status: "New" },
+    { id: 2, name: "Globex", status: "New" },
+  ];
+  const deletedIds: number[] = [];
+  const originalFetch = globalThis.fetch;
+  const originalConfirm = globalThis.window?.confirm;
+  globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
+    const method = init?.method ?? "GET";
+    if (method === "GET" && input === "/api/Customer") {
+      return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    const patchMatch = /^\/api\/Customer\/(\d+)$/.exec(input);
+    if (method === "PATCH" && patchMatch) {
+      const record = store.find((r) => r.id === Number(patchMatch[1]))!;
+      Object.assign(record, JSON.parse(init!.body as string));
+      return new Response(JSON.stringify({ record }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    const deleteMatch = /^\/api\/Customer\/(\d+)$/.exec(input);
+    if (method === "DELETE" && deleteMatch) {
+      deletedIds.push(Number(deleteMatch[1]));
+      return new Response(null, { status: 204 });
+    }
+    throw new Error(`unexpected request ${method} ${input}`);
+  }) as typeof fetch;
+  (globalThis.window as unknown as { confirm: () => boolean }).confirm = () => true;
+
+  try {
+    await withRealLocalStorage(async () => {
+      const { EntityView } = await import(path.join(dir, "web", "src", "components", "EntityView.jsx"));
+      const customerEntity = project.spec.entities.find((e) => e.name === "Customer")!;
+      const props = {
+        entity: customerEntity,
+        highlightRecordId: null,
+        onHighlightHandled: () => {},
+        onJumpToRecord: () => {},
+        onRecordCountChange: () => {},
+      };
+
+      const { container } = render(React.createElement(EntityView, props));
+      for (let i = 0; i < 40; i++) {
+        if (container.querySelectorAll("tbody tr").length === 2) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+      assert.equal(container.querySelectorAll("tbody tr").length, 2, "expected both records to have loaded");
+
+      // Deliberately real timers: the test only needs to stay inside the
+      // 5s undo window, never advance past it, so the real UNDO_WINDOW_MS
+      // setTimeout simply never fires during this test's own execution.
+      const deleteButtons = Array.from(container.querySelectorAll("button")).filter((b) => b.textContent === "Delete");
+      await act(async () => {
+        fireEvent.click(deleteButtons[0]);
+      });
+      assert.equal(container.querySelectorAll("tbody tr").length, 1, "Acme Corp must disappear from view immediately");
+      assert.equal(deletedIds.length, 0, "the real DELETE must not have fired yet -- still inside the undo window");
+
+      // Globex's own name cell -- the only remaining row's first data column.
+      const nameCell = container.querySelectorAll("tbody td")[1] as HTMLTableCellElement;
+      assert.equal(nameCell.textContent, "Globex");
+      await act(async () => {
+        fireEvent.doubleClick(nameCell);
+      });
+      const input = nameCell.querySelector("input") as HTMLInputElement;
+      assert.ok(input, "expected a real inline edit input to open in the cell");
+      await act(async () => {
+        fireEvent.change(input, { target: { value: "Globex Corp" } });
+        fireEvent.keyDown(input, { key: "Enter" });
+      });
+
+      for (let i = 0; i < 40; i++) {
+        if (container.querySelectorAll("tbody td")[1]?.textContent === "Globex Corp") break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+      assert.equal(container.querySelectorAll("tbody td")[1]?.textContent, "Globex Corp", "the inline edit must have committed");
+
+      assert.equal(
+        container.querySelectorAll("tbody tr").length,
+        1,
+        "the inline edit's own refresh() must not have resurrected Acme Corp, which is still only inside its undo window",
+      );
+      assert.ok(container.querySelector(".entity-undo-toast"), "the Undo toast for Acme Corp must still be showing");
+      assert.equal(deletedIds.length, 0, "Acme Corp's real DELETE still must not have fired");
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (originalConfirm) (globalThis.window as unknown as { confirm: () => boolean }).confirm = originalConfirm;
+    cleanup();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
+ * New in this round: the exported standalone app's own Delete button had
+ * no undo at all -- unlike the live Forge AI preview (round 184's own
+ * undo toast), a single click on Delete (past the confirm dialog) was
+ * instantly irreversible in the exported app. Ports the identical fix:
+ * the record disappears from view right away (so the table still feels
+ * instant), but the real DELETE request is delayed behind a real
+ * UNDO_WINDOW_MS window, with a toast offering Undo. Executes the real
+ * generated restoreRecordAt (extracted from real codegen output, not
+ * reimplemented), mirroring apps/web/src/entityFormatting.test.ts's own
+ * restoreRecordAt coverage.
+ */
+test("the exported EntityView's restoreRecordAt reinserts a record at its original index, not at the end or via mutation", () => {
+  const entityViewJsx = generateExportFiles(project).find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+  const restoreSrc = entityViewJsx.match(/export function restoreRecordAt\(records, record, index\) \{[\s\S]*?\n\}\n/)?.[0]?.replace("export ", "");
+  assert.ok(restoreSrc, "expected to find restoreRecordAt in generated output");
+
+  const restoreRecordAt = new Function(`${restoreSrc}\nreturn restoreRecordAt;`)() as (
+    records: { id: number }[],
+    record: { id: number },
+    index: number,
+  ) => { id: number }[];
+
+  const records = [{ id: 1 }, { id: 2 }, { id: 4 }];
+  const restored = restoreRecordAt(records, { id: 3 }, 2);
+  assert.deepEqual(
+    restored.map((r) => r.id),
+    [1, 2, 3, 4],
+    "the record must land back at its original index, not get appended to the end",
+  );
+  assert.deepEqual(records.map((r) => r.id), [1, 2, 4], "the original array must not be mutated");
+
+  const clamped = restoreRecordAt(records, { id: 99 }, 50);
+  assert.deepEqual(clamped.map((r) => r.id), [1, 2, 4, 99], "an out-of-range index must clamp to the end rather than throw");
+});
+
+test("the exported EntityView renders a real Undo toast after a single-record delete, wired to a real UNDO_WINDOW_MS-delayed commit", () => {
+  const files = generateExportFiles(project);
+  const entityViewJsx = files.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+
+  assert.match(entityViewJsx, /const UNDO_WINDOW_MS = 5000;/);
+  assert.match(entityViewJsx, /const \[pendingDelete, setPendingDelete\] = useState\(null\);/);
+  // commitPendingDelete now runs every pending entry's delete through
+  // Promise.allSettled -- round 321's generalization to a shared batch
+  // shape with handleBulkDelete, mirroring the live preview's own round
+  // 320 change exactly.
+  assert.match(entityViewJsx, /async function commitPendingDelete\(pending\) \{\s*const results = await Promise\.allSettled\(pending\.entries\.map\(\(e\) => deleteRecord\(entity\.name, e\.id\)\)\);/);
+  assert.match(entityViewJsx, /function handleUndoDelete\(\) \{/);
+  assert.match(entityViewJsx, /className="entity-undo-toast"/);
+  assert.match(entityViewJsx, /onClick=\{handleUndoDelete\}/);
+  // handleDelete must remove the record from view immediately (optimistic),
+  // not wait on the real request the way it used to.
+  assert.match(entityViewJsx, /setRecords\(\(prev\) => prev\.filter\(\(r\) => r\.id !== id\)\)/);
+  // A second delete arriving mid-undo-window must commit the first one for
+  // real rather than letting two undo windows overlap.
+  assert.match(entityViewJsx, /if \(pendingDeleteRef\.current\) \{\s*clearTimeout\(pendingDeleteRef\.current\.timeoutId\);\s*commitPendingDelete\(pendingDeleteRef\.current\);/);
+  // The delete must actually go through the delayed-commit setTimeout, not
+  // be committed for real immediately -- otherwise there'd be no undo
+  // window at all despite the toast being shown. The identity check now
+  // compares timeoutId (unique per call) rather than id, so it works
+  // uniformly for both the single-record and batch shapes.
+  assert.match(entityViewJsx, /const timeoutId = setTimeout\(\(\) => \{\s*setPendingDelete\(\(current\) => \{\s*if \(current\?\.timeoutId !== timeoutId\) return current;\s*commitPendingDelete\(current\);\s*return null;\s*\}\);\s*\}, UNDO_WINDOW_MS\);/);
+  assert.match(entityViewJsx, /setPendingDelete\(\{ entries: \[\{ id, record, index \}\], message: `Deleted "\$\{label\}"\. `, timeoutId \}\);/);
+
+  const stylesCss = files.find((f) => f.path === "web/src/styles.css")!.content;
+  assert.match(stylesCss, /\.entity-undo-toast/);
+  assert.match(stylesCss, /\.link-button/);
+});
+
+/**
+ * New in this round: bulk delete now shares the exact same
+ * pendingDelete/commitPendingDelete machinery as single-record delete --
+ * confirms the generated source actually wires handleBulkDelete into the
+ * same batch shape (an array of entries, one shared toast message) rather
+ * than its old inline Promise.allSettled-plus-refresh() shape.
+ */
+test("the exported EntityView's handleBulkDelete is wired into the same batch pendingDelete machinery as handleDelete", () => {
+  const entityViewJsx = generateExportFiles(project).find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+
+  assert.match(entityViewJsx, /async function handleBulkDelete\(\) \{/);
+  assert.match(
+    entityViewJsx,
+    /if \(pendingDeleteRef\.current\) \{\s*clearTimeout\(pendingDeleteRef\.current\.timeoutId\);\s*commitPendingDelete\(pendingDeleteRef\.current\);\s*\}\s*\n\s*setError\(null\);\s*const idSet = new Set\(ids\);/,
+    "handleBulkDelete must commit any still-pending delete for real first, same as handleDelete",
+  );
+  assert.match(
+    entityViewJsx,
+    /setRecords\(\(prev\) => prev\.filter\(\(r\) => !idSet\.has\(r\.id\)\)\);\s*setSelectedIds\(new Set\(\)\);/,
+    "every selected row must be removed from view optimistically, all at once",
+  );
+  assert.match(
+    entityViewJsx,
+    /setPendingDelete\(\{ entries, message: `Deleted \$\{entries\.length\} records\. `, timeoutId \}\);/,
+    "the batch toast message must name the real entry count",
+  );
+
+  const handleBulkDeleteSrc = entityViewJsx.match(/async function handleBulkDelete\(\) \{[\s\S]*?\n  \}\n/)?.[0];
+  assert.ok(handleBulkDeleteSrc, "expected to find handleBulkDelete in generated output");
+  assert.doesNotMatch(
+    handleBulkDeleteSrc!,
+    /refresh\(\)/,
+    "handleBulkDelete must no longer call refresh() directly -- it's now optimistic, same as handleDelete, and relies on the shared undo-window machinery instead",
+  );
+});
+
+/**
+ * New in this round: the exported standalone app's table could only ever
+ * sort by one column at a time, unlike the live Forge AI preview (round
+ * 177's own multi-column sort with shift-click tiebreakers). Ports the
+ * identical sortRecordsMulti logic. Executes the real generated function
+ * (extracted from real codegen output, not reimplemented), mirroring
+ * apps/web/src/entityFormatting.test.ts's own sortRecordsMulti coverage.
+ */
+test("the exported EntityView's sortRecordsMulti sorts by several fields in priority order, breaking ties with later keys", () => {
+  const entityViewJsx = generateExportFiles(project).find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+  const compareSrc = entityViewJsx.match(/function compareValues\(a, b\) \{[\s\S]*?\n\}\n/)?.[0];
+  const resolveSortValueSrc = entityViewJsx.match(/function resolveSortValue\([\s\S]*?\n\}\n/)?.[0];
+  const sortSrc = entityViewJsx.match(/export function sortRecordsMulti\(records, sortKeys, fields, relatedRecords\) \{[\s\S]*?\n\}\n/)?.[0]?.replace("export ", "");
+  assert.ok(compareSrc, "expected to find compareValues in generated output");
+  assert.ok(resolveSortValueSrc, "expected to find resolveSortValue in generated output");
+  assert.ok(sortSrc, "expected to find sortRecordsMulti in generated output");
+
+  const sortRecordsMulti = new Function(`${compareSrc}\n${resolveSortValueSrc}\n${sortSrc}\nreturn sortRecordsMulti;`)() as (
+    records: Record<string, unknown>[],
+    sortKeys: { field: string; direction: "asc" | "desc" }[],
+  ) => Record<string, unknown>[];
+
+  const records = [
+    { id: 1, status: "open", total: 30 },
+    { id: 2, status: "closed", total: 10 },
+    { id: 3, status: "open", total: 10 },
+  ];
+
+  assert.equal(sortRecordsMulti(records, []), records, "an empty key list must return the same array reference, unsorted");
+
+  const byStatus = sortRecordsMulti(records, [{ field: "status", direction: "asc" }]);
+  assert.deepEqual(byStatus.map((r) => r.id), [2, 1, 3], "single-key sort must order by that field alone");
+  assert.deepEqual(records.map((r) => r.id), [1, 2, 3], "the original array must not be mutated");
+
+  const byStatusThenTotal = sortRecordsMulti(records, [
+    { field: "status", direction: "asc" },
+    { field: "total", direction: "asc" },
+  ]);
+  assert.deepEqual(
+    byStatusThenTotal.map((r) => r.id),
+    [2, 3, 1],
+    "the second key must only break ties the first key left standing (both open records ordered by total)",
+  );
+
+  const byStatusAscTotalDesc = sortRecordsMulti(records, [
+    { field: "status", direction: "asc" },
+    { field: "total", direction: "desc" },
+  ]);
+  assert.deepEqual(
+    byStatusAscTotalDesc.map((r) => r.id),
+    [2, 1, 3],
+    "reversing only the second key's direction must not flip the first key's own tie-break order",
+  );
+});
+
+test("the exported EntityView's table headers support shift-click multi-column sort with a priority badge", () => {
+  const files = generateExportFiles(project);
+  const entityViewJsx = files.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+
+  assert.match(entityViewJsx, /const \[sortKeys, setSortKeys\] = useState\(\(\) => getPersistedSortKeys\(entity\.name\)\);/);
+  // Plain click replaces the whole key list (or toggles direction in place
+  // when the clicked field is already the sole key); shift-click appends a
+  // tiebreaker or toggles an existing key's direction without moving it.
+  // Each outcome is also persisted via setPersistedSortKeys (round 315).
+  assert.match(
+    entityViewJsx,
+    /function toggleSort\(fieldName, additive\) \{\s*setSortKeys\(\(prev\) => \{\s*const existingIndex = prev\.findIndex\(\(k\) => k\.field === fieldName\);\s*let next;\s*if \(!additive\) \{\s*next =\s*prev\.length === 1 && existingIndex === 0\s*\? \[\{ field: fieldName, direction: prev\[0\]\.direction === "asc" \? "desc" : "asc" \}\]\s*: \[\{ field: fieldName, direction: "asc" \}\];\s*\} else if \(existingIndex === -1\) \{\s*next = \[\.\.\.prev, \{ field: fieldName, direction: "asc" \}\];\s*\} else \{\s*next = prev\.map\(\(k, i\) => \(i === existingIndex \? \{ \.\.\.k, direction: k\.direction === "asc" \? "desc" : "asc" \} : k\)\);\s*\}\s*setPersistedSortKeys\(entity\.name, next\);\s*return next;\s*\}\);\s*\}/,
+  );
+  // The header must pass the real shiftKey through, not just always additive/replace.
+  assert.match(entityViewJsx, /onClick=\{\(e\) => toggleSort\(f\.name, e\.shiftKey\)\}/);
+  // A priority badge only appears once there's more than one active sort key.
+  assert.match(entityViewJsx, /\{key && sortKeys\.length > 1 && <span className="sort-priority">\{keyIndex \+ 1\}<\/span>\}/);
+  // aria-sort must only reflect the primary (first) key, never a secondary tiebreaker.
+  assert.match(entityViewJsx, /aria-sort=\{keyIndex === 0 \? \(key\.direction === "asc" \? "ascending" : "descending"\) : "none"\}/);
+  // Switching to a different entity tab must reset the OLD sortKeys state, not
+  // a stale sortField/setSortField reference left over from the single-column
+  // implementation (a real bug this exact port introduced and Playwright
+  // caught: setSortField is not defined, since the state variable no longer exists).
+  assert.doesNotMatch(entityViewJsx, /setSortField/);
+  // Round 315: switching entities now re-reads the NEW entity's own
+  // persisted sort (not a hardcoded reset to []), the same persistence
+  // every other per-entity view preference here already gets.
+  assert.match(entityViewJsx, /setSortKeys\(getPersistedSortKeys\(entity\.name\)\);/);
+
+  const stylesCss = files.find((f) => f.path === "web/src/styles.css")!.content;
+  assert.match(stylesCss, /\.sort-priority/);
+});
+
+test("the exported EntityView renders a real CSV import (the complement to CSV export), ported from the Forge AI live preview", () => {
+  const files = generateExportFiles(project);
+  const entityViewJsx = files.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+  assert.match(entityViewJsx, /function parseCsv\(text\)/);
+  assert.match(entityViewJsx, /function buildImportRecords\(fields, rows\)/);
+  assert.match(entityViewJsx, /async function handleImportFile\(e\)/);
+  assert.match(entityViewJsx, /csv-import-label/);
+  assert.match(entityViewJsx, /Promise\.allSettled/);
+  // A required relation field refuses the whole import with one clear
+  // error rather than guessing at foreign keys -- same rule as the live
+  // preview's buildImportRecords.
+  assert.match(entityViewJsx, /CSV import isn't supported yet for entities with a required relation field/);
+
+  const stylesCss = files.find((f) => f.path === "web/src/styles.css")!.content;
+  assert.match(stylesCss, /\.csv-import-row/);
+  assert.match(stylesCss, /\.csv-import-errors/);
+});
+
+// Regression test: the exported app's CSV import validates numbers and enum
+// values client-side (a row-numbered error before anything is even sent to
+// the server) but, until now, silently accepted any string at all for a
+// "date" field -- the same gap round 62 found in repository.ts and round 64
+// found in this very file's own server-side coerce(), just recurring a
+// third time in a fourth, independent copy: this file's *client-side*
+// buildImportRecords(), which the comment right above handleImportFile
+// claims already validates every field "client-side". Executes the actual
+// generated buildImportRecords/matchesImportHeader/isValidDate functions
+// (extracted from real codegen output, not reimplemented here) so a future
+// edit to this template can't silently reintroduce the gap.
+test("the exported EntityView's CSV import rejects a date field value that isn't a real, well-formed calendar date", () => {
+  const dateProject: Project = {
+    ...project,
+    spec: {
+      ...project.spec,
+      entities: [
+        {
+          name: "Appointment",
+          label: "Appointment",
+          fields: [
+            { name: "date", label: "Date", type: "date", required: true },
+            { name: "notes", label: "Notes", type: "text" },
+          ],
+        },
+      ],
+    },
+  };
+  const entityViewJsx = generateExportFiles(dateProject).find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+
+  const isValidDateSrc = entityViewJsx.match(/const DATE_FORMAT[\s\S]*?\nfunction isValidDate\(value\) \{[\s\S]*?\n\}\n/)?.[0];
+  const headerSrc = entityViewJsx.match(/function matchesImportHeader\(header, field\) \{[\s\S]*?\n\}\n/)?.[0];
+  const importSrc = entityViewJsx.match(/function buildImportRecords\(fields, rows\) \{[\s\S]*?\n\}\n/)?.[0];
+  assert.ok(isValidDateSrc && headerSrc && importSrc, "expected to find isValidDate/matchesImportHeader/buildImportRecords in generated output");
+
+  const buildImportRecords = new Function(`${isValidDateSrc}\n${headerSrc}\n${importSrc}\nreturn buildImportRecords;`)();
+
+  const fields = dateProject.spec.entities[0].fields;
+  const rows = [
+    ["Date", "Notes"],
+    ["2024-01-15", "valid"],
+    ["2024-13-45", "impossible date"],
+    ["not-a-date", "garbage"],
+  ];
+  const { records, errors } = buildImportRecords(fields, rows);
+
+  assert.deepEqual(records, [{ date: "2024-01-15", notes: "valid" }]);
+  assert.equal(errors.length, 2);
+  assert.match(errors[0], /Row 2: "2024-13-45" isn't a valid date/);
+  assert.match(errors[1], /Row 3: "not-a-date" isn't a valid date/);
+});
+
+/**
+ * Regression test for a real bug found by round 287's Explore survey and
+ * fixed the same round in both entityFormatting.ts (live preview) and here:
+ * two fields on the same entity can share a label (FieldLabelEditor enforces
+ * no uniqueness), so two CSV columns with that same header text used to both
+ * resolve to whichever field matched first, silently dropping the other
+ * field's real data. Confirms the exported app's own buildImportRecords
+ * (executed from real generated output, not reimplemented here) now claims
+ * each column for a distinct field.
+ */
+test("the exported EntityView's CSV import maps each column to a distinct field even when two fields share the same label", () => {
+  const twoStatusProject: Project = {
+    ...project,
+    spec: {
+      ...project.spec,
+      entities: [
+        {
+          name: "Task",
+          label: "Task",
+          fields: [
+            { name: "stage", label: "Status", type: "text", required: false },
+            { name: "shippingStatus", label: "Status", type: "text", required: false },
+          ],
+        },
+      ],
+    },
+  };
+  const entityViewJsx = generateExportFiles(twoStatusProject).find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+
+  const isValidDateSrc = entityViewJsx.match(/const DATE_FORMAT[\s\S]*?\nfunction isValidDate\(value\) \{[\s\S]*?\n\}\n/)?.[0];
+  const headerSrc = entityViewJsx.match(/function matchesImportHeader\(header, field\) \{[\s\S]*?\n\}\n/)?.[0];
+  const importSrc = entityViewJsx.match(/function buildImportRecords\(fields, rows\) \{[\s\S]*?\n\}\n/)?.[0];
+  assert.ok(isValidDateSrc && headerSrc && importSrc, "expected to find isValidDate/matchesImportHeader/buildImportRecords in generated output");
+
+  const buildImportRecords = new Function(`${isValidDateSrc}\n${headerSrc}\n${importSrc}\nreturn buildImportRecords;`)();
+
+  const fields = twoStatusProject.spec.entities[0].fields;
+  const rows = [
+    ["Status", "Status"],
+    ["In Progress", "Shipped"],
+  ];
+  const { records, errors } = buildImportRecords(fields, rows);
+
+  assert.deepEqual(errors, []);
+  assert.deepEqual(records, [{ stage: "In Progress", shippingStatus: "Shipped" }]);
+});
+
+/**
+ * Regression test for a real bug found by round 376's Explore survey:
+ * csvEscape (this file's own guard against CSV/formula injection,
+ * CWE-1236) prepends a leading "'" to any value starting with =, +, -,
+ * @, or a tab/CR before writing it to a CSV cell -- but buildImportRecords,
+ * its designed inverse, never stripped that apostrophe back off. Re-
+ * importing a CSV the exported app's own "Export CSV" button had just
+ * produced would permanently corrupt a text value like "-1 day late" into
+ * the literal "'-1 day late", and silently fail to parse a negative
+ * number at all (Number("'-120.5") is NaN). Confirms the real generated
+ * recordsToCsv/parseCsv/buildImportRecords (not reimplemented here) now
+ * round-trip such values exactly.
+ */
+test("the exported EntityView's CSV export and import round-trip a value csvEscape guards against formula injection, instead of permanently corrupting it", () => {
+  const files = generateExportFiles(project);
+  const entityViewJsx = files.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+
+  const csvEscapeSrc = entityViewJsx.match(/function csvEscape\(value\) \{[\s\S]*?\n\}\n/)?.[0];
+  const fieldDisplayValueSrc = entityViewJsx.match(/function fieldDisplayValue\(field, value, relatedRecords\) \{[\s\S]*?\n\}\n/)?.[0];
+  const recordsToCsvSrc = entityViewJsx.match(/function recordsToCsv\(fields, records, relatedRecords\) \{[\s\S]*?\n\}\n/)?.[0];
+  const parseCsvSrc = entityViewJsx.match(/function parseCsv\(text\) \{[\s\S]*?\n\}\n/)?.[0];
+  const headerSrc = entityViewJsx.match(/function matchesImportHeader\(header, field\) \{[\s\S]*?\n\}\n/)?.[0];
+  const isValidDateSrc = entityViewJsx.match(/const DATE_FORMAT[\s\S]*?\nfunction isValidDate\(value\) \{[\s\S]*?\n\}\n/)?.[0];
+  const importSrc = entityViewJsx.match(/function buildImportRecords\(fields, rows\) \{[\s\S]*?\n\}\n/)?.[0];
+  assert.ok(
+    csvEscapeSrc && fieldDisplayValueSrc && recordsToCsvSrc && parseCsvSrc && headerSrc && isValidDateSrc && importSrc,
+    "expected to find csvEscape/fieldDisplayValue/recordsToCsv/parseCsv/matchesImportHeader/isValidDate/buildImportRecords in generated output",
+  );
+
+  const { recordsToCsv, parseCsv, buildImportRecords } = new Function(
+    `${csvEscapeSrc}\n${fieldDisplayValueSrc}\n${recordsToCsvSrc}\n${parseCsvSrc}\n${isValidDateSrc}\n${headerSrc}\n${importSrc}\nreturn { recordsToCsv, parseCsv, buildImportRecords };`,
+  )();
+
+  const fields = [
+    { name: "name", label: "Name", type: "text" },
+    { name: "notes", label: "Notes", type: "text" },
+    { name: "balance", label: "Balance", type: "number" },
+  ];
+  const original = { name: "Dana", notes: "-1 day late, call @dana", balance: -120.5 };
+
+  const csv = recordsToCsv(fields, [original], {});
+  const rows = parseCsv(csv);
+  const { records, errors } = buildImportRecords(fields, rows);
+
+  assert.deepEqual(errors, []);
+  assert.deepEqual(records, [original]);
+});
+
+test("the exported app includes a real cross-entity global search, ported from the Forge AI live preview", () => {
+  const files = generateExportFiles(project);
+  const globalSearchJsx = files.find((f) => f.path === "web/src/components/GlobalSearch.jsx")!.content;
+  // Reuses EntityView's own matchesSearch/recordDisplayLabel rather than
+  // re-implementing the matching rule a second time.
+  assert.match(globalSearchJsx, /import \{ matchesSearch, recordDisplayLabel \} from ".\/EntityView\.jsx"/);
+  assert.match(globalSearchJsx, /export function GlobalSearch/);
+  assert.match(globalSearchJsx, /global-search-group-selected/);
+  assert.match(globalSearchJsx, /ArrowDown/);
+  assert.match(globalSearchJsx, /ArrowUp/);
+
+  // EntityView.jsx must actually export what GlobalSearch.jsx imports.
+  const entityViewJsx = files.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+  assert.match(entityViewJsx, /export function matchesSearch/);
+  assert.match(entityViewJsx, /export function recordDisplayLabel/);
+
+  // App.jsx wires it up: Ctrl/Cmd+K opens it, each entity import also pulls
+  // in that entity's own field list (needed to search its records), and a
+  // visible shortcut hint makes the affordance discoverable.
+  const appJsx = files.find((f) => f.path === "web/src/App.jsx")!.content;
+  assert.match(appJsx, /import \{ GlobalSearch \} from ".\/components\/GlobalSearch\.jsx"/);
+  assert.match(appJsx, /entity as CustomerEntity/);
+  assert.match(appJsx, /fields: CustomerEntity\.fields/);
+  assert.match(appJsx, /ctrlKey \|\| e\.metaKey/);
+  assert.match(appJsx, /shortcut-hint/);
+});
+
+/**
+ * The live Forge AI preview's own GlobalSearchPanel.tsx lets a person click
+ * an individual matched row (not just the group's "Go to tab" button) and
+ * land scrolled-to/highlighted on that exact record -- see EntityPanel.tsx's
+ * own highlightRecordId prop and App.tsx's onJumpToRecord handler. The
+ * exported app's GlobalSearch.jsx was otherwise a thorough port (group
+ * navigation, ArrowUp/Down, "Go to tab" all present) but never got this one
+ * record-level jump, so someone using their own deployed app had to re-scan
+ * the whole table for the row they'd already found via search. Round 257.
+ */
+test("the exported app's Global Search can jump to an individual matched record, not just the entity's tab", () => {
+  const files = generateExportFiles(project);
+  const globalSearchJsx = files.find((f) => f.path === "web/src/components/GlobalSearch.jsx")!.content;
+  const entityViewJsx = files.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+  const appJsx = files.find((f) => f.path === "web/src/App.jsx")!.content;
+  const stylesCss = files.find((f) => f.path === "web/src/styles.css")!.content;
+
+  // GlobalSearch.jsx: each result row is a real clickable button calling
+  // onJumpToRecord with that record's own entity name and id, not just
+  // plain text inside a <li>.
+  assert.match(globalSearchJsx, /export function GlobalSearch\(\{ entities, onClose, onJumpToEntity, onJumpToRecord \}\)/);
+  assert.match(globalSearchJsx, /onClick=\{\(\) => onJumpToRecord\(result\.entityName, record\.id\)\}/);
+  assert.match(globalSearchJsx, /className="link-button global-search-hit-button"/);
+
+  // EntityView.jsx: accepts highlightRecordId/onHighlightHandled, applies
+  // it (clearing search, switching to table view) once records have
+  // loaded, fades it out after a few seconds, and marks + scrolls to the
+  // real highlighted row via a real data-record-id attribute.
+  assert.match(entityViewJsx, /export function EntityView\(\{ entity, highlightRecordId, onHighlightHandled, onJumpToRecord, onRecordCountChange \}\)/);
+  assert.match(entityViewJsx, /if \(highlightRecordId == null \|\| loading\) return;/);
+  assert.match(entityViewJsx, /setHighlightedRecordId\(highlightRecordId\);/);
+  assert.match(entityViewJsx, /onHighlightHandled\?\.\(\);/);
+  assert.match(entityViewJsx, /setTimeout\(\(\) => setHighlightedRecordId\(null\), 4000\)/);
+  assert.match(
+    entityViewJsx,
+    /data-record-id=\{r\.id\} className=\{\[r\.id === highlightedRecordId \? "record-row-highlighted" : null, r\.id === focusedRowId \? "record-row-focused" : null, r\.id === moveErrorId \? "record-row-move-error" : null\]\.filter\(Boolean\)\.join\(" "\) \|\| undefined\}/,
+  );
+  assert.match(entityViewJsx, /querySelector\(`tr\[data-record-id="\$\{highlightedRecordId\}"\]`\)/);
+
+  // App.jsx: owns the highlightRecordId state, threads it into the active
+  // entity's View, and GlobalSearch's onJumpToRecord sets both the active
+  // tab and the record to highlight in one go, mirroring App.tsx's own
+  // onJumpToRecord handlers.
+  assert.match(appJsx, /const \[highlightRecordId, setHighlightRecordId\] = useState\(null\);/);
+  assert.match(appJsx, /highlightRecordId=\{highlightRecordId\}\s+onHighlightHandled=\{\(\) => setHighlightRecordId\(null\)\}/);
+  assert.match(appJsx, /onJumpToRecord=\{\(name, recordId\) => \{\s*setActive\(name\);\s*setHighlightRecordId\(recordId\);\s*setShowSearch\(false\);\s*\}\}/);
+
+  // entities/Customer.jsx's own View forwards the new props through to
+  // EntityView rather than swallowing them.
+  const customerJsx = files.find((f) => f.path === "web/src/entities/Customer.jsx")!.content;
+  assert.match(customerJsx, /export default function View\(\{ highlightRecordId, onHighlightHandled, onJumpToRecord, onRecordCountChange \}\)/);
+  assert.match(customerJsx, /highlightRecordId=\{highlightRecordId\}\s+onHighlightHandled=\{onHighlightHandled\}/);
+
+  assert.match(stylesCss, /\.record-row-highlighted, \.record-row-highlighted:hover \{ background: var\(--accent-soft\)/);
+});
+
+// Regression test: runSearch used to await a bare
+// Promise.all(entities.map(searchEntity)) -- one entity whose records
+// failed to load (a transient network blip, a cold-starting backend)
+// rejected the WHOLE search, blanking out results from every OTHER
+// entity that searched fine. A user with, say, 9 working entity tables
+// and 1 flaky one got a bare error message instead of the 9 entities'
+// worth of results they could otherwise see. Runs the real generated
+// runSearch/searchEntity with a mock listRecords that fails for exactly
+// one of three entities.
+test("the exported GlobalSearch's runSearch shows results from every entity that succeeded, instead of Promise.all's all-or-nothing blanking everything on one entity's failure", async () => {
+  const files = generateExportFiles(project);
+  const globalSearchJsx = files.find((f) => f.path === "web/src/components/GlobalSearch.jsx")!.content;
+  const entityViewJsx = files.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+
+  const matchesSearchSrc = entityViewJsx.match(/export function matchesSearch\([\s\S]*?\n\}\n/)?.[0]?.replace("export ", "");
+  const searchAllEntitiesSrc = globalSearchJsx.match(/async function searchAllEntities\([\s\S]*?\n\}\n/)?.[0];
+  const runSearchSrc = globalSearchJsx.match(/ {2}async function runSearch\(q\) \{[\s\S]*?\n {2}\}\n/)?.[0];
+  assert.ok(
+    matchesSearchSrc && searchAllEntitiesSrc && runSearchSrc,
+    "expected to find matchesSearch/searchAllEntities/runSearch in generated output",
+  );
+
+  const entityA = { name: "Alpha", label: "Alpha", fields: [{ name: "name", label: "Name", type: "text" }] };
+  const entityB = { name: "Beta", label: "Beta", fields: [{ name: "name", label: "Name", type: "text" }] };
+  const entityC = { name: "Gamma", label: "Gamma", fields: [{ name: "name", label: "Name", type: "text" }] };
+  const rejection = new Error("network error");
+
+  let capturedResults: unknown[] | undefined;
+  let capturedError: string | undefined;
+
+  const fn = new Function(
+    "entities",
+    "listRecords",
+    "setLoading",
+    "setError",
+    "setResults",
+    "setSearched",
+    "setSelectedIndex",
+    "searchRequestId",
+    "lastRecordsByEntityRef",
+    `${matchesSearchSrc}\n${searchAllEntitiesSrc}\n${runSearchSrc}\nreturn runSearch;`,
+  )(
+    [entityA, entityB, entityC],
+    async (entityName: string) => {
+      if (entityName === "Beta") throw rejection;
+      return { records: [{ id: 1, name: `match-${entityName}` }] };
+    },
+    () => {},
+    (msg: string) => {
+      capturedError = msg;
+    },
+    (results: unknown[]) => {
+      capturedResults = results;
+    },
+    () => {},
+    () => {},
+    { current: 0 },
+    { current: {} },
+  ) as (q: string) => Promise<void>;
+
+  await fn("match");
+
+  assert.deepEqual(
+    (capturedResults ?? []).map((r) => (r as { entityName: string }).entityName),
+    ["Alpha", "Gamma"],
+    "must still show results from the entities that searched successfully",
+  );
+  assert.match(
+    capturedError!,
+    /1 of 3/,
+    "a partial failure must report how many entities failed, not the raw single-entity rejection",
+  );
+
+  const stylesCss = files.find((f) => f.path === "web/src/styles.css")!.content;
+  assert.match(stylesCss, /\.search-overlay/);
+  assert.match(stylesCss, /\.global-search-group-selected/);
+});
+
+/**
+ * Regression test: the exported app's own GlobalSearch.jsx is a deliberate
+ * duplicate of the live-preview GlobalSearchPanel.tsx's runSearch, and it
+ * had the exact same stale-async-overwrites-newer-setState race this
+ * session already found and fixed in GlobalSearchPanel.tsx itself (round
+ * 95) -- a second, more recent search that resolves before a slower first
+ * one lets the first search's late-arriving setResults silently clobber
+ * the newer, correct results on screen. Deterministic, not timing-based:
+ * holds the FIRST search's listRecords call open past the SECOND search's
+ * own completion. Runs the real generated runSearch/searchEntity.
+ */
+test("the exported GlobalSearch's runSearch ignores a stale, still-in-flight search's results once a newer search has already completed", async () => {
+  const files = generateExportFiles(project);
+  const globalSearchJsx = files.find((f) => f.path === "web/src/components/GlobalSearch.jsx")!.content;
+  const entityViewJsx = files.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+
+  const matchesSearchSrc = entityViewJsx.match(/export function matchesSearch\([\s\S]*?\n\}\n/)?.[0]?.replace("export ", "");
+  const searchAllEntitiesSrc = globalSearchJsx.match(/async function searchAllEntities\([\s\S]*?\n\}\n/)?.[0];
+  const runSearchSrc = globalSearchJsx.match(/ {2}async function runSearch\(q\) \{[\s\S]*?\n {2}\}\n/)?.[0];
+  assert.ok(
+    matchesSearchSrc && searchAllEntitiesSrc && runSearchSrc,
+    "expected to find matchesSearch/searchAllEntities/runSearch in generated output",
+  );
+
+  const entityA = { name: "Alpha", label: "Alpha", fields: [{ name: "name", label: "Name", type: "text" }] };
+
+  let listRecordsCallCount = 0;
+  let resolveFirstCall!: () => void;
+  const firstCallHeld = new Promise<void>((resolve) => {
+    resolveFirstCall = resolve;
+  });
+  const capturedResultsByCall: unknown[][] = [];
+  const searchRequestId = { current: 0 };
+
+  const fn = new Function(
+    "entities",
+    "listRecords",
+    "setLoading",
+    "setError",
+    "setResults",
+    "setSearched",
+    "setSelectedIndex",
+    "searchRequestId",
+    "lastRecordsByEntityRef",
+    `${matchesSearchSrc}\n${searchAllEntitiesSrc}\n${runSearchSrc}\nreturn runSearch;`,
+  )(
+    [entityA],
+    async () => {
+      listRecordsCallCount += 1;
+      if (listRecordsCallCount === 1) {
+        await firstCallHeld; // the stale "first" search's own network call stays open
+        return { records: [{ id: 1, name: "stale-target" }] };
+      }
+      return { records: [{ id: 2, name: "fresh-target" }] };
+    },
+    () => {},
+    () => {},
+    (results: unknown[]) => {
+      capturedResultsByCall.push(results);
+    },
+    () => {},
+    () => {},
+    searchRequestId,
+    { current: {} },
+  ) as (q: string) => Promise<void>;
+
+  const stalePromise = fn("target");
+  await Promise.resolve(); // let the stale call actually start and reach its held-open listRecords call
+  const freshPromise = fn("target");
+  await freshPromise;
+
+  assert.equal(capturedResultsByCall.length, 1, "the fresh (second) search must have applied its own results");
+  assert.deepEqual(
+    (capturedResultsByCall[0][0] as { sample: unknown[] }).sample,
+    [{ id: 2, name: "fresh-target" }],
+  );
+
+  resolveFirstCall();
+  await stalePromise;
+
+  assert.equal(
+    capturedResultsByCall.length,
+    1,
+    "the stale (first) search resolving afterward must never call setResults again and overwrite the fresh results",
+  );
+});
+
+/**
+ * Regression test (round 412; the exported app's GlobalSearch.jsx is a
+ * deliberate duplicate of the live-preview GlobalSearchPanel.tsx's
+ * handleShowAll, same as runSearch above): handleShowAll made its own
+ * async fetch into shared setExpandedSamples state with no guard against
+ * a newer search completing first, even though runSearch right next to it
+ * already guards the identical race via searchRequestId. Holds "Show
+ * all"'s own listRecords call open past a newer search's completion
+ * (bumping searchRequestId), then only resolves it afterward, to prove
+ * the late arrival can't merge a stale sample into expandedSamples. Runs
+ * the real generated matchesSearch/handleShowAll.
+ */
+test("the exported GlobalSearch's handleShowAll ignores a stale, still-in-flight fetch once a newer search has already completed", async () => {
+  const files = generateExportFiles(project);
+  const globalSearchJsx = files.find((f) => f.path === "web/src/components/GlobalSearch.jsx")!.content;
+  const entityViewJsx = files.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+
+  const matchesSearchSrc = entityViewJsx.match(/export function matchesSearch\([\s\S]*?\n\}\n/)?.[0]?.replace("export ", "");
+  const handleShowAllSrc = globalSearchJsx.match(/ {2}async function handleShowAll\(entityName\) \{[\s\S]*?\n {2}\}\n/)?.[0];
+  assert.ok(matchesSearchSrc && handleShowAllSrc, "expected to find matchesSearch/handleShowAll in generated output");
+
+  const entityA = { name: "Alpha", label: "Alpha", fields: [] };
+
+  let resolveShowAllCall!: () => void;
+  const showAllCallHeld = new Promise<void>((resolve) => {
+    resolveShowAllCall = resolve;
+  });
+  const expandedSamplesCalls: unknown[] = [];
+  const searchRequestId = { current: 0 };
+
+  const fn = new Function(
+    "entities",
+    "listRecords",
+    "searchRequestId",
+    "setShowAllLoading",
+    "query",
+    "lastRecordsByEntityRef",
+    "setExpandedSamples",
+    `${matchesSearchSrc}\n${handleShowAllSrc}\nreturn handleShowAll;`,
+  )(
+    [entityA],
+    async () => {
+      await showAllCallHeld; // "Show all"'s own network call stays open
+      return { records: [{ id: 1, name: "stale-shown-record" }] };
+    },
+    searchRequestId,
+    () => {},
+    "stale query",
+    { current: {} },
+    (updater: (prev: Record<string, unknown>) => Record<string, unknown>) => {
+      expandedSamplesCalls.push(updater({}));
+    },
+  ) as (entityName: string) => Promise<void>;
+
+  const showAllPromise = fn("Alpha");
+  await Promise.resolve(); // let "Show all" actually start and reach its held-open listRecords call
+  searchRequestId.current += 1; // a newer search completed while "Show all" was still in flight
+  resolveShowAllCall();
+  await showAllPromise;
+
+  assert.equal(
+    expandedSamplesCalls.length,
+    0,
+    "a Show all fetch superseded by a newer search must never write its stale sample into expandedSamples",
+  );
+});
+
+test("the exported App.jsx renders a real 'Backup All Data' link pointing at the generated server's own /api/backup endpoint", () => {
+  const files = generateExportFiles(project);
+  const appJsx = files.find((f) => f.path === "web/src/App.jsx")!.content;
+  assert.match(appJsx, /href="\/api\/backup"/);
+  assert.match(appJsx, /backup-all-btn/);
+});
+
+test("the generated server.js's /api/backup endpoint returns a real ZIP with one CSV per entity, containing real inserted data", async () => {
+  const files = generateExportFiles(project);
+  const serverJs = files.find((f) => f.path === "server.js")!.content;
+  assert.match(serverJs, /function buildZip\(entries\)/);
+  assert.match(serverJs, /app\.get\("\/api\/backup"/);
+
+  const dir = mkdtempSync(path.join(tmpdir(), "codegen-backup-test-"));
+  const repoRoot = path.resolve(import.meta.dirname, "../../..");
+  symlinkSync(path.join(repoRoot, "node_modules"), path.join(dir, "node_modules"));
+  writeFileSync(path.join(dir, "server.js"), serverJs);
+
+  const port = 39000 + Math.floor(Math.random() * 5000);
+  const child = spawn(process.execPath, ["--experimental-sqlite", "server.js"], {
+    cwd: dir,
+    env: { ...process.env, PORT: String(port) },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  let stderr = "";
+  child.stderr.on("data", (chunk) => {
+    stderr += chunk.toString();
+  });
+
+  try {
+    const deadline = Date.now() + 5000;
+    let lastErr: unknown;
+    while (Date.now() < deadline) {
+      if (child.exitCode !== null) {
+        throw new Error(`server.js exited early (code ${child.exitCode}):\n${stderr}`);
+      }
+      try {
+        await fetch(`http://localhost:${port}/api/entities`);
+        break;
+      } catch (err) {
+        lastErr = err;
+        await new Promise((r) => setTimeout(r, 100));
+      }
+    }
+    if (child.exitCode !== null) throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
+
+    const createCustomer = await fetch(`http://localhost:${port}/api/Customer`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ name: "Dana Levi", status: "Won" }),
+    });
+    assert.equal(createCustomer.status, 201);
+    // A stored field can hold arbitrary text (an AI-generated spec's field,
+    // a WhatsApp-sourced message) -- not just values this app itself ever
+    // wrote -- so the generated backup endpoint's CSV must guard a value
+    // that would otherwise be interpreted as a spreadsheet formula when
+    // opened in Excel/Sheets/LibreOffice (CSV/formula injection, CWE-1236).
+    await fetch(`http://localhost:${port}/api/Customer`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ name: "=cmd|' /C calc'!A1", status: "New" }),
+    });
+    await fetch(`http://localhost:${port}/api/Service`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ title: "Haircut" }),
+    });
+
+    const backupRes = await fetch(`http://localhost:${port}/api/backup`);
+    assert.equal(backupRes.status, 200);
+    assert.equal(backupRes.headers.get("content-type"), "application/zip");
+    const zipBuffer = Buffer.from(await backupRes.arrayBuffer());
+
+    const zipPath = path.join(dir, "backup.zip");
+    writeFileSync(zipPath, zipBuffer);
+    execFileSync("unzip", ["-t", zipPath], { stdio: "pipe" });
+    const extractDir = path.join(dir, "extracted");
+    execFileSync("unzip", ["-o", zipPath, "-d", extractDir], { stdio: "pipe" });
+
+    const customerCsv = readFileSync(path.join(extractDir, "Customer.csv"), "utf8");
+    assert.match(customerCsv, /^﻿/, "expected a UTF-8 BOM so Excel opens Hebrew text correctly");
+    assert.match(customerCsv, /Dana Levi/);
+    assert.match(customerCsv, /הצליח/, "expected the enum's translated label, not the raw stored value 'Won'");
+    assert.match(
+      customerCsv,
+      /'=cmd\|' \/C calc'!A1/,
+      "the formula-like name must be guarded with a leading single quote, not left as a live formula",
+    );
+
+    const serviceCsv = readFileSync(path.join(extractDir, "Service.csv"), "utf8");
+    assert.match(serviceCsv, /Haircut/);
+  } finally {
+    child.kill();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+// Round 117 found that apps/api/src/backup.ts's boolean CSV rendering was
+// completely untested -- and that an *omitted* boolean field renders
+// "FALSE", not blank, because rowToRecord coerces a stored NULL through
+// Boolean(value) before the CSV writer ever sees it. This exported app's
+// server.js has its own independent copy of that exact same rowToRecord +
+// backupFieldDisplayValue pair (see codegen.ts's template), so the same
+// gap and the same invariant apply here too -- confirmed by extracting and
+// executing the real generated functions (not a reimplementation), the
+// same technique the buildZip test below uses, rather than the heavier
+// spawn-a-real-server approach the /api/backup integration test above
+// uses (unnecessary here since no HTTP or real SQLite round-trip is
+// involved).
+test("the exported server.js's own rowToRecord + backupFieldDisplayValue render a boolean as TRUE/FALSE, and an omitted boolean as FALSE rather than blank", () => {
+  const serverJs = generateExportFiles(project).find((f) => f.path === "server.js")!.content;
+  const rowToRecordSrc = serverJs.match(/function rowToRecord\(entity, row\) \{[\s\S]*?\n\}\n/)?.[0];
+  const backupFieldDisplayValueSrc = serverJs.match(/function backupFieldDisplayValue\(field, value, recordIndexByEntity\) \{[\s\S]*?\n\}\n/)?.[0];
+  assert.ok(rowToRecordSrc, "expected to find rowToRecord in generated server.js");
+  assert.ok(backupFieldDisplayValueSrc, "expected to find backupFieldDisplayValue in generated server.js");
+
+  const { rowToRecord, backupFieldDisplayValue } = new Function(
+    `${rowToRecordSrc}\n${backupFieldDisplayValueSrc}\nreturn { rowToRecord, backupFieldDisplayValue };`,
+  )();
+
+  const entity = { name: "Task", fields: [{ name: "done", type: "boolean" }] };
+  const trueRecord = rowToRecord(entity, { id: 1, createdAt: "", done: 1 });
+  const falseRecord = rowToRecord(entity, { id: 2, createdAt: "", done: 0 });
+  const unsetRecord = rowToRecord(entity, { id: 3, createdAt: "" }); // no "done" column value at all
+
+  assert.equal(backupFieldDisplayValue(entity.fields[0], trueRecord.done, {}), "TRUE");
+  assert.equal(backupFieldDisplayValue(entity.fields[0], falseRecord.done, {}), "FALSE");
+  assert.equal(backupFieldDisplayValue(entity.fields[0], unsetRecord.done, {}), "FALSE");
+});
+
+/**
+ * Round 385: backupFieldDisplayValue used to resolve a relation field by
+ * `records.find(...)` -- a full linear scan of the related entity's
+ * whole record array, repeated once per row, O(N*M) for N rows and M
+ * related records. Fixed to take a pre-built id->record Map instead
+ * (built once in the real /api/backup handler, before any CSV is
+ * rendered). Extracts and executes the real generated
+ * backupFieldDisplayValue (not a reimplementation), confirming it still
+ * resolves a relation correctly given that Map shape, and still falls
+ * back to the raw `#id` when the related record genuinely isn't found.
+ */
+test("the exported server.js's own backupFieldDisplayValue resolves a relation field via a Map lookup, not a linear scan, and still falls back to '#id' for a record that doesn't exist", () => {
+  const serverJs = generateExportFiles(project).find((f) => f.path === "server.js")!.content;
+  const backupRecordDisplayLabelSrc = serverJs.match(/function backupRecordDisplayLabel\(entity, record\) \{[\s\S]*?\n\}\n/)?.[0];
+  const backupPickDisplayFieldSrc = serverJs.match(/const BACKUP_DISPLAY_FIELD_HINTS[\s\S]*?\nfunction backupPickDisplayField\(entity\) \{[\s\S]*?\n\}\n/)?.[0];
+  const backupFieldDisplayValueSrc = serverJs.match(/function backupFieldDisplayValue\(field, value, recordIndexByEntity\) \{[\s\S]*?\n\}\n/)?.[0];
+  assert.ok(
+    backupRecordDisplayLabelSrc && backupPickDisplayFieldSrc && backupFieldDisplayValueSrc,
+    "expected to find backupRecordDisplayLabel/backupPickDisplayField/backupFieldDisplayValue in generated server.js",
+  );
+
+  const courierEntity = { name: "Courier", fields: [{ name: "name", type: "text" }] };
+  const backupFieldDisplayValue = new Function(
+    "ENTITIES",
+    `${backupPickDisplayFieldSrc}\n${backupRecordDisplayLabelSrc}\n${backupFieldDisplayValueSrc}\nreturn backupFieldDisplayValue;`,
+  )([courierEntity]);
+
+  const relationField = { name: "courierId", type: "relation", relationTo: "Courier" };
+  const recordIndexByEntity = { Courier: new Map([[42, { id: 42, name: "Avi Mizrahi" }]]) };
+
+  assert.equal(backupFieldDisplayValue(relationField, 42, recordIndexByEntity), "Avi Mizrahi");
+  assert.equal(
+    backupFieldDisplayValue(relationField, 999, recordIndexByEntity),
+    "#999",
+    "a relation id with no matching record must fall back to the raw id, not throw or return empty",
+  );
+});
+
+// Regression test: the exported app's own embedded buildZip() (a
+// necessary copy of apps/api/src/zip.ts, since the exported app has zero
+// runtime dependency on this repo) had drifted from it -- missing the
+// UTF-8 general-purpose-bit-flag zip.ts's own test below documents, and
+// missing the >65535-entries guard zip.test.ts has. Neither was reachable
+// through this app's own backup endpoint (entity names are always plain
+// ASCII identifiers -- see codegen.ts's own assertSafe -- and a real
+// project has nowhere near 65535 entities), so it was never a live bug,
+// but it's still worth keeping the two copies in sync rather than letting
+// a real reader-compatibility/entry-count fix applied to zip.ts silently
+// never reach the exported app. Extracts and executes the real generated
+// buildZip/crc32/CRC_TABLE (not a reimplementation) via a direct Python
+// zipfile check, the same "spec-strict reader" technique zip.test.ts uses
+// (the system `unzip` auto-detects UTF-8 regardless of the flag, so it
+// wouldn't catch a regression here).
+test("the exported app's embedded buildZip sets the UTF-8 flag and rejects more than 65535 entries, matching the live zip.ts", () => {
+  const serverJs = generateExportFiles(project).find((f) => f.path === "server.js")!.content;
+  const crcTableSrc = serverJs.match(/const CRC_TABLE = \(\(\) => \{[\s\S]*?\n\}\)\(\);\n/)?.[0];
+  const crc32Src = serverJs.match(/function crc32\(buf\) \{[\s\S]*?\n\}\n/)?.[0];
+  const dosSrc = serverJs.match(/const DOS_TIME[\s\S]*?const DOS_DATE.*\n/)?.[0];
+  const buildZipSrc = serverJs.match(/function buildZip\(entries\) \{[\s\S]*?\n\}\n/)?.[0];
+  assert.ok(crcTableSrc && crc32Src && dosSrc && buildZipSrc, "expected to find CRC_TABLE/crc32/DOS_TIME/DOS_DATE/buildZip in generated server.js");
+
+  const buildZip = new Function(`${crcTableSrc}\n${crc32Src}\n${dosSrc}\n${buildZipSrc}\nreturn buildZip;`)();
+
+  const hebrewName = "לקוחות.csv";
+  const zip = buildZip([{ path: hebrewName, content: "a,b\n1,2\n" }]);
+  const dir = mkdtempSync(path.join(tmpdir(), "codegen-zip-utf8-test-"));
+  const zipPath = path.join(dir, "out.zip");
+  writeFileSync(zipPath, zip);
+  try {
+    const output = execFileSync(
+      "python3",
+      ["-c", "import sys, zipfile; print(zipfile.ZipFile(sys.argv[1]).namelist()[0])", zipPath],
+      { encoding: "utf8" },
+    ).trim();
+    assert.equal(output, hebrewName);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+
+  const tooMany = Array.from({ length: 65536 }, (_, i) => ({ path: `f${i}.txt`, content: "x" }));
+  assert.throws(() => buildZip(tooMany), /Zip64/i);
+});
+
+// PWA support for the exported standalone app -- installable to a phone's
+// home screen, opening in its own window without browser chrome, and
+// staying usable through a flaky connection. Requested directly by שלומי
+// ("build a feature Claude doesn't have") after being asked to pick a
+// concrete direction: a real, installable app on her phone, not a browser
+// tab -- exactly what a web app manifest + service worker provide.
+
+test("generateExportFiles produces a real web app manifest naming the project, with standalone display and an SVG icon", () => {
+  const files = generateExportFiles(project);
+  const manifestFile = files.find((f) => f.path === "web/public/manifest.json");
+  assert.ok(manifestFile, "expected web/public/manifest.json in the export (Vite's publicDir, copied verbatim to dist/)");
+  const manifest = JSON.parse(manifestFile!.content);
+  assert.equal(manifest.name, project.name);
+  assert.equal(manifest.display, "standalone", "standalone display is what actually hides the browser chrome once installed");
+  assert.equal(manifest.start_url, "/");
+  assert.ok(manifest.icons.length > 0);
+  assert.ok(manifest.icons.every((icon: { src: string }) => icon.src === "/icon.svg"));
+
+  const iconFile = files.find((f) => f.path === "web/public/icon.svg")!;
+  assert.match(iconFile.content, /<svg[^>]*viewBox="0 0 192 192"/);
+  assert.match(iconFile.content, />B<\/text>/, "Beauty Clinic Manager's icon should show its initial, 'B'");
+});
+
+test("a very long project name gets a truncated short_name, so it doesn't get cut off unpredictably on a real home screen", () => {
+  const longNameProject: Project = { ...project, name: "The Complete Beauty and Wellness Clinic Management Platform" };
+  const files = generateExportFiles(longNameProject);
+  const manifest = JSON.parse(files.find((f) => f.path === "web/public/manifest.json")!.content);
+  assert.equal(manifest.name, longNameProject.name, "the full name is still kept for the install prompt/app-switcher");
+  assert.ok(manifest.short_name.length <= 14, `short_name should be truncated, got "${manifest.short_name}"`);
+});
+
+test("a Hebrew project name gets a Hebrew icon initial, not a mangled half-character from a raw UTF-16 index", () => {
+  const hebrewProject: Project = { ...project, name: "מספרת יופי" };
+  const files = generateExportFiles(hebrewProject);
+  const iconFile = files.find((f) => f.path === "web/public/icon.svg")!;
+  assert.match(iconFile.content, />מ<\/text>/);
+});
+
+test("the exported index.html links the manifest and icon, and sets a real theme-color", () => {
+  const html = generateExportFiles(project).find((f) => f.path === "web/index.html")!.content;
+  assert.match(html, /<link rel="manifest" href="\/manifest\.json" \/>/);
+  assert.match(html, /<meta name="theme-color" content="#d9622b" \/>/);
+  assert.match(html, /<link rel="apple-touch-icon" href="\/icon\.svg" \/>/);
+});
+
+test("main.jsx registers the service worker only after the app's own first render, and never lets a failed registration surface as an error", () => {
+  const mainJsx = generateExportFiles(project).find((f) => f.path === "web/src/main.jsx")!.content;
+  const renderIndex = mainJsx.indexOf("createRoot");
+  const registerIndex = mainJsx.indexOf("serviceWorker.register");
+  assert.ok(renderIndex !== -1 && registerIndex !== -1);
+  assert.ok(renderIndex < registerIndex, "registration must come after the render call, not block the app's first paint");
+  assert.match(mainJsx, /navigator\.serviceWorker\.register\("\/sw\.js"\)\.catch\(\(\) => \{\}\)/);
+});
+
+/**
+ * Regression-style behavioral test (not just a string match): runs the real
+ * generated service worker's fetch handler against a mocked self/caches/fetch,
+ * confirming a request to /api/* is never intercepted (no event.respondWith
+ * call at all -- the browser's own real network fetch runs untouched), while
+ * an ordinary static asset request IS intercepted and resolves to a real
+ * Response. A stale cached response for this app's own live business data
+ * (today's appointments, a customer list) would be actively wrong, not just
+ * out of date, so this is the one behavior that must never regress silently.
+ */
+test("the exported service worker's fetch handler never intercepts /api/ requests but does intercept ordinary static asset requests", async () => {
+  const swJs = generateExportFiles(project).find((f) => f.path === "web/public/sw.js")!.content;
+
+  const listeners: Record<string, (event: unknown) => void> = {};
+  const fakeSelf = {
+    addEventListener: (type: string, handler: (event: unknown) => void) => {
+      listeners[type] = handler;
+    },
+    skipWaiting: () => {},
+    clients: { claim: () => {} },
+  };
+  const fakeCaches = {
+    open: async () => ({ addAll: async () => {}, put: async () => {} }),
+    match: async () => undefined,
+    keys: async () => [],
+    delete: async () => {},
+  };
+  const fakeFetch = async () => new Response("ok", { status: 200 });
+
+  new Function("self", "caches", "fetch", swJs)(fakeSelf, fakeCaches, fakeFetch);
+  assert.ok(listeners.fetch, "expected the exported sw.js to register a fetch listener");
+
+  let apiRespondWithCalled = false;
+  listeners.fetch({
+    request: new Request("http://localhost/api/Customer"),
+    respondWith: () => {
+      apiRespondWithCalled = true;
+    },
+  });
+  assert.equal(apiRespondWithCalled, false, "an /api/ GET must never be intercepted with respondWith");
+
+  let assetResponsePromise: Promise<Response> | undefined;
+  listeners.fetch({
+    request: new Request("http://localhost/assets/index-abc123.js"),
+    respondWith: (p: Promise<Response>) => {
+      assetResponsePromise = p;
+    },
+  });
+  assert.ok(assetResponsePromise, "an ordinary static asset request must be intercepted");
+  const assetResponse = await assetResponsePromise!;
+  assert.equal(await assetResponse.text(), "ok");
+});
+
+/**
+ * The strongest proof this feature actually works: writes the FULL export
+ * (not just server.js, like the tests above) to a real directory, runs a
+ * real `vite build` (the exact command this export's own package.json
+ * promises), then spawns the real server.js and fetches /manifest.json,
+ * /icon.svg, and /sw.js from it -- confirming Vite's publicDir convention
+ * genuinely copies web/public/* to dist/* at the paths index.html/main.jsx
+ * actually reference, not just that the generated source strings look
+ * right in isolation.
+ */
+test("a real vite build of the exported app actually serves the manifest, icon, and service worker at the root paths the app references", async () => {
+  const files = generateExportFiles(project);
+  const dir = mkdtempSync(path.join(tmpdir(), "codegen-pwa-test-"));
+  const repoRoot = path.resolve(import.meta.dirname, "../../..");
+  symlinkSync(path.join(repoRoot, "node_modules"), path.join(dir, "node_modules"));
+  for (const file of files) {
+    const filePath = path.join(dir, file.path);
+    mkdirSync(path.dirname(filePath), { recursive: true });
+    writeFileSync(filePath, file.content);
+  }
+
+  try {
+    execFileSync(path.join(dir, "node_modules", ".bin", "vite"), ["build"], { cwd: dir, stdio: "pipe" });
+
+    const port = 34000 + Math.floor(Math.random() * 5000);
+    const child = spawn(process.execPath, ["--experimental-sqlite", "server.js"], {
+      cwd: dir,
+      env: { ...process.env, PORT: String(port) },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    let stderr = "";
+    child.stderr.on("data", (chunk) => {
+      stderr += chunk.toString();
+    });
+
+    try {
+      const deadline = Date.now() + 5000;
+      let lastErr: unknown;
+      while (Date.now() < deadline) {
+        if (child.exitCode !== null) {
+          throw new Error(`server.js exited early (code ${child.exitCode}):\n${stderr}`);
+        }
+        try {
+          const manifestRes = await fetch(`http://localhost:${port}/manifest.json`);
+          assert.equal(manifestRes.status, 200);
+          const manifest = await manifestRes.json();
+          assert.equal(manifest.name, project.name);
+
+          const iconRes = await fetch(`http://localhost:${port}/icon.svg`);
+          assert.equal(iconRes.status, 200);
+          assert.match(await iconRes.text(), /<svg/);
+
+          const swRes = await fetch(`http://localhost:${port}/sw.js`);
+          assert.equal(swRes.status, 200);
+          assert.match(await swRes.text(), /addEventListener\("fetch"/);
+          return;
+        } catch (err) {
+          lastErr = err;
+          await new Promise((r) => setTimeout(r, 150));
+        }
+      }
+      throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
+    } finally {
+      child.kill();
+    }
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
+ * New in this round: the exported standalone app never had a dark mode at
+ * all -- every color in styles.css was a hardcoded hex value, unlike the
+ * live Forge AI preview (round 42's own dark mode toggle). Someone who
+ * exports and self-hosts their app loses that. theme.js mirrors the live
+ * preview's own theme/theme.ts exactly (same storage key fallback order):
+ * an explicit stored choice always wins; otherwise the OS-level
+ * prefers-color-scheme decides; light when there's no signal at all.
+ * Executes the real generated detectInitialTheme, not a reimplementation.
+ */
+test("the exported theme.js's detectInitialTheme prefers an explicit stored choice, then the system preference, then light", () => {
+  const themeJs = generateExportFiles(project).find((f) => f.path === "web/src/theme.js")!.content;
+  assert.match(themeJs, /THEME_STORAGE_KEY/);
+
+  const themeJsBody = themeJs.replace(/^export /gm, "");
+  const detectInitialTheme = new Function(`${themeJsBody}\nreturn detectInitialTheme;`)() as (
+    stored: string | null,
+    prefersDark?: boolean,
+  ) => string;
+
+  assert.equal(detectInitialTheme(null, false), "light", "no stored choice, no system preference -> light");
+  assert.equal(detectInitialTheme(null, true), "dark", "no stored choice, system prefers dark -> dark");
+  assert.equal(detectInitialTheme("light", true), "light", "an explicit stored 'light' wins even if the system prefers dark");
+  assert.equal(detectInitialTheme("dark", false), "dark", "an explicit stored 'dark' wins even if the system prefers light");
+  assert.equal(detectInitialTheme("not-a-real-value", true), "dark", "a corrupted stored value falls back to the system preference");
+});
+
+test("the exported App.jsx renders a real theme toggle button wired to detectInitialTheme and localStorage, matching the live preview's own ThemeSwitcher", () => {
+  const files = generateExportFiles(project);
+  const appJsx = files.find((f) => f.path === "web/src/App.jsx")!.content;
+
+  assert.match(appJsx, /import \{ THEME_STORAGE_KEY, detectInitialTheme \} from "\.\/theme\.js";/);
+  assert.match(appJsx, /className="theme-switch"/);
+  assert.match(appJsx, /setTheme\(\(current\) => \(current === "dark" \? "light" : "dark"\)\)/);
+  assert.match(appJsx, /document\.documentElement\.setAttribute\("data-theme", theme\)/);
+  assert.match(appJsx, /localStorage\.setItem\(THEME_STORAGE_KEY, theme\)/);
+
+  // The exported CSS actually reacts to the attribute the toggle sets, via
+  // real CSS variables -- not just a button that flips unused state.
+  const stylesCss = files.find((f) => f.path === "web/src/styles.css")!.content;
+  assert.match(stylesCss, /:root\[data-theme="dark"\]/);
+  assert.match(stylesCss, /body \{ font-family: [^;]+; margin: 0; background: var\(--bg\); color: var\(--text\); \}/);
+});
+
+test("render.yaml's service name is a safe slug even for a project name with spaces, punctuation, and Hebrew", () => {
+  const messyName: Project = { ...project, name: 'לקוחות שלי! (v2) — "Best" App?' };
+  const files = generateExportFiles(messyName);
+  const renderYaml = files.find((f) => f.path === "render.yaml")!.content;
+  const nameLine = renderYaml.split("\n").find((l) => l.trim().startsWith("name:"))!;
+  const name = nameLine.split("name:")[1].trim();
+  assert.match(name, /^[a-z0-9-]+$/, `render.yaml service name must be a safe slug, got: "${name}"`);
+});
+
+/**
+ * Regression test: the exported app's own badgeTone copy (a deliberate
+ * duplicate of apps/web/src/entityFormatting.ts's, per this codebase's
+ * "duplicate small formatting helpers per surface" pattern) had the same
+ * gap as the live-preview version -- the built-in InsuranceClaim domain
+ * entity's own status enum uses "Denied" right alongside "Approved", but
+ * only "Approved" read as a colored badge; "Denied" fell through to the
+ * same neutral gray as a genuinely undecided "Submitted"/"UnderReview"
+ * state. Runs the real generated badgeTone (extracted from real codegen
+ * output, not reimplemented here), not a reference copy.
+ */
+test("the exported EntityView's badgeTone classifies 'Denied' as negative, matching InsuranceClaim's real status enum", () => {
+  const entityViewJsx = generateExportFiles(project).find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+  const badgeToneSrc = entityViewJsx.match(/const POSITIVE_WORDS[\s\S]*?\nfunction badgeTone\(rawValue\) \{[\s\S]*?\n\}\n/)?.[0];
+  assert.ok(badgeToneSrc, "expected to find POSITIVE_WORDS/NEGATIVE_WORDS/badgeTone in generated output");
+
+  const badgeTone = new Function(`${badgeToneSrc}\nreturn badgeTone;`)() as (v: string) => string;
+  assert.equal(badgeTone("Denied"), "negative");
+  assert.equal(badgeTone("Approved"), "positive");
+});
+
+/**
+ * Regression test for the same real bug this round fixed in the
+ * live-preview version: "Inactive" contains "active" as a substring, so
+ * checking POSITIVE_WORDS before NEGATIVE_WORDS classified it as a green
+ * "positive" badge -- the exact opposite of what it means, and directly
+ * visible in the exported app's own table cells and Kanban column
+ * headers (both render via this same badgeTone). Runs the real generated
+ * badgeTone, not a reference copy.
+ */
+test("the exported EntityView's badgeTone classifies 'Inactive' as negative, not positive from matching 'active' as a substring", () => {
+  const entityViewJsx = generateExportFiles(project).find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+  const badgeToneSrc = entityViewJsx.match(/const POSITIVE_WORDS[\s\S]*?\nfunction badgeTone\(rawValue\) \{[\s\S]*?\n\}\n/)?.[0];
+  assert.ok(badgeToneSrc, "expected to find POSITIVE_WORDS/NEGATIVE_WORDS/badgeTone in generated output");
+
+  const badgeTone = new Function(`${badgeToneSrc}\nreturn badgeTone;`)() as (v: string) => string;
+  assert.equal(badgeTone("Inactive"), "negative");
+  assert.equal(badgeTone("Active"), "positive");
+});
+
+/**
+ * New in this round: the exported standalone app's entity table columns
+ * were a fixed auto-layout width, unlike the live Forge AI preview (round
+ * 185's own drag-to-resize columns, persisted per entity via
+ * localStorage). Ports the identical clamped drag-math. Executes the real
+ * generated function (extracted from real codegen output, not
+ * reimplemented), mirroring apps/web/src/columnWidths.test.ts's own
+ * computeResizedWidth coverage -- minus the RTL direction parameter, since
+ * the exported app has no lang/dir switching at all (round 200's own note).
+ */
+test("the exported EntityView's computeResizedWidth clamps a dragged column between MIN_COLUMN_WIDTH and MAX_COLUMN_WIDTH", () => {
+  const entityViewJsx = generateExportFiles(project).find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+  const fnSrc = entityViewJsx
+    .match(/const MIN_COLUMN_WIDTH[\s\S]*?export function computeResizedWidth\(startWidth, deltaX\) \{[\s\S]*?\n\}\n/)?.[0]
+    ?.replace("export ", "");
+  assert.ok(fnSrc, "expected to find computeResizedWidth (with its MIN/MAX constants) in generated output");
+
+  const computeResizedWidth = new Function(`${fnSrc}\nreturn computeResizedWidth;`)() as (startWidth: number, deltaX: number) => number;
+
+  assert.equal(computeResizedWidth(150, 40), 190, "an ordinary drag must widen by exactly the mouse delta");
+  assert.equal(computeResizedWidth(150, -40), 110, "dragging the other way must narrow by exactly the mouse delta");
+  assert.equal(computeResizedWidth(150, -1000), 60, "must clamp to MIN_COLUMN_WIDTH rather than going arbitrarily narrow");
+  assert.equal(computeResizedWidth(150, 1000), 480, "must clamp to MAX_COLUMN_WIDTH rather than going arbitrarily wide");
+});
+
+test("the exported EntityView's table headers are drag-resizable, persisting per entity via a real localStorage round trip", () => {
+  const files = generateExportFiles(project);
+  const entityViewJsx = files.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+
+  assert.match(entityViewJsx, /const \[columnWidths, setColumnWidths\] = useState\(\(\) => getColumnWidths\(entity\.name\)\);/);
+  assert.match(entityViewJsx, /const \[resizingField, setResizingField\] = useState\(null\);/);
+  // The drag must only ever attach real mousemove/mouseup listeners while a
+  // drag is actually in progress, and must persist to localStorage only on
+  // mouseup (via setColumnWidth) -- not on every mousemove.
+  assert.match(
+    entityViewJsx,
+    /useEffect\(\(\) => \{\s*if \(!resizingField\) return;\s*function handleMove\(e\) \{\s*const width = computeResizedWidth\(resizingField\.startWidth, e\.clientX - resizingField\.startX\);\s*setColumnWidths\(\(prev\) => \(\{ \.\.\.prev, \[resizingField\.field\]: width \}\)\);\s*\}\s*function handleUp\(\) \{\s*setColumnWidths\(\(prev\) => \{\s*const width = prev\[resizingField\.field\];\s*if \(width != null\) setColumnWidth\(entity\.name, resizingField\.field, width\);\s*return prev;\s*\}\);\s*setResizingField\(null\);\s*\}/,
+  );
+  assert.match(entityViewJsx, /onMouseDown=\{\(e\) => startResize\(e, f\.name\)\}/);
+  // The reset-on-entity-switch effect must reload the new entity's own
+  // widths -- the exact class of bug round 198 shipped and Playwright
+  // caught (a stale reference to state that had been renamed/removed).
+  assert.match(entityViewJsx, /setColumnWidths\(getColumnWidths\(entity\.name\)\);\s*setColumnOrderState\(getColumnOrder\(entity\.name\)\);\s*refresh\(\);/);
+
+  const stylesCss = files.find((f) => f.path === "web/src/styles.css")!.content;
+  assert.match(stylesCss, /\.column-resize-handle/);
+  assert.match(stylesCss, /\.entity-table-resized/);
+
+  // Executes the real generated getColumnWidths/setColumnWidth against a
+  // fake localStorage, the same "run the real generated code" standard this
+  // file's other persistence-backed tests use (see getHiddenColumns/
+  // toggleColumnVisibility below).
+  const storeSrc = entityViewJsx.match(/const MIN_COLUMN_WIDTH[\s\S]*?\nfunction setColumnWidth\(entityName, fieldName, width\) \{[\s\S]*?\n\}\n/)?.[0];
+  assert.ok(storeSrc, "expected to find the column-widths store functions in generated output");
+
+  const fakeStorage: Record<string, string> = {};
+  const { getColumnWidths, setColumnWidth } = new Function(
+    "localStorage",
+    `${storeSrc}\nreturn { getColumnWidths, setColumnWidth };`,
+  )({
+    getItem: (k: string) => fakeStorage[k] ?? null,
+    setItem: (k: string, v: string) => {
+      fakeStorage[k] = v;
+    },
+  }) as { getColumnWidths: (e: string) => Record<string, number>; setColumnWidth: (e: string, f: string, w: number) => Record<string, number> };
+
+  assert.deepEqual(getColumnWidths("Order"), {}, "an entity with no resized column must start with an empty width map");
+  const updated = setColumnWidth("Order", "customerName", 220);
+  assert.deepEqual(updated, { customerName: 220 });
+  assert.deepEqual(getColumnWidths("Order"), { customerName: 220 }, "must round-trip through the real localStorage-backed store");
+  assert.deepEqual(getColumnWidths("Courier"), {}, "a different entity's own widths must not leak across entities");
+});
+
+/**
+ * New in this round: table columns in the exported standalone app could
+ * only be resized (round 201) or hidden (round 198's own "Columns" menu
+ * port) -- never actually REORDERED, unlike the live Forge AI preview
+ * (round 203). Ports the identical draggable/onDragStart/onDragOver/
+ * onDragLeave/onDrop contract EntityPanel.tsx's own column-header drag
+ * already uses, reusing applyColumnOrder/reorderColumns verbatim rather
+ * than reimplementing the reorder math (they're already generic over any
+ * `{name}[]`, and a field object here has the same shape a live-preview
+ * field does).
+ */
+test("the exported EntityView's table columns are drag-and-drop reorderable, persisting per entity via a real localStorage round trip", () => {
+  const files = generateExportFiles(project);
+  const entityViewJsx = files.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+
+  assert.match(entityViewJsx, /const \[columnOrder, setColumnOrderState\] = useState\(\(\) => getColumnOrder\(entity\.name\)\);/);
+  assert.match(entityViewJsx, /const \[draggedField, setDraggedField\] = useState\(null\);/);
+  assert.match(
+    entityViewJsx,
+    /const orderedFields = useMemo\(\(\) => applyColumnOrder\(entity\.fields, columnOrder\), \[entity\.fields, columnOrder\]\);/,
+  );
+  assert.match(
+    entityViewJsx,
+    /function handleReorderColumn\(targetName\) \{\s*setDragOverField\(null\);\s*if \(!draggedField \|\| draggedField === targetName\) return;\s*const fullOrder = orderedFields\.map\(\(f\) => f\.name\);\s*setColumnOrderState\(setColumnOrder\(entity\.name, reorderColumns\(fullOrder, draggedField, targetName\)\)\);\s*setDraggedField\(null\);\s*\}/,
+  );
+  assert.match(entityViewJsx, /onDragStart=\{\(\) => setDraggedField\(f\.name\)\}/);
+  assert.match(entityViewJsx, /onDrop=\{\(e\) => \{\s*e\.preventDefault\(\);\s*handleReorderColumn\(f\.name\);\s*\}\}/);
+  // The reset-on-entity-switch effect must reload the new entity's own
+  // persisted order -- the exact class of bug round 198 shipped and
+  // Playwright caught (a stale reference to state that had been
+  // renamed/removed), re-verified for every new piece of per-entity state.
+  assert.match(entityViewJsx, /setColumnOrderState\(getColumnOrder\(entity\.name\)\);\s*refresh\(\);/);
+
+  const stylesCss = files.find((f) => f.path === "web/src/styles.css")!.content;
+  assert.match(stylesCss, /\.resizable-col-drag-over/);
+
+  // Executes the real generated applyColumnOrder/reorderColumns and the
+  // real generated getColumnOrder/setColumnOrder against a fake
+  // localStorage -- the same "run the real generated code" standard this
+  // file's other persistence-backed tests use.
+  const pureFnSrc = entityViewJsx.match(
+    /function applyColumnOrder\(fields, order\) \{[\s\S]*?\nfunction reorderColumns\(order, sourceName, targetName\) \{[\s\S]*?\n\}\n/,
+  )?.[0];
+  assert.ok(pureFnSrc, "expected to find applyColumnOrder/reorderColumns in generated output");
+  const { applyColumnOrder, reorderColumns } = new Function(`${pureFnSrc}\nreturn { applyColumnOrder, reorderColumns };`)() as {
+    applyColumnOrder: (fields: { name: string }[], order: string[]) => { name: string }[];
+    reorderColumns: (order: string[], source: string, target: string) => string[];
+  };
+  assert.deepEqual(
+    applyColumnOrder([{ name: "name" }, { name: "status" }], ["status", "name"]).map((f) => f.name),
+    ["status", "name"],
+  );
+  assert.deepEqual(reorderColumns(["name", "status"], "status", "name"), ["status", "name"]);
+  const unchanged = ["name", "status"];
+  assert.equal(reorderColumns(unchanged, "status", "status"), unchanged, "dropping a column back onto itself must be a real no-op");
+
+  const storeSrc = entityViewJsx.match(/const COLUMN_ORDER_STORAGE_KEY[\s\S]*?\nfunction setColumnOrder\(entityName, order\) \{[\s\S]*?\n\}\n/)?.[0];
+  assert.ok(storeSrc, "expected to find the column-order store functions in generated output");
+  const fakeStorage: Record<string, string> = {};
+  const { getColumnOrder, setColumnOrder } = new Function(
+    "localStorage",
+    `${storeSrc}\nreturn { getColumnOrder, setColumnOrder };`,
+  )({
+    getItem: (k: string) => fakeStorage[k] ?? null,
+    setItem: (k: string, v: string) => {
+      fakeStorage[k] = v;
+    },
+  }) as { getColumnOrder: (e: string) => string[]; setColumnOrder: (e: string, order: string[]) => string[] };
+
+  assert.deepEqual(getColumnOrder("Order"), [], "an entity with no reordered columns must start with an empty order");
+  const updated = setColumnOrder("Order", ["status", "customerName"]);
+  assert.deepEqual(updated, ["status", "customerName"]);
+  assert.deepEqual(getColumnOrder("Order"), ["status", "customerName"], "must round-trip through the real localStorage-backed store");
+  assert.deepEqual(getColumnOrder("Courier"), [], "a different entity's own order must not leak across entities");
+});
+
+/**
+ * New in this round: the exported standalone app's Kanban board could only
+ * move a card between columns via its own <select>, unlike the live Forge
+ * AI preview (round 186's own native HTML5 drag-and-drop). Ports the
+ * identical drag mechanics -- draggable cards, drop targets that highlight
+ * while dragged over, and a real no-op guard for dropping a card back onto
+ * its own column.
+ */
+test("the exported EntityView's Kanban board cards are drag-and-drop-able onto another column, reusing the same handleMove the dropdown already calls", () => {
+  const files = generateExportFiles(project);
+  const entityViewJsx = files.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+
+  assert.match(entityViewJsx, /const \[dragOverColumn, setDragOverColumn\] = useState\(null\);/);
+  // BoardCard itself must be a real native drag source, not just visually styled.
+  assert.match(
+    entityViewJsx,
+    /<div className=\{hasMoveError \? "board-card board-card-move-error" : "board-card"\} draggable onDragStart=\{\(e\) => e\.dataTransfer\.setData\("text\/plain", String\(record\.id\)\)\}>/,
+  );
+  // handleCardDrop must guard against a real no-op (dropping a card back onto its own column) before ever calling handleMove.
+  const dropSrc = entityViewJsx.match(/function handleCardDrop\(e, fieldName, value\) \{[\s\S]*?\n {2}\}\n/)?.[0];
+  assert.ok(dropSrc, "expected to find handleCardDrop in generated output");
+  assert.match(dropSrc!, /const record = records\.find\(\(r\) => r\.id === id\);/);
+  assert.match(dropSrc!, /if \(record && String\(record\[fieldName\] \?\? ""\) === value\) return;/);
+  assert.match(dropSrc!, /void handleMove\(id, fieldName, value\);/);
+  // The column itself must be a real drop target, highlighted only while actually dragged over -- except
+  // the synthetic "(other)" column (see the "(other)" bucket test below), which must guard out of both.
+  assert.match(
+    entityViewJsx,
+    /onDragOver=\{\(e\) => \{\s*if \(column\.isOther\) return;\s*e\.preventDefault\(\);\s*setDragOverColumn\(column\.value\);\s*\}\}/,
+  );
+  assert.match(entityViewJsx, /onDragLeave=\{\(\) => setDragOverColumn\(\(prev\) => \(prev === column\.value \? null : prev\)\)\}/);
+  assert.match(
+    entityViewJsx,
+    /onDrop=\{\(e\) => \{\s*if \(column\.isOther\) return;\s*handleCardDrop\(e, boardField\.name, column\.value\);\s*\}\}/,
+  );
+  assert.match(
+    entityViewJsx,
+    /className=\{\s*dragOverColumn === column\.value\s*\? "board-column board-column-drag-over"\s*: column\.isOther\s*\? "board-column board-column-other"\s*: "board-column"\s*\}/,
+  );
+
+  const stylesCss = files.find((f) => f.path === "web/src/styles.css")!.content;
+  assert.match(stylesCss, /\.board-column-drag-over/);
+  assert.match(stylesCss, /\.board-column-other/);
+});
+
+// Executes the real generated isInlineEditableField (extracted from real
+// codegen output, not reimplemented), the same "run the real generated
+// code" standard this file's other pure-function tests use. Mirrors the
+// live preview's own entityFormatting.test.ts coverage for
+// isInlineEditableField (round 206).
+test("the exported EntityView's isInlineEditableField allows every field type except relation", () => {
+  const entityViewJsx = generateExportFiles(project).find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+  const fnSrc = entityViewJsx.match(/export function isInlineEditableField\(field\) \{[\s\S]*?\n\}\n/)?.[0]?.replace("export ", "");
+  assert.ok(fnSrc, "expected to find isInlineEditableField in generated output");
+  const isInlineEditableField = new Function(`${fnSrc}\nreturn isInlineEditableField;`)() as (field: { type: string }) => boolean;
+
+  for (const type of ["text", "longtext", "number", "boolean", "enum", "date"]) {
+    assert.equal(isInlineEditableField({ type }), true, `expected ${type} to be inline-editable`);
+  }
+  assert.equal(isInlineEditableField({ type: "relation" }), false, "a relation field's cell shows a label resolved from a different record, so it must stay excluded");
+});
+
+/**
+ * New in this round: the exported app's own matchesSearch had the exact
+ * same gap the live preview's matchesSearch did -- a relation field's
+ * table cell visibly shows a related record's resolved label (e.g.
+ * "Dana", via relationDisplayLabel), but search fell through to
+ * String(value), the raw stored foreign-key id, so typing the name shown
+ * right there on screen found nothing in an exported/standalone app
+ * either. Runs the real generated matchesSearch (plus the real
+ * ALL_ENTITIES/pickDisplayField/recordDisplayLabel/relationDisplayLabel
+ * it actually depends on) against a real relation field and value.
+ */
+test("the exported EntityView's matchesSearch resolves a relation field to its related record's display label, not the raw foreign-key id", () => {
+  const withRelation: Project = {
+    ...project,
+    spec: {
+      ...project.spec,
+      entities: [
+        ...project.spec.entities,
+        { name: "Courier", label: "Courier", fields: [{ name: "name", label: "Name", type: "text", required: true }] },
+        {
+          name: "Order",
+          label: "Order",
+          fields: [
+            { name: "item", label: "Item", type: "text", required: true },
+            { name: "courierId", label: "Assigned Courier", type: "relation", required: false, relationTo: "Courier" },
+          ],
+        },
+      ],
+    },
+  };
+  const entityViewJsx = generateExportFiles(withRelation).find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+
+  const allEntitiesSrc = entityViewJsx.match(/const ALL_ENTITIES = [\s\S]*?;\n/)?.[0];
+  const displayFieldHintsSrc = entityViewJsx.match(/const DISPLAY_FIELD_NAME_HINTS = .*;\n/)?.[0];
+  const pickDisplayFieldSrc = entityViewJsx.match(/export function pickDisplayField\([\s\S]*?\n\}\n/)?.[0]?.replace("export ", "");
+  const recordDisplayLabelSrc = entityViewJsx.match(/export function recordDisplayLabel\([\s\S]*?\n\}\n/)?.[0]?.replace("export ", "");
+  const relationIndexSrc = entityViewJsx.match(/const relationIndexCache = new WeakMap\(\);\nfunction relationIndexFor\(records\) \{[\s\S]*?\n\}\n/)?.[0];
+  const relationDisplayLabelSrc = entityViewJsx.match(/function relationDisplayLabel\([\s\S]*?\n\}\n/)?.[0];
+  const matchesSearchSrc = entityViewJsx.match(/export function matchesSearch\([\s\S]*?\n\}\n/)?.[0]?.replace("export ", "");
+  assert.ok(
+    allEntitiesSrc && displayFieldHintsSrc && pickDisplayFieldSrc && recordDisplayLabelSrc && relationIndexSrc && relationDisplayLabelSrc && matchesSearchSrc,
+    "expected to find ALL_ENTITIES/DISPLAY_FIELD_NAME_HINTS/pickDisplayField/recordDisplayLabel/relationIndexFor/relationDisplayLabel/matchesSearch in generated output",
+  );
+
+  const matchesSearch = new Function(
+    `${allEntitiesSrc}\n${displayFieldHintsSrc}\n${pickDisplayFieldSrc}\n${recordDisplayLabelSrc}\n${relationIndexSrc}\n${relationDisplayLabelSrc}\n${matchesSearchSrc}\nreturn matchesSearch;`,
+  )() as (record: unknown, fields: unknown[], query: string, relatedRecords: unknown) => boolean;
+
+  const orderFields = [{ name: "item", type: "text" }, { name: "courierId", type: "relation", relationTo: "Courier" }];
+  const order = { item: "Pizza", courierId: 9 };
+  const relatedRecords = { Courier: [{ id: 9, name: "Dana" }] };
+
+  assert.equal(matchesSearch(order, orderFields, "dana", relatedRecords), true);
+  assert.equal(matchesSearch(order, orderFields, "9", relatedRecords), false, "the raw foreign-key id is never shown on screen, so it must not match");
+});
+
+/**
+ * New in this round: the exported app's own matchesSearch had the same
+ * number-field gap the live preview's did -- a number field's table cell
+ * (EntityView.jsx) renders through .toLocaleString(), adding thousands
+ * separators (1500 -> "1,500"), but matchesSearch fell through to the
+ * field's own plain String(value) ("1500"), so typing back the exact
+ * digits shown on screen, comma included, found nothing in an exported/
+ * standalone app either. Runs the real generated matchesSearch alone --
+ * the number branch needs none of the relation helpers the test above
+ * depends on.
+ */
+test("the exported EntityView's matchesSearch matches a number field's locale-formatted display (with thousands separators), not just its raw digits", () => {
+  const entityViewJsx = generateExportFiles(project).find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+  const matchesSearchSrc = entityViewJsx.match(/export function matchesSearch\([\s\S]*?\n\}\n/)?.[0]?.replace("export ", "");
+  assert.ok(matchesSearchSrc, "expected to find matchesSearch in generated output");
+
+  const matchesSearch = new Function(`${matchesSearchSrc}\nreturn matchesSearch;`)() as (
+    record: unknown,
+    fields: unknown[],
+    query: string,
+  ) => boolean;
+
+  const fields = [{ name: "total", type: "number" }];
+  const record = { total: 1500 };
+  assert.equal(matchesSearch(record, fields, "1500"), true);
+  assert.equal(matchesSearch(record, fields, "1,500"), true);
+  assert.equal(matchesSearch(record, fields, "9999"), false);
+});
+
+/**
+ * New in this round: the exported app's own sortRecordsMulti had the same
+ * gap as matchesSearch above -- a relation column's cell shows the related
+ * record's resolved label, but clicking that header sorted by the raw
+ * stored foreign-key id. Runs the real generated sortRecordsMulti (plus
+ * the real relationDisplayLabel it depends on) against real relation
+ * values whose id order and name order genuinely disagree: courier
+ * names are assigned in REVERSE alphabetical order of their ids (id 1 =
+ * "Zed", id 3 = "Abe") -- if they had instead happened to be alphabetical
+ * in id order, ascending-by-raw-id and ascending-by-resolved-name would
+ * produce the same row order, and this test would pass even against
+ * unfixed code that never resolved the relation at all.
+ */
+test("the exported EntityView's sortRecordsMulti resolves a relation field to its related record's display label, not the raw foreign-key id", () => {
+  const withRelation: Project = {
+    ...project,
+    spec: {
+      ...project.spec,
+      entities: [
+        ...project.spec.entities,
+        { name: "Courier", label: "Courier", fields: [{ name: "name", label: "Name", type: "text", required: true }] },
+        {
+          name: "Order",
+          label: "Order",
+          fields: [
+            { name: "item", label: "Item", type: "text", required: true },
+            { name: "courierId", label: "Assigned Courier", type: "relation", required: false, relationTo: "Courier" },
+          ],
+        },
+      ],
+    },
+  };
+  const entityViewJsx = generateExportFiles(withRelation).find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+
+  const allEntitiesSrc = entityViewJsx.match(/const ALL_ENTITIES = [\s\S]*?;\n/)?.[0];
+  const displayFieldHintsSrc = entityViewJsx.match(/const DISPLAY_FIELD_NAME_HINTS = .*;\n/)?.[0];
+  const pickDisplayFieldSrc = entityViewJsx.match(/export function pickDisplayField\([\s\S]*?\n\}\n/)?.[0]?.replace("export ", "");
+  const recordDisplayLabelSrc = entityViewJsx.match(/export function recordDisplayLabel\([\s\S]*?\n\}\n/)?.[0]?.replace("export ", "");
+  const relationIndexSrc = entityViewJsx.match(/const relationIndexCache = new WeakMap\(\);\nfunction relationIndexFor\(records\) \{[\s\S]*?\n\}\n/)?.[0];
+  const relationDisplayLabelSrc = entityViewJsx.match(/function relationDisplayLabel\([\s\S]*?\n\}\n/)?.[0];
+  const compareValuesSrc = entityViewJsx.match(/function compareValues\([\s\S]*?\n\}\n/)?.[0];
+  const resolveSortValueSrc = entityViewJsx.match(/function resolveSortValue\([\s\S]*?\n\}\n/)?.[0];
+  const sortRecordsMultiSrc = entityViewJsx.match(/export function sortRecordsMulti\([\s\S]*?\n\}\n/)?.[0]?.replace("export ", "");
+  assert.ok(
+    allEntitiesSrc &&
+      displayFieldHintsSrc &&
+      pickDisplayFieldSrc &&
+      recordDisplayLabelSrc &&
+      relationIndexSrc &&
+      relationDisplayLabelSrc &&
+      compareValuesSrc &&
+      resolveSortValueSrc &&
+      sortRecordsMultiSrc,
+    "expected to find ALL_ENTITIES/DISPLAY_FIELD_NAME_HINTS/pickDisplayField/recordDisplayLabel/relationIndexFor/relationDisplayLabel/compareValues/resolveSortValue/sortRecordsMulti in generated output",
+  );
+
+  const sortRecordsMulti = new Function(
+    `${allEntitiesSrc}\n${displayFieldHintsSrc}\n${pickDisplayFieldSrc}\n${recordDisplayLabelSrc}\n${relationIndexSrc}\n${relationDisplayLabelSrc}\n${compareValuesSrc}\n${resolveSortValueSrc}\n${sortRecordsMultiSrc}\nreturn sortRecordsMulti;`,
+  )() as (records: { id: number }[], sortKeys: { field: string; direction: string }[], fields: unknown[], relatedRecords: unknown) => { id: number }[];
+
+  const orderFields = [{ name: "item", type: "text" }, { name: "courierId", type: "relation", relationTo: "Courier" }];
+  const records = [
+    { id: 1, courierId: 1 }, // Zed
+    { id: 2, courierId: 2 }, // Mona
+    { id: 3, courierId: 3 }, // Abe
+  ];
+  const relatedRecords = {
+    Courier: [
+      { id: 1, name: "Zed" },
+      { id: 2, name: "Mona" },
+      { id: 3, name: "Abe" },
+    ],
+  };
+  const sorted = sortRecordsMulti(records, [{ field: "courierId", direction: "asc" }], orderFields, relatedRecords);
+  assert.deepEqual(
+    sorted.map((r) => r.id),
+    [3, 2, 1],
+    "alphabetical by resolved courier name (Abe, Mona, Zed), not numeric by the raw stored id (1, 2, 3)",
+  );
+});
+
+/**
+ * New in this round: the exported app's own resolveSortValue had the same
+ * gap for enum fields that round 415 already fixed for matchesSearch --
+ * the table cell renders an enum's translated label, but sorting compared
+ * the raw stored value. The fixture's raw codes ("P1"/"P3") sort in the
+ * OPPOSITE order from their labels ("Low"/"High"), so unfixed code (still
+ * sorting by the raw value) would produce a detectably different order.
+ * The enum branch needs none of the relation helpers the test above
+ * depends on.
+ */
+test("the exported EntityView's sortRecordsMulti sorts an enum field by its translated label, not the raw stored enum value", () => {
+  const entityViewJsx = generateExportFiles(project).find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+
+  const compareValuesSrc = entityViewJsx.match(/function compareValues\([\s\S]*?\n\}\n/)?.[0];
+  const resolveSortValueSrc = entityViewJsx.match(/function resolveSortValue\([\s\S]*?\n\}\n/)?.[0];
+  const sortRecordsMultiSrc = entityViewJsx.match(/export function sortRecordsMulti\([\s\S]*?\n\}\n/)?.[0]?.replace("export ", "");
+  assert.ok(compareValuesSrc && resolveSortValueSrc && sortRecordsMultiSrc, "expected to find compareValues/resolveSortValue/sortRecordsMulti in generated output");
+
+  const sortRecordsMulti = new Function(
+    `${compareValuesSrc}\n${resolveSortValueSrc}\n${sortRecordsMultiSrc}\nreturn sortRecordsMulti;`,
+  )() as (records: { id: number }[], sortKeys: { field: string; direction: string }[], fields: unknown[]) => { id: number }[];
+
+  const fields = [{ name: "priority", type: "enum", enumLabels: { P1: "Low", P3: "High" } }];
+  const records = [
+    { id: 1, priority: "P1" }, // "Low"
+    { id: 2, priority: "P3" }, // "High"
+  ];
+  const sorted = sortRecordsMulti(records, [{ field: "priority", direction: "asc" }], fields);
+  assert.deepEqual(
+    sorted.map((r) => r.id),
+    [2, 1],
+    "ascending by label puts \"High\" before \"Low\", the opposite of ascending by the raw \"P1\"/\"P3\" codes",
+  );
+});
+
+/**
+ * Round 386: the exported app's own relationDisplayLabel had the exact
+ * same O(N*M) records.find(...) scan round 385 fixed in this file's
+ * backup route, just with far more call sites (matchesSearch/
+ * sortRecordsMulti above, plus table/board/calendar cell rendering and
+ * CSV export). Fixed with a WeakMap cache keyed on the records array's
+ * own identity (relationIndexFor above), reused across an entire
+ * render/export pass without any call site changing. Confirms the real
+ * generated relationDisplayLabel still resolves correctly, and -- the
+ * actual risk this caching strategy introduces -- that it never
+ * cross-contaminates between two different record arrays that happen to
+ * share the same stored id (two different data refreshes), by calling
+ * it against two different arrays and then back against the first.
+ */
+test("the exported EntityView's relationDisplayLabel resolves correctly and its cache never cross-contaminates between two different record arrays sharing the same id", () => {
+  const entityViewJsx = generateExportFiles(project).find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+
+  const displayFieldHintsSrc = entityViewJsx.match(/const DISPLAY_FIELD_NAME_HINTS = .*;\n/)?.[0];
+  const pickDisplayFieldSrc = entityViewJsx.match(/export function pickDisplayField\([\s\S]*?\n\}\n/)?.[0]?.replace("export ", "");
+  const recordDisplayLabelSrc = entityViewJsx.match(/export function recordDisplayLabel\([\s\S]*?\n\}\n/)?.[0]?.replace("export ", "");
+  const relationIndexSrc = entityViewJsx.match(/const relationIndexCache = new WeakMap\(\);\nfunction relationIndexFor\(records\) \{[\s\S]*?\n\}\n/)?.[0];
+  const relationDisplayLabelSrc = entityViewJsx.match(/function relationDisplayLabel\([\s\S]*?\n\}\n/)?.[0];
+  assert.ok(
+    displayFieldHintsSrc && pickDisplayFieldSrc && recordDisplayLabelSrc && relationIndexSrc && relationDisplayLabelSrc,
+    "expected to find DISPLAY_FIELD_NAME_HINTS/pickDisplayField/recordDisplayLabel/relationIndexFor/relationDisplayLabel in generated output",
+  );
+
+  const relationDisplayLabel = new Function(
+    "ALL_ENTITIES",
+    `${displayFieldHintsSrc}\n${pickDisplayFieldSrc}\n${recordDisplayLabelSrc}\n${relationIndexSrc}\n${relationDisplayLabelSrc}\nreturn relationDisplayLabel;`,
+  )([{ name: "Courier", fields: [{ name: "name", type: "text" }] }]) as (
+    field: { relationTo: string },
+    value: unknown,
+    relatedRecords: Record<string, { id: number; name: string }[]>,
+  ) => string;
+
+  const field = { relationTo: "Courier" };
+  const arrayA = [{ id: 1, name: "Avi from A" }];
+  const arrayB = [{ id: 1, name: "Bar from B" }];
+  assert.equal(relationDisplayLabel(field, 1, { Courier: arrayA }), "Avi from A");
+  assert.equal(relationDisplayLabel(field, 1, { Courier: arrayB }), "Bar from B");
+  assert.equal(relationDisplayLabel(field, 1, { Courier: arrayA }), "Avi from A", "re-querying the first array must still resolve to its own record");
+  assert.equal(relationDisplayLabel(field, 999, { Courier: arrayA }), "#999", "no matching record falls back to the raw id");
+});
+
+// Ported from the Forge AI live preview's EntityPanel.tsx (round 206):
+// double-clicking a table cell (any field except relation) opens it for
+// editing right in place, instead of requiring the full add/edit form
+// below the table for a single-value change. Confirms the wiring is
+// actually present in the generated output, the same source-inspection
+// standard the Kanban drag-and-drop test above uses.
+test("the exported EntityView supports double-click inline cell editing, ported from the Forge AI live preview", () => {
+  const files = generateExportFiles(project);
+  const entityViewJsx = files.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+
+  assert.match(entityViewJsx, /const \[editingCell, setEditingCell\] = useState\(null\);/);
+  assert.match(entityViewJsx, /const \[cellDraft, setCellDraft\] = useState\(undefined\);/);
+  assert.match(entityViewJsx, /const suppressCellBlurCommitRef = useRef\(false\);/);
+
+  const startSrc = entityViewJsx.match(/function startInlineEdit\(record, field\) \{[\s\S]*?\n {2}\}\n/)?.[0];
+  assert.ok(startSrc, "expected to find startInlineEdit in generated output");
+  assert.match(startSrc!, /if \(!isInlineEditableField\(field\)\) return;/);
+
+  const commitSrc = entityViewJsx.match(/async function commitInlineEdit\(\) \{[\s\S]*?\n {2}\}\n/)?.[0];
+  assert.ok(commitSrc, "expected to find commitInlineEdit in generated output");
+  assert.match(commitSrc!, /await updateRecord\(entity\.name, recordId, \{ \[field\]: value \}\);/);
+  assert.match(commitSrc!, /await refresh\(\);/);
+
+  const cancelSrc = entityViewJsx.match(/function cancelInlineEdit\(\) \{[\s\S]*?\n {2}\}\n/)?.[0];
+  assert.ok(cancelSrc, "expected to find cancelInlineEdit in generated output");
+  assert.match(cancelSrc!, /suppressCellBlurCommitRef\.current = true;/);
+
+  // The table cell itself must be a real double-click target when editable, rendering FieldInput (not just Cell) while editing.
+  assert.match(entityViewJsx, /onDoubleClick=\{editable && !isEditingThisCell \? \(\) => startInlineEdit\(r, f\) : undefined\}/);
+  assert.match(entityViewJsx, /isEditingThisCell \? \(\s*<FieldInput/);
+  assert.match(entityViewJsx, /onKeyDown=\{\(e\) => \{\s*if \(e\.key === "Enter"\) \{\s*e\.preventDefault\(\);\s*void commitInlineEdit\(\);\s*\} else if \(e\.key === "Escape"\) \{\s*e\.preventDefault\(\);\s*cancelInlineEdit\(\);/);
+
+  const stylesCss = files.find((f) => f.path === "web/src/styles.css")!.content;
+  assert.match(stylesCss, /\.cell-inline-editable/);
+  assert.match(stylesCss, /\.cell-editing input, \.cell-editing select, \.cell-editing textarea/);
+});
+
+/**
+ * New in this round: the exported app's FieldInput had the identical bug
+ * the live preview did -- a "number" field's <input type="number"> carried
+ * no `step`, defaulting to the HTML5 spec's step="1" and silently
+ * rejecting a normal decimal price/amount on submit, with no error shown
+ * anywhere. Confirms the generated FieldInput's number/relation branch
+ * conditionally sets step="any" only for a real "number" field, leaving a
+ * relation field's raw fallback number input (an always-integer foreign
+ * key) at the correct default step of 1.
+ */
+test("the exported EntityView's number field input has step=\"any\" (a real decimal price no longer fails native browser validation), but a relation field's fallback number input keeps the default integer step", () => {
+  const files = generateExportFiles(project);
+  const entityViewJsx = files.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+
+  const fieldInputSrc = entityViewJsx.match(/function FieldInput\(\{[\s\S]*?\n\}\n/)?.[0];
+  assert.ok(fieldInputSrc, "expected to find FieldInput in generated output");
+  assert.match(
+    fieldInputSrc!,
+    /field\.type === "number" \|\| field\.type === "relation"[\s\S]{0,400}step=\{field\.type === "number" \? "any" : undefined\}/,
+    'the number/relation input branch must set step="any" only when field.type === "number"',
+  );
+});
+
+/**
+ * New in this round: the exported app's FieldInput had the identical gap
+ * the live preview's own EntityPanel.tsx did -- none of the form controls
+ * ever wired field.required into the real HTML `required` attribute, so
+ * a required field could be left empty and submitted without any native
+ * browser blocking. Confirms every non-boolean branch of the generated
+ * FieldInput carries `required={field.required}`, and the boolean
+ * (checkbox) branch deliberately does NOT -- an unchecked checkbox is
+ * already a complete, real value, not an "empty" state to require away.
+ */
+test("the exported EntityView's FieldInput wires field.required into the real required attribute on every branch except boolean", () => {
+  const files = generateExportFiles(project);
+  const entityViewJsx = files.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+
+  const fieldInputSrc = entityViewJsx.match(/function FieldInput\(\{[\s\S]*?\n\}\n/)?.[0];
+  assert.ok(fieldInputSrc, "expected to find FieldInput in generated output");
+
+  const relationSelectBranch = fieldInputSrc!.match(/field\.type === "relation" && relatedEntity && relatedEntityRecords[\s\S]{0,150}/)?.[0];
+  assert.match(relationSelectBranch ?? "", /required=\{field\.required\}/, "the relation <select> branch must be required-wired");
+
+  const booleanBranch = fieldInputSrc!.match(/field\.type === "boolean"[\s\S]{0,200}\}\n\s*\}/)?.[0];
+  assert.doesNotMatch(booleanBranch ?? "", /required=\{field\.required\}/, "the boolean checkbox branch must NOT be required-wired");
+
+  const enumBranch = fieldInputSrc!.match(/field\.type === "enum"[\s\S]{0,200}/)?.[0];
+  assert.match(enumBranch ?? "", /required=\{field\.required\}/, "the enum <select> branch must be required-wired");
+
+  const longtextBranch = fieldInputSrc!.match(/field\.type === "longtext"[\s\S]{0,150}/)?.[0];
+  assert.match(longtextBranch ?? "", /required=\{field\.required\}/, "the longtext <textarea> branch must be required-wired");
+
+  const dateBranch = fieldInputSrc!.match(/field\.type === "date"[\s\S]{0,150}/)?.[0];
+  assert.match(dateBranch ?? "", /required=\{field\.required\}/, "the date input branch must be required-wired");
+
+  const numberBranch = fieldInputSrc!.match(/field\.type === "number" \|\| field\.type === "relation"[\s\S]{0,400}/)?.[0];
+  assert.match(numberBranch ?? "", /required=\{field\.required\}/, "the number/relation-fallback input branch must be required-wired");
+
+  const textBranch = fieldInputSrc!.match(/return <input id=\{id\} type="text"[\s\S]{0,100}/)?.[0];
+  assert.match(textBranch ?? "", /required=\{field\.required\}/, "the plain text input fallback branch must be required-wired");
+});
+
+/**
+ * New in this round: the exported app's own GlobalSearch.jsx had the
+ * identical gap the live preview's own GlobalSearchPanel.tsx did --
+ * ArrowDown/ArrowUp moved the highlighted result group's CSS class, but
+ * nothing ever scrolled that group into view. With more result groups than
+ * fit on screen, keyboard navigation could move the highlight below the
+ * fold with zero visual cue, so Enter would jump to a group the user
+ * couldn't see was even selected. Confirms the generated GlobalSearch.jsx
+ * wires a ref onto the results container, tags each group with its own
+ * index, and scrolls the selected one into view whenever selectedIndex
+ * changes.
+ */
+test("the exported GlobalSearch scrolls the newly-highlighted result group into view", () => {
+  const files = generateExportFiles(project);
+  const globalSearchJsx = files.find((f) => f.path === "web/src/components/GlobalSearch.jsx")!.content;
+
+  assert.match(
+    globalSearchJsx,
+    /resultsContainerRef\.current[\s\S]{0,120}querySelector\(`\[data-group-index="\$\{selectedIndex\}"\]`\)/,
+    "expected a useEffect that looks up the selected group by its data-group-index inside resultsContainerRef",
+  );
+  assert.match(
+    globalSearchJsx,
+    /group\.scrollIntoView\(\{ behavior: "smooth", block: "nearest" \}\)/,
+    "expected the found group to actually be scrolled into view",
+  );
+  assert.match(
+    globalSearchJsx,
+    /<div className="global-search-results" ref=\{resultsContainerRef\}>/,
+    "expected the results container div to carry resultsContainerRef",
+  );
+  assert.match(
+    globalSearchJsx,
+    /<div key=\{result\.entityName\} data-group-index=\{i\}/,
+    "expected each result group div to carry its own data-group-index",
+  );
+});
+
+/**
+ * New in this round: the exported app's own EntityView.jsx had the
+ * identical gap the live preview's own EntityPanel.tsx did -- a failed
+ * inline-cell-edit PATCH, column-move PATCH (Kanban drag), or
+ * reschedule-drag PATCH (calendar drag) only ever showed a generic error
+ * banner near the top of the panel, with zero in-place indication of which
+ * specific record/card/chip the failure was even about. Confirms the
+ * generated EntityView.jsx wires a moveErrorId into all three failure
+ * sites and into the three places that render it (table row, board card,
+ * calendar chip).
+ */
+test("the exported EntityView marks the specific row/card/chip with a move-error indicator when its own PATCH fails", () => {
+  const files = generateExportFiles(project);
+  const entityViewJsx = files.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+
+  // handleMove delegates to handleMoveFields (added round 383 to let
+  // handleCalendarDrop shift a ranged entity's end-date field alongside its
+  // start), which is where the real try/catch + setMoveErrorId now lives.
+  const handleMoveFieldsSrc = entityViewJsx.match(/async function handleMoveFields\([\s\S]*?\n  \}\n/)?.[0];
+  assert.ok(handleMoveFieldsSrc, "expected to find handleMoveFields in generated output");
+  assert.match(handleMoveFieldsSrc!, /setMoveErrorId\(id\)/, "handleMoveFields's catch block must set moveErrorId");
+  assert.match(entityViewJsx, /async function handleMove\(id, fieldName, value\) \{\s*await handleMoveFields\(id, \{ \[fieldName\]: value \}\);\s*\}/);
+
+  const commitInlineEditSrc = entityViewJsx.match(/async function commitInlineEdit\(\)[\s\S]*?\n  \}\n/)?.[0];
+  assert.ok(commitInlineEditSrc, "expected to find commitInlineEdit in generated output");
+  assert.match(
+    commitInlineEditSrc!,
+    /setMoveErrorId\(recordId\)/,
+    "commitInlineEdit's catch block must set moveErrorId",
+  );
+
+  assert.match(
+    entityViewJsx,
+    /r\.id === moveErrorId \? "record-row-move-error" : null/,
+    "the table row's className must include a moveErrorId-driven marker",
+  );
+  assert.match(
+    entityViewJsx,
+    /hasMoveError \? "board-card board-card-move-error" : "board-card"/,
+    "BoardCard's root div className must reflect its own hasMoveError prop",
+  );
+  assert.match(
+    entityViewJsx,
+    /hasMoveError=\{r\.id === moveErrorId\}/,
+    "the BoardCard call site must pass hasMoveError scoped to that specific record",
+  );
+  assert.match(
+    entityViewJsx,
+    /record\.id === moveErrorId \? "calendar-record-chip calendar-record-chip-move-error" : "calendar-record-chip"/,
+    "the calendar chip's className must reflect moveErrorId",
+  );
+  assert.match(
+    entityViewJsx,
+    /moveErrorId=\{moveErrorId\}/,
+    "the CalendarView call site must pass moveErrorId through",
+  );
+});
+
+/**
+ * New in this round: the exported standalone app's entity-tab bar (App.jsx's
+ * <nav>) was always plain, non-draggable buttons in spec.entities' fixed
+ * generation order, unlike the live Forge AI preview's own draggable,
+ * order-persisting tab bar (entityTabOrder.ts). Ports the identical reorder
+ * mechanics -- draggable tabs, a drop target that highlights while dragged
+ * over, and a real localStorage-backed order that survives a reload.
+ */
+test("the exported App's entity tabs are drag-and-drop reorderable, persisting via a real localStorage round trip", () => {
+  const files = generateExportFiles(project);
+  const appJsx = files.find((f) => f.path === "web/src/App.jsx")!.content;
+
+  assert.match(appJsx, /const \[entityTabOrder, setEntityTabOrderState\] = useState\(\(\) => getEntityTabOrder\(\)\);/);
+  assert.match(appJsx, /const \[draggedEntityTab, setDraggedEntityTab\] = useState\(null\);/);
+  assert.match(
+    appJsx,
+    /const orderedEntities = useMemo\(\(\) => applyEntityTabOrder\(ENTITIES, entityTabOrder\), \[entityTabOrder\]\);/,
+  );
+  assert.match(
+    appJsx,
+    /function handleReorderEntityTab\(targetName\) \{\s*setDragOverEntityTab\(null\);\s*if \(!draggedEntityTab \|\| draggedEntityTab === targetName\) return;\s*const fullOrder = orderedEntities\.map\(\(e\) => e\.name\);\s*setEntityTabOrderState\(setEntityTabOrder\(reorderEntityTabs\(fullOrder, draggedEntityTab, targetName\)\)\);\s*setDraggedEntityTab\(null\);\s*\}/,
+  );
+  assert.match(appJsx, /\{orderedEntities\.map\(\(e\) => \(/, "the nav must render orderedEntities, not the fixed ENTITIES order");
+  assert.match(appJsx, /onDragStart=\{\(\) => setDraggedEntityTab\(e\.name\)\}/);
+  assert.match(
+    appJsx,
+    /onDrop=\{\(ev\) => \{\s*ev\.preventDefault\(\);\s*handleReorderEntityTab\(e\.name\);\s*\}\}/,
+  );
+
+  const stylesCss = files.find((f) => f.path === "web/src/styles.css")!.content;
+  assert.match(stylesCss, /nav button\.drag-over/);
+
+  // Executes the real generated applyEntityTabOrder/reorderEntityTabs
+  // against plain arrays, and the real generated getEntityTabOrder/
+  // setEntityTabOrder against a fake localStorage -- the same "run the real
+  // generated code" standard this file's other persistence-backed tests use.
+  const pureFnSrc = appJsx.match(
+    /function applyEntityTabOrder\(entities, order\) \{[\s\S]*?\nfunction reorderEntityTabs\(order, sourceName, targetName\) \{[\s\S]*?\n\}\n/,
+  )?.[0];
+  assert.ok(pureFnSrc, "expected to find applyEntityTabOrder/reorderEntityTabs in generated output");
+  const { applyEntityTabOrder, reorderEntityTabs } = new Function(
+    `${pureFnSrc}\nreturn { applyEntityTabOrder, reorderEntityTabs };`,
+  )() as {
+    applyEntityTabOrder: (entities: { name: string }[], order: string[]) => { name: string }[];
+    reorderEntityTabs: (order: string[], source: string, target: string) => string[];
+  };
+  assert.deepEqual(
+    applyEntityTabOrder([{ name: "Customer" }, { name: "Service" }], ["Service", "Customer"]).map((e) => e.name),
+    ["Service", "Customer"],
+  );
+  assert.deepEqual(
+    applyEntityTabOrder([{ name: "Customer" }, { name: "Service" }], []).map((e) => e.name),
+    ["Customer", "Service"],
+    "an empty persisted order must fall back to the natural entity order",
+  );
+  assert.deepEqual(reorderEntityTabs(["Customer", "Service"], "Service", "Customer"), ["Service", "Customer"]);
+  const unchanged = ["Customer", "Service"];
+  assert.equal(
+    reorderEntityTabs(unchanged, "Customer", "Customer"),
+    unchanged,
+    "dropping a tab back onto itself must be a real no-op",
+  );
+
+  const storeSrc = appJsx.match(/const ENTITY_TAB_ORDER_STORAGE_KEY[\s\S]*?\nfunction setEntityTabOrder\(order\) \{[\s\S]*?\n\}\n/)?.[0];
+  assert.ok(storeSrc, "expected to find the entity-tab-order store functions in generated output");
+  const fakeStorage: Record<string, string> = {};
+  const { getEntityTabOrder, setEntityTabOrder } = new Function(
+    "localStorage",
+    `${storeSrc}\nreturn { getEntityTabOrder, setEntityTabOrder };`,
+  )({
+    getItem: (k: string) => fakeStorage[k] ?? null,
+    setItem: (k: string, v: string) => {
+      fakeStorage[k] = v;
+    },
+  }) as { getEntityTabOrder: () => string[]; setEntityTabOrder: (order: string[]) => string[] };
+
+  assert.deepEqual(getEntityTabOrder(), [], "tabs must start with no persisted order");
+  const updated = setEntityTabOrder(["Service", "Customer"]);
+  assert.deepEqual(updated, ["Service", "Customer"]);
+  assert.deepEqual(getEntityTabOrder(), ["Service", "Customer"], "must round-trip through the real localStorage-backed store");
+});
+
+/**
+ * Writes every real generated web/src/** file (components and api.js alike)
+ * to a temp directory shaped exactly like the real export (e.g.
+ * web/src/components/GlobalSearch.jsx importing "../api.js" and
+ * "./EntityView.jsx"), symlinks the repo's real node_modules so react/
+ * react-dom/@testing-library resolve, so a caller can dynamically import any
+ * one real generated component from it afterward -- not a regex proxy for
+ * it. A plain `import React from "react";` is prepended only to each
+ * written .jsx file (never to the actual generated content under test) so
+ * tsx's esbuild loader, which has no tsconfig "jsx": "react-jsx" to pick up
+ * for an arbitrary temp path the way the real `vite build` config does,
+ * falls back to the classic React.createElement transform instead of
+ * throwing "React is not defined" -- a test-harness concession that
+ * doesn't change the behavior of the code under test.
+ */
+function writeGeneratedWebComponent(files: { path: string; content: string }[]): string {
+  const repoRoot = path.resolve(import.meta.dirname, "../../..");
+  const dir = mkdtempSync(path.join(tmpdir(), "forge-global-search-dom-"));
+  symlinkSync(path.join(repoRoot, "node_modules"), path.join(dir, "node_modules"));
+  for (const f of files) {
+    if (!f.path.startsWith("web/src/")) continue;
+    const full = path.join(dir, f.path);
+    mkdirSync(path.dirname(full), { recursive: true });
+    const content = f.path.endsWith(".jsx") ? `import React from "react";\n${f.content}` : f.content;
+    writeFileSync(full, content);
+  }
+  return dir;
+}
+
+/**
+ * Installs a real jsdom `localStorage` as `globalThis.localStorage` for the
+ * duration of `fn`, then restores whatever was there before. The generated
+ * components under test call the bare `localStorage` global directly (the
+ * same way they'd run in a real browser, where it's always global) -- but
+ * in this Node test process it is NOT a global at all (jsdom's own
+ * `localStorage` lives on `window.localStorage`, a different realm from
+ * Node's bare global scope, the same window-vs-bare-global gap
+ * jsdomWarmup.ts papers over for `window`/`document`/etc). Without this,
+ * every `localStorage.getItem`/`setItem` call inside the generated code's
+ * try/catch silently no-ops (caught as a bare ReferenceError), so
+ * persistence looks broken even though the real generated code is correct
+ * -- confirmed by debugging exactly this symptom while writing round 315's
+ * EntityView reload-survival test. A fresh JSDOM per call keeps this
+ * isolated from any other test's localStorage state.
+ */
+async function withRealLocalStorage<T>(fn: () => Promise<T> | T): Promise<T> {
+  const dom = new JSDOM("<!doctype html><html><body></body></html>", { url: "http://localhost/" });
+  const original = Object.getOwnPropertyDescriptor(globalThis, "localStorage");
+  Object.defineProperty(globalThis, "localStorage", {
+    value: dom.window.localStorage,
+    writable: true,
+    configurable: true,
+    enumerable: true,
+  });
+  try {
+    return await fn();
+  } finally {
+    if (original) Object.defineProperty(globalThis, "localStorage", original);
+    else delete (globalThis as { localStorage?: unknown }).localStorage;
+  }
+}
+
+/**
+ * Regression test for a real, severe bug the round 313 Explore survey's
+ * parity check surfaced while investigating a *different* gap (missing
+ * Copy/Download buttons): round 301 added a useEffect call to the exported
+ * GlobalSearch.jsx (scrolling the highlighted result group into view) but
+ * never added useEffect to its own `import { useRef, useState } from
+ * "react"` line. Since this file's other tests of GlobalSearch.jsx only
+ * ever regex-matched the generated source text or drove it through a real
+ * HTTP server (never actually executing the component's own React code in
+ * a real renderer), nothing caught that useEffect is called unconditionally
+ * in the component body on every render, not just when a result is
+ * selected -- meaning the exported GlobalSearch crashed with "useEffect is
+ * not defined" the instant it was ever opened, in every exported app, ever
+ * since round 301. Confirmed independently with a standalone script before
+ * touching any code: reverting just the import line reproduces the crash.
+ */
+test("the exported GlobalSearch component actually renders instead of crashing with 'useEffect is not defined'", async () => {
+  const files = generateExportFiles(project);
+  const dir = writeGeneratedWebComponent(files);
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async () => ({ ok: true, status: 200, json: async () => ({ records: [] }) })) as typeof fetch;
+
+  try {
+    const { GlobalSearch } = await import(path.join(dir, "web", "src", "components", "GlobalSearch.jsx"));
+    let renderResult: ReturnType<typeof render> | undefined;
+    await act(async () => {
+      renderResult = render(
+        React.createElement(GlobalSearch, {
+          entities: project.spec.entities,
+          onClose: () => {},
+          onJumpToEntity: () => {},
+          onJumpToRecord: () => {},
+        }),
+      );
+    });
+    assert.match(
+      renderResult!.container.textContent ?? "",
+      /Search everything/,
+      "expected the GlobalSearch panel to actually render its heading instead of throwing during mount",
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+    cleanup();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
+ * New in this round: the exported app's own GlobalSearch had the identical
+ * gap the live preview's own GlobalSearchPanel.tsx did before it gained
+ * Copy/Download buttons -- a cross-entity result set only ever existed on
+ * screen, with no way to take it anywhere once the panel closed. Mirrors
+ * apps/web/src/GlobalSearchPanel.test.ts's own real-DOM Copy/Download test:
+ * confirms neither button renders before a real search has run, both
+ * appear once real results exist, and clicking Copy writes the real
+ * formatted results (not a placeholder) to the clipboard.
+ */
+test("the exported GlobalSearch's Copy/Download buttons only appear once real results exist, and Copy writes the real formatted results to the clipboard", async (t) => {
+  const files = generateExportFiles(project);
+  const dir = writeGeneratedWebComponent(files);
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async (input: string) => {
+    if (String(input).endsWith("/Customer")) {
+      return { ok: true, status: 200, json: async () => ({ records: [{ id: 1, name: "Acme widget order" }] }) };
+    }
+    return { ok: true, status: 200, json: async () => ({ records: [] }) };
+  }) as typeof fetch;
+
+  let writtenText: string | undefined;
+  Object.defineProperty(navigator, "clipboard", {
+    value: { writeText: async (text: string) => void (writtenText = text) },
+    configurable: true,
+  });
+
+  try {
+    const { GlobalSearch } = await import(path.join(dir, "web", "src", "components", "GlobalSearch.jsx"));
+    render(
+      React.createElement(GlobalSearch, {
+        entities: project.spec.entities,
+        onClose: () => {},
+        onJumpToEntity: () => {},
+        onJumpToRecord: () => {},
+      }),
+    );
+
+    assert.equal(
+      Array.from(document.querySelectorAll("button")).some((b) => b.textContent === "Copy"),
+      false,
+      "no Copy button should render before any search has run",
+    );
+
+    const input = document.querySelector(".global-search-input") as HTMLInputElement;
+    await act(async () => {
+      fireEvent.change(input, { target: { value: "widget" } });
+      fireEvent.submit(document.querySelector("form.global-search-form")!);
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    const copyButton = Array.from(document.querySelectorAll("button")).find((b) => b.textContent === "Copy");
+    const downloadButton = Array.from(document.querySelectorAll("button")).find((b) => b.textContent === "Download");
+    assert.ok(copyButton, "expected a Copy button once real results exist");
+    assert.ok(downloadButton, "expected a Download button once real results exist");
+    assert.equal(copyButton!.getAttribute("aria-live"), "polite", "the copy button's own changing label must be announced to screen readers, not just silently change visually");
+    assert.equal(copyButton!.getAttribute("aria-atomic"), "true", "the whole button's text must be re-announced, not just the changed part");
+
+    t.mock.timers.enable({ apis: ["setTimeout"] });
+
+    await act(async () => {
+      fireEvent.click(copyButton!);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    assert.equal(typeof writtenText, "string", "clicking Copy must actually call navigator.clipboard.writeText");
+    assert.match(writtenText!, /widget/, "the copied text must include the real search query");
+    assert.match(writtenText!, /Acme widget order/, "the copied text must be the real formatted results, not a placeholder");
+    assert.equal(copyButton!.textContent, "Copied!", "must show the real Copied confirmation");
+
+    act(() => {
+      t.mock.timers.tick(2000);
+    });
+    assert.equal(copyButton!.textContent, "Copy", "must revert to the normal label once the delay elapses");
+  } finally {
+    t.mock.timers.reset();
+    globalThis.fetch = originalFetch;
+    delete (navigator as { clipboard?: unknown }).clipboard;
+    cleanup();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
+ * Regression test for a real gap found while porting -- see round 314's
+ * trigger-prompt note that this was the last known gap in the
+ * port-to-exported-codegen family: the exported app's own groupFieldName/
+ * sortKeys/viewMode were always plain `useState` with no persistence at
+ * all, unlike every other per-entity view preference this exported app
+ * already remembers (hidden columns, column widths, column order, entity
+ * tab order), and unlike the live preview's own groupByPreference.ts/
+ * viewModePreference.ts/sortKeysPreference.ts. Extracts and runs the three
+ * real generated store functions directly (not a regex proxy for their
+ * logic) against a fake localStorage, mirroring this file's own
+ * entity-tab-order persistence test.
+ */
+test("the exported EntityView's group-by/view-mode/sort-key choices are each persisted per entity via real localStorage-backed stores", () => {
+  const files = generateExportFiles(project);
+  const entityViewJsx = files.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+
+  const storeSrc = entityViewJsx.match(
+    /const GROUP_FIELD_STORAGE_KEY[\s\S]*?\nfunction setPersistedFieldFilters\(entityName, filters\) \{[\s\S]*?\n\}\n/,
+  )?.[0];
+  assert.ok(storeSrc, "expected to find the group-field/view-mode/sort-keys/field-filters store functions in generated output");
+
+  const fakeStorage: Record<string, string> = {};
+  const {
+    getPersistedGroupField,
+    setPersistedGroupField,
+    getPersistedViewMode,
+    setPersistedViewMode,
+    getPersistedSortKeys,
+    setPersistedSortKeys,
+    getPersistedFieldFilters,
+    setPersistedFieldFilters,
+  } = new Function(
+    "localStorage",
+    `${storeSrc}\nreturn { getPersistedGroupField, setPersistedGroupField, getPersistedViewMode, setPersistedViewMode, getPersistedSortKeys, setPersistedSortKeys, getPersistedFieldFilters, setPersistedFieldFilters };`,
+  )({
+    getItem: (k: string) => fakeStorage[k] ?? null,
+    setItem: (k: string, v: string) => {
+      fakeStorage[k] = v;
+    },
+  }) as {
+    getPersistedGroupField: (entityName: string) => string;
+    setPersistedGroupField: (entityName: string, fieldName: string) => string;
+    getPersistedViewMode: (entityName: string) => string;
+    setPersistedViewMode: (entityName: string, mode: string) => string;
+    getPersistedSortKeys: (entityName: string) => { field: string; direction: string }[];
+    setPersistedSortKeys: (entityName: string, keys: { field: string; direction: string }[]) => { field: string; direction: string }[];
+    getPersistedFieldFilters: (entityName: string) => Record<string, string>;
+    setPersistedFieldFilters: (entityName: string, filters: Record<string, string>) => Record<string, string>;
+  };
+
+  // Defaults, matching the live app's own "" / "table" / [] defaults.
+  assert.equal(getPersistedGroupField("Customer"), "", "no stored group field yet must default to empty (no grouping)");
+  assert.equal(getPersistedViewMode("Customer"), "table", "no stored view mode yet must default to table");
+  assert.deepEqual(getPersistedSortKeys("Customer"), [], "no stored sort keys yet must default to an empty array");
+  assert.deepEqual(getPersistedFieldFilters("Customer"), {}, "no stored field filters yet must default to an empty object");
+
+  // Round-trip each store, scoped by entity name.
+  setPersistedGroupField("Customer", "status");
+  assert.equal(getPersistedGroupField("Customer"), "status", "a stored group field must round-trip");
+  setPersistedViewMode("Customer", "board");
+  assert.equal(getPersistedViewMode("Customer"), "board", "a stored view mode must round-trip");
+  const keys = [{ field: "name", direction: "asc" }];
+  setPersistedSortKeys("Customer", keys);
+  assert.deepEqual(getPersistedSortKeys("Customer"), keys, "stored sort keys must round-trip");
+  setPersistedFieldFilters("Customer", { status: "New" });
+  assert.deepEqual(getPersistedFieldFilters("Customer"), { status: "New" }, "stored field filters must round-trip");
+
+  // A different entity must not see Customer's own stored choices.
+  assert.equal(getPersistedGroupField("Service"), "", "a different entity must not inherit another entity's group field");
+  assert.equal(getPersistedViewMode("Service"), "table", "a different entity must not inherit another entity's view mode");
+  assert.deepEqual(getPersistedSortKeys("Service"), [], "a different entity must not inherit another entity's sort keys");
+  assert.deepEqual(getPersistedFieldFilters("Service"), {}, "a different entity must not inherit another entity's field filters");
+
+  // Clearing back to the default value removes the stored entry entirely
+  // (mirroring the live app's own "" / "table" / [] / {} clearing
+  // semantics), rather than leaving a stale, now-meaningless entry behind
+  // forever.
+  setPersistedGroupField("Customer", "");
+  assert.equal(getPersistedGroupField("Customer"), "", "clearing the group field must round-trip back to empty");
+  setPersistedViewMode("Customer", "table");
+  assert.equal(getPersistedViewMode("Customer"), "table", "switching back to table view must round-trip");
+  setPersistedSortKeys("Customer", []);
+  assert.deepEqual(getPersistedSortKeys("Customer"), [], "clearing all sort keys must round-trip back to empty");
+  setPersistedFieldFilters("Customer", { status: "" });
+  assert.deepEqual(getPersistedFieldFilters("Customer"), {}, "clearing a filter back to '' must drop it from storage entirely, not persist an empty string");
+});
+
+/**
+ * Real-DOM companion to the pure-function test above: proves the actual
+ * generated EntityView component -- not just its store helpers in
+ * isolation -- genuinely survives a reload. Renders EntityView, switches
+ * to Board view (the entity fixture's Service entity has no groupable/date
+ * field, so Table is the only view *without* a status-like field; this
+ * reuses the suite's own Customer entity, whose "status" enum field makes
+ * a real Board view available), unmounts (simulating navigating away),
+ * then mounts a fresh instance of the exact same component (simulating a
+ * page reload) and confirms it comes back up already on Board view instead
+ * of resetting to Table.
+ */
+test("the exported EntityView's view-mode choice actually survives an unmount+remount (simulated reload), not just its store function in isolation", async () => {
+  const files = generateExportFiles(project);
+  const dir = writeGeneratedWebComponent(files);
+  const originalFetch = globalThis.fetch;
+  // A record with a real status value is required: EntityView's own
+  // empty-state branch (records.length === 0) suppresses the entire
+  // toolbar, including the view-toggle buttons this test clicks.
+  globalThis.fetch = (async () => ({
+    ok: true,
+    status: 200,
+    json: async () => ({ records: [{ id: 1, name: "Alice", status: "New" }] }),
+  })) as typeof fetch;
+
+  async function waitForBoardButton(container: HTMLElement): Promise<HTMLButtonElement> {
+    for (let i = 0; i < 40; i++) {
+      const found = Array.from(container.querySelectorAll("button")).find((b) => b.textContent?.includes("Board"));
+      if (found) return found as HTMLButtonElement;
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      });
+    }
+    throw new Error("waitForBoardButton: Board view-toggle button never appeared");
+  }
+
+  try {
+    await withRealLocalStorage(async () => {
+      const { EntityView } = await import(path.join(dir, "web", "src", "components", "EntityView.jsx"));
+      const customerEntity = project.spec.entities.find((e) => e.name === "Customer")!;
+      const props = {
+        entity: customerEntity,
+        highlightRecordId: null,
+        onHighlightHandled: () => {},
+        onJumpToRecord: () => {},
+        onRecordCountChange: () => {},
+      };
+
+      const firstMount = render(React.createElement(EntityView, props));
+      const boardButton = await waitForBoardButton(firstMount.container);
+      await act(async () => {
+        fireEvent.click(boardButton);
+      });
+      assert.ok(
+        firstMount.container.querySelector(".view-toggle-btn-active")?.textContent?.includes("Board"),
+        "Board must actually become the active view after clicking it",
+      );
+      firstMount.unmount();
+
+      const secondMount = render(React.createElement(EntityView, props));
+      await waitForBoardButton(secondMount.container);
+      assert.ok(
+        secondMount.container.querySelector(".view-toggle-btn-active")?.textContent?.includes("Board"),
+        "a freshly mounted EntityView for the same entity must come back up already on Board view, not reset to Table",
+      );
+      secondMount.unmount();
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    cleanup();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
+ * Real-DOM companion to the field-filters assertions folded into the
+ * pure-function store test above (round 339): proves the actual generated
+ * EntityView component -- not just its store helpers in isolation --
+ * genuinely survives a reload. fieldFilters previously had no persistence
+ * at all here, unlike groupFieldName/sortKeys/viewMode just above, and
+ * unlike the live preview's own newly-added fieldFiltersPreference.ts.
+ */
+test("the exported EntityView's per-field enum filter actually survives an unmount+remount (simulated reload), not just its store function in isolation", async () => {
+  const files = generateExportFiles(project);
+  const dir = writeGeneratedWebComponent(files);
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async () => ({
+    ok: true,
+    status: 200,
+    json: async () => ({
+      records: [
+        { id: 1, name: "Alice", status: "New" },
+        { id: 2, name: "Bob", status: "Won" },
+      ],
+    }),
+  })) as typeof fetch;
+
+  try {
+    await withRealLocalStorage(async () => {
+      const { EntityView } = await import(path.join(dir, "web", "src", "components", "EntityView.jsx"));
+      const customerEntity = project.spec.entities.find((e) => e.name === "Customer")!;
+      const props = {
+        entity: customerEntity,
+        highlightRecordId: null,
+        onHighlightHandled: () => {},
+        onJumpToRecord: () => {},
+        onRecordCountChange: () => {},
+      };
+
+      const firstMount = render(React.createElement(EntityView, props));
+      for (let i = 0; i < 40; i++) {
+        if (firstMount.container.querySelector(".entity-status-filter")) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+      const statusFilter = firstMount.container.querySelector(".entity-status-filter") as HTMLSelectElement;
+      assert.ok(statusFilter, "expected a real status filter select");
+      await act(async () => {
+        fireEvent.change(statusFilter, { target: { value: "New" } });
+      });
+      assert.equal(firstMount.container.querySelectorAll("tbody tr").length, 1, "the filter must actually narrow the rendered rows");
+      firstMount.unmount();
+
+      const secondMount = render(React.createElement(EntityView, props));
+      for (let i = 0; i < 40; i++) {
+        if (secondMount.container.querySelector(".entity-status-filter")) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+      assert.equal(
+        (secondMount.container.querySelector(".entity-status-filter") as HTMLSelectElement).value,
+        "New",
+        "a freshly mounted EntityView for the same entity must come back up with the persisted filter still selected, not reset to 'All'",
+      );
+      assert.equal(
+        secondMount.container.querySelectorAll("tbody tr").length,
+        1,
+        "the restored filter must actually narrow the rendered rows again, not just show as selected while listing everything",
+      );
+      secondMount.unmount();
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    cleanup();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
+ * New in this round: mirrors the live preview's own group-collapse
+ * toggle -- a grouped table previously rendered every one of a group's
+ * rows unconditionally, with no way to hide a group a person doesn't
+ * care about right now. Confirms the toggle actually hides/shows just
+ * that one group's own rows and that the collapsed state survives an
+ * unmount+remount (getPersistedCollapsedGroups/setPersistedCollapsedGroups),
+ * not just that the dropdown/header-row classNames exist (see round 336's
+ * own regex-level assertions for that).
+ */
+test("the exported EntityView's group-header toggle collapses and expands just that one group's rows, and survives an unmount+remount", async () => {
+  const files = generateExportFiles(project);
+  const dir = writeGeneratedWebComponent(files);
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async () => ({
+    ok: true,
+    status: 200,
+    json: async () => ({
+      records: [
+        { id: 1, name: "Alice", status: "New" },
+        { id: 2, name: "Bob", status: "Won" },
+        { id: 3, name: "Carol", status: "Won" },
+      ],
+    }),
+  })) as typeof fetch;
+
+  try {
+    await withRealLocalStorage(async () => {
+      const { EntityView } = await import(path.join(dir, "web", "src", "components", "EntityView.jsx"));
+      const customerEntity = project.spec.entities.find((e) => e.name === "Customer")!;
+      const props = {
+        entity: customerEntity,
+        highlightRecordId: null,
+        onHighlightHandled: () => {},
+        onJumpToRecord: () => {},
+        onRecordCountChange: () => {},
+      };
+
+      const firstMount = render(React.createElement(EntityView, props));
+      for (let i = 0; i < 40; i++) {
+        if (firstMount.container.querySelector(".entity-group-by")) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+      const groupBySelect = firstMount.container.querySelector(".entity-group-by") as HTMLSelectElement;
+      assert.ok(groupBySelect, "expected a real 'Group by' dropdown");
+      await act(async () => {
+        fireEvent.change(groupBySelect, { target: { value: "status" } });
+      });
+      for (let i = 0; i < 40; i++) {
+        if (firstMount.container.querySelectorAll(".entity-group-header-row").length === 2) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+      assert.equal(firstMount.container.querySelectorAll("tbody tr").length, 5, "3 record rows + 2 group-header rows before any toggle");
+
+      const headerRows = Array.from(firstMount.container.querySelectorAll(".entity-group-header-row"));
+      const wonToggle = headerRows[1].querySelector(".entity-group-toggle") as HTMLButtonElement;
+      assert.ok(wonToggle, "expected a real toggle button in the group header");
+      assert.equal(wonToggle.getAttribute("aria-expanded"), "true", "a freshly grouped table must start with every group expanded");
+
+      await act(async () => {
+        fireEvent.click(wonToggle);
+      });
+      assert.equal(firstMount.container.querySelectorAll("tbody tr").length, 3, "collapsing 'Won' must hide its own 2 record rows, leaving 2 headers + 1 'New' record");
+      assert.equal(wonToggle.getAttribute("aria-expanded"), "false", "collapsing the 'Won' group must flip its own toggle's aria-expanded");
+      assert.ok(!firstMount.container.textContent?.includes("Bob"), "the collapsed 'Won' group's own rows must no longer render");
+      assert.ok(firstMount.container.textContent?.includes("Alice"), "the untouched 'New' group's own row must still render");
+      firstMount.unmount();
+
+      const secondMount = render(React.createElement(EntityView, props));
+      for (let i = 0; i < 40; i++) {
+        if (secondMount.container.querySelectorAll(".entity-group-header-row").length === 2) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+      assert.equal(
+        secondMount.container.querySelectorAll("tbody tr").length,
+        3,
+        "a freshly mounted EntityView for the same entity must come back up with 'Won' still collapsed, not reset to all-expanded",
+      );
+      const wonToggleAfterRemount = Array.from(secondMount.container.querySelectorAll(".entity-group-header-row"))[1].querySelector(
+        ".entity-group-toggle",
+      ) as HTMLButtonElement;
+      assert.equal(wonToggleAfterRemount.getAttribute("aria-expanded"), "false", "the restored toggle must itself report collapsed too");
+      secondMount.unmount();
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    cleanup();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
+ * New in this round: mirrors the live preview's own board-column collapse
+ * toggle -- a huge "Won" column previously always rendered every one of
+ * its cards, with no way to hide it. Confirms the toggle hides/shows just
+ * that one column's own cards (leaving the other column untouched), the
+ * collapsed state survives an unmount+remount (getPersistedCollapsedBoardColumns/
+ * setPersistedCollapsedBoardColumns -- a deliberately separate store from
+ * the group-collapse feature's own, just above, since both are keyed only
+ * by entity name and could otherwise cross-contaminate), and a collapsed
+ * column's own drag-and-drop target wiring stays fully live (only its card
+ * list is hidden, never its outer onDragOver/onDrop handlers).
+ */
+test("the exported EntityView's board-column toggle collapses and expands just that one column's cards, survives an unmount+remount, and keeps a collapsed column's drop target live", async () => {
+  const files = generateExportFiles(project);
+  const dir = writeGeneratedWebComponent(files);
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async () => ({
+    ok: true,
+    status: 200,
+    json: async () => ({
+      records: [
+        { id: 1, name: "Alice", status: "New" },
+        { id: 2, name: "Bob", status: "Won" },
+      ],
+    }),
+  })) as typeof fetch;
+
+  async function waitForBoardButton(container: HTMLElement): Promise<HTMLButtonElement> {
+    for (let i = 0; i < 40; i++) {
+      const found = Array.from(container.querySelectorAll("button")).find((b) => b.textContent?.includes("Board"));
+      if (found) return found as HTMLButtonElement;
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      });
+    }
+    throw new Error("waitForBoardButton: Board view-toggle button never appeared");
+  }
+
+  // The Customer fixture's status enum has Hebrew enumLabels (New: "חדש",
+  // Won: "הצליח"), so columns must be picked by their declared enumValues
+  // order (["New", "Won"]), not by matching English label text.
+  function columns(container: HTMLElement): HTMLElement[] {
+    return Array.from(container.querySelectorAll(".board-column")) as HTMLElement[];
+  }
+
+  try {
+    await withRealLocalStorage(async () => {
+      const { EntityView } = await import(path.join(dir, "web", "src", "components", "EntityView.jsx"));
+      const customerEntity = project.spec.entities.find((e) => e.name === "Customer")!;
+      const props = {
+        entity: customerEntity,
+        highlightRecordId: null,
+        onHighlightHandled: () => {},
+        onJumpToRecord: () => {},
+        onRecordCountChange: () => {},
+      };
+
+      const firstMount = render(React.createElement(EntityView, props));
+      const boardButton = await waitForBoardButton(firstMount.container);
+      await act(async () => {
+        fireEvent.click(boardButton);
+      });
+      for (let i = 0; i < 40; i++) {
+        if (firstMount.container.querySelectorAll(".board-column").length > 0) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+
+      assert.equal(columns(firstMount.container).length, 2, "expected exactly 2 board columns for the 2 declared enum values");
+      assert.equal(columns(firstMount.container)[0].querySelectorAll(".board-card").length, 1, "the 'New' column (index 0) must start expanded with its own card visible");
+      assert.equal(columns(firstMount.container)[1].querySelectorAll(".board-card").length, 1, "the 'Won' column (index 1) must start expanded with its own card visible");
+
+      const wonToggle = columns(firstMount.container)[1].querySelector(".board-column-toggle") as HTMLButtonElement;
+      assert.ok(wonToggle, "expected a real toggle button in the 'Won' column's header");
+      assert.equal(wonToggle.getAttribute("aria-expanded"), "true", "a freshly opened board must start with every column expanded");
+
+      await act(async () => {
+        fireEvent.click(wonToggle);
+      });
+      assert.equal(
+        columns(firstMount.container)[1].querySelectorAll(".board-card").length,
+        0,
+        "collapsing the 'Won' column must hide its own card",
+      );
+      assert.equal(
+        columns(firstMount.container)[0].querySelectorAll(".board-card").length,
+        1,
+        "collapsing 'Won' must not affect the unrelated 'New' column's own card",
+      );
+      assert.equal(
+        columns(firstMount.container)[1].querySelector(".board-column-toggle")!.getAttribute("aria-expanded"),
+        "false",
+        "the collapsed column's own toggle must report aria-expanded=false",
+      );
+
+      // A collapsed column's own drop target must still be fully live.
+      await act(async () => {
+        fireEvent.dragOver(columns(firstMount.container)[1], { dataTransfer: { getData: () => "", setData: () => {} } });
+      });
+      assert.ok(
+        columns(firstMount.container)[1].classList.contains("board-column-drag-over"),
+        "a collapsed column must still show real drag-over feedback -- only its card list should be hidden, not its drop wiring",
+      );
+      firstMount.unmount();
+
+      const secondMount = render(React.createElement(EntityView, props));
+      await waitForBoardButton(secondMount.container);
+      for (let i = 0; i < 40; i++) {
+        if (columns(secondMount.container).length > 0) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+      assert.equal(
+        columns(secondMount.container)[1].querySelectorAll(".board-card").length,
+        0,
+        "a freshly mounted EntityView for the same entity must come back up with 'Won' (index 1) still collapsed, not reset to all-expanded",
+      );
+      secondMount.unmount();
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    cleanup();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
+ * New in this round: mirrors the live preview's own "Reset column
+ * widths" button -- once a column was manually resized, the only way
+ * back to automatic sizing was dragging it back by hand, with no
+ * one-click way to reset. Drives a real mousedown/mousemove/mouseup
+ * drag on the Name column's own resize handle (the same wire-up the
+ * generated app's startResize/computeResizedWidth already has), then
+ * confirms the reset button appears, clicking it clears the live inline
+ * width, and the persisted storage is genuinely cleared too (read
+ * directly from localStorage, not just inferred from the DOM).
+ */
+test("the exported EntityView's 'Reset column widths' button only appears once a column has been resized, and clears both the live width and persisted storage", async () => {
+  const files = generateExportFiles(project);
+  const dir = writeGeneratedWebComponent(files);
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async () => ({
+    ok: true,
+    status: 200,
+    json: async () => ({ records: [{ id: 1, name: "Alice", status: "New" }] }),
+  })) as typeof fetch;
+
+  try {
+    await withRealLocalStorage(async () => {
+      const { EntityView } = await import(path.join(dir, "web", "src", "components", "EntityView.jsx"));
+      const customerEntity = project.spec.entities.find((e) => e.name === "Customer")!;
+      const props = {
+        entity: customerEntity,
+        highlightRecordId: null,
+        onHighlightHandled: () => {},
+        onJumpToRecord: () => {},
+        onRecordCountChange: () => {},
+      };
+
+      const { container } = render(React.createElement(EntityView, props));
+      for (let i = 0; i < 40; i++) {
+        if (container.querySelector(".resizable-col")) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+      assert.equal(container.querySelector(".entity-reset-column-widths"), null, "no reset button before any column has been resized");
+
+      const nameHeader = container.querySelector(".resizable-col") as HTMLTableCellElement;
+      const handle = nameHeader.querySelector(".column-resize-handle") as HTMLSpanElement;
+      assert.ok(handle, "expected a real resize handle inside the Name column's header");
+
+      // mousedown sets resizingField, and only the useEffect reacting to
+      // THAT state attaches the real window mousemove/mouseup listeners --
+      // a single act() around all three events risks firing mousemove
+      // before that effect has run, so mousedown gets its own act() first.
+      await act(async () => {
+        fireEvent.mouseDown(handle, { clientX: 100 });
+      });
+      await act(async () => {
+        fireEvent.mouseMove(window, { clientX: 160 });
+        fireEvent.mouseUp(window, { clientX: 160 });
+      });
+      assert.equal(nameHeader.style.width, "60px", "sanity check: the drag itself must have actually resized the column");
+
+      const resetButton = container.querySelector(".entity-reset-column-widths") as HTMLButtonElement;
+      assert.ok(resetButton, "expected the reset button to appear once a column has been resized");
+
+      await act(async () => {
+        fireEvent.click(resetButton);
+      });
+      assert.equal(nameHeader.style.width, "", "clicking reset must clear the live inline width back to automatic sizing");
+      assert.equal(container.querySelector(".entity-reset-column-widths"), null, "the reset button itself must disappear once there's nothing left to reset");
+
+      const stored = JSON.parse(localStorage.getItem("forge_column_widths") ?? "{}");
+      assert.deepEqual(stored.Customer ?? {}, {}, "clicking reset must also clear the persisted storage, not just the live DOM");
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    cleanup();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
+ * New in this round (341): mirrors the live preview's own "Clear filters"
+ * button -- with no way to reset multiple active per-field filters except
+ * reopening each dropdown individually, a button now appears only once at
+ * least one filter is set, and resets every filter (both in memory and in
+ * persisted storage) with one click.
+ */
+test("the exported EntityView shows a 'Clear filters' button only once a filter is active, and it resets both the select and the persisted storage", async () => {
+  const files = generateExportFiles(project);
+  const dir = writeGeneratedWebComponent(files);
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async () => ({
+    ok: true,
+    status: 200,
+    json: async () => ({
+      records: [
+        { id: 1, name: "Alice", status: "New" },
+        { id: 2, name: "Bob", status: "Won" },
+      ],
+    }),
+  })) as typeof fetch;
+
+  try {
+    await withRealLocalStorage(async () => {
+      const { EntityView } = await import(path.join(dir, "web", "src", "components", "EntityView.jsx"));
+      const customerEntity = project.spec.entities.find((e) => e.name === "Customer")!;
+      const props = {
+        entity: customerEntity,
+        highlightRecordId: null,
+        onHighlightHandled: () => {},
+        onJumpToRecord: () => {},
+        onRecordCountChange: () => {},
+      };
+
+      const { container } = render(React.createElement(EntityView, props));
+      for (let i = 0; i < 40; i++) {
+        if (container.querySelector(".entity-status-filter")) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+      assert.equal(container.querySelector(".entity-clear-filters"), null, "no filter is active yet, so the button must not render at all");
+
+      const statusFilter = container.querySelector(".entity-status-filter") as HTMLSelectElement;
+      await act(async () => {
+        fireEvent.change(statusFilter, { target: { value: "New" } });
+      });
+      assert.equal(container.querySelectorAll("tbody tr").length, 1, "the filter must actually narrow the rendered rows");
+
+      const clearButton = container.querySelector(".entity-clear-filters") as HTMLButtonElement;
+      assert.ok(clearButton, "the button must appear the moment a filter is set");
+
+      await act(async () => {
+        fireEvent.click(clearButton);
+      });
+      assert.equal(container.querySelectorAll("tbody tr").length, 2, "clicking it must actually restore every row");
+      assert.equal((container.querySelector(".entity-status-filter") as HTMLSelectElement).value, "", "the select itself must reset back to 'All'");
+      assert.equal(container.querySelector(".entity-clear-filters"), null, "the button must disappear again once nothing is filtered");
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    cleanup();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
+ * New in this round: mirrors the live preview's own "Clear search" button
+ * -- every other filtering control in the exported app's toolbar already
+ * had a one-click reset (the "Clear filters"/"Clear sort" buttons just
+ * above), but the free-text search box itself had none. A small "x"
+ * button now appears next to the search input only once it has text in
+ * it, and clears only that live value.
+ */
+test("the exported EntityView shows a 'Clear search' button only once the search box has text, and clicking it empties the search value", async () => {
+  const files = generateExportFiles(project);
+  const dir = writeGeneratedWebComponent(files);
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async () => ({
+    ok: true,
+    status: 200,
+    json: async () => ({
+      records: [
+        { id: 1, name: "Alice", status: "New" },
+        { id: 2, name: "Bob", status: "Won" },
+      ],
+    }),
+  })) as typeof fetch;
+
+  try {
+    await withRealLocalStorage(async () => {
+      const { EntityView } = await import(path.join(dir, "web", "src", "components", "EntityView.jsx"));
+      const customerEntity = project.spec.entities.find((e) => e.name === "Customer")!;
+      const props = {
+        entity: customerEntity,
+        highlightRecordId: null,
+        onHighlightHandled: () => {},
+        onJumpToRecord: () => {},
+        onRecordCountChange: () => {},
+      };
+
+      const { container } = render(React.createElement(EntityView, props));
+      for (let i = 0; i < 40; i++) {
+        if (container.querySelector(".entity-search")) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+      assert.equal(container.querySelector(".entity-clear-search"), null, "the search box starts empty, so the button must not render at all");
+
+      const searchBox = container.querySelector(".entity-search") as HTMLInputElement;
+      await act(async () => {
+        fireEvent.change(searchBox, { target: { value: "Alice" } });
+      });
+      assert.equal(container.querySelectorAll("tbody tr").length, 1, "the search must actually narrow the rendered rows");
+
+      const clearButton = container.querySelector(".entity-clear-search") as HTMLButtonElement;
+      assert.ok(clearButton, "the button must appear the moment the search box has text");
+
+      await act(async () => {
+        fireEvent.click(clearButton);
+      });
+      assert.equal(container.querySelectorAll("tbody tr").length, 2, "clicking it must actually restore every row");
+      assert.equal((container.querySelector(".entity-search") as HTMLInputElement).value, "", "the search input itself must empty out");
+      assert.equal(container.querySelector(".entity-clear-search"), null, "the button must disappear again once the search box is empty");
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    cleanup();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
+ * New in this round: mirrors the live preview's own "Clear sort" button
+ * -- toggleSort's own non-additive branch only ever collapses a sort
+ * down to a single key, never back to [], so once a multi-column sort
+ * was built via shift-click there was no one-click way back to the
+ * table's natural/unsorted order.
+ */
+test("the exported EntityView shows a 'Clear sort' button only once a sort is active, and it resets both the headers and the persisted storage", async () => {
+  const files = generateExportFiles(project);
+  const dir = writeGeneratedWebComponent(files);
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async () => ({
+    ok: true,
+    status: 200,
+    json: async () => ({
+      records: [
+        { id: 1, name: "Globex", status: "Won" },
+        { id: 2, name: "Zeta Inc", status: "New" },
+        { id: 3, name: "Acme Corp", status: "New" },
+      ],
+    }),
+  })) as typeof fetch;
+
+  try {
+    await withRealLocalStorage(async () => {
+      const { EntityView } = await import(path.join(dir, "web", "src", "components", "EntityView.jsx"));
+      const customerEntity = project.spec.entities.find((e) => e.name === "Customer")!;
+      const props = {
+        entity: customerEntity,
+        highlightRecordId: null,
+        onHighlightHandled: () => {},
+        onJumpToRecord: () => {},
+        onRecordCountChange: () => {},
+      };
+
+      const { container } = render(React.createElement(EntityView, props));
+      for (let i = 0; i < 40; i++) {
+        if (container.querySelectorAll("tbody tr").length === 3) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+      assert.equal(container.querySelector(".entity-clear-sort"), null, "no sort is active yet, so the button must not render at all");
+
+      // The Customer fixture's own field labels are Hebrew ("שם"/"סטטוס",
+      // round 342's own lesson), so headers are picked by their declared
+      // field order (name, then status) rather than by label text.
+      const sortHeaders = container.querySelectorAll("thead th button.sort-header");
+      const nameHeader = sortHeaders[0] as HTMLButtonElement;
+      const statusHeader = sortHeaders[1] as HTMLButtonElement;
+      await act(async () => {
+        fireEvent.click(statusHeader);
+      });
+      await act(async () => {
+        fireEvent.click(nameHeader, { shiftKey: true });
+      });
+      assert.equal(container.querySelectorAll(".sort-priority").length, 2, "sanity check: shift-click must have actually built a multi-key sort");
+
+      const clearButton = container.querySelector(".entity-clear-sort") as HTMLButtonElement;
+      assert.ok(clearButton, "the button must appear the moment a sort is active, including a multi-key one");
+
+      await act(async () => {
+        fireEvent.click(clearButton);
+      });
+      assert.equal(container.querySelectorAll(".sort-priority").length, 0, "clicking it must clear the multi-key priority badges");
+      const sortedHeaders = Array.from(container.querySelectorAll("thead th[aria-sort]")).filter((th) => th.getAttribute("aria-sort") !== "none");
+      assert.equal(sortedHeaders.length, 0, "no column header must still report itself as sorted");
+      assert.equal(container.querySelector(".entity-clear-sort"), null, "the button must disappear again once nothing is sorted");
+
+      const stored = JSON.parse(localStorage.getItem("forge_sort_keys") ?? "{}");
+      assert.deepEqual(stored.Customer ?? [], [], "clicking it must also clear the persisted storage, not just the live DOM");
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    cleanup();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
+ * New in this round: the exported app's per-entity table search box had
+ * zero memory of recent queries, the same gap the live preview's own
+ * EntityPanel.tsx had before entityRecentSearches.ts (round 318) -- and
+ * the more impactful of the two remaining recent-searches gaps (the other,
+ * Global Search's own recent-searches, is a less-used box than the
+ * per-entity table every tab opens into). Extracts and *executes* the real
+ * generated store functions (not a reimplementation): capped at 5, most
+ * recent first, case-insensitive dedup/removal, and scoped per entity name
+ * only (this single-tenant exported app has no project id to scope by,
+ * unlike the live preview's own two-key (projectId, entityName) scoping).
+ */
+test("the exported EntityView's recent-searches store caps at 5, dedupes case-insensitively, and is scoped per entity name", () => {
+  const files = generateExportFiles(project);
+  const entityViewJsx = files.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+
+  const storeSrc = entityViewJsx.match(
+    /const ENTITY_RECENT_SEARCHES_STORAGE_KEY[\s\S]*?\nfunction clearEntityRecentSearches\(entityName\) \{[\s\S]*?\n\}\n/,
+  )?.[0];
+  assert.ok(storeSrc, "expected to find the entity recent-searches store functions in generated output");
+
+  const fakeStorage: Record<string, string> = {};
+  const { getEntityRecentSearches, addEntityRecentSearch, removeEntityRecentSearch, clearEntityRecentSearches } = new Function(
+    "localStorage",
+    `${storeSrc}\nreturn { getEntityRecentSearches, addEntityRecentSearch, removeEntityRecentSearch, clearEntityRecentSearches };`,
+  )({
+    getItem: (k: string) => fakeStorage[k] ?? null,
+    setItem: (k: string, v: string) => {
+      fakeStorage[k] = v;
+    },
+  }) as {
+    getEntityRecentSearches: (entityName: string) => string[];
+    addEntityRecentSearch: (entityName: string, query: string) => string[];
+    removeEntityRecentSearch: (entityName: string, query: string) => string[];
+    clearEntityRecentSearches: (entityName: string) => void;
+  };
+
+  assert.deepEqual(getEntityRecentSearches("Customer"), [], "no stored searches yet must default to an empty array");
+
+  addEntityRecentSearch("Customer", "acme");
+  addEntityRecentSearch("Customer", "globex");
+  assert.deepEqual(addEntityRecentSearch("Customer", "ACME"), ["ACME", "globex"], "re-adding case-insensitively must move it to the front (with the newly typed casing), not duplicate it");
+
+  for (const q of ["a", "b", "c", "d", "e"]) addEntityRecentSearch("Customer", q);
+  assert.deepEqual(
+    getEntityRecentSearches("Customer"),
+    ["e", "d", "c", "b", "a"],
+    "the list must cap at 5 entries, dropping the oldest",
+  );
+
+  assert.deepEqual(removeEntityRecentSearch("Customer", "C"), ["e", "d", "b", "a"], "removal must be case-insensitive");
+
+  assert.deepEqual(getEntityRecentSearches("Service"), [], "a different entity must not inherit Customer's own recent searches");
+
+  clearEntityRecentSearches("Customer");
+  assert.deepEqual(getEntityRecentSearches("Customer"), [], "clearing must wipe the entity's own list entirely");
+});
+
+/**
+ * Real-DOM companion: renders the actual generated EntityView, types a
+ * query, presses Enter (the commit signal for a filter-as-you-type box
+ * with no submit button -- same convention as handleProjectSearchKeyDown),
+ * confirms a real recent-search chip appears, clicking it refills the
+ * search box, and removing it drops just that one chip.
+ */
+test("the exported EntityView's search box remembers a query on Enter and shows it as a clickable, removable chip", async () => {
+  const files = generateExportFiles(project);
+  const dir = writeGeneratedWebComponent(files);
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async () => ({
+    ok: true,
+    status: 200,
+    json: async () => ({ records: [{ id: 1, name: "Alice", status: "New" }] }),
+  })) as typeof fetch;
+
+  try {
+    await withRealLocalStorage(async () => {
+      const { EntityView } = await import(path.join(dir, "web", "src", "components", "EntityView.jsx"));
+      const customerEntity = project.spec.entities.find((e) => e.name === "Customer")!;
+      const props = {
+        entity: customerEntity,
+        highlightRecordId: null,
+        onHighlightHandled: () => {},
+        onJumpToRecord: () => {},
+        onRecordCountChange: () => {},
+      };
+
+      const { container } = render(React.createElement(EntityView, props));
+      for (let i = 0; i < 40; i++) {
+        if (container.querySelectorAll("tbody tr").length === 1) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+      assert.equal(container.querySelectorAll("tbody tr").length, 1, "expected the record to have loaded");
+
+      const searchInput = container.querySelector(".entity-search") as HTMLInputElement;
+      assert.equal(container.querySelector(".entity-search-recent"), null, "no recent-searches row before any query is committed");
+
+      await act(async () => {
+        fireEvent.change(searchInput, { target: { value: "alice" } });
+        fireEvent.keyDown(searchInput, { key: "Enter" });
+      });
+      // The recent-searches row only shows once the search box itself is
+      // empty again (same as the live preview: it's "what you searched for
+      // before", not shown while a search is actively filtering the table).
+      assert.equal(
+        container.querySelector(".entity-search-recent"),
+        null,
+        "the recent-searches row must stay hidden while the search box still has the just-typed query in it",
+      );
+
+      await act(async () => {
+        fireEvent.change(searchInput, { target: { value: "" } });
+      });
+      assert.equal(searchInput.value, "", "search box must be clearable independently of the remembered chip");
+
+      const chip = container.querySelector(".entity-search-recent .chip-text");
+      assert.ok(chip, "expected a real recent-search chip once the search box is cleared");
+      assert.equal(chip!.textContent, "alice", "the chip must show the real committed query");
+
+      await act(async () => {
+        fireEvent.click(chip!);
+      });
+      assert.equal(searchInput.value, "alice", "clicking the chip must refill the search box with the real remembered query");
+
+      await act(async () => {
+        fireEvent.change(searchInput, { target: { value: "" } });
+      });
+      await act(async () => {
+        fireEvent.click(container.querySelector(".entity-search-recent .chip-remove")!);
+      });
+      assert.equal(container.querySelector(".entity-search-recent"), null, "removing the only chip must hide the whole recent-searches row");
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    cleanup();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
+ * New in this round: the window-level table keydown handler already
+ * clears the multi-row selection on Escape, but it bails out via
+ * isTypingTarget the instant the search box has focus -- so Escape typed
+ * INTO the exported app's search box itself was a dead key. Reuses the
+ * same setSearch("") the "Clear search" button already calls: confirms
+ * it empties the box and restores the unfiltered table, and that an
+ * Escape with nothing typed is a harmless no-op that never commits a
+ * recent search (only Enter does that).
+ */
+test("the exported EntityView's search box clears itself on Escape, restoring the unfiltered table", async () => {
+  const files = generateExportFiles(project);
+  const dir = writeGeneratedWebComponent(files);
+  const store = [
+    { id: 1, name: "Acme Corp", status: "New" },
+    { id: 2, name: "Globex", status: "Won" },
+  ];
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async () => ({
+    ok: true,
+    status: 200,
+    json: async () => ({ records: store }),
+  })) as typeof fetch;
+
+  try {
+    await withRealLocalStorage(async () => {
+      const { EntityView } = await import(path.join(dir, "web", "src", "components", "EntityView.jsx"));
+      const customerEntity = project.spec.entities.find((e) => e.name === "Customer")!;
+      const props = {
+        entity: customerEntity,
+        highlightRecordId: null,
+        onHighlightHandled: () => {},
+        onJumpToRecord: () => {},
+        onRecordCountChange: () => {},
+      };
+
+      const { container } = render(React.createElement(EntityView, props));
+      for (let i = 0; i < 40; i++) {
+        if (container.querySelectorAll("tbody tr").length === 2) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+      assert.equal(container.querySelectorAll("tbody tr").length, 2, "expected both records to have loaded");
+
+      const searchInput = container.querySelector(".entity-search") as HTMLInputElement;
+
+      await act(async () => {
+        fireEvent.keyDown(searchInput, { key: "Escape" });
+      });
+      assert.equal(searchInput.value, "", "Escape on an already-empty search box must not throw or do anything odd");
+
+      await act(async () => {
+        fireEvent.change(searchInput, { target: { value: "Globex" } });
+      });
+      assert.equal(container.querySelectorAll("tbody tr").length, 1, "the search must actually narrow the rendered rows");
+
+      await act(async () => {
+        fireEvent.keyDown(searchInput, { key: "Escape" });
+      });
+      assert.equal(searchInput.value, "", "Escape must empty the search box");
+      assert.equal(container.querySelectorAll("tbody tr").length, 2, "clearing the search via Escape must restore every row");
+      assert.equal(
+        container.querySelector(".entity-search-recent"),
+        null,
+        "Escape must never commit a recent search -- only Enter does that",
+      );
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    cleanup();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
+ * New in this round: the exported app's Global Search had the same
+ * recent-searches gap EntityView's own table search box had before round
+ * 324 -- the last remaining item in the recent-searches family. Extracts
+ * and *executes* the real generated store functions (not a
+ * reimplementation): capped at 5, most recent first, case-insensitive
+ * dedup/removal. Unlike EntityView's own store (scoped per entity name),
+ * this one is a single flat list, since this single-tenant exported app
+ * has only one Global Search in the whole app to begin with.
+ */
+test("the exported GlobalSearch's recent-searches store caps at 5 and dedupes case-insensitively, as a single flat list", () => {
+  const files = generateExportFiles(project);
+  const globalSearchJsx = files.find((f) => f.path === "web/src/components/GlobalSearch.jsx")!.content;
+
+  const storeSrc = globalSearchJsx.match(
+    /const GLOBAL_SEARCH_RECENT_SEARCHES_STORAGE_KEY[\s\S]*?\nfunction clearGlobalSearchRecentSearches\(\) \{[\s\S]*?\n\}\n/,
+  )?.[0];
+  assert.ok(storeSrc, "expected to find the Global Search recent-searches store functions in generated output");
+
+  const fakeStorage: Record<string, string> = {};
+  const { getGlobalSearchRecentSearches, addGlobalSearchRecentSearch, removeGlobalSearchRecentSearch, clearGlobalSearchRecentSearches } =
+    new Function(
+      "localStorage",
+      `${storeSrc}\nreturn { getGlobalSearchRecentSearches, addGlobalSearchRecentSearch, removeGlobalSearchRecentSearch, clearGlobalSearchRecentSearches };`,
+    )({
+      getItem: (k: string) => fakeStorage[k] ?? null,
+      setItem: (k: string, v: string) => {
+        fakeStorage[k] = v;
+      },
+    }) as {
+      getGlobalSearchRecentSearches: () => string[];
+      addGlobalSearchRecentSearch: (query: string) => string[];
+      removeGlobalSearchRecentSearch: (query: string) => string[];
+      clearGlobalSearchRecentSearches: () => void;
+    };
+
+  assert.deepEqual(getGlobalSearchRecentSearches(), [], "no stored searches yet must default to an empty array");
+
+  addGlobalSearchRecentSearch("acme");
+  addGlobalSearchRecentSearch("globex");
+  assert.deepEqual(
+    addGlobalSearchRecentSearch("ACME"),
+    ["ACME", "globex"],
+    "re-adding case-insensitively must move it to the front (with the newly typed casing), not duplicate it",
+  );
+
+  for (const q of ["a", "b", "c", "d", "e"]) addGlobalSearchRecentSearch(q);
+  assert.deepEqual(getGlobalSearchRecentSearches(), ["e", "d", "c", "b", "a"], "the list must cap at 5 entries, dropping the oldest");
+
+  assert.deepEqual(removeGlobalSearchRecentSearch("C"), ["e", "d", "b", "a"], "removal must be case-insensitive");
+
+  clearGlobalSearchRecentSearches();
+  assert.deepEqual(getGlobalSearchRecentSearches(), [], "clearing must wipe the list entirely");
+});
+
+/**
+ * Real-DOM companion, mirroring the live preview's own
+ * GlobalSearchPanel.test.ts pattern exactly: submits a real search (a
+ * genuine fetch + form submit, not a direct store call), unmounts and
+ * remounts the component fresh (simulating closing and reopening the
+ * panel), and confirms the submitted query now shows as a real,
+ * clickable, removable recent-search chip -- a real persistence round
+ * trip through the actual component, not just the store helpers in
+ * isolation.
+ */
+test("the exported GlobalSearch remembers a submitted search and shows it as a recent-search chip after being closed and reopened", async () => {
+  const files = generateExportFiles(project);
+  const dir = writeGeneratedWebComponent(files);
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async (input: string) => {
+    if (String(input).endsWith("/Customer")) {
+      return { ok: true, status: 200, json: async () => ({ records: [{ id: 1, name: "Acme widget order" }] }) };
+    }
+    return { ok: true, status: 200, json: async () => ({ records: [] }) };
+  }) as typeof fetch;
+
+  try {
+    await withRealLocalStorage(async () => {
+      const { GlobalSearch } = await import(path.join(dir, "web", "src", "components", "GlobalSearch.jsx"));
+      const props = { entities: project.spec.entities, onClose: () => {}, onJumpToEntity: () => {}, onJumpToRecord: () => {} };
+
+      const firstMount = render(React.createElement(GlobalSearch, props));
+      const input = firstMount.container.querySelector(".global-search-input") as HTMLInputElement;
+      await act(async () => {
+        fireEvent.change(input, { target: { value: "widget" } });
+        fireEvent.submit(firstMount.container.querySelector("form.global-search-form")!);
+        await Promise.resolve();
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+      assert.equal(
+        firstMount.container.querySelector(".global-search-recent"),
+        null,
+        "the recent-searches row must stay hidden while real results are showing",
+      );
+      firstMount.unmount();
+
+      const secondMount = render(React.createElement(GlobalSearch, props));
+      const chip = Array.from(secondMount.container.querySelectorAll(".global-search-recent .chip-text")).find(
+        (el) => el.textContent === "widget",
+      );
+      assert.ok(chip, "expected the reopened panel to show 'widget' as a real recent-search chip, from real persisted state");
+
+      await act(async () => {
+        fireEvent.click(chip!);
+        await Promise.resolve();
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+      assert.match(
+        secondMount.container.textContent ?? "",
+        /Acme widget order/,
+        "clicking the chip must genuinely re-run the search, not just refill the input",
+      );
+
+      const removeButton = secondMount.container.querySelector(".global-search-recent .chip-remove") as HTMLButtonElement | null;
+      assert.equal(removeButton, null, "the recent-searches row (and its remove button) must stay hidden once results are showing again");
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    cleanup();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
+ * New in this round: porting the live preview's own error+Retry pattern
+ * (round 328, GlobalSearchPanel.tsx) to the exported app's GlobalSearch.jsx.
+ * Unlike EntityView/EntityPanel, GlobalSearch's own error state was already
+ * single-purpose (set only inside runSearch, same as the live preview) --
+ * so this is just a Retry button wired to re-run the search, no new state
+ * needed. Confirms a real failed-then-retried search via the real generated
+ * component.
+ */
+test("the exported GlobalSearch shows a real error with a Retry button when a search fails, and Retry re-runs the exact same query", async () => {
+  const files = generateExportFiles(project);
+  const dir = writeGeneratedWebComponent(files);
+  const originalFetch = globalThis.fetch;
+  let callCount = 0;
+  globalThis.fetch = (async (input: string) => {
+    callCount += 1;
+    if (callCount <= 2) {
+      return { ok: false, status: 500, json: async () => ({ error: "Server exploded" }) };
+    }
+    if (String(input).endsWith("/Customer")) {
+      return { ok: true, status: 200, json: async () => ({ records: [{ id: 1, name: "Acme widget order" }] }) };
+    }
+    return { ok: true, status: 200, json: async () => ({ records: [] }) };
+  }) as typeof fetch;
+
+  try {
+    await withRealLocalStorage(async () => {
+      const { GlobalSearch } = await import(path.join(dir, "web", "src", "components", "GlobalSearch.jsx"));
+      const props = { entities: project.spec.entities, onClose: () => {}, onJumpToEntity: () => {}, onJumpToRecord: () => {} };
+
+      const { container } = render(React.createElement(GlobalSearch, props));
+      const input = container.querySelector(".global-search-input") as HTMLInputElement;
+      await act(async () => {
+        fireEvent.change(input, { target: { value: "widget" } });
+        fireEvent.submit(container.querySelector("form.global-search-form")!);
+        await Promise.resolve();
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+
+      assert.match(container.querySelector(".error-retry-row p.error")?.textContent ?? "", /Server exploded/);
+      assert.equal(container.querySelector(".error-retry-row p.error")?.getAttribute("role"), "status", "the error message must be announced to screen readers");
+      const retryButton = container.querySelector(".error-retry-row button") as HTMLButtonElement;
+      assert.ok(retryButton, "expected a real Retry button");
+
+      await act(async () => {
+        fireEvent.click(retryButton);
+        await Promise.resolve();
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+
+      assert.equal(container.querySelector(".error-retry-row"), null, "the error+Retry row must disappear once the retry succeeds");
+      assert.match(container.textContent ?? "", /Acme widget order/, "Retry must re-run the originally-submitted query");
+      assert.equal(input.value, "widget", "Retry must not clear the query that's still in the box");
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    cleanup();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
+ * New in this round: the exported app's GlobalSearch had the identical
+ * dead end the live preview's own GlobalSearchPanel.tsx did before its own
+ * "Show all" button -- a group capped its rows at 5 and printed a static
+ * "+N more" text for the rest, real matches the panel already knew the
+ * count of but gave no way to ever reach. Mirrors the live preview's own
+ * GlobalSearchPanel.test.ts pattern: confirms a real "Show all" button
+ * appears exactly when more matches exist, that clicking it genuinely
+ * reveals every one of them (not just relabels the same 5, and via a real
+ * re-fetch + re-filter, not a reimplementation), and that the button
+ * itself disappears once nothing is left to expand.
+ */
+test("the exported GlobalSearch's 'Show all' button reveals every match beyond the default 5-row sample, and disappears once everything is shown", async () => {
+  const files = generateExportFiles(project);
+  const dir = writeGeneratedWebComponent(files);
+  const customerRecords = Array.from({ length: 7 }, (_, i) => ({ id: i + 1, name: `Widget item ${i + 1}` }));
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async (input: string) => {
+    if (String(input).endsWith("/Customer")) {
+      return { ok: true, status: 200, json: async () => ({ records: customerRecords }) };
+    }
+    return { ok: true, status: 200, json: async () => ({ records: [] }) };
+  }) as typeof fetch;
+
+  try {
+    const { GlobalSearch } = await import(path.join(dir, "web", "src", "components", "GlobalSearch.jsx"));
+    const { container } = render(
+      React.createElement(GlobalSearch, {
+        entities: project.spec.entities,
+        onClose: () => {},
+        onJumpToEntity: () => {},
+        onJumpToRecord: () => {},
+      }),
+    );
+
+    const input = container.querySelector(".global-search-input") as HTMLInputElement;
+    await act(async () => {
+      fireEvent.change(input, { target: { value: "widget" } });
+      fireEvent.submit(container.querySelector("form.global-search-form")!);
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    assert.equal(container.querySelectorAll(".global-search-hit-button").length, 5, "expected the default 5-row sample");
+
+    const showAllButton = container.querySelector(".global-search-show-all") as HTMLButtonElement | null;
+    assert.ok(showAllButton, "expected a real 'Show all' button when more matches exist than the sample shows");
+
+    await act(async () => {
+      fireEvent.click(showAllButton!);
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    assert.equal(container.querySelectorAll(".global-search-hit-button").length, 7, "clicking 'Show all' must reveal every real match, not just the same 5");
+    assert.equal(
+      container.querySelector(".global-search-show-all"),
+      null,
+      "the 'Show all' button must disappear once every match is already shown",
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+    cleanup();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
+ * New in this round (340): porting the live preview's own deadline
+ * overdue/due-soon date indicator to the exported app's EntityView.jsx --
+ * before this fix, every date field rendered as plain text with zero
+ * comparison to "today" anywhere in the generated code. Confirms both that
+ * a deadline-named field (dueDate) does get flagged, using the same
+ * isDeadlineFieldName/getDateUrgency functions the live preview's
+ * entityFormatting.ts introduces, and that an ordinary date field never
+ * does -- a past dateOfBirth is normal, not overdue.
+ */
+test("the exported EntityView flags a deadline-named date field as overdue/due-soon, but never an ordinary date field", async () => {
+  const files = generateExportFiles(project);
+  const dir = writeGeneratedWebComponent(files);
+  const originalFetch = globalThis.fetch;
+
+  function isoDateOffset(days: number): string {
+    const d = new Date();
+    d.setDate(d.getDate() + days);
+    const pad = (n: number) => String(n).padStart(2, "0");
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+  }
+
+  const taskEntity = {
+    name: "Task",
+    label: "Task",
+    fields: [
+      { name: "title", label: "Title", type: "text", required: true },
+      { name: "dueDate", label: "Due", type: "date", required: false },
+    ],
+  };
+  const records = [
+    { id: 1, title: "Overdue task", dueDate: isoDateOffset(-5) },
+    { id: 2, title: "Due soon task", dueDate: isoDateOffset(1) },
+    { id: 3, title: "Far future task", dueDate: isoDateOffset(30) },
+  ];
+  globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
+    const method = init?.method ?? "GET";
+    if (method === "GET" && input === "/api/Task") {
+      return new Response(JSON.stringify({ records }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    throw new Error(`unexpected request ${method} ${input}`);
+  }) as typeof fetch;
+
+  try {
+    await withRealLocalStorage(async () => {
+      const { EntityView } = await import(path.join(dir, "web", "src", "components", "EntityView.jsx"));
+      const props = {
+        entity: taskEntity,
+        highlightRecordId: null,
+        onHighlightHandled: () => {},
+        onJumpToRecord: () => {},
+        onRecordCountChange: () => {},
+      };
+
+      const { container } = render(React.createElement(EntityView, props));
+      for (let i = 0; i < 40; i++) {
+        if (container.querySelectorAll("tbody tr").length === 3) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+      const rows = Array.from(container.querySelectorAll("tbody tr"));
+      const overdueRow = rows.find((r) => /Overdue task/.test(r.textContent ?? ""))!;
+      const dueSoonRow = rows.find((r) => /Due soon task/.test(r.textContent ?? ""))!;
+      const farRow = rows.find((r) => /Far future task/.test(r.textContent ?? ""))!;
+
+      assert.ok(overdueRow.querySelector(".date-overdue"), "a dueDate 5 days in the past must be flagged overdue");
+      assert.ok(dueSoonRow.querySelector(".date-due-soon"), "a dueDate due tomorrow must be flagged due-soon");
+      assert.equal(farRow.querySelector(".date-overdue"), null, "a dueDate a month out needs no overdue styling");
+      assert.equal(farRow.querySelector(".date-due-soon"), null, "a dueDate a month out needs no due-soon styling either");
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    cleanup();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("the exported EntityView never flags an ordinary (non-deadline-named) date field as overdue, even decades in the past", async () => {
+  const files = generateExportFiles(project);
+  const dir = writeGeneratedWebComponent(files);
+  const originalFetch = globalThis.fetch;
+
+  function isoDateOffset(days: number): string {
+    const d = new Date();
+    d.setDate(d.getDate() + days);
+    const pad = (n: number) => String(n).padStart(2, "0");
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+  }
+
+  const personEntity = {
+    name: "Person",
+    label: "Person",
+    fields: [
+      { name: "name", label: "Name", type: "text", required: true },
+      { name: "dateOfBirth", label: "Born", type: "date", required: false },
+    ],
+  };
+  const records = [{ id: 1, name: "Alice", dateOfBirth: isoDateOffset(-365 * 30) }];
+  globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
+    const method = init?.method ?? "GET";
+    if (method === "GET" && input === "/api/Person") {
+      return new Response(JSON.stringify({ records }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    throw new Error(`unexpected request ${method} ${input}`);
+  }) as typeof fetch;
+
+  try {
+    await withRealLocalStorage(async () => {
+      const { EntityView } = await import(path.join(dir, "web", "src", "components", "EntityView.jsx"));
+      const props = {
+        entity: personEntity,
+        highlightRecordId: null,
+        onHighlightHandled: () => {},
+        onJumpToRecord: () => {},
+        onRecordCountChange: () => {},
+      };
+
+      const { container } = render(React.createElement(EntityView, props));
+      for (let i = 0; i < 40; i++) {
+        if (container.querySelectorAll("tbody tr").length === 1) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+      assert.equal(container.querySelector(".date-overdue"), null, "a birth date decades in the past must never read as 'overdue'");
+      assert.equal(container.querySelector(".date-due-soon"), null);
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    cleanup();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
+ * New in this round (342): mirrors the live preview's own identical fix.
+ * Submitting the exported app's add/edit form with a required field left
+ * empty previously fell through to the browser's own native HTML5
+ * constraint-validation tooltip instead of a real, app-rendered error.
+ * The form now has noValidate, and handleSubmit checks required fields
+ * itself before ever calling the API, showing the error through the same
+ * role="status" paragraph every other error in this file already uses.
+ */
+test("the exported EntityView shows a required-field error instead of relying on the browser's own native validation, and never calls the API until it's fixed", async () => {
+  const files = generateExportFiles(project);
+  const dir = writeGeneratedWebComponent(files);
+  const originalFetch = globalThis.fetch;
+  const store = [{ id: 1, name: "Globex", status: "Won" }];
+  let postCount = 0;
+  globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
+    const method = init?.method ?? "GET";
+    if (method === "GET" && input === "/api/Customer") {
+      return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    if (method === "POST" && input === "/api/Customer") {
+      postCount += 1;
+      const record = { id: 2, ...JSON.parse(init!.body as string) };
+      store.push(record);
+      return new Response(JSON.stringify({ record }), { status: 201, headers: { "content-type": "application/json" } });
+    }
+    throw new Error(`unexpected request ${method} ${input}`);
+  }) as typeof fetch;
+
+  try {
+    await withRealLocalStorage(async () => {
+      const { EntityView } = await import(path.join(dir, "web", "src", "components", "EntityView.jsx"));
+      const customerEntity = project.spec.entities.find((e) => e.name === "Customer")!;
+      const props = {
+        entity: customerEntity,
+        highlightRecordId: null,
+        onHighlightHandled: () => {},
+        onJumpToRecord: () => {},
+        onRecordCountChange: () => {},
+      };
+
+      const { container } = render(React.createElement(EntityView, props));
+      for (let i = 0; i < 40; i++) {
+        if (container.querySelectorAll("tbody tr").length === 1) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+
+      const submitButton = container.querySelector(".record-form button[type=submit]") as HTMLButtonElement;
+      assert.ok(submitButton, "expected a real submit button");
+      await act(async () => {
+        fireEvent.click(submitButton);
+      });
+
+      const errorEl = container.querySelector(".record-form + p.error") as HTMLElement;
+      assert.ok(errorEl, "expected a real error paragraph to appear");
+      assert.match(errorEl.textContent ?? "", /שם/, "the error must name the actual missing field (Customer's own \"name\" field is labeled שם)");
+      assert.equal(errorEl.getAttribute("role"), "status", "must use the same role=status pattern as every other error here");
+      assert.equal(postCount, 0, "the API must never be called while a required field is still empty");
+
+      const nameInput = container.querySelector('.record-form input[type="text"]') as HTMLInputElement;
+      const statusSelect = container.querySelector(".record-form select") as HTMLSelectElement;
+      await act(async () => {
+        fireEvent.change(nameInput, { target: { value: "Acme Corp" } });
+        fireEvent.change(statusSelect, { target: { value: "New" } });
+      });
+      await act(async () => {
+        fireEvent.click(submitButton);
+      });
+      for (let i = 0; i < 40; i++) {
+        if (container.querySelectorAll("tbody tr").length === 2) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+
+      assert.equal(postCount, 1, "once every required field is filled in, the real create request must actually fire");
+      assert.equal(container.querySelector(".record-form + p.error"), null, "the error must clear once the record is created successfully");
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    cleanup();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
+ * New in this round: mirrors the live preview's own fix -- extends the
+ * already-established Escape-to-cancel convention (the inline cell editor
+ * already has it) to the exported app's main add/edit form, which
+ * previously had no keyboard way at all to back out of an in-progress
+ * edit; only the mouse-driven Cancel button could. Confirms Escape on a
+ * focused field calls the exact same reset the Cancel button's own
+ * onClick already does, and -- the flip side -- that Escape never clears
+ * an in-progress NEW-record draft outside edit mode (editingId is null
+ * then, and this same form IS the blank create form).
+ */
+test("the exported EntityView's record form discards an in-progress EDIT on Escape (same as Cancel), but never clears an in-progress NEW-record draft", async () => {
+  const files = generateExportFiles(project);
+  const dir = writeGeneratedWebComponent(files);
+  const originalFetch = globalThis.fetch;
+  const store = [{ id: 1, name: "Acme Corp", status: "New" }];
+  globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
+    const method = init?.method ?? "GET";
+    if (method === "GET" && input === "/api/Customer") {
+      return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    throw new Error(`unexpected request ${method} ${input}`);
+  }) as typeof fetch;
+
+  try {
+    await withRealLocalStorage(async () => {
+      const { EntityView } = await import(path.join(dir, "web", "src", "components", "EntityView.jsx"));
+      const customerEntity = project.spec.entities.find((e) => e.name === "Customer")!;
+      const props = {
+        entity: customerEntity,
+        highlightRecordId: null,
+        onHighlightHandled: () => {},
+        onJumpToRecord: () => {},
+        onRecordCountChange: () => {},
+      };
+
+      const { container } = render(React.createElement(EntityView, props));
+      for (let i = 0; i < 40; i++) {
+        if (container.querySelectorAll("tbody tr").length === 1) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+
+      // Not editing yet -- a draft for a brand-new record must survive Escape untouched.
+      const nameInput = container.querySelector('.record-form input[type="text"]') as HTMLInputElement;
+      await act(async () => {
+        fireEvent.change(nameInput, { target: { value: "Draft not yet saved" } });
+        fireEvent.keyDown(nameInput, { key: "Escape" });
+      });
+      assert.equal(nameInput.value, "Draft not yet saved", "Escape must never clear an in-progress NEW-record draft (editingId is null here)");
+
+      // Now actually open the real record for editing.
+      const editButton = Array.from(container.querySelectorAll("button")).find((b) => b.textContent === "Edit") as HTMLButtonElement;
+      assert.ok(editButton, "expected a real Edit button");
+      await act(async () => {
+        fireEvent.click(editButton);
+      });
+      for (let i = 0; i < 40; i++) {
+        if ((container.querySelector('.record-form input[type="text"]') as HTMLInputElement)?.value === "Acme Corp") break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+      const cancelButton = Array.from(container.querySelectorAll("button")).find((b) => b.textContent === "Cancel");
+      assert.ok(cancelButton, "expected a real Cancel button once editing an existing record");
+
+      await act(async () => {
+        fireEvent.keyDown(container.querySelector('.record-form input[type="text"]') as HTMLInputElement, { key: "Escape" });
+      });
+
+      assert.equal(
+        (container.querySelector('.record-form input[type="text"]') as HTMLInputElement).value,
+        "",
+        "Escape must reset the form to blank, exactly like Cancel",
+      );
+      assert.equal(
+        Array.from(container.querySelectorAll("button")).find((b) => b.textContent === "Cancel"),
+        undefined,
+        "Escape must discard edit mode exactly like Cancel -- the Cancel button must disappear",
+      );
+      const submitButton = container.querySelector(".record-form button[type=submit]") as HTMLButtonElement;
+      assert.equal(submitButton.textContent, "Add", "the submit button must revert to create-mode wording once Escape discards the edit");
+      assert.equal(store[0].name, "Acme Corp", "the mock server's own record must be untouched -- Escape never saves");
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    cleanup();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
+ * New in this round: mirrors the live preview's own fix -- a longtext
+ * field's own <textarea> had no keyboard way to submit the form at all (a
+ * bare Enter there just inserts a newline, unlike every single-line input
+ * where Enter already submits natively), and the exported form's own
+ * onKeyDown only handled Escape. Extended that same handler to also call
+ * the real form submit (via requestSubmit()) on Ctrl+Enter or Cmd+Enter.
+ * Confirms both halves: a bare Enter in the textarea never submits
+ * (postCount stays 0), while Ctrl+Enter AND Cmd+Enter each genuinely
+ * create a real record through the real API.
+ */
+test("the exported EntityView's record form submits on Ctrl+Enter or Cmd+Enter from a longtext textarea, but a bare Enter there never submits", async () => {
+  const withLead: Project = {
+    ...project,
+    spec: {
+      ...project.spec,
+      entities: [
+        ...project.spec.entities,
+        {
+          name: "Lead",
+          label: "Lead",
+          fields: [
+            { name: "name", label: "Name", type: "text", required: true },
+            { name: "notes", label: "Notes", type: "longtext", required: false },
+          ],
+        },
+      ],
+    },
+  };
+  const files = generateExportFiles(withLead);
+  const dir = writeGeneratedWebComponent(files);
+  const originalFetch = globalThis.fetch;
+  const store: { id: number; name: string; notes: string }[] = [];
+  let postCount = 0;
+  globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
+    const method = init?.method ?? "GET";
+    if (method === "GET" && input === "/api/Lead") {
+      return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    if (method === "POST" && input === "/api/Lead") {
+      postCount += 1;
+      const record = { id: postCount, ...JSON.parse(init!.body as string) };
+      store.push(record);
+      return new Response(JSON.stringify({ record }), { status: 201, headers: { "content-type": "application/json" } });
+    }
+    throw new Error(`unexpected request ${method} ${input}`);
+  }) as typeof fetch;
+
+  try {
+    await withRealLocalStorage(async () => {
+      const { EntityView } = await import(path.join(dir, "web", "src", "components", "EntityView.jsx"));
+      const leadEntity = withLead.spec.entities.find((e) => e.name === "Lead")!;
+      const props = {
+        entity: leadEntity,
+        highlightRecordId: null,
+        onHighlightHandled: () => {},
+        onJumpToRecord: () => {},
+        onRecordCountChange: () => {},
+      };
+
+      const { container } = render(React.createElement(EntityView, props));
+      for (let i = 0; i < 40; i++) {
+        if (container.querySelector(".record-form") !== null) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+
+      const nameInput = container.querySelector('.record-form input[type="text"]') as HTMLInputElement;
+      const notesTextarea = container.querySelector(".record-form textarea") as HTMLTextAreaElement;
+      assert.ok(notesTextarea, "expected a real textarea for the longtext field");
+
+      await act(async () => {
+        fireEvent.change(nameInput, { target: { value: "Dana" } });
+        fireEvent.keyDown(notesTextarea, { key: "Enter" });
+      });
+      assert.equal(postCount, 0, "a bare Enter in the longtext textarea must never submit the form");
+
+      await act(async () => {
+        fireEvent.keyDown(notesTextarea, { key: "Enter", ctrlKey: true });
+      });
+      for (let i = 0; i < 40; i++) {
+        if (postCount === 1) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+      assert.equal(postCount, 1, "Ctrl+Enter must create the real record through the real API");
+      assert.equal(store[0]?.name, "Dana");
+
+      await act(async () => {
+        fireEvent.change(nameInput, { target: { value: "Lee" } });
+        fireEvent.keyDown(notesTextarea, { key: "Enter", metaKey: true });
+      });
+      for (let i = 0; i < 40; i++) {
+        if (postCount === 2) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+      assert.equal(postCount, 2, "Cmd+Enter (metaKey) must also create a real record through the real API");
+      assert.equal(store[1]?.name, "Lee");
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    cleanup();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
