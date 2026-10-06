@@ -287,6 +287,7 @@ test("WhatsAppPanel's startConnectedPolling also refreshes the message log each 
     "connectedPollRef",
     "cancelInFlightConnectedCheckRef",
     "connectedPollFailuresRef",
+    "messagesVersionRef",
     "setInterval",
     "clearInterval",
     "getWhatsAppStatus",
@@ -304,6 +305,7 @@ test("WhatsAppPanel's startConnectedPolling also refreshes the message log each 
     connectedPollRef,
     cancelInFlightConnectedCheckRef,
     connectedPollFailuresRef,
+    { current: 0 },
     fakeSetInterval,
     fakeClearInterval,
     async () => ({ status: "connected" }),
@@ -332,6 +334,148 @@ test("WhatsAppPanel's startConnectedPolling also refreshes the message log each 
     capturedMessages?.map((m) => m.id),
     ["m3", "m2", "m1"],
     "the new message (m3) is prepended, the already-loaded one (m2) is not duplicated, and m1 is preserved",
+  );
+});
+
+/**
+ * Regression test for a real race found by round 431's Explore survey:
+ * mergeFreshMessages is purely additive (it can only add an id missing
+ * from `prev`, never remove one it no longer sees). If handleDeleteMessage
+ * or handleClearHistory removes a message while this tick's own
+ * listWhatsAppMessages fetch is already in flight, that fetch's response
+ * still reflects the pre-deletion log -- once it resolves, the merge
+ * would treat every id in it as "new" relative to the now-shorter `prev`
+ * and splice the just-deleted message right back in, permanently (the
+ * next tick's genuinely up-to-date fetch computes zero new ids and leaves
+ * the wrongly-resurrected list untouched). Confirms the fix:
+ * messagesVersionRef (bumped by handleDeleteMessage/handleClearHistory,
+ * simulated directly here since this test extracts only
+ * startConnectedPolling itself) changing while the fetch is held open
+ * means its result is discarded -- setMessages is never even called for
+ * this tick -- rather than merged into state.
+ */
+test("WhatsAppPanel's connected-poll tick never resurrects a message deleted while its own message-refresh fetch was still in flight", async () => {
+  const stopMatch = whatsAppPanelSrc.match(/ {2}function stopConnectedPolling\(\) \{[\s\S]*?\n {2}\}\n/);
+  const startMatch = whatsAppPanelSrc.match(/ {2}function startConnectedPolling\(\) \{[\s\S]*?\n {2}\}\n/);
+  assert.ok(stopMatch, "expected to find stopConnectedPolling in WhatsAppPanel.tsx");
+  assert.ok(startMatch, "expected to find startConnectedPolling in WhatsAppPanel.tsx");
+  const { code: raceCode } = transformSync(`${stopMatch![0]}\n${startMatch![0]}`, { loader: "ts" });
+
+  let raceTickFn: (() => Promise<void>) | undefined;
+  const fakeSetIntervalForRace = ((fn: () => Promise<void>) => {
+    raceTickFn = fn;
+    return 1 as unknown as ReturnType<typeof setInterval>;
+  }) as typeof setInterval;
+  const fakeClearIntervalForRace = (() => {
+    raceTickFn = undefined;
+  }) as typeof clearInterval;
+
+  const connectedPollRefForRace = { current: null as unknown };
+  const cancelInFlightConnectedCheckRefForRace = { current: null as (() => void) | null };
+  const connectedPollFailuresRefForRace = { current: 0 };
+  const messagesVersionRef = { current: 0 };
+
+  function makeRaceMsg(id: string): WhatsAppMessageLogEntry {
+    return {
+      id,
+      direction: "in",
+      fromNumber: "+1000",
+      toNumber: "+2000",
+      body: id,
+      matchedLabel: null,
+      matchedEntityName: null,
+      matchedRecordId: null,
+      status: "received",
+      createdAt: "2024-01-01T00:00:00.000Z",
+    };
+  }
+  // This tick's own fetch, issued before the user's concurrent delete --
+  // it still reflects the pre-deletion log.
+  const stalePage = [makeRaceMsg("m2"), makeRaceMsg("m1")];
+
+  let releaseListMessages: (() => void) | undefined;
+  const held = new Promise<void>((resolve) => {
+    releaseListMessages = resolve;
+  });
+  // getWhatsAppStatus's own `await` (real code, above listWhatsAppMessages)
+  // needs a microtask turn to resolve before the tick's continuation even
+  // reaches `const versionBeforeFetch = messagesVersionRef.current;` --
+  // bumping the version synchronously right after calling raceTickFn()
+  // would race ahead of that capture and land before it, not during the
+  // listWhatsAppMessages call this test means to simulate. Waiting for the
+  // listWhatsAppMessages stub to actually be entered (same technique as
+  // round 424's "waits for logout() to actually be entered") guarantees
+  // the version bump below lands strictly after versionBeforeFetch was
+  // already captured.
+  let resolveFetchStarted: (() => void) | undefined;
+  const fetchStarted = new Promise<void>((resolve) => {
+    resolveFetchStarted = resolve;
+  });
+  let setMessagesCallCount = 0;
+
+  const { startConnectedPolling: startRacePolling } = new Function(
+    "connectedPollRef",
+    "cancelInFlightConnectedCheckRef",
+    "connectedPollFailuresRef",
+    "messagesVersionRef",
+    "setInterval",
+    "clearInterval",
+    "getWhatsAppStatus",
+    "setStatus",
+    "startPolling",
+    "listWhatsAppMessages",
+    "setMessages",
+    "setLoadError",
+    "MAX_CONSECUTIVE_CONNECTED_POLL_FAILURES",
+    "CONNECTED_POLL_INTERVAL_MS",
+    "projectId",
+    "mergeFreshMessages",
+    `${raceCode}\nreturn { stopConnectedPolling, startConnectedPolling };`,
+  )(
+    connectedPollRefForRace,
+    cancelInFlightConnectedCheckRefForRace,
+    connectedPollFailuresRefForRace,
+    messagesVersionRef,
+    fakeSetIntervalForRace,
+    fakeClearIntervalForRace,
+    async () => ({ status: "connected" }),
+    () => {},
+    () => {},
+    async () => {
+      resolveFetchStarted!();
+      await held;
+      return { messages: stalePage, hasMore: false };
+    },
+    () => {
+      setMessagesCallCount += 1;
+    },
+    () => {},
+    5,
+    10000,
+    "proj1",
+    (prev: WhatsAppMessageLogEntry[], fresh: WhatsAppMessageLogEntry[]) => {
+      const existingIds = new Set(prev.map((m) => m.id));
+      const newOnes = fresh.filter((m) => !existingIds.has(m.id));
+      return newOnes.length === 0 ? prev : [...newOnes, ...prev];
+    },
+  ) as { startConnectedPolling: () => void };
+
+  startRacePolling();
+  assert.ok(raceTickFn, "expected startConnectedPolling to register an interval callback");
+  const tickPromise = raceTickFn!();
+
+  // Wait for the tick to actually reach its own listWhatsAppMessages call
+  // before simulating handleDeleteMessage's version bump -- a real network
+  // fetch would take real time, exactly like this held-open promise.
+  await fetchStarted;
+  messagesVersionRef.current += 1;
+  releaseListMessages!();
+  await tickPromise;
+
+  assert.equal(
+    setMessagesCallCount,
+    0,
+    "a message-refresh fetch that started before a delete/clear must never apply its now-stale result",
   );
 });
 

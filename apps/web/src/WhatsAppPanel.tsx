@@ -200,6 +200,21 @@ export function WhatsAppPanel({
   // afterward and overwriting the fresh, correct state with a stale
   // "connecting"/"qr" payload.
   const cancelInFlightPollRef = useRef<(() => void) | null>(null);
+  /**
+   * Bumped by handleDeleteMessage/handleClearHistory's own explicit
+   * removal, the moment it's known to have succeeded server-side. Every
+   * mergeFreshMessages call site below (the connected-poll tick,
+   * handleSendTest, handleRetry) captures this value right before its own
+   * listWhatsAppMessages fetch starts, and skips applying that fetch's
+   * result if the value changed while it was in flight. Without this, a
+   * delete/clear landing while one of those fetches is already running
+   * resurrects the just-deleted message(s): that fetch's response still
+   * reflects the pre-deletion log, mergeFreshMessages treats every id
+   * missing from the now-shorter `prev` as new, and splices it right back
+   * in -- permanently, since the next poll's genuinely-empty fresh page
+   * computes zero new ids and leaves the resurrected list unchanged.
+   */
+  const messagesVersionRef = useRef(0);
 
   function stopPolling() {
     if (pollRef.current) {
@@ -250,9 +265,12 @@ export function WhatsAppPanel({
           return;
         }
         try {
+          const versionBeforeFetch = messagesVersionRef.current;
           const { messages: freshPage } = await listWhatsAppMessages(projectId);
           if (cancelled) return;
-          setMessages((prev) => mergeFreshMessages(prev, freshPage));
+          if (messagesVersionRef.current === versionBeforeFetch) {
+            setMessages((prev) => mergeFreshMessages(prev, freshPage));
+          }
         } catch {
           // A single failed message-refresh isn't worth surfacing an error
           // for -- the connection-status check above already covers real
@@ -412,8 +430,11 @@ export function WhatsAppPanel({
       setSendResult(
         result.ok ? { ok: true, text: t("whatsapp.send.success") } : { ok: false, text: result.error ?? t("whatsapp.send.genericError") },
       );
+      const versionBeforeFetch = messagesVersionRef.current;
       const { messages: freshPage } = await listWhatsAppMessages(projectId);
-      setMessages((prev) => mergeFreshMessages(prev, freshPage));
+      if (messagesVersionRef.current === versionBeforeFetch) {
+        setMessages((prev) => mergeFreshMessages(prev, freshPage));
+      }
     } catch (err) {
       setSendResult({ ok: false, text: (err as Error).message });
     } finally {
@@ -494,8 +515,11 @@ export function WhatsAppPanel({
       // send) -- in that case the message log is unchanged, so show the
       // reason directly instead of leaving the button silently reset.
       if (!result.ok) setRetryError(result.error ?? t("whatsapp.log.retryError"));
+      const versionBeforeFetch = messagesVersionRef.current;
       const { messages: freshPage } = await listWhatsAppMessages(projectId);
-      setMessages((prev) => mergeFreshMessages(prev, freshPage));
+      if (messagesVersionRef.current === versionBeforeFetch) {
+        setMessages((prev) => mergeFreshMessages(prev, freshPage));
+      }
     } catch (err) {
       setRetryError((err as Error).message);
     } finally {
@@ -565,6 +589,7 @@ export function WhatsAppPanel({
     setDeleteError(null);
     try {
       await deleteWhatsAppMessage(projectId, m.id);
+      messagesVersionRef.current += 1;
       setMessages((prev) => prev.filter((msg) => msg.id !== m.id));
     } catch (err) {
       setDeleteError((err as Error).message);
@@ -578,6 +603,7 @@ export function WhatsAppPanel({
     setClearing(true);
     try {
       await clearWhatsAppMessages(projectId);
+      messagesVersionRef.current += 1;
       setMessages([]);
       setHasMoreMessages(false);
       setRetryError(null);
