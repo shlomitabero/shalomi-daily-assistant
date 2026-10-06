@@ -2842,6 +2842,8 @@ button.sort-header:hover:not(:disabled) {
 .print-field dd {
   margin: 0;
   flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .print-record-footer {
@@ -2870,6 +2872,7 @@ button.sort-header:hover:not(:disabled) {
   padding: 6px 10px;
   border-bottom: 1px solid #ccc;
   font-size: 13px;
+  overflow-wrap: anywhere;
 }
 
 .print-list-sheet th {

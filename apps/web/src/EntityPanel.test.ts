@@ -2635,6 +2635,43 @@ test("EntityPanel's Print list button prints exactly the selected rows when a se
 });
 
 /**
+ * New in this round (441): a long-standing, known-but-deprioritized small
+ * candidate from round 377's own notes -- confirmed still present in the
+ * current stylesheet. `.print-field` is `display: flex` with `dd` at
+ * `flex: 1`; a flex item's default `min-width` resolves to its *min-content*
+ * size, which for plain text is the width of its single longest unbreakable
+ * token (a URL, a long SKU/reference number, a long Hebrew word with no
+ * spaces). With no `min-width: 0` on the flex item and no `overflow-wrap`
+ * on the text, that one long token forces `dd` (and the whole print sheet)
+ * wider than the printed page's content box -- and since `@media print`
+ * positions the sheet as `position: absolute; inset: 0` with no horizontal
+ * scroll possible on a physical page, the overflow is simply clipped off
+ * with no error or indication. `.print-list-sheet td` has the identical
+ * gap (no `overflow-wrap`, so one long cell value can force the table
+ * wider than the page). This exact CSS shape has already been fixed four
+ * other times in this same stylesheet (`.checkpoint-list li strong`,
+ * `.collab-list li strong`, `.whatsapp-log-body`, `.my-project-open
+ * strong`), always with the same `min-width: 0` + `overflow-wrap: anywhere`
+ * pairing -- `.print-field`/`.print-list-sheet` simply never received it.
+ * jsdom has no layout engine and can't detect real overflow/clipping (see
+ * the print tests just above, which only ever assert on textContent), so
+ * this reads styles.css's own source directly -- the same discipline this
+ * routine already uses for codegen.ts's generated-app template checks.
+ */
+test("the print sheet's CSS lets a long, unbreakable field value wrap instead of overflowing/clipping off the printed page", () => {
+  const stylesCss = readFileSync(new URL("./styles.css", import.meta.url), "utf8");
+
+  const printFieldDd = stylesCss.match(/\.print-field dd \{[\s\S]*?\}/)?.[0];
+  assert.ok(printFieldDd, "expected a .print-field dd rule in styles.css");
+  assert.match(printFieldDd!, /min-width:\s*0/, ".print-field dd must have min-width: 0 so its flex item can actually shrink below its text's min-content width");
+  assert.match(printFieldDd!, /overflow-wrap:\s*anywhere/, ".print-field dd must allow a long unbreakable value to wrap instead of overflowing the printed page");
+
+  const printListCell = stylesCss.match(/\.print-list-sheet th,\s*\n\.print-list-sheet td \{[\s\S]*?\}/)?.[0];
+  assert.ok(printListCell, "expected a .print-list-sheet th/td rule in styles.css");
+  assert.match(printListCell!, /overflow-wrap:\s*anywhere/, ".print-list-sheet td must allow a long unbreakable cell value to wrap instead of forcing the table wider than the printed page");
+});
+
+/**
  * CSV sibling of the print-list test above: stubs URL.createObjectURL the
  * same way BuildProgress.test.ts's own download test does (jsdom has no
  * real Blob-URL machinery) to read back the actual generated CSV content,
