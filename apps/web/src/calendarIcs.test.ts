@@ -171,7 +171,7 @@ test("buildCalendarIcs resolves an enum field to its Hebrew enumLabels translati
   assert.doesNotMatch(ics, /SUMMARY:shipped/, "must never leak the raw enum value in SUMMARY once a real Hebrew label exists for it");
 });
 
-test("buildCalendarIcs folds a long DESCRIPTION line at 75 octets with a CRLF + single leading space continuation", () => {
+test("buildCalendarIcs folds a long DESCRIPTION line at 75 UTF-8 octets with a CRLF + single leading space continuation", () => {
   const longNote = "x".repeat(120);
   const records: EntityRecord[] = [
     { id: 1, appointmentDate: "2026-03-15", customerName: "Dana Levi", notes: longNote, courierId: null },
@@ -180,6 +180,51 @@ test("buildCalendarIcs folds a long DESCRIPTION line at 75 octets with a CRLF + 
   const lines = ics.split("\r\n");
   const descriptionLineIndex = lines.findIndex((l) => l.startsWith("DESCRIPTION:"));
   assert.ok(descriptionLineIndex >= 0);
-  assert.ok(lines[descriptionLineIndex].length <= 75, `folded first line must be <=75 chars, was ${lines[descriptionLineIndex].length}`);
+  // Asserting real UTF-8 byte length (not .length, which is only equal to
+  // byte length for pure-ASCII content like this test's) -- the Hebrew
+  // test right below this one is where that distinction actually bites.
+  const firstLineBytes = new TextEncoder().encode(lines[descriptionLineIndex]).length;
+  assert.ok(firstLineBytes <= 75, `folded first line must be <=75 UTF-8 octets, was ${firstLineBytes}`);
   assert.ok(lines[descriptionLineIndex + 1].startsWith(" "), "a folded continuation line must start with a single leading space");
+});
+
+/**
+ * Regression test for round 430: RFC 5545 §3.1's 75-octet fold limit
+ * counts bytes of the UTF-8 encoding, not JS string length (UTF-16 code
+ * units). A Hebrew character is 1 UTF-16 unit but 2 UTF-8 bytes, so the
+ * original character-counting foldIcsLine let a Hebrew DESCRIPTION line
+ * well over 75 real bytes pass through completely unfolded -- its
+ * *character* count alone looked compliant -- defeating line-folding for
+ * exactly the content this Hebrew-primary app actually generates.
+ */
+test("buildCalendarIcs folds a Hebrew DESCRIPTION line by real UTF-8 byte count, not character count", () => {
+  const hebrewNote = "לקוח חדש הגיע למשרד וביקש הצעת מחיר מפורטת לפרויקט שיפוץ גדול בבית פרטי";
+  assert.ok(hebrewNote.length < 75, "sanity check: this note's character count alone looks compliant with the old (wrong) check");
+  assert.ok(
+    new TextEncoder().encode(hebrewNote).length > 75,
+    "sanity check: its real UTF-8 byte count is NOT compliant -- this is the actual RFC 5545 limit",
+  );
+
+  const records: EntityRecord[] = [
+    { id: 1, appointmentDate: "2026-03-15", customerName: "Dana Levi", notes: hebrewNote, courierId: null },
+  ];
+  const ics = buildCalendarIcs(entity, dateField, nameField, records, [], {});
+  const lines = ics.split("\r\n");
+  const descriptionLineIndex = lines.findIndex((l) => l.startsWith("DESCRIPTION:"));
+  assert.ok(descriptionLineIndex >= 0);
+
+  const descriptionPhysicalLines = [lines[descriptionLineIndex]];
+  let i = descriptionLineIndex;
+  while (lines[i + 1]?.startsWith(" ")) {
+    i += 1;
+    descriptionPhysicalLines.push(lines[i]);
+  }
+  assert.ok(
+    descriptionPhysicalLines.length > 1,
+    "a Hebrew line this long in real bytes must actually be folded into more than one physical line",
+  );
+  for (const line of descriptionPhysicalLines) {
+    const byteLength = new TextEncoder().encode(line).length;
+    assert.ok(byteLength <= 75, `every folded physical line must be <=75 UTF-8 octets, was ${byteLength}: ${JSON.stringify(line)}`);
+  }
 });

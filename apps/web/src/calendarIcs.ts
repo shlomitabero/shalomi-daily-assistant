@@ -22,21 +22,52 @@ function icsEscapeText(value: string): string {
 }
 
 /**
+ * RFC 5545 §3.1's 75-octet limit counts bytes of the UTF-8-encoded line,
+ * not JS string length (UTF-16 code units) -- a distinction that matters
+ * immediately for this Hebrew-primary app: every Hebrew character is 1
+ * UTF-16 unit (so `.length` counts it as 1) but 2 UTF-8 bytes, so counting
+ * characters let a DESCRIPTION/SUMMARY line up to 150 real bytes through
+ * completely unfolded, or folded a longer one into still-150-byte chunks --
+ * exactly the "a strict parser could reject or truncate" failure
+ * foldIcsLine exists to prevent, defeated for its own primary audience.
+ * TextEncoder (not Buffer, which doesn't exist in this file's actual
+ * browser runtime) gives the real UTF-8 byte length in both the browser
+ * and this file's Node-based test runner.
+ */
+function utf8ByteLength(s: string): number {
+  return new TextEncoder().encode(s).length;
+}
+
+/**
  * RFC 5545 §3.1 requires folding any content line longer than 75 octets:
- * a CRLF followed by a single leading space starts the continuation.
- * Without this, a long DESCRIPTION (several fields' worth of values on one
- * line) is exactly the kind of line a strict parser -- unlike the
- * permissive ones used while building this -- could reject or truncate.
+ * a CRLF followed by a single leading space starts the continuation. That
+ * leading space is part of the printed physical line, so a continuation
+ * chunk can only hold 74 bytes of real content -- the first chunk (which
+ * gets no leading space) is the only one allowed the full 75. Missing this
+ * meant every continuation line printed at 76 octets, one over budget,
+ * regardless of character set -- caught by this round's own new Hebrew
+ * test asserting every folded physical line, not just the first.
+ * Splits on whole characters (Array.from, not raw indices, so a surrogate
+ * pair is never torn in half) while tracking UTF-8 bytes, so each physical
+ * output line -- not just its character count -- stays within budget.
  */
 function foldIcsLine(line: string): string {
-  if (line.length <= 75) return line;
+  if (utf8ByteLength(line) <= 75) return line;
+  const chars = Array.from(line);
   const parts: string[] = [];
-  let rest = line;
-  while (rest.length > 75) {
-    parts.push(rest.slice(0, 75));
-    rest = rest.slice(75);
+  let current = "";
+  let limit = 75;
+  for (const ch of chars) {
+    const candidate = current + ch;
+    if (current !== "" && utf8ByteLength(candidate) > limit) {
+      parts.push(current);
+      current = ch;
+      limit = 74;
+    } else {
+      current = candidate;
+    }
   }
-  parts.push(rest);
+  if (current !== "") parts.push(current);
   return parts.join("\r\n ");
 }
 

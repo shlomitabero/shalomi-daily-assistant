@@ -2007,16 +2007,28 @@ function icsEscapeText(value) {
   return value.replace(/\\\\/g, "\\\\\\\\").replace(/;/g, "\\\\;").replace(/,/g, "\\\\,").replace(/\\r\\n|\\r|\\n/g, "\\\\n");
 }
 
-// RFC 5545 §3.1 requires folding any content line longer than 75 octets: a CRLF followed by a single leading space starts the continuation.
+// RFC 5545 §3.1's 75-octet limit counts UTF-8 bytes, not JS string length -- a Hebrew character is 1 UTF-16 unit but 2 UTF-8 bytes, so counting characters let a Hebrew line through unfolded (or folded into still-oversized chunks) exactly when this app's own primary-language content needed folding most.
+function utf8ByteLength(s) {
+  return new TextEncoder().encode(s).length;
+}
+
 function foldIcsLine(line) {
-  if (line.length <= 75) return line;
+  if (utf8ByteLength(line) <= 75) return line;
+  const chars = Array.from(line);
   const parts = [];
-  let rest = line;
-  while (rest.length > 75) {
-    parts.push(rest.slice(0, 75));
-    rest = rest.slice(75);
+  let current = "";
+  let limit = 75;
+  for (const ch of chars) {
+    const candidate = current + ch;
+    if (current !== "" && utf8ByteLength(candidate) > limit) {
+      parts.push(current);
+      current = ch;
+      limit = 74;
+    } else {
+      current = candidate;
+    }
   }
-  parts.push(rest);
+  if (current !== "") parts.push(current);
   return parts.join("\\r\\n ");
 }
 

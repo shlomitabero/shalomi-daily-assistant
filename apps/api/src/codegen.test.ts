@@ -1626,12 +1626,17 @@ test("the exported EntityView's real generated buildCalendarIcs produces a genui
   const dateSrc = entityViewJsx.match(/function formatIcsDate\(date\) \{[\s\S]*?\n\}\n/)?.[0];
   const tsSrc = entityViewJsx.match(/function formatIcsTimestamp\(date\) \{[\s\S]*?\n\}\n/)?.[0];
   const escSrc = entityViewJsx.match(/function icsEscapeText\(value\) \{[\s\S]*?\n\}\n/)?.[0];
+  // foldIcsLine (round 430: byte-accurate RFC 5545 folding) now calls this
+  // separate helper -- without extracting and including it too, the
+  // assembled new Function below throws "utf8ByteLength is not defined"
+  // the instant foldIcsLine actually runs.
+  const utf8LenSrc = entityViewJsx.match(/function utf8ByteLength\(s\) \{[\s\S]*?\n\}\n/)?.[0];
   const foldSrc = entityViewJsx.match(/function foldIcsLine\(line\) \{[\s\S]*?\n\}\n/)?.[0];
   const buildSrc = entityViewJsx.match(
     /function buildCalendarIcs\(entity, dateField, labelField, records, relatedRecords, now, endField\) \{[\s\S]*?\n\}\n/,
   )?.[0];
   assert.ok(
-    pickDisplaySrc && labelFieldSrc && pad2Src && dateSrc && tsSrc && escSrc && foldSrc && buildSrc,
+    pickDisplaySrc && labelFieldSrc && pad2Src && dateSrc && tsSrc && escSrc && utf8LenSrc && foldSrc && buildSrc,
     "expected to find every ICS helper function in the real generated output",
   );
 
@@ -1642,7 +1647,7 @@ test("the exported EntityView's real generated buildCalendarIcs produces a genui
   // from).
   const relationStub = "function relationDisplayLabel() { return ''; }\n";
   const buildCalendarIcs = new Function(
-    `${pickDisplaySrc}\n${labelFieldSrc}\n${pad2Src}\n${dateSrc}\n${tsSrc}\n${escSrc}\n${foldSrc}\n${relationStub}\n${buildSrc}\nreturn buildCalendarIcs;`,
+    `${pickDisplaySrc}\n${labelFieldSrc}\n${pad2Src}\n${dateSrc}\n${tsSrc}\n${escSrc}\n${utf8LenSrc}\n${foldSrc}\n${relationStub}\n${buildSrc}\nreturn buildCalendarIcs;`,
   )() as (entity: unknown, dateField: unknown, labelField: unknown, records: unknown[], relatedRecords: unknown, now: Date) => string;
 
   const entity = {
@@ -1706,18 +1711,19 @@ test("the exported EntityView's real generated buildCalendarIcs resolves an enum
   const dateSrc = entityViewJsx.match(/function formatIcsDate\(date\) \{[\s\S]*?\n\}\n/)?.[0];
   const tsSrc = entityViewJsx.match(/function formatIcsTimestamp\(date\) \{[\s\S]*?\n\}\n/)?.[0];
   const escSrc = entityViewJsx.match(/function icsEscapeText\(value\) \{[\s\S]*?\n\}\n/)?.[0];
+  const utf8LenSrc = entityViewJsx.match(/function utf8ByteLength\(s\) \{[\s\S]*?\n\}\n/)?.[0];
   const foldSrc = entityViewJsx.match(/function foldIcsLine\(line\) \{[\s\S]*?\n\}\n/)?.[0];
   const buildSrc = entityViewJsx.match(
     /function buildCalendarIcs\(entity, dateField, labelField, records, relatedRecords, now, endField\) \{[\s\S]*?\n\}\n/,
   )?.[0];
   assert.ok(
-    pickDisplaySrc && labelFieldSrc && pad2Src && dateSrc && tsSrc && escSrc && foldSrc && buildSrc,
+    pickDisplaySrc && labelFieldSrc && pad2Src && dateSrc && tsSrc && escSrc && utf8LenSrc && foldSrc && buildSrc,
     "expected to find every ICS helper function in the real generated output",
   );
 
   const relationStub = "function relationDisplayLabel() { return ''; }\n";
   const buildCalendarIcs = new Function(
-    `${pickDisplaySrc}\n${labelFieldSrc}\n${pad2Src}\n${dateSrc}\n${tsSrc}\n${escSrc}\n${foldSrc}\n${relationStub}\n${buildSrc}\nreturn buildCalendarIcs;`,
+    `${pickDisplaySrc}\n${labelFieldSrc}\n${pad2Src}\n${dateSrc}\n${tsSrc}\n${escSrc}\n${utf8LenSrc}\n${foldSrc}\n${relationStub}\n${buildSrc}\nreturn buildCalendarIcs;`,
   )() as (entity: unknown, dateField: unknown, labelField: unknown, records: unknown[], relatedRecords: unknown, now: Date) => string;
 
   const entity = withStatus.spec.entities.find((e) => e.name === "Appointment")!;
@@ -1729,6 +1735,81 @@ test("the exported EntityView's real generated buildCalendarIcs resolves an enum
 
   assert.match(ics, /סטטוס: נשלח/);
   assert.doesNotMatch(ics, /סטטוס: shipped/, "must never leak the raw enum value once a real Hebrew label exists for it");
+});
+
+/**
+ * Regression test for round 430: the exported app's own ported foldIcsLine
+ * had the exact same byte-vs-character bug as the live-preview version
+ * (counting .length instead of real UTF-8 bytes), since it's a byte-for-
+ * byte copy per this file's own stated convention. Mirrors the dedicated
+ * Hebrew test added to calendarIcs.test.ts.
+ */
+test("the exported EntityView's real generated buildCalendarIcs folds a Hebrew DESCRIPTION line by real UTF-8 byte count, not character count", () => {
+  const withNotes: Project = {
+    ...project,
+    spec: {
+      ...project.spec,
+      entities: [
+        ...project.spec.entities,
+        {
+          name: "Appointment",
+          label: "תורים",
+          fields: [
+            { name: "customerName", label: "שם לקוח", type: "text", required: true },
+            { name: "date", label: "תאריך", type: "date", required: true },
+            { name: "notes", label: "הערות", type: "text", required: false },
+          ],
+        },
+      ],
+    },
+  };
+  const entityViewJsx = generateExportFiles(withNotes).find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+
+  const pickDisplaySrc = entityViewJsx.match(/export function pickDisplayField\(entity\) \{[\s\S]*?\n\}\n/)?.[0]?.replace(/^export /, "");
+  const labelFieldSrc = entityViewJsx.match(/function calendarLabelField\(entity, dateField\) \{[\s\S]*?\n\}\n/)?.[0];
+  const pad2Src = entityViewJsx.match(/function icsPad2\(n\) \{[\s\S]*?\n\}\n/)?.[0];
+  const dateSrc = entityViewJsx.match(/function formatIcsDate\(date\) \{[\s\S]*?\n\}\n/)?.[0];
+  const tsSrc = entityViewJsx.match(/function formatIcsTimestamp\(date\) \{[\s\S]*?\n\}\n/)?.[0];
+  const escSrc = entityViewJsx.match(/function icsEscapeText\(value\) \{[\s\S]*?\n\}\n/)?.[0];
+  const utf8LenSrc = entityViewJsx.match(/function utf8ByteLength\(s\) \{[\s\S]*?\n\}\n/)?.[0];
+  const foldSrc = entityViewJsx.match(/function foldIcsLine\(line\) \{[\s\S]*?\n\}\n/)?.[0];
+  const buildSrc = entityViewJsx.match(
+    /function buildCalendarIcs\(entity, dateField, labelField, records, relatedRecords, now, endField\) \{[\s\S]*?\n\}\n/,
+  )?.[0];
+  assert.ok(
+    pickDisplaySrc && labelFieldSrc && pad2Src && dateSrc && tsSrc && escSrc && utf8LenSrc && foldSrc && buildSrc,
+    "expected to find every ICS helper function in the real generated output",
+  );
+
+  const relationStub = "function relationDisplayLabel() { return ''; }\n";
+  const buildCalendarIcs = new Function(
+    `${pickDisplaySrc}\n${labelFieldSrc}\n${pad2Src}\n${dateSrc}\n${tsSrc}\n${escSrc}\n${utf8LenSrc}\n${foldSrc}\n${relationStub}\n${buildSrc}\nreturn buildCalendarIcs;`,
+  )() as (entity: unknown, dateField: unknown, labelField: unknown, records: unknown[], relatedRecords: unknown, now: Date) => string;
+
+  const entity = withNotes.spec.entities.find((e) => e.name === "Appointment")!;
+  const dateField = entity.fields.find((f) => f.name === "date")!;
+  const labelField = entity.fields.find((f) => f.name === "customerName")!;
+  const notesField = entity.fields.find((f) => f.name === "notes")!;
+  const hebrewNote = "לקוח חדש הגיע למשרד וביקש הצעת מחיר מפורטת לפרויקט שיפוץ גדול בבית פרטי";
+  assert.ok(hebrewNote.length < 75, "sanity check: character count alone looks compliant with the old (wrong) check");
+  assert.ok(new TextEncoder().encode(hebrewNote).length > 75, "sanity check: real UTF-8 byte count is not compliant");
+  const records = [{ id: 5, customerName: "Dana Levi", date: "2026-03-15", [notesField.name]: hebrewNote }];
+
+  const ics = buildCalendarIcs(entity, dateField, labelField, records, {}, new Date("2026-01-01T00:00:00Z"));
+  const lines = ics.split("\r\n");
+  const descriptionLineIndex = lines.findIndex((l) => l.startsWith("DESCRIPTION:"));
+  assert.ok(descriptionLineIndex >= 0);
+  const descriptionPhysicalLines = [lines[descriptionLineIndex]];
+  let i = descriptionLineIndex;
+  while (lines[i + 1]?.startsWith(" ")) {
+    i += 1;
+    descriptionPhysicalLines.push(lines[i]);
+  }
+  assert.ok(descriptionPhysicalLines.length > 1, "a Hebrew line this long in real bytes must actually be folded");
+  for (const line of descriptionPhysicalLines) {
+    const byteLength = new TextEncoder().encode(line).length;
+    assert.ok(byteLength <= 75, `every folded physical line must be <=75 UTF-8 octets, was ${byteLength}: ${JSON.stringify(line)}`);
+  }
 });
 
 // The live-preview app's own EntityPanel.tsx got a "Columns" menu (hide/show
