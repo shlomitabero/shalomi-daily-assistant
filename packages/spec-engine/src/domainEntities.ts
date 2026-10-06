@@ -147,7 +147,13 @@ export const DOMAIN_ENTITY_RULES: DomainEntityRule[] = [
     },
   },
   {
-    keywords: ["employee", "staff", "team member", "worker", "עובד", "עובדת", "עובדים", "צוות"],
+    // "worker" (round 446): a bare substring match on "coworker" -- a
+    // common, everyday word with nothing to do with HR/staff management
+    // (e.g. "split expenses with my coworker") -- spuriously fabricated an
+    // Employee entity for purely personal app descriptions. `\b`-bounded
+    // here, same fix already applied to order/stock/driver/patient/deals
+    // above for the identical collision shape.
+    keywords: ["employee", "staff", "team member", /\bworkers?\b/, "עובד", "עובדת", "עובדים", "צוות"],
     labelHe: "עובדים",
     descriptionHe: "מישהו שעובד בעסק.",
     fieldLabelsHe: { name: "שם", role: "תפקיד", email: "אימייל", active: "פעיל/ה" },
@@ -1083,14 +1089,16 @@ export const DOMAIN_ENTITY_RULES: DomainEntityRule[] = [
 ];
 
 export interface RoleRule {
-  keywords: string[];
+  keywords: (string | RegExp)[];
   labelHe: string;
 }
 
 export const ROLE_RULES: Record<string, RoleRule> = {
   Admin: { keywords: ["admin", "administrator", "owner", "מנהל מערכת", "אדמין", "בעלים"], labelHe: "מנהל/ת ראשי/ת" },
   Manager: { keywords: ["manager", "management", "מנהל", "מנהלת", "ניהול"], labelHe: "מנהל/ת" },
-  Employee: { keywords: ["employee", "staff", "worker", "team member", "עובד", "עובדת", "עובדים", "צוות"], labelHe: "עובד/ת" },
+  // Same bare-substring collision as the Employee entity rule above
+  // ("coworker" contains "worker") -- \b-bounded here too.
+  Employee: { keywords: ["employee", "staff", /\bworkers?\b/, "team member", "עובד", "עובדת", "עובדים", "צוות"], labelHe: "עובד/ת" },
   Customer: { keywords: ["customer portal", "client portal", "self-service", "פורטל לקוחות", "גישת לקוחות"], labelHe: "לקוח/ה" },
 };
 

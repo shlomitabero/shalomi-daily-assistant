@@ -650,6 +650,38 @@ test("Patient's 'patient' keyword doesn't spuriously match 'impatient', and 'out
   assert.ok(outpatient.entities.some((e) => e.name === "Patient"), "'outpatient' must still match Patient");
 });
 
+/**
+ * Regression test for a real bug found in round 446: Employee's bare
+ * "worker" keyword (used both in DOMAIN_ENTITY_RULES and ROLE_RULES) is a
+ * substring of "coworker" -- an ordinary word in a plain personal
+ * expense-splitting description that has nothing to do with staff
+ * management, so it spuriously fabricated both an Employee entity AND an
+ * Employee role. Fixed with the same `\b`-bounded RegExp pattern Order's
+ * "order"/Product's "stock"/Deal's "deals"/Patient's "patient" already
+ * use. ROLE_RULES.keywords was widened from `string[]` to
+ * `(string | RegExp)[]` and matchRoles switched from a raw
+ * `lower.includes(kw)` to the shared matchesKeyword helper (which already
+ * supported RegExp) to make the role side of the fix possible at all.
+ */
+test("Employee's 'worker' keyword doesn't spuriously match 'coworker', for both the entity and the role", async () => {
+  const provider = new HeuristicSpecProvider();
+
+  const coworker = await provider.generate("An app to split shared expenses with my coworker, like rent and groceries.");
+  assert.ok(
+    !coworker.entities.some((e) => e.name === "Employee"),
+    "'coworker' alone must not spuriously match Employee via a bare 'worker' substring",
+  );
+  assert.ok(
+    !coworker.roles.includes("Employee"),
+    "'coworker' alone must not spuriously add an Employee role via a bare 'worker' substring",
+  );
+
+  // The real HR/staff term still works, for both the entity and the role.
+  const staffApp = await provider.generate("An app to manage our staff schedule: track every worker's shifts and hours.");
+  assert.ok(staffApp.entities.some((e) => e.name === "Employee"), "'worker' must still match Employee");
+  assert.ok(staffApp.roles.includes("Employee"), "'worker' must still add the Employee role");
+});
+
 test("MenuItem's 'מנה' keyword doesn't spuriously match 'מנהלים' (managers)", async () => {
   const provider = new HeuristicSpecProvider();
   const managers = await provider.generate("אפליקציה למעקב אחרי מנהלים בעסק");

@@ -94,7 +94,7 @@ export function matchRoles(text: string, isHebrew: boolean): string[] {
   const lower = text.toLowerCase();
   const roles = new Set<string>();
   for (const [role, rule] of Object.entries(ROLE_RULES)) {
-    if (rule.keywords.some((kw) => lower.includes(kw))) {
+    if (rule.keywords.some((kw) => matchesKeyword(lower, kw))) {
       roles.add(isHebrew ? rule.labelHe : role);
     }
   }
