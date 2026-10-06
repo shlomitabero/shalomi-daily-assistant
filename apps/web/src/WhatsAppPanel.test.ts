@@ -2522,6 +2522,162 @@ test("WhatsAppPanel's 'Load older messages' button appends the next page without
 });
 
 /**
+ * Regression test for round 432: handleLoadMore was a fourth
+ * fetch-then-setMessages call site that round 431's own messagesVersionRef
+ * fix never covered (the fix's own doc comment and code only guarded the
+ * three mergeFreshMessages call sites). "Load older messages" and "Clear
+ * history" are both always-enabled, simultaneously-rendered buttons --
+ * nothing stops a user from clicking "Load older messages" and then
+ * "Clear history" before the first request resolves. Before this round's
+ * fix, the held-open "older page" fetch's response (still reflecting the
+ * pre-clear log) would land after handleClearHistory had already emptied
+ * `messages`, and handleLoadMore's unconditional `setMessages((prev) =>
+ * [...prev, ...older])` would glue the stale page right back onto the
+ * now-empty state -- resurrecting the entire cleared history. Confirms the
+ * fix: the version bump from Clear history (which lands first here) makes
+ * the load-more fetch's own now-stale result get discarded instead.
+ */
+test("WhatsAppPanel's 'Load older messages' never resurrects history cleared while its own fetch was still in flight", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    const originalConfirm = globalThis.window.confirm;
+    globalThis.window.confirm = (() => true) as typeof window.confirm;
+    const page1: WhatsAppMessageLogEntry[] = [
+      {
+        id: "m1",
+        direction: "out",
+        fromNumber: "972501234567",
+        toNumber: "972521112233",
+        body: "Newest message",
+        matchedLabel: null,
+        matchedEntityName: null,
+        matchedRecordId: null,
+        status: "sent",
+        createdAt: new Date().toISOString(),
+      },
+      {
+        id: "m2",
+        direction: "in",
+        fromNumber: "972521112233",
+        toNumber: "972501234567",
+        body: "Second message",
+        matchedLabel: null,
+        matchedEntityName: null,
+        matchedRecordId: null,
+        status: "received",
+        createdAt: new Date().toISOString(),
+      },
+    ];
+    const page2: WhatsAppMessageLogEntry[] = [
+      {
+        id: "m3",
+        direction: "in",
+        fromNumber: "972521112233",
+        toNumber: "972501234567",
+        body: "Oldest message",
+        matchedLabel: null,
+        matchedEntityName: null,
+        matchedRecordId: null,
+        status: "received",
+        createdAt: new Date().toISOString(),
+      },
+    ];
+    let releaseOlderPageFetch: (() => void) | undefined;
+    const olderPageHeld = new Promise<void>((resolve) => {
+      releaseOlderPageFetch = resolve;
+    });
+    let olderPageRequestEntered = false;
+    globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/integrations/whatsapp/status") {
+        return new Response(
+          JSON.stringify({ status: "connected", phoneNumber: "972501234567", qrDataUrl: null, error: null }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      if (method === "GET" && input.startsWith("/api/projects/proj1/integrations/whatsapp/messages")) {
+        if (!input.includes("offset=")) {
+          return new Response(JSON.stringify({ messages: page1, hasMore: true }), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          });
+        }
+        if (input.endsWith("offset=2")) {
+          olderPageRequestEntered = true;
+          await olderPageHeld;
+          return new Response(JSON.stringify({ messages: page2, hasMore: false }), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          });
+        }
+        throw new Error(`unexpected offset in ${input}`);
+      }
+      if (method === "DELETE" && input === "/api/projects/proj1/integrations/whatsapp/messages") {
+        return new Response(null, { status: 204 });
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+
+    try {
+      render(
+        React.createElement(
+          ThemeProvider,
+          null,
+          React.createElement(
+            LanguageProvider,
+            null,
+            React.createElement(WhatsAppPanel, { projectId: "proj1", projectName: "Test Project", onClose: () => {}, onJumpToEntity: () => {}, onJumpToRecord: () => {} }),
+          ),
+        ),
+      );
+
+      await waitForCondition(() => document.querySelectorAll(".whatsapp-log-list li").length === 2);
+
+      const loadMoreButton = Array.from(document.querySelectorAll("button")).find((b) => b.textContent === "Load older messages");
+      assert.ok(loadMoreButton, "expected a 'Load older messages' button while hasMore is true");
+      fireEvent.click(loadMoreButton!);
+      await waitForCondition(() => olderPageRequestEntered);
+      // loadingMore flips the button's own label while its fetch is in
+      // flight -- a real, DOM-observable signal (not a timer) that the
+      // click's own fetch has actually started, mirroring this file's
+      // existing "Loading…" button-text convention.
+      await waitForCondition(() => Array.from(document.querySelectorAll("button")).some((b) => b.textContent === "Loading…"));
+
+      // The older-page fetch is now held open, exactly as if a real
+      // network request were still in flight. Clicking Clear history
+      // while it's held simulates the real race this test guards against.
+      const clearButton = Array.from(document.querySelectorAll("button")).find((b) => b.textContent === "Clear history");
+      assert.ok(clearButton, "expected a 'Clear history' button");
+      fireEvent.click(clearButton!);
+      await waitForCondition(() => document.querySelectorAll(".whatsapp-log-list li").length === 0);
+
+      // Only now release the stale older-page fetch, after the clear has
+      // already taken effect. handleClearHistory's own setHasMoreMessages(false)
+      // unmounts the "Load older messages" button entirely, so its
+      // "Loading…" label can't be used as a completion signal here --
+      // draining the microtask queue a few times (the same technique
+      // EntityPanel.test.ts already uses for an identical "let the stale
+      // call's continuation actually run after release" need, not a
+      // timing-based sleep) is what actually lets handleLoadMore's own
+      // continuation run before the assertion below.
+      releaseOlderPageFetch!();
+      await new Promise((resolve) => setImmediate(resolve));
+      await new Promise((resolve) => setImmediate(resolve));
+      await new Promise((resolve) => setImmediate(resolve));
+
+      assert.equal(
+        document.querySelectorAll(".whatsapp-log-list li").length,
+        0,
+        "the cleared history must stay empty -- the stale 'older page' fetch must never resurrect it",
+      );
+    } finally {
+      globalThis.window.confirm = originalConfirm;
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * Regression test: handleSendTest used to refresh the log with a plain
  * `setMessages(messages)` using the newest-page response (offset 0) --
  * a full replace, not a merge. Once a user had clicked "Load older

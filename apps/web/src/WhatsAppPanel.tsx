@@ -203,16 +203,20 @@ export function WhatsAppPanel({
   /**
    * Bumped by handleDeleteMessage/handleClearHistory's own explicit
    * removal, the moment it's known to have succeeded server-side. Every
-   * mergeFreshMessages call site below (the connected-poll tick,
-   * handleSendTest, handleRetry) captures this value right before its own
-   * listWhatsAppMessages fetch starts, and skips applying that fetch's
-   * result if the value changed while it was in flight. Without this, a
-   * delete/clear landing while one of those fetches is already running
-   * resurrects the just-deleted message(s): that fetch's response still
-   * reflects the pre-deletion log, mergeFreshMessages treats every id
-   * missing from the now-shorter `prev` as new, and splices it right back
-   * in -- permanently, since the next poll's genuinely-empty fresh page
-   * computes zero new ids and leaves the resurrected list unchanged.
+   * fetch-then-setMessages call site below -- the three mergeFreshMessages
+   * ones (the connected-poll tick, handleSendTest, handleRetry) and
+   * handleLoadMore's own plain-append one -- captures this value right
+   * before its own listWhatsAppMessages fetch starts, and skips applying
+   * that fetch's result if the value changed while it was in flight.
+   * Without this, a delete/clear landing while one of those fetches is
+   * already running resurrects the just-deleted message(s): that fetch's
+   * response still reflects the pre-deletion log, and either
+   * mergeFreshMessages treats every id missing from the now-shorter `prev`
+   * as new and splices it right back in, or (handleLoadMore) the plain
+   * `[...prev, ...older]` concat glues the stale page onto whatever `prev`
+   * has shrunk to in the meantime -- permanently in both cases, since no
+   * later fetch of the now-genuinely-smaller log ever removes an id it
+   * doesn't recognize as missing.
    */
   const messagesVersionRef = useRef(0);
 
@@ -537,9 +541,12 @@ export function WhatsAppPanel({
   async function handleLoadMore() {
     setLoadingMore(true);
     try {
+      const versionBeforeFetch = messagesVersionRef.current;
       const { messages: older, hasMore } = await listWhatsAppMessages(projectId, messages.length);
-      setMessages((prev) => [...prev, ...older]);
-      setHasMoreMessages(hasMore);
+      if (messagesVersionRef.current === versionBeforeFetch) {
+        setMessages((prev) => [...prev, ...older]);
+        setHasMoreMessages(hasMore);
+      }
     } catch (err) {
       setLoadError((err as Error).message);
     } finally {
