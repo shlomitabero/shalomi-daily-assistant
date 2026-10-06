@@ -5924,6 +5924,75 @@ test("EntityPanel's add/edit form wires field.required into the real required at
 });
 
 /**
+ * Round 443: FieldSchema.enumValues has no uniqueness constraint (and
+ * deliberately isn't given one -- tightening ProductSpecSchema would make
+ * an already-stored project/checkpoint with this defect fail to parse from
+ * now on, too high a cost for a cosmetic rendering bug). The one realistic
+ * way a real project ends up with a duplicate is an AI-generated spec.
+ * Before this fix, every enum <select> mapped enumValues directly to
+ * <option> elements keyed by the raw value, so a duplicate rendered the
+ * same choice twice. Covers all three enum <select> sites in one entity:
+ * the add/edit form's FieldInput, the Kanban board card's move dropdown,
+ * and the toolbar's filter-by-field dropdown.
+ */
+test("EntityPanel's enum <select> never renders the same option twice, even when the field's own enumValues contains a duplicate", async () => {
+  await withJsdom(async () => {
+    const dealEntity: Entity = {
+      name: "Deal",
+      label: "Deal",
+      fields: [
+        { name: "name", label: "Name", type: "text", required: true },
+        { name: "status", label: "Status", type: "enum", required: true, enumValues: ["new", "new", "won"] },
+      ],
+    };
+    const store: EntityRecord[] = [{ id: 1, name: "Acme Corp", status: "new" }];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = mockRecordsFetch(store) as typeof fetch;
+    try {
+      renderEntityPanel({ entity: dealEntity, allEntities: [dealEntity] });
+      await waitForCondition(() => document.querySelector(".entity-toolbar") !== null);
+
+      const filterSelect = document.querySelector(".entity-status-filter") as HTMLSelectElement;
+      assert.ok(filterSelect, "expected the toolbar's filter-by-status dropdown to render");
+      assert.deepEqual(
+        Array.from(filterSelect.options)
+          .map((o) => o.value)
+          .filter((v) => v !== ""),
+        ["new", "won"],
+        "the filter-by-field dropdown must list each distinct enum value exactly once, not once per duplicate entry in enumValues",
+      );
+
+      const boardToggle = document.querySelectorAll(".view-toggle-btn")[1] as HTMLButtonElement;
+      fireEvent.click(boardToggle);
+      await waitForCondition(() => document.querySelectorAll(".board-column").length === 2);
+
+      const boardSelect = document.querySelector(".board-card-move") as HTMLSelectElement;
+      assert.ok(boardSelect, "expected the Kanban board card's move dropdown to render");
+      assert.deepEqual(
+        Array.from(boardSelect.options).map((o) => o.value),
+        ["new", "won"],
+        "the board card's move dropdown must list each distinct enum value exactly once",
+      );
+
+      const addButton = document.querySelector(".board-add-card-btn") as HTMLButtonElement;
+      assert.ok(addButton, "expected a real add-card button in the column header");
+      fireEvent.click(addButton);
+
+      const formSelect = document.querySelector(".record-form select") as HTMLSelectElement;
+      assert.deepEqual(
+        Array.from(formSelect.options)
+          .map((o) => o.value)
+          .filter((v) => v !== ""),
+        ["new", "won"],
+        "the add/edit form's enum <select> must list each distinct enum value exactly once",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * New in this round: the per-entity table search box (the live filter-as-
  * you-type field in the toolbar) now remembers recent queries the same way
  * Global Search/Time Machine/WhatsApp/the home screen's own project search

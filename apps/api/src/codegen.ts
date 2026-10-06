@@ -806,6 +806,19 @@ import { createRecord, deleteRecord, listRecords, updateRecord } from "../api.js
 // another entity's own records, without needing a runtime schema fetch.
 const ALL_ENTITIES = ${allEntitiesJson};
 
+// An AI-generated spec's enum field can declare a duplicate value (nothing
+// else in this app edits enumValues directly, so a stored project almost
+// never gets one any other way). Every <select> built from enumValues keys
+// its <option> by the raw value, so a duplicate renders the same choice
+// twice; groupByField/groupRecordsByField below are worse -- each
+// duplicate became its own column/group with the exact same
+// records.filter(...) result, silently duplicating every matching
+// record's card/row across two identical columns. De-duping here, once
+// (order-preserving), fixes all three shapes of the same root cause.
+function uniqueEnumValues(values) {
+  return Array.from(new Set(values || []));
+}
+
 function emptyForm(entity) {
   const form = {};
   for (const f of entity.fields) form[f.name] = f.type === "boolean" ? false : "";
@@ -1857,7 +1870,7 @@ function findBoardField(fields) {
 // silently vanishing, mirroring groupRecordsByField's own "(other)"
 // bucket below.
 function groupByField(records, field) {
-  const values = field.enumValues || [];
+  const values = uniqueEnumValues(field.enumValues);
   const columns = values.map((value) => ({
     value,
     label: (field.enumLabels && field.enumLabels[value]) || value,
@@ -1896,7 +1909,7 @@ function groupRecordsByField(records, field) {
   }
   const groups = [];
   const known = new Set(field.enumValues || []);
-  for (const value of field.enumValues || []) {
+  for (const value of uniqueEnumValues(field.enumValues)) {
     const matched = records.filter((r) => String(r[field.name] || "") === value);
     if (matched.length > 0) groups.push({ key: value, label: (field.enumLabels && field.enumLabels[value]) || value, records: matched });
   }
@@ -2266,7 +2279,7 @@ function BoardCard({ entity, boardField, record, relatedRecords, hasMoveError, o
         </div>
       ))}
       <select className="board-card-move" value={record[boardField.name] ?? ""} onChange={(e) => onMove(e.target.value)}>
-        {(boardField.enumValues || []).map((v) => (
+        {uniqueEnumValues(boardField.enumValues).map((v) => (
           <option key={v} value={v}>
             {(boardField.enumLabels && boardField.enumLabels[v]) || v}
           </option>
@@ -2340,7 +2353,7 @@ function FieldInput({ entity, field, value, onChange, relatedEntity, relatedEnti
         <option value="" disabled>
           …
         </option>
-        {(field.enumValues ?? []).map((v) => (
+        {uniqueEnumValues(field.enumValues).map((v) => (
           <option key={v} value={v}>
             {(field.enumLabels && field.enumLabels[v]) || v}
           </option>
@@ -3563,7 +3576,7 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
                     <option value="false">No</option>
                   </>
                 ) : (
-                  (f.enumValues || []).map((v) => (
+                  uniqueEnumValues(f.enumValues).map((v) => (
                     <option key={v} value={v}>
                       {(f.enumLabels && f.enumLabels[v]) || v}
                     </option>

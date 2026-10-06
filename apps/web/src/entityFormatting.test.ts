@@ -41,6 +41,7 @@ import {
   splitHighlightSegments,
   splitLinkSegments,
   sumNumericFields,
+  uniqueEnumValues,
 } from "./entityFormatting.js";
 
 test("badgeTone recognizes common positive and negative status words, case-insensitively", () => {
@@ -1351,6 +1352,12 @@ test("buildImportRecords maps each column to a distinct field even when two fiel
   assert.deepEqual(result.records, [{ stage: "In Progress", shippingStatus: "Shipped" }]);
 });
 
+test("uniqueEnumValues de-dupes while preserving first-occurrence order, and tolerates a missing array", () => {
+  assert.deepEqual(uniqueEnumValues(["New", "New", "Won", "Lost", "Won"]), ["New", "Won", "Lost"]);
+  assert.deepEqual(uniqueEnumValues([]), []);
+  assert.deepEqual(uniqueEnumValues(undefined), []);
+});
+
 test("groupByField groups records into one column per declared enum value, in declared order, including empty columns", () => {
   const field: Field = {
     name: "stage",
@@ -1411,6 +1418,27 @@ test("groupByField falls back to the raw 'Other' label when called without a tra
   const field: Field = { name: "stage", type: "enum", required: true, enumValues: ["Lead"] };
   const columns = groupByField([{ id: 1, stage: "Archived" }], field);
   assert.equal(columns.find((c) => c.value === "__other__")!.label, "Other");
+});
+
+/**
+ * Round 443: field.enumValues has no uniqueness constraint (the one
+ * realistic way a real project ends up with a duplicate is an
+ * AI-generated spec -- see uniqueEnumValues' own doc comment above).
+ * Before this fix, groupByField mapped field.enumValues directly to
+ * columns with no dedup, so a duplicate value produced two identical
+ * columns that both filtered the SAME records -- every matching record's
+ * card rendered on the board twice, once in each duplicate column.
+ */
+test("groupByField never produces two columns for the same enum value, even when the field's own enumValues contains a duplicate", () => {
+  const field: Field = { name: "stage", type: "enum", required: true, enumValues: ["Lead", "Lead", "Won"] };
+  const records = [{ id: 1, stage: "Lead" }];
+  const columns = groupByField(records, field);
+  assert.deepEqual(
+    columns.map((c) => c.value),
+    ["Lead", "Won"],
+    "a duplicate declared value must collapse to one column, not one column per occurrence",
+  );
+  assert.equal(columns[0].records.length, 1, "the single matching record must not be duplicated across two identical columns");
 });
 
 /**
@@ -1623,6 +1651,26 @@ test("groupRecordsByField groups by an enum field in the field's own declared or
     [1, 4],
   );
   assert.deepEqual(groups.find((g) => g.key === "__other__")!.records.map((r) => r.id), [3]);
+});
+
+/**
+ * Round 443: same root cause as groupByField's identical regression test
+ * above -- groupRecordsByField's own loop iterated field.enumValues
+ * directly with no dedup, so a duplicate value produced two identical
+ * groups that both filtered the SAME records, duplicating every matching
+ * row across two groups in the table's "group by" view.
+ */
+test("groupRecordsByField never produces two groups for the same enum value, even when the field's own enumValues contains a duplicate", () => {
+  const t = (key: string) => translate("en", key);
+  const field: Field = { name: "status", type: "enum", required: true, enumValues: ["New", "New", "Won"] };
+  const records = [{ id: 1, status: "New" }];
+  const groups = groupRecordsByField(records, field, t);
+  assert.deepEqual(
+    groups.map((g) => g.key),
+    ["New"],
+    "a duplicate declared value must collapse to one group, not one group per occurrence (the empty 'Won' group is correctly omitted)",
+  );
+  assert.deepEqual(groups[0].records.map((r) => r.id), [1], "the single matching record must not be duplicated across two identical groups");
 });
 
 test("groupRecordsByField groups by a boolean field into exactly true then false, omitting an empty side entirely", () => {

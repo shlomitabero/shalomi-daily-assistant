@@ -543,6 +543,27 @@ export interface BoardColumn {
 }
 
 /**
+ * FieldSchema.enumValues has no uniqueness constraint (and deliberately
+ * isn't given one -- tightening ProductSpecSchema itself would make an
+ * already-stored project/checkpoint with this defect fail to parse from
+ * now on, too high a cost for what's only a cosmetic/grouping bug, not
+ * data corruption). The realistic way a real project ends up with a
+ * duplicate is an AI-generated spec, since nothing else in this app ever
+ * edits enumValues directly. Every enum <select> in EntityPanel.tsx keys
+ * its <option> by the raw value, so an unreconciled duplicate renders the
+ * same choice twice; groupByField/groupRecordsByField below are worse --
+ * each duplicate value became its own column/group with the exact same
+ * `records.filter(...)` result, so a board or "group by" view silently
+ * duplicated every matching record's card/row across two identical
+ * columns. De-duping here, once, order-preserving, fixes all three
+ * shapes of the same root cause without touching the schema or any
+ * stored data.
+ */
+export function uniqueEnumValues(values: string[] | undefined): string[] {
+  return Array.from(new Set(values ?? []));
+}
+
+/**
  * Groups records into one column per declared enum value, in the enum's
  * own declared order (not first-seen order) -- including a value with zero
  * matching records, so an empty stage still shows as a column rather than
@@ -563,7 +584,7 @@ export function groupByField(
   field: Field,
   t?: (key: string) => string,
 ): BoardColumn[] {
-  const values = field.enumValues ?? [];
+  const values = uniqueEnumValues(field.enumValues);
   const columns: BoardColumn[] = values.map((value) => ({
     value,
     label: field.enumLabels?.[value] ?? value,
@@ -1284,7 +1305,7 @@ export function groupRecordsByField(
 
   const groups: RecordGroup[] = [];
   const known = new Set(field.enumValues ?? []);
-  for (const value of field.enumValues ?? []) {
+  for (const value of uniqueEnumValues(field.enumValues)) {
     const matched = records.filter((r) => String(r[field.name] ?? "") === value);
     if (matched.length > 0) groups.push({ key: value, label: field.enumLabels?.[value] ?? value, records: matched });
   }

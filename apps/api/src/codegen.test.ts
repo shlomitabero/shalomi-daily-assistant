@@ -723,8 +723,11 @@ test("the exported EntityView's groupByField collects a record with an unrecogni
   const entityViewJsx = generateExportFiles(project).find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
   const groupByFieldSrc = entityViewJsx.match(/function groupByField\(records, field\) \{[\s\S]*?\n\}\n/)?.[0];
   assert.ok(groupByFieldSrc, "expected to find groupByField in generated output");
+  // groupByField calls uniqueEnumValues (round 443) -- must be in scope too.
+  const uniqueEnumValuesSrc = entityViewJsx.match(/function uniqueEnumValues\(values\) \{[\s\S]*?\n\}\n/)?.[0];
+  assert.ok(uniqueEnumValuesSrc, "expected to find uniqueEnumValues in generated output");
 
-  const groupByField = new Function(`${groupByFieldSrc}\nreturn groupByField;`)() as (
+  const groupByField = new Function(`${uniqueEnumValuesSrc}\n${groupByFieldSrc}\nreturn groupByField;`)() as (
     records: Record<string, unknown>[],
     field: { name: string; enumValues?: string[]; enumLabels?: Record<string, string> },
   ) => { value: string; label: string; records: unknown[]; isOther?: boolean }[];
@@ -5504,6 +5507,58 @@ test("the exported EntityView's FieldInput wires field.required into the real re
 
   const textBranch = fieldInputSrc!.match(/return <input id=\{id\} type="text"[\s\S]{0,100}/)?.[0];
   assert.match(textBranch ?? "", /required=\{field\.required\}/, "the plain text input fallback branch must be required-wired");
+});
+
+/**
+ * Round 443: field.enumValues has no uniqueness constraint anywhere in this
+ * app (and deliberately isn't given one at the shared-schema level --
+ * ProductSpecSchema is append-only in practice, so tightening it would make
+ * an already-stored project with this defect fail to parse from now on,
+ * too high a cost for what's only a cosmetic rendering bug). The realistic
+ * path for a real project to end up with a duplicate is an AI-generated
+ * spec. Before this fix, every enum <select> in the exported app (same as
+ * the live preview's EntityPanel.tsx) mapped enumValues straight to
+ * <option> elements keyed by the raw value, so a duplicate rendered the
+ * same choice twice. Extracts the real generated uniqueEnumValues helper
+ * via "real generated code via new Function" (this file's own established
+ * standard) and calls it directly, then confirms all three enum-rendering
+ * branches (FieldInput's <select>, BoardCard's move <select>, and the
+ * toolbar's filter-by-field <select>) route through it rather than mapping
+ * field.enumValues/boardField.enumValues/f.enumValues directly.
+ */
+test("the exported app's uniqueEnumValues de-dupes real generated code, and every enum <select> branch routes through it", () => {
+  const entityViewJsx = generateExportFiles(project).find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+
+  const helperSrc = entityViewJsx.match(/function uniqueEnumValues\(values\) \{[\s\S]*?\n\}\n/)?.[0];
+  assert.ok(helperSrc, "expected to find a real generated uniqueEnumValues helper");
+  const uniqueEnumValues = new Function(`${helperSrc}\nreturn uniqueEnumValues;`)() as (values: string[] | undefined) => string[];
+  assert.deepEqual(
+    uniqueEnumValues(["new", "new", "won"]),
+    ["new", "won"],
+    "must dedupe while preserving first-occurrence order",
+  );
+  assert.deepEqual(uniqueEnumValues(undefined), [], "must tolerate a missing enumValues array, same as the original inline fallback did");
+
+  const boardCardSrc = entityViewJsx.match(/function BoardCard\(\{[\s\S]*?\n\}\n/)?.[0];
+  assert.match(
+    boardCardSrc ?? "",
+    /\{uniqueEnumValues\(boardField\.enumValues\)\.map/,
+    "the board card's move dropdown must route boardField.enumValues through uniqueEnumValues",
+  );
+
+  const fieldInputSrc = entityViewJsx.match(/function FieldInput\(\{[\s\S]*?\n\}\n/)?.[0];
+  const enumBranch = fieldInputSrc!.match(/field\.type === "enum"[\s\S]{0,400}/)?.[0];
+  assert.match(
+    enumBranch ?? "",
+    /\{uniqueEnumValues\(field\.enumValues\)\.map/,
+    "the add/edit form's enum <select> must route field.enumValues through uniqueEnumValues",
+  );
+
+  assert.match(
+    entityViewJsx,
+    /uniqueEnumValues\(f\.enumValues\)\.map/,
+    "the toolbar's filter-by-field <select> must route f.enumValues through uniqueEnumValues",
+  );
 });
 
 /**

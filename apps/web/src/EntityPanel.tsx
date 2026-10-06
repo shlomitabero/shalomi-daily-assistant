@@ -58,6 +58,7 @@ import {
   splitHighlightSegments,
   splitLinkSegments,
   sumNumericFields,
+  uniqueEnumValues,
   type RelatedRecordsByEntity,
   type SortKey,
 } from "./entityFormatting.js";
@@ -417,7 +418,7 @@ function BoardCard({
         value={String(record[boardField.name] ?? "")}
         onChange={(e) => onMove(e.target.value)}
       >
-        {(boardField.enumValues ?? []).map((v) => (
+        {uniqueEnumValues(boardField.enumValues).map((v) => (
           <option key={v} value={v}>
             {boardField.enumLabels?.[v] ?? v}
           </option>
@@ -721,7 +722,7 @@ function FieldInput({
         <option value="" disabled>
           {t("entity.select")}
         </option>
-        {field.enumValues?.map((v) => (
+        {uniqueEnumValues(field.enumValues).map((v) => (
           <option key={v} value={v}>
             {field.enumLabels?.[v] ?? v}
           </option>
@@ -2310,7 +2311,7 @@ export function EntityPanel({
                     <option value="false">{t("entity.groupBy.no")}</option>
                   </>
                 ) : (
-                  (f.enumValues ?? []).map((v) => (
+                  uniqueEnumValues(f.enumValues).map((v) => (
                     <option key={v} value={v}>
                       {f.enumLabels?.[v] ?? v}
                     </option>
