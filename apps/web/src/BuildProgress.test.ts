@@ -166,6 +166,96 @@ test("BuildProgress does not show the failed-build banner once a failed step is 
 });
 
 /**
+ * Regression test for round 433's finding: the fix above (latest status,
+ * not first-ever-failure) only protects a build that has ALREADY received
+ * Debug's fresh success + Database's fresh success events. pipeline.ts
+ * streams Database's "failed" event and Debug's "running" one BEFORE it
+ * `await`s the actual fix (a real Anthropic API call, often several real
+ * seconds) -- so for that whole window, Database's *latest* status really
+ * is still "failed" even though the pipeline hasn't given up. Delivers
+ * only that much of the sequence (holding the rest back, exactly like
+ * pipeline.ts would mid-`await`), and asserts the banner must NOT show
+ * while Debug's own row is still visibly "running" one step below it --
+ * then releases the rest and confirms a normal recovered-success finish
+ * still works once the pipeline genuinely continues.
+ */
+test("BuildProgress does not show the failed-build banner while Debug is still actively trying to recover from a Database failure", async () => {
+  await withJsdom(async () => {
+    let releaseRecovery!: () => void;
+    const recoveryHeld = new Promise<void>((resolve) => {
+      releaseRecovery = resolve;
+    });
+    const firstPhase: AgentStepEvent[] = [
+      { agent: "Architect", status: "running", message: "…" },
+      { agent: "Architect", status: "success", message: "…", detail: { newEntities: [], changedEntities: [] } },
+      { agent: "Database", status: "running", message: "…" },
+      { agent: "Database", status: "failed", message: "a real migration error" },
+      { agent: "Debug", status: "running", message: "…" },
+    ];
+    const secondPhase: AgentStepEvent[] = [
+      { agent: "Architect", status: "success", message: "…", detail: { newEntities: [], changedEntities: [] } },
+      { agent: "Debug", status: "success", message: "…", detail: { correctedSpec: {} } },
+      { agent: "Database", status: "success", message: "…", detail: [] },
+      { agent: "Seed Data", status: "running", message: "…" },
+      { agent: "Seed Data", status: "success", message: "…", detail: { seededCount: 0, entities: [] } },
+      { agent: "QA", status: "running", message: "…" },
+      { agent: "QA", status: "success", message: "…", detail: [] },
+      { agent: "Security", status: "running", message: "…" },
+      { agent: "Security", status: "success", message: "…", detail: [] },
+      { agent: "Forge", status: "success", message: "…", detail: { project: { id: "p1", name: "Test" } } },
+    ];
+    renderBuildProgress([], () => {}, {
+      run: async (onEvent: (event: AgentStepEvent) => void) => {
+        await act(async () => {
+          for (const event of firstPhase) onEvent(event);
+        });
+        await recoveryHeld;
+        await act(async () => {
+          for (const event of secondPhase) onEvent(event);
+        });
+      },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    // Guarantees the component's own in-flight run() (stuck awaiting
+    // recoveryHeld) always gets released, even if an assertion below
+    // throws -- otherwise a failing assertion here leaves that promise,
+    // and the real setInterval the component's elapsed-time effect started
+    // (see BuildProgress.tsx, "Ticks once a second while the build is
+    // still running"), dangling past this test's own cleanup().
+    try {
+      // Reduced to a boolean first, not compared as a raw jsdom Node --
+      // same footgun (and same fix) as the "does not show the failed-build
+      // banner once a failed step is superseded" test above: on failure,
+      // node:assert's util.inspect() on a jsdom element's huge, circular
+      // property graph hangs the whole test run instead of reporting
+      // a clean failure.
+      assert.equal(
+        document.querySelector("p.error:not(.banner)") === null,
+        true,
+        "the 'Build failed' banner must not show while Debug is still actively running a recovery attempt",
+      );
+      const debugStep = [...document.querySelectorAll(".agent-step")].find((s) => s.textContent?.includes("Debug"));
+      assert.equal(
+        debugStep?.classList.contains("agent-step-running") ?? false,
+        true,
+        "Debug's own row must still show as actively running during this window",
+      );
+    } finally {
+      releaseRecovery();
+    }
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    assert.equal(
+      document.querySelector("p.error:not(.banner)") === null,
+      true,
+      "once the recovery genuinely succeeds, the banner must still never have appeared",
+    );
+    assert.equal(document.querySelectorAll(".step-success").length, 7, "every one of the 7 agents that ran must end up showing success");
+  });
+});
+
+/**
  * New in this round: a successful step's caption used to always show a
  * generic canned phrase (e.g. "All checks passed.") regardless of what the
  * build actually did. The server (pipeline.ts) computes a genuinely

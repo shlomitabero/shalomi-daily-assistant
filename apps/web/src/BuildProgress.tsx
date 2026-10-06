@@ -444,7 +444,18 @@ export function BuildProgress({
   // would keep the "Build failed" banner (and its Back button, in place of
   // the rest of the step list) showing for the whole remainder of a build
   // that's actually recovering and about to complete successfully.
-  const failedStep = [...latestByAgent.values()].find((e) => e.status === "failed");
+  //
+  // That alone isn't enough: pipeline.ts streams Database's "failed" event
+  // and Debug's "running" one BEFORE it `await`s the actual fix (a real
+  // Anthropic API call, often several real seconds) -- so for that whole
+  // window, Database's latest status really is still "failed" even though
+  // the pipeline hasn't given up on it. The pipeline never starts a new
+  // step after yielding a *terminal* failure (it `return`s right after),
+  // so any agent still "running" is proof-positive the build is still
+  // actively working -- a failed status only counts as the build's real,
+  // terminal failure once nothing is running anymore.
+  const anyAgentRunning = [...latestByAgent.values()].some((e) => e.status === "running");
+  const failedStep = anyAgentRunning ? undefined : [...latestByAgent.values()].find((e) => e.status === "failed");
   // Debug only ever shows up if it actually ran (a real migration failure)
   // — most builds never trigger it, so it shouldn't sit there as a
   // permanent "pending" placeholder on every successful build.
