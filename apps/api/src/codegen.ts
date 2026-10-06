@@ -819,6 +819,13 @@ function uniqueEnumValues(values) {
   return Array.from(new Set(values || []));
 }
 
+// Mirrors the live preview's own formatEntityRecordCount (entityFormatting.ts) --
+// no translator here since this exported app has no i18n, so the English
+// phrasing is hardcoded, matching entity.recordCount.all/.filtered's EN strings.
+function formatEntityRecordCount(shown, total) {
+  return shown === total ? \`\${total} records\` : \`\${shown} of \${total} records\`;
+}
+
 function emptyForm(entity) {
   const form = {};
   for (const f of entity.fields) form[f.name] = f.type === "boolean" ? false : "";
@@ -3555,6 +3562,9 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
                 ✕
               </button>
             )}
+            <span className="muted entity-record-count">
+              {formatEntityRecordCount(visibleRecords.length, records.length)}
+            </span>
             {filterableFields.map((f) => (
               <select
                 key={f.name}
@@ -4803,6 +4813,7 @@ th, td { text-align: start; padding: 8px 10px; border-bottom: 1px solid var(--bo
 .empty-state { padding: 32px 16px; text-align: center; color: var(--muted); background: var(--surface-subtle); border: 1px dashed var(--border); border-radius: 10px; }
 .entity-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 14px; }
 .entity-toolbar .entity-search { margin-bottom: 0; flex: 1; }
+.entity-record-count { white-space: nowrap; }
 .entity-search-recent { margin-top: -6px; margin-bottom: 14px; }
 .entity-search-recent-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; }
 .chips { display: flex; flex-wrap: wrap; gap: 8px; }

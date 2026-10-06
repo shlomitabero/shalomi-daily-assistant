@@ -6948,6 +6948,72 @@ test("the exported EntityView shows a 'Clear search' button only once the search
 });
 
 /**
+ * New in this round: the live preview's EntityPanel.tsx toolbar shows a
+ * record-count indicator ("N records" / "shown of total records") next to
+ * the search box, but the exported app's own duplicated toolbar template
+ * in codegen.ts never got this span added -- an exported app's table
+ * silently has no record count at all, even though filtering narrows the
+ * rows exactly the same way the live preview does.
+ */
+test("the exported EntityView shows a record count next to the search box, and it switches to 'shown of total' once a search actually narrows the table", async () => {
+  const files = generateExportFiles(project);
+  const dir = writeGeneratedWebComponent(files);
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async () => ({
+    ok: true,
+    status: 200,
+    json: async () => ({
+      records: [
+        { id: 1, name: "Alice", status: "New" },
+        { id: 2, name: "Bob", status: "Won" },
+      ],
+    }),
+  })) as typeof fetch;
+
+  try {
+    await withRealLocalStorage(async () => {
+      const { EntityView } = await import(path.join(dir, "web", "src", "components", "EntityView.jsx"));
+      const customerEntity = project.spec.entities.find((e) => e.name === "Customer")!;
+      const props = {
+        entity: customerEntity,
+        highlightRecordId: null,
+        onHighlightHandled: () => {},
+        onJumpToRecord: () => {},
+        onRecordCountChange: () => {},
+      };
+
+      const { container } = render(React.createElement(EntityView, props));
+      for (let i = 0; i < 40; i++) {
+        if (container.querySelector(".entity-search")) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+      assert.equal(
+        container.querySelector(".entity-record-count")?.textContent,
+        "2 records",
+        "unfiltered, it must show a plain total, not a redundant 'shown of total'",
+      );
+
+      const searchBox = container.querySelector(".entity-search") as HTMLInputElement;
+      await act(async () => {
+        fireEvent.change(searchBox, { target: { value: "Alice" } });
+      });
+      assert.equal(container.querySelectorAll("tbody tr").length, 1, "the search must actually narrow the rendered rows");
+      assert.equal(
+        container.querySelector(".entity-record-count")?.textContent,
+        "1 of 2 records",
+        "once filtered, it must show how many of the total are still showing",
+      );
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    cleanup();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
  * New in this round: mirrors the live preview's own "Clear sort" button
  * -- toggleSort's own non-additive branch only ever collapses a sort
  * down to a single key, never back to [], so once a multi-column sort
