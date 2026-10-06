@@ -116,6 +116,28 @@ test("formatTwinReport folds jumpableObservations back into the observations sec
   assert.match(report, /possibly a duplicate/);
 });
 
+/**
+ * Round 437: BusinessTwinPanel.tsx renders mostActiveObservation's bullet
+ * before mostLinkedRecord's bullet on screen (see its <ul>, which lists the
+ * mostActiveObservation <li> first). The report must match that same order
+ * when both are present at once, instead of silently reversing it.
+ */
+test("formatTwinReport orders mostActiveObservation before mostLinkedRecord, matching BusinessTwinPanel's on-screen order", () => {
+  const t = (key: string, params?: Record<string, string | number>) => translate("en", key, params);
+  const twin = makeTwin({
+    observations: [],
+    mostActiveObservation: { text: 'Most activity is in "Customers" — 3 records.', entityName: "Customer" },
+    mostLinkedRecord: { text: '"Dana Levi" (Customers) is the most-linked record: 3 links total.', entityName: "Customer", recordId: 7 },
+  });
+  const report = formatTwinReport(twin, "Flower Shop", "en", t);
+
+  const activeIndex = report.indexOf("Most activity is in");
+  const linkedIndex = report.indexOf("most-linked record");
+  assert.notEqual(activeIndex, -1);
+  assert.notEqual(linkedIndex, -1);
+  assert.ok(activeIndex < linkedIndex, "mostActiveObservation must appear before mostLinkedRecord, matching the panel's order");
+});
+
 test("formatTwinReport still lists every entity's count even when there are zero total records", () => {
   const t = (key: string, params?: Record<string, string | number>) => translate("en", key, params);
   const twin = makeTwin({

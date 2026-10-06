@@ -42,10 +42,11 @@ export function formatTwinReport(
   // kept as their own structured fields (not inside `observations`) so the
   // live panel can make each a real clickable jump -- but the plain-text
   // report has no such distinction, so all are folded back in here as plain
-  // bullets, in the same relative order they held before being split out.
+  // bullets, in the same order BusinessTwinPanel.tsx renders them on screen
+  // (mostActiveObservation before mostLinkedRecord).
   const allObservations = [
-    ...(twin.mostLinkedRecord ? [twin.mostLinkedRecord.text] : []),
     ...(twin.mostActiveObservation ? [twin.mostActiveObservation.text] : []),
+    ...(twin.mostLinkedRecord ? [twin.mostLinkedRecord.text] : []),
     ...twin.jumpableObservations.map((o) => o.text),
     ...twin.observations,
   ];
