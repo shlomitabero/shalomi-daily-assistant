@@ -211,11 +211,7 @@ export function diffAndMigrate(
             fromType: prevField.type,
             toType: field.type,
           });
-        } else if (
-          field.type === "relation" &&
-          prevField.type === "relation" &&
-          prevField.relationTo !== field.relationTo
-        ) {
+        } else if (field.type === "relation" && prevField.type === "relation") {
           // Same gap as "type_changed" above, but for a relation field's
           // *target* rather than its own type: the column's REFERENCES
           // clause (generateCreateTableStatements, the "new_column" branch
@@ -230,13 +226,54 @@ export function diffAndMigrate(
           // or (if an id happens to coincide with the stale target table)
           // silently accepted with no FK protection at all, breaking the
           // dangling-id invariant twin.ts's own insight logic relies on.
-          changes.push({
-            type: "relation_target_changed",
-            table,
-            column: assertSafeIdentifier(field.name, "column"),
-            fromRelationTo: prevField.relationTo,
-            toRelationTo: field.relationTo,
-          });
+          //
+          // Deliberately compares the column's REAL physical FK target
+          // (physicalShapeByColumn, the same source the "reused column"
+          // branch below already uses) rather than prevField.relationTo --
+          // a relationTo that oscillates across >=2 refines (A -> B -> A)
+          // used to compare only against the IMMEDIATELY preceding spec, so
+          // the third refine (back to A) saw prevField.relationTo ("B") !==
+          // field.relationTo ("A") and reported a spurious
+          // relation_target_changed "B -> A", even though the FK had
+          // physically pointed at A continuously the entire time (the
+          // middle refine's own ALTER never ran, by the same additive-only
+          // design this comment already describes) -- a false "still
+          // watching the wrong table" warning for a column that was never
+          // actually wrong. Comparing physical reality instead reports a
+          // change exactly when one still genuinely exists, regardless of
+          // how many hops the relationTo string took to get there. Unlike
+          // "type_changed" above, this has no ambiguous-bucket problem to
+          // worry about (every relationTo maps to one distinct physical
+          // table, never collapsed the way text/longtext/enum/date share a
+          // single SQL column type), so it's safe to always prefer physical
+          // reality here.
+          const columnName = assertSafeIdentifier(field.name, "column");
+          const shape = physicalShapeByColumn.get(columnName);
+          const expectedFkTable =
+            field.relationTo && entityNames.has(field.relationTo) ? tableNameFor(projectId, field.relationTo) : undefined;
+          if (shape?.fkTable && expectedFkTable && shape.fkTable !== expectedFkTable) {
+            changes.push({
+              type: "relation_target_changed",
+              table,
+              column: columnName,
+              fromRelationTo: entityNameForTable(projectId, [...previousEntities.keys(), ...entityNames], shape.fkTable),
+              toRelationTo: field.relationTo,
+            });
+          } else if (shape && !shape.fkTable && expectedFkTable) {
+            // Mirrors the identical relation_missing_fk case in the "reused
+            // column" branch below -- a relation field whose relationTo
+            // stayed textually the same across this hop can still have lost
+            // its FK somewhere in an earlier oscillation (e.g. relation ->
+            // boolean -> relation, sharing the INTEGER bucket so
+            // type_changed never fires, with no FK ever re-added since
+            // ALTER can't add one to an existing column).
+            changes.push({
+              type: "relation_missing_fk",
+              table,
+              column: columnName,
+              toRelationTo: field.relationTo,
+            });
+          }
         }
         continue;
       }

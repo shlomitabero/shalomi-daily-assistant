@@ -506,6 +506,100 @@ test("diffAndMigrate reports a relation_missing_fk entry when a removed boolean 
 });
 
 /**
+ * Round 444: the prevField branch's relation_target_changed check compared
+ * only `prevField.relationTo !== field.relationTo` -- the IMMEDIATELY
+ * preceding spec, never physical reality. A relationTo that oscillates
+ * across two refines (Customer -> Vendor -> Customer, the field staying a
+ * "relation" the whole time, never removed from the spec) used to report a
+ * spurious relation_target_changed on the THIRD spec ("Vendor -> Customer"),
+ * even though the real FK had pointed at Customer continuously the entire
+ * time -- the middle refine's own report already documented that SQLite
+ * can't retroactively repoint an existing column's FK, so it never actually
+ * moved. The fix compares the column's real physical FK target instead,
+ * so a relationTo that returns to what's already physically there reports
+ * nothing, regardless of how many hops it took to get there.
+ */
+test("diffAndMigrate reports no relation_target_changed when relationTo oscillates back to the entity the FK has pointed at the whole time", () => {
+  const db = openDatabase(":memory:");
+  applyMigrations(db, "proj1", spec);
+
+  const vendorAddedSpec: ProductSpec = {
+    ...spec,
+    entities: [spec.entities[0], { name: "Vendor", fields: [{ name: "name", type: "text", required: true }] }, spec.entities[1]],
+  };
+  const repointedToVendor: ProductSpec = {
+    ...vendorAddedSpec,
+    entities: [
+      vendorAddedSpec.entities[0],
+      vendorAddedSpec.entities[1],
+      { ...spec.entities[1], fields: [spec.entities[1].fields[0], { name: "customerId", type: "relation", required: false, relationTo: "Vendor" }] },
+    ],
+  };
+  const firstHopChanges = diffAndMigrate(db, "proj1", spec, repointedToVendor);
+  assert.deepEqual(firstHopChanges.filter((c) => c.type === "relation_target_changed"), [
+    { type: "relation_target_changed", table: "entity_proj1_Order", column: "customerId", fromRelationTo: "Customer", toRelationTo: "Vendor" },
+  ]);
+
+  // Refine again, repointing relationTo back to Customer -- the field was
+  // never removed from the spec, so this goes through the prevField branch,
+  // not the field-reuse path the relation_missing_fk test above exercises.
+  const repointedBackToCustomer: ProductSpec = {
+    ...repointedToVendor,
+    entities: [
+      repointedToVendor.entities[0],
+      repointedToVendor.entities[1],
+      { ...repointedToVendor.entities[2], fields: [repointedToVendor.entities[2].fields[0], { name: "customerId", type: "relation", required: false, relationTo: "Customer" }] },
+    ],
+  };
+  const secondHopChanges = diffAndMigrate(db, "proj1", repointedToVendor, repointedBackToCustomer);
+  assert.deepEqual(
+    secondHopChanges,
+    [],
+    "relationTo returned to Customer, exactly matching the FK's real, never-moved target -- nothing should be reported",
+  );
+
+  // The real FK must still point at Customer -- it never moved, through
+  // either hop.
+  const fkList = db.prepare('PRAGMA foreign_key_list("entity_proj1_Order")').all() as { table: string }[];
+  assert.deepEqual(fkList.map((fk) => fk.table), ["entity_proj1_Customer"]);
+});
+
+/**
+ * Round 444: the mirror-image case of the oscillation test above, for
+ * relation_missing_fk rather than relation_target_changed. A relation field
+ * whose relationTo was invalid (pointing at a not-yet-existing entity) when
+ * its column was first created gets no FK at all -- and the prevField
+ * branch's old check (`prevField.relationTo !== field.relationTo`) stayed
+ * silent forever afterward once relationTo stopped changing text-wise, even
+ * after the target entity started existing and the column should have been
+ * flagged as still missing its FK. The fix's relation_missing_fk check
+ * (mirroring the existing one in the "reused column" branch) catches this
+ * for a field that was never removed from the spec at all.
+ */
+test("diffAndMigrate reports relation_missing_fk once an invalid relationTo's target entity starts existing, for a field never removed from the spec", () => {
+  const db = openDatabase(":memory:");
+  const baseSpec: ProductSpec = {
+    ...spec,
+    entities: [
+      spec.entities[0],
+      { ...spec.entities[1], fields: [spec.entities[1].fields[0], { name: "assigneeId", type: "relation", required: false, relationTo: "Ghost" }] },
+    ],
+  };
+  applyMigrations(db, "proj1", baseSpec);
+  const fkListBefore = db.prepare('PRAGMA foreign_key_list("entity_proj1_Order")').all() as { table: string }[];
+  assert.deepEqual(fkListBefore, [], "Ghost doesn't exist yet, so the column must be created with no FK at all");
+
+  const ghostAddedSpec: ProductSpec = {
+    ...baseSpec,
+    entities: [baseSpec.entities[0], { name: "Ghost", fields: [{ name: "name", type: "text", required: true }] }, baseSpec.entities[1]],
+  };
+  const changes = diffAndMigrate(db, "proj1", baseSpec, ghostAddedSpec);
+  assert.deepEqual(changes.filter((c) => c.type !== "new_table"), [
+    { type: "relation_missing_fk", table: "entity_proj1_Order", column: "assigneeId", toRelationTo: "Ghost" },
+  ]);
+});
+
+/**
  * Regression test: the entity-level twin of the field-reuse gaps above.
  * previousSpec is only ever the spec immediately before THIS ONE
  * diffAndMigrate call, so an entity removed on one refine and re-added
