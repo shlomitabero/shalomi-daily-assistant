@@ -6193,8 +6193,8 @@ test("the exported EntityView's group-header toggle collapses and expands just t
  * that one column's own cards (leaving the other column untouched), the
  * collapsed state survives an unmount+remount (getPersistedCollapsedBoardColumns/
  * setPersistedCollapsedBoardColumns -- a deliberately separate store from
- * the group-collapse feature's own, just above, since both are keyed only
- * by entity name and could otherwise cross-contaminate), and a collapsed
+ * the group-collapse feature's own, just above, since both are keyed per
+ * entity+field and could otherwise cross-contaminate), and a collapsed
  * column's own drag-and-drop target wiring stays fully live (only its card
  * list is hidden, never its outer onDragOver/onDrop handlers).
  */
@@ -6306,6 +6306,130 @@ test("the exported EntityView's board-column toggle collapses and expands just t
         "a freshly mounted EntityView for the same entity must come back up with 'Won' (index 1) still collapsed, not reset to all-expanded",
       );
       secondMount.unmount();
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    cleanup();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
+ * Regression test for round 436's finding: the exported/standalone app's
+ * own generated EntityView component has this exact same group-keys-are-
+ * field-independent defect the live preview's EntityPanel.tsx had fixed
+ * for it in round 434 (collapsedGroupsPreference.ts gaining a
+ * groupFieldName key dimension) -- but round 434's fix only touched
+ * apps/web/src/*, never apps/api/src/codegen.ts's own, separately
+ * hand-duplicated copy of this same logic. groupRecordsByField's group
+ * keys are field-independent (every boolean field's two groups are keyed
+ * by the literal strings "true"/"false"), so an entity with two boolean
+ * fields had its collapsed-group state leak from one "Group by" field to
+ * the other the moment the dropdown switched between them.
+ */
+test("the exported EntityView's collapsed-group state does not leak from one 'Group by' field to a different field with the same group keys", async () => {
+  const twoBooleanFieldsProject: Project = {
+    ...project,
+    spec: {
+      ...project.spec,
+      entities: [
+        {
+          name: "Deal",
+          label: "Deal",
+          fields: [
+            { name: "name", label: "Name", type: "text", required: true },
+            { name: "completed", label: "Completed", type: "boolean", required: true },
+            { name: "urgent", label: "Urgent", type: "boolean", required: true },
+          ],
+        },
+      ],
+    },
+  };
+  const files = generateExportFiles(twoBooleanFieldsProject);
+  const dir = writeGeneratedWebComponent(files);
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async () => ({
+    ok: true,
+    status: 200,
+    json: async () => ({
+      records: [
+        { id: 1, name: "Acme Corp", completed: true, urgent: false },
+        { id: 2, name: "Beta Inc", completed: false, urgent: true },
+      ],
+    }),
+  })) as typeof fetch;
+
+  try {
+    await withRealLocalStorage(async () => {
+      const { EntityView } = await import(path.join(dir, "web", "src", "components", "EntityView.jsx"));
+      const dealEntity = twoBooleanFieldsProject.spec.entities[0];
+      const props = {
+        entity: dealEntity,
+        highlightRecordId: null,
+        onHighlightHandled: () => {},
+        onJumpToRecord: () => {},
+        onRecordCountChange: () => {},
+      };
+
+      const view = render(React.createElement(EntityView, props));
+      for (let i = 0; i < 40; i++) {
+        if (view.container.querySelector(".entity-group-by")) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+      const groupBySelect = view.container.querySelector(".entity-group-by") as HTMLSelectElement;
+      assert.ok(groupBySelect, "expected a real 'Group by' dropdown");
+
+      await act(async () => {
+        fireEvent.change(groupBySelect, { target: { value: "completed" } });
+      });
+      for (let i = 0; i < 40; i++) {
+        if (view.container.querySelectorAll(".entity-group-header-row").length === 2) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+
+      // Collapse "completed"'s own "No" group (the literal key "false").
+      const completedHeaderRows = Array.from(view.container.querySelectorAll(".entity-group-header-row"));
+      const completedNoToggle = completedHeaderRows
+        .find((r) => r.textContent?.includes("No"))
+        ?.querySelector(".entity-group-toggle") as HTMLButtonElement;
+      assert.ok(completedNoToggle, "expected a 'No' group header under 'completed'");
+      await act(async () => {
+        fireEvent.click(completedNoToggle);
+      });
+      assert.equal(view.container.querySelectorAll("tbody tr").length, 3, "1 record + 2 group headers once 'completed''s 'No' group is collapsed");
+
+      // Switch "Group by" to "urgent" -- a DIFFERENT field the person never
+      // touched, but whose own "No" group shares the exact same key "false".
+      await act(async () => {
+        fireEvent.change(groupBySelect, { target: { value: "urgent" } });
+      });
+      for (let i = 0; i < 40; i++) {
+        if (view.container.querySelectorAll(".entity-group-header-row").length === 2) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+
+      const urgentHeaderRows = Array.from(view.container.querySelectorAll(".entity-group-header-row"));
+      const urgentNoToggle = urgentHeaderRows
+        .find((r) => r.textContent?.includes("No"))
+        ?.querySelector(".entity-group-toggle") as HTMLButtonElement;
+      assert.ok(urgentNoToggle, "expected a 'No' group header under 'urgent'");
+      assert.equal(
+        urgentNoToggle.getAttribute("aria-expanded"),
+        "true",
+        "switching 'Group by' to a different field must not carry over the first field's collapsed-group state",
+      );
+      assert.equal(
+        view.container.querySelectorAll("tbody tr").length,
+        4,
+        "both of 'urgent''s groups (1 record each) plus their 2 headers must render fully expanded",
+      );
+      view.unmount();
     });
   } finally {
     globalThis.fetch = originalFetch;

@@ -1128,11 +1128,19 @@ function setPersistedFieldFilters(entityName, filters) {
   return cleaned;
 }
 
-// Which grouped-table-view group keys are collapsed, per entity. Mirrors
-// the live preview's own collapsedGroupsPreference.ts. Previously a
+// Which grouped-table-view group keys are collapsed, per entity+groupField.
+// Mirrors the live preview's own collapsedGroupsPreference.ts. Previously a
 // grouped table always rendered every one of a group's rows, defeating
 // the point of grouping a sizeable table to see just the groups you care
 // about.
+//
+// groupFieldName is part of the key (not just entity) because
+// groupRecordsByField's own group keys are field-independent: every
+// boolean field's two groups are keyed by the literal strings "true"/
+// "false", and an enum field's groups are keyed by its raw enum values --
+// so two boolean fields, or two enum fields sharing a value, would
+// otherwise collapse each other's groups the moment "Group by" switched
+// from one to the other.
 const COLLAPSED_GROUPS_STORAGE_KEY = "forge_collapsed_groups";
 function readCollapsedGroupsStore() {
   try {
@@ -1152,26 +1160,35 @@ function writeCollapsedGroupsStore(store) {
     // localStorage can be unavailable (private mode) -- the choice just won't survive a reload.
   }
 }
-function getPersistedCollapsedGroups(entityName) {
+function getPersistedCollapsedGroups(entityName, groupFieldName) {
   const store = readCollapsedGroupsStore();
-  const keys = store[entityName];
+  const keys = store[entityName + ":" + groupFieldName];
   return Array.isArray(keys) ? keys.filter((k) => typeof k === "string") : [];
 }
-function setPersistedCollapsedGroups(entityName, keys) {
+function setPersistedCollapsedGroups(entityName, groupFieldName, keys) {
   const store = readCollapsedGroupsStore();
+  const mapKey = entityName + ":" + groupFieldName;
   const deduped = [...new Set(keys)];
-  if (deduped.length === 0) delete store[entityName];
-  else store[entityName] = deduped;
+  if (deduped.length === 0) delete store[mapKey];
+  else store[mapKey] = deduped;
   writeCollapsedGroupsStore(store);
   return deduped;
 }
 
-// Which board-view column values are collapsed, per entity. Mirrors the
-// live preview's own collapsedBoardColumnsPreference.ts -- deliberately
-// a SEPARATE store from the one just above (table groups and board
-// columns can be keyed by different fields, so sharing storage would
-// conflate the two). Previously a board column always rendered every one
-// of its own cards, even a huge "Done" column.
+// Which board-view column values are collapsed, per entity+boardField.
+// Mirrors the live preview's own collapsedBoardColumnsPreference.ts --
+// deliberately a SEPARATE store from the one just above (table groups and
+// board columns can be keyed by different fields, so sharing storage
+// would conflate the two). Previously a board column always rendered
+// every one of its own cards, even a huge "Done" column.
+//
+// boardFieldName is part of the key even though it's never a direct user
+// choice the way groupFieldName is: findBoardField recomputes which field
+// drives the board from the entity's CURRENT fields every render, so
+// editing the entity's fields can silently swap which field holds that
+// role -- without this dimension in the key, the newly-chosen field would
+// inherit whichever columns were collapsed under the field that used to
+// hold it.
 const COLLAPSED_BOARD_COLUMNS_STORAGE_KEY = "forge_collapsed_board_columns";
 function readCollapsedBoardColumnsStore() {
   try {
@@ -1191,16 +1208,17 @@ function writeCollapsedBoardColumnsStore(store) {
     // localStorage can be unavailable (private mode) -- the choice just won't survive a reload.
   }
 }
-function getPersistedCollapsedBoardColumns(entityName) {
+function getPersistedCollapsedBoardColumns(entityName, boardFieldName) {
   const store = readCollapsedBoardColumnsStore();
-  const values = store[entityName];
+  const values = store[entityName + ":" + boardFieldName];
   return Array.isArray(values) ? values.filter((v) => typeof v === "string") : [];
 }
-function setPersistedCollapsedBoardColumns(entityName, values) {
+function setPersistedCollapsedBoardColumns(entityName, boardFieldName, values) {
   const store = readCollapsedBoardColumnsStore();
+  const mapKey = entityName + ":" + boardFieldName;
   const deduped = [...new Set(values)];
-  if (deduped.length === 0) delete store[entityName];
-  else store[entityName] = deduped;
+  if (deduped.length === 0) delete store[mapKey];
+  else store[mapKey] = deduped;
   writeCollapsedBoardColumnsStore(store);
   return deduped;
 }
@@ -2393,8 +2411,10 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
   const [recentSearches, setRecentSearches] = useState(() => getEntityRecentSearches(entity.name));
   const [fieldFilters, setFieldFilters] = useState(() => getPersistedFieldFilters(entity.name));
   const [groupFieldName, setGroupFieldName] = useState(() => getPersistedGroupField(entity.name));
-  const [collapsedGroups, setCollapsedGroups] = useState(() => new Set(getPersistedCollapsedGroups(entity.name)));
-  const [collapsedBoardColumns, setCollapsedBoardColumns] = useState(() => new Set(getPersistedCollapsedBoardColumns(entity.name)));
+  const [collapsedGroups, setCollapsedGroups] = useState(() => new Set(getPersistedCollapsedGroups(entity.name, groupFieldName)));
+  const [collapsedBoardColumns, setCollapsedBoardColumns] = useState(
+    () => new Set(getPersistedCollapsedBoardColumns(entity.name, (findBoardField(entity.fields) || {}).name || "")),
+  );
   const [highlightedRecordId, setHighlightedRecordId] = useState(null);
   const [moveErrorId, setMoveErrorId] = useState(null);
   const [focusedRowId, setFocusedRowId] = useState(null);
@@ -2505,8 +2525,6 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
     setRecentSearches(getEntityRecentSearches(entity.name));
     setFieldFilters(getPersistedFieldFilters(entity.name));
     setGroupFieldName(getPersistedGroupField(entity.name));
-    setCollapsedGroups(new Set(getPersistedCollapsedGroups(entity.name)));
-    setCollapsedBoardColumns(new Set(getPersistedCollapsedBoardColumns(entity.name)));
     setSortKeys(getPersistedSortKeys(entity.name));
     setViewMode(getPersistedViewMode(entity.name));
     setCalendarMonth(new Date());
@@ -2521,6 +2539,21 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
     refresh();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [entity.name]);
+
+  // Which groups are collapsed is scoped per entity+groupFieldName too
+  // (also re-running whenever groupFieldName itself changes, e.g. the
+  // "Group by" dropdown) -- see COLLAPSED_GROUPS_STORAGE_KEY's own
+  // comment above for why groupFieldName has to be part of the key.
+  useEffect(() => {
+    setCollapsedGroups(new Set(getPersistedCollapsedGroups(entity.name, groupFieldName)));
+  }, [entity.name, groupFieldName]);
+
+  // Same reasoning as collapsedGroups' own effect just above -- which
+  // board columns are collapsed is scoped per entity+boardField too, in
+  // its own separate store.
+  useEffect(() => {
+    setCollapsedBoardColumns(new Set(getPersistedCollapsedBoardColumns(entity.name, boardField ? boardField.name : "")));
+  }, [entity.name, boardField]);
 
   // Applies an incoming highlightRecordId (from GlobalSearch's own per-row
   // "jump to record" click) once this entity's records have actually
@@ -2887,7 +2920,7 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
       const next = new Set(prev);
       if (next.has(groupKey)) next.delete(groupKey);
       else next.add(groupKey);
-      setPersistedCollapsedGroups(entity.name, [...next]);
+      setPersistedCollapsedGroups(entity.name, groupFieldName, [...next]);
       return next;
     });
   }
@@ -2898,7 +2931,7 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
       const next = new Set(prev);
       if (next.has(columnValue)) next.delete(columnValue);
       else next.add(columnValue);
-      setPersistedCollapsedBoardColumns(entity.name, [...next]);
+      setPersistedCollapsedBoardColumns(entity.name, boardField ? boardField.name : "", [...next]);
       return next;
     });
   }
