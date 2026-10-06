@@ -3987,8 +3987,11 @@ async function searchAllEntities(entities, query) {
 // Renders the already-fetched results as a plain, shareable text snapshot --
 // same "plain text, not a PDF" reasoning the live preview's own
 // searchReport.ts uses for its Copy/Download buttons, which the exported
-// app's own GlobalSearch never had at all.
-function formatGlobalSearchReport(results, entities, query) {
+// app's own GlobalSearch never had at all. expandedSamples mirrors exactly
+// what the panel itself is currently showing (including any "Show all"
+// expansions, see searchReport.ts's own formatSearchResults), so the
+// copied/downloaded text never disagrees with what's actually on screen.
+function formatGlobalSearchReport(results, entities, expandedSamples, query) {
   const lines = [\`Search everything — "\${query}"\`, \`Generated \${new Date().toLocaleString()}\`, ""];
   if (results.length === 0) {
     lines.push("No matching results in any entity.");
@@ -3996,11 +3999,12 @@ function formatGlobalSearchReport(results, entities, query) {
   }
   for (const result of results) {
     const entity = entities.find((e) => e.name === result.entityName);
+    const displayed = expandedSamples[result.entityName] ?? result.sample;
     lines.push(\`\${result.entityLabel} — \${result.totalMatches} results\`);
-    for (const record of result.sample) {
+    for (const record of displayed) {
       lines.push(\`- \${entity ? recordDisplayLabel(entity, record) : "#" + record.id}\`);
     }
-    const remaining = result.totalMatches - result.sample.length;
+    const remaining = result.totalMatches - displayed.length;
     if (remaining > 0) lines.push(\`…and \${remaining} more\`);
     lines.push("");
   }
@@ -4178,7 +4182,7 @@ export function GlobalSearch({ entities, onClose, onJumpToEntity, onJumpToRecord
 
   async function handleCopy() {
     try {
-      await navigator.clipboard.writeText(formatGlobalSearchReport(results, entities, query));
+      await navigator.clipboard.writeText(formatGlobalSearchReport(results, entities, expandedSamples, query));
       setCopyStatus("copied");
     } catch {
       setCopyStatus("failed");
@@ -4186,7 +4190,7 @@ export function GlobalSearch({ entities, onClose, onJumpToEntity, onJumpToRecord
   }
 
   function handleDownload() {
-    const text = formatGlobalSearchReport(results, entities, query);
+    const text = formatGlobalSearchReport(results, entities, expandedSamples, query);
     const blob = new Blob([text], { type: "text/plain;charset=utf-8" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");

@@ -7312,6 +7312,87 @@ test("the exported GlobalSearch's 'Show all' button reveals every match beyond t
 });
 
 /**
+ * New in this round (439): the exported GlobalSearch's own Copy/Download
+ * report (formatGlobalSearchReport) ignored "Show all" entirely -- it was
+ * only ever given `results` (whose `.sample` stays capped at 5), never the
+ * component's own `expandedSamples` state, so copying/downloading after
+ * expanding a group still produced a report capped at 5 rows plus a now-
+ * stale "…and N more" line, even though the screen itself was showing every
+ * match. Mirrors the live preview's own searchReport.ts, whose
+ * formatSearchResults already threads expandedSamples through correctly.
+ * Confirms the exported app's report now matches what's actually on screen
+ * after a real "Show all" expansion, not just the pre-expansion sample.
+ */
+test("the exported GlobalSearch's Copy report includes every match revealed by 'Show all', not just the original 5-row sample", async () => {
+  const files = generateExportFiles(project);
+  const dir = writeGeneratedWebComponent(files);
+  const customerRecords = Array.from({ length: 7 }, (_, i) => ({ id: i + 1, name: `Widget item ${i + 1}` }));
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async (input: string) => {
+    if (String(input).endsWith("/Customer")) {
+      return { ok: true, status: 200, json: async () => ({ records: customerRecords }) };
+    }
+    return { ok: true, status: 200, json: async () => ({ records: [] }) };
+  }) as typeof fetch;
+
+  let writtenText: string | undefined;
+  Object.defineProperty(navigator, "clipboard", {
+    value: { writeText: async (text: string) => void (writtenText = text) },
+    configurable: true,
+  });
+
+  try {
+    const { GlobalSearch } = await import(path.join(dir, "web", "src", "components", "GlobalSearch.jsx"));
+    const { container } = render(
+      React.createElement(GlobalSearch, {
+        entities: project.spec.entities,
+        onClose: () => {},
+        onJumpToEntity: () => {},
+        onJumpToRecord: () => {},
+      }),
+    );
+
+    const input = container.querySelector(".global-search-input") as HTMLInputElement;
+    await act(async () => {
+      fireEvent.change(input, { target: { value: "widget" } });
+      fireEvent.submit(container.querySelector("form.global-search-form")!);
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    assert.equal(container.querySelectorAll(".global-search-hit-button").length, 5, "expected the default 5-row sample before expanding");
+
+    const showAllButton = container.querySelector(".global-search-show-all") as HTMLButtonElement;
+    assert.ok(showAllButton, "expected a real 'Show all' button when more matches exist than the sample shows");
+    await act(async () => {
+      fireEvent.click(showAllButton);
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    assert.equal(container.querySelectorAll(".global-search-hit-button").length, 7, "the screen must now show every real match after 'Show all'");
+
+    const copyButton = Array.from(container.querySelectorAll("button")).find((b) => b.textContent === "Copy") as HTMLButtonElement;
+    assert.ok(copyButton, "expected a Copy button once real results exist");
+    await act(async () => {
+      fireEvent.click(copyButton);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    assert.equal(typeof writtenText, "string", "clicking Copy must actually call navigator.clipboard.writeText");
+    for (let i = 1; i <= 7; i++) {
+      assert.match(writtenText!, new RegExp(`Widget item ${i}\\b`), `the copied report must include Widget item ${i}, matching what 'Show all' put on screen`);
+    }
+    assert.doesNotMatch(writtenText!, /and \d+ more/, "once every match is shown on screen, the copied report must not still claim some are missing");
+  } finally {
+    globalThis.fetch = originalFetch;
+    cleanup();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
  * New in this round (340): porting the live preview's own deadline
  * overdue/due-soon date indicator to the exported app's EntityView.jsx --
  * before this fix, every date field rendered as plain text with zero
