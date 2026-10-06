@@ -1,7 +1,7 @@
 const STORAGE_KEY = "forge.collapsedBoardColumns";
 
-function keyFor(projectId: string, entityName: string): string {
-  return `${projectId}:${entityName}`;
+function keyFor(projectId: string, entityName: string, boardFieldName: string): string {
+  return `${projectId}:${entityName}:${boardFieldName}`;
 }
 
 function readStore(): Record<string, string[]> {
@@ -31,25 +31,33 @@ function writeStore(store: Record<string, string[]>): void {
 
 /**
  * Which board-view column values a person has collapsed, scoped per
- * project+entity, mirroring collapsedGroupsPreference.ts's own keying --
- * deliberately a SEPARATE store rather than reusing that one: the
- * grouped-table view's own collapsed keys are keyed only by
- * project+entity too, not by which field is being grouped, so sharing
- * storage with the board (whose column values come from a different
- * field, boardField) would make collapsing "Won" in one view silently
- * collapse any same-named group/column in the other. Previously there
- * was no way to collapse a board column at all -- a huge "Done" column
- * always rendered every one of its cards.
+ * project+entity+boardFieldName, mirroring collapsedGroupsPreference.ts's
+ * own keying (see its doc comment for why groupFieldName/boardFieldName
+ * has to be part of the key) -- deliberately a SEPARATE store rather than
+ * reusing that one: the grouped-table view's own collapsed keys come from
+ * a potentially different field than the board's own boardField, so
+ * sharing storage between the two would make collapsing "Won" in one view
+ * silently collapse any same-named group/column in the other. Previously
+ * there was no way to collapse a board column at all -- a huge "Done"
+ * column always rendered every one of its cards.
+ *
+ * boardFieldName matters even for a single entity whose own name never
+ * changes: findBoardField (entityFormatting.ts) recomputes which field is
+ * the board field from the entity's CURRENT fields every render, so
+ * adding/removing/reordering fields (or renaming one to/from "status"/
+ * "stage") can silently swap which field drives the board -- without this
+ * dimension in the key, the newly-chosen field would inherit whichever
+ * columns were collapsed under the field that used to hold that role.
  */
-export function getCollapsedBoardColumns(projectId: string, entityName: string): string[] {
+export function getCollapsedBoardColumns(projectId: string, entityName: string, boardFieldName: string): string[] {
   const store = readStore();
-  return [...(store[keyFor(projectId, entityName)] ?? [])];
+  return [...(store[keyFor(projectId, entityName, boardFieldName)] ?? [])];
 }
 
 /** Persists the entity's full updated set of collapsed board-column values and returns it, so callers can update their own state from the return value instead of re-reading storage. */
-export function setCollapsedBoardColumns(projectId: string, entityName: string, values: string[]): string[] {
+export function setCollapsedBoardColumns(projectId: string, entityName: string, boardFieldName: string, values: string[]): string[] {
   const store = readStore();
-  const mapKey = keyFor(projectId, entityName);
+  const mapKey = keyFor(projectId, entityName, boardFieldName);
   const deduped = [...new Set(values)];
   if (deduped.length === 0) delete store[mapKey];
   else store[mapKey] = deduped;

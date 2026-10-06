@@ -1021,12 +1021,21 @@ export function EntityPanel({
   }
 
   // Same reasoning as collapsedGroups' own effect just above -- which
-  // board columns are collapsed is scoped per project+entity too, in its
-  // own separate store (board columns and table groups can be keyed by
+  // board columns are collapsed is scoped per project+entity+boardField
+  // too (also re-running whenever boardField itself changes), in its own
+  // separate store (board columns and table groups can be keyed by
   // different fields, so sharing storage would conflate the two).
+  // boardField isn't a user choice like groupFieldName -- findBoardField
+  // recomputes it from entity.fields on every render -- but editing the
+  // entity's fields (add/remove/reorder/rename to or from "status"/
+  // "stage") can still silently swap which field it resolves to, and
+  // without this in the key the newly-chosen field would inherit
+  // whichever columns were collapsed under the field that used to hold
+  // that role.
+  const boardFieldName = boardField?.name ?? "";
   useEffect(() => {
-    setCollapsedBoardColumns(new Set(getCollapsedBoardColumns(projectId, entity.name)));
-  }, [projectId, entity.name]);
+    setCollapsedBoardColumns(new Set(getCollapsedBoardColumns(projectId, entity.name, boardFieldName)));
+  }, [projectId, entity.name, boardFieldName]);
 
   /** Mirrors toggleGroupCollapsed above, for board columns instead of table groups. */
   function toggleBoardColumnCollapsed(columnValue: string) {
@@ -1034,7 +1043,7 @@ export function EntityPanel({
       const next = new Set(prev);
       if (next.has(columnValue)) next.delete(columnValue);
       else next.add(columnValue);
-      setCollapsedBoardColumnsPreference(projectId, entity.name, [...next]);
+      setCollapsedBoardColumnsPreference(projectId, entity.name, boardFieldName, [...next]);
       return next;
     });
   }

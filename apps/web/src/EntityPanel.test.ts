@@ -3556,6 +3556,101 @@ test("EntityPanel's board column toggle hides only that column's cards, persists
 });
 
 /**
+ * Regression test for round 435's finding: collapsedBoardColumnsPreference.ts
+ * had the exact same missing-dimension defect round 434 fixed for
+ * collapsedGroupsPreference.ts, just left open in this sibling file --
+ * its persisted key was scoped by project+entity only, not by which field
+ * findBoardField (entityFormatting.ts) currently resolves to for this
+ * entity. findBoardField recomputes on every render from entity.fields
+ * (preferring a field literally named "status"/"stage", else the first
+ * qualifying enum field), so an entity whose fields are edited (e.g. a
+ * refine adds a "status" field) can have its board silently driven by a
+ * DIFFERENT field afterward, while entity.name stays the same. Without
+ * boardFieldName in the key, the new field's columns inherited whichever
+ * columns were collapsed under the field that used to hold that role --
+ * exactly round 434's "group keys are field-independent" defect, applied
+ * to the Kanban board's own collapse state instead of the table's.
+ */
+test("EntityPanel's board-column collapse state does not leak from one board field to a different field after a schema edit changes which field drives the board", async () => {
+  await withJsdom(async () => {
+    const priorityField = {
+      name: "priority",
+      label: "Priority",
+      type: "enum" as const,
+      required: true,
+      enumValues: ["low", "high"],
+      enumLabels: { low: "Low", high: "High" },
+    };
+    const statusField = {
+      name: "status",
+      label: "Status",
+      type: "enum" as const,
+      required: true,
+      enumValues: ["low", "done"],
+      enumLabels: { low: "Low", done: "Done" },
+    };
+    const entityV1: Entity = {
+      name: "Deal",
+      label: "Deal",
+      fields: [{ name: "name", label: "Name", type: "text", required: true }, priorityField],
+    };
+    const entityV2: Entity = {
+      name: "Deal",
+      label: "Deal",
+      fields: [{ name: "name", label: "Name", type: "text", required: true }, priorityField, statusField],
+    };
+    const store: EntityRecord[] = [
+      { id: 1, createdAt: "x", name: "Acme Corp", priority: "low", status: "low" },
+      { id: 2, createdAt: "x", name: "Beta Inc", priority: "high", status: "done" },
+    ];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = mockRecordsFetch(store) as typeof fetch;
+    try {
+      const view = renderEntityPanel({ entity: entityV1, allEntities: [entityV1] });
+      await waitForCondition(() => document.querySelector(".entity-toolbar") !== null);
+
+      const boardToggle = document.querySelectorAll(".view-toggle-btn")[1] as HTMLButtonElement;
+      fireEvent.click(boardToggle);
+      await waitForCondition(() => document.querySelectorAll(".board-column").length === 2);
+
+      function findColumn(label: string) {
+        return Array.from(document.querySelectorAll(".board-column")).find((col) =>
+          col.querySelector(".board-column-header-info")?.textContent?.includes(label),
+        ) as HTMLDivElement;
+      }
+
+      // No "status"/"stage" field exists yet, so the board is driven by
+      // "priority" (the only qualifying enum field). Collapse its "Low" column.
+      const priorityLowColumn = findColumn("Low");
+      assert.ok(priorityLowColumn, "expected a 'Low' column grouped by 'priority'");
+      fireEvent.click(priorityLowColumn.querySelector(".board-column-toggle") as HTMLButtonElement);
+      await waitForCondition(() => findColumn("Low").querySelectorAll(".board-card").length === 0);
+
+      // Simulate a schema edit (e.g. a refine) that adds a "status" field --
+      // findBoardField now prefers it (name-hint match) over "priority",
+      // even though entity.name ("Deal") never changed.
+      view.rerender(buildEntityPanelElement({ entity: entityV2, allEntities: [entityV2] }));
+      await waitForCondition(() => document.querySelectorAll(".board-column").length === 2);
+
+      const statusLowColumn = findColumn("Low");
+      assert.ok(statusLowColumn, "expected a 'Low' column, now grouped by the newly-preferred 'status' field");
+      assert.equal(
+        statusLowColumn.querySelectorAll(".board-card").length,
+        1,
+        "'status' field's own 'Low' column must not inherit 'priority' field's collapsed state just because they share the same column value",
+      );
+      assert.equal(
+        statusLowColumn.querySelector(".board-column-toggle")!.getAttribute("aria-expanded"),
+        "true",
+        "the 'status' field's 'Low' column must start expanded -- the user never touched it",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * New in this round: the table view had no way to move between rows
  * without reaching for the mouse. j/k (and ArrowDown/ArrowUp) move a
  * keyboard focus between visible rows, and Enter opens the focused row for
