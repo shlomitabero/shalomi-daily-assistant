@@ -95,6 +95,11 @@ export const translations: Record<Lang, Record<string, string>> = {
     "error.EXPORT_UNSAFE_IDENTIFIER":
       "לא ניתן לייצא: לאחת הישויות או השדות יש שם שאינו באותיות אנגליות. שנו את השם (השתמשו באותיות אנגליות, ספרות וקו תחתון בלבד) ונסו שוב -- אפשר להמשיך להשתמש באפליקציה בתצוגה החיה גם בלי לייצא.",
     "error.RECORD_HAS_DEPENDENT_RECORDS": "אי אפשר למחוק את הרשומה הזו -- רשומה אחרת עדיין מקושרת אליה.",
+    "error.ROLE_NOT_FOUND": "התפקיד הזה לא נמצא.",
+    "error.ASSUMPTION_NOT_FOUND": "ההנחה הזו לא נמצאה.",
+    "error.ROLE_STALE_INDEX": "התפקיד הזה כבר השתנה בעדכון אחר -- רפרשו ונסו שוב.",
+    "error.ASSUMPTION_STALE_INDEX": "ההנחה הזו כבר השתנתה בעדכון אחר -- רפרשו ונסו שוב.",
+    "error.INVALID_RELATION_TARGET": "הרשומה הזו מצביעה על רשומה אחרת שכבר לא קיימת.",
     "lang.he": "עברית",
     "lang.en": "EN",
     "theme.switchToDark": "מעבר למצב כהה",
@@ -621,6 +626,11 @@ export const translations: Record<Lang, Record<string, string>> = {
     "error.EXPORT_UNSAFE_IDENTIFIER":
       "Can't export: an entity or field name isn't in English. Rename it (English letters, digits, and underscores only) and try again -- you can keep using the app in the live preview without exporting.",
     "error.RECORD_HAS_DEPENDENT_RECORDS": "Can't delete this record -- another record still refers to it.",
+    "error.ROLE_NOT_FOUND": "This role wasn't found.",
+    "error.ASSUMPTION_NOT_FOUND": "This assumption wasn't found.",
+    "error.ROLE_STALE_INDEX": "This role was already changed by another update -- refresh and try again.",
+    "error.ASSUMPTION_STALE_INDEX": "This assumption was already changed by another update -- refresh and try again.",
+    "error.INVALID_RELATION_TARGET": "This record references another record that no longer exists.",
     "lang.he": "עברית",
     "lang.en": "EN",
     "theme.switchToDark": "Switch to dark mode",

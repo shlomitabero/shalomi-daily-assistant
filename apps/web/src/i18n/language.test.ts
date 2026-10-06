@@ -12,11 +12,23 @@ import { detectInitialLang, dirFor, resolveErrorMessage, translate, translations
  * of a hand-maintained list that can silently drift out of sync -- which is
  * exactly how PIPELINE_IN_PROGRESS and ALREADY_BUILT shipped with no
  * translation at all until a real user hit the untranslated fallback.
+ *
+ * Round 425: this scan itself had two blind spots that let
+ * ROLE_NOT_FOUND/ASSUMPTION_NOT_FOUND/ROLE_STALE_INDEX/ASSUMPTION_STALE_INDEX/
+ * INVALID_RELATION_TARGET ship with no translation, same as
+ * PIPELINE_IN_PROGRESS/ALREADY_BUILT before it -- codePattern required the
+ * code string to sit with no trailing comma right before the closing `)`,
+ * which INVALID_RELATION_TARGET's own multi-line call site doesn't (it has
+ * one); and parseListIndex/assertIndexStillMatches (projects.ts) take their
+ * HttpError code as a `notFoundCode` *parameter* rather than a literal next
+ * to `new HttpError(` at all, so no amount of tolerating formatting in
+ * codePattern could ever see them -- only each call site does.
  */
 function findThrownHttpErrorCodes(): Set<string> {
   const apiSrcDir = fileURLToPath(new URL("../../../api/src", import.meta.url));
   const codes = new Set<string>();
-  const codePattern = /new HttpError\(\s*\d+\s*,[\s\S]*?"([A-Z_]+)"\s*\)/g;
+  const codePattern = /new HttpError\(\s*\d+\s*,[\s\S]*?"([A-Z_]+)"\s*,?\s*\)/g;
+  const delegatedCodePattern = /\b(?:parseListIndex|assertIndexStillMatches)\([\s\S]*?,\s*"([A-Z_]+)"\s*,?\s*\)/g;
 
   function walk(dir: string): void {
     for (const entry of readdirSync(dir, { withFileTypes: true })) {
@@ -26,6 +38,9 @@ function findThrownHttpErrorCodes(): Set<string> {
       } else if (entry.isFile() && entry.name.endsWith(".ts") && !entry.name.endsWith(".test.ts")) {
         const contents = readFileSync(fullPath, "utf-8");
         for (const match of contents.matchAll(codePattern)) {
+          codes.add(match[1]);
+        }
+        for (const match of contents.matchAll(delegatedCodePattern)) {
           codes.add(match[1]);
         }
       }
@@ -184,7 +199,21 @@ test("every HttpError code the API can send has a Hebrew and an English translat
 
 test("findThrownHttpErrorCodes actually finds the known, real HttpError codes (sanity check on the scan itself)", () => {
   const thrownCodes = findThrownHttpErrorCodes();
-  for (const code of ["VALIDATION_ERROR", "PROJECT_NOT_FOUND", "PIPELINE_IN_PROGRESS", "ALREADY_BUILT", "WHATSAPP_NOT_CONNECTED"]) {
+  for (const code of [
+    "VALIDATION_ERROR",
+    "PROJECT_NOT_FOUND",
+    "PIPELINE_IN_PROGRESS",
+    "ALREADY_BUILT",
+    "WHATSAPP_NOT_CONNECTED",
+    // Multi-line new HttpError(...) call with a trailing comma after the
+    // code string -- round 425 found the original codePattern silently
+    // skipped this formatting.
+    "INVALID_RELATION_TARGET",
+    // Only ever a literal at parseListIndex/assertIndexStillMatches call
+    // sites, never next to `new HttpError(` itself -- see delegatedCodePattern.
+    "ROLE_NOT_FOUND",
+    "ASSUMPTION_STALE_INDEX",
+  ]) {
     assert.ok(thrownCodes.has(code), `scan should have found "${code}" being thrown somewhere in apps/api/src`);
   }
 });
