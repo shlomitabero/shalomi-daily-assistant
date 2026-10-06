@@ -4965,6 +4965,82 @@ test("deleting your account requires a valid session, the same as any other auth
 });
 
 /**
+ * New in this round (424): DELETE /auth/account used to only revoke this
+ * account's sessions AFTER its whole per-project cleanup loop finished --
+ * and that loop awaits a genuine network round-trip (whatsapp.disconnect's
+ * own session.sock.logout()) for any project with a live WhatsApp
+ * connection. While suspended on that await, this account's still-valid
+ * token could authenticate an unrelated POST /projects and create a brand
+ * new project -- one that was never in the owned-ids snapshot taken up
+ * front, so it was never deleted, and (since projects.ownerId carries no
+ * foreign-key constraint to users.id) the user row was still deleted out
+ * from under it, permanently orphaning it under a user id that no longer
+ * exists. Holds the fake socket's own logout() open with a real
+ * never-resolving-until-released promise (the same deterministic
+ * hold-the-async-call-open technique used elsewhere in this file, rather
+ * than a timing-based sleep) to force this exact window open, then
+ * confirms a request racing inside it is rejected -- sessions must already
+ * be gone before the slow WhatsApp disconnect is reached.
+ */
+test("deleting your account revokes your sessions before the slow per-project WhatsApp disconnect runs, so a request racing inside that window can't create an orphaned project", async () => {
+  let createdSockets: ReturnType<typeof createFakeWhatsAppSocket>[] = [];
+  await withServer(
+    async (baseUrl) => {
+      const token = await signup(baseUrl, "race-account-delete1@example.com");
+      const createRes = await fetch(`${baseUrl}/api/projects`, {
+        method: "POST",
+        headers: authHeaders(token),
+        body: JSON.stringify({ description: "A CRM with customers and deals." }),
+      });
+      const { project } = (await createRes.json()) as { project: { id: string } };
+
+      await fetch(`${baseUrl}/api/projects/${project.id}/integrations/whatsapp/connect`, { method: "POST", headers: authHeaders(token) });
+      createdSockets[0].sock.user = { id: "15550001111:1@s.whatsapp.net" };
+      createdSockets[0].emitConnectionUpdate({ connection: "open" });
+
+      let logoutEntered = false;
+      let releaseLogout!: () => void;
+      const logoutHeld = new Promise<void>((resolve) => {
+        releaseLogout = resolve;
+      });
+      createdSockets[0].sock.logout = async () => {
+        logoutEntered = true;
+        await logoutHeld;
+      };
+
+      const deletePromise = fetch(`${baseUrl}/api/auth/account`, { method: "DELETE", headers: authHeaders(token) });
+
+      for (let i = 0; i < 40 && !logoutEntered; i++) {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      }
+      assert.ok(logoutEntered, "expected the account-deletion request to actually be suspended inside the slow WhatsApp disconnect");
+
+      const duringRes = await fetch(`${baseUrl}/api/projects`, {
+        method: "POST",
+        headers: authHeaders(token),
+        body: JSON.stringify({ description: "A second, unrelated project created during the deletion window." }),
+      });
+      assert.equal(
+        duringRes.status,
+        401,
+        "the session must already be revoked before the slow WhatsApp disconnect begins -- a request racing inside that window must never succeed",
+      );
+
+      releaseLogout();
+      const deleteRes = await deletePromise;
+      assert.equal(deleteRes.status, 204);
+    },
+    {
+      whatsapp: (db) => {
+        const { manager, createdSockets: sockets } = createTestWhatsAppManager(db);
+        createdSockets = sockets;
+        return manager;
+      },
+    },
+  );
+});
+
+/**
  * Regression test for a real gap found by round 292's Explore survey:
  * deleting a record another record still points to via a `relation` field
  * fails a real foreign-key constraint (`PRAGMA foreign_keys = ON`,

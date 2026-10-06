@@ -189,13 +189,30 @@ export function createAuthRouter(db: ForgeDatabase, whatsapp: WhatsAppWebManager
    */
   router.delete("/auth/account", requireAuth(db), async (req, res, next) => {
     try {
+      // Revokes every session -- including this very request's own token --
+      // as the first thing this handler does, synchronously, before any of
+      // the real async I/O below. whatsapp.disconnect() awaits a genuine
+      // network round-trip (session.sock.logout(), see whatsappWeb.ts's own
+      // comment) whenever a project has a live WhatsApp connection, and that
+      // used to run while this account's token was still valid. Round 424:
+      // while suspended on that await, an unrelated POST /projects using
+      // the same still-valid token could create a brand-new project whose
+      // id was never in listOwnedProjectIds' own snapshot below (taken once,
+      // up front) -- and since projects.ownerId carries no foreign-key
+      // constraint to users.id, deleteUser further down still succeeded,
+      // permanently orphaning that project under a user id that no longer
+      // exists anywhere, reachable by no route ever again. Revoking first
+      // closes the window: any request racing this one now fails
+      // requireAuth before it can do anything, for the same reason the
+      // existing "the deleted user's own session token must stop working
+      // immediately" check below already expects.
+      deleteAllSessionsForUser(db, req.userId!);
       const ownedProjectIds = listOwnedProjectIds(db, req.userId!);
       for (const projectId of ownedProjectIds) {
         await whatsapp.disconnect(projectId).catch(() => {});
         deleteProject(db, projectId);
       }
       removeAllCollaborationsForUser(db, req.userId!);
-      deleteAllSessionsForUser(db, req.userId!);
       deleteUser(db, req.userId!);
       res.status(204).end();
     } catch (err) {
