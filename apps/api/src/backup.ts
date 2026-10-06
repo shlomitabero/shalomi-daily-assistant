@@ -174,6 +174,31 @@ function whatsappMessagesToCsv(messages: WhatsAppMessage[]): string {
  * they always get a CSV; WhatsApp is a project-optional integration, not
  * part of the spec, so its absence is the normal case, not a gap).
  */
+/**
+ * Nothing stops a real entity from being named exactly "WhatsApp Messages"
+ * -- ProductSpecSchema has no reservation for it (unlike id/createdAt via
+ * RESERVED_FIELD_NAMES), and an AI-generated spec for an app that itself
+ * prominently features a WhatsApp integration can plausibly produce that
+ * exact wording. Without this check, that entity's own CSV entry above and
+ * this hardcoded log entry would collide at the identical path
+ * "WhatsApp Messages.csv" -- buildZip (zip.ts) does no dedup of its own, so
+ * both would land in the archive under one name, and every common unzip
+ * tool resolves that by silently overwriting one with the other on
+ * extraction, with no error or warning. Same deterministic
+ * case-insensitive numeric-suffix resolution deriveEntityName/
+ * deriveFieldName (routes/projects.ts) already use for every other naming
+ * conflict in this codebase -- the entity keeps its real, user-facing
+ * name untouched; this hardcoded entry is the one that yields.
+ */
+function uniqueWhatsAppLogPath(existingPaths: string[]): string {
+  const existingLower = new Set(existingPaths.map((p) => p.toLowerCase()));
+  const base = "WhatsApp Messages";
+  if (!existingLower.has(`${base}.csv`.toLowerCase())) return `${base}.csv`;
+  let suffix = 2;
+  while (existingLower.has(`${base} ${suffix}.csv`.toLowerCase())) suffix += 1;
+  return `${base} ${suffix}.csv`;
+}
+
 export function generateBackupZipEntries(db: ForgeDatabase, project: Project): { path: string; content: string }[] {
   const allEntities = project.spec.entities;
   const recordsByEntity: Record<string, EntityRecord[]> = {};
@@ -192,7 +217,7 @@ export function generateBackupZipEntries(db: ForgeDatabase, project: Project): {
   const whatsappMessages = collectAllWhatsAppMessages(db, project.id);
   if (whatsappMessages.length > 0) {
     entries.push({
-      path: "WhatsApp Messages.csv",
+      path: uniqueWhatsAppLogPath(entries.map((e) => e.path)),
       content: "﻿" + whatsappMessagesToCsv(whatsappMessages),
     });
   }

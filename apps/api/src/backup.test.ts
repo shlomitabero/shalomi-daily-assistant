@@ -357,6 +357,61 @@ test("a project that never used WhatsApp gets no 'WhatsApp Messages.csv' entry a
   assert.ok(!entries.some((e) => e.path === "WhatsApp Messages.csv"));
 });
 
+/**
+ * Regression test for a real bug found by round 426's Explore survey:
+ * nothing in ProductSpecSchema reserves the exact string "WhatsApp
+ * Messages" as an entity name (unlike id/createdAt via
+ * RESERVED_FIELD_NAMES) -- an AI-generated spec for an app that itself
+ * prominently features a WhatsApp integration can plausibly produce that
+ * exact wording, and the heuristic/case-collision checks only ever compare
+ * entity names against EACH OTHER, never against this file's own hardcoded
+ * literal. Before this round's fix, an entity named exactly "WhatsApp
+ * Messages" produced two ZIP entries at the identical path "WhatsApp
+ * Messages.csv" (its own real records, and the project's real WhatsApp
+ * conversation log) -- buildZip (zip.ts) does no dedup of its own, so both
+ * landed in the archive under one name, and every common unzip tool
+ * resolves that by silently overwriting one with the other on extraction,
+ * losing a whole dataset with no error or warning at all.
+ */
+test("an entity named exactly 'WhatsApp Messages' never collides with the real WhatsApp log entry -- both datasets survive, neither silently overwrites the other", () => {
+  const collidingProject: Project = {
+    ...project,
+    spec: {
+      ...project.spec,
+      entities: [
+        ...project.spec.entities,
+        { name: "WhatsApp Messages", fields: [{ name: "note", type: "text", required: true }] },
+      ],
+    },
+  };
+  const db = createTestDb(collidingProject);
+  const entityNamedWhatsapp = collidingProject.spec.entities[2];
+  insertRecord(db, collidingProject.id, entityNamedWhatsapp, { note: "this is the entity's own real record" });
+  insertWhatsAppMessage(db, {
+    projectId: collidingProject.id,
+    direction: "in",
+    fromNumber: "+972501111111",
+    toNumber: "+972502222222",
+    body: "this is the real WhatsApp conversation log",
+    status: "received",
+  });
+
+  const entries = generateBackupZipEntries(db, collidingProject);
+  const paths = entries.map((e) => e.path);
+  // Every path must be unique -- buildZip has no dedup of its own, so a
+  // duplicate path here is exactly the silent-data-loss bug this test
+  // guards against.
+  assert.equal(new Set(paths).size, paths.length, "no two ZIP entries may share the same path");
+  assert.ok(paths.includes("WhatsApp Messages.csv"), "the entity keeps its own real, user-facing name");
+  // The entity's own CSV holds its own real record, not the WhatsApp log.
+  const entityCsv = entries.find((e) => e.path === "WhatsApp Messages.csv")!.content;
+  assert.ok(entityCsv.includes("this is the entity's own real record"));
+  assert.ok(!entityCsv.includes("this is the real WhatsApp conversation log"));
+  // The real WhatsApp log survives too, under a different, still-unique path.
+  const logEntry = entries.find((e) => e.path !== "WhatsApp Messages.csv" && e.content.includes("this is the real WhatsApp conversation log"));
+  assert.ok(logEntry, "the real WhatsApp log must still be present in the archive, under some unique path");
+});
+
 test("a value that would be interpreted as a spreadsheet formula is guarded with a leading single quote (CSV/formula injection)", () => {
   // A stored "name" field can hold arbitrary text -- not just values this
   // app itself ever wrote -- and Excel/Sheets/LibreOffice treat an
