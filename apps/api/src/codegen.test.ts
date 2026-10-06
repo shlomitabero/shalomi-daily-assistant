@@ -9,7 +9,7 @@ import { transformSync } from "esbuild";
 import { JSDOM } from "jsdom";
 import React from "react";
 import { act, cleanup, fireEvent, render } from "@testing-library/react";
-import type { Entity, Project } from "@forge/shared";
+import type { Entity, EntityRecord, Project } from "@forge/shared";
 import { generateExportFiles } from "./codegen.js";
 
 const project: Project = {
@@ -3136,8 +3136,9 @@ test("the exported EntityView renders a real picker for relation fields, not a r
   assert.match(entityViewJsx, /function recordDisplayLabel/);
   assert.match(entityViewJsx, /function relationDisplayLabel/);
   // The relation branch of FieldInput renders a real <select> of related
-  // records, not the old raw number input.
-  assert.match(entityViewJsx, /relatedEntity && relatedEntityRecords/);
+  // records, not the old raw number input, once relatedEntityRecords has
+  // actually loaded (see round 440's disabled-placeholder loading branch).
+  assert.match(entityViewJsx, /field\.type === "relation" && relatedEntity\)/);
   assert.match(entityViewJsx, /relatedEntityRecords\.map/);
   // CSV export also resolves the related record's label, not the raw id.
   assert.match(entityViewJsx, /function recordsToCsv\(fields, records, relatedRecords\)/);
@@ -5456,7 +5457,11 @@ test("the exported EntityView's FieldInput wires field.required into the real re
   const fieldInputSrc = entityViewJsx.match(/function FieldInput\(\{[\s\S]*?\n\}\n/)?.[0];
   assert.ok(fieldInputSrc, "expected to find FieldInput in generated output");
 
-  const relationSelectBranch = fieldInputSrc!.match(/field\.type === "relation" && relatedEntity && relatedEntityRecords[\s\S]{0,150}/)?.[0];
+  // round 440 added a disabled, loading-placeholder <select> branch ahead
+  // of the real, option-backed one (rendered while relatedEntityRecords
+  // hasn't resolved yet) -- anchor on relatedEntityRecords.map to land in
+  // the real branch specifically, not the loading placeholder.
+  const relationSelectBranch = fieldInputSrc!.match(/field\.type === "relation" && relatedEntity\)[\s\S]*?relatedEntityRecords\.map/)?.[0];
   assert.match(relationSelectBranch ?? "", /required=\{field\.required\}/, "the relation <select> branch must be required-wired");
 
   const booleanBranch = fieldInputSrc!.match(/field\.type === "boolean"[\s\S]{0,200}\}\n\s*\}/)?.[0];
@@ -6543,6 +6548,110 @@ test("the exported EntityView's self-referencing relation field picker includes 
       );
     });
   } finally {
+    globalThis.fetch = originalFetch;
+    cleanup();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
+ * New in this round (440): a long-standing, known-but-deprioritized gap
+ * from round 375's own notes, mirrored here in the exported standalone
+ * app's own hand-duplicated FieldInput (apps/api/src/codegen.ts). Its
+ * relatedRecords is only ever populated by EntityView's loadRelated
+ * effect -- a useEffect never runs synchronously on the first render --
+ * but the add/edit form is rendered completely unconditionally. Before
+ * this fix, FieldInput's relation branch required relatedEntityRecords to
+ * already be truthy, so it fell through to the generic number-input
+ * branch on every single mount of an entity with a relation field: a
+ * plain, raw, fully-editable number field with no real options and no
+ * validation, for as long as the real network fetch took. Confirms the
+ * field now renders as a disabled placeholder instead, and only becomes
+ * the real option-backed <select> once relatedRecords genuinely resolves.
+ */
+test("the exported EntityView's relation field never falls back to a raw, unvalidated number input while related records are still loading", async () => {
+  const courierEntity: Entity = { name: "Courier", label: "Courier", fields: [{ name: "name", label: "Name", type: "text", required: true }] };
+  const orderEntity: Entity = {
+    name: "Order",
+    label: "Order",
+    fields: [
+      { name: "item", label: "Item", type: "text", required: true },
+      { name: "courierId", label: "Courier", type: "relation", relationTo: "Courier", required: false },
+    ],
+  };
+  const withRelationProject: Project = {
+    ...project,
+    spec: { ...project.spec, entities: [courierEntity, orderEntity] },
+  };
+  const files = generateExportFiles(withRelationProject);
+  const dir = writeGeneratedWebComponent(files);
+  const store: EntityRecord[] = [{ id: 1, item: "Pizza", courierId: null }];
+  const courierRelated: EntityRecord[] = [{ id: 9, name: "Dana" }];
+  let releaseCourierFetch: (() => void) | undefined;
+  const courierFetchHeld = new Promise<void>((resolve) => {
+    releaseCourierFetch = resolve;
+  });
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async (input: string) => {
+    if (input === "/api/Order") {
+      return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    if (input === "/api/Courier") {
+      await courierFetchHeld; // held open to simulate the real pre-resolve window
+      return new Response(JSON.stringify({ records: courierRelated }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    throw new Error(`unexpected request ${input}`);
+  }) as typeof fetch;
+
+  try {
+    await withRealLocalStorage(async () => {
+      const { EntityView } = await import(path.join(dir, "web", "src", "components", "EntityView.jsx"));
+      const props = {
+        entity: orderEntity,
+        highlightRecordId: null,
+        onHighlightHandled: () => {},
+        onJumpToRecord: () => {},
+        onRecordCountChange: () => {},
+      };
+
+      const { container } = render(React.createElement(EntityView, props));
+      for (let i = 0; i < 40; i++) {
+        if (container.querySelectorAll("tbody tr").length === 1) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+
+      assert.equal(
+        container.querySelector('.record-form input[type="number"]') === null,
+        true,
+        "the relation field must never fall back to a raw, unvalidated number input while related records are still loading",
+      );
+      const loadingSelect = container.querySelector(".record-form select") as HTMLSelectElement | null;
+      assert.ok(loadingSelect, "expected a real <select> for the relation field even before related records have loaded");
+      assert.equal(loadingSelect!.disabled, true, "the relation field's placeholder select must be disabled while loading, not freely submittable");
+
+      await act(async () => {
+        releaseCourierFetch!();
+        await courierFetchHeld;
+      });
+      for (let i = 0; i < 40; i++) {
+        const select = container.querySelector(".record-form select") as HTMLSelectElement | null;
+        if (select !== null && !select.disabled && select.querySelectorAll("option").length === 2) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+
+      const realSelect = container.querySelector(".record-form select") as HTMLSelectElement;
+      const optionLabels = Array.from(realSelect.options).map((o) => o.textContent);
+      assert.ok(optionLabels.includes("Dana"), "once related records load, the field must become the real, option-backed select");
+    });
+  } finally {
+    // Released unconditionally -- if an earlier assertion throws before the
+    // normal release point above, the mock Courier fetch would otherwise
+    // stay suspended on its held promise forever.
+    releaseCourierFetch!();
     globalThis.fetch = originalFetch;
     cleanup();
     rmSync(dir, { recursive: true, force: true });

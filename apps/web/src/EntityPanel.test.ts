@@ -4447,6 +4447,88 @@ test("Escape while renaming a field's label cancels only that rename, never the 
 });
 
 /**
+ * New in this round (440): a long-standing, known-but-deprioritized gap
+ * from round 375's own notes, confirmed still present in the current code.
+ * relatedRecords is only ever populated by loadRelated's own useEffect --
+ * which, by React's contract, never runs synchronously on the first render
+ * -- but the add/edit form is rendered completely unconditionally, with no
+ * gate of its own on either `loading` or relatedRecords having arrived.
+ * FieldInput's relation branch used to require `relatedEntityRecords` to
+ * already be truthy, so on every single mount of an entity with a relation
+ * field, the window before that fetch resolves fell through to the
+ * generic `field.type === "number" || "relation"` branch: a plain, raw,
+ * fully-editable `<input type="number">` with no real options and no
+ * validation against an actual related record -- not just a rare race,
+ * but the deterministic first-paint state every time. A fast user (or
+ * keyboard/autofill) could submit an arbitrary foreign-key id during that
+ * window. Confirms the field now renders as a disabled, clearly-labeled
+ * loading placeholder instead, and only becomes the real, option-backed
+ * `<select>` once relatedRecords genuinely resolves.
+ */
+test("EntityPanel's relation field never falls back to a raw, unvalidated number input while related records are still loading", async () => {
+  await withJsdom(async () => {
+    const orderEntity: Entity = {
+      name: "Order",
+      label: "Order",
+      fields: [
+        { name: "item", label: "Item", type: "text", required: true },
+        { name: "courierId", label: "Courier", type: "relation", relationTo: "Courier", required: false },
+      ],
+    };
+    const courierEntity: Entity = { name: "Courier", label: "Courier", fields: [{ name: "name", label: "Name", type: "text", required: true }] };
+    const courierRelated: EntityRecord[] = [{ id: 9, createdAt: "x", name: "Dana" }];
+    const store: EntityRecord[] = [{ id: 1, createdAt: "x", item: "Pizza", courierId: null }];
+    let releaseCourierFetch: (() => void) | undefined;
+    const courierFetchHeld = new Promise<void>((resolve) => {
+      releaseCourierFetch = resolve;
+    });
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string) => {
+      if (input === "/api/projects/proj1/entities/Order") {
+        return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      if (input === "/api/projects/proj1/entities/Courier") {
+        await courierFetchHeld; // held open to simulate the real pre-resolve window
+        return new Response(JSON.stringify({ records: courierRelated }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${input}`);
+    }) as typeof fetch;
+    try {
+      renderEntityPanel({ entity: orderEntity, allEntities: [orderEntity, courierEntity] });
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 1);
+
+      assert.equal(
+        document.querySelector('.record-form input[type="number"]') === null,
+        true,
+        "the relation field must never fall back to a raw, unvalidated number input while related records are still loading",
+      );
+      const loadingSelect = document.querySelector(".record-form select") as HTMLSelectElement;
+      assert.ok(loadingSelect, "expected a real <select> for the relation field even before related records have loaded");
+      assert.equal(loadingSelect.disabled, true, "the relation field's placeholder select must be disabled while loading, not freely submittable");
+
+      releaseCourierFetch!();
+      await courierFetchHeld;
+      await waitForCondition(() => {
+        const select = document.querySelector(".record-form select") as HTMLSelectElement | null;
+        return select !== null && !select.disabled && select.querySelectorAll("option").length === 2;
+      });
+
+      const realSelect = document.querySelector(".record-form select") as HTMLSelectElement;
+      const optionLabels = Array.from(realSelect.options).map((o) => o.textContent);
+      assert.ok(optionLabels.includes("Dana"), "once related records load, the field must become the real, option-backed select");
+    } finally {
+      // Released unconditionally -- if an earlier assertion throws before
+      // the normal release point above, the mock Courier fetch would
+      // otherwise stay suspended on its held promise forever, leaving the
+      // component's own loadRelated effect (and React's pending update
+      // machinery) dangling even after this test has already failed.
+      releaseCourierFetch!();
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * New in this round: the search box's own matchesSearch fell through to
  * the raw stored foreign-key id for a relation field, so typing the exact
  * name a relation cell visibly shows (e.g. "Dana", resolved via

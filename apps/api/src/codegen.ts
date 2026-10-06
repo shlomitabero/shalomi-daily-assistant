@@ -2285,7 +2285,20 @@ function BoardCard({ entity, boardField, record, relatedRecords, hasMoveError, o
 // (EntityPanel.tsx, round 206).
 function FieldInput({ entity, field, value, onChange, relatedEntity, relatedEntityRecords, autoFocus, onBlur, onKeyDown }) {
   const id = \`f_\${entity.name}_\${field.name}\`;
-  if (field.type === "relation" && relatedEntity && relatedEntityRecords) {
+  if (field.type === "relation" && relatedEntity) {
+    // relatedEntityRecords is only populated once EntityView's own
+    // loadRelated effect resolves its real network fetch -- a useEffect
+    // never runs synchronously on the first render, so the add/edit form
+    // (rendered unconditionally, with no loading gate of its own) would
+    // otherwise fall through to the generic number-input branch below on
+    // every single mount. Mirrors the live preview's own fix (EntityPanel.tsx).
+    if (!relatedEntityRecords) {
+      return (
+        <select id={id} disabled aria-busy="true">
+          <option value="">Loading…</option>
+        </select>
+      );
+    }
     return (
       <select
         id={id}

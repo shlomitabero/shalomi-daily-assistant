@@ -662,7 +662,22 @@ function FieldInput({
   onKeyDown?: (e: React.KeyboardEvent) => void;
 }) {
   const { t } = useTranslation();
-  if (field.type === "relation" && relatedEntity && relatedEntityRecords) {
+  if (field.type === "relation" && relatedEntity) {
+    // relatedEntityRecords is only populated once EntityPanel's own
+    // loadRelated effect resolves its real network fetch -- a useEffect
+    // never runs synchronously on the first render, so the add/edit form
+    // (rendered unconditionally, with no loading gate of its own) would
+    // otherwise fall through to the generic number-input branch below on
+    // every single mount, letting a fast user submit an arbitrary,
+    // unvalidated foreign-key id before the real options ever existed.
+    // A disabled, clearly-labeled placeholder here closes that window.
+    if (!relatedEntityRecords) {
+      return (
+        <select disabled aria-busy="true">
+          <option value="">{t("entity.relation.loading")}</option>
+        </select>
+      );
+    }
     return (
       <select
         required={field.required}
