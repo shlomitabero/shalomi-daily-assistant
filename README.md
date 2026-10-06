@@ -18,12 +18,17 @@ watch a simulated global economy move around you.
 A second design pass ("turn this into a real game") pushed the experience
 layer specifically — without touching the underlying financial simulation:
 
-- **A living city.** The World screen's City tab renders 8 stylized
-  districts (Downtown, Food, Tech, Industrial, Entertainment, Luxury,
-  Residential, Port), each with its own color language, showing your
-  presence there and a pulsing 🔥 badge when there's an opportunity. Home
-  leads with a compact city strip and up to 3 one-tap "URGENT" cards (a
-  deal, your nearest rival, a property) instead of a menu.
+- **A real 3D city.** The World screen's City tab renders an actual
+  low-poly 3D city (`client/src/components/CityScene3D.jsx`, raw three.js —
+  no React renderer) — 8 colored district blocks with buildings, drag to
+  orbit, tap a building to navigate there. Lazy-loaded (~140KB gzipped)
+  only when the tab opens, so it never costs anything on first load; a 2D
+  fallback is one tap away and used automatically under
+  `prefers-reduced-motion`. Each district shows your presence there and a
+  pulsing 🔥 badge when there's an opportunity. Home leads with a compact
+  city strip (ambient CSS-animated pedestrians and cars — see
+  `client/src/components/CityLife.jsx`) and up to 3 one-tap "URGENT" cards
+  (a deal, your nearest rival, a property) instead of a menu.
 - **Cinematic deals.** Negotiation is framed as a boardroom scene — a
   portrait, a live mood indicator, and a tension meter that rises with each
   round — not a plain chat log. Closing one plays a "DEAL CLOSED" sequence
@@ -49,12 +54,13 @@ layer specifically — without touching the underlying financial simulation:
   to reach it, your first business, and portfolio size.
 
 **Deliberately out of scope for this pass**, because they need infrastructure
-or product decisions beyond a single build (an actual 3D/isometric renderer,
-a video clip export pipeline, public companies/IPOs, a multi-city global
-map, and a spectator system): the city map and business tiers are 2D/CSS,
-not 3D; the "share card" is a static PNG, not a video clip; rivalry is a
-live comparison, not a persisted history (there's no snapshot table yet to
-back a real trend).
+or product decisions beyond a single build: a video clip export pipeline,
+public companies/IPOs, a multi-city global map, and a spectator system. The
+city is a real (if deliberately low-poly, stylized) 3D scene now, not a
+renderer promise; business tiers are still 2D icon badges, not 3D models;
+the "share card" is a static PNG, not a video clip; rivalry is a live
+comparison, not a persisted history (there's no snapshot table yet to back
+a real trend).
 
 ## What's actually playable
 
@@ -222,7 +228,7 @@ infrastructure" below for what real persistence needs.
 
 Full spec sections not implemented in this pass: hostile takeovers between
 real players, the AI Game Master content pipeline, the viral-content export
-engine, an actual 3D/isometric city renderer, public companies/IPOs, and a
-multi-city global map. The architecture (server-authoritative economy,
-isolated negotiation seam, full schema) is built to grow into those rather
-than be rewritten for them.
+engine, public companies/IPOs, and a multi-city global map (the city itself
+is real low-poly 3D now — see "Game feel, not a dashboard" above). The
+architecture (server-authoritative economy, isolated negotiation seam, full
+schema) is built to grow into those rather than be rewritten for them.

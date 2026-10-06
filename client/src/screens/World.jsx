@@ -1,9 +1,13 @@
-import { useEffect, useState } from 'react';
+import { lazy, Suspense, useEffect, useMemo, useState } from 'react';
 import { api } from '../api';
 import { formatCompact } from '../format';
 import { DISTRICTS } from '../world';
 import PlayerCard from '../components/PlayerCard';
 import CityLife from '../components/CityLife';
+
+// three.js is a heavy dependency (~700KB) — only fetch it when someone
+// actually opens the 3D view, not on every page load.
+const CityScene3D = lazy(() => import('../components/CityScene3D'));
 
 const KIND_ICON = {
   sale: '💰', loss: '📉', property: '🏙️', acquisition: '🤝', bankruptcy: '⚠️',
@@ -22,6 +26,7 @@ export default function World({ state, onNavigate }) {
   const [opportunities, setOpportunities] = useState({ opportunities: [], locked: [] });
   const [properties, setProperties] = useState([]);
   const [viewingPlayer, setViewingPlayer] = useState(null);
+  const [view3d, setView3d] = useState(() => !window.matchMedia?.('(prefers-reduced-motion: reduce)').matches);
 
   useEffect(() => { if (tab === 'feed') api.getFeed().then((d) => setFeed(d.items)); }, [tab]);
   useEffect(() => { if (tab === 'leaderboard') api.getLeaderboard(category).then((d) => setBoard(d.items)); }, [tab, category]);
@@ -32,6 +37,14 @@ export default function World({ state, onNavigate }) {
   }, [tab]);
 
   const activeBusinesses = state.businesses.filter((b) => b.stage === 'active');
+
+  const districtsWithData = useMemo(() => DISTRICTS.map((d) => {
+    const mine = activeBusinesses.filter((b) => d.industries.includes(b.industry)).length;
+    const myProperties = properties.filter((p) => p.owner_id === state.profile.id && d.propertyKinds?.includes(p.kind)).length;
+    const hot = opportunities.opportunities.some((o) => d.industries.includes(o.industry))
+      || properties.some((p) => !p.owner_id && d.propertyKinds?.includes(p.kind));
+    return { ...d, presence: mine + myProperties, hot };
+  }), [state.businesses, properties, opportunities, state.profile.id]);
 
   return (
     <div className="scroll-area stack-lg fade-in">
@@ -48,15 +61,28 @@ export default function World({ state, onNavigate }) {
 
       {tab === 'city' && (
         <div className="stack">
-          <p className="muted" style={{ fontSize: 13 }}>Tap a district to see what's there.</p>
-          <div className="district-grid">
-            {DISTRICTS.map((d) => {
-              const mine = activeBusinesses.filter((b) => d.industries.includes(b.industry)).length;
-              const myProperties = properties.filter((p) => p.owner_id === state.profile.id && d.propertyKinds?.includes(p.kind)).length;
-              const hasHotOpportunity = opportunities.opportunities.some((o) => d.industries.includes(o.industry))
-                || properties.some((p) => !p.owner_id && d.propertyKinds?.includes(p.kind));
-              const presence = mine + myProperties;
-              return (
+          <div className="row-between">
+            <p className="muted" style={{ fontSize: 13, margin: 0 }}>
+              {view3d ? 'Drag to look around. Tap a district.' : 'Tap a district to see what\'s there.'}
+            </p>
+            <button className="btn btn-sm btn-ghost" onClick={() => setView3d((v) => !v)}>
+              {view3d ? '2D view' : '3D view'}
+            </button>
+          </div>
+
+          {view3d ? (
+            <Suspense fallback={<div className="center" style={{ height: 320 }}><div className="spinner" /></div>}>
+              <CityScene3D
+                districts={districtsWithData}
+                onSelectDistrict={(id) => {
+                  const d = DISTRICTS.find((x) => x.id === id);
+                  onNavigate?.(d?.industries.length ? 'opportunities' : 'estate');
+                }}
+              />
+            </Suspense>
+          ) : (
+            <div className="district-grid">
+              {districtsWithData.map((d) => (
                 <div
                   key={d.id}
                   className="district-tile"
@@ -64,16 +90,16 @@ export default function World({ state, onNavigate }) {
                   onClick={() => onNavigate?.(d.industries.length ? 'opportunities' : 'estate')}
                 >
                   <CityLife seed={d.id.length * 17 + d.id.charCodeAt(0)} count={3} />
-                  {hasHotOpportunity && <span className="hot-badge">🔥 HOT</span>}
+                  {d.hot && <span className="hot-badge">🔥 HOT</span>}
                   <span className="district-icon" style={{ position: 'relative' }}>{d.icon}</span>
                   <div style={{ position: 'relative' }}>
                     <div className="district-name">{d.name}</div>
-                    <div className="district-meta">{presence > 0 ? `You own ${presence} here` : 'No presence yet'}</div>
+                    <div className="district-meta">{d.presence > 0 ? `You own ${d.presence} here` : 'No presence yet'}</div>
                   </div>
                 </div>
-              );
-            })}
-          </div>
+              ))}
+            </div>
+          )}
         </div>
       )}
 
