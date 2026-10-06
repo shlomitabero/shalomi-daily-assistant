@@ -466,7 +466,15 @@ export const DOMAIN_ENTITY_RULES: DomainEntityRule[] = [
     },
   },
   {
-    keywords: ["courses", "curriculum", "lesson", "lessons", "קורס", "קורסים", "שיעור", "שיעורים", "כיתה"],
+    // Bare "courses" (round 447) is a substring of "discourses" -- an
+    // ordinary word in a plain discussion/forum description ("hosting
+    // public discourses and debates") that has nothing to do with
+    // education, so it spuriously matched this entity. `\b`-bounded here,
+    // same pitfall-1 shape as the other six fixes in this file. Deliberately
+    // not adding a singular "course" keyword alongside it: "course" alone
+    // would collide with "of course" and "golf course", both far more
+    // common than any real education-app phrasing that needs it.
+    keywords: [/\bcourses\b/, "curriculum", "lesson", "lessons", "קורס", "קורסים", "שיעור", "שיעורים", "כיתה"],
     labelHe: "קורסים",
     descriptionHe: "קורס או שיעור שהעסק מלמד.",
     fieldLabelsHe: { name: "שם הקורס", instructor: "מדריך/ה", startDate: "תאריך התחלה", capacity: "מקום למספר תלמידים" },

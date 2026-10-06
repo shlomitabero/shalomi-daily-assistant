@@ -682,6 +682,30 @@ test("Employee's 'worker' keyword doesn't spuriously match 'coworker', for both 
   assert.ok(staffApp.roles.includes("Employee"), "'worker' must still add the Employee role");
 });
 
+/**
+ * Regression test for a real bug found in round 447: Course's bare
+ * "courses" keyword is a substring of "discourses" -- an ordinary word in
+ * a plain discussion/forum description that has nothing to do with
+ * education, so it spuriously matched this entity. Fixed with the same
+ * `\b`-bounded RegExp pattern order/stock/driver/patient/deals/worker
+ * already use.
+ */
+test("Course's 'courses' keyword doesn't spuriously match 'discourses'", async () => {
+  const provider = new HeuristicSpecProvider();
+
+  const discourses = await provider.generate(
+    "A community platform for hosting public discourses and debates about philosophy.",
+  );
+  assert.ok(
+    !discourses.entities.some((e) => e.name === "Course"),
+    "'discourses' alone must not spuriously match Course via a bare 'courses' substring",
+  );
+
+  // The real education term still works.
+  const realCourse = await provider.generate("An app to manage our online courses and curriculum for students.");
+  assert.ok(realCourse.entities.some((e) => e.name === "Course"), "'courses' must still match Course");
+});
+
 test("MenuItem's 'מנה' keyword doesn't spuriously match 'מנהלים' (managers)", async () => {
   const provider = new HeuristicSpecProvider();
   const managers = await provider.generate("אפליקציה למעקב אחרי מנהלים בעסק");
