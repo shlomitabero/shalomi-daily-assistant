@@ -122,6 +122,40 @@ test("asks about payments for a membership/subscription description phrased with
   assert.equal(paymentQuestion!.recommendation, "Stripe");
 });
 
+test("does not ask about payments for a clothing-store description mentioning 'striped' shirts, but still asks when 'stripe' itself is used", async () => {
+  // Regression test for a real bug found by a round 460 Explore survey:
+  // PAYMENT_KEYWORDS's bare "stripe" hint matched via plain .includes(),
+  // so it was also a substring of "striped"/"pinstripe" -- an ordinary
+  // clothing-store or tailoring description that never mentions payments
+  // at all would still get "Which payment provider should this use?"
+  // (recommending Stripe), purely because of the fabric-pattern word.
+  // Fixed with a \b-bounded regex, reusing the matchesKeyword helper this
+  // file already uses for DOMAIN_ENTITY_RULES/ROLE_RULES.
+  const provider = new HeuristicSpecProvider();
+
+  const stripedSpec = await provider.generate(
+    "An inventory tracker for a clothing store selling striped shirts, scarves, and seasonal collections.",
+  );
+  assert.deepEqual(stripedSpec.entities.map((e) => e.name), ["Product"]);
+  const stripedQuestion = stripedSpec.openQuestions[0];
+  assert.equal(stripedQuestion.question, "Does this application need to accept payments?");
+  assert.equal(stripedQuestion.recommendation, "No payments");
+
+  const pinstripeSpec = await provider.generate(
+    "A catalog app for a boutique tailor to track pinstripe suits, fabric swatches, and client measurements.",
+  );
+  const pinstripeQuestion = pinstripeSpec.openQuestions[0];
+  assert.equal(pinstripeQuestion.question, "Does this application need to accept payments?");
+  assert.equal(pinstripeQuestion.recommendation, "No payments");
+
+  const realStripeSpec = await provider.generate(
+    "A small business app that integrates with stripe to process customer payments.",
+  );
+  const realStripeQuestion = realStripeSpec.openQuestions[0];
+  assert.equal(realStripeQuestion.question, "Which payment provider should this use?");
+  assert.equal(realStripeQuestion.recommendation, "Stripe");
+});
+
 test("detects Hebrew input and returns Hebrew labels while keeping ASCII names", async () => {
   const provider = new HeuristicSpecProvider();
   const spec = await provider.generate(

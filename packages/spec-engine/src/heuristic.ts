@@ -12,8 +12,16 @@ import {
   isHebrewText,
 } from "./domainEntities.js";
 
-const PAYMENT_KEYWORDS = [
-  "payment", "invoice", "billing", "subscription", "checkout", "stripe",
+const PAYMENT_KEYWORDS: (string | RegExp)[] = [
+  "payment", "invoice", "billing", "subscription", "checkout",
+  // Plain "stripe" would also match "striped"/"pinstripe" as a plain
+  // substring (same collision class fixed elsewhere in this codebase, e.g.
+  // domainEntities.ts's keyword matching) -- a clothing-store description
+  // mentioning "striped shirts" has nothing to do with the Stripe payment
+  // provider. "Stripe" the company is never referred to in the plural, so
+  // a \b-bounded regex (rather than allowing an "s" suffix) also correctly
+  // keeps rejecting "stripes" (the fabric pattern, plural).
+  /\bstripe\b/,
   "תשלום", "תשלומים", "חשבונית", "חיוב", "מנוי",
 ];
 
@@ -124,7 +132,7 @@ function buildScreens(entities: Entity[]): Screen[] {
 
 function buildOpenQuestions(text: string, entities: Entity[], isHebrew: boolean): OpenQuestion[] {
   const lower = text.toLowerCase();
-  const mentionsPayments = PAYMENT_KEYWORDS.some((kw) => lower.includes(kw));
+  const mentionsPayments = PAYMENT_KEYWORDS.some((kw) => matchesKeyword(lower, kw));
   const hasBillingEntity = entities.some((e) => BILLING_ENTITY_NAMES.has(e.name));
   const needsPayments = mentionsPayments || hasBillingEntity;
 
