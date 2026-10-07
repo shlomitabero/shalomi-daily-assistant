@@ -25807,6 +25807,22 @@ Full suite green: **829 tests** in `@forge/web` (+2), with `@forge/spec-engine` 
 
 **Topic status**: closed. The three other long-standing unanswered reminders (round 163 cold-start fix, round 381 Render deploy-failure, the out-of-band wakeRetry.ts "מעירים את השרת" fix) remain open and are still re-raised every round.
 
+### Round 452: Service's bare `"treatment"` keyword was a literal substring of the ordinary word `"mistreatment"`, spuriously fabricating a Service entity for elder-care/social-work complaint descriptions
+
+**The candidate**: again no new survey needed -- picked the next of round 448's pre-verified corroborating collisions: Service's `"treatment"` keyword.
+
+**Independent verification**: read the Service entity rule directly (`DOMAIN_ENTITY_RULES`, `domainEntities.ts`) -- confirmed `"treatment"` was still a bare, unbounded string alongside `"service"` in the same keywords array, and confirmed Service has no presence in `ROLE_RULES`, making this a single-site fix like the three before it. Ran the real `matchEntities` function against `"An app for a social worker to report mistreatment of elderly residents in care facilities."` -- a pure elder-care complaint description with zero retail/service-business content. Confirmed the exact false positive: `matchEntities` returned `['Employee', 'Service']`, fabricating a spurious Service entity purely from the "treatment" substring inside "mistreatment".
+
+**The fix**: changed the bare `"treatment"` string to `/\btreatment(s)?\b/`, leaving the sibling `"service"` keyword (the other half of this round-448-identified pair) untouched -- it's a separate, still-open small-candidate entry, not part of this round's one-bug-per-round scope. The `(s)?` suffix preserves the existing plural match, matching the convention from rounds 448-450.
+
+**Tests**: added a test to `heuristic.test.ts`, following the established pattern: confirms `"mistreatment"` alone does not trigger the Service entity, while both `"treatment"` and `"treatments"` in descriptions carefully worded to avoid this rule's other keyword (`"service"`) still do -- isolating that the match genuinely comes from "treatment" itself. Caught and fixed a self-introduced typo (a stray Hebrew character accidentally merged into an unrelated, unchanged test's title during the edit) before running the suite, rather than after a test failure revealed it.
+
+**Regression-proof**: backed up `domainEntities.ts`, reverted it via `git checkout --` (keeping the new test in `heuristic.test.ts` in place), confirmed the test failed with the exact predicted mismatch (the Service false-positive returned, exactly as the un-fixed "mistreatment" repro had shown), restored from backup, confirmed byte-identical via `diff`, then re-ran green.
+
+Full suite green: **103 tests** in `@forge/spec-engine` (+1), **16 tests** in `@forge/shared` (unchanged), **129 tests** in `@forge/db` (unchanged), **411 tests** in `@forge/api` (unchanged), **829 tests** in `@forge/web` (unchanged), a clean `tsc -b` on `@forge/web`, and a clean full monorepo `npm run build`. Commit `582525a`.
+
+**Topic status**: this fix is closed. One of the four round-448-pre-verified candidates remains as the standing small-candidate entry: Service's `"service"` vs `"disservice"` ("avoid doing a disservice to their reputation") -- a quick, well-precedented `\b`-bounded fix exactly like the eleven already closed (order/stock/driver/patient/deals/worker/courses/dish/product/mechanic/treatment). A second, not-yet-verified candidate remains from round 450: Vehicle's `"garage"` vs `"garage sale"`. `domainEntities.ts`'s bare-substring collision class should stay on the standing survey checklist. Everything else still open from rounds 378-451 (`wakeRetry.ts` idempotency, AI-label language mismatch, checkpoint pruning, render.yaml disk stanza, `listRecords` pagination, non-ASCII field name, Seed Data recycled-entity gap, `CollaboratorsPanel` email enumeration, `diffAndMigrate`'s `type_changed` oscillation) remains open and unchanged.
+
 Each phase assumes the previous one is genuinely working, not merely
 scaffolded — see `docs/ADR/0001-initial-architecture.md` and
 `docs/ADR/0002-auth-pipeline-time-machine.md` for the specific tradeoffs
