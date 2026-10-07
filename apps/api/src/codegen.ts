@@ -1358,7 +1358,14 @@ function relationDisplayLabel(field, value, relatedRecords) {
 // own spec generator uses ("Won", "Lost", "Active", ...) and falls back to
 // neutral for anything else (e.g. a freeform value).
 const POSITIVE_WORDS = ["won", "completed", "active", "paid", "delivered", "success", "qualified", "shipped", "confirmed", "approved"];
-const NEGATIVE_WORDS = ["lost", "cancelled", "canceled", "inactive", "overdue", "no-show", "failed", "rejected", "declined", "denied"];
+// round 458: the "un-"/"dis-" negated forms below must stay listed here too --
+// each contains a POSITIVE_WORDS entry as a literal substring ("unpaid"
+// contains "paid", etc.), the same "inactive"/"active" shape "inactive"
+// already handles, mirrored from apps/web/src/entityFormatting.ts's own fix.
+const NEGATIVE_WORDS = [
+  "lost", "cancelled", "canceled", "inactive", "overdue", "no-show", "failed", "rejected", "declined", "denied",
+  "unpaid", "undelivered", "unconfirmed", "unapproved", "disapproved", "unqualified", "disqualified", "unshipped",
+];
 function badgeTone(rawValue) {
   const lower = String(rawValue).toLowerCase();
   if (NEGATIVE_WORDS.some((w) => lower.includes(w))) return "negative";

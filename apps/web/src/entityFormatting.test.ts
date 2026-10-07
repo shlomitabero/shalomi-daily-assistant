@@ -89,6 +89,35 @@ test("badgeTone recognizes 'Inactive' as negative, not positive from matching 'a
   assert.equal(badgeTone("Active"), "positive");
 });
 
+/**
+ * Regression test for a real bug found by a round 458 Explore survey
+ * targeting the same bug class this file's "Inactive" test above already
+ * covers, but outside domainEntities.ts: every POSITIVE_WORDS entry has a
+ * common real-world negated counterpart ("paid" -> "unpaid", "approved"
+ * -> "unapproved"/"disapproved", etc.) that contains the positive word as
+ * a literal substring, so without being listed in NEGATIVE_WORDS too,
+ * each was misread as a positive (green) badge -- the exact opposite of
+ * its meaning. This function's own doc comment says it exists specifically
+ * to classify freeform AI-generated enum values, where these are ordinary,
+ * expected status terms.
+ */
+test("badgeTone recognizes common 'un-'/'dis-' negated status words as negative, not positive from matching their root word as a substring", () => {
+  assert.equal(badgeTone("Unpaid"), "negative");
+  assert.equal(badgeTone("Paid"), "positive");
+  assert.equal(badgeTone("Undelivered"), "negative");
+  assert.equal(badgeTone("Delivered"), "positive");
+  assert.equal(badgeTone("Unconfirmed"), "negative");
+  assert.equal(badgeTone("Confirmed"), "positive");
+  assert.equal(badgeTone("Unapproved"), "negative");
+  assert.equal(badgeTone("Disapproved"), "negative");
+  assert.equal(badgeTone("Approved"), "positive");
+  assert.equal(badgeTone("Unqualified"), "negative");
+  assert.equal(badgeTone("Disqualified"), "negative");
+  assert.equal(badgeTone("Qualified"), "positive");
+  assert.equal(badgeTone("Unshipped"), "negative");
+  assert.equal(badgeTone("Shipped"), "positive");
+});
+
 test("formatDateValue formats a valid ISO date per locale, and leaves an invalid one unchanged", () => {
   const result = formatDateValue("2026-03-15", "en");
   assert.match(result, /3\/15\/2026|15\/3\/2026/); // exact format is locale/engine-dependent, just confirm it parsed

@@ -32,6 +32,22 @@ const NEGATIVE_WORDS = [
   // "Rejected" already does elsewhere, even though it's exactly as
   // conclusive an outcome as "Approved" is positive.
   "denied",
+  // round 458: no built-in entity uses these today, but this function's
+  // whole purpose is to also classify freeform AI-generated enum values
+  // (see the doc comment below), and every one of these is an ordinary
+  // real-world business-status term that contains a POSITIVE_WORDS entry
+  // as a literal substring ("unpaid" contains "paid", etc.) -- without
+  // being listed here too, each would be misread as POSITIVE, the exact
+  // opposite of its meaning, the same "inactive"/"active" shape already
+  // handled above.
+  "unpaid",
+  "undelivered",
+  "unconfirmed",
+  "unapproved",
+  "disapproved",
+  "unqualified",
+  "disqualified",
+  "unshipped",
 ];
 
 const DATE_FORMAT = /^(\d{4})-(\d{2})-(\d{2})$/;
