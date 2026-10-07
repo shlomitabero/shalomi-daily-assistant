@@ -1,7 +1,17 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { AgentStepEvent, Project, ProductSpec } from "@forge/shared";
-import { applyMigrations, countRecords, ensureCheckpointsTable, ensureProjectsTable, insertProject, listCheckpoints, listRecords, openDatabase } from "@forge/db";
+import {
+  applyMigrations,
+  countRecords,
+  deleteRecord,
+  ensureCheckpointsTable,
+  ensureProjectsTable,
+  insertProject,
+  listCheckpoints,
+  listRecords,
+  openDatabase,
+} from "@forge/db";
 import { runBuildPipeline, runQaChecks, runSecurityScan } from "./pipeline.js";
 
 const brokenSpec: ProductSpec = {
@@ -333,6 +343,77 @@ test("seeding a spec that lists a dependent entity before its required relation 
 
   const qaEvent = events.find((e) => e.agent === "QA" && e.status !== "running");
   assert.equal(qaEvent!.status, "success", "QA must still pass once seeding genuinely succeeds");
+});
+
+/**
+ * Regression test: the old Seed Data eligibility filter only seeded an
+ * entity if it was BOTH brand-new (per this diff's new_table changes) AND
+ * currently empty. An existing entity the user had emptied out (e.g. she
+ * deleted every Customer record through the normal UI) was never eligible
+ * again -- so when a later refine adds a new entity with a required
+ * relation to that now-empty existing entity, seedValueFor's best-effort
+ * id=1 guess for the required relation violates a real FK constraint on
+ * every single insert, permanently leaving the new entity with zero seeded
+ * rows and no error ever surfacing to the user. Walking the required-
+ * relation graph out from every new entity to also reseed any existing but
+ * currently-empty target fixes this without touching an existing entity
+ * that genuinely still has real data.
+ */
+test("refining to add an entity with a required relation to an existing-but-emptied entity still seeds both", async () => {
+  const spec: ProductSpec = {
+    summary: "test",
+    personas: [],
+    roles: ["Admin"],
+    screens: [],
+    assumptions: [],
+    openQuestions: [],
+    entities: [{ name: "Customer", fields: [{ name: "name", type: "text", required: true }] }],
+  };
+  const db = openDatabase(":memory:");
+  ensureProjectsTable(db);
+  ensureCheckpointsTable(db);
+  const project = insertProject(db, { id: "proj1", ownerId: "user1", name: "test", description: "test", spec });
+  const customer = spec.entities[0];
+
+  await collect(runBuildPipeline(db, project, { nextSpec: spec, changeLabel: "Initial build" }));
+  assert.ok(countRecords(db, project.id, customer) > 0, "the initial build should have seeded Customer");
+
+  // The user deletes every Customer record through the normal UI, leaving
+  // the table empty but not "new" by any later diff.
+  for (const record of listRecords(db, project.id, customer)) {
+    deleteRecord(db, project.id, customer, record.id as number);
+  }
+  assert.equal(countRecords(db, project.id, customer), 0, "Customer must genuinely be empty before the refine");
+
+  const refinedSpec: ProductSpec = {
+    ...spec,
+    entities: [
+      ...spec.entities,
+      {
+        name: "Invoice",
+        fields: [
+          { name: "amount", type: "number", required: true },
+          { name: "customerId", type: "relation", relationTo: "Customer", required: true },
+        ],
+      },
+    ],
+  };
+  const events = await collect(
+    runBuildPipeline(db, project, { previousSpec: spec, nextSpec: refinedSpec, changeLabel: "Refine: add invoices" }),
+  );
+  const forgeEvent = events.find((e) => e.agent === "Forge");
+  assert.ok(forgeEvent && forgeEvent.status === "success", "the refine should still succeed overall");
+
+  const seedEvent = events.find((e) => e.agent === "Seed Data" && e.status !== "running");
+  assert.equal(
+    seedEvent!.status,
+    "success",
+    "seeding must not report any FK-constraint-violation failures for Invoice's required relation",
+  );
+
+  const invoice = refinedSpec.entities[1];
+  assert.ok(countRecords(db, project.id, invoice) > 0, "Invoice must actually have seeded rows");
+  assert.ok(countRecords(db, project.id, customer) > 0, "Customer must be reseeded too, since it was genuinely empty");
 });
 
 test("the Architect step's impact summary is re-emitted with the corrected spec after a Debug Agent recovery, not left stale", async () => {

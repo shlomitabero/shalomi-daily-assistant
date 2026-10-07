@@ -362,13 +362,65 @@ export async function* runBuildPipeline(
   // seeding before a later step (QA) failed. Without this check, a retry
   // re-inserts a full duplicate round of sample rows into tables that
   // already have them.
+  //
+  // A new entity's required relation field can point at an EXISTING entity
+  // that currently has zero rows (e.g. the user deleted all of its records
+  // through the normal UI before this refine) -- seedValueFor's
+  // required-relation guess (row id 1) then violates the FK constraint on
+  // every single insert, since row 1 genuinely doesn't exist, permanently
+  // failing to seed the new entity with no error ever shown to the user
+  // (round 467). Walking the required-relation graph out from every new
+  // entity -- following chains, tolerating cycles via the visited set --
+  // finds every such currently-empty target so it gets reseeded too, even
+  // though it isn't itself "new". Same countRecords===0 safety check as
+  // above, so an existing entity that genuinely still has rows is never
+  // touched.
+  const entityByName = new Map(nextSpec.entities.map((e) => [e.name, e]));
+  const mustAlsoSeed = new Set<string>();
+  const newEntitiesList = nextSpec.entities.filter((e) => newEntityNames.has(tableNameFor(project.id, e.name)));
+  const visited = new Set(newEntitiesList.map((e) => e.name));
+  const frontier = [...newEntitiesList];
+  while (frontier.length > 0) {
+    const entity = frontier.shift()!;
+    for (const field of entity.fields) {
+      if (field.type !== "relation" || !field.required || !field.relationTo || visited.has(field.relationTo)) continue;
+      const target = entityByName.get(field.relationTo);
+      if (!target || countRecords(db, project.id, target) > 0) continue;
+      visited.add(target.name);
+      mustAlsoSeed.add(target.name);
+      frontier.push(target);
+    }
+  }
   const entitiesToSeed = orderForSeeding(
-    nextSpec.entities.filter((e) => newEntityNames.has(tableNameFor(project.id, e.name)) && countRecords(db, project.id, e) === 0),
+    nextSpec.entities.filter(
+      (e) =>
+        (newEntityNames.has(tableNameFor(project.id, e.name)) || mustAlsoSeed.has(e.name)) &&
+        countRecords(db, project.id, e) === 0,
+    ),
   );
   let seededCount = 0;
   const seedErrors: string[] = [];
   for (const entity of entitiesToSeed) {
     for (const record of generateSeedRecords(entity)) {
+      // generateSeedRecords's required-relation guess is a static "row 1",
+      // which orderForSeeding above only gets right by assuming the target
+      // table's very first row genuinely has id 1 -- true for a target
+      // seeded fresh in this same batch, but false the moment that target
+      // is an AUTOINCREMENT table that ever had (and lost) rows before: an
+      // existing-but-emptied entity reseeded above lands on ids 3, 4, ...
+      // (SQLite's AUTOINCREMENT keyword never reuses a deleted rowid), so
+      // the guessed 1 is a dangling FK on every insert. Overwriting with
+      // whichever real row the target actually has right now -- which by
+      // this point in the loop always exists, since orderForSeeding placed
+      // the target before its dependent -- fixes that without touching the
+      // self-relation/cycle case, where no real row exists yet and the
+      // guess is left exactly as fragile as before.
+      for (const field of entity.fields) {
+        if (field.type !== "relation" || !field.required || !field.relationTo) continue;
+        const target = entityByName.get(field.relationTo);
+        const existing = target ? listRecords(db, project.id, target) : [];
+        if (existing.length > 0) record[field.name] = existing[0].id;
+      }
       try {
         insertRecord(db, project.id, entity, record);
         seededCount += 1;
