@@ -1198,12 +1198,25 @@ export function EntityPanel({
    * Reports back via onHighlightHandled so the parent clears its own copy
    * and a second click on the same record (after this one auto-fades)
    * can re-trigger it.
+   *
+   * The filter/view-mode clears below go through the same persisting
+   * setters the manual Clear-filters button and view-mode buttons use
+   * (round 461 fix) -- a bare setFieldFilters({})/setViewMode("table")
+   * only cleared the in-memory state, leaving the stale value still in
+   * fieldFiltersPreference.ts/viewModePreference.ts's storage. Since
+   * switching entity tabs remounts EntityPanel (key={entity.name} in
+   * App.tsx), the mount-time effects above reload that stale persisted
+   * value the moment the user switches away and back, silently re-hiding
+   * the very record this effect just revealed.
    */
   useEffect(() => {
     if (highlightRecordId == null || loading) return;
     setSearch("");
-    setFieldFilters({});
-    setViewMode("table");
+    setFieldFilters(() => {
+      setFieldFiltersPreference(projectId, entity.name, {});
+      return {};
+    });
+    setViewMode(setViewModePreference(projectId, entity.name, "table"));
     setHighlightedRecordId(highlightRecordId);
     onHighlightHandled?.();
     // eslint-disable-next-line react-hooks/exhaustive-deps

@@ -926,6 +926,33 @@ test("the exported app's entity-tabs nav shows a live record-count badge per tab
 });
 
 /**
+ * Regression test for a real bug found by a round 461 Explore survey,
+ * identically present in both the live preview's EntityPanel.tsx and this
+ * exact generated EntityView.jsx: the highlightRecordId effect's filter/
+ * view-mode clears used bare setFieldFilters({})/setViewMode("table") calls
+ * that only touched in-memory state, never the persisted
+ * setPersistedFieldFilters/setPersistedViewMode storage every OTHER mutator
+ * of these two pieces of state in this component writes through. Since the
+ * exported app's own entity-tab switcher swaps in a different component
+ * instance per entity with no key (same remount-on-switch effect as the
+ * live preview's key={entity.name}), the persisted-load effects would
+ * reload the stale filter/view-mode the moment someone switches tabs away
+ * and back, silently re-hiding the record "jump to record" was supposed to
+ * reveal. Confirms the generated source now routes through the persisting
+ * setters instead.
+ */
+test("the exported EntityView's highlightRecordId effect clears fieldFilters/viewMode through the persisting setters, not just in-memory state", () => {
+  const files = generateExportFiles(project);
+  const entityViewJsx = files.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+
+  assert.match(
+    entityViewJsx,
+    /setFieldFilters\(\(\) => \{\s*\n\s*setPersistedFieldFilters\(entity\.name, \{\}\);\s*\n\s*return \{\};\s*\n\s*\}\);/,
+  );
+  assert.match(entityViewJsx, /setViewMode\(setPersistedViewMode\(entity\.name, "table"\)\);/);
+});
+
+/**
  * New in this round: round 306 ported the BASE table-grouping feature to
  * codegen.ts (the group-by dropdown + grouped tbody with group-header
  * rows), but deliberately deferred per-group numeric subtotals -- the

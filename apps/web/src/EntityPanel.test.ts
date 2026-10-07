@@ -2963,6 +2963,74 @@ test("EntityPanel highlights the record named by highlightRecordId once loaded, 
 });
 
 /**
+ * Regression test for a real bug found by a round 461 Explore survey: the
+ * highlightRecordId effect above cleared fieldFilters/viewMode with bare
+ * setFieldFilters({})/setViewMode("table") calls that only touched in-memory
+ * state, never fieldFiltersPreference.ts/viewModePreference.ts's persisted
+ * storage -- unlike every other mutator of these two pieces of state in this
+ * file (the Clear-filters button, the view-mode buttons), which always write
+ * through. Since switching entity tabs remounts EntityPanel (App.tsx renders
+ * it with key={entity.name}), the persisted-load effects above re-read the
+ * stale filter/view-mode the moment the user switches tabs away and back,
+ * silently re-hiding the very record the jump was supposed to reveal, with
+ * no reload needed. Confirms both that the persisted storage is actually
+ * cleared (not just the in-memory state) and that a real unmount+remount
+ * (simulating the tab switch) doesn't resurrect the stale values.
+ */
+test("EntityPanel's 'jump to record' clears the persisted field-filter/view-mode storage too, so a later tab switch doesn't resurrect them and re-hide the record", async () => {
+  await withJsdom(async () => {
+    const store: EntityRecord[] = [
+      { id: 1, createdAt: "x", name: "Acme Corp", status: "new" },
+      { id: 2, createdAt: "x", name: "Globex", status: "won" },
+      { id: 3, createdAt: "x", name: "Initech", status: "lost" },
+    ];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = mockRecordsFetch(store) as typeof fetch;
+    let handledCount = 0;
+    const onHighlightHandled = () => {
+      handledCount++;
+    };
+    try {
+      const firstView = render(buildEntityPanelElement({ onHighlightHandled }));
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 3);
+
+      // Set up exactly the state a real visit would leave behind: a status
+      // filter and Board view, both persisted via their own real controls.
+      const statusFilter = document.querySelector(".entity-status-filter") as HTMLSelectElement;
+      fireEvent.change(statusFilter, { target: { value: "new" } });
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 1);
+
+      const boardToggle = document.querySelectorAll(".view-toggle-btn")[1] as HTMLButtonElement;
+      fireEvent.click(boardToggle);
+      await waitForCondition(() => document.querySelectorAll(".board-column").length === 3);
+      assert.deepEqual(getFieldFilters("proj1", "Deal"), { status: "new" }, "sanity check: the filter must actually be persisted before the jump");
+      assert.equal(getViewMode("proj1", "Deal"), "board", "sanity check: the view mode must actually be persisted before the jump");
+
+      // Jump to Initech (id 3, status "lost") -- hidden by both the "new"
+      // filter and (as a status column collapsed out of view) irrelevant in
+      // Board mode too, so this only works if both get cleared for real.
+      firstView.rerender(buildEntityPanelElement({ highlightRecordId: 3, onHighlightHandled }));
+      await waitForCondition(() => handledCount === 1);
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 3);
+
+      assert.deepEqual(getFieldFilters("proj1", "Deal"), {}, "the persisted filter storage must be cleared too, not just the in-memory state");
+      assert.equal(getViewMode("proj1", "Deal"), "table", "the persisted view-mode storage must be cleared too, not just the in-memory state");
+
+      // Simulate the real-world trigger: switching to another tab and back
+      // remounts EntityPanel (key={entity.name} in App.tsx) -- confirm the
+      // stale values don't get reloaded from storage on that fresh mount.
+      firstView.unmount();
+      render(buildEntityPanelElement());
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 3);
+      assert.equal((document.querySelector(".entity-status-filter") as HTMLSelectElement).value, "", "a fresh mount must not resurrect the cleared filter");
+      assert.equal(document.querySelectorAll("table").length, 1, "a fresh mount must not resurrect the cleared Board view");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * New in this round: the table's own sort was always single-column --
  * clicking a second header threw away the first one entirely, so there
  * was no way to sort by, say, status and THEN by name within each status.

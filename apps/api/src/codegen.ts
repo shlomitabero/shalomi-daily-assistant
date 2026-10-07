@@ -2616,12 +2616,21 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
   // filter, since either could otherwise hide the very row this was
   // supposed to reveal. Reports back via onHighlightHandled so the parent
   // clears its own copy and a second click on the same record can
-  // re-trigger it. Mirrors the live Forge AI preview's own EntityPanel.tsx.
+  // re-trigger it. Mirrors the live Forge AI preview's own EntityPanel.tsx,
+  // including the round 461 fix: the filter/view-mode clears below go
+  // through the same persisting setters the manual Clear-filters/view-mode
+  // buttons use, since a bare setFieldFilters({})/setViewMode("table") only
+  // cleared in-memory state -- switching entity tabs swaps in a different
+  // component instance with no key, which React also remounts, and the
+  // mount-time effects above would reload the stale persisted value.
   useEffect(() => {
     if (highlightRecordId == null || loading) return;
     setSearch("");
-    setFieldFilters({});
-    setViewMode("table");
+    setFieldFilters(() => {
+      setPersistedFieldFilters(entity.name, {});
+      return {};
+    });
+    setViewMode(setPersistedViewMode(entity.name, "table"));
     setHighlightedRecordId(highlightRecordId);
     onHighlightHandled?.();
     // eslint-disable-next-line react-hooks/exhaustive-deps
