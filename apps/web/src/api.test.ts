@@ -2,9 +2,11 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
   backupProject,
+  createProjectFromTemplate,
   createWakeRefCounter,
   exportProject,
   listProjects,
+  listTemplates,
   REQUEST_TIMEOUT_MS,
   safeDownloadName,
   sendWhatsAppMessage,
@@ -75,6 +77,48 @@ test("exportProject requests the export endpoint and downloads it under the proj
     globalThis.fetch = original;
   }
   assert.equal(requestedUrl, "/api/projects/proj1/export");
+});
+
+test("listTemplates fetches the Templates Gallery metadata endpoint with a plain GET", async () => {
+  let requestedUrl: string | undefined;
+  let requestedMethod: string | undefined;
+  const { templates } = await (async () => {
+    const original = globalThis.fetch;
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      requestedUrl = input;
+      requestedMethod = init?.method;
+      return new Response(JSON.stringify({ templates: [{ id: "crm", icon: "📈", name: "Sales CRM", nameHe: "CRM", description: "d", descriptionHe: "ד" }] }), {
+        status: 200,
+      });
+    }) as typeof fetch;
+    try {
+      return await listTemplates();
+    } finally {
+      globalThis.fetch = original;
+    }
+  })();
+  assert.equal(requestedUrl, "/api/templates");
+  assert.equal(requestedMethod, undefined);
+  assert.equal(templates[0].id, "crm");
+});
+
+test("createProjectFromTemplate POSTs the chosen templateId and language to /projects/from-template", async () => {
+  let requestedUrl: string | undefined;
+  let requestedBody: string | undefined;
+  const original = globalThis.fetch;
+  globalThis.fetch = (async (input: string, init?: RequestInit) => {
+    requestedUrl = input;
+    requestedBody = init?.body as string;
+    return new Response(JSON.stringify({ project: { id: "proj1", name: "CRM" } }), { status: 201 });
+  }) as typeof fetch;
+  try {
+    const { project } = await createProjectFromTemplate("crm", "he");
+    assert.equal(project.id, "proj1");
+  } finally {
+    globalThis.fetch = original;
+  }
+  assert.equal(requestedUrl, "/api/projects/from-template");
+  assert.deepEqual(JSON.parse(requestedBody!), { templateId: "crm", lang: "he" });
 });
 
 test("backupProject requests the backup endpoint and downloads it with a '-backup' suffix, not the export filename", async () => {

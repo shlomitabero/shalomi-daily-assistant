@@ -6,6 +6,7 @@ import {
   clearToken,
   cloneProject,
   createProject,
+  createProjectFromTemplate,
   deleteProject,
   enhanceIdea,
   exportProject,
@@ -13,6 +14,7 @@ import {
   getToken,
   getWhatsAppStatus,
   listProjects,
+  listTemplates,
   listWhatsAppMessages,
   logout,
   me,
@@ -20,6 +22,7 @@ import {
   streamRefine,
   subscribeAuthExpired,
   subscribeWakeStatus,
+  type TemplateSummary,
   type WhatsAppMessageLogEntry,
 } from "./api.js";
 import { AuthScreen } from "./AuthScreen.js";
@@ -472,6 +475,8 @@ function AppContent() {
   const [showDeleteAccount, setShowDeleteAccount] = useState(false);
   const [showShortcuts, setShowShortcuts] = useState(false);
   const [myProjects, setMyProjects] = useState<Project[]>([]);
+  const [templates, setTemplates] = useState<TemplateSummary[]>([]);
+  const [templateBusy, setTemplateBusy] = useState<string | null>(null);
   const [pinnedIds, setPinnedIds] = useState<Set<string>>(() => getPinnedIds());
   const [seenShared, setSeenShared] = useState<Map<string, string>>(() => getSeenSharedTimestamps());
   const [projectSortMode, setProjectSortModeState] = useState<ProjectSortMode>(() => getProjectSortMode());
@@ -768,6 +773,20 @@ function AppContent() {
       .catch(() => setMyProjects([]));
   }, [user, view]);
 
+  // The Templates Gallery catalog is fixed, server-side static data (see
+  // @forge/spec-engine's TEMPLATES) -- unlike myProjects above, it never
+  // changes during a session, so this only needs to fetch once per login
+  // rather than re-running on every visit to the home screen. A fetch
+  // failure just leaves the gallery empty (the free-text idea box above it
+  // still works fine on its own), so this deliberately swallows the error
+  // instead of surfacing it as a blocking page-level failure.
+  useEffect(() => {
+    if (!user || templates.length > 0) return;
+    listTemplates()
+      .then(({ templates }) => setTemplates(templates))
+      .catch(() => setTemplates([]));
+  }, [user, templates.length]);
+
   /**
    * Both handleExport/handleBackup's own downloads resolve the instant the
    * browser's own save dialog is triggered, with nothing shown afterward --
@@ -1018,6 +1037,34 @@ function AppContent() {
       setError((err as Error).message);
     } finally {
       setEnhanceBusy(false);
+    }
+  }
+
+  /**
+   * The Templates Gallery's one-click path: unlike handleDescribe, there's
+   * no free-text idea to send through generateSpec -- the chosen template's
+   * spec is already a complete, valid ProductSpec, so this lands straight
+   * on the spec review screen the same way handleDescribe's result does,
+   * just with specProvider/enhanceProvider both cleared (neither the AI nor
+   * the heuristic provider touched this draft, so there's nothing honest to
+   * attribute it to -- see specProviderLabel/enhanceProviderLabel).
+   * `templateBusy` (the chosen template's own id, not a plain boolean) lets
+   * the gallery disable every card while keeping track of *which* card's
+   * button should show its own busy label.
+   */
+  async function handleUseTemplate(templateId: string) {
+    setTemplateBusy(templateId);
+    setError(null);
+    try {
+      const { project } = await createProjectFromTemplate(templateId, lang);
+      setProject(project);
+      setSpecProvider(null);
+      setEnhanceProvider(null);
+      setView("spec");
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setTemplateBusy(null);
     }
   }
 
@@ -1513,6 +1560,31 @@ function AppContent() {
               ))}
             </div>
           </div>
+
+          {templates.length > 0 && (
+            <div className="templates-gallery">
+              <h2>{t("home.templates.heading")}</h2>
+              <p className="muted small">{t("home.templates.subheading")}</p>
+              <div className="templates-gallery-grid">
+                {templates.map((template) => (
+                  <div className="template-card" key={template.id}>
+                    <span className="template-card-icon">{template.icon}</span>
+                    <h3 className="template-card-name">{lang === "en" ? template.name : template.nameHe}</h3>
+                    <p className="muted small template-card-description">
+                      {lang === "en" ? template.description : template.descriptionHe}
+                    </p>
+                    <button
+                      type="button"
+                      disabled={templateBusy !== null}
+                      onClick={() => handleUseTemplate(template.id)}
+                    >
+                      {templateBusy === template.id ? t("home.templates.use.busy") : t("home.templates.use")}
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </main>
       )}
 

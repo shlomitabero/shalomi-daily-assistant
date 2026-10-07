@@ -1207,6 +1207,82 @@ test("cloning someone else's project you have no access to still 404s, the same 
   });
 });
 
+test("GET /templates returns the Templates Gallery's display metadata, but never a template's full spec", async () => {
+  await withServer(async (baseUrl) => {
+    const token = await signup(baseUrl, "templates-list1@example.com");
+    const res = await fetch(`${baseUrl}/api/templates`, { headers: authHeaders(token) });
+    assert.equal(res.status, 200);
+    const { templates } = (await res.json()) as {
+      templates: { id: string; icon: string; name: string; nameHe: string; description: string; descriptionHe: string; spec?: unknown }[];
+    };
+    assert.ok(templates.length > 0, "the gallery must offer at least one template");
+    const restaurant = templates.find((t) => t.id === "restaurant");
+    assert.ok(restaurant, "the restaurant template must be in the gallery");
+    assert.ok(restaurant!.nameHe.length > 0);
+    assert.ok(restaurant!.name.length > 0);
+    assert.equal(restaurant!.spec, undefined, "the list endpoint must not leak each template's full spec");
+  });
+});
+
+test("POST /projects/from-template creates a buildable draft project from a template, defaulting to its Hebrew display text", async () => {
+  await withServer(async (baseUrl) => {
+    const token = await signup(baseUrl, "templates-use1@example.com");
+    const res = await fetch(`${baseUrl}/api/projects/from-template`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ templateId: "crm" }),
+    });
+    assert.equal(res.status, 201);
+    const { project } = (await res.json()) as {
+      project: { id: string; name: string; description: string; status: string; spec: { entities: { name: string }[] } };
+    };
+    assert.equal(project.status, "draft");
+    assert.equal(project.name, "CRM לניהול לקוחות ועסקאות");
+    assert.ok(project.spec.entities.some((e) => e.name === "Deal"), "the CRM template must include a Deal entity");
+
+    // A template-created project is a real, ordinary draft: it must build
+    // just like one created from free text, with no special-casing left
+    // over from skipping generateSpec.
+    const buildRes = await fetch(`${baseUrl}/api/projects/${project.id}/build`, {
+      method: "POST",
+      headers: authHeaders(token),
+    });
+    const events = await collectSSE(buildRes);
+    assert.ok(events.length > 0, "the build pipeline must actually run for a template-created project");
+    const builtRes = await fetch(`${baseUrl}/api/projects/${project.id}`, { headers: authHeaders(token) });
+    const { project: built } = (await builtRes.json()) as { project: { status: string } };
+    assert.equal(built.status, "built");
+  });
+});
+
+test("POST /projects/from-template with lang: \"en\" uses the template's English display text instead", async () => {
+  await withServer(async (baseUrl) => {
+    const token = await signup(baseUrl, "templates-use2@example.com");
+    const res = await fetch(`${baseUrl}/api/projects/from-template`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ templateId: "crm", lang: "en" }),
+    });
+    assert.equal(res.status, 201);
+    const { project } = (await res.json()) as { project: { name: string } };
+    assert.equal(project.name, "Sales CRM");
+  });
+});
+
+test("POST /projects/from-template 404s on an unknown templateId", async () => {
+  await withServer(async (baseUrl) => {
+    const token = await signup(baseUrl, "templates-use3@example.com");
+    const res = await fetch(`${baseUrl}/api/projects/from-template`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ templateId: "no-such-template" }),
+    });
+    assert.equal(res.status, 404);
+    const body = (await res.json()) as { code: string };
+    assert.equal(body.code, "TEMPLATE_NOT_FOUND");
+  });
+});
+
 test("the owner can rename a project, and a collaborator can too since they have identical full access", async () => {
   await withServer(async (baseUrl) => {
     const ownerToken = await signup(baseUrl, "rename-owner1@example.com");

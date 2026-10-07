@@ -33,7 +33,7 @@ import {
   type ForgeDatabase,
 } from "@forge/db";
 import type { SpecProvider } from "@forge/spec-engine";
-import { enhancePrompt, generateSpec, isHebrewText } from "@forge/spec-engine";
+import { enhancePrompt, generateSpec, isHebrewText, TEMPLATES } from "@forge/spec-engine";
 import { formatValidationError, HttpError } from "../httpError.js";
 import { requireAuth } from "../auth/middleware.js";
 import { runBuildPipeline } from "../pipeline.js";
@@ -47,6 +47,11 @@ import { findMatchingRecord } from "../whatsapp.js";
 const CreateProjectSchema = z.object({
   description: z.string().min(1, "description is required"),
   name: z.string().optional(),
+});
+
+const FromTemplateSchema = z.object({
+  templateId: z.string().min(1, "templateId is required"),
+  lang: z.enum(["he", "en"]).optional(),
 });
 
 const EnhanceIdeaSchema = z.object({
@@ -372,6 +377,67 @@ export function createProjectsRouter(db: ForgeDatabase, provider: SpecProvider |
         spec,
       });
       res.status(201).json({ project, providerName });
+    }),
+  );
+
+  /**
+   * The Templates Gallery (Forge AI vision doc's "reusable templates" /
+   * docs/roadmap.md's "Template/agent marketplace" backlog item): a fixed,
+   * hand-authored catalog a client can browse before ever typing an idea.
+   * Deliberately returns only display metadata, never each template's full
+   * `spec` -- the client doesn't need it (picking a template goes straight
+   * to POST /projects/from-template below, which resolves it server-side),
+   * and there's no reason to hand a bigger payload than the gallery cards
+   * actually render.
+   */
+  router.get(
+    "/templates",
+    asyncRoute(async (_req, res) => {
+      res.json({
+        templates: TEMPLATES.map(({ id, icon, name, nameHe, description, descriptionHe }) => ({
+          id,
+          icon,
+          name,
+          nameHe,
+          description,
+          descriptionHe,
+        })),
+      });
+    }),
+  );
+
+  /**
+   * One-click project creation from a Templates Gallery card -- the same
+   * "insert a project from an already-fully-formed spec, no AI call"
+   * precedent /projects/:id/clone already established, just sourcing the
+   * spec from the static TEMPLATES catalog instead of an existing project.
+   * `lang` picks which of the template's two display-text pairs becomes the
+   * new project's name/description (both are real, human-authored text in
+   * their respective language, not a machine translation of one): this
+   * app is Hebrew-first, so anything other than an explicit "en" falls back
+   * to the Hebrew copy, matching /projects/:id/clone's own Hebrew-first
+   * suffix choice just above.
+   */
+  router.post(
+    "/projects/from-template",
+    asyncRoute(async (req, res) => {
+      const parsed = FromTemplateSchema.safeParse(req.body);
+      if (!parsed.success) {
+        throw new HttpError(400, formatValidationError(parsed.error), "VALIDATION_ERROR");
+      }
+      const template = TEMPLATES.find((t) => t.id === parsed.data.templateId);
+      if (!template) {
+        throw new HttpError(404, `No template "${parsed.data.templateId}"`, "TEMPLATE_NOT_FOUND");
+      }
+      const useEnglish = parsed.data.lang === "en";
+      const project = insertProject(db, {
+        id: randomUUID(),
+        ownerId: req.userId!,
+        name: useEnglish ? template.name : template.nameHe,
+        description: useEnglish ? template.description : template.descriptionHe,
+        spec: template.spec,
+      });
+      res.status(201).json({ project });
     }),
   );
 

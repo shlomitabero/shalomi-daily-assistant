@@ -232,6 +232,23 @@ export function createProject(description: string): Promise<{ project: Project; 
   return request("/projects", { method: "POST", body: JSON.stringify({ description }) });
 }
 
+export interface TemplateSummary {
+  id: string;
+  icon: string;
+  name: string;
+  nameHe: string;
+  description: string;
+  descriptionHe: string;
+}
+
+export function listTemplates(): Promise<{ templates: TemplateSummary[] }> {
+  return request("/templates");
+}
+
+export function createProjectFromTemplate(templateId: string, lang: "he" | "en"): Promise<{ project: Project }> {
+  return request("/projects/from-template", { method: "POST", body: JSON.stringify({ templateId, lang }) });
+}
+
 /**
  * The Prompt Architect Agent: sends a short, rough idea and gets back a
  * fuller, more detailed rewrite the user can review before it's used to

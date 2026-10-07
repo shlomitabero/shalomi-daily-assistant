@@ -7,6 +7,7 @@ export type { SpecProvider } from "./provider.js";
 export { HeuristicSpecProvider } from "./heuristic.js";
 export { AnthropicSpecProvider } from "./anthropic.js";
 export { isHebrewText } from "./domainEntities.js";
+export { TEMPLATES, type AppTemplate } from "./templates.js";
 export { requestSpecFix, type RequestSpecFixOptions } from "./debug.js";
 export {
   enhancePrompt,
