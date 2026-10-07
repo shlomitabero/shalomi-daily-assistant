@@ -389,6 +389,122 @@ h2 {
   line-height: 1;
 }
 
+/*
+ * Purely decorative 3D hero graphic on the home screen (a rotating
+ * cube built from CSS 3D transforms -- no WebGL/three.js dependency).
+ * `aria-hidden` on the wrapping element in App.tsx keeps it out of the
+ * accessibility tree entirely, matching this app's own accessibility-pass
+ * precedent (round 91) of never exposing a purely decorative element to
+ * assistive tech. The animation is disabled under prefers-reduced-motion,
+ * leaving the cube visible but static at a fixed angle rather than vanishing
+ * outright, since the shape itself is still a legitimate visual, just the
+ * motion is what some users need to avoid.
+ */
+.hero3d {
+  display: flex;
+  justify-content: center;
+  margin: 4px 0 20px;
+  perspective: 600px;
+}
+
+.hero3d-cube {
+  width: 72px;
+  height: 72px;
+  position: relative;
+  transform-style: preserve-3d;
+  animation: hero3d-spin 14s linear infinite;
+}
+
+.hero3d-face {
+  position: absolute;
+  inset: 0;
+  width: 72px;
+  height: 72px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: linear-gradient(135deg, var(--accent-soft), var(--accent));
+  box-shadow: var(--shadow-sm);
+  opacity: 0.92;
+}
+
+.hero3d-face-front {
+  transform: translateZ(36px);
+}
+
+.hero3d-face-back {
+  transform: translateZ(-36px) rotateY(180deg);
+}
+
+.hero3d-face-right {
+  transform: translateX(36px) rotateY(90deg);
+}
+
+.hero3d-face-left {
+  transform: translateX(-36px) rotateY(-90deg);
+}
+
+.hero3d-face-top {
+  transform: translateY(-36px) rotateX(90deg);
+  background: linear-gradient(135deg, var(--accent), var(--accent-deep));
+}
+
+.hero3d-face-bottom {
+  transform: translateY(36px) rotateX(-90deg);
+  background: linear-gradient(135deg, var(--accent-deep), var(--accent-soft));
+}
+
+@keyframes hero3d-spin {
+  from {
+    transform: rotateX(-18deg) rotateY(0deg);
+  }
+  to {
+    transform: rotateX(-18deg) rotateY(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .hero3d-cube {
+    animation: none;
+    transform: rotateX(-18deg) rotateY(-28deg);
+  }
+}
+
+@media (max-width: 480px) {
+  .hero3d {
+    margin: 0 0 16px;
+  }
+
+  .hero3d-cube,
+  .hero3d-face {
+    width: 56px;
+    height: 56px;
+  }
+
+  .hero3d-face-front {
+    transform: translateZ(28px);
+  }
+
+  .hero3d-face-back {
+    transform: translateZ(-28px) rotateY(180deg);
+  }
+
+  .hero3d-face-right {
+    transform: translateX(28px) rotateY(90deg);
+  }
+
+  .hero3d-face-left {
+    transform: translateX(-28px) rotateY(-90deg);
+  }
+
+  .hero3d-face-top {
+    transform: translateY(-28px) rotateX(90deg);
+  }
+
+  .hero3d-face-bottom {
+    transform: translateY(28px) rotateX(-90deg);
+  }
+}
+
 .templates-gallery {
   margin-top: 36px;
 }

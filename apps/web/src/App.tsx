@@ -1515,6 +1515,16 @@ function AppContent() {
               )}
             </div>
           )}
+          <div className="hero3d" aria-hidden="true">
+            <div className="hero3d-cube">
+              <div className="hero3d-face hero3d-face-front" />
+              <div className="hero3d-face hero3d-face-back" />
+              <div className="hero3d-face hero3d-face-right" />
+              <div className="hero3d-face hero3d-face-left" />
+              <div className="hero3d-face hero3d-face-top" />
+              <div className="hero3d-face hero3d-face-bottom" />
+            </div>
+          </div>
           <h1>{t("home.title")}</h1>
           <form onSubmit={handleDescribe}>
             <textarea

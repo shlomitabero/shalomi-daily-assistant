@@ -2372,3 +2372,39 @@ test("App's subscribeAuthExpired effect clears the token and resets user/project
   assert.equal(projectSet, null, "must clear the open project too, not leave stale project state behind");
   assert.equal(viewSet, "home", "must reset view to home so a later re-login lands on the home screen, not a dead view");
 });
+
+/**
+ * The decorative 3D hero graphic on the home screen (a rotating CSS cube,
+ * no WebGL/three.js dependency) is purely presentational -- it has no
+ * state or handler to test, and jsdom has no real 3D rendering to assert
+ * on anyway, so the only thing worth pinning here is the DOM wiring: the
+ * wrapper must be `aria-hidden` so this never reaches a screen reader as a
+ * confusing unlabeled element, matching this app's own accessibility-pass
+ * precedent (round 91) of never exposing a purely decorative element to
+ * assistive tech. The actual 3D/animation CSS is covered separately below
+ * by reading styles.css directly, the same discipline round 441 already
+ * established for CSS jsdom can't otherwise exercise.
+ */
+test("the home screen's decorative 3D hero cube is marked aria-hidden, keeping it out of the accessibility tree", () => {
+  const appSrc = readFileSync(new URL("./App.tsx", import.meta.url), "utf8");
+  const hero3dBlock = appSrc.match(/<div className="hero3d"[^>]*>[\s\S]*?<\/div>\s*<\/div>\s*<h1>\{t\("home\.title"\)\}<\/h1>/);
+  assert.ok(hero3dBlock, "expected a .hero3d wrapper immediately before the home screen's <h1>");
+  assert.match(hero3dBlock![0], /aria-hidden="true"/, "the decorative cube wrapper must be aria-hidden");
+  const faceCount = hero3dBlock![0].match(/className="hero3d-face /g)?.length ?? 0;
+  assert.equal(faceCount, 6, "a cube needs exactly 6 faces");
+});
+
+test("the decorative 3D hero cube's CSS uses real 3D transforms and respects prefers-reduced-motion", () => {
+  const stylesCss = readFileSync(new URL("./styles.css", import.meta.url), "utf8");
+
+  const cubeRule = stylesCss.match(/\.hero3d-cube \{[\s\S]*?\}/)?.[0];
+  assert.ok(cubeRule, "expected a .hero3d-cube rule in styles.css");
+  assert.match(cubeRule!, /transform-style:\s*preserve-3d/, ".hero3d-cube must use preserve-3d or its faces collapse flat");
+  assert.match(cubeRule!, /animation:\s*hero3d-spin/, ".hero3d-cube must reference the hero3d-spin animation");
+
+  assert.match(stylesCss, /@keyframes hero3d-spin \{/, "expected an @keyframes hero3d-spin rule in styles.css");
+
+  const reducedMotionBlock = stylesCss.match(/@media \(prefers-reduced-motion: reduce\) \{[\s\S]*?\n\}/)?.[0];
+  assert.ok(reducedMotionBlock, "expected a prefers-reduced-motion override in styles.css");
+  assert.match(reducedMotionBlock!, /\.hero3d-cube[\s\S]*?animation:\s*none/, "the reduced-motion override must disable the cube's animation, not just leave it spinning");
+});
