@@ -910,6 +910,36 @@ test("Shipment's 'shipping' keyword doesn't spuriously match 'worshipping'", asy
   assert.ok(realShipping.entities.some((e) => e.name === "Shipment"), "'shipping' must still match Shipment");
 });
 
+/**
+ * Regression test for a real bug surfaced (but left unverified) by round
+ * 455's systematic survey and verified+fixed in round 456: Project's bare
+ * "project" keyword is a substring of "projector" -- an ordinary word in
+ * an AV-equipment rental description that has nothing to do with managing
+ * client work, so it spuriously matched this entity. Fixed with the same
+ * `\b`-bounded RegExp pattern this file's other collision fixes already
+ * use.
+ */
+test("Project's 'project' keyword doesn't spuriously match 'projector'", async () => {
+  const provider = new HeuristicSpecProvider();
+
+  const projectors = await provider.generate(
+    "An app for a rental company to track projectors and sound equipment rented out for weddings and conferences.",
+  );
+  assert.ok(
+    !projectors.entities.some((e) => e.name === "Project"),
+    "'projectors' alone must not spuriously match Project via a bare 'project' substring",
+  );
+
+  // The real word still works on its own, singular and plural (this
+  // rule's only other English keyword is "project" itself, so there is no
+  // sibling keyword to avoid here).
+  const realProject = await provider.generate("An app for a design agency to track every client project and its deadline.");
+  assert.ok(realProject.entities.some((e) => e.name === "Project"), "'project' must still match Project");
+
+  const realProjects = await provider.generate("An app for a design agency to track all its client projects and their deadlines.");
+  assert.ok(realProjects.entities.some((e) => e.name === "Project"), "'projects' must still match Project");
+});
+
 test("MenuItem's 'מנה' keyword doesn't spuriously match 'מנהלים' (managers)", async () => {
   const provider = new HeuristicSpecProvider();
   const managers = await provider.generate("אפליקציה למעקב אחרי מנהלים בעסק");

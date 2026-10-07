@@ -531,7 +531,15 @@ export const DOMAIN_ENTITY_RULES: DomainEntityRule[] = [
     },
   },
   {
-    keywords: ["project", "פרויקט", "פרויקטים"],
+    keywords: [
+      // Bare "project" (round 456) is a substring of "projector" -- an
+      // ordinary word in an AV-equipment rental description that has
+      // nothing to do with managing client work, so it spuriously matched
+      // this entity. \b-bounded, same pitfall-1 shape as the thirteen
+      // other collision fixes already in this file.
+      /\bproject(s)?\b/,
+      "פרויקט", "פרויקטים",
+    ],
     labelHe: "פרויקטים",
     descriptionHe: "עבודה מוגדרת שהעסק מבצע עבור לקוח.",
     fieldLabelsHe: { name: "שם", client: "לקוח", status: "סטטוס", deadline: "תאריך יעד", budget: "תקציב" },
