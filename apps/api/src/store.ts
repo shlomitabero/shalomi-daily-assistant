@@ -8,6 +8,7 @@ import {
   ensureCheckpointsTable,
   ensureWhatsAppConnectionsTable,
   ensureWhatsAppMessagesTable,
+  ensureIdempotencyKeysTable,
   type ForgeDatabase,
 } from "@forge/db";
 
@@ -22,5 +23,6 @@ export function createStore(path: string): ForgeDatabase {
   ensureCheckpointsTable(db);
   ensureWhatsAppConnectionsTable(db);
   ensureWhatsAppMessagesTable(db);
+  ensureIdempotencyKeysTable(db);
   return db;
 }

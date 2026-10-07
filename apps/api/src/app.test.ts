@@ -501,6 +501,111 @@ test("project routes reject requests without a valid session", async () => {
   });
 });
 
+/**
+ * The real scenario docs/wakeRetry-idempotency-design.md (round 470) was
+ * written for and round 471 implements for this route: a connection that
+ * drops *after* the server already fully finished creating a project but
+ * *before* the response made it back to the browser, so
+ * fetchWithWakeRetry (apps/web/src/wakeRetry.ts) retries the exact same
+ * POST with the exact same `X-Idempotency-Key` it generated once for this
+ * call (apps/web/src/api.ts's createProject). Reproduced here the same
+ * way the design doc frames it: from the server's own point of view, a
+ * genuine network-level retry and this test's second identical fetch are
+ * indistinguishable -- both are just "the same key arriving twice, the
+ * second time after the first request already finished." Without the
+ * fix, each of the two fetches below would call generateSpec() (a second
+ * real AI call) and insertProject() again, leaving the user with a
+ * confusing, orphaned second draft project they never asked for.
+ */
+test("POST /projects retried with the same idempotency key after the first attempt already finished replays the original response instead of creating a second project", async () => {
+  await withServer(async (baseUrl) => {
+    const token = await signup(baseUrl);
+    const headers = { ...authHeaders(token), "x-idempotency-key": "repro-key-1" };
+    const firstRes = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ description: "A CRM with customers and deals." }),
+    });
+    assert.equal(firstRes.status, 201);
+    const first = (await firstRes.json()) as { project: { id: string }; providerName: string };
+
+    const retryRes = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ description: "A CRM with customers and deals." }),
+    });
+    assert.equal(retryRes.status, 201);
+    const retry = (await retryRes.json()) as { project: { id: string }; providerName: string };
+    assert.equal(retry.project.id, first.project.id, "the retry must return the exact same project, not a newly created one");
+    assert.deepEqual(retry, first, "the replayed response must be identical to what the first attempt actually returned");
+
+    const listRes = await fetch(`${baseUrl}/api/projects`, { headers: authHeaders(token) });
+    const { projects } = (await listRes.json()) as { projects: { id: string }[] };
+    assert.equal(projects.length, 1, "exactly one project must exist -- the retry must not have inserted a second row");
+  });
+});
+
+test("POST /projects with no idempotency key behaves exactly as before: two identical requests create two separate projects", async () => {
+  await withServer(async (baseUrl) => {
+    const token = await signup(baseUrl);
+    const headers = authHeaders(token);
+    const firstRes = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ description: "A CRM with customers and deals." }),
+    });
+    const secondRes = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ description: "A CRM with customers and deals." }),
+    });
+    const first = (await firstRes.json()) as { project: { id: string } };
+    const second = (await secondRes.json()) as { project: { id: string } };
+    assert.notEqual(first.project.id, second.project.id, "with no key supplied, the guard must not apply at all -- this is a genuinely new feature, opted into per call site");
+
+    const listRes = await fetch(`${baseUrl}/api/projects`, { headers: authHeaders(token) });
+    const { projects } = (await listRes.json()) as { projects: { id: string }[] };
+    assert.equal(projects.length, 2);
+  });
+});
+
+test("POST /projects with the same idempotency key arriving while the first request is still genuinely in flight is rejected with 409 DUPLICATE_REQUEST_IN_PROGRESS, instead of running a second concurrent AI call", async () => {
+  const gated = createGatedProvider();
+  await withServer(
+    async (baseUrl) => {
+      const token = await signup(baseUrl);
+      const headers = { ...authHeaders(token), "x-idempotency-key": "concurrent-key" };
+
+      gated.arm();
+      const firstPromise = fetch(`${baseUrl}/api/projects`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ description: "A CRM with customers and deals." }),
+      });
+      firstPromise.catch(() => {});
+      await gated.waitUntilStarted();
+
+      const secondRes = await fetch(`${baseUrl}/api/projects`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ description: "A different description entirely." }),
+      });
+      let secondBody: { code?: string } = {};
+      try {
+        secondBody = (await secondRes.json()) as { code?: string };
+      } finally {
+        gated.release();
+      }
+      assert.equal(secondRes.status, 409);
+      assert.equal(secondBody.code, "DUPLICATE_REQUEST_IN_PROGRESS");
+
+      const firstRes = await firstPromise;
+      assert.equal(firstRes.status, 201);
+    },
+    { provider: gated.provider },
+  );
+});
+
 test("full acceptance flow: idea -> spec -> AI build pipeline -> CRUD -> refine -> checkpoints", async () => {
   await withServer(async (baseUrl) => {
     const token = await signup(baseUrl);

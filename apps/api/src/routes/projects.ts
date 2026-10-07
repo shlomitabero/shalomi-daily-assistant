@@ -38,6 +38,7 @@ import { enhancePrompt, generateSpec, isHebrewText, TEMPLATES } from "@forge/spe
 import { formatValidationError, HttpError } from "../httpError.js";
 import { requireAuth } from "../auth/middleware.js";
 import { runBuildPipeline } from "../pipeline.js";
+import { withIdempotency } from "../idempotency.js";
 import { generateExportFiles } from "../codegen.js";
 import { generateBackupZipEntries } from "../backup.js";
 import { buildZip } from "../zip.js";
@@ -361,6 +362,17 @@ export function createProjectsRouter(db: ForgeDatabase, provider: SpecProvider |
     }),
   );
 
+  /**
+   * `X-Idempotency-Key` (apps/web/src/api.ts's createProject) is this
+   * route's first consumer of the mechanism docs/wakeRetry-idempotency-
+   * design.md (round 470) designed: a client-generated key reused across
+   * fetchWithWakeRetry's own retries of the same createProject() call, so
+   * a retry that lands after the first attempt already fully created a
+   * project (a real AI call plus a new row) replays that same response
+   * instead of creating a second, duplicate draft. A request with no key
+   * (an older client, or the key being optional by design) behaves exactly
+   * as before -- see withIdempotency's own doc comment.
+   */
   router.post(
     "/projects",
     asyncRoute(async (req, res) => {
@@ -369,15 +381,19 @@ export function createProjectsRouter(db: ForgeDatabase, provider: SpecProvider |
         throw new HttpError(400, formatValidationError(parsed.error), "VALIDATION_ERROR");
       }
       const { description, name } = parsed.data;
-      const { spec, providerName } = await generateSpec(description, provider);
-      const project = insertProject(db, {
-        id: randomUUID(),
-        ownerId: req.userId!,
-        name: name ?? deriveName(description),
-        description,
-        spec,
+      const idempotencyKey = req.header("X-Idempotency-Key") || undefined;
+      const { status, body } = await withIdempotency(db, idempotencyKey, req.userId!, "POST /projects", async () => {
+        const { spec, providerName } = await generateSpec(description, provider);
+        const project = insertProject(db, {
+          id: randomUUID(),
+          ownerId: req.userId!,
+          name: name ?? deriveName(description),
+          description,
+          spec,
+        });
+        return { status: 201, body: { project, providerName } };
       });
-      res.status(201).json({ project, providerName });
+      res.status(status).json(body);
     }),
   );
 

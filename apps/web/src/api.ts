@@ -228,8 +228,24 @@ export function deleteAccount(): Promise<void> {
   return request("/auth/account", { method: "DELETE" });
 }
 
+/**
+ * `X-Idempotency-Key` is generated once per call (not inside `request()`'s
+ * own retry loop), so fetchWithWakeRetry's own retries of *this* call
+ * resend the exact same key (it's part of the `init` object that loop
+ * reuses on every attempt -- see wakeRetry.ts) while a genuinely new call
+ * (the user submitting the idea box again) gets a fresh one. This is
+ * docs/wakeRetry-idempotency-design.md's (round 470) mechanism, first
+ * wired up for this route in round 471: a retry that lands after the
+ * first attempt already finished creating a project replays that same
+ * response instead of creating a second, duplicate draft and paying for a
+ * second real AI call.
+ */
 export function createProject(description: string): Promise<{ project: Project; providerName: string }> {
-  return request("/projects", { method: "POST", body: JSON.stringify({ description }) });
+  return request("/projects", {
+    method: "POST",
+    headers: { "x-idempotency-key": crypto.randomUUID() },
+    body: JSON.stringify({ description }),
+  });
 }
 
 export interface TemplateSummary {

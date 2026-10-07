@@ -84,3 +84,11 @@ export {
   type WhatsAppMessageDirection,
   type WhatsAppMessageStatus,
 } from "./whatsapp.js";
+export {
+  ensureIdempotencyKeysTable,
+  getIdempotencyRecord,
+  insertIdempotencyRecord,
+  completeIdempotencyRecord,
+  deleteIdempotencyRecord,
+  type IdempotencyRecord,
+} from "./idempotency.js";
