@@ -25887,6 +25887,22 @@ Full suite green: **107 tests** in `@forge/spec-engine` (+1), **16 tests** in `@
 
 **Topic status**: this fix is closed. One candidate from round 455's survey remains unverified for a future round: Property's bare `"listing"` vs `"enlisting"` (a nonprofit/volunteer-outreach description) -- still only a subagent's claim, not yet independently reproduced. Everything else still open from rounds 378-455 (`wakeRetry.ts` idempotency, AI-label language mismatch, checkpoint pruning, render.yaml disk stanza, `listRecords` pagination, non-ASCII field name, Seed Data recycled-entity gap, `CollaboratorsPanel` email enumeration, `diffAndMigrate`'s `type_changed` oscillation) remains open and unchanged.
 
+### Round 457: verified and fixed the last of round 455's two unverified candidates -- Property's bare `"listing"` keyword was a literal substring of the ordinary word `"enlisting"`, spuriously fabricating a Property entity for nonprofit/volunteer-outreach descriptions
+
+**The candidate**: the last standing candidate from round 455's systematic survey -- Property/"listing" vs "enlisting", left unverified since round 456 picked the Project candidate instead.
+
+**Independent verification**: read the Property entity rule directly (`DOMAIN_ENTITY_RULES`, `domainEntities.ts`) -- confirmed `"listing"` was still a bare, unbounded string alongside `"property"`, `"real estate"`, `"apartment for rent"`, and confirmed Property has no presence in `ROLE_RULES` (single-site fix). Ran the real `matchEntities` function against `"An app for a nonprofit coordinator enlisting local volunteers and businesses to sponsor an annual charity run."` -- a pure nonprofit/volunteer-outreach description with zero real-estate content. Confirmed the exact false positive: `matchEntities` returned `['Property', 'Donation', 'Volunteer']`, fabricating a spurious Property entity purely from the "listing" substring inside "enlisting" (the `Donation`/`Volunteer` matches, from "sponsor"/"volunteers", were separate, expected matches not investigated further).
+
+**The fix**: changed the bare `"listing"` string to `/\blisting(s)?\b/`, the fifteenth fix of this exact pitfall-1 shape in this file. The `(s)?` suffix preserves the existing plural match.
+
+**Tests**: added a test to `heuristic.test.ts` following the established pattern: confirms `"enlisting"` alone does not trigger the Property entity, while both `"listing"` and `"listings"` in genuine real-estate descriptions (worded to avoid this rule's other keywords -- `"property"`, `"real estate"`, `"apartment for rent"`) still do. Re-read the edit's result in full before running any test, per round 456's lesson that this discipline has caught real corruption before -- no corruption found this round, confirming it isn't always needed but is cheap insurance each time.
+
+**Regression-proof**: backed up `domainEntities.ts`, reverted it via `git checkout --` (keeping the new test in `heuristic.test.ts` in place), confirmed the test failed with the exact predicted mismatch (the Property false-positive returned, exactly as the un-fixed "enlisting" repro had shown), restored from backup, confirmed byte-identical via `diff`, then re-ran green.
+
+Full suite green: **108 tests** in `@forge/spec-engine` (+1), **16 tests** in `@forge/shared` (unchanged), **129 tests** in `@forge/db` (unchanged), **411 tests** in `@forge/api` (unchanged), **829 tests** in `@forge/web` (unchanged), a clean `tsc -b` on `@forge/web`, and a clean full monorepo `npm run build`. Also confirmed `codegen.ts` carries no duplicated copy of `DOMAIN_ENTITY_RULES`, so this remains a single-site fix. Commit `1aee1c2`.
+
+**Topic status**: this fix is closed. Both candidates surfaced by round 455's systematic survey (Project/"project", Property/"listing") are now fixed, across rounds 456-457. No further domainEntities.ts candidates are currently known; a fresh systematic survey would be needed to find more. Everything else still open from rounds 378-456 (`wakeRetry.ts` idempotency, AI-label language mismatch, checkpoint pruning, render.yaml disk stanza, `listRecords` pagination, non-ASCII field name, Seed Data recycled-entity gap, `CollaboratorsPanel` email enumeration, `diffAndMigrate`'s `type_changed` oscillation) remains open and unchanged.
+
 Each phase assumes the previous one is genuinely working, not merely
 scaffolded — see `docs/ADR/0001-initial-architecture.md` and
 `docs/ADR/0002-auth-pipeline-time-machine.md` for the specific tradeoffs
