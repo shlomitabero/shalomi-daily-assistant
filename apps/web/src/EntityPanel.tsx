@@ -1208,6 +1208,16 @@ export function EntityPanel({
    * App.tsx), the mount-time effects above reload that stale persisted
    * value the moment the user switches away and back, silently re-hiding
    * the very record this effect just revealed.
+   *
+   * Clearing groupFieldName (round 462 fix) is the same "what else could
+   * hide this row" reasoning applied to a third, independently-persisted
+   * piece of state the round 461 fix didn't account for: table view's own
+   * "Group by" + per-group collapse state (collapsedGroupsPreference.ts)
+   * hides a row exactly as effectively as a field filter does -- a
+   * collapsed group's records aren't rendered into the DOM at all, so the
+   * scroll-into-view effect below finds no matching row and silently
+   * no-ops, with no error and no visible result for the very click that
+   * was supposed to reveal this record.
    */
   useEffect(() => {
     if (highlightRecordId == null || loading) return;
@@ -1217,6 +1227,7 @@ export function EntityPanel({
       return {};
     });
     setViewMode(setViewModePreference(projectId, entity.name, "table"));
+    setGroupFieldName(setGroupByField(projectId, entity.name, ""));
     setHighlightedRecordId(highlightRecordId);
     onHighlightHandled?.();
     // eslint-disable-next-line react-hooks/exhaustive-deps

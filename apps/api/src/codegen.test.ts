@@ -953,6 +953,24 @@ test("the exported EntityView's highlightRecordId effect clears fieldFilters/vie
 });
 
 /**
+ * Regression test for a real bug found by a round 462 Explore survey,
+ * identically present in both the live preview's EntityPanel.tsx and this
+ * exact generated EntityView.jsx: the highlightRecordId effect (round 461)
+ * cleared fieldFilters/viewMode but never groupFieldName -- a third,
+ * independently-persisted piece of state that hides a row just as
+ * effectively, since a collapsed group's records aren't rendered into the
+ * DOM at all. A record filed inside a collapsed group would silently fail
+ * to be revealed by "jump to record", with no error. Confirms the generated
+ * source now clears groupFieldName through its own persisting setter too.
+ */
+test("the exported EntityView's highlightRecordId effect clears groupFieldName too, through its own persisting setter", () => {
+  const files = generateExportFiles(project);
+  const entityViewJsx = files.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+
+  assert.match(entityViewJsx, /setGroupFieldName\(setPersistedGroupField\(entity\.name, ""\)\);/);
+});
+
+/**
  * New in this round: round 306 ported the BASE table-grouping feature to
  * codegen.ts (the group-by dropdown + grouped tbody with group-header
  * rows), but deliberately deferred per-group numeric subtotals -- the

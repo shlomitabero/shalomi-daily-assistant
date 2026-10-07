@@ -2622,7 +2622,10 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
   // buttons use, since a bare setFieldFilters({})/setViewMode("table") only
   // cleared in-memory state -- switching entity tabs swaps in a different
   // component instance with no key, which React also remounts, and the
-  // mount-time effects above would reload the stale persisted value.
+  // mount-time effects above would reload the stale persisted value. Also
+  // clears groupFieldName (round 462 fix): a collapsed group hides its
+  // records from the DOM entirely, so a jumped-to record inside one would
+  // silently fail to scroll into view or highlight, with no error at all.
   useEffect(() => {
     if (highlightRecordId == null || loading) return;
     setSearch("");
@@ -2631,6 +2634,7 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
       return {};
     });
     setViewMode(setPersistedViewMode(entity.name, "table"));
+    setGroupFieldName(setPersistedGroupField(entity.name, ""));
     setHighlightedRecordId(highlightRecordId);
     onHighlightHandled?.();
     // eslint-disable-next-line react-hooks/exhaustive-deps

@@ -3031,6 +3031,67 @@ test("EntityPanel's 'jump to record' clears the persisted field-filter/view-mode
 });
 
 /**
+ * Regression test for a real bug found by a round 462 Explore survey: the
+ * highlightRecordId effect above (round 461) cleared fieldFilters/viewMode
+ * but never groupFieldName -- a third, independently-persisted piece of
+ * state that hides rows exactly as effectively. When a record lives inside
+ * a COLLAPSED group, that group's rows are never rendered into the DOM at
+ * all (see the table body's `{!collapsed && group.records.map(...)}`), so
+ * the scroll-into-view effect finds no matching row and silently no-ops --
+ * "jump to record" visibly does nothing, with no error. Confirms jumping to
+ * a record inside a collapsed group actually reveals it (clears grouping
+ * entirely, same as the existing filter/view-mode clears), and that the
+ * persisted groupFieldName storage is cleared too, not just in-memory state.
+ */
+test("EntityPanel's 'jump to record' clears grouping too, so a record hidden inside a collapsed group is actually revealed", async () => {
+  await withJsdom(async () => {
+    const store: EntityRecord[] = [
+      { id: 1, createdAt: "x", name: "Acme Corp", status: "new" },
+      { id: 2, createdAt: "x", name: "Globex", status: "won" },
+      { id: 3, createdAt: "x", name: "Initech", status: "lost" },
+    ];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = mockRecordsFetch(store) as typeof fetch;
+    let handledCount = 0;
+    const onHighlightHandled = () => {
+      handledCount++;
+    };
+    try {
+      const firstView = render(buildEntityPanelElement({ onHighlightHandled }));
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 3);
+
+      // Group by status, then collapse the "Lost" group -- exactly where
+      // Initech (id 3) lives.
+      const groupBySelect = document.querySelector(".entity-group-by") as HTMLSelectElement;
+      fireEvent.change(groupBySelect, { target: { value: "status" } });
+      await waitForCondition(() => document.querySelectorAll(".entity-group-header-row").length === 3);
+
+      const headerRows = Array.from(document.querySelectorAll(".entity-group-header-row"));
+      const lostHeader = headerRows.find((r) => r.textContent?.includes("Lost"))!;
+      const lostToggle = lostHeader.querySelector(".entity-group-toggle") as HTMLButtonElement;
+      fireEvent.click(lostToggle);
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 5); // 3 headers + 2 visible records (New's Acme, Won's Globex) -- Lost's own row is now hidden
+      assert.equal(document.querySelector('tr[data-record-id="3"]'), null, "sanity check: Initech's row must genuinely be absent from the DOM while its group is collapsed");
+      assert.equal(getGroupByField("proj1", "Deal"), "status", "sanity check: grouping must actually be persisted before the jump");
+
+      // Jump to Initech (id 3) while its group is still collapsed.
+      firstView.rerender(buildEntityPanelElement({ highlightRecordId: 3, onHighlightHandled }));
+      await waitForCondition(() => handledCount === 1);
+
+      assert.equal(getGroupByField("proj1", "Deal"), "", "the persisted group-by storage must be cleared too, not just the in-memory state");
+      await waitForCondition(() => document.querySelector('tr[data-record-id="3"]') !== null);
+      assert.equal(document.querySelectorAll(".entity-group-header-row").length, 0, "grouping must actually be turned off, not just re-expand the one group");
+      assert.ok(
+        (document.querySelector('tr[data-record-id="3"]') as HTMLElement).classList.contains("record-row-highlighted"),
+        "Initech's row must be highlighted once it's actually revealed",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * New in this round: the table's own sort was always single-column --
  * clicking a second header threw away the first one entirely, so there
  * was no way to sort by, say, status and THEN by name within each status.
