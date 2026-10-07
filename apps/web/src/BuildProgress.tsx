@@ -151,7 +151,7 @@ interface ImpactDetail {
 }
 
 interface MigrationChangeDetail {
-  type: "new_table" | "new_column" | "type_changed" | "relation_target_changed";
+  type: "new_table" | "new_column" | "type_changed" | "relation_target_changed" | "relation_missing_fk";
   table: string;
   column?: string;
   fromType?: string;
@@ -229,7 +229,9 @@ function AgentDetail({ agent, detail }: { agent: AgentStepEvent["agent"]; detail
                 ? `${t("build.detail.database.newColumn")}${c.table}.${c.column}`
                 : c.type === "relation_target_changed"
                   ? `${t("build.detail.database.relationTargetChanged")}${c.table}.${c.column} (${c.fromRelationTo} → ${c.toRelationTo})`
-                  : `${t("build.detail.database.typeChanged")}${c.table}.${c.column} (${c.fromType} → ${c.toType})`}
+                  : c.type === "relation_missing_fk"
+                    ? `${t("build.detail.database.relationMissingFk")}${c.table}.${c.column} (→ ${c.toRelationTo})`
+                    : `${t("build.detail.database.typeChanged")}${c.table}.${c.column} (${c.fromType} → ${c.toType})`}
           </li>
         ))}
       </ul>

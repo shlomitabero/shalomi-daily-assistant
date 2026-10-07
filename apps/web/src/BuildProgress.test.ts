@@ -495,6 +495,60 @@ test("BuildProgress's Database detail panel reports a relation field's changed t
 });
 
 /**
+ * Regression test for a real gap found by round 464's checkpoint-restore
+ * audit: migrate.ts's MigrationChange has a 5th variant, "relation_missing_fk"
+ * (reported when a relation field reuses a column that was never linked to
+ * anything), already handled correctly by pipeline.ts's own collapsed
+ * Database-step summary message (see describeMigrationHazards). But exactly
+ * like round 396's relation_target_changed gap, this panel's own local
+ * MigrationChangeDetail type never learned about the 5th variant -- any
+ * detail entry that wasn't "new_table"/"new_column"/"relation_target_changed"
+ * fell into the final else branch, which assumes "type_changed" and reads
+ * fromType/toType -- fields a relation_missing_fk entry doesn't have (it only
+ * ever sets toRelationTo), rendering a bogus "Field type changed ...
+ * (undefined → undefined)" line.
+ */
+test("BuildProgress's Database detail panel reports a relation field reusing an unlinked column correctly, once expanded", async () => {
+  await withJsdom(async () => {
+    const events: AgentStepEvent[] = [
+      { agent: "Database", status: "running", message: "…" },
+      {
+        agent: "Database",
+        status: "success",
+        message: "1 schema change(s) applied (0 new tables, 0 new columns). Nothing was dropped. Note: entity_proj1_Order.driverId (→ Driver) is a relation field reusing a column that was never linked to anything -- existing and new values in it are not protected against pointing at a record that doesn't exist.",
+        detail: [
+          {
+            type: "relation_missing_fk",
+            table: "entity_proj1_Order",
+            column: "driverId",
+            toRelationTo: "Driver",
+          },
+        ],
+      },
+    ];
+    renderBuildProgress(events);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const steps = [...document.querySelectorAll(".agent-step")];
+    const databaseStep = steps.find((s) => s.textContent?.includes("Database Engineer"));
+    const toggle = databaseStep?.querySelector(".detail-toggle") as HTMLButtonElement | null;
+    assert.ok(toggle, "expected a details toggle for the Database step once it succeeds with a detail payload");
+    fireEvent.click(toggle!);
+
+    const detailList = databaseStep?.querySelector(".detail-list");
+    assert.ok(detailList, "expected the detail list to render once expanded");
+    const text = detailList!.textContent ?? "";
+    assert.match(text, /→ Driver/, "must name the real relation target, not 'undefined → undefined'");
+    assert.doesNotMatch(text, /undefined/, "a relation_missing_fk entry has no fromType/toType -- it must never fall through to the type_changed rendering branch");
+    assert.doesNotMatch(
+      text,
+      /Field type changed/,
+      "the wording must be specific to a relation field reusing an unlinked column, not reuse the unrelated 'type changed' label",
+    );
+  });
+});
+
+/**
  * New in this round: the subtitle's "step N of M" text already carried
  * this same fraction, but only as text a reader had to do the division on
  * themselves. Confirms a real filled progress bar renders in the DOM with
