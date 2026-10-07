@@ -1022,6 +1022,60 @@ test("BuildProgress does not show a 'Download build summary' button for a succes
 });
 
 /**
+ * Regression test (round 468): the pipeline keeps going past a non-
+ * terminal agent failure (e.g. Seed Data hitting a real error) as long as
+ * the build still eventually reaches Forge:success -- see pipeline.ts. This
+ * component unmounts the instant `onComplete` fires, so before this round
+ * that real failure was never shown anywhere: onComplete only ever got the
+ * built project, nothing else. onComplete's second argument now carries a
+ * plain "<agent>: <message>" summary whenever some agent's LATEST event is
+ * still "failed" even though Forge itself succeeded.
+ */
+test("BuildProgress's onComplete reports a non-terminal agent failure (e.g. Seed Data) that didn't stop the build from reaching Forge:success", async () => {
+  await withJsdom(async () => {
+    const events: AgentStepEvent[] = [
+      { agent: "Architect", status: "success", message: "…", detail: { newEntities: [], changedEntities: [] } },
+      { agent: "Database", status: "success", message: "…", detail: [] },
+      { agent: "Seed Data", status: "running", message: "…" },
+      { agent: "Seed Data", status: "failed", message: "Seeded 0 record(s), but 2 failed." },
+      { agent: "QA", status: "success", message: "…", detail: [] },
+      { agent: "Security", status: "success", message: "…", detail: [] },
+      { agent: "Forge", status: "success", message: "…", detail: { project: { id: "p1", name: "Test" } } },
+    ];
+    let capturedWarning: unknown = "not called";
+    renderBuildProgress(events, (_project: unknown, warning?: string) => {
+      capturedWarning = warning;
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    assert.equal(typeof capturedWarning, "string", "onComplete must receive a warning for the real, unrecovered Seed Data failure");
+    assert.match(capturedWarning as string, /Seed Data/, "the warning must name the actual agent that failed");
+    assert.match(
+      capturedWarning as string,
+      /Seeded 0 record\(s\), but 2 failed\./,
+      "the warning must carry the real failure message, not a generic placeholder",
+    );
+  });
+});
+
+/** The other half: a Database failure the Debug Agent actually recovers from (its LATEST event is "success") must NOT be reported as a warning -- it genuinely isn't one. */
+test("BuildProgress's onComplete reports no warning when every agent's latest event actually succeeded (a recovered failure doesn't count)", async () => {
+  await withJsdom(async () => {
+    let capturedWarning: unknown = "not called";
+    renderBuildProgress(RECOVERED_BUILD_EVENTS, (_project: unknown, warning?: string) => {
+      capturedWarning = warning;
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    assert.equal(
+      capturedWarning,
+      undefined,
+      "Database's earlier failure was genuinely recovered by the Debug Agent -- its LATEST event is success, so this must not be reported as a warning",
+    );
+  });
+});
+
+/**
  * New in this round: a failed build/refine previously had no recovery but
  * navigating all the way back to spec review (or the refine box) and
  * resubmitting from scratch -- even though the server itself is perfectly

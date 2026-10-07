@@ -575,6 +575,7 @@ test("App's handleBuild overwrites specProvider with the /answers call's own pro
       "answerQuestions",
       "setProject",
       "setSpecProvider",
+      "setBuildWarning",
       "setView",
       `${code}\nreturn handleBuild;`,
     )(
@@ -589,6 +590,7 @@ test("App's handleBuild overwrites specProvider with the /answers call's own pro
       },
       (p: Project) => (state.project = p),
       (v: string | null) => (state.specProvider = v),
+      () => {},
       (v: string) => (state.view = v),
     ) as () => Promise<void>;
     return { fn, state };
@@ -1399,7 +1401,7 @@ function makeProject(entities: Entity[]): Project {
  */
 test("App's handleBuildComplete falls back to the first entity when the previously-active one was dropped by a refine, but keeps it when it's still present", () => {
   const appSrc = readFileSync(new URL("./App.tsx", import.meta.url), "utf8");
-  const handlerMatch = appSrc.match(/ {2}function handleBuildComplete\(builtProject: Project\) \{[\s\S]*?\n {2}\}\n/);
+  const handlerMatch = appSrc.match(/ {2}function handleBuildComplete\(builtProject: Project, warning\?: string\) \{[\s\S]*?\n {2}\}\n/);
   assert.ok(handlerMatch, "expected to find handleBuildComplete in App.tsx");
   const { code } = transformSync(handlerMatch![0], { loader: "ts" });
 
@@ -1412,6 +1414,7 @@ test("App's handleBuildComplete falls back to the first entity when the previous
       "t",
       "summarizeRefineImpact",
       "setRefineHistory",
+      "setBuildWarning",
       "setProject",
       "setActiveEntity",
       "setRefineText",
@@ -1425,6 +1428,7 @@ test("App's handleBuildComplete falls back to the first entity when the previous
       { current: [] },
       (key: string) => key,
       summarizeRefineImpact,
+      () => {},
       () => {},
       () => {},
       (updater: string | null | ((prev: string | null) => string | null)) => {
@@ -1463,7 +1467,7 @@ test("App's handleBuildComplete falls back to the first entity when the previous
  */
 test("App's handleBuildComplete records the refine's own providerName (via extractRefineProviderName) on the new history entry", () => {
   const appSrc = readFileSync(new URL("./App.tsx", import.meta.url), "utf8");
-  const handlerMatch = appSrc.match(/ {2}function handleBuildComplete\(builtProject: Project\) \{[\s\S]*?\n {2}\}\n/);
+  const handlerMatch = appSrc.match(/ {2}function handleBuildComplete\(builtProject: Project, warning\?: string\) \{[\s\S]*?\n {2}\}\n/);
   assert.ok(handlerMatch, "expected to find handleBuildComplete in App.tsx");
   const { code } = transformSync(handlerMatch![0], { loader: "ts" });
 
@@ -1476,6 +1480,7 @@ test("App's handleBuildComplete records the refine's own providerName (via extra
     "summarizeRefineImpact",
     "extractRefineProviderName",
     "setRefineHistory",
+    "setBuildWarning",
     "setProject",
     "setActiveEntity",
     "setRefineText",
@@ -1493,6 +1498,7 @@ test("App's handleBuildComplete records the refine's own providerName (via extra
     (updater: (prev: Array<{ providerName: string | null }>) => Array<{ providerName: string | null }>) => {
       historyEntries.push(...updater([]));
     },
+    () => {},
     () => {},
     () => {},
     () => {},

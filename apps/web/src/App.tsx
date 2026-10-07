@@ -489,6 +489,12 @@ function AppContent() {
   const [refineHistory, setRefineHistory] = useState<RefineHistoryEntry[]>([]);
   const [refineHistorySearch, setRefineHistorySearch] = useState("");
   const [refineRunning, setRefineRunning] = useState(false);
+  // Set from BuildProgress's onComplete when a build/refine genuinely
+  // completed but some earlier agent step's latest event is still "failed"
+  // (e.g. Seed Data hit a real error that didn't stop the build). That
+  // screen unmounts in the same tick it fires, so this is the only place
+  // left that can ever show it.
+  const [buildWarning, setBuildWarning] = useState<string | null>(null);
   const [highlightRecordId, setHighlightRecordId] = useState<number | null>(null);
   const [entityTabOrder, setEntityTabOrderState] = useState<string[]>([]);
   const [draggedEntityTab, setDraggedEntityTab] = useState<string | null>(null);
@@ -1152,6 +1158,7 @@ function AppContent() {
       }
       setBusy(false);
     }
+    setBuildWarning(null);
     setView("building");
   }
 
@@ -1160,6 +1167,7 @@ function AppContent() {
     if (!refineText.trim()) return;
     pendingRefineInstruction.current = refineText.trim();
     refineEvents.current = [];
+    setBuildWarning(null);
     setRefineRunning(true);
   }
 
@@ -1183,7 +1191,7 @@ function AppContent() {
     setRefineHistory((prev) => removeRefineHistoryEntry(prev, id));
   }
 
-  function handleBuildComplete(builtProject: Project) {
+  function handleBuildComplete(builtProject: Project, warning?: string) {
     if (refineRunning && pendingRefineInstruction.current) {
       const entry: RefineHistoryEntry = {
         id: crypto.randomUUID(),
@@ -1195,6 +1203,7 @@ function AppContent() {
       setRefineHistory((prev) => [...prev, entry]);
     }
     pendingRefineInstruction.current = null;
+    setBuildWarning(warning ?? null);
     setProject(builtProject);
     // A refine's regenerated spec is free to drop an entity the previous
     // one had (the AI provider isn't guaranteed to keep every entity, e.g.
@@ -1218,6 +1227,7 @@ function AppContent() {
     await logout();
     setUser(null);
     setProject(null);
+    setBuildWarning(null);
     setView("home");
     // Without these, the browser tab stays mounted (no page reload happens
     // on logout) and the next project built in the same session -- by the
@@ -1786,6 +1796,12 @@ function AppContent() {
               </button>
             </div>
           </div>
+
+          {buildWarning && (
+            <p className="muted small" role="status">
+              {t("preview.buildWarning", { detail: buildWarning })}
+            </p>
+          )}
 
           <div className="preview-body">
             <div className="preview-chat-pane">

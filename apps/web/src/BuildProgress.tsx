@@ -315,7 +315,14 @@ export function BuildProgress({
    * "Download build summary" button below. */
   projectName: string;
   run: (onEvent: (event: AgentStepEvent) => void) => Promise<void>;
-  onComplete: (project: Project) => void;
+  /**
+   * `warning` is set when the build genuinely completed (Forge succeeded)
+   * but some earlier agent step's LATEST event is still "failed" -- e.g.
+   * Seed Data hit a real error that didn't stop the build. This component
+   * unmounts in the same tick `onComplete` fires, so the caller is the only
+   * place left that can ever show this to the user.
+   */
+  onComplete: (project: Project, warning?: string) => void;
   onBack: () => void;
   /** Renders without the full-page <main>/<h1> chrome, for embedding inline
    * (e.g. in the preview screen's chat pane during a refine) instead of
@@ -417,7 +424,22 @@ export function BuildProgress({
     if (!finished) return;
     const last = events[events.length - 1];
     if (last?.agent === "Forge" && last.status === "success") {
-      onComplete((last.detail as { project: Project }).project);
+      // The pipeline keeps going after a non-terminal agent failure (e.g.
+      // Seed Data hitting a real error) as long as a LATER event for that
+      // same agent eventually succeeds or the build still reaches Forge --
+      // see pipeline.ts. That means the Database-recovery case below
+      // (latest status success) is indistinguishable here from a step that
+      // genuinely never recovered, UNLESS its last event really is
+      // "failed" -- which is exactly what onComplete needs to surface,
+      // since this component unmounts in this same tick and the failure
+      // would otherwise never be visible on screen at all.
+      const latestByAgentNow = new Map<string, AgentStepEvent>();
+      for (const event of events) latestByAgentNow.set(event.agent, event);
+      const unrecovered = [...latestByAgentNow.values()].find((e) => e.status === "failed");
+      onComplete(
+        (last.detail as { project: Project }).project,
+        unrecovered ? `${unrecovered.agent}: ${unrecovered.message}` : undefined,
+      );
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [finished]);
