@@ -787,6 +787,35 @@ test("Vehicle's 'mechanic' keyword doesn't spuriously match 'mechanical'", async
   assert.ok(realMechanics.entities.some((e) => e.name === "Vehicle"), "'mechanics' must still match Vehicle");
 });
 
+/**
+ * Regression test for a real bug found in round 448's survey and fixed in
+ * round 452: Service's bare "treatment" keyword is a substring of
+ * "mistreatment" -- an ordinary word in an elder-care/social-work
+ * complaint description that has nothing to do with selling a service, so
+ * it spuriously matched this entity. Fixed with the same `\b`-bounded
+ * RegExp pattern this file's other collision fixes already use.
+ */
+test("Service's 'treatment' keyword doesn't spuriously match 'mistreatment'", async () => {
+  const provider = new HeuristicSpecProvider();
+
+  const mistreatment = await provider.generate(
+    "An app for a social worker to report mistreatment of elderly residents in care facilities.",
+  );
+  assert.ok(
+    !mistreatment.entities.some((e) => e.name === "Service"),
+    "'mistreatment' alone must not spuriously match Service via a bare 'treatment' substring",
+  );
+
+  // The real clinical term still works on its own, singular and plural
+  // (neither description below mentions this rule's other keyword
+  // "service", so a match here can only come from "treatment" itself).
+  const realTreatment = await provider.generate("An app for a physical therapy clinic to schedule each patient's treatment.");
+  assert.ok(realTreatment.entities.some((e) => e.name === "Service"), "'treatment' must still match Service");
+
+  const realTreatments = await provider.generate("An app for a clinic to track the treatments it offers to patients.");
+  assert.ok(realTreatments.entities.some((e) => e.name === "Service"), "'treatments' must still match Service");
+});
+
 test("MenuItem's 'מנה' keyword doesn't spuriously match 'מנהלים' (managers)", async () => {
   const provider = new HeuristicSpecProvider();
   const managers = await provider.generate("אפליקציה למעקב אחרי מנהלים בעסק");
