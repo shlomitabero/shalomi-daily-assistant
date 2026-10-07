@@ -902,6 +902,66 @@ test("Security scan's 'secret' hint doesn't spuriously flag 'secretary', but sti
 });
 
 /**
+ * Regression test for a real bug found by a round 459 Explore survey: the
+ * same SENSITIVE_FIELD_HINTS array's bare "ssn" hint flagged fields via a
+ * plain substring check (`lowerName.includes("ssn")`), so entirely ordinary
+ * fields "businessName" and "className" (lowercased: "busine**ssn**ame",
+ * "cla**ssn**ame") tripped a false "looks sensitive" warning -- the exact
+ * same collision class as "secret"/"secretary" fixed just above in this same
+ * array, left unfixed on this sibling hint. Fixed the same way: a regex
+ * against the field's original, un-lowercased name, checking for a
+ * word-start lowercase "ssn" or the "SSN" acronym form, each not
+ * immediately followed by a lowercase letter.
+ */
+test("Security scan's 'ssn' hint doesn't spuriously flag 'businessName'/'className', but still catches ssn/userSSN/ssn_number", () => {
+  const spec: ProductSpec = {
+    summary: "test",
+    personas: [],
+    roles: ["Admin"],
+    screens: [],
+    assumptions: [],
+    openQuestions: [],
+    entities: [
+      {
+        name: "Vendor",
+        fields: [
+          { name: "name", type: "text", required: true },
+          { name: "businessName", type: "text", required: false },
+          { name: "className", type: "text", required: false },
+          { name: "ssn", type: "text", required: false },
+          { name: "userSSN", type: "text", required: false },
+          { name: "ssn_number", type: "text", required: false },
+        ],
+      },
+    ],
+  };
+
+  const security = runSecurityScan("proj1", spec);
+
+  assert.ok(
+    !security.warnings.some((w) => w.includes('"Vendor.businessName"')),
+    "an ordinary 'businessName' field must not be flagged as looking sensitive",
+  );
+  assert.ok(
+    !security.warnings.some((w) => w.includes('"Vendor.className"')),
+    "an ordinary 'className' field must not be flagged as looking sensitive",
+  );
+  assert.ok(
+    security.warnings.some((w) => w.includes('"Vendor.ssn"')),
+    "'ssn' must still be flagged -- it's a genuinely sensitive field name",
+  );
+  assert.ok(
+    security.warnings.some((w) => w.includes('"Vendor.userSSN"')),
+    "'userSSN' must still be flagged",
+  );
+  assert.ok(
+    security.warnings.some((w) => w.includes('"Vendor.ssn_number"')),
+    "'ssn_number' must still be flagged",
+  );
+  assert.equal(security.warnings.length, 3, "exactly the 3 genuinely sensitive-sounding fields should be flagged, not 'businessName'/'className' too");
+});
+
+/**
  * Real end-to-end proof of the same fix, run through the actual
  * runBuildPipeline a real build/refine uses (real migrations, real seed
  * data, every real agent step) rather than calling runSecurityScan in

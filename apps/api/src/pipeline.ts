@@ -44,7 +44,16 @@ const SENSITIVE_FIELD_HINTS: (string | RegExp)[] = [
   "apikey",
   "api_key",
   "token",
-  "ssn",
+  // Plain "ssn" would also match "businessName"/"className" as a plain
+  // substring (lowercased: "busine**ssn**ame", "cla**ssn**ame") -- same
+  // collision class as "secret"/"secretary" just above. "ssn" is normally
+  // kept all-uppercase as a standalone acronym within camelCase (ssn,
+  // SSN, userSSN, ssn_number, ssnNumber), unlike "secret"/"Secret" which
+  // is an ordinary word, so the boundary regex checks for lowercase "ssn"
+  // at a word start or the acronym "SSN" anywhere, each not immediately
+  // followed by a lowercase letter -- which is exactly what rules out the
+  // mixed-case "ssN" inside "businessName"/"className".
+  /(?:(?<![a-zA-Z])ssn|SSN)(?![a-z])/,
   "creditcard",
 ];
 
