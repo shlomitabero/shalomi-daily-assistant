@@ -41,6 +41,7 @@ export function HistoryPanel({
   const { t, lang } = useTranslation();
   const [checkpoints, setCheckpoints] = useState<Checkpoint[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [restoreWarning, setRestoreWarning] = useState<string | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [expandedId, setExpandedId] = useState<string | null>(null);
@@ -102,9 +103,11 @@ export function HistoryPanel({
     if (!window.confirm(t("history.confirmRestore", { label: checkpoint.label }))) return;
     setBusyId(checkpoint.id);
     setError(null);
+    setRestoreWarning(null);
     try {
-      const { project } = await restoreCheckpoint(projectId, checkpoint.id);
+      const { project, migrationWarning } = await restoreCheckpoint(projectId, checkpoint.id);
       onRestored(project);
+      setRestoreWarning(migrationWarning);
     } catch (err) {
       setError((err as Error).message);
     } finally {
@@ -205,6 +208,11 @@ export function HistoryPanel({
         {error && (
           <p className="error" role="status">
             {error}
+          </p>
+        )}
+        {restoreWarning && (
+          <p className="muted small" role="status">
+            {restoreWarning}
           </p>
         )}
         {deleteError && (

@@ -543,7 +543,10 @@ export function listCheckpoints(projectId: string): Promise<{ checkpoints: Check
   return request(`/projects/${projectId}/checkpoints`);
 }
 
-export function restoreCheckpoint(projectId: string, checkpointId: string): Promise<{ project: Project }> {
+export function restoreCheckpoint(
+  projectId: string,
+  checkpointId: string,
+): Promise<{ project: Project; migrationWarning: string | null }> {
   return request(`/projects/${projectId}/checkpoints/${checkpointId}/restore`, { method: "POST" });
 }
 

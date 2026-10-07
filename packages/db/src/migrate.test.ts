@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { ProductSpec } from "@forge/shared";
 import { openDatabase } from "./connection.js";
-import { applyMigrations, diffAndMigrate, generateCreateTableStatements } from "./migrate.js";
+import { applyMigrations, describeMigrationHazards, diffAndMigrate, generateCreateTableStatements } from "./migrate.js";
 import { insertRecord, listRecords } from "./repository.js";
 
 const spec: ProductSpec = {
@@ -801,4 +801,72 @@ test("generateCreateTableStatements quotes identifiers so a field named after a 
 
   const db = openDatabase(":memory:");
   assert.doesNotThrow(() => db.exec(statement));
+});
+
+/**
+ * New in this round: describeMigrationHazards is the shared helper pulled
+ * out of pipeline.ts (round 464) so the checkpoint-restore route could
+ * reuse the exact same "kept the original type/relation target" notice
+ * instead of silently discarding diffAndMigrate's own hazard entries, which
+ * is what pipeline.ts's own "Database" agent message already did. Pins the
+ * exact text (byte-for-byte what pipeline.ts used to build inline) and the
+ * no-hazard "" case, since both call sites now depend on this contract.
+ */
+test("describeMigrationHazards reports nothing for new_table/new_column entries, and the exact note text for each hazard type", () => {
+  assert.equal(describeMigrationHazards([]), "");
+  assert.equal(
+    describeMigrationHazards([
+      { type: "new_table", table: "entity_proj1_Deal" },
+      { type: "new_column", table: "entity_proj1_Deal", column: "title" },
+    ]),
+    "",
+  );
+
+  assert.equal(
+    describeMigrationHazards([
+      { type: "type_changed", table: "entity_proj1_Deal", column: "won", fromType: "boolean", toType: "text" },
+    ]),
+    " Note: entity_proj1_Deal.won (boolean → text) kept the original database column type — existing data was not converted.",
+  );
+
+  assert.equal(
+    describeMigrationHazards([
+      {
+        type: "relation_target_changed",
+        table: "entity_proj1_Order",
+        column: "customerId",
+        fromRelationTo: "Customer",
+        toRelationTo: "Courier",
+      },
+    ]),
+    " Note: entity_proj1_Order.customerId (Customer → Courier) kept pointing at the original related table — existing data was not re-linked.",
+  );
+
+  assert.equal(
+    describeMigrationHazards([
+      { type: "relation_missing_fk", table: "entity_proj1_Order", column: "customerId", toRelationTo: "Customer" },
+    ]),
+    " Note: entity_proj1_Order.customerId (→ Customer) is a relation field reusing a column that was never linked to anything — existing and new values in it are not protected against pointing at a record that doesn't exist.",
+  );
+
+  // All three together concatenate as three separate "Note:" segments, in
+  // type order -- matching exactly what pipeline.ts's inline version did
+  // before this extraction, so this round's refactor changed nothing about
+  // /build and /refine's own existing behavior.
+  assert.equal(
+    describeMigrationHazards([
+      { type: "type_changed", table: "entity_proj1_Deal", column: "won", fromType: "boolean", toType: "text" },
+      {
+        type: "relation_target_changed",
+        table: "entity_proj1_Order",
+        column: "customerId",
+        fromRelationTo: "Customer",
+        toRelationTo: "Courier",
+      },
+      { type: "relation_missing_fk", table: "entity_proj1_Order", column: "driverId", toRelationTo: "Driver" },
+    ]),
+    " Note: entity_proj1_Deal.won (boolean → text) kept the original database column type — existing data was not converted." +
+      " Note: entity_proj1_Order.customerId (Customer → Courier) kept pointing at the original related table — existing data was not re-linked." +
+      " Note: entity_proj1_Order.driverId (→ Driver) is a relation field reusing a column that was never linked to anything — existing and new values in it are not protected against pointing at a record that doesn't exist.",
+  );
 });

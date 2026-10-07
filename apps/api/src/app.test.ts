@@ -1,14 +1,23 @@
 import assert from "node:assert/strict";
+import { randomUUID } from "node:crypto";
 import { test } from "node:test";
 import type { AgentStepEvent, ProductSpec } from "@forge/shared";
-import { insertWhatsAppMessage, type ForgeDatabase } from "@forge/db";
+import {
+  diffAndMigrate,
+  findUserByEmail,
+  insertCheckpoint,
+  insertProject,
+  insertWhatsAppMessage,
+  updateProjectSpec,
+  type ForgeDatabase,
+} from "@forge/db";
 import { HeuristicSpecProvider, type SpecProvider } from "@forge/spec-engine";
 import { createApp } from "./app.js";
 import { createStore } from "./store.js";
 import { WhatsAppWebManager, type BaileysConnectionUpdate, type BaileysMessagesUpsert, type WhatsAppSocket } from "./whatsappWeb.js";
 
 async function withServer(
-  fn: (baseUrl: string) => Promise<void>,
+  fn: (baseUrl: string, db: ForgeDatabase) => Promise<void>,
   opts?: { whatsapp?: (db: ForgeDatabase) => WhatsAppWebManager; provider?: SpecProvider },
 ) {
   const db = createStore(":memory:");
@@ -18,7 +27,7 @@ async function withServer(
   const address = server.address();
   const port = typeof address === "object" && address ? address.port : 0;
   try {
-    await fn(`http://127.0.0.1:${port}`);
+    await fn(`http://127.0.0.1:${port}`, db);
   } finally {
     // server.close()'s own callback doesn't fire until every open
     // connection closes on its own -- a keep-alive socket sitting idle
@@ -5345,4 +5354,114 @@ test("a relation field added via refine to an already-existing entity gets the s
     },
     { provider },
   );
+});
+
+/**
+ * New in this round: the checkpoint-restore route calls diffAndMigrate the
+ * exact same way /build and /refine do (pipeline.ts), but used to throw its
+ * return value away completely -- so a restore that reuses a column whose
+ * physical SQL type no longer matches what the restored spec claims (e.g. a
+ * field that was boolean at checkpoint time but has since been retyped to
+ * text under the same name) got no warning at all, unlike the identical
+ * situation during a real /build or /refine. Engineered directly via the DB
+ * layer (not a real /build+/refine round trip) so the exact "same field
+ * name, different declared type" scenario is deterministic rather than
+ * dependent on what the heuristic spec generator happens to produce from a
+ * free-text description.
+ */
+test("restoring a checkpoint surfaces a migrationWarning when a reused column's physical type no longer matches the restored spec, the same diagnostic /build and /refine already give", async () => {
+  await withServer(async (baseUrl, db) => {
+    const email = `restore-warning-${randomUUID()}@example.com`;
+    const token = await signup(baseUrl, email);
+    const user = findUserByEmail(db, email)!;
+
+    const specWithBooleanWon: ProductSpec = {
+      summary: "test",
+      personas: [],
+      roles: ["Admin"],
+      entities: [
+        {
+          name: "Deal",
+          fields: [
+            { name: "title", type: "text", required: true },
+            { name: "won", type: "boolean", required: false },
+          ],
+        },
+      ],
+      screens: [],
+      assumptions: [],
+      openQuestions: [],
+    };
+    const specWithTextWon: ProductSpec = {
+      ...specWithBooleanWon,
+      entities: [
+        {
+          name: "Deal",
+          fields: [
+            { name: "title", type: "text", required: true },
+            { name: "won", type: "text", required: false },
+          ],
+        },
+      ],
+    };
+
+    const projectId = randomUUID();
+    insertProject(db, {
+      id: projectId,
+      ownerId: user.id,
+      name: "Deal tracker",
+      description: "A CRM for tracking deals.",
+      spec: specWithBooleanWon,
+    });
+    // Builds the physical table with "won" as an INTEGER column (boolean).
+    diffAndMigrate(db, projectId, undefined, specWithBooleanWon);
+    const checkpoint = insertCheckpoint(db, {
+      id: randomUUID(),
+      projectId,
+      label: "Initial build",
+      kind: "build",
+      spec: specWithBooleanWon,
+    });
+
+    // Simulates a later refine that retypes "won" to text under the same
+    // name -- diffAndMigrate leaves the physical column as INTEGER (same
+    // documented limitation type_changed exists to report), and the spec
+    // pointer moves on, exactly like /refine's own route does.
+    diffAndMigrate(db, projectId, specWithBooleanWon, specWithTextWon);
+    updateProjectSpec(db, projectId, specWithTextWon);
+
+    // Restoring the original checkpoint moves the spec pointer back to
+    // "won: boolean", but the physical column was never altered -- this is
+    // exactly the hazard type_changed exists to report, and the fix under
+    // test is that the restore route must no longer discard it.
+    const restoreRes = await fetch(`${baseUrl}/api/projects/${projectId}/checkpoints/${checkpoint.id}/restore`, {
+      method: "POST",
+      headers: authHeaders(token),
+    });
+    assert.equal(restoreRes.status, 200);
+    const restoreBody = (await restoreRes.json()) as {
+      project: { spec: { entities: { fields: { name: string; type: string }[] }[] } };
+      migrationWarning: string | null;
+    };
+    assert.equal(
+      restoreBody.project.spec.entities[0].fields.find((f) => f.name === "won")!.type,
+      "boolean",
+      "the restore itself must still move the spec pointer back",
+    );
+    assert.ok(restoreBody.migrationWarning, "a migrationWarning must be present given the reused column's type mismatch");
+    assert.match(restoreBody.migrationWarning!, /won \(text → boolean\)/);
+    assert.match(restoreBody.migrationWarning!, /kept the original database column type/);
+
+    // Control: restoring a checkpoint whose spec already matches the
+    // current project.spec (the restore above just moved the pointer back
+    // to specWithBooleanWon) reports no mismatch, so migrationWarning must
+    // come back null, not an empty-but-present string.
+    const cleanRestoreRes = await fetch(`${baseUrl}/api/projects/${projectId}/checkpoints/${checkpoint.id}/restore`, {
+      method: "POST",
+      headers: authHeaders(token),
+    });
+    assert.equal(cleanRestoreRes.status, 200);
+    const cleanRestoreBody = (await cleanRestoreRes.json()) as { migrationWarning: string | null };
+    assert.equal(cleanRestoreBody.migrationWarning, null);
+  });
 });

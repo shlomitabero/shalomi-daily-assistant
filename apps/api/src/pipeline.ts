@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { AgentStepEvent, Entity, ProductSpec, Project } from "@forge/shared";
 import {
   countRecords,
+  describeMigrationHazards,
   diffAndMigrate,
   generateSeedRecords,
   getProject,
@@ -342,23 +343,12 @@ export async function* runBuildPipeline(
       detail: { correctedSpec: fixedSpec },
     };
   }
-  const typeChanges = changes.filter((c) => c.type === "type_changed");
-  const relationTargetChanges = changes.filter((c) => c.type === "relation_target_changed");
-  const relationMissingFkChanges = changes.filter((c) => c.type === "relation_missing_fk");
   yield {
     agent: "Database",
     status: "success",
     message:
       `${changes.length} schema change(s) applied (${changes.filter((c) => c.type === "new_table").length} new tables, ${changes.filter((c) => c.type === "new_column").length} new columns). Nothing was dropped.` +
-      (typeChanges.length > 0
-        ? ` Note: ${typeChanges.map((c) => `${c.table}.${c.column} (${c.fromType} → ${c.toType})`).join(", ")} kept the original database column type — existing data was not converted.`
-        : "") +
-      (relationTargetChanges.length > 0
-        ? ` Note: ${relationTargetChanges.map((c) => `${c.table}.${c.column} (${c.fromRelationTo} → ${c.toRelationTo})`).join(", ")} kept pointing at the original related table — existing data was not re-linked.`
-        : "") +
-      (relationMissingFkChanges.length > 0
-        ? ` Note: ${relationMissingFkChanges.map((c) => `${c.table}.${c.column} (→ ${c.toRelationTo})`).join(", ")} is a relation field reusing a column that was never linked to anything — existing and new values in it are not protected against pointing at a record that doesn't exist.`
-        : ""),
+      describeMigrationHazards(changes),
     detail: changes,
   };
 

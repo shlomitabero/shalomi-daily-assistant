@@ -3,6 +3,7 @@ export {
   applyMigrations,
   generateCreateTableStatements,
   diffAndMigrate,
+  describeMigrationHazards,
   type MigrationChange,
 } from "./migrate.js";
 export {

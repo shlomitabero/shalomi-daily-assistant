@@ -11,6 +11,7 @@ import {
   deleteCheckpoint,
   listProjectsForUser,
   diffAndMigrate,
+  describeMigrationHazards,
   updateProjectSpec,
   updateProjectName,
   updateProjectDescription,
@@ -790,12 +791,23 @@ export function createProjectsRouter(db: ForgeDatabase, provider: SpecProvider |
         throw new HttpError(409, "A build or refine is already running for this project", "PIPELINE_IN_PROGRESS");
       }
       // Restoring never drops columns/tables (migrations are additive-only),
-      // so it's always safe: this just ensures the restored spec's schema
-      // exists (a no-op unless restoring "forward" to a spec never built)
-      // and moves the spec pointer.
-      diffAndMigrate(db, project.id, project.spec, checkpoint.spec);
+      // so it's always safe from *losing* data: this just ensures the
+      // restored spec's schema exists (a no-op unless restoring "forward"
+      // to a spec never built) and moves the spec pointer. "Safe from
+      // losing" isn't "safe from misreading" though -- diffAndMigrate can
+      // still report a reused column whose physical SQL type or FK target
+      // no longer matches what the restored spec claims (e.g. a field that
+      // was boolean when this checkpoint was taken, but has since been
+      // retyped to text and wasn't just created fresh here), and /build and
+      // /refine always surface that exact same diagnostic to the user
+      // (pipeline.ts's "Database" agent message) -- silently discarding it
+      // here, right where it's needed just as much, left a restored project
+      // render stale/mismatched values (e.g. a boolean cell reading
+      // Boolean("some real note text") as true) with no warning at all.
+      const changes = diffAndMigrate(db, project.id, project.spec, checkpoint.spec);
       const updated = updateProjectSpec(db, project.id, checkpoint.spec);
-      res.json({ project: updated });
+      const migrationWarning = describeMigrationHazards(changes).trim();
+      res.json({ project: updated, migrationWarning: migrationWarning.length > 0 ? migrationWarning : null });
     }),
   );
 

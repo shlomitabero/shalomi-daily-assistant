@@ -131,6 +131,33 @@ export interface MigrationChange {
 }
 
 /**
+ * Builds the "kept the original column type/relation target" notice for any
+ * type_changed/relation_target_changed/relation_missing_fk entries in a
+ * diffAndMigrate() result -- the one signal that catches a reused column
+ * whose physical SQL type or FK target no longer matches what the spec now
+ * claims. Returns "" when there's nothing to warn about. Shared by
+ * pipeline.ts (surfaced live during /build and /refine) and the
+ * checkpoint-restore route (surfaced in its response), so this diagnostic
+ * is computed once and never silently dropped at either call site.
+ */
+export function describeMigrationHazards(changes: MigrationChange[]): string {
+  const typeChanges = changes.filter((c) => c.type === "type_changed");
+  const relationTargetChanges = changes.filter((c) => c.type === "relation_target_changed");
+  const relationMissingFkChanges = changes.filter((c) => c.type === "relation_missing_fk");
+  return (
+    (typeChanges.length > 0
+      ? ` Note: ${typeChanges.map((c) => `${c.table}.${c.column} (${c.fromType} → ${c.toType})`).join(", ")} kept the original database column type — existing data was not converted.`
+      : "") +
+    (relationTargetChanges.length > 0
+      ? ` Note: ${relationTargetChanges.map((c) => `${c.table}.${c.column} (${c.fromRelationTo} → ${c.toRelationTo})`).join(", ")} kept pointing at the original related table — existing data was not re-linked.`
+      : "") +
+    (relationMissingFkChanges.length > 0
+      ? ` Note: ${relationMissingFkChanges.map((c) => `${c.table}.${c.column} (→ ${c.toRelationTo})`).join(", ")} is a relation field reusing a column that was never linked to anything — existing and new values in it are not protected against pointing at a record that doesn't exist.`
+      : "")
+  );
+}
+
+/**
  * Additive-only migration: creates tables for entities that didn't exist in
  * `previousSpec`, and ALTER TABLE ADD COLUMN for fields that didn't exist on
  * an entity that did. Never drops or renames anything, even if a field or

@@ -276,6 +276,103 @@ test("HistoryPanel disables every restore button while one restore is in flight,
 });
 
 /**
+ * New in this round: the restore route now surfaces a migrationWarning
+ * whenever diffAndMigrate reports a reused column's physical type or
+ * relation target no longer matches the restored spec -- the same
+ * diagnostic /build and /refine already give, previously discarded
+ * silently at this one call site. Confirms HistoryPanel actually displays
+ * whatever the server sends back (not just that it's wired up to request
+ * it), that it's absent when the server reports none, and that a later
+ * restore replaces rather than accumulates the previous one's warning.
+ */
+test("HistoryPanel shows the server's migrationWarning after a restore, and replaces it (rather than keeping a stale one) on the next restore", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    const cp1 = makeCheckpoint("cp1", "Initial build");
+    const cp2 = makeCheckpoint("cp2", "Refine: add invoices");
+
+    globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/checkpoints") {
+        return new Response(JSON.stringify({ checkpoints: [cp1, cp2] }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      if (method === "POST" && input === "/api/projects/proj1/checkpoints/cp1/restore") {
+        return new Response(
+          JSON.stringify({
+            project: { id: "proj1" },
+            migrationWarning:
+              "Note: entity_proj1_Deal.won (text → boolean) kept the original database column type — existing data was not converted.",
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      if (method === "POST" && input === "/api/projects/proj1/checkpoints/cp2/restore") {
+        return new Response(JSON.stringify({ project: { id: "proj1" }, migrationWarning: null }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+
+    const originalConfirm = globalThis.window?.confirm;
+    try {
+      render(
+        React.createElement(
+          ThemeProvider,
+          null,
+          React.createElement(
+            LanguageProvider,
+            null,
+            React.createElement(HistoryPanel, {
+              projectId: "proj1",
+              projectName: "Test Project",
+              currentSpec: { ...cp1.spec, entities: [] },
+              onRestored: () => {},
+              onClose: () => {},
+            }),
+          ),
+        ),
+      );
+      await waitForCondition(() => document.querySelectorAll(".checkpoint-list li").length === 2);
+      globalThis.window.confirm = (() => true) as typeof window.confirm;
+
+      const buttons = Array.from(document.querySelectorAll(".checkpoint-restore-btn")) as HTMLButtonElement[];
+      assert.equal(
+        Array.from(document.querySelectorAll('[role="status"]')).some((el) =>
+          el.textContent?.includes("kept the original database column type"),
+        ),
+        false,
+        "no migrationWarning text should be shown before any restore happens",
+      );
+
+      fireEvent.click(buttons[0]);
+      await waitForCondition(() =>
+        Array.from(document.querySelectorAll('[role="status"]')).some((el) =>
+          el.textContent?.includes("kept the original database column type"),
+        ),
+      );
+
+      fireEvent.click(buttons[1]);
+      await waitForCondition(() => !buttons[1].disabled);
+      assert.equal(
+        Array.from(document.querySelectorAll('[role="status"]')).some((el) =>
+          el.textContent?.includes("kept the original database column type"),
+        ),
+        false,
+        "a later restore reporting no warning must clear the previous restore's warning, not leave it showing stale",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+      if (originalConfirm) globalThis.window.confirm = originalConfirm;
+    }
+  });
+});
+
+/**
  * New in this round: restoring a checkpoint (unlike every other real
  * destructive-feeling action in this app -- deleting a project, round 123;
  * removing a collaborator, round 136) had NO confirmation at all, even
