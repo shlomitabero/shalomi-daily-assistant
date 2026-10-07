@@ -758,6 +758,35 @@ test("Product's 'product' keyword doesn't spuriously match 'production'", async 
   assert.ok(realProducts.entities.some((e) => e.name === "Product"), "'products' must still match Product");
 });
 
+/**
+ * Regression test for a real bug found in round 448's survey and fixed in
+ * round 450: Vehicle's bare "mechanic" keyword is a substring of
+ * "mechanical" -- an ordinary word in a facilities-management description
+ * that has nothing to do with vehicles, so it spuriously matched this
+ * entity. Fixed with the same `\b`-bounded RegExp pattern this file's other
+ * collision fixes already use.
+ */
+test("Vehicle's 'mechanic' keyword doesn't spuriously match 'mechanical'", async () => {
+  const provider = new HeuristicSpecProvider();
+
+  const mechanical = await provider.generate(
+    "An app to track mechanical issues in a building for a facilities management team.",
+  );
+  assert.ok(
+    !mechanical.entities.some((e) => e.name === "Vehicle"),
+    "'mechanical' alone must not spuriously match Vehicle via a bare 'mechanic' substring",
+  );
+
+  // The real auto-repair term still works on its own, singular and plural
+  // (neither description below mentions any of this rule's other
+  // keywords, so a match here can only come from "mechanic" itself).
+  const realMechanic = await provider.generate("An app for an auto repair business to schedule its mechanic for each job.");
+  assert.ok(realMechanic.entities.some((e) => e.name === "Vehicle"), "'mechanic' must still match Vehicle");
+
+  const realMechanics = await provider.generate("An app for an auto repair business to assign jobs to its mechanics.");
+  assert.ok(realMechanics.entities.some((e) => e.name === "Vehicle"), "'mechanics' must still match Vehicle");
+});
+
 test("MenuItem's 'מנה' keyword doesn't spuriously match 'מנהלים' (managers)", async () => {
   const provider = new HeuristicSpecProvider();
   const managers = await provider.generate("אפליקציה למעקב אחרי מנהלים בעסק");

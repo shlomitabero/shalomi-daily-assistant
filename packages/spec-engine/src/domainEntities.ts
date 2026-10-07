@@ -576,7 +576,13 @@ export const DOMAIN_ENTITY_RULES: DomainEntityRule[] = [
   },
   {
     keywords: [
-      "vehicle", "vehicles", "fleet management", "garage", "mechanic", "car dealership",
+      // Bare "mechanic" (round 450) is a substring of "mechanical" -- an
+      // ordinary word in e.g. a facilities-management description
+      // ("mechanical issues in a building") that has nothing to do with
+      // vehicles, so it spuriously matched this entity. \b-bounded, same
+      // pitfall-1 shape as order/stock/driver/patient/deals/worker/courses/
+      // dish/product.
+      "vehicle", "vehicles", "fleet management", "garage", /\bmechanic(s)?\b/, "car dealership",
       "רכב", "רכבים", "מוסך", "מכונאי", "כלי רכב",
     ],
     labelHe: "כלי רכב",
