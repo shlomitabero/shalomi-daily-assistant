@@ -883,6 +883,33 @@ test("Vehicle's 'garage' keyword doesn't spuriously match 'garage sale'", async 
   assert.ok(realGarage.entities.some((e) => e.name === "Vehicle"), "'garage' must still match Vehicle");
 });
 
+/**
+ * Regression test for a real bug found in a fresh systematic survey in
+ * round 455: Shipment's bare "shipping" keyword is a substring of
+ * "worshipping" -- an ordinary word in a church/congregation attendance
+ * description that has nothing to do with logistics, so it spuriously
+ * matched this entity. Fixed with the same `\b`-bounded RegExp pattern
+ * this file's other collision fixes already use.
+ */
+test("Shipment's 'shipping' keyword doesn't spuriously match 'worshipping'", async () => {
+  const provider = new HeuristicSpecProvider();
+
+  const worshipping = await provider.generate(
+    "An app for a church to track members worshipping together every Sunday and record weekly attendance.",
+  );
+  assert.ok(
+    !worshipping.entities.some((e) => e.name === "Shipment"),
+    "'worshipping' alone must not spuriously match Shipment via a bare 'shipping' substring",
+  );
+
+  // The real logistics term still works on its own (this description
+  // avoids this rule's other keywords -- "logistics", "warehouse
+  // management", "package tracking", "freight" -- so a match here can
+  // only come from "shipping" itself).
+  const realShipping = await provider.generate("An app for an online retailer to track shipping of customer orders to their destinations.");
+  assert.ok(realShipping.entities.some((e) => e.name === "Shipment"), "'shipping' must still match Shipment");
+});
+
 test("MenuItem's 'מנה' keyword doesn't spuriously match 'מנהלים' (managers)", async () => {
   const provider = new HeuristicSpecProvider();
   const managers = await provider.generate("אפליקציה למעקב אחרי מנהלים בעסק");

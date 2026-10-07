@@ -837,7 +837,12 @@ export const DOMAIN_ENTITY_RULES: DomainEntityRule[] = [
     // no substring overlap, so a logistics/warehouse description doesn't
     // spuriously also match Order.
     keywords: [
-      "shipping", "logistics", "warehouse management", "package tracking", "freight",
+      // Bare "shipping" (round 455) is a substring of "worshipping" -- an
+      // ordinary word in a church/congregation attendance description
+      // that has nothing to do with logistics, so it spuriously matched
+      // this entity. \b-bounded, same pitfall-1 shape as the twelve other
+      // collision fixes already in this file.
+      /\bshipping\b/, "logistics", "warehouse management", "package tracking", "freight",
       "שילוח", "לוגיסטיקה", "ניהול מחסן", "מעקב חבילות",
     ],
     labelHe: "משלוחים ומעקב",
