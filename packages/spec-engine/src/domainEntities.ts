@@ -587,7 +587,15 @@ export const DOMAIN_ENTITY_RULES: DomainEntityRule[] = [
       // vehicles, so it spuriously matched this entity. \b-bounded, same
       // pitfall-1 shape as order/stock/driver/patient/deals/worker/courses/
       // dish/product.
-      "vehicle", "vehicles", "fleet management", "garage", /\bmechanic(s)?\b/, "car dealership",
+      "vehicle", "vehicles", "fleet management",
+      // Bare "garage" (round 454) is a whole word that's genuinely
+      // ambiguous: it means an auto-repair shop in most descriptions, but
+      // "garage sale" is an unrelated everyday phrase (a household selling
+      // unwanted items) with nothing to do with vehicles. Unlike the
+      // substring-in-a-longer-word pitfall above, \b alone can't fix this
+      // since "garage" word-boundary-matches correctly in "garage sale"
+      // too -- the negative lookahead excludes only that specific phrase.
+      /\bgarage\b(?!\s+sales?\b)/, /\bmechanic(s)?\b/, "car dealership",
       "רכב", "רכבים", "מוסך", "מכונאי", "כלי רכב",
     ],
     labelHe: "כלי רכב",

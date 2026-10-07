@@ -845,6 +845,44 @@ test("Service's 'service' keyword doesn't spuriously match 'disservice'", async 
   assert.ok(realServices.entities.some((e) => e.name === "Service"), "'services' must still match Service");
 });
 
+/**
+ * Regression test for a real bug noticed in round 450 and fixed in round
+ * 454: Vehicle's bare "garage" keyword is a whole word that's genuinely
+ * ambiguous -- it means an auto-repair shop in most descriptions, but
+ * "garage sale" is an unrelated everyday phrase (a household selling
+ * unwanted items) with nothing to do with vehicles. Unlike the
+ * substring-in-a-longer-word collisions fixed in earlier rounds, a plain
+ * `\b`-bounded RegExp can't fix this since "garage" word-boundary-matches
+ * correctly inside "garage sale" too -- fixed with a negative lookahead
+ * that excludes only that specific phrase.
+ */
+test("Vehicle's 'garage' keyword doesn't spuriously match 'garage sale'", async () => {
+  const provider = new HeuristicSpecProvider();
+
+  const garageSale = await provider.generate(
+    "An app for a neighborhood community to coordinate an annual garage sale, listing items each household wants to sell.",
+  );
+  assert.ok(
+    !garageSale.entities.some((e) => e.name === "Vehicle"),
+    "'garage sale' alone must not spuriously match Vehicle via the bare 'garage' word",
+  );
+
+  const garageSales = await provider.generate(
+    "An app for a neighborhood community to coordinate annual garage sales, listing items each household wants to sell.",
+  );
+  assert.ok(
+    !garageSales.entities.some((e) => e.name === "Vehicle"),
+    "'garage sales' alone must not spuriously match Vehicle via the bare 'garage' word",
+  );
+
+  // The real auto-repair sense still works (this description avoids this
+  // rule's other keywords -- "vehicle", "mechanic", "fleet management",
+  // "car dealership" -- so a match here can only come from "garage"
+  // itself).
+  const realGarage = await provider.generate("An app for an auto repair garage to track customer jobs and parts inventory.");
+  assert.ok(realGarage.entities.some((e) => e.name === "Vehicle"), "'garage' must still match Vehicle");
+});
+
 test("MenuItem's 'מנה' keyword doesn't spuriously match 'מנהלים' (managers)", async () => {
   const provider = new HeuristicSpecProvider();
   const managers = await provider.generate("אפליקציה למעקב אחרי מנהלים בעסק");
