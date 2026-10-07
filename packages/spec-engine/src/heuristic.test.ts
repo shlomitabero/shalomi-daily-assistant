@@ -816,6 +816,35 @@ test("Service's 'treatment' keyword doesn't spuriously match 'mistreatment'", as
   assert.ok(realTreatments.entities.some((e) => e.name === "Service"), "'treatments' must still match Service");
 });
 
+/**
+ * Regression test for a real bug found in round 448's survey and fixed in
+ * round 453: Service's bare "service" keyword is a substring of
+ * "disservice" -- an ordinary word (e.g. "do a disservice to their
+ * reputation") that has nothing to do with selling a service, so it
+ * spuriously matched this entity. Fixed with the same `\b`-bounded RegExp
+ * pattern this file's other collision fixes already use.
+ */
+test("Service's 'service' keyword doesn't spuriously match 'disservice'", async () => {
+  const provider = new HeuristicSpecProvider();
+
+  const disservice = await provider.generate(
+    "An app for a reputation management consultant to track clients who worry that bad reviews will do a disservice to their reputation.",
+  );
+  assert.ok(
+    !disservice.entities.some((e) => e.name === "Service"),
+    "'disservice' alone must not spuriously match Service via a bare 'service' substring",
+  );
+
+  // The real word still works on its own, singular and plural (neither
+  // description below mentions this rule's other keyword "treatment", so a
+  // match here can only come from "service" itself).
+  const realService = await provider.generate("An app for a hair salon to manage the service it charges clients for.");
+  assert.ok(realService.entities.some((e) => e.name === "Service"), "'service' must still match Service");
+
+  const realServices = await provider.generate("An app for a hair salon to manage the services it offers to clients.");
+  assert.ok(realServices.entities.some((e) => e.name === "Service"), "'services' must still match Service");
+});
+
 test("MenuItem's 'מנה' keyword doesn't spuriously match 'מנהלים' (managers)", async () => {
   const provider = new HeuristicSpecProvider();
   const managers = await provider.generate("אפליקציה למעקב אחרי מנהלים בעסק");

@@ -250,12 +250,12 @@ export const DOMAIN_ENTITY_RULES: DomainEntityRule[] = [
     },
   },
   {
-    // Bare "treatment" (round 452) is a substring of "mistreatment" -- an
-    // ordinary word in an elder-care/social-work complaint description
-    // that has nothing to do with selling a service, so it spuriously
+    // Bare "treatment" (round 452) is a substring of "mistreatment", and
+    // bare "service" (round 453) is a substring of "disservice" -- both
+    // ordinary words unrelated to selling a service, so they spuriously
     // matched this entity. \b-bounded, same pitfall-1 shape as the other
-    // ten collision fixes already in this file.
-    keywords: ["service", /\btreatment(s)?\b/, "שירות", "שירותים", "טיפול", "טיפולים"],
+    // eleven collision fixes already in this file.
+    keywords: [/\bservice(s)?\b/, /\btreatment(s)?\b/, "שירות", "שירותים", "טיפול", "טיפולים"],
     labelHe: "שירותים",
     descriptionHe: "משהו שהעסק מציע למכירה.",
     fieldLabelsHe: { name: "שם", price: "מחיר", durationMinutes: "משך בדקות", description: "תיאור" },
