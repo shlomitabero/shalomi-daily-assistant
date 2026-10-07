@@ -733,6 +733,31 @@ test("MenuItem's 'dish' keyword doesn't spuriously match 'dishonest'", async () 
   assert.ok(realDishes.entities.some((e) => e.name === "MenuItem"), "'dishes' must still match MenuItem");
 });
 
+/**
+ * Regression test for a real bug found in round 448's survey and fixed in
+ * round 449: Product's bare "product" keyword is a substring of
+ * "production" -- an ordinary word in a creative/media description that has
+ * nothing to do with selling or tracking products, so it spuriously matched
+ * this entity. Fixed with the same `\b`-bounded RegExp pattern this file's
+ * other collision fixes already use.
+ */
+test("Product's 'product' keyword doesn't spuriously match 'production'", async () => {
+  const provider = new HeuristicSpecProvider();
+
+  const production = await provider.generate("An app for a video production studio to manage clients and bookings.");
+  assert.ok(
+    !production.entities.some((e) => e.name === "Product"),
+    "'production' alone must not spuriously match Product via a bare 'product' substring",
+  );
+
+  // The real retail term still works, singular and plural.
+  const realProduct = await provider.generate("An app for a shop to track product price and quantity in inventory.");
+  assert.ok(realProduct.entities.some((e) => e.name === "Product"), "'product' must still match Product");
+
+  const realProducts = await provider.generate("An app for a store to manage its products and stock levels.");
+  assert.ok(realProducts.entities.some((e) => e.name === "Product"), "'products' must still match Product");
+});
+
 test("MenuItem's 'מנה' keyword doesn't spuriously match 'מנהלים' (managers)", async () => {
   const provider = new HeuristicSpecProvider();
   const managers = await provider.generate("אפליקציה למעקב אחרי מנהלים בעסק");

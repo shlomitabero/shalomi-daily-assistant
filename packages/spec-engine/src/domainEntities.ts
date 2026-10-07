@@ -270,8 +270,11 @@ export const DOMAIN_ENTITY_RULES: DomainEntityRule[] = [
       // Bare "stock" is a substring of "livestock" (a farm-management
       // description has nothing to do with retail inventory) -- same
       // collision class as Order's "order" fix above. \b-bounded so
-      // "stock"/"stocks" still matches as a real standalone word.
-      "product", "inventory", /\bstock(s)?\b/, "מוצר", "מוצרים", "מלאי",
+      // "stock"/"stocks" still matches as a real standalone word. Bare
+      // "product" (round 449) has the identical problem: it's a substring
+      // of "production" ("a video production studio"), an ordinary word
+      // with nothing to do with selling or tracking products.
+      /\bproduct(s)?\b/, "inventory", /\bstock(s)?\b/, "מוצר", "מוצרים", "מלאי",
     ],
     labelHe: "מוצרים",
     descriptionHe: "פריט שהעסק מוכר או עוקב אחריו.",
