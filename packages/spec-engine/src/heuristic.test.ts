@@ -706,6 +706,33 @@ test("Course's 'courses' keyword doesn't spuriously match 'discourses'", async (
   assert.ok(realCourse.entities.some((e) => e.name === "Course"), "'courses' must still match Course");
 });
 
+/**
+ * Regression test for a real bug found in round 448: MenuItem's bare
+ * "dish" keyword is a substring of "dishonest" -- an ordinary word in a
+ * consumer-protection/trust description that has nothing to do with
+ * restaurants, so it spuriously matched this entity. Fixed with the same
+ * `\b`-bounded RegExp pattern order/stock/driver/patient/deals/worker/
+ * courses already use.
+ */
+test("MenuItem's 'dish' keyword doesn't spuriously match 'dishonest'", async () => {
+  const provider = new HeuristicSpecProvider();
+
+  const dishonest = await provider.generate(
+    "An app for a consumer watchdog group to track dishonest sellers and scam reports.",
+  );
+  assert.ok(
+    !dishonest.entities.some((e) => e.name === "MenuItem"),
+    "'dishonest' alone must not spuriously match MenuItem via a bare 'dish' substring",
+  );
+
+  // The real restaurant term still works, singular and plural.
+  const realDish = await provider.generate("An app for a restaurant to manage its menu and daily dish specials.");
+  assert.ok(realDish.entities.some((e) => e.name === "MenuItem"), "'dish' must still match MenuItem");
+
+  const realDishes = await provider.generate("An app for a cafe to track which dishes are available each day.");
+  assert.ok(realDishes.entities.some((e) => e.name === "MenuItem"), "'dishes' must still match MenuItem");
+});
+
 test("MenuItem's 'מנה' keyword doesn't spuriously match 'מנהלים' (managers)", async () => {
   const provider = new HeuristicSpecProvider();
   const managers = await provider.generate("אפליקציה למעקב אחרי מנהלים בעסק");

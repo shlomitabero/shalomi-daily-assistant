@@ -344,8 +344,14 @@ export const DOMAIN_ENTITY_RULES: DomainEntityRule[] = [
     // Plural "מנות" (mem-nun-vav-tav) doesn't have this problem -- Hebrew
     // plural formation drops the ה and adds ות, so it never contains the
     // מנהל root as a substring.
+    // Bare "dish" (round 448) is a substring of "dishonest" -- an ordinary
+    // word in a consumer-protection/trust description ("track dishonest
+    // sellers") that has nothing to do with restaurants, so it spuriously
+    // matched this entity. `\b`-bounded here, same pitfall-1 shape as the
+    // other seven fixes in this file (order/stock/driver/patient/deals/
+    // worker/courses).
     keywords: [
-      "menu", "dish", "food item", "restaurant", "cafe", "מסעדה", "מסעדות",
+      "menu", /\bdish(es)?\b/, "food item", "restaurant", "cafe", "מסעדה", "מסעדות",
       "תפריט", "מנות", "בית קפה",
     ],
     labelHe: "פריטי תפריט",
