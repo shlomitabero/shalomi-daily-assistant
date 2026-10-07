@@ -965,6 +965,7 @@ test("App's openExistingProject routes a built project to the live preview and a
       view: string | null;
       specProvider: string | null;
       enhanceProvider: string | null;
+      buildWarning: string | null;
       markSeenCalls: Array<[string, string]>;
     } = {
       project: null,
@@ -972,6 +973,7 @@ test("App's openExistingProject routes a built project to the live preview and a
       view: null,
       specProvider: "unset",
       enhanceProvider: "unset",
+      buildWarning: "Seed Data: a real failure from a previously-opened project",
       markSeenCalls: [],
     };
     const fn = new Function(
@@ -979,6 +981,7 @@ test("App's openExistingProject routes a built project to the live preview and a
       "setActiveEntity",
       "setSpecProvider",
       "setEnhanceProvider",
+      "setBuildWarning",
       "setView",
       "user",
       "markSharedProjectSeen",
@@ -989,6 +992,7 @@ test("App's openExistingProject routes a built project to the live preview and a
       (name: string | null) => (state.activeEntity = name),
       (v: string | null) => (state.specProvider = v),
       (v: string | null) => (state.enhanceProvider = v),
+      (w: string | null) => (state.buildWarning = w),
       (v: string) => (state.view = v),
       currentUser,
       (id: string, sharedAt: string) => {
@@ -1019,6 +1023,11 @@ test("App's openExistingProject routes a built project to the live preview and a
     { project: builtProject, activeEntity: "Customer", view: "preview", specProvider: null, enhanceProvider: null },
   );
   assert.deepEqual(builtResult.markSeenCalls, [], "opening a project you own yourself must never call markSharedProjectSeen");
+  assert.equal(
+    builtResult.buildWarning,
+    null,
+    "opening any project must clear a stale non-terminal build-warning banner left over from whatever project was open before (round 469) -- otherwise it falsely re-appears here",
+  );
 
   const draftProject = makeProject([makeEntity("Customer")]);
   draftProject.status = "draft";
@@ -1546,6 +1555,7 @@ test("App's handleBackToHome resets view/project/selectedAnswers/additionalReque
   };
 
   let setDescriptionCalls = 0;
+  let buildWarning: string | null = "Seed Data: a real failure from the abandoned draft's own prior build";
   const fn = new Function(
     "setView",
     "setProject",
@@ -1553,6 +1563,7 @@ test("App's handleBackToHome resets view/project/selectedAnswers/additionalReque
     "setEnhanceProvider",
     "setSelectedAnswers",
     "setAdditionalRequest",
+    "setBuildWarning",
     "setDescription",
     `${code}\nreturn handleBackToHome;`,
   )(
@@ -1562,6 +1573,7 @@ test("App's handleBackToHome resets view/project/selectedAnswers/additionalReque
     (v: string | null) => (state.enhanceProvider = v),
     (a: Record<string, string>) => (state.selectedAnswers = a),
     (r: string) => (state.additionalRequest = r),
+    (w: string | null) => (buildWarning = w),
     () => {
       setDescriptionCalls += 1;
     },
@@ -1575,6 +1587,11 @@ test("App's handleBackToHome resets view/project/selectedAnswers/additionalReque
   assert.equal(state.enhanceProvider, null, "must clear the abandoned draft's own enhance-provider info too (round 402), for the same reason");
   assert.deepEqual(state.selectedAnswers, {}, "must clear answers tied to the abandoned draft's own open questions");
   assert.equal(state.additionalRequest, "", "must clear the additional-request text tied to the abandoned draft");
+  assert.equal(
+    buildWarning,
+    null,
+    "must clear a stale non-terminal build-warning banner from the abandoned draft's own prior build (round 469)",
+  );
   assert.equal(setDescriptionCalls, 0, "must never touch description -- the typed idea text should survive going back");
 });
 
@@ -1622,6 +1639,7 @@ test("App's handleGoHome resets view/project/selectedAnswers/additionalRequest A
   };
 
   let setDescriptionCalls = 0;
+  let buildWarning: string | null = "Seed Data: a real failure from the left-behind project";
   const fn = new Function(
     "setView",
     "setProject",
@@ -1633,6 +1651,7 @@ test("App's handleGoHome resets view/project/selectedAnswers/additionalRequest A
     "setRefineText",
     "setRefineHistory",
     "setRefineHistorySearch",
+    "setBuildWarning",
     "setDescription",
     `${code}\nreturn handleGoHome;`,
   )(
@@ -1646,6 +1665,7 @@ test("App's handleGoHome resets view/project/selectedAnswers/additionalRequest A
     (r: string) => (state.refineText = r),
     (h: unknown[]) => (state.refineHistory = h),
     (s: string) => (state.refineHistorySearch = s),
+    (w: string | null) => (buildWarning = w),
     () => {
       setDescriptionCalls += 1;
     },
@@ -1663,6 +1683,11 @@ test("App's handleGoHome resets view/project/selectedAnswers/additionalRequest A
   assert.equal(state.refineText, "", "must clear the half-typed refine instruction");
   assert.deepEqual(state.refineHistory, [], "must clear the left-behind project's own refine history, not carry it into the next project opened");
   assert.equal(state.refineHistorySearch, "", "must clear the refine-history search box too");
+  assert.equal(
+    buildWarning,
+    null,
+    "must clear a non-terminal build-warning banner from the left-behind project (round 469) -- otherwise it falsely re-appears on whatever project is opened next",
+  );
   assert.equal(setDescriptionCalls, 0, "must never touch description -- the home screen's own saved idea draft is a separate concern");
 });
 
@@ -1836,6 +1861,56 @@ test("App's CollaboratorsPanel onLeft callback purges the left project's own cli
   assert.deepEqual(state.purgeCalls, ["shared-project-1"], "must purge preferences for exactly the project just left");
   assert.equal(state.showCollaborators, false, "must still close the collaborators panel");
   assert.equal(state.goHomeCalls, 1, "must still navigate home the same way it always did");
+});
+
+/**
+ * Regression test (round 469): round 468 added `buildWarning` (a real,
+ * non-terminal agent-step-failure notice -- see BuildProgress.tsx) but only
+ * ever threaded it into the functions that START a fresh build/refine/
+ * logout. Restoring an older checkpoint via Time Machine's own onRestored
+ * callback is a 4th convergent "the screen's content just changed out from
+ * under the user" path that missed it -- a warning from a LATER build
+ * would otherwise keep showing after restoring to an earlier checkpoint it
+ * never actually applied to. Extracts the real inline onRestored callback
+ * the same "slice between JSX attributes" technique the onLeft test above
+ * uses, rather than reimplementing it.
+ */
+test("App's HistoryPanel onRestored callback clears a stale build-warning banner along with setting the restored project", () => {
+  const appSrc = readFileSync(new URL("./App.tsx", import.meta.url), "utf8");
+  const handlerMatch = appSrc.match(/ {14}onRestored=\{\((restored\) => \{[\s\S]*?\n {14}\})\}\n/);
+  assert.ok(handlerMatch, "expected to find the HistoryPanel onRestored callback in App.tsx");
+  const { code } = transformSync(`(${handlerMatch![1]}`, { loader: "ts" });
+
+  const state: { project: unknown; activeEntity: string | null; buildWarning: string | null; showHistory: boolean } = {
+    project: null,
+    activeEntity: null,
+    buildWarning: "Seed Data: a real failure from a later build, not the one being restored to",
+    showHistory: true,
+  };
+  const fn = new Function(
+    "setProject",
+    "setActiveEntity",
+    "setBuildWarning",
+    "setShowHistory",
+    `return ${code}`,
+  )(
+    (p: unknown) => (state.project = p),
+    (e: string | null) => (state.activeEntity = e),
+    (w: string | null) => (state.buildWarning = w),
+    (v: boolean) => (state.showHistory = v),
+  ) as (restored: { spec: { entities: { name: string }[] } }) => void;
+
+  const restoredProject = { spec: { entities: [{ name: "Customer" }] } };
+  fn(restoredProject);
+
+  assert.equal(state.project, restoredProject, "must still set the restored project, same as before");
+  assert.equal(state.activeEntity, "Customer", "must still pick the restored spec's first entity, same as before");
+  assert.equal(
+    state.buildWarning,
+    null,
+    "must clear a stale build-warning banner from a later build that doesn't apply to the checkpoint just restored to",
+  );
+  assert.equal(state.showHistory, false, "must still close the history panel, same as before");
 });
 
 /**

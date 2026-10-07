@@ -865,6 +865,7 @@ function AppContent() {
     setActiveEntity(p.spec.entities[0]?.name ?? null);
     setSpecProvider(null);
     setEnhanceProvider(null);
+    setBuildWarning(null);
     setView(p.status === "built" ? "preview" : "spec");
     if (user && p.ownerId !== user.id && p.sharedAt) setSeenShared(markSharedProjectSeen(p.id, p.sharedAt));
   }
@@ -1087,6 +1088,7 @@ function AppContent() {
     setEnhanceProvider(null);
     setSelectedAnswers({});
     setAdditionalRequest("");
+    setBuildWarning(null);
   }
 
   /**
@@ -1110,6 +1112,7 @@ function AppContent() {
     setRefineText("");
     setRefineHistory([]);
     setRefineHistorySearch("");
+    setBuildWarning(null);
   }
 
   async function handleExport() {
@@ -1958,6 +1961,7 @@ function AppContent() {
               onRestored={(restored) => {
                 setProject(restored);
                 setActiveEntity(restored.spec.entities[0]?.name ?? null);
+                setBuildWarning(null);
                 setShowHistory(false);
               }}
             />
