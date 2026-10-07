@@ -423,7 +423,12 @@ export const DOMAIN_ENTITY_RULES: DomainEntityRule[] = [
   },
   {
     keywords: [
-      "property", "real estate", "listing", "apartment for rent", "נכס", "נכסים",
+      // Bare "listing" (round 457) is a substring of "enlisting" -- an
+      // ordinary word in a nonprofit/volunteer-outreach description that
+      // has nothing to do with real estate, so it spuriously matched
+      // this entity. \b-bounded, same pitfall-1 shape as the fourteen
+      // other collision fixes already in this file.
+      "property", "real estate", /\blisting(s)?\b/, "apartment for rent", "נכס", "נכסים",
       "נדל\"ן", "דירה למכירה", "דירה להשכרה",
     ],
     labelHe: "נכסים",

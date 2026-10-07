@@ -940,6 +940,37 @@ test("Project's 'project' keyword doesn't spuriously match 'projector'", async (
   assert.ok(realProjects.entities.some((e) => e.name === "Project"), "'projects' must still match Project");
 });
 
+/**
+ * Regression test for a real bug surfaced (but left unverified) by round
+ * 455's systematic survey and verified+fixed in round 457: Property's
+ * bare "listing" keyword is a substring of "enlisting" -- an ordinary
+ * word in a nonprofit/volunteer-outreach description that has nothing to
+ * do with real estate, so it spuriously matched this entity. Fixed with
+ * the same `\b`-bounded RegExp pattern this file's other collision fixes
+ * already use.
+ */
+test("Property's 'listing' keyword doesn't spuriously match 'enlisting'", async () => {
+  const provider = new HeuristicSpecProvider();
+
+  const enlisting = await provider.generate(
+    "An app for a nonprofit coordinator enlisting local volunteers and businesses to sponsor an annual charity run.",
+  );
+  assert.ok(
+    !enlisting.entities.some((e) => e.name === "Property"),
+    "'enlisting' alone must not spuriously match Property via a bare 'listing' substring",
+  );
+
+  // The real word still works on its own, singular and plural (this
+  // description avoids this rule's other keywords -- "property", "real
+  // estate", "apartment for rent" -- so a match here can only come from
+  // "listing" itself).
+  const realListing = await provider.generate("An app for an agent to manage each listing and schedule viewings with buyers.");
+  assert.ok(realListing.entities.some((e) => e.name === "Property"), "'listing' must still match Property");
+
+  const realListings = await provider.generate("An app for an agent to manage all the listings and schedule viewings with buyers.");
+  assert.ok(realListings.entities.some((e) => e.name === "Property"), "'listings' must still match Property");
+});
+
 test("MenuItem's 'מנה' keyword doesn't spuriously match 'מנהלים' (managers)", async () => {
   const provider = new HeuristicSpecProvider();
   const managers = await provider.generate("אפליקציה למעקב אחרי מנהלים בעסק");
