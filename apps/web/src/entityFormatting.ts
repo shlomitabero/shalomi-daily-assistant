@@ -1063,6 +1063,13 @@ export interface ImportResult {
 
 function matchesHeader(header: string, field: Field): boolean {
   const normalized = header.trim().toLowerCase();
+  // A blank header can never legitimately refer to any field -- without
+  // this, (field.label ?? "").toLowerCase() is itself "" for any field
+  // with no label set, so a blank/unnamed CSV column (a stray trailing
+  // comma, an unlabeled spreadsheet column) would match the FIRST
+  // unlabeled field and silently import unrelated data into it, instead
+  // of being ignored the way a column with real, unmatched text already is.
+  if (!normalized) return false;
   return normalized === field.name.toLowerCase() || normalized === (field.label ?? "").toLowerCase();
 }
 

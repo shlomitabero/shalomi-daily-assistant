@@ -1749,6 +1749,11 @@ function parseCsv(text) {
 
 function matchesImportHeader(header, field) {
   const normalized = header.trim().toLowerCase();
+  // A blank header can never legitimately refer to any field -- without
+  // this, (field.label || "") is itself "" for any field with no label
+  // set, so a blank/unnamed CSV column would match the FIRST unlabeled
+  // field and silently import unrelated data into it.
+  if (!normalized) return false;
   return normalized === field.name.toLowerCase() || normalized === (field.label || "").toLowerCase();
 }
 

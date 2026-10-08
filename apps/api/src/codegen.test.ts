@@ -4149,6 +4149,58 @@ test("the exported EntityView's CSV import maps each column to a distinct field 
 });
 
 /**
+ * Regression test for a real bug found by round 481's Explore survey and
+ * fixed the same round in both entityFormatting.ts (live preview) and here:
+ * matchesImportHeader compared a blank header against `(field.label || "")`,
+ * which is itself "" for any field with no label set, so a genuinely blank
+ * CSV column matched the FIRST unlabeled field instead of being ignored the
+ * way an unmatched-but-non-empty header already is. Uses fields with no
+ * label at all (the common case: most entities only get labels under the
+ * Hebrew path in domainEntities.ts) to confirm the blank column's data is
+ * dropped, not silently bound into `notes`.
+ */
+test("the exported EntityView's CSV import ignores a blank/unnamed column instead of binding it to the first unlabeled field", () => {
+  const noLabelProject: Project = {
+    ...project,
+    spec: {
+      ...project.spec,
+      entities: [
+        {
+          name: "Contact",
+          label: "Contact",
+          fields: [
+            { name: "name", type: "text", required: true },
+            { name: "notes", type: "text", required: false },
+          ],
+        },
+      ],
+    },
+  };
+  const entityViewJsx = generateExportFiles(noLabelProject).find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+
+  const isValidDateSrc = entityViewJsx.match(/const DATE_FORMAT[\s\S]*?\nfunction isValidDate\(value\) \{[\s\S]*?\n\}\n/)?.[0];
+  const headerSrc = entityViewJsx.match(/function matchesImportHeader\(header, field\) \{[\s\S]*?\n\}\n/)?.[0];
+  const importSrc = entityViewJsx.match(/function buildImportRecords\(fields, rows\) \{[\s\S]*?\n\}\n/)?.[0];
+  assert.ok(isValidDateSrc && headerSrc && importSrc, "expected to find isValidDate/matchesImportHeader/buildImportRecords in generated output");
+
+  const buildImportRecords = new Function(`${isValidDateSrc}\n${headerSrc}\n${importSrc}\nreturn buildImportRecords;`)();
+
+  const fields = noLabelProject.spec.entities[0].fields;
+  const rows = [
+    ["name", ""],
+    ["Dana", "this is garbage from an unrelated blank column"],
+  ];
+  const { records, errors } = buildImportRecords(fields, rows);
+
+  assert.deepEqual(errors, []);
+  assert.deepEqual(
+    records,
+    [{ name: "Dana", notes: null }],
+    "the blank-header column's garbage text must not land in notes (or any other field) -- notes must stay null, same as any other unmatched optional field",
+  );
+});
+
+/**
  * Regression test for a real bug found by round 376's Explore survey:
  * csvEscape (this file's own guard against CSV/formula injection,
  * CWE-1236) prepends a leading "'" to any value starting with =, +, -,

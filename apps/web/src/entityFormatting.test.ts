@@ -1383,6 +1383,33 @@ test("buildImportRecords ignores an unmatched CSV column instead of erroring on 
 });
 
 /**
+ * Real bug found by round 481's Explore survey: matchesHeader compared a
+ * blank header against `(field.label ?? "").toLowerCase()`, which is
+ * itself "" for any field with no label set -- so a genuinely blank/
+ * unnamed CSV column (a stray trailing comma, an unlabeled spreadsheet
+ * column) matched the FIRST unlabeled field instead of being ignored the
+ * way a column with real, unmatched text already is (see the test right
+ * above). Most entities have no field labels at all in English-mode specs
+ * (domainEntities.ts only sets .label under the Hebrew path), so this was
+ * genuinely reachable, not theoretical. Confirms a blank header column's
+ * data is now dropped instead of silently landing in `notes`.
+ */
+test("buildImportRecords ignores a blank/unnamed CSV column instead of binding it to the first unlabeled field", () => {
+  const fields: Field[] = [
+    { name: "name", type: "text", required: true },
+    { name: "notes", type: "text", required: false },
+  ];
+  const rows = [["name", ""], ["Dana", "this is garbage from an unrelated blank column"]];
+  const result = buildImportRecords(fields, rows);
+  assert.deepEqual(result.errors, []);
+  assert.deepEqual(
+    result.records,
+    [{ name: "Dana", notes: null }],
+    "the blank-header column's garbage text must not land in notes (or any other field) -- notes must stay null, same as any other unmatched optional field",
+  );
+});
+
+/**
  * Regression test for a real bug found by round 287's Explore survey:
  * FieldLabelEditor enforces no uniqueness on a field's label (confirmed by
  * reading both it and its server route, RenameFieldLabelSchema in
