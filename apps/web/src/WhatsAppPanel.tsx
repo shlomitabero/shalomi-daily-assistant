@@ -537,6 +537,15 @@ export function WhatsAppPanel({
    * DESC-ordered log -- messages.length as the offset means "everything
    * already showing," so this always asks for the page right after what's
    * currently loaded, regardless of how many load-more clicks came before.
+   * Dedupes the fetched page against `prev` before appending, the same way
+   * mergeFreshMessages already does for its own three call sites: a real
+   * WhatsApp message can arrive (and get inserted) between this function
+   * reading `messages.length` and the server actually running the OFFSET
+   * query, which shifts the DESC-ordered log's true position by however
+   * many messages landed in that window -- the "older" page the server
+   * returns then overlaps with the tail of what's already in `prev`, and
+   * the old unconditional `[...prev, ...older]` concat would render that
+   * overlap twice (duplicate ids, duplicate React keys).
    */
   async function handleLoadMore() {
     setLoadingMore(true);
@@ -544,7 +553,10 @@ export function WhatsAppPanel({
       const versionBeforeFetch = messagesVersionRef.current;
       const { messages: older, hasMore } = await listWhatsAppMessages(projectId, messages.length);
       if (messagesVersionRef.current === versionBeforeFetch) {
-        setMessages((prev) => [...prev, ...older]);
+        setMessages((prev) => {
+          const existingIds = new Set(prev.map((m) => m.id));
+          return [...prev, ...older.filter((m) => !existingIds.has(m.id))];
+        });
         setHasMoreMessages(hasMore);
       }
     } catch (err) {

@@ -2678,6 +2678,139 @@ test("WhatsAppPanel's 'Load older messages' never resurrects history cleared whi
 });
 
 /**
+ * Regression test for round 476: handleLoadMore's offset (messages.length,
+ * read at click time) is a server-side OFFSET over a DESC-ordered log that
+ * a real incoming WhatsApp message can grow at the HEAD at any time --
+ * nothing to do with the round 432 delete/clear race above, which only
+ * guards messagesVersionRef (bumped solely by handleDeleteMessage/
+ * handleClearHistory). If a message lands between reading that offset and
+ * the server running the query, the "older" page the server returns shifts
+ * and overlaps with the tail of what's already shown, which the old
+ * unconditional `[...prev, ...older]` concat rendered twice (duplicate ids,
+ * duplicate React keys). Confirms the fix: handleLoadMore now dedupes the
+ * fetched page against `prev` the same way mergeFreshMessages's own three
+ * call sites already did.
+ */
+test("WhatsAppPanel's 'Load older messages' doesn't duplicate a message that's both already shown and in the newly-fetched older page", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    const page1: WhatsAppMessageLogEntry[] = [
+      {
+        id: "m1",
+        direction: "out",
+        fromNumber: "972501234567",
+        toNumber: "972521112233",
+        body: "Newest message",
+        matchedLabel: null,
+        matchedEntityName: null,
+        matchedRecordId: null,
+        status: "sent",
+        createdAt: new Date().toISOString(),
+      },
+      {
+        id: "m2",
+        direction: "in",
+        fromNumber: "972521112233",
+        toNumber: "972501234567",
+        body: "Second message",
+        matchedLabel: null,
+        matchedEntityName: null,
+        matchedRecordId: null,
+        status: "received",
+        createdAt: new Date().toISOString(),
+      },
+    ];
+    // Simulates a new WhatsApp message having been inserted server-side
+    // between handleLoadMore reading offset=2 and the server running its
+    // OFFSET query: the true DESC order shifted by one, so the "older" page
+    // the server hands back starts with m2 (already shown, now one
+    // position later than the client's stale offset assumed) followed by
+    // the genuinely-new-to-the-client m3.
+    const page2WithOverlap: WhatsAppMessageLogEntry[] = [
+      page1[1],
+      {
+        id: "m3",
+        direction: "in",
+        fromNumber: "972521112233",
+        toNumber: "972501234567",
+        body: "Oldest message",
+        matchedLabel: null,
+        matchedEntityName: null,
+        matchedRecordId: null,
+        status: "received",
+        createdAt: new Date().toISOString(),
+      },
+    ];
+    globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/integrations/whatsapp/status") {
+        return new Response(
+          JSON.stringify({ status: "connected", phoneNumber: "972501234567", qrDataUrl: null, error: null }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      if (method === "GET" && input.startsWith("/api/projects/proj1/integrations/whatsapp/messages")) {
+        if (!input.includes("offset=")) {
+          return new Response(JSON.stringify({ messages: page1, hasMore: true }), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          });
+        }
+        if (input.endsWith("offset=2")) {
+          return new Response(JSON.stringify({ messages: page2WithOverlap, hasMore: false }), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          });
+        }
+        throw new Error(`unexpected offset in ${input}`);
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+
+    try {
+      render(
+        React.createElement(
+          ThemeProvider,
+          null,
+          React.createElement(
+            LanguageProvider,
+            null,
+            React.createElement(WhatsAppPanel, { projectId: "proj1", projectName: "Test Project", onClose: () => {}, onJumpToEntity: () => {}, onJumpToRecord: () => {} }),
+          ),
+        ),
+      );
+
+      await waitForCondition(() => document.querySelectorAll(".whatsapp-log-list li").length === 2);
+
+      const loadMoreButton = Array.from(document.querySelectorAll("button")).find((b) => b.textContent === "Load older messages");
+      assert.ok(loadMoreButton, "expected a 'Load older messages' button while hasMore is true");
+      fireEvent.click(loadMoreButton!);
+
+      // Wait on the actual rendered row count, not on the button's own
+      // text -- it flips to a transient "Loading…" label the instant the
+      // click fires, which would also satisfy a "no longer says 'Load
+      // older messages'" condition well before the fetch's result (and
+      // this fix's dedup) has actually been applied to `messages`.
+      await waitForCondition(() => document.querySelectorAll(".whatsapp-log-list li").length === 3);
+
+      assert.equal(
+        document.querySelectorAll(".whatsapp-log-list li").length,
+        3,
+        "m2 must not be rendered twice -- the overlapping message from the shifted 'older' page must be deduped against what's already shown",
+      );
+      const bodies = Array.from(document.querySelectorAll(".whatsapp-log-list li")).map((li) => li.textContent);
+      assert.equal(
+        bodies.filter((text) => text?.includes("Second message")).length,
+        1,
+        "'Second message' (m2) must appear exactly once in the log",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * Regression test: handleSendTest used to refresh the log with a plain
  * `setMessages(messages)` using the newest-page response (offset 0) --
  * a full replace, not a merge. Once a user had clicked "Load older
