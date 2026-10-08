@@ -2291,6 +2291,75 @@ test("EntityPanel's table view header checkbox reflects none/some/all selected v
 });
 
 /**
+ * Regression test for round 486's finding: "select all" (and its header
+ * checkbox's own checked/indeterminate state) used to read the flat
+ * visibleRecords array directly, oblivious to table grouping -- exactly
+ * the same staleness round 485 fixed for j/k keyboard navigation, but in
+ * the bulk-selection code path instead. Clicking "select all" while a
+ * group is collapsed used to silently add that hidden group's own record
+ * ids to selectedIds too, which the bulk-actions bar, bulk delete/
+ * duplicate/edit, CSV-export-selected, and print-selected all act on
+ * directly. Confirms selecting all while "Won" is collapsed only selects
+ * the one visible record (Acme), and that the hidden "Won" records stay
+ * unselected even once that group is re-expanded.
+ */
+test("EntityPanel's 'select all' only selects records actually visible, not ones hidden inside a collapsed group", async () => {
+  await withJsdom(async () => {
+    const store: EntityRecord[] = [
+      { id: 1, name: "Acme Corp", status: "new" },
+      { id: 2, name: "Beta Inc", status: "won" },
+      { id: 3, name: "Gamma LLC", status: "won" },
+    ];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = mockRecordsFetch(store) as typeof fetch;
+    try {
+      renderEntityPanel();
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 3);
+
+      const groupBySelect = document.querySelector(".entity-group-by") as HTMLSelectElement;
+      fireEvent.change(groupBySelect, { target: { value: "status" } });
+      await waitForCondition(() => document.querySelectorAll(".entity-group-header-row").length === 2);
+
+      const headerRows = Array.from(document.querySelectorAll(".entity-group-header-row"));
+      const wonToggle = headerRows[1].querySelector(".entity-group-toggle") as HTMLButtonElement;
+      fireEvent.click(wonToggle);
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 3);
+      assert.ok(
+        !Array.from(document.querySelectorAll("table tbody tr")).some((r) => r.textContent?.includes("Beta Inc")),
+        "the 'Won' group must actually be collapsed before testing select-all",
+      );
+
+      const headerCheckbox = document.querySelector("thead .select-col input") as HTMLInputElement;
+      fireEvent.click(headerCheckbox);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      assert.equal(headerCheckbox.checked, true, "the header checkbox must report fully-checked once the one visible record is selected");
+      assert.equal(headerCheckbox.indeterminate, false, "the header checkbox must not be indeterminate once every visible record is selected");
+
+      const acmeCheckbox = Array.from(document.querySelectorAll("tbody tr")).find((r) => r.textContent?.includes("Acme Corp"))?.querySelector(
+        ".select-col input",
+      ) as HTMLInputElement;
+      assert.equal(acmeCheckbox.checked, true, "the one visible record (Acme) must actually be selected");
+
+      // Re-expand 'Won' -- its two records must NOT have been silently
+      // swept into the selection while they were hidden.
+      fireEvent.click(wonToggle);
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 5);
+      const wonCheckboxes = Array.from(document.querySelectorAll("tbody tr"))
+        .filter((r) => r.textContent?.includes("Beta Inc") || r.textContent?.includes("Gamma LLC"))
+        .map((r) => r.querySelector(".select-col input") as HTMLInputElement);
+      assert.equal(wonCheckboxes.length, 2, "expected to find both of 'Won''s own row checkboxes after re-expanding");
+      assert.ok(
+        wonCheckboxes.every((cb) => !cb.checked),
+        "records hidden inside a collapsed group during 'select all' must stay unselected even after the group is re-expanded",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * Real-DOM coverage for the search box's interaction with the board view --
  * `visibleRecords` (the search+sort-filtered array) is what actually feeds
  * groupByField/CalendarView, not the raw `records` state, but that wiring

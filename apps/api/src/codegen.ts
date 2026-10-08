@@ -2944,6 +2944,14 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
     [groupField, visibleRecords],
   );
 
+  // The records actually rendered in the table body right now -- unlike
+  // visibleRecords, this excludes a collapsed group's records. Mirrors the
+  // live preview's own effectivelyVisibleRecords (EntityPanel.tsx).
+  const effectivelyVisibleRecords = useMemo(
+    () => (recordGroups ? recordGroups.flatMap((group) => (collapsedGroups.has(group.key) ? [] : group.records)) : visibleRecords),
+    [recordGroups, collapsedGroups, visibleRecords],
+  );
+
   // Per-group numeric subtotals -- without this, grouping a table by e.g.
   // Order Status still only ever showed one grand total under the whole
   // table (numericFieldTotals above), defeating the point of grouping a
@@ -3214,7 +3222,7 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
   }
 
   function toggleSelectAllVisible() {
-    const visibleIds = visibleRecords.map((r) => r.id);
+    const visibleIds = effectivelyVisibleRecords.map((r) => r.id);
     const allSelected = visibleIds.length > 0 && visibleIds.every((id) => selectedIds.has(id));
     setSelectedIds((prev) => {
       const next = new Set(prev);
@@ -4028,11 +4036,11 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
                     <th className="select-col">
                       <input
                         type="checkbox"
-                        checked={visibleRecords.length > 0 && visibleRecords.every((r) => selectedIds.has(r.id))}
+                        checked={effectivelyVisibleRecords.length > 0 && effectivelyVisibleRecords.every((r) => selectedIds.has(r.id))}
                         ref={(el) => {
                           if (!el) return;
-                          const someSelected = visibleRecords.some((r) => selectedIds.has(r.id));
-                          const allSelected = visibleRecords.length > 0 && visibleRecords.every((r) => selectedIds.has(r.id));
+                          const someSelected = effectivelyVisibleRecords.some((r) => selectedIds.has(r.id));
+                          const allSelected = effectivelyVisibleRecords.length > 0 && effectivelyVisibleRecords.every((r) => selectedIds.has(r.id));
                           el.indeterminate = someSelected && !allSelected;
                         }}
                         onChange={toggleSelectAllVisible}
