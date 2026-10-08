@@ -2285,6 +2285,73 @@ function CalendarView({ entity, dateField, endDateField, records, month, onPrevM
   );
 }
 
+// Hidden off-screen except during an actual print (see the .print-record-sheet
+// rule in the generated CSS, which only shows it under @media print) so a
+// single record can be printed as a clean paper handout -- the kind of
+// "hand someone a paper copy" artifact (an order, a work order, an
+// insurance claim) the live Forge AI preview's own EntityPanel.tsx ported
+// this same feature for in the first place.
+function RecordPrintSheet({ entity, record, relatedRecords }) {
+  if (!record) return <div className="print-record-sheet" />;
+  return (
+    <div className="print-record-sheet">
+      <h1>{entity.label}</h1>
+      <dl>
+        {entity.fields.map((f) => (
+          <div key={f.name} className="print-field">
+            <dt>{f.label || f.name}</dt>
+            <dd>
+              <Cell
+                field={f}
+                value={record[f.name]}
+                relationLabel={f.type === "relation" ? relationDisplayLabel(f, record[f.name], relatedRecords) : undefined}
+              />
+            </dd>
+          </div>
+        ))}
+      </dl>
+      <p className="print-record-footer">Printed on {new Date().toLocaleString()}</p>
+    </div>
+  );
+}
+
+// Same idea as RecordPrintSheet, but for the current table's rows -- whatever
+// is checkbox-selected, or every visible row if nothing is selected, same as
+// the existing Export CSV button's own selectedOrAllRecords convention.
+function RecordListPrintSheet({ entity, fields, records, relatedRecords, show }) {
+  if (!show) return <div className="print-list-sheet" />;
+  return (
+    <div className="print-list-sheet">
+      <h1>{entity.label}</h1>
+      <table>
+        <thead>
+          <tr>
+            {fields.map((f) => (
+              <th key={f.name}>{f.label || f.name}</th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {records.map((r) => (
+            <tr key={r.id}>
+              {fields.map((f) => (
+                <td key={f.name}>
+                  <Cell
+                    field={f}
+                    value={r[f.name]}
+                    relationLabel={f.type === "relation" ? relationDisplayLabel(f, r[f.name], relatedRecords) : undefined}
+                  />
+                </td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <p className="print-record-footer">{records.length} records · Printed on {new Date().toLocaleString()}</p>
+    </div>
+  );
+}
+
 // One card in the board view: the record's other fields (never the board
 // field itself, since that's implied by which column the card is in), a
 // select to move it directly to another column, and the same Edit/Delete
@@ -2500,6 +2567,8 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
   const [dragOverColumn, setDragOverColumn] = useState(null);
   const [editingCell, setEditingCell] = useState(null);
   const [cellDraft, setCellDraft] = useState(undefined);
+  const [recordToPrint, setRecordToPrint] = useState(null);
+  const [showPrintList, setShowPrintList] = useState(false);
   // Set right before an Escape-cancel clears editingCell so the input's own
   // blur (which removing it from the DOM can still trigger) finds the flag
   // already set and skips committing, rather than racing a stale closure's
@@ -2555,6 +2624,32 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
     if (onRecordCountChange) onRecordCountChange(entity.name, records.length);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [entity.name, records.length]);
+
+  // Fires window.print() right after recordToPrint/showPrintList is set --
+  // on the next tick (setTimeout 0) so the sheet has already rendered with
+  // its new content first. The shared afterprint listener below clears
+  // both back to their idle state whether the user actually printed or
+  // just cancelled the print dialog.
+  useEffect(() => {
+    if (!recordToPrint) return;
+    const timer = setTimeout(() => window.print(), 0);
+    return () => clearTimeout(timer);
+  }, [recordToPrint]);
+
+  useEffect(() => {
+    if (!showPrintList) return;
+    const timer = setTimeout(() => window.print(), 0);
+    return () => clearTimeout(timer);
+  }, [showPrintList]);
+
+  useEffect(() => {
+    function clearPrinted() {
+      setRecordToPrint(null);
+      setShowPrintList(false);
+    }
+    window.addEventListener("afterprint", clearPrinted);
+    return () => window.removeEventListener("afterprint", clearPrinted);
+  }, []);
 
   async function refresh() {
     const requestId = ++refreshRequestId.current;
@@ -3489,6 +3584,7 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
       <td className="row-actions">
         <button onClick={() => startEdit(r)}>Edit</button>
         <button onClick={() => handleDuplicate(r.id)}>Duplicate</button>
+        <button onClick={() => setRecordToPrint(r)}>Print</button>
         <button onClick={() => handleDelete(r.id)}>Delete</button>
       </td>
     </tr>
@@ -3726,6 +3822,14 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
               disabled={selectedIds.size === 0 && visibleRecords.length === 0}
             >
               {selectedIds.size > 0 ? <>⬇️ Export {selectedIds.size} selected</> : "⬇️ Export CSV"}
+            </button>
+            <button
+              type="button"
+              className="print-list-btn"
+              onClick={() => setShowPrintList(true)}
+              disabled={selectedIds.size === 0 && visibleRecords.length === 0}
+            >
+              {selectedIds.size > 0 ? <>🖨️ Print {selectedIds.size} selected</> : "🖨️ Print list"}
             </button>
             <div className="columns-menu-wrapper">
               <button type="button" className="columns-menu-btn" onClick={() => setColumnsMenuOpen((v) => !v)} aria-expanded={columnsMenuOpen}>
@@ -4037,6 +4141,14 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
           )}
         </>
       )}
+      <RecordPrintSheet entity={entity} record={recordToPrint} relatedRecords={relatedRecords} />
+      <RecordListPrintSheet
+        entity={entity}
+        fields={visibleFields}
+        records={selectedOrAllRecords(records, visibleRecords, selectedIds)}
+        relatedRecords={relatedRecords}
+        show={showPrintList}
+      />
     </div>
   );
 }
@@ -4938,9 +5050,9 @@ nav button.active .tab-count { background: rgba(255, 255, 255, 0.25); color: inh
 .calendar-record-chip-move-error { background: var(--danger-soft); border-color: var(--danger); }
 .calendar-record-more { font-size: 11px; color: var(--muted); padding: 2px 5px; background: none; border: none; text-align: start; cursor: pointer; font: inherit; }
 .calendar-record-more:hover { color: var(--text); text-decoration: underline; }
-.csv-export-btn, .ics-export-btn, .copy-records-btn { flex-shrink: 0; padding: 8px 14px; font-size: 13px; border-radius: 8px; border: 1px solid var(--border); background: var(--surface); color: var(--text); cursor: pointer; font: inherit; }
-.csv-export-btn:hover:not(:disabled), .ics-export-btn:hover:not(:disabled), .copy-records-btn:hover:not(:disabled) { background: var(--bg); }
-.csv-export-btn:disabled, .ics-export-btn:disabled, .copy-records-btn:disabled { opacity: 0.55; cursor: default; }
+.csv-export-btn, .ics-export-btn, .copy-records-btn, .print-list-btn { flex-shrink: 0; padding: 8px 14px; font-size: 13px; border-radius: 8px; border: 1px solid var(--border); background: var(--surface); color: var(--text); cursor: pointer; font: inherit; }
+.csv-export-btn:hover:not(:disabled), .ics-export-btn:hover:not(:disabled), .copy-records-btn:hover:not(:disabled), .print-list-btn:hover:not(:disabled) { background: var(--bg); }
+.csv-export-btn:disabled, .ics-export-btn:disabled, .copy-records-btn:disabled, .print-list-btn:disabled { opacity: 0.55; cursor: default; }
 .columns-menu-wrapper { position: relative; flex-shrink: 0; }
 .columns-menu-btn { padding: 8px 14px; font-size: 13px; border-radius: 8px; border: 1px solid var(--border); background: var(--surface); color: var(--text); cursor: pointer; font: inherit; }
 .columns-menu-btn:hover { background: var(--bg); }
@@ -4988,6 +5100,21 @@ nav button.active .tab-count { background: rgba(255, 255, 255, 0.25); color: inh
 .record-row-highlighted, .record-row-highlighted:hover { background: var(--accent-soft); transition: background 1.5s ease; }
 .record-row-focused { outline: 2px solid var(--accent); outline-offset: -2px; }
 .record-row-move-error, .record-row-move-error:hover { background: var(--danger-soft); transition: background 2s ease; }
+.print-record-sheet, .print-list-sheet { display: none; }
+.print-record-sheet h1, .print-list-sheet h1 { font-size: 20px; margin: 0 0 16px; }
+.print-record-sheet dl { margin: 0; }
+.print-field { display: flex; gap: 12px; padding: 8px 0; border-bottom: 1px solid var(--border-soft); }
+.print-field dt { flex: 0 0 160px; font-weight: 600; color: var(--muted); }
+.print-field dd { margin: 0; flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.print-record-footer { margin-top: 24px; font-size: 12px; color: var(--muted); }
+.print-list-sheet table { width: 100%; border-collapse: collapse; }
+.print-list-sheet th, .print-list-sheet td { text-align: start; padding: 6px 10px; border-bottom: 1px solid var(--border-soft); font-size: 13px; overflow-wrap: anywhere; }
+.print-list-sheet th { font-weight: 600; color: var(--muted); }
+@media print {
+  body * { visibility: hidden; }
+  .print-record-sheet, .print-record-sheet *, .print-list-sheet, .print-list-sheet * { visibility: visible !important; }
+  .print-record-sheet, .print-list-sheet { display: block !important; position: absolute; inset: 0; padding: 24px; }
+}
 `;
 }
 

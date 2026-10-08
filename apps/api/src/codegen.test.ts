@@ -8207,3 +8207,178 @@ test("the exported EntityView's record form submits on Ctrl+Enter or Cmd+Enter f
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+/**
+ * New in this round: ports the live Forge AI preview's own Print feature
+ * (round 265 first shipped RecordPrintSheet/RecordListPrintSheet there;
+ * the export was left without it at the time, a choice reconsidered this
+ * round since the gap was never actually about the feature being
+ * unsuitable for an exported app -- round 265's own text only ranked it
+ * below that round's calendar-export port on usefulness, for that round).
+ * Mirrors EntityPanel.test.ts's own "Print action fills the print sheet
+ * with that record's own fields and calls window.print" test: clicking a
+ * row's Print button must populate the always-mounted (CSS-hidden)
+ * .print-record-sheet with THAT row's own fields, not another row's, and
+ * must call the real window.print().
+ */
+test("the exported EntityView's per-row Print button fills .print-record-sheet with that record's own fields and calls window.print", async () => {
+  const files = generateExportFiles(project);
+  const dir = writeGeneratedWebComponent(files);
+  const originalFetch = globalThis.fetch;
+  const store = [
+    { id: 1, name: "Acme Corp", status: "New" },
+    { id: 2, name: "Globex", status: "Won" },
+  ];
+  globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
+    const method = init?.method ?? "GET";
+    if (method === "GET" && input === "/api/Customer") {
+      return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    throw new Error(`unexpected request ${method} ${input}`);
+  }) as typeof fetch;
+  const originalPrint = window.print;
+  let printCalls = 0;
+  window.print = () => {
+    printCalls += 1;
+  };
+
+  try {
+    await withRealLocalStorage(async () => {
+      const { EntityView } = await import(path.join(dir, "web", "src", "components", "EntityView.jsx"));
+      const customerEntity = project.spec.entities.find((e) => e.name === "Customer")!;
+      const props = {
+        entity: customerEntity,
+        highlightRecordId: null,
+        onHighlightHandled: () => {},
+        onJumpToRecord: () => {},
+        onRecordCountChange: () => {},
+      };
+
+      const { container } = render(React.createElement(EntityView, props));
+      for (let i = 0; i < 40; i++) {
+        if (container.querySelectorAll("tbody tr").length === 2) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+
+      assert.equal(
+        container.querySelector(".print-record-sheet")!.textContent,
+        "",
+        "the print sheet must be empty until a row's Print button is actually clicked",
+      );
+
+      const rows = container.querySelectorAll("tbody tr");
+      const globexRow = Array.from(rows).find((r) => /Globex/.test(r.textContent ?? ""))!;
+      const printButton = Array.from(globexRow.querySelectorAll("button")).find((b) => b.textContent === "Print")!;
+      await act(async () => {
+        fireEvent.click(printButton);
+      });
+      for (let i = 0; i < 40; i++) {
+        if (printCalls === 1) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+
+      assert.equal(printCalls, 1, "window.print must actually be called once the sheet has the clicked record's data");
+      const sheetText = container.querySelector(".print-record-sheet")!.textContent ?? "";
+      assert.match(sheetText, /Globex/, "the print sheet must show the clicked row's own name");
+      assert.match(sheetText, /הצליח/, "the print sheet must show the clicked row's own status (rendered through its enumLabels, same as the table cell)");
+      assert.doesNotMatch(sheetText, /Acme Corp/, "the print sheet must not include the OTHER record's data");
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    window.print = originalPrint;
+    cleanup();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
+ * The list-view sibling of the test above: the toolbar's "Print list"
+ * button fills .print-list-sheet with the same selectedOrAllRecords set
+ * Export CSV already uses, and genuinely calls window.print(). Selects
+ * one of two records first, proving the printed list follows the real
+ * selection (same convention as handleExportCsv) rather than always
+ * printing every visible row.
+ */
+test("the exported EntityView's toolbar Print list button fills .print-list-sheet with the selected records and calls window.print", async () => {
+  const files = generateExportFiles(project);
+  const dir = writeGeneratedWebComponent(files);
+  const originalFetch = globalThis.fetch;
+  const store = [
+    { id: 1, name: "Acme Corp", status: "New" },
+    { id: 2, name: "Globex", status: "Won" },
+  ];
+  globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
+    const method = init?.method ?? "GET";
+    if (method === "GET" && input === "/api/Customer") {
+      return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    throw new Error(`unexpected request ${method} ${input}`);
+  }) as typeof fetch;
+  const originalPrint = window.print;
+  let printCalls = 0;
+  window.print = () => {
+    printCalls += 1;
+  };
+
+  try {
+    await withRealLocalStorage(async () => {
+      const { EntityView } = await import(path.join(dir, "web", "src", "components", "EntityView.jsx"));
+      const customerEntity = project.spec.entities.find((e) => e.name === "Customer")!;
+      const props = {
+        entity: customerEntity,
+        highlightRecordId: null,
+        onHighlightHandled: () => {},
+        onJumpToRecord: () => {},
+        onRecordCountChange: () => {},
+      };
+
+      const { container } = render(React.createElement(EntityView, props));
+      for (let i = 0; i < 40; i++) {
+        if (container.querySelectorAll("tbody tr").length === 2) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+
+      assert.equal(
+        container.querySelector(".print-list-sheet")!.textContent,
+        "",
+        "the print-list sheet must be empty until Print list is actually clicked",
+      );
+
+      const rows = container.querySelectorAll("tbody tr");
+      const globexRow = Array.from(rows).find((r) => /Globex/.test(r.textContent ?? ""))!;
+      const checkbox = globexRow.querySelector(".select-col input") as HTMLInputElement;
+      await act(async () => {
+        fireEvent.click(checkbox);
+      });
+
+      const printListButton = Array.from(container.querySelectorAll("button")).find((b) => b.textContent?.includes("Print"))!;
+      assert.match(printListButton.textContent ?? "", /1/, "the button label must reflect the real selected count (1)");
+      await act(async () => {
+        fireEvent.click(printListButton);
+      });
+      for (let i = 0; i < 40; i++) {
+        if (printCalls === 1) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+
+      assert.equal(printCalls, 1, "window.print must actually be called once the sheet has the selected records");
+      const sheetText = container.querySelector(".print-list-sheet")!.textContent ?? "";
+      assert.match(sheetText, /Globex/, "the printed list must include the selected record");
+      assert.doesNotMatch(sheetText, /Acme Corp/, "the printed list must NOT include the unselected record");
+      assert.match(sheetText, /1 records/, "the footer must report the real selected count (1), not the full store (2)");
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    window.print = originalPrint;
+    cleanup();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
