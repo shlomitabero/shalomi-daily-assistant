@@ -3492,6 +3492,82 @@ test("the exported EntityView's 'd' shortcut does not fire while GlobalSearch is
 });
 
 /**
+ * Round 494's finding: the exported app's GlobalSearch never got the live
+ * preview's own round-290 "Escape clears the query first" behavior
+ * (GlobalSearchPanel.tsx's own handleInputKeyDown + its
+ * data-escape-handled-locally marker, checked by useDialogFocusTrap.ts
+ * before closing). App.jsx's own window-level Escape listener closed the
+ * whole search overlay unconditionally on every Escape press, so typing a
+ * query and pressing Escape -- the ordinary, muscle-memory expectation for
+ * a search box -- discarded the entire search instead of just clearing the
+ * typed text. Renders the real generated App.jsx end to end (not just a
+ * source-text regex check), since the bug lives specifically in the
+ * interaction between GlobalSearch's own input and App's window-level
+ * listener, not in either file alone.
+ */
+test("the exported app's Global Search clears its query on the first Escape, and only closes on a second Escape with an empty query", async () => {
+  const files = generateExportFiles(project);
+  const dir = writeGeneratedWebComponent(files);
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async (input: string) => {
+    if (input === "/api/entity-counts") {
+      return new Response(JSON.stringify({ counts: {} }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    if (input === "/api/Customer") {
+      return new Response(JSON.stringify({ records: [{ id: 1, name: "Acme Corp", status: "New" }] }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }
+    return new Response(JSON.stringify({ records: [] }), { status: 200, headers: { "content-type": "application/json" } });
+  }) as typeof fetch;
+
+  try {
+    await withRealLocalStorage(async () => {
+      const { default: App } = await import(path.join(dir, "web", "src", "App.jsx"));
+      const { container } = render(React.createElement(App));
+
+      await act(async () => {
+        fireEvent.click(container.querySelector(".search-trigger") as HTMLButtonElement);
+      });
+      const searchInput = container.querySelector(".global-search-input") as HTMLInputElement;
+      assert.ok(searchInput, "sanity check: the search overlay must actually be open");
+
+      await act(async () => {
+        fireEvent.change(searchInput, { target: { value: "acme" } });
+      });
+      assert.equal(searchInput.value, "acme", "sanity check: the query must actually be typed in");
+
+      await act(async () => {
+        fireEvent.keyDown(searchInput, { key: "Escape" });
+      });
+      assert.ok(
+        container.querySelector(".global-search-input"),
+        "the first Escape must only clear the query, not close the whole search overlay",
+      );
+      assert.equal(
+        (container.querySelector(".global-search-input") as HTMLInputElement).value,
+        "",
+        "the first Escape must actually clear the typed query",
+      );
+
+      await act(async () => {
+        fireEvent.keyDown(container.querySelector(".global-search-input") as HTMLInputElement, { key: "Escape" });
+      });
+      assert.equal(
+        container.querySelector(".global-search-input"),
+        null,
+        "a second Escape, with the query already empty, must close the search overlay",
+      );
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    cleanup();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
  * New in this round: porting the live preview's own Escape shortcut
  * (clear the table's multi-row selection) to the exported app's
  * EntityView.jsx. "x" above lets a keyboard-only user build a

@@ -4484,6 +4484,11 @@ export function GlobalSearch({ entities, onClose, onJumpToEntity, onJumpToRecord
   }
 
   function handleInputKeyDown(e) {
+    if (e.key === "Escape" && query.length > 0) {
+      e.preventDefault();
+      setQuery("");
+      return;
+    }
     if (results.length === 0) return;
     if (e.key === "ArrowDown") {
       e.preventDefault();
@@ -4523,6 +4528,7 @@ export function GlobalSearch({ entities, onClose, onJumpToEntity, onJumpToRecord
             className="global-search-input"
             placeholder="Type to search…"
             value={query}
+            data-escape-handled-locally={query.length > 0 ? "" : undefined}
             onChange={(e) => setQuery(e.target.value)}
             onKeyDown={handleInputKeyDown}
           />
@@ -4812,7 +4818,13 @@ export default function App() {
 
   // Ctrl/Cmd+K opens global search from anywhere in the app (the same
   // command-palette convention Forge AI's own live preview uses), and
-  // Escape closes it.
+  // Escape closes it -- unless GlobalSearch's own input still has an
+  // unsaved query, in which case the first Escape clears that query
+  // instead (mirrors the live preview's own GlobalSearchPanel.tsx +
+  // useDialogFocusTrap.ts data-escape-handled-locally convention: GlobalSearch
+  // marks its input while there's text in it, and this listener checks for
+  // that marker before closing, so clearing the search box doesn't cost the
+  // whole overlay on the very same keypress).
   useEffect(() => {
     function handleKeyDown(e) {
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") {
@@ -4821,6 +4833,7 @@ export default function App() {
         return;
       }
       if (e.key === "Escape") {
+        if (e.target && e.target.closest && e.target.closest("[data-escape-handled-locally]")) return;
         setShowSearch(false);
       }
     }
