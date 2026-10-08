@@ -3005,26 +3005,34 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
     if (viewMode !== "table") return;
     function handleKeyDown(e) {
       if (isTypingTarget(e.target)) return;
-      const visibleIds = visibleRecords.map((r) => r.id);
+      // Grouping/collapse-aware, unlike a flat visibleRecords.map(): a
+      // collapsed group's records are skipped from the <tbody> entirely
+      // (see the table body render below), so navigating or acting on them
+      // by a stale index would silently focus/edit/delete/duplicate a row
+      // the user can't even see.
+      const visibleIds = (
+        recordGroups ? recordGroups.flatMap((group) => (collapsedGroups.has(group.key) ? [] : group.records)) : visibleRecords
+      ).map((r) => r.id);
+      const isFocusedRowVisible = focusedRowId != null && visibleIds.includes(focusedRowId);
       if (e.key === "j" || e.key === "ArrowDown") {
         e.preventDefault();
         setFocusedRowId((current) => computeNextFocusedRowId(visibleIds, current, "next"));
       } else if (e.key === "k" || e.key === "ArrowUp") {
         e.preventDefault();
         setFocusedRowId((current) => computeNextFocusedRowId(visibleIds, current, "prev"));
-      } else if (e.key === "Enter" && focusedRowId != null) {
+      } else if (e.key === "Enter" && isFocusedRowVisible) {
         const record = visibleRecords.find((r) => r.id === focusedRowId);
         if (record) {
           e.preventDefault();
           startEdit(record);
         }
-      } else if (e.key === "x" && focusedRowId != null) {
+      } else if (e.key === "x" && isFocusedRowVisible) {
         e.preventDefault();
         toggleSelected(focusedRowId);
-      } else if ((e.key === "Delete" || e.key === "Backspace") && focusedRowId != null) {
+      } else if ((e.key === "Delete" || e.key === "Backspace") && isFocusedRowVisible) {
         e.preventDefault();
         handleDelete(focusedRowId);
-      } else if (e.key === "d" && focusedRowId != null) {
+      } else if (e.key === "d" && isFocusedRowVisible) {
         e.preventDefault();
         handleDuplicate(focusedRowId);
       } else if (e.key === "Escape" && selectedIds.size > 0) {
@@ -3034,7 +3042,7 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
     }
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [viewMode, visibleRecords, focusedRowId, selectedIds]);
+  }, [viewMode, visibleRecords, focusedRowId, selectedIds, recordGroups, collapsedGroups]);
 
   /**
    * "n" jumps straight to a blank add-record form, abandoning whatever

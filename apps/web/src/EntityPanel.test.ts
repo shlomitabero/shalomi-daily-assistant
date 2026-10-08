@@ -3900,6 +3900,68 @@ test("EntityPanel's table rows support j/k row navigation and Enter-to-edit, wit
 });
 
 /**
+ * Regression test for round 485's finding: j/k's own visibleIds used to be
+ * built from the flat visibleRecords array, oblivious to table grouping --
+ * when a group is collapsed, its records are skipped from the <tbody>
+ * entirely (see the table body render), yet the old visibleIds still
+ * contained them, so "j" could silently focus a row the user can't see,
+ * and Enter/x/Delete/d would then act on that invisible record. Confirms
+ * j/k now skips entirely over a collapsed group's records instead of
+ * landing on them.
+ */
+test("EntityPanel's j/k row navigation skips over records hidden inside a collapsed group", async () => {
+  await withJsdom(async () => {
+    const store: EntityRecord[] = [
+      { id: 1, name: "Acme Corp", status: "new" },
+      { id: 2, name: "Beta Inc", status: "won" },
+      { id: 3, name: "Gamma LLC", status: "won" },
+    ];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = mockRecordsFetch(store) as typeof fetch;
+    try {
+      renderEntityPanel();
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 3);
+
+      const groupBySelect = document.querySelector(".entity-group-by") as HTMLSelectElement;
+      fireEvent.change(groupBySelect, { target: { value: "status" } });
+      await waitForCondition(() => document.querySelectorAll(".entity-group-header-row").length === 2);
+
+      const headerRows = Array.from(document.querySelectorAll(".entity-group-header-row"));
+      const wonToggle = headerRows[1].querySelector(".entity-group-toggle") as HTMLButtonElement;
+      fireEvent.click(wonToggle);
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 3, 100);
+      assert.ok(
+        !Array.from(document.querySelectorAll("table tbody tr")).some((r) => r.textContent?.includes("Beta Inc")),
+        "the 'Won' group must actually be collapsed before testing navigation",
+      );
+
+      for (let attempt = 0; document.querySelectorAll(".record-row-focused").length === 0 && attempt < 40; attempt++) {
+        fireEvent.keyDown(window, { key: "j" });
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      }
+      assert.equal(
+        (document.querySelector(".record-row-focused") as HTMLElement)?.getAttribute("data-record-id"),
+        "1",
+        "the first 'j' must focus the only visible record (Acme Corp, id 1)",
+      );
+
+      // Both Beta Inc (2) and Gamma LLC (3) are hidden inside the collapsed
+      // 'Won' group -- further "j" presses must NOT move the focus onto
+      // either of them, since neither row exists in the rendered table.
+      fireEvent.keyDown(window, { key: "j" });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      assert.equal(
+        (document.querySelector(".record-row-focused") as HTMLElement)?.getAttribute("data-record-id"),
+        "1",
+        "'j' must clamp at the one visible row instead of landing on a record hidden inside a collapsed group",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * New in this round: j/k/Enter above let a keyboard-only user navigate to
  * and open any record, but there was no way to actually SELECT a row (the
  * checkbox toggleSelected already wires to onClick) without reaching for

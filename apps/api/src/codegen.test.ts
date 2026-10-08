@@ -2675,6 +2675,97 @@ test("the exported EntityView's j/k/ArrowUp/ArrowDown move a real keyboard focus
 });
 
 /**
+ * Regression test for round 485's finding: the exported app's j/k own
+ * visibleIds was built from the flat visibleRecords array (mirroring the
+ * live preview's pre-fix bug exactly), oblivious to table grouping -- a
+ * collapsed group's records are skipped from the <tbody> entirely, yet
+ * the old visibleIds still contained them, so "j" could silently focus a
+ * row the exported app's own user can't see. Confirms j/k now skips
+ * entirely over a collapsed group's records instead of landing on them,
+ * using the real generated component (not a reimplementation).
+ */
+test("the exported EntityView's j/k row navigation skips over records hidden inside a collapsed group", async () => {
+  const files = generateExportFiles(project);
+  const dir = writeGeneratedWebComponent(files);
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async () => ({
+    ok: true,
+    status: 200,
+    json: async () => ({
+      records: [
+        { id: 1, name: "Alice", status: "New" },
+        { id: 2, name: "Bob", status: "Won" },
+        { id: 3, name: "Carol", status: "Won" },
+      ],
+    }),
+  })) as typeof fetch;
+
+  try {
+    await withRealLocalStorage(async () => {
+      const { EntityView } = await import(path.join(dir, "web", "src", "components", "EntityView.jsx"));
+      const customerEntity = project.spec.entities.find((e) => e.name === "Customer")!;
+      const props = {
+        entity: customerEntity,
+        highlightRecordId: null,
+        onHighlightHandled: () => {},
+        onJumpToRecord: () => {},
+        onRecordCountChange: () => {},
+      };
+
+      const { container } = render(React.createElement(EntityView, props));
+      for (let i = 0; i < 40; i++) {
+        if (container.querySelector(".entity-group-by")) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+      const groupBySelect = container.querySelector(".entity-group-by") as HTMLSelectElement;
+      await act(async () => {
+        fireEvent.change(groupBySelect, { target: { value: "status" } });
+      });
+      for (let i = 0; i < 40; i++) {
+        if (container.querySelectorAll(".entity-group-header-row").length === 2) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+
+      const headerRows = Array.from(container.querySelectorAll(".entity-group-header-row"));
+      const wonToggle = headerRows[1].querySelector(".entity-group-toggle") as HTMLButtonElement;
+      await act(async () => {
+        fireEvent.click(wonToggle);
+      });
+      assert.equal(container.querySelectorAll("tbody tr").length, 3, "collapsing 'Won' must hide its own 2 record rows, leaving 2 headers + 1 'New' record");
+      assert.ok(!container.textContent?.includes("Bob"), "the 'Won' group must actually be collapsed before testing navigation");
+
+      await act(async () => {
+        fireEvent.keyDown(window, { key: "j" });
+      });
+      let focused = container.querySelector(".record-row-focused");
+      assert.ok(focused, "the first 'j' must focus the only visible record (Alice, id 1)");
+      assert.equal(focused!.getAttribute("data-record-id"), "1");
+
+      // Both Bob (2) and Carol (3) are hidden inside the collapsed 'Won'
+      // group -- a further "j" press must NOT move the focus onto either
+      // of them, since neither row exists in the rendered table.
+      await act(async () => {
+        fireEvent.keyDown(window, { key: "j" });
+      });
+      focused = container.querySelector(".record-row-focused");
+      assert.equal(
+        focused!.getAttribute("data-record-id"),
+        "1",
+        "'j' must clamp at the one visible row instead of landing on a record hidden inside a collapsed group",
+      );
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    cleanup();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
  * New in this round: porting the live preview's own "x" shortcut
  * (toggle the focused row's own selection checkbox) to the exported
  * app's EntityView.jsx. j/k/Enter above let a keyboard-only user
