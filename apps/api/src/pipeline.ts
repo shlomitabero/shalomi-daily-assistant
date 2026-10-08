@@ -162,9 +162,16 @@ function architectEvent(previousSpec: ProductSpec | undefined, nextSpec: Product
   // (now required, or an enum losing a value) -- a real, user-caused change
   // computeImpact now tracks but that otherwise had no warning at all.
   const entitiesWithTightenedFields = impact.changedEntities.filter((e) => e.tightenedFieldNames.length > 0);
+  // changedEntities includes an entity for ANY of new/removed/tightened
+  // fields (see computeImpact above), but the headline below only ever
+  // talks about entities "gaining fields" -- using changedEntities.length
+  // directly claimed an entity gained fields even when its only change was
+  // a removal or a tightening, contradicting the warning clause(s) that
+  // follow in the very same message for that exact entity.
+  const entitiesWithNewFields = impact.changedEntities.filter((e) => e.newFieldNames.length > 0);
   const message = previousSpec
     ? `Impact: +${impact.newEntityNames.length} new entities (${impact.newEntityNames.join(", ") || "none"}), ` +
-      `${impact.changedEntities.length} existing entities gaining fields.` +
+      `${entitiesWithNewFields.length} existing entities gaining fields.` +
       (impact.removedEntityNames.length > 0
         ? ` Warning: ${impact.removedEntityNames.length} entities are no longer in the spec (${impact.removedEntityNames.join(", ")}) -- their data is kept but is no longer reachable through the app.`
         : "") +

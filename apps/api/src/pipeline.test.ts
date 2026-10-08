@@ -605,13 +605,16 @@ test("a refine that drops a field from an entity that still exists is reported a
   assert.ok(architectSuccess);
 
   // The real proof: the message must name the lost field, not just imply
-  // (incorrectly) that the entity gained fields.
+  // (incorrectly) that the entity gained fields. The previous version of
+  // this assertion (round 397) used `assert.doesNotMatch` against a regex
+  // with a negative lookahead for " Warning" immediately after "gaining
+  // fields." -- since the real message DOES have " Warning" right after
+  // that phrase, the lookahead always failed to match and `doesNotMatch`
+  // passed vacuously, never actually checking the count itself. Assert the
+  // exact headline directly instead: Order only lost a field and gained
+  // nothing, so the count must read 0, not 1 (round 477's own regression).
+  assert.match(architectSuccess!.message, /\+0 new entities \(none\), 0 existing entities gaining fields\./);
   assert.match(architectSuccess!.message, /Warning: Order lost field\(s\): notes/);
-  assert.doesNotMatch(
-    architectSuccess!.message,
-    /1 existing entities gaining fields\.(?! Warning)/,
-    "the phrase 'gaining fields' alone, with no warning clause following it, would be actively misleading for an entity that only lost a field",
-  );
 
   type ImpactDetail = { changedEntities: { name: string; label: string; newFieldNames: string[]; removedFieldNames: string[]; tightenedFieldNames: string[] }[] };
   const detail = architectSuccess!.detail as ImpactDetail;
