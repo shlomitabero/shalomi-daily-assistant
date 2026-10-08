@@ -4076,6 +4076,75 @@ test("EntityPanel falls back viewMode to 'table' when a schema edit removes the 
 });
 
 /**
+ * Regression test for round 493's finding: fieldFilters' own re-validation
+ * effect (sibling to viewMode's, fixed in round 490) was never given the
+ * same fix -- it only dropped a filter referencing a removed field on
+ * [projectId, entity.name] (an actual tab switch), never while the tab
+ * stays mounted through a live Refine. Since visibleRecords's own filter
+ * check compares a record's (now-undefined) field value against the
+ * stale filter's stored value, a refine that removed the exact field the
+ * user was filtering on left the table showing zero records -- with no
+ * visible filter chip or error to explain why -- until the user happened
+ * to notice and click "Clear filters". Confirms the filtered-down table
+ * (1 of 2 records) reverts to showing both records once a refine removes
+ * the "status" field being filtered on, without remounting.
+ */
+test("EntityPanel drops a field filter when a live refine removes the exact field it filters on, instead of silently showing zero records", async () => {
+  await withJsdom(async () => {
+    const statusField = {
+      name: "status",
+      label: "Status",
+      type: "enum" as const,
+      required: true,
+      enumValues: ["new", "won"],
+      enumLabels: { new: "New", won: "Won" },
+    };
+    const entityWithStatus: Entity = {
+      name: "Deal",
+      label: "Deal",
+      fields: [{ name: "name", label: "Name", type: "text", required: true }, statusField],
+    };
+    const entityWithoutStatus: Entity = {
+      name: "Deal",
+      label: "Deal",
+      fields: [{ name: "name", label: "Name", type: "text", required: true }],
+    };
+    const store: EntityRecord[] = [
+      { id: 1, createdAt: "x", name: "Acme Corp", status: "new" },
+      { id: 2, createdAt: "x", name: "Globex", status: "won" },
+    ];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = mockRecordsFetch(store) as typeof fetch;
+    try {
+      const view = renderEntityPanel({ entity: entityWithStatus, allEntities: [entityWithStatus] });
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 2);
+
+      const statusFilter = document.querySelector(".entity-status-filter") as HTMLSelectElement;
+      fireEvent.change(statusFilter, { target: { value: "new" } });
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 1);
+      assert.ok(
+        document.querySelector("table tbody")?.textContent?.includes("Acme Corp"),
+        "filtering to status=new must leave only Acme Corp visible",
+      );
+
+      // Simulate a refine that removes "status" -- the exact field being
+      // filtered on -- while staying on the exact same entity.name
+      // ("Deal"), the same way App.tsx's real key={entity.name} never
+      // remounts for this.
+      view.rerender(buildEntityPanelElement({ entity: entityWithoutStatus, allEntities: [entityWithoutStatus] }));
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 2);
+
+      assert.ok(
+        document.querySelector("table tbody")?.textContent?.includes("Globex"),
+        "both records must be visible again once the stale 'status' filter is dropped, not stuck hiding Globex forever",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * New in this round: the table view had no way to move between rows
  * without reaching for the mouse. j/k (and ArrowDown/ArrowUp) move a
  * keyboard focus between visible rows, and Enter opens the focused row for

@@ -1121,17 +1121,23 @@ export function EntityPanel({
   // didn't even survive clicking to another tab and back, unlike this
   // entity's sort order, grouping, hidden columns, and column widths, every
   // one of which already survives the same switch. Drops any persisted
-  // filter referencing a field this entity no longer has.
+  // filter referencing a field this entity no longer has -- keyed on
+  // fieldNamesKey (not just projectId/entity.name), same as viewMode's own
+  // effect above: EntityPanel doesn't remount when a Refine mutates the
+  // currently-active entity's own fields in place, so without this a filter
+  // set on a field a refine then removed left visibleRecords's own
+  // `r[fieldName] === value` check comparing against `undefined` forever,
+  // silently hiding every record with no visible indication why.
+  const fieldNamesKey = useMemo(() => entity.fields.map((f) => f.name).join(","), [entity.fields]);
   useEffect(() => {
-    const validFieldNames = new Set(entity.fields.map((f) => f.name));
+    const validFieldNames = new Set(fieldNamesKey ? fieldNamesKey.split(",") : []);
     const persisted = getFieldFiltersPreference(projectId, entity.name);
     const next: Record<string, string> = {};
     for (const [field, value] of Object.entries(persisted)) {
       if (validFieldNames.has(field)) next[field] = value;
     }
     setFieldFilters(next);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [projectId, entity.name]);
+  }, [projectId, entity.name, fieldNamesKey]);
 
   /**
    * Drag-to-resize a column header. Only attaches real mousemove/mouseup
