@@ -312,9 +312,11 @@ export function renameFieldLabel(
   });
 }
 
+/** See createProject's own doc comment for why this generates one idempotency key per call, here protecting against a duplicate field from the same click/retry. */
 export function addField(projectId: string, entityName: string, label: string): Promise<{ project: Project }> {
   return request(`/projects/${projectId}/entities/${entityName}/fields`, {
     method: "POST",
+    headers: { "x-idempotency-key": crypto.randomUUID() },
     body: JSON.stringify({ label }),
   });
 }
@@ -349,12 +351,22 @@ export function removeAssumption(projectId: string, index: number, expect: strin
   });
 }
 
+/** See createProject's own doc comment for why this generates one idempotency key per call, here protecting against a duplicate role from the same click/retry. */
 export function addRole(projectId: string, role: string): Promise<{ project: Project }> {
-  return request(`/projects/${projectId}/roles`, { method: "POST", body: JSON.stringify({ role }) });
+  return request(`/projects/${projectId}/roles`, {
+    method: "POST",
+    headers: { "x-idempotency-key": crypto.randomUUID() },
+    body: JSON.stringify({ role }),
+  });
 }
 
+/** See createProject's own doc comment for why this generates one idempotency key per call, here protecting against a duplicate assumption from the same click/retry. */
 export function addAssumption(projectId: string, assumption: string): Promise<{ project: Project }> {
-  return request(`/projects/${projectId}/assumptions`, { method: "POST", body: JSON.stringify({ assumption }) });
+  return request(`/projects/${projectId}/assumptions`, {
+    method: "POST",
+    headers: { "x-idempotency-key": crypto.randomUUID() },
+    body: JSON.stringify({ assumption }),
+  });
 }
 
 export function renameRole(
@@ -385,8 +397,13 @@ export function removeEntity(projectId: string, entityName: string): Promise<{ p
   return request(`/projects/${projectId}/entities/${entityName}`, { method: "DELETE" });
 }
 
+/** See createProject's own doc comment for why this generates one idempotency key per call, here protecting against a duplicate entity from the same click/retry. */
 export function addEntity(projectId: string, label: string): Promise<{ project: Project }> {
-  return request(`/projects/${projectId}/entities`, { method: "POST", body: JSON.stringify({ label }) });
+  return request(`/projects/${projectId}/entities`, {
+    method: "POST",
+    headers: { "x-idempotency-key": crypto.randomUUID() },
+    body: JSON.stringify({ label }),
+  });
 }
 
 /**

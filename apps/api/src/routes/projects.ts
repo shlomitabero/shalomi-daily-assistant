@@ -1225,6 +1225,13 @@ export function createProjectsRouter(db: ForgeDatabase, provider: SpecProvider |
    * updateProjectSpec path, no schema/status checks needed since any
    * non-empty string is a valid role or assumption.
    */
+  /**
+   * Round 473 extends the same withIdempotency() mechanism (round 471's
+   * POST /projects, round 472's from-template/clone) to this append route
+   * -- the design doc's own "append-only gap": a retry landing after the
+   * first append already finished would otherwise append the identical
+   * role a second time.
+   */
   router.post(
     "/projects/:id/roles",
     asyncRoute(async (req, res) => {
@@ -1240,12 +1247,17 @@ export function createProjectsRouter(db: ForgeDatabase, provider: SpecProvider |
       if (!parsed.success) {
         throw new HttpError(400, formatValidationError(parsed.error), "VALIDATION_ERROR");
       }
-      const nextSpec = { ...project.spec, roles: [...project.spec.roles, parsed.data.role] };
-      const updated = updateProjectSpec(db, project.id, nextSpec);
-      res.json({ project: updated });
+      const idempotencyKey = req.header("X-Idempotency-Key") || undefined;
+      const { status, body } = await withIdempotency(db, idempotencyKey, req.userId!, "POST /projects/:id/roles", async () => {
+        const nextSpec = { ...project.spec, roles: [...project.spec.roles, parsed.data.role] };
+        const updated = updateProjectSpec(db, project.id, nextSpec);
+        return { status: 200, body: { project: updated } };
+      });
+      res.status(status).json(body);
     }),
   );
 
+  /** See POST /projects/:id/roles's own doc comment just above -- same extension, same reasoning. */
   router.post(
     "/projects/:id/assumptions",
     asyncRoute(async (req, res) => {
@@ -1258,9 +1270,13 @@ export function createProjectsRouter(db: ForgeDatabase, provider: SpecProvider |
       if (!parsed.success) {
         throw new HttpError(400, formatValidationError(parsed.error), "VALIDATION_ERROR");
       }
-      const nextSpec = { ...project.spec, assumptions: [...project.spec.assumptions, parsed.data.assumption] };
-      const updated = updateProjectSpec(db, project.id, nextSpec);
-      res.json({ project: updated });
+      const idempotencyKey = req.header("X-Idempotency-Key") || undefined;
+      const { status, body } = await withIdempotency(db, idempotencyKey, req.userId!, "POST /projects/:id/assumptions", async () => {
+        const nextSpec = { ...project.spec, assumptions: [...project.spec.assumptions, parsed.data.assumption] };
+        const updated = updateProjectSpec(db, project.id, nextSpec);
+        return { status: 200, body: { project: updated } };
+      });
+      res.status(status).json(body);
     }),
   );
 
@@ -1441,6 +1457,7 @@ export function createProjectsRouter(db: ForgeDatabase, provider: SpecProvider |
    * above, for the same reason: once built, the real database table and
    * generated code already exist and don't track further spec edits.
    */
+  /** Same withIdempotency() extension as POST /projects/:id/roles above -- see its own doc comment. */
   router.post(
     "/projects/:id/entities",
     asyncRoute(async (req, res) => {
@@ -1457,15 +1474,19 @@ export function createProjectsRouter(db: ForgeDatabase, provider: SpecProvider |
       if (!parsed.success) {
         throw new HttpError(400, formatValidationError(parsed.error), "VALIDATION_ERROR");
       }
-      const name = deriveEntityName(parsed.data.label, project.spec.entities.map((e) => e.name));
-      const newEntity: Entity = {
-        name,
-        label: parsed.data.label,
-        fields: [{ name: "name", type: "text", required: true }],
-      };
-      const nextSpec = { ...project.spec, entities: [...project.spec.entities, newEntity] };
-      const updated = updateProjectSpec(db, project.id, nextSpec);
-      res.json({ project: updated });
+      const idempotencyKey = req.header("X-Idempotency-Key") || undefined;
+      const { status, body } = await withIdempotency(db, idempotencyKey, req.userId!, "POST /projects/:id/entities", async () => {
+        const name = deriveEntityName(parsed.data.label, project.spec.entities.map((e) => e.name));
+        const newEntity: Entity = {
+          name,
+          label: parsed.data.label,
+          fields: [{ name: "name", type: "text", required: true }],
+        };
+        const nextSpec = { ...project.spec, entities: [...project.spec.entities, newEntity] };
+        const updated = updateProjectSpec(db, project.id, nextSpec);
+        return { status: 200, body: { project: updated } };
+      });
+      res.status(status).json(body);
     }),
   );
 
@@ -1486,6 +1507,7 @@ export function createProjectsRouter(db: ForgeDatabase, provider: SpecProvider |
    * routes: once built, the real database column and generated code
    * already exist and don't track further spec edits.
    */
+  /** Same withIdempotency() extension as POST /projects/:id/roles above -- see its own doc comment. */
   router.post(
     "/projects/:id/entities/:entityName/fields",
     asyncRoute(async (req, res) => {
@@ -1503,14 +1525,24 @@ export function createProjectsRouter(db: ForgeDatabase, provider: SpecProvider |
       if (!parsed.success) {
         throw new HttpError(400, formatValidationError(parsed.error), "VALIDATION_ERROR");
       }
-      const name = deriveFieldName(parsed.data.label, entity.fields.map((f) => f.name));
-      const newField: Field = { name, label: parsed.data.label, type: "text", required: false };
-      const nextSpec = {
-        ...project.spec,
-        entities: project.spec.entities.map((e) => (e.name === entity.name ? { ...e, fields: [...e.fields, newField] } : e)),
-      };
-      const updated = updateProjectSpec(db, project.id, nextSpec);
-      res.json({ project: updated });
+      const idempotencyKey = req.header("X-Idempotency-Key") || undefined;
+      const { status, body } = await withIdempotency(
+        db,
+        idempotencyKey,
+        req.userId!,
+        "POST /projects/:id/entities/:entityName/fields",
+        async () => {
+          const name = deriveFieldName(parsed.data.label, entity.fields.map((f) => f.name));
+          const newField: Field = { name, label: parsed.data.label, type: "text", required: false };
+          const nextSpec = {
+            ...project.spec,
+            entities: project.spec.entities.map((e) => (e.name === entity.name ? { ...e, fields: [...e.fields, newField] } : e)),
+          };
+          const updated = updateProjectSpec(db, project.id, nextSpec);
+          return { status: 200, body: { project: updated } };
+        },
+      );
+      res.status(status).json(body);
     }),
   );
 

@@ -670,6 +670,154 @@ test("POST /projects/:id/clone retried with the same idempotency key after the f
   });
 });
 
+/**
+ * Round 473 extends the same withIdempotency() mechanism to the
+ * append-only gap docs/wakeRetry-idempotency-design.md identified in
+ * POST /projects/:id/roles, /assumptions, /entities, and
+ * /entities/:name/fields -- a retry with the same key after the first
+ * append already finished must not append the same role/assumption/
+ * entity/field a second time.
+ */
+test("POST /projects/:id/roles retried with the same idempotency key after the first attempt already finished replays the original response instead of appending a second role", async () => {
+  await withServer(async (baseUrl) => {
+    const token = await signup(baseUrl, "role-idem1@example.com");
+    const createRes = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ description: "A CRM with customers and deals." }),
+    });
+    const { project } = (await createRes.json()) as { project: { id: string; spec: { roles: string[] } } };
+    const originalRoleCount = project.spec.roles.length;
+
+    const headers = { ...authHeaders(token), "x-idempotency-key": "role-repro-key" };
+    const firstRes = await fetch(`${baseUrl}/api/projects/${project.id}/roles`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ role: "Warehouse Manager" }),
+    });
+    assert.equal(firstRes.status, 200);
+    const first = (await firstRes.json()) as { project: { spec: { roles: string[] } } };
+    assert.equal(first.project.spec.roles.length, originalRoleCount + 1);
+
+    const retryRes = await fetch(`${baseUrl}/api/projects/${project.id}/roles`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ role: "Warehouse Manager" }),
+    });
+    assert.equal(retryRes.status, 200);
+    const retry = (await retryRes.json()) as { project: { spec: { roles: string[] } } };
+    assert.deepEqual(retry.project.spec.roles, first.project.spec.roles, "the retry must replay the original response, not append a second role");
+  });
+});
+
+test("POST /projects/:id/assumptions retried with the same idempotency key after the first attempt already finished replays the original response instead of appending a second assumption", async () => {
+  await withServer(async (baseUrl) => {
+    const token = await signup(baseUrl, "assumption-idem1@example.com");
+    const createRes = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ description: "A CRM with customers and deals." }),
+    });
+    const { project } = (await createRes.json()) as { project: { id: string; spec: { assumptions: string[] } } };
+    const originalCount = project.spec.assumptions.length;
+
+    const headers = { ...authHeaders(token), "x-idempotency-key": "assumption-repro-key" };
+    const firstRes = await fetch(`${baseUrl}/api/projects/${project.id}/assumptions`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ assumption: "Each customer has exactly one primary contact." }),
+    });
+    assert.equal(firstRes.status, 200);
+    const first = (await firstRes.json()) as { project: { spec: { assumptions: string[] } } };
+    assert.equal(first.project.spec.assumptions.length, originalCount + 1);
+
+    const retryRes = await fetch(`${baseUrl}/api/projects/${project.id}/assumptions`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ assumption: "Each customer has exactly one primary contact." }),
+    });
+    assert.equal(retryRes.status, 200);
+    const retry = (await retryRes.json()) as { project: { spec: { assumptions: string[] } } };
+    assert.deepEqual(
+      retry.project.spec.assumptions,
+      first.project.spec.assumptions,
+      "the retry must replay the original response, not append a second assumption",
+    );
+  });
+});
+
+test("POST /projects/:id/entities retried with the same idempotency key after the first attempt already finished replays the original response instead of adding a second entity", async () => {
+  await withServer(async (baseUrl) => {
+    const token = await signup(baseUrl, "entity-idem1@example.com");
+    const createRes = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ description: "A CRM with customers and deals." }),
+    });
+    const { project } = (await createRes.json()) as { project: { id: string; spec: { entities: { name: string }[] } } };
+    const originalCount = project.spec.entities.length;
+
+    const headers = { ...authHeaders(token), "x-idempotency-key": "entity-repro-key" };
+    const firstRes = await fetch(`${baseUrl}/api/projects/${project.id}/entities`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ label: "Loyalty Program" }),
+    });
+    assert.equal(firstRes.status, 200);
+    const first = (await firstRes.json()) as { project: { spec: { entities: { name: string }[] } } };
+    assert.equal(first.project.spec.entities.length, originalCount + 1);
+
+    const retryRes = await fetch(`${baseUrl}/api/projects/${project.id}/entities`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ label: "Loyalty Program" }),
+    });
+    assert.equal(retryRes.status, 200);
+    const retry = (await retryRes.json()) as { project: { spec: { entities: { name: string }[] } } };
+    assert.deepEqual(
+      retry.project.spec.entities,
+      first.project.spec.entities,
+      "the retry must replay the original response, not add a second entity",
+    );
+  });
+});
+
+test("POST /projects/:id/entities/:entityName/fields retried with the same idempotency key after the first attempt already finished replays the original response instead of adding a second field", async () => {
+  await withServer(async (baseUrl) => {
+    const token = await signup(baseUrl, "field-idem1@example.com");
+    const createRes = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ description: "A CRM with customers and deals." }),
+    });
+    const { project } = (await createRes.json()) as {
+      project: { id: string; spec: { entities: { name: string; fields: unknown[] }[] } };
+    };
+    const entityName = project.spec.entities[0].name;
+    const originalFieldCount = project.spec.entities[0].fields.length;
+
+    const headers = { ...authHeaders(token), "x-idempotency-key": "field-repro-key" };
+    const firstRes = await fetch(`${baseUrl}/api/projects/${project.id}/entities/${entityName}/fields`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ label: "Phone Number" }),
+    });
+    assert.equal(firstRes.status, 200);
+    const first = (await firstRes.json()) as { project: { spec: { entities: { name: string; fields: unknown[] }[] } } };
+    const firstEntity = first.project.spec.entities.find((e) => e.name === entityName)!;
+    assert.equal(firstEntity.fields.length, originalFieldCount + 1);
+
+    const retryRes = await fetch(`${baseUrl}/api/projects/${project.id}/entities/${entityName}/fields`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ label: "Phone Number" }),
+    });
+    assert.equal(retryRes.status, 200);
+    const retry = (await retryRes.json()) as { project: { spec: { entities: { name: string; fields: unknown[] }[] } } };
+    assert.deepEqual(retry.project.spec, first.project.spec, "the retry must replay the original response, not add a second field");
+  });
+});
+
 test("full acceptance flow: idea -> spec -> AI build pipeline -> CRUD -> refine -> checkpoints", async () => {
   await withServer(async (baseUrl) => {
     const token = await signup(baseUrl);
