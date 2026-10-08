@@ -2856,6 +2856,97 @@ test("the exported EntityView's 'select all' only selects records actually visib
 });
 
 /**
+ * Round 491's finding: numericFieldTotals (the grand total shown in the
+ * table's tfoot) was computed from visibleRecords rather than the
+ * grouping/collapse-aware effectivelyVisibleRecords -- the same value round
+ * 486 introduced for "select all" and round 487 for Export CSV/Copy/Print.
+ * Collapsing a group correctly hid that group's own per-group subtotal row,
+ * but the grand total kept counting the collapsed group's records anyway,
+ * so the one subtotal still on screen no longer added up to the footer's
+ * number. Exercises the real generated EntityView.jsx end to end (not just a
+ * source-text regex check): groups by status, collapses "Won", and confirms
+ * the tfoot total now matches the one still-visible subtotal (New's 100)
+ * instead of the full 180 including Won's collapsed 50+30.
+ */
+test("the exported EntityView's grand-total tfoot excludes a collapsed group's records, matching what's actually visible", async () => {
+  const numericProject: Project = {
+    ...project,
+    spec: {
+      ...project.spec,
+      entities: project.spec.entities.map((e) =>
+        e.name === "Customer" ? { ...e, fields: [...e.fields, { name: "amount", label: "סכום", type: "number", required: true }] } : e,
+      ),
+    },
+  };
+  const files = generateExportFiles(numericProject);
+  const dir = writeGeneratedWebComponent(files);
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async () => ({
+    ok: true,
+    status: 200,
+    json: async () => ({
+      records: [
+        { id: 1, name: "Alice", status: "New", amount: 100 },
+        { id: 2, name: "Bob", status: "Won", amount: 50 },
+        { id: 3, name: "Carol", status: "Won", amount: 30 },
+      ],
+    }),
+  })) as typeof fetch;
+
+  try {
+    await withRealLocalStorage(async () => {
+      const { EntityView } = await import(path.join(dir, "web", "src", "components", "EntityView.jsx"));
+      const customerEntity = numericProject.spec.entities.find((e) => e.name === "Customer")!;
+      const props = {
+        entity: customerEntity,
+        highlightRecordId: null,
+        onHighlightHandled: () => {},
+        onJumpToRecord: () => {},
+        onRecordCountChange: () => {},
+      };
+
+      const { container } = render(React.createElement(EntityView, props));
+      for (let i = 0; i < 40; i++) {
+        if (container.querySelector(".entity-group-by")) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+      const groupBySelect = container.querySelector(".entity-group-by") as HTMLSelectElement;
+      await act(async () => {
+        fireEvent.change(groupBySelect, { target: { value: "status" } });
+      });
+      for (let i = 0; i < 40; i++) {
+        if (container.querySelectorAll(".entity-group-header-row").length === 2) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+
+      const headerRows = Array.from(container.querySelectorAll(".entity-group-header-row"));
+      const wonToggle = headerRows[1].querySelector(".entity-group-toggle") as HTMLButtonElement;
+      await act(async () => {
+        fireEvent.click(wonToggle);
+      });
+      assert.ok(!container.textContent?.includes("Bob"), "the 'Won' group must actually be collapsed before checking the grand total");
+      assert.ok(!container.textContent?.includes("Carol"), "the 'Won' group must actually be collapsed before checking the grand total");
+
+      const subtotalRows = Array.from(container.querySelectorAll(".entity-group-totals-row"));
+      assert.equal(subtotalRows.length, 1, "only the still-expanded New group should have a visible subtotal row");
+      assert.match(subtotalRows[0].textContent ?? "", /100/, "the one visible subtotal must be New's own 100");
+
+      const tfootText = container.querySelector("tfoot tr")!.textContent ?? "";
+      assert.match(tfootText, /100/, "the grand total must match the one subtotal still visible (100), not the full 180 including collapsed Won");
+      assert.doesNotMatch(tfootText, /180/, "the grand total must not still include the collapsed Won group's 50+30");
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    cleanup();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
  * Round 487's finding: selectedOrAllRecords's own contract is "export/print
  * what the table is currently showing" when nothing is selected -- but
  * handleExportCsv, handleCopy, and the print-list sheet all passed the flat

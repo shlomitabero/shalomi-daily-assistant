@@ -1383,16 +1383,9 @@ export function EntityPanel({
     return sortRecordsMulti(filtered, sortKeys, entity.fields, allEntities, relatedRecords);
   }, [records, entity.fields, search, fieldFilters, sortKeys, allEntities, relatedRecords, lang]);
 
-  // Totals row under the table -- sums each visible number-type column over
-  // visibleRecords (the same already-filtered/sorted set the body renders),
-  // so narrowing the search updates the totals along with the rows, and a
-  // hidden numeric column's total disappears along with its column. Only
-  // relevant, and only rendered, when at least one visible field is numeric.
+  // Whether the totals row under the table is relevant at all -- only
+  // rendered when at least one visible field is numeric.
   const hasNumericVisibleField = useMemo(() => visibleFields.some((f) => f.type === "number"), [visibleFields]);
-  const numericFieldTotals = useMemo(
-    () => (hasNumericVisibleField ? sumNumericFields(visibleRecords, visibleFields) : {}),
-    [hasNumericVisibleField, visibleRecords, visibleFields],
-  );
 
   /** Exactly the records the calendar grid's current month is showing -- the same computation handleExportIcs uses, kept separate so the export button can disable itself when the visible month is genuinely empty, not just when the whole entity has no records. */
   const icsMonthRecords = useMemo(() => {
@@ -1425,6 +1418,16 @@ export function EntityPanel({
   const effectivelyVisibleRecords = useMemo(
     () => (recordGroups ? recordGroups.flatMap((group) => (collapsedGroups.has(group.key) ? [] : group.records)) : visibleRecords),
     [recordGroups, collapsedGroups, visibleRecords],
+  );
+
+  // Totals row under the table -- sums each visible number-type column over
+  // effectivelyVisibleRecords (not visibleRecords), so a collapsed group's
+  // records drop out of the grand total just like they drop out of the
+  // table body and their own per-group subtotal row; otherwise the footer
+  // silently kept counting records the user could no longer see on screen.
+  const numericFieldTotals = useMemo(
+    () => (hasNumericVisibleField ? sumNumericFields(effectivelyVisibleRecords, visibleFields) : {}),
+    [hasNumericVisibleField, effectivelyVisibleRecords, visibleFields],
   );
 
   // Per-group numeric subtotals -- without this, grouping a table by e.g.

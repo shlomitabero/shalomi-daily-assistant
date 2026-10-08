@@ -2954,10 +2954,6 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
   }, [records, entity.fields, search, fieldFilters, sortKeys, relatedRecords]);
 
   const hasNumericVisibleField = useMemo(() => visibleFields.some((f) => f.type === "number"), [visibleFields]);
-  const numericFieldTotals = useMemo(
-    () => (hasNumericVisibleField ? sumNumericFields(visibleRecords, visibleFields) : {}),
-    [hasNumericVisibleField, visibleRecords, visibleFields],
-  );
 
   // Grouping the plain table by a small-value-space field (enum/boolean) --
   // distinct from the Kanban board view (always exactly one auto-picked
@@ -2978,6 +2974,16 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
   const effectivelyVisibleRecords = useMemo(
     () => (recordGroups ? recordGroups.flatMap((group) => (collapsedGroups.has(group.key) ? [] : group.records)) : visibleRecords),
     [recordGroups, collapsedGroups, visibleRecords],
+  );
+
+  // Totals row under the table -- sums each visible number-type column over
+  // effectivelyVisibleRecords (not visibleRecords), so a collapsed group's
+  // records drop out of the grand total just like they drop out of the
+  // table body and their own per-group subtotal row. Mirrors the live
+  // preview's own EntityPanel.tsx.
+  const numericFieldTotals = useMemo(
+    () => (hasNumericVisibleField ? sumNumericFields(effectivelyVisibleRecords, visibleFields) : {}),
+    [hasNumericVisibleField, effectivelyVisibleRecords, visibleFields],
   );
 
   // Per-group numeric subtotals -- without this, grouping a table by e.g.

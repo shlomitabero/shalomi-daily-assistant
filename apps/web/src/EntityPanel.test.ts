@@ -6315,6 +6315,86 @@ test("EntityPanel's grouped table shows a numeric subtotal row per group, summin
 });
 
 /**
+ * Regression test for round 491's finding: numericFieldTotals (the grand
+ * total shown in the table's tfoot) was computed from visibleRecords
+ * rather than effectivelyVisibleRecords -- the same collapse-aware value
+ * round 486 introduced for "select all" and round 487 for Export
+ * CSV/Copy/Print. Collapsing a group hid that group's own per-group
+ * subtotal row (correctly), but the grand total kept counting the
+ * collapsed group's amounts anyway, so the one subtotal still on screen no
+ * longer added up to the footer's number. Confirms collapsing "Paid"
+ * leaves only Pending's subtotal (300) on screen, and the grand total now
+ * matches it (300) instead of the full 1,800.
+ */
+test("EntityPanel's grand-total tfoot excludes a collapsed group's records, matching what's actually visible", async () => {
+  await withJsdom(async () => {
+    const orderEntity: Entity = {
+      name: "Order",
+      label: "Order",
+      fields: [
+        { name: "client", label: "Client", type: "text", required: true },
+        {
+          name: "status",
+          label: "Status",
+          type: "enum",
+          required: true,
+          enumValues: ["paid", "pending"],
+          enumLabels: { paid: "Paid", pending: "Pending" },
+        },
+        { name: "amount", label: "Amount", type: "number", required: true },
+      ],
+    };
+    const store: EntityRecord[] = [
+      { id: 1, createdAt: "x", client: "Acme Corp", status: "paid", amount: 1000 },
+      { id: 2, createdAt: "x", client: "Globex", status: "paid", amount: 500 },
+      { id: 3, createdAt: "x", client: "Initech", status: "pending", amount: 300 },
+    ];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string) => {
+      if (input === "/api/projects/proj1/entities/Order") {
+        return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${input}`);
+    }) as typeof fetch;
+    try {
+      renderEntityPanel({ entity: orderEntity, allEntities: [orderEntity] });
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 3);
+
+      const groupBySelect = document.querySelector(".entity-group-by") as HTMLSelectElement;
+      fireEvent.change(groupBySelect, { target: { value: "status" } });
+      await waitForCondition(() => document.querySelectorAll(".entity-group-header-row").length === 2);
+
+      const paidToggle = document.querySelectorAll(".entity-group-header-row")[0].querySelector(".entity-group-toggle") as HTMLButtonElement;
+      fireEvent.click(paidToggle);
+      await waitForCondition(
+        () => !Array.from(document.querySelectorAll("table tbody tr")).some((r) => r.textContent?.includes("Acme Corp")),
+      );
+      assert.ok(
+        !Array.from(document.querySelectorAll("table tbody tr")).some((r) => r.textContent?.includes("Globex")),
+        "the 'Paid' group must actually be collapsed before checking the grand total",
+      );
+
+      const subtotalRows = Array.from(document.querySelectorAll(".entity-group-totals-row"));
+      assert.equal(subtotalRows.length, 1, "only the still-expanded Pending group should have a visible subtotal row");
+      assert.match(subtotalRows[0].textContent ?? "", /(?<!,)300/, "the one visible subtotal must be Pending's own 300");
+
+      assert.match(
+        document.querySelector("table tfoot tr")!.textContent ?? "",
+        /(?<!,)300/,
+        "the grand total must match the one subtotal still visible (300), not the full 1,800 including the collapsed Paid group",
+      );
+      assert.doesNotMatch(
+        document.querySelector("table tfoot tr")!.textContent ?? "",
+        /1,800/,
+        "the grand total must not still include the collapsed Paid group's 1,500",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * New in this round: a real bug in FieldInput's number input, found by a
  * fresh Explore survey. `<input type="number">` with no `step` attribute
  * defaults to the HTML5 spec's `step="1"` -- typing a perfectly normal
