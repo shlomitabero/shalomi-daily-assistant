@@ -5291,6 +5291,37 @@ test("the exported EntityView's matchesSearch matches a number field's locale-fo
 });
 
 /**
+ * Round 475: the exported app's own matchesSearch had the identical gap
+ * for date fields that round 415 already fixed for number fields above --
+ * simply missed at the time. A date field's table cell (Cell(), in
+ * EntityView.jsx) renders via parseFieldDate + toLocaleDateString()
+ * ("2026-03-15" -> "3/15/2026"), but matchesSearch fell through to the
+ * raw stored "YYYY-MM-DD" string, so typing back the exact date shown on
+ * screen found nothing in an exported/standalone app either. Runs the
+ * real generated matchesSearch plus the real generated parseFieldDate
+ * (matchesSearch's date branch calls it directly) -- extracted the same
+ * way the calendar-view tests above already extract parseFieldDate.
+ */
+test("the exported EntityView's matchesSearch matches a date field's locale-formatted display, not just its raw YYYY-MM-DD value", () => {
+  const entityViewJsx = generateExportFiles(project).find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+  const matchesSearchSrc = entityViewJsx.match(/export function matchesSearch\([\s\S]*?\n\}\n/)?.[0]?.replace("export ", "");
+  const parseFieldDateSrc = entityViewJsx.match(/const CALENDAR_DATE_FORMAT[\s\S]*?\nfunction parseFieldDate\(raw\) \{[\s\S]*?\n\}\n/)?.[0];
+  assert.ok(matchesSearchSrc && parseFieldDateSrc, "expected to find matchesSearch/parseFieldDate in generated output");
+
+  const matchesSearch = new Function(`${parseFieldDateSrc}\n${matchesSearchSrc}\nreturn matchesSearch;`)() as (
+    record: unknown,
+    fields: unknown[],
+    query: string,
+  ) => boolean;
+
+  const fields = [{ name: "dueDate", type: "date" }];
+  const record = { dueDate: "2026-03-15" };
+  assert.equal(matchesSearch(record, fields, "2026-03-15"), true);
+  assert.equal(matchesSearch(record, fields, "3/15/2026"), true);
+  assert.equal(matchesSearch(record, fields, "4/15/2026"), false);
+});
+
+/**
  * New in this round: the exported app's own sortRecordsMulti had the same
  * gap as matchesSearch above -- a relation column's cell shows the related
  * record's resolved label, but clicking that header sorted by the raw

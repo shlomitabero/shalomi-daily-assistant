@@ -1524,12 +1524,24 @@ function Cell({ field, value, relationLabel, onJumpToRecord }) {
 // screen, comma included, found nothing. Checked against both the plain
 // and the formatted string (space-joined), so either "1500" or "1,500"
 // still finds the same row.
+//
+// A date field had the identical gap, for the identical reason, and was
+// simply missed when the fix above was made: the table cell (Cell(),
+// above) renders it via parseFieldDate + toLocaleDateString(), a real
+// formatted string ("2026-03-15" -> "3/15/2026") -- but this matched
+// against the raw stored "YYYY-MM-DD" string, so typing back the exact
+// date shown on screen found nothing.
 export function matchesSearch(record, fields, query, relatedRecords) {
   const trimmed = query.trim().toLowerCase();
   if (!trimmed) return true;
   return fields.some((f) => {
     const value = record[f.name];
     if (value === null || value === undefined) return false;
+    if (f.type === "date") {
+      const date = parseFieldDate(value);
+      const formatted = Number.isNaN(date.getTime()) ? value : date.toLocaleDateString();
+      return \`\${value} \${formatted}\`.toLowerCase().includes(trimmed);
+    }
     const display =
       f.type === "enum" && f.enumLabels && f.enumLabels[value]
         ? f.enumLabels[value]

@@ -220,6 +220,13 @@ export function sumNumericFields(records: EntityRecord[], fields: Field[]): Reco
  * comma included, got zero matches for a value they're looking right at.
  * Checked against both the plain and the formatted string (space-joined),
  * so a search for either "1500" or "1,500" still finds the same row.
+ *
+ * A `date` field had the identical gap, for the identical reason, and was
+ * simply missed when the number/relation fix above was made: the table
+ * cell (EntityPanel.tsx) renders it through `formatDateValue`, a real
+ * locale-formatted string ("2026-03-15" -> "3/15/2026" in en, "15.3.2026"
+ * in he) -- but this matched against the raw stored "YYYY-MM-DD" string,
+ * so typing back the exact date shown on screen found nothing.
  */
 export function matchesSearch(
   record: EntityRecord,
@@ -241,7 +248,9 @@ export function matchesSearch(
           ? relationDisplayLabel(field, value, allEntities, relatedRecords)
           : field.type === "number" && typeof value === "number"
             ? `${value} ${formatNumberValue(value, lang)}`
-            : String(value);
+            : field.type === "date"
+              ? `${value} ${formatDateValue(String(value), lang)}`
+              : String(value);
     return display.toLowerCase().includes(trimmed);
   });
 }

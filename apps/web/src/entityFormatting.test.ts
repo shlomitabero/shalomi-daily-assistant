@@ -236,6 +236,37 @@ test("matchesSearch's number-field comma-matching defaults to \"en\" when no lan
 });
 
 /**
+ * Round 475: a date field had the identical gap to the relation/number
+ * fields fixed above (round 271/415), for the identical reason, and was
+ * simply missed when those fixes were made -- round 195 originally named
+ * date alongside number/relation/enum as a display/match mismatch, but
+ * only number/relation/enum were ever actually fixed in matchesSearch
+ * itself. The table cell actually shown on screen (EntityPanel.tsx) renders
+ * a date field through formatDateValue ("2026-03-15" -> "3/15/2026" in en),
+ * but this matched against the raw stored "YYYY-MM-DD" string, so a user
+ * typing back the exact date they can see on screen found nothing.
+ */
+test("matchesSearch matches a date field's locale-formatted display, not just its raw YYYY-MM-DD value", () => {
+  const fields: Field[] = [{ name: "dueDate", type: "date", required: true }];
+  const record = { dueDate: "2026-03-15" };
+  assert.ok(matchesSearch(record, fields, "2026-03-15", undefined, undefined, "en"));
+  assert.ok(matchesSearch(record, fields, "3/15/2026", undefined, undefined, "en"));
+  assert.ok(!matchesSearch(record, fields, "4/15/2026", undefined, undefined, "en"));
+});
+
+test("matchesSearch's date-field display-matching defaults to \"en\" when no lang is given, instead of throwing", () => {
+  const fields: Field[] = [{ name: "dueDate", type: "date", required: true }];
+  const record = { dueDate: "2026-03-15" };
+  assert.ok(matchesSearch(record, fields, "3/15/2026"));
+});
+
+test("matchesSearch's date-field matching falls back to the raw stored value for an unparseable date, instead of throwing", () => {
+  const fields: Field[] = [{ name: "dueDate", type: "date", required: true }];
+  const record = { dueDate: "not-a-real-date" };
+  assert.ok(matchesSearch(record, fields, "not-a-real-date", undefined, undefined, "en"));
+});
+
+/**
  * New in this round: matchesSearch already tells the table a record
  * matched, but nothing showed *where* within a cell's own text -- a real
  * everyday annoyance the moment a search term is short/common and you
