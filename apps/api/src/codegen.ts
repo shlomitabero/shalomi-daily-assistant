@@ -3462,7 +3462,7 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
   }
 
   function handleExportCsv() {
-    const csv = recordsToCsv(entity.fields, selectedOrAllRecords(records, visibleRecords, selectedIds), relatedRecords);
+    const csv = recordsToCsv(entity.fields, selectedOrAllRecords(records, effectivelyVisibleRecords, selectedIds), relatedRecords);
     const blob = new Blob(["\\uFEFF" + csv], { type: "text/csv;charset=utf-8;" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
@@ -3476,7 +3476,7 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
 
   async function handleCopy() {
     try {
-      const csv = recordsToCsv(entity.fields, selectedOrAllRecords(records, visibleRecords, selectedIds), relatedRecords);
+      const csv = recordsToCsv(entity.fields, selectedOrAllRecords(records, effectivelyVisibleRecords, selectedIds), relatedRecords);
       await navigator.clipboard.writeText(csv);
       setCopyStatus("copied");
     } catch {
@@ -4166,7 +4166,7 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
       <RecordListPrintSheet
         entity={entity}
         fields={visibleFields}
-        records={selectedOrAllRecords(records, visibleRecords, selectedIds)}
+        records={selectedOrAllRecords(records, effectivelyVisibleRecords, selectedIds)}
         relatedRecords={relatedRecords}
         show={showPrintList}
       />

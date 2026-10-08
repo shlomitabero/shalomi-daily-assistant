@@ -2856,6 +2856,199 @@ test("the exported EntityView's 'select all' only selects records actually visib
 });
 
 /**
+ * Round 487's finding: selectedOrAllRecords's own contract is "export/print
+ * what the table is currently showing" when nothing is selected -- but
+ * handleExportCsv, handleCopy, and the print-list sheet all passed the flat
+ * visibleRecords instead of the grouping/collapse-aware
+ * effectivelyVisibleRecords (the same value round 486 already introduced
+ * for "select all"), so a collapsed group's hidden records silently leaked
+ * into the export/print output. Exercises the real generated handleExportCsv
+ * via an actual button click (not just a source-text regex check, since
+ * that alone can't prove the collapsed group's records are excluded at
+ * runtime), stubbing URL.createObjectURL/revokeObjectURL the same way the
+ * live-preview app's own EntityPanel.test.ts does -- no such stub existed
+ * yet in this file since the earlier CSV-export tests here only asserted on
+ * generated source text.
+ */
+test("the exported EntityView's Export CSV button (nothing selected) excludes records hidden inside a collapsed group", async () => {
+  const files = generateExportFiles(project);
+  const dir = writeGeneratedWebComponent(files);
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async () => ({
+    ok: true,
+    status: 200,
+    json: async () => ({
+      records: [
+        { id: 1, name: "Acme Corp", status: "New" },
+        { id: 2, name: "Beta Inc", status: "Won" },
+        { id: 3, name: "Gamma LLC", status: "Won" },
+      ],
+    }),
+  })) as typeof fetch;
+  const originalCreateObjectURL = (URL as unknown as { createObjectURL?: (b: Blob) => string }).createObjectURL;
+  const originalRevokeObjectURL = (URL as unknown as { revokeObjectURL?: (u: string) => void }).revokeObjectURL;
+  let capturedBlob: Blob | null = null;
+  (URL as unknown as { createObjectURL: (b: Blob) => string }).createObjectURL = (b: Blob) => {
+    capturedBlob = b;
+    return "blob:mock-url";
+  };
+  (URL as unknown as { revokeObjectURL: (u: string) => void }).revokeObjectURL = () => {};
+
+  try {
+    await withRealLocalStorage(async () => {
+      const { EntityView } = await import(path.join(dir, "web", "src", "components", "EntityView.jsx"));
+      const customerEntity = project.spec.entities.find((e) => e.name === "Customer")!;
+      const props = {
+        entity: customerEntity,
+        highlightRecordId: null,
+        onHighlightHandled: () => {},
+        onJumpToRecord: () => {},
+        onRecordCountChange: () => {},
+      };
+
+      const { container } = render(React.createElement(EntityView, props));
+      for (let i = 0; i < 40; i++) {
+        if (container.querySelector(".entity-group-by")) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+      const groupBySelect = container.querySelector(".entity-group-by") as HTMLSelectElement;
+      await act(async () => {
+        fireEvent.change(groupBySelect, { target: { value: "status" } });
+      });
+      for (let i = 0; i < 40; i++) {
+        if (container.querySelectorAll(".entity-group-header-row").length === 2) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+
+      const headerRows = Array.from(container.querySelectorAll(".entity-group-header-row"));
+      const wonToggle = headerRows[1].querySelector(".entity-group-toggle") as HTMLButtonElement;
+      await act(async () => {
+        fireEvent.click(wonToggle);
+      });
+      assert.equal(container.querySelectorAll("tbody tr").length, 3, "collapsing 'Won' must hide its own 2 record rows, leaving 2 headers + 1 'New' record");
+      assert.ok(!container.textContent?.includes("Beta Inc"), "the 'Won' group must actually be collapsed before testing export");
+
+      const exportBtn = container.querySelector(".csv-export-btn") as HTMLButtonElement;
+      await act(async () => {
+        fireEvent.click(exportBtn);
+      });
+      for (let i = 0; i < 40; i++) {
+        if (capturedBlob !== null) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+
+      assert.ok(capturedBlob, "Export CSV must actually build and download a Blob");
+      const csvText = await (capturedBlob as unknown as Blob).text();
+      assert.match(csvText, /Acme Corp/, "the one visible record must still be exported");
+      assert.doesNotMatch(csvText, /Beta Inc/, "a record hidden inside a collapsed group must not be exported");
+      assert.doesNotMatch(csvText, /Gamma LLC/, "a record hidden inside a collapsed group must not be exported");
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (originalCreateObjectURL) (URL as unknown as { createObjectURL: (b: Blob) => string }).createObjectURL = originalCreateObjectURL;
+    if (originalRevokeObjectURL) (URL as unknown as { revokeObjectURL: (u: string) => void }).revokeObjectURL = originalRevokeObjectURL;
+    cleanup();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
+ * Print-list sibling of the Export CSV regression test above -- same
+ * round-487 finding, same underlying selectedOrAllRecords call. Unlike CSV
+ * export, the print-list sheet needs no URL.createObjectURL stub, only
+ * window.print, matching this file's existing "toolbar Print list" test.
+ */
+test("the exported EntityView's Print list button (nothing selected) excludes records hidden inside a collapsed group", async () => {
+  const files = generateExportFiles(project);
+  const dir = writeGeneratedWebComponent(files);
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async () => ({
+    ok: true,
+    status: 200,
+    json: async () => ({
+      records: [
+        { id: 1, name: "Acme Corp", status: "New" },
+        { id: 2, name: "Beta Inc", status: "Won" },
+        { id: 3, name: "Gamma LLC", status: "Won" },
+      ],
+    }),
+  })) as typeof fetch;
+  const originalPrint = window.print;
+  let printCalls = 0;
+  window.print = () => {
+    printCalls += 1;
+  };
+
+  try {
+    await withRealLocalStorage(async () => {
+      const { EntityView } = await import(path.join(dir, "web", "src", "components", "EntityView.jsx"));
+      const customerEntity = project.spec.entities.find((e) => e.name === "Customer")!;
+      const props = {
+        entity: customerEntity,
+        highlightRecordId: null,
+        onHighlightHandled: () => {},
+        onJumpToRecord: () => {},
+        onRecordCountChange: () => {},
+      };
+
+      const { container } = render(React.createElement(EntityView, props));
+      for (let i = 0; i < 40; i++) {
+        if (container.querySelector(".entity-group-by")) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+      const groupBySelect = container.querySelector(".entity-group-by") as HTMLSelectElement;
+      await act(async () => {
+        fireEvent.change(groupBySelect, { target: { value: "status" } });
+      });
+      for (let i = 0; i < 40; i++) {
+        if (container.querySelectorAll(".entity-group-header-row").length === 2) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+
+      const headerRows = Array.from(container.querySelectorAll(".entity-group-header-row"));
+      const wonToggle = headerRows[1].querySelector(".entity-group-toggle") as HTMLButtonElement;
+      await act(async () => {
+        fireEvent.click(wonToggle);
+      });
+      assert.equal(container.querySelectorAll("tbody tr").length, 3, "collapsing 'Won' must hide its own 2 record rows, leaving 2 headers + 1 'New' record");
+      assert.ok(!container.textContent?.includes("Beta Inc"), "the 'Won' group must actually be collapsed before testing print");
+
+      const printListButton = Array.from(container.querySelectorAll("button")).find((b) => b.textContent?.includes("Print"))!;
+      await act(async () => {
+        fireEvent.click(printListButton);
+      });
+      for (let i = 0; i < 40; i++) {
+        if (printCalls === 1) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+
+      assert.equal(printCalls, 1, "window.print must actually be called");
+      const sheetText = container.querySelector(".print-list-sheet")!.textContent ?? "";
+      assert.match(sheetText, /Acme Corp/, "the one visible record must still print");
+      assert.doesNotMatch(sheetText, /Beta Inc/, "a record hidden inside a collapsed group must not print");
+      assert.doesNotMatch(sheetText, /Gamma LLC/, "a record hidden inside a collapsed group must not print");
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    window.print = originalPrint;
+    cleanup();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
  * New in this round: porting the live preview's own "x" shortcut
  * (toggle the focused row's own selection checkbox) to the exported
  * app's EntityView.jsx. j/k/Enter above let a keyboard-only user
@@ -3620,7 +3813,7 @@ test("the exported EntityView's Export CSV routes through selectedOrAllRecords, 
   assert.ok(handleExportCsvSrc, "expected to find handleExportCsv in generated output");
   assert.match(
     handleExportCsvSrc!,
-    /recordsToCsv\(entity\.fields, selectedOrAllRecords\(records, visibleRecords, selectedIds\), relatedRecords\)/,
+    /recordsToCsv\(entity\.fields, selectedOrAllRecords\(records, effectivelyVisibleRecords, selectedIds\), relatedRecords\)/,
     "handleExportCsv must route through selectedOrAllRecords instead of always exporting visibleRecords directly",
   );
 
@@ -3662,7 +3855,7 @@ test("the exported EntityView renders a real Copy button that writes the selecti
   assert.ok(handleCopySrc, "expected to find handleCopy in generated output");
   assert.match(
     handleCopySrc!,
-    /recordsToCsv\(entity\.fields, selectedOrAllRecords\(records, visibleRecords, selectedIds\), relatedRecords\)/,
+    /recordsToCsv\(entity\.fields, selectedOrAllRecords\(records, effectivelyVisibleRecords, selectedIds\), relatedRecords\)/,
     "handleCopy must reuse the exact same selection logic as handleExportCsv",
   );
   assert.match(handleCopySrc!, /navigator\.clipboard\.writeText\(csv\)/, "handleCopy must actually write to the clipboard");

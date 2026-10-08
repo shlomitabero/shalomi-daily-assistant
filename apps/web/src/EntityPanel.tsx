@@ -1886,7 +1886,7 @@ export function EntityPanel({
   }
 
   function handleExportCsv() {
-    const csv = recordsToCsv(entity.fields, selectedOrAllRecords(records, visibleRecords, selectedIds), lang, allEntities, relatedRecords);
+    const csv = recordsToCsv(entity.fields, selectedOrAllRecords(records, effectivelyVisibleRecords, selectedIds), lang, allEntities, relatedRecords);
     const blob = new Blob(["﻿" + csv], { type: "text/csv;charset=utf-8;" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
@@ -1910,7 +1910,7 @@ export function EntityPanel({
    */
   async function handleCopy() {
     try {
-      const csv = recordsToCsv(entity.fields, selectedOrAllRecords(records, visibleRecords, selectedIds), lang, allEntities, relatedRecords);
+      const csv = recordsToCsv(entity.fields, selectedOrAllRecords(records, effectivelyVisibleRecords, selectedIds), lang, allEntities, relatedRecords);
       await navigator.clipboard.writeText(csv);
       setCopyStatus("copied");
     } catch {
@@ -2870,7 +2870,7 @@ export function EntityPanel({
       <RecordListPrintSheet
         entity={entity}
         fields={visibleFields}
-        records={selectedOrAllRecords(records, visibleRecords, selectedIds)}
+        records={selectedOrAllRecords(records, effectivelyVisibleRecords, selectedIds)}
         show={showPrintList}
         lang={lang}
         t={t}

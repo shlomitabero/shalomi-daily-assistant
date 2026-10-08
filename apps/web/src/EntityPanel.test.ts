@@ -2704,6 +2704,118 @@ test("EntityPanel's Print list button prints exactly the selected rows when a se
 });
 
 /**
+ * Regression test for round 487's finding: with nothing selected,
+ * selectedOrAllRecords's own contract is "export what the table is
+ * currently showing" -- but every call site passed the flat visibleRecords
+ * instead of the grouping/collapse-aware effectivelyVisibleRecords (the
+ * same value round 486 already introduced for "select all"), so Export
+ * CSV silently included a collapsed group's hidden records too. Confirms
+ * Export CSV with nothing selected, while "Won" is collapsed, excludes
+ * Won's own records. Copy uses the exact same recordsToCsv(...,
+ * selectedOrAllRecords(...)) call as Export CSV, so this one test covers
+ * both code paths.
+ */
+test("EntityPanel's Export CSV button (nothing selected) excludes records hidden inside a collapsed group", async () => {
+  await withJsdom(async () => {
+    const store: EntityRecord[] = [
+      { id: 1, name: "Acme Corp", status: "new" },
+      { id: 2, name: "Beta Inc", status: "won" },
+      { id: 3, name: "Gamma LLC", status: "won" },
+    ];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = mockRecordsFetch(store) as typeof fetch;
+    const originalCreateObjectURL = (URL as unknown as { createObjectURL?: (b: Blob) => string }).createObjectURL;
+    const originalRevokeObjectURL = (URL as unknown as { revokeObjectURL?: (u: string) => void }).revokeObjectURL;
+    let capturedBlob: Blob | null = null;
+    (URL as unknown as { createObjectURL: (b: Blob) => string }).createObjectURL = (b: Blob) => {
+      capturedBlob = b;
+      return "blob:mock-url";
+    };
+    (URL as unknown as { revokeObjectURL: (u: string) => void }).revokeObjectURL = () => {};
+    try {
+      renderEntityPanel();
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 3);
+
+      const groupBySelect = document.querySelector(".entity-group-by") as HTMLSelectElement;
+      fireEvent.change(groupBySelect, { target: { value: "status" } });
+      await waitForCondition(() => document.querySelectorAll(".entity-group-header-row").length === 2);
+
+      const headerRows = Array.from(document.querySelectorAll(".entity-group-header-row"));
+      const wonToggle = headerRows[1].querySelector(".entity-group-toggle") as HTMLButtonElement;
+      fireEvent.click(wonToggle);
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 3);
+      assert.ok(
+        !Array.from(document.querySelectorAll("table tbody tr")).some((r) => r.textContent?.includes("Beta Inc")),
+        "the 'Won' group must actually be collapsed before testing export",
+      );
+
+      const exportBtn = document.querySelector(".csv-export-btn") as HTMLButtonElement;
+      fireEvent.click(exportBtn);
+
+      await waitForCondition(() => capturedBlob !== null);
+      const csvText = await (capturedBlob as unknown as Blob).text();
+      assert.match(csvText, /Acme Corp/, "the one visible record must still be exported");
+      assert.doesNotMatch(csvText, /Beta Inc/, "a record hidden inside a collapsed group must not be exported");
+      assert.doesNotMatch(csvText, /Gamma LLC/, "a record hidden inside a collapsed group must not be exported");
+    } finally {
+      globalThis.fetch = originalFetch;
+      if (originalCreateObjectURL) (URL as unknown as { createObjectURL: (b: Blob) => string }).createObjectURL = originalCreateObjectURL;
+      if (originalRevokeObjectURL) (URL as unknown as { revokeObjectURL: (u: string) => void }).revokeObjectURL = originalRevokeObjectURL;
+    }
+  });
+});
+
+/**
+ * Print-list sibling of the Export CSV regression test above -- same
+ * round-487 finding, same underlying selectedOrAllRecords call.
+ */
+test("EntityPanel's Print list button (nothing selected) excludes records hidden inside a collapsed group", async () => {
+  await withJsdom(async () => {
+    const store: EntityRecord[] = [
+      { id: 1, name: "Acme Corp", status: "new" },
+      { id: 2, name: "Beta Inc", status: "won" },
+      { id: 3, name: "Gamma LLC", status: "won" },
+    ];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = mockRecordsFetch(store) as typeof fetch;
+    const originalPrint = window.print;
+    let printCalls = 0;
+    window.print = () => {
+      printCalls += 1;
+    };
+    try {
+      renderEntityPanel();
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 3);
+
+      const groupBySelect = document.querySelector(".entity-group-by") as HTMLSelectElement;
+      fireEvent.change(groupBySelect, { target: { value: "status" } });
+      await waitForCondition(() => document.querySelectorAll(".entity-group-header-row").length === 2);
+
+      const headerRows = Array.from(document.querySelectorAll(".entity-group-header-row"));
+      const wonToggle = headerRows[1].querySelector(".entity-group-toggle") as HTMLButtonElement;
+      fireEvent.click(wonToggle);
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 3);
+      assert.ok(
+        !Array.from(document.querySelectorAll("table tbody tr")).some((r) => r.textContent?.includes("Beta Inc")),
+        "the 'Won' group must actually be collapsed before testing print",
+      );
+
+      const printListBtn = Array.from(document.querySelectorAll("button")).find((b) => b.textContent?.includes("Print"))!;
+      fireEvent.click(printListBtn);
+      await waitForCondition(() => printCalls === 1);
+
+      const sheetText = document.querySelector(".print-list-sheet")!.textContent ?? "";
+      assert.match(sheetText, /Acme Corp/, "the one visible record must still print");
+      assert.doesNotMatch(sheetText, /Beta Inc/, "a record hidden inside a collapsed group must not print");
+      assert.doesNotMatch(sheetText, /Gamma LLC/, "a record hidden inside a collapsed group must not print");
+    } finally {
+      globalThis.fetch = originalFetch;
+      window.print = originalPrint;
+    }
+  });
+});
+
+/**
  * New in this round (441): a long-standing, known-but-deprioritized small
  * candidate from round 377's own notes -- confirmed still present in the
  * current stylesheet. `.print-field` is `display: flex` with `dd` at
