@@ -415,7 +415,9 @@ export function addEntity(projectId: string, label: string): Promise<{ project: 
  * AI-vs-heuristic honest signal, carried from this route's own
  * generateSpec() call -- absent (not even the key) when there was nothing
  * to answer, since the server never calls generateSpec() again in that
- * no-op case.
+ * no-op case. See createProject's own doc comment for why this also
+ * generates one idempotency key per call, protecting against a second
+ * real generateSpec() call and spec overwrite from the same click/retry.
  */
 export function answerQuestions(
   projectId: string,
@@ -424,6 +426,7 @@ export function answerQuestions(
 ): Promise<{ project: Project; providerName?: string }> {
   return request(`/projects/${projectId}/answers`, {
     method: "POST",
+    headers: { "x-idempotency-key": crypto.randomUUID() },
     body: JSON.stringify({ answers, additionalRequest }),
   });
 }

@@ -818,6 +818,67 @@ test("POST /projects/:id/entities/:entityName/fields retried with the same idemp
   });
 });
 
+/**
+ * Round 474 closes the design doc's other identified residual gap:
+ * POST /projects/:id/answers. Unlike /build and /refine, this route
+ * returns a plain JSON response (not an SSE stream) -- confirmed by
+ * reading the route directly before implementing -- so it fits
+ * withIdempotency() exactly like the five routes already converted.
+ * A call-counting provider proves generateSpec() only runs once for the
+ * retry, not just that the response looks the same (the heuristic
+ * provider is a pure function of its input, so a second real call would
+ * produce an identical spec anyway -- only the call count reveals whether
+ * the second request actually ran the work or replayed the first).
+ */
+test("POST /projects/:id/answers retried with the same idempotency key after the first attempt already finished replays the original response instead of calling generateSpec a second time", async () => {
+  let calls = 0;
+  const inner = new HeuristicSpecProvider();
+  const provider: SpecProvider = {
+    name: inner.name,
+    async generate(description) {
+      calls += 1;
+      return inner.generate(description);
+    },
+  };
+  await withServer(
+    async (baseUrl) => {
+      const token = await signup(baseUrl, "answers-idem1@example.com");
+      const createRes = await fetch(`${baseUrl}/api/projects`, {
+        method: "POST",
+        headers: authHeaders(token),
+        body: JSON.stringify({ description: "A CRM with customers and deals." }),
+      });
+      const { project } = (await createRes.json()) as {
+        project: { id: string; spec: { openQuestions: { question: string }[] } };
+      };
+      const question = project.spec.openQuestions[0];
+      assert.ok(question, "the heuristic provider should ask at least one open question here");
+      calls = 0; // reset after the create call above, which also calls generate()
+
+      const headers = { ...authHeaders(token), "x-idempotency-key": "answers-repro-key" };
+      const firstRes = await fetch(`${baseUrl}/api/projects/${project.id}/answers`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ answers: { [question.question]: "Yes, use Stripe for all payments" } }),
+      });
+      assert.equal(firstRes.status, 200);
+      const first = await firstRes.json();
+      assert.equal(calls, 1, "the first attempt must actually call generateSpec once");
+
+      const retryRes = await fetch(`${baseUrl}/api/projects/${project.id}/answers`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ answers: { [question.question]: "Yes, use Stripe for all payments" } }),
+      });
+      assert.equal(retryRes.status, 200);
+      const retry = await retryRes.json();
+      assert.equal(calls, 1, "the retry must not call generateSpec a second time");
+      assert.deepEqual(retry, first, "the retry must replay the original response exactly");
+    },
+    { provider },
+  );
+});
+
 test("full acceptance flow: idea -> spec -> AI build pipeline -> CRUD -> refine -> checkpoints", async () => {
   await withServer(async (baseUrl) => {
     const token = await signup(baseUrl);

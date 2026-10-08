@@ -713,15 +713,27 @@ export function createProjectsRouter(db: ForgeDatabase, provider: SpecProvider |
       if (activePipelines.has(project.id)) {
         throw new HttpError(409, "A build or refine is already running for this project", "PIPELINE_IN_PROGRESS");
       }
-      activePipelines.add(project.id);
-      try {
-        const combinedDescription = `${project.description}\n\n${sections.join("\n\n")}`;
-        const { spec, providerName } = await generateSpec(combinedDescription, provider);
-        const updated = updateProjectSpec(db, project.id, spec);
-        res.json({ project: updated, providerName });
-      } finally {
-        activePipelines.delete(project.id);
-      }
+      // Round 474: unlike /build and /refine (which stream SSE and are out
+      // of scope for this mechanism), this route returns a plain JSON
+      // response, so it fits withIdempotency()'s {status, body} contract
+      // exactly like the five routes converted in rounds 471-473. A retry
+      // landing after the activePipelines guard above already cleared
+      // (the pipeline fully finished) would otherwise call generateSpec()
+      // again -- a second real AI call -- and overwrite project.spec a
+      // second time.
+      const idempotencyKey = req.header("X-Idempotency-Key") || undefined;
+      const { status, body } = await withIdempotency(db, idempotencyKey, req.userId!, "POST /projects/:id/answers", async () => {
+        activePipelines.add(project.id);
+        try {
+          const combinedDescription = `${project.description}\n\n${sections.join("\n\n")}`;
+          const { spec, providerName } = await generateSpec(combinedDescription, provider);
+          const updated = updateProjectSpec(db, project.id, spec);
+          return { status: 200, body: { project: updated, providerName } };
+        } finally {
+          activePipelines.delete(project.id);
+        }
+      });
+      res.status(status).json(body);
     }),
   );
 
