@@ -307,6 +307,27 @@ test("an entity with two date fields (e.g. Rental's startDate/endDate) gets dist
   assert.ok((record.endDate as string) > (record.startDate as string), "endDate should be after startDate");
 });
 
+test("an entity with a checkInDate/checkoutDate pair (not literally named 'endDate') also gets distinct values", () => {
+  // The previous fix above only ever matched a field name containing the
+  // literal substring "end" -- a plausible, equally common booking-style
+  // field name like "checkoutDate" (recognized as a real end-of-range field
+  // by apps/web/src/entityFormatting.ts's own findEndDateField, used by the
+  // calendar view and ICS export) fell through unnoticed and still
+  // collapsed to the same 0-day-stay bug this file's own Rental test above
+  // already guards against, just under a different field name.
+  const booking: Entity = {
+    name: "Booking",
+    fields: [
+      { name: "guestName", type: "text", required: true },
+      { name: "checkInDate", type: "date", required: false },
+      { name: "checkoutDate", type: "date", required: false },
+    ],
+  };
+  const [record] = generateSeedRecords(booking, 1);
+  assert.notEqual(record.checkInDate, record.checkoutDate, "checkInDate and checkoutDate must not collapse to the same day");
+  assert.ok((record.checkoutDate as string) > (record.checkInDate as string), "checkoutDate should be after checkInDate");
+});
+
 test("the generic fallback entity (Item, used when no domain keyword matches) seeds its name field as an item, not a person", () => {
   // "Item" is DEFAULT_ENTITY's real name (packages/spec-engine/src/
   // domainEntities.ts) -- the fallback hit whenever a description doesn't

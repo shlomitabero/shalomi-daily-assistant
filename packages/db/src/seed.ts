@@ -2,6 +2,12 @@ import type { Entity, Field } from "@forge/shared";
 
 const HEBREW_PATTERN = /[֐-׿]/;
 
+// Mirrors apps/web/src/entityFormatting.ts's own END_DATE_FIELD_NAME_HINTS --
+// the live app's calendar view and ICS export already recognize all five of
+// these as a genuine "end of range" field, so seeding must agree with that
+// list rather than its own narrower literal-"end" substring check.
+const END_DATE_FIELD_NAME_HINTS = ["enddate", "returndate", "checkoutdate", "untildate", "todate"];
+
 // Believable-looking sample values for the specific field names this
 // platform's own domain entity library actually generates (see
 // packages/spec-engine/src/domainEntities.ts) — picked cyclically by
@@ -85,14 +91,16 @@ function seedValueFor(field: Field, entity: Entity, index: number): unknown {
     case "boolean":
       return index % 2 === 0;
     case "date": {
-      // A field literally named "endDate" needs to land after its record's
-      // other date field(s), not collapse to the same day -- e.g. Rental's
-      // startDate/endDate would otherwise both seed to the exact same
-      // value for a given index, making every seeded rental a visibly
+      // An end-of-range field (endDate, but also checkoutDate/returnDate/
+      // untilDate/toDate -- the same conventions entityFormatting.ts's
+      // findEndDateField already recognizes) needs to land after its
+      // record's other date field(s), not collapse to the same day -- e.g.
+      // Rental's startDate/endDate would otherwise both seed to the exact
+      // same value for a given index, making every seeded rental a visibly
       // wrong 0-day rental. baseOffset always leaves a 3-day margin for an
-      // "end"-like field to land 3 days closer to today (chronologically
+      // end-like field to land 3 days closer to today (chronologically
       // after) without ever colliding, even at index 0.
-      const isEndLike = /end/i.test(field.name);
+      const isEndLike = END_DATE_FIELD_NAME_HINTS.includes(field.name.toLowerCase());
       const baseOffset = (index + 1) * 3;
       const dayOffset = isEndLike ? baseOffset - 3 : baseOffset;
       const d = new Date(Date.now() - dayOffset * 86_400_000);
