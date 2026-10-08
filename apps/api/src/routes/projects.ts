@@ -447,14 +447,18 @@ export function createProjectsRouter(db: ForgeDatabase, provider: SpecProvider |
         throw new HttpError(404, `No template "${parsed.data.templateId}"`, "TEMPLATE_NOT_FOUND");
       }
       const useEnglish = parsed.data.lang === "en";
-      const project = insertProject(db, {
-        id: randomUUID(),
-        ownerId: req.userId!,
-        name: useEnglish ? template.name : template.nameHe,
-        description: useEnglish ? template.description : template.descriptionHe,
-        spec: template.spec,
+      const idempotencyKey = req.header("X-Idempotency-Key") || undefined;
+      const { status, body } = await withIdempotency(db, idempotencyKey, req.userId!, "POST /projects/from-template", async () => {
+        const project = insertProject(db, {
+          id: randomUUID(),
+          ownerId: req.userId!,
+          name: useEnglish ? template.name : template.nameHe,
+          description: useEnglish ? template.description : template.descriptionHe,
+          spec: template.spec,
+        });
+        return { status: 201, body: { project } };
       });
-      res.status(201).json({ project });
+      res.status(status).json(body);
     }),
   );
 
@@ -541,14 +545,18 @@ export function createProjectsRouter(db: ForgeDatabase, provider: SpecProvider |
     asyncRoute(async (req, res) => {
       const source = requireProjectAccess(db, req.params.id, req.userId!);
       const suffix = isHebrewText(source.description) ? " (עותק)" : " (copy)";
-      const cloned = insertProject(db, {
-        id: randomUUID(),
-        ownerId: req.userId!,
-        name: `${source.name}${suffix}`,
-        description: source.description,
-        spec: source.spec,
+      const idempotencyKey = req.header("X-Idempotency-Key") || undefined;
+      const { status, body } = await withIdempotency(db, idempotencyKey, req.userId!, "POST /projects/:id/clone", async () => {
+        const cloned = insertProject(db, {
+          id: randomUUID(),
+          ownerId: req.userId!,
+          name: `${source.name}${suffix}`,
+          description: source.description,
+          spec: source.spec,
+        });
+        return { status: 201, body: { project: cloned } };
       });
-      res.status(201).json({ project: cloned });
+      res.status(status).json(body);
     }),
   );
 

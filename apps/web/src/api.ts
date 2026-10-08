@@ -261,8 +261,13 @@ export function listTemplates(): Promise<{ templates: TemplateSummary[] }> {
   return request("/templates");
 }
 
+/** See createProject's own doc comment for why this generates one idempotency key per call, here protecting against a duplicate draft project from the same template. */
 export function createProjectFromTemplate(templateId: string, lang: "he" | "en"): Promise<{ project: Project }> {
-  return request("/projects/from-template", { method: "POST", body: JSON.stringify({ templateId, lang }) });
+  return request("/projects/from-template", {
+    method: "POST",
+    headers: { "x-idempotency-key": crypto.randomUUID() },
+    body: JSON.stringify({ templateId, lang }),
+  });
 }
 
 /**
@@ -278,8 +283,9 @@ export function listProjects(): Promise<{ projects: Project[] }> {
   return request("/projects");
 }
 
+/** See createProject's own doc comment for why this generates one idempotency key per call, here protecting against a duplicate clone of the same source project. */
 export function cloneProject(projectId: string): Promise<{ project: Project }> {
-  return request(`/projects/${projectId}/clone`, { method: "POST" });
+  return request(`/projects/${projectId}/clone`, { method: "POST", headers: { "x-idempotency-key": crypto.randomUUID() } });
 }
 
 export function renameProject(projectId: string, name: string): Promise<{ project: Project }> {

@@ -606,6 +606,70 @@ test("POST /projects with the same idempotency key arriving while the first requ
   );
 });
 
+/**
+ * Round 472 extends the same withIdempotency() mechanism (proven on
+ * POST /projects in round 471) to the other two routes
+ * docs/wakeRetry-idempotency-design.md flagged as sharing the identical
+ * unguarded `insertProject(db, { id: randomUUID(), ... })` shape:
+ * from-template and clone. Same repro as round 471's own test: the same
+ * X-Idempotency-Key sent twice, the second time after the first request
+ * already fully finished, must replay the original response instead of
+ * creating a second project.
+ */
+test("POST /projects/from-template retried with the same idempotency key after the first attempt already finished replays the original response instead of creating a second project", async () => {
+  await withServer(async (baseUrl) => {
+    const token = await signup(baseUrl, "from-template-idem1@example.com");
+    const headers = { ...authHeaders(token), "x-idempotency-key": "from-template-repro-key" };
+    const firstRes = await fetch(`${baseUrl}/api/projects/from-template`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ templateId: "crm" }),
+    });
+    assert.equal(firstRes.status, 201);
+    const first = (await firstRes.json()) as { project: { id: string } };
+
+    const retryRes = await fetch(`${baseUrl}/api/projects/from-template`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ templateId: "crm" }),
+    });
+    assert.equal(retryRes.status, 201);
+    const retry = (await retryRes.json()) as { project: { id: string } };
+    assert.equal(retry.project.id, first.project.id, "the retry must return the exact same project, not a newly created one");
+
+    const listRes = await fetch(`${baseUrl}/api/projects`, { headers: authHeaders(token) });
+    const { projects } = (await listRes.json()) as { projects: { id: string }[] };
+    assert.equal(projects.length, 1, "exactly one project must exist -- the retry must not have inserted a second row");
+  });
+});
+
+test("POST /projects/:id/clone retried with the same idempotency key after the first attempt already finished replays the original response instead of creating a second clone", async () => {
+  await withServer(async (baseUrl) => {
+    const token = await signup(baseUrl, "clone-idem1@example.com");
+    const sourceRes = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ description: "A CRM with customers and deals." }),
+    });
+    const { project: source } = (await sourceRes.json()) as { project: { id: string } };
+
+    const headers = { ...authHeaders(token), "x-idempotency-key": "clone-repro-key" };
+    const firstRes = await fetch(`${baseUrl}/api/projects/${source.id}/clone`, { method: "POST", headers });
+    assert.equal(firstRes.status, 201);
+    const first = (await firstRes.json()) as { project: { id: string } };
+
+    const retryRes = await fetch(`${baseUrl}/api/projects/${source.id}/clone`, { method: "POST", headers });
+    assert.equal(retryRes.status, 201);
+    const retry = (await retryRes.json()) as { project: { id: string } };
+    assert.equal(retry.project.id, first.project.id, "the retry must return the exact same cloned project, not a new one");
+
+    const listRes = await fetch(`${baseUrl}/api/projects`, { headers: authHeaders(token) });
+    const { projects } = (await listRes.json()) as { projects: { id: string }[] };
+    // source + exactly one clone, never two clones.
+    assert.equal(projects.length, 2, "exactly one source project and one clone must exist -- the retry must not have inserted a second clone");
+  });
+});
+
 test("full acceptance flow: idea -> spec -> AI build pipeline -> CRUD -> refine -> checkpoints", async () => {
   await withServer(async (baseUrl) => {
     const token = await signup(baseUrl);
