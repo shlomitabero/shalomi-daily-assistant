@@ -158,7 +158,18 @@ export function RoleChip({
 
   return (
     <span className="chip chip-removable">
-      <span className="chip-text" onClick={rename.startEditing} title={t("spec.roles.rename")}>
+      <span
+        className="chip-text"
+        onClick={rename.startEditing}
+        title={t("spec.roles.rename")}
+        role="button"
+        tabIndex={0}
+        onKeyDown={(e) => {
+          if (e.key !== "Enter" && e.key !== " ") return;
+          e.preventDefault();
+          rename.startEditing();
+        }}
+      >
         {role}
       </span>
       <button
@@ -233,7 +244,18 @@ export function AssumptionItem({
 
   return (
     <li className="assumption-item">
-      <span className="assumption-text" onClick={rename.startEditing} title={t("spec.assumptions.rename")}>
+      <span
+        className="assumption-text"
+        onClick={rename.startEditing}
+        title={t("spec.assumptions.rename")}
+        role="button"
+        tabIndex={0}
+        onKeyDown={(e) => {
+          if (e.key !== "Enter" && e.key !== " ") return;
+          e.preventDefault();
+          rename.startEditing();
+        }}
+      >
         {assumption}
       </span>
       <button
@@ -327,7 +349,18 @@ export function EntitySummaryItem({
   return (
     <div className="entity-summary">
       <div className="entity-summary-header">
-        <strong className="entity-summary-label" onClick={rename.startEditing} title={t("spec.entities.rename")}>
+        <strong
+          className="entity-summary-label"
+          onClick={rename.startEditing}
+          title={t("spec.entities.rename")}
+          role="button"
+          tabIndex={0}
+          onKeyDown={(e) => {
+            if (e.key !== "Enter" && e.key !== " ") return;
+            e.preventDefault();
+            rename.startEditing();
+          }}
+        >
           {entity.label ?? entity.name}
         </strong>
         <button
@@ -428,7 +461,18 @@ export function FieldChip({
 
   return (
     <span className="chip chip-removable">
-      <span className="chip-text" onClick={rename.startEditing} title={t("spec.fields.rename")}>
+      <span
+        className="chip-text"
+        onClick={rename.startEditing}
+        title={t("spec.fields.rename")}
+        role="button"
+        tabIndex={0}
+        onKeyDown={(e) => {
+          if (e.key !== "Enter" && e.key !== " ") return;
+          e.preventDefault();
+          rename.startEditing();
+        }}
+      >
         {field.label ?? field.name}
         {field.required ? " *" : ""}
       </span>

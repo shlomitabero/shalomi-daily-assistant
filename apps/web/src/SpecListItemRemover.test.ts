@@ -317,6 +317,21 @@ test("clicking a role chip's text opens an inline edit, and saving it calls the 
   });
 });
 
+/** Mirrors ProjectNameEditor.test.ts's own keyboard-focus test for the identical gap round 483 fixed in a sibling family of click-to-rename components. */
+test("a role chip's text is keyboard-focusable and Enter opens edit mode", async () => {
+  await withJsdom(async () => {
+    renderRoleChip(() => {});
+
+    const chipText = document.querySelector(".chip-text") as HTMLElement;
+    assert.equal(chipText.getAttribute("role"), "button");
+    assert.equal(chipText.getAttribute("tabIndex"), "0");
+
+    fireEvent.keyDown(chipText, { key: "Enter" });
+    await waitForCondition(() => document.querySelector(".chip-rename-edit input") !== null);
+    assert.ok(document.querySelector(".chip-rename-edit input"), "Enter should have entered edit mode");
+  });
+});
+
 test("pressing Escape while editing a role chip cancels without saving", async () => {
   await withJsdom(async () => {
     const originalFetch = globalThis.fetch;
@@ -434,6 +449,21 @@ test("clicking an assumption's text opens an inline edit, and saving it calls th
     } finally {
       globalThis.fetch = originalFetch;
     }
+  });
+});
+
+/** Mirrors ProjectNameEditor.test.ts's own keyboard-focus test for the identical gap round 483 fixed in a sibling family of click-to-rename components. */
+test("an assumption's text is keyboard-focusable and Enter opens edit mode", async () => {
+  await withJsdom(async () => {
+    renderAssumptionItem(() => {});
+
+    const text = document.querySelector(".assumption-text") as HTMLElement;
+    assert.equal(text.getAttribute("role"), "button");
+    assert.equal(text.getAttribute("tabIndex"), "0");
+
+    fireEvent.keyDown(text, { key: "Enter" });
+    await waitForCondition(() => document.querySelector(".assumption-rename-edit input") !== null);
+    assert.ok(document.querySelector(".assumption-rename-edit input"), "Enter should have entered edit mode");
   });
 });
 
@@ -593,6 +623,21 @@ test("clicking an entity summary's label opens an inline edit, and saving it cal
     } finally {
       globalThis.fetch = originalFetch;
     }
+  });
+});
+
+/** Mirrors ProjectNameEditor.test.ts's own keyboard-focus test for the identical gap round 483 fixed in a sibling family of click-to-rename components. */
+test("an entity summary's label is keyboard-focusable and Enter opens edit mode", async () => {
+  await withJsdom(async () => {
+    renderEntitySummaryItem(() => {});
+
+    const label = document.querySelector(".entity-summary-label") as HTMLElement;
+    assert.equal(label.getAttribute("role"), "button");
+    assert.equal(label.getAttribute("tabIndex"), "0");
+
+    fireEvent.keyDown(label, { key: "Enter" });
+    await waitForCondition(() => document.querySelector(".entity-summary-rename-edit input") !== null);
+    assert.ok(document.querySelector(".entity-summary-rename-edit input"), "Enter should have entered edit mode");
   });
 });
 
@@ -967,6 +1012,21 @@ test("clicking a field chip's text opens an inline edit, and saving it calls the
     } finally {
       globalThis.fetch = originalFetch;
     }
+  });
+});
+
+/** Mirrors ProjectNameEditor.test.ts's own keyboard-focus test for the identical gap round 483 fixed in a sibling family of click-to-rename components. */
+test("a field chip's text is keyboard-focusable and Enter opens edit mode", async () => {
+  await withJsdom(async () => {
+    renderFieldChip(() => {});
+
+    const chipText = document.querySelector(".chip-text") as HTMLElement;
+    assert.equal(chipText.getAttribute("role"), "button");
+    assert.equal(chipText.getAttribute("tabIndex"), "0");
+
+    fireEvent.keyDown(chipText, { key: "Enter" });
+    await waitForCondition(() => document.querySelector(".chip-rename-edit input") !== null);
+    assert.ok(document.querySelector(".chip-rename-edit input"), "Enter should have entered edit mode");
   });
 });
 
