@@ -6891,6 +6891,69 @@ test("the exported EntityView's 'Reset column widths' button only appears once a
 });
 
 /**
+ * Regression test for round 478: ports the live preview's own keyboard-
+ * operable "move earlier"/"move later" fallback to column reorder (the
+ * exported app's own drag-and-drop reorder, round 211, had the identical
+ * drag-only gap EntityPanel.tsx's did before this round). Drives a real
+ * click on the generated buttons and confirms the real reorder happens and
+ * persists to localStorage, exactly like the drag-and-drop test above.
+ */
+test("the exported EntityView's column headers have keyboard-operable 'move earlier'/'move later' buttons as a real fallback to drag-and-drop reorder", async () => {
+  const files = generateExportFiles(project);
+  const dir = writeGeneratedWebComponent(files);
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async () => ({
+    ok: true,
+    status: 200,
+    json: async () => ({ records: [{ id: 1, name: "Alice", status: "New" }] }),
+  })) as typeof fetch;
+
+  try {
+    await withRealLocalStorage(async () => {
+      const { EntityView } = await import(path.join(dir, "web", "src", "components", "EntityView.jsx"));
+      const customerEntity = project.spec.entities.find((e) => e.name === "Customer")!;
+      const props = {
+        entity: customerEntity,
+        highlightRecordId: null,
+        onHighlightHandled: () => {},
+        onJumpToRecord: () => {},
+        onRecordCountChange: () => {},
+      };
+
+      const { container } = render(React.createElement(EntityView, props));
+      for (let i = 0; i < 40; i++) {
+        if (container.querySelectorAll(".resizable-col").length === 2) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+
+      const headerText = () => [...container.querySelectorAll(".resizable-col")].map((th) => th.querySelector(".sort-header")!.textContent);
+      const moveButtons = (th: Element) => th.querySelectorAll(".column-move-btn") as NodeListOf<HTMLButtonElement>;
+      assert.deepEqual(headerText(), ["שם", "סטטוס"], "columns must start in the entity's own natural field order");
+
+      const headers = () => container.querySelectorAll(".resizable-col");
+      const [nameEarlier, nameLater] = moveButtons(headers()[0]);
+      const [, statusLater] = moveButtons(headers()[1]);
+      assert.equal(nameEarlier.disabled, true, "the first column's 'move earlier' button must be disabled");
+      assert.equal(statusLater.disabled, true, "the last column's 'move later' button must be disabled");
+
+      await act(async () => {
+        fireEvent.click(nameLater);
+      });
+      assert.deepEqual(headerText(), ["סטטוס", "שם"], "clicking 'move later' on the first column must swap it with the one after it");
+
+      const stored = JSON.parse(localStorage.getItem("forge_column_order") ?? "{}");
+      assert.deepEqual(stored.Customer, ["status", "name"], "the keyboard-driven reorder must persist to real localStorage exactly like the drag-and-drop one does");
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    cleanup();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
  * New in this round (341): mirrors the live preview's own "Clear filters"
  * button -- with no way to reset multiple active per-field filters except
  * reopening each dropdown individually, a button now appears only once at

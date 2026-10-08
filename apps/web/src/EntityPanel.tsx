@@ -1344,6 +1344,30 @@ export function EntityPanel({
     setDraggedField(null);
   }
 
+  /**
+   * Keyboard-operable fallback for the drag-and-drop column reorder above --
+   * before this, dragging a column header (onDragStart/onDrop, native HTML5
+   * drag-and-drop) was the ONLY way to reorder columns, same gap the Kanban
+   * board's own card drag had before round 186 gave it a <select> fallback.
+   * Moving a field earlier/later swaps it with its visible neighbor by
+   * reusing reorderColumns the same way a drag would -- "move earlier" asks
+   * to move this field to just before its visible predecessor; "move later"
+   * asks to move the visible successor to just before this field, which is
+   * the same operation expressed the other way around (reorderColumns only
+   * has a "move X before Y" primitive, not "move X after Y").
+   */
+  function handleMoveColumn(fieldName: string, direction: "earlier" | "later") {
+    const visibleIndex = visibleFields.findIndex((f) => f.name === fieldName);
+    if (visibleIndex === -1) return;
+    const neighborIndex = direction === "earlier" ? visibleIndex - 1 : visibleIndex + 1;
+    if (neighborIndex < 0 || neighborIndex >= visibleFields.length) return;
+    const neighborName = visibleFields[neighborIndex].name;
+    const fullOrder = orderedFields.map((f) => f.name);
+    const next =
+      direction === "earlier" ? reorderColumns(fullOrder, fieldName, neighborName) : reorderColumns(fullOrder, neighborName, fieldName);
+    setColumnOrderState(setColumnOrder(projectId, entity.name, next));
+  }
+
   const visibleRecords = useMemo(() => {
     const matched = records.filter((r) => matchesSearch(r, entity.fields, search, allEntities, relatedRecords, lang));
     const filtered = matched.filter((r) =>
@@ -2672,7 +2696,7 @@ export function EntityPanel({
                         onChange={toggleSelectAllVisible}
                       />
                     </th>
-                    {visibleFields.map((f) => {
+                    {visibleFields.map((f, visibleIndex) => {
                       const keyIndex = sortKeys.findIndex((k) => k.field === f.name);
                       const key = keyIndex === -1 ? null : sortKeys[keyIndex];
                       return (
@@ -2698,6 +2722,26 @@ export function EntityPanel({
                             {key && (key.direction === "asc" ? " ▲" : " ▼")}
                             {key && sortKeys.length > 1 && <span className="sort-priority">{keyIndex + 1}</span>}
                           </button>
+                          <span className="column-move-buttons">
+                            <button
+                              type="button"
+                              className="column-move-btn"
+                              onClick={() => handleMoveColumn(f.name, "earlier")}
+                              disabled={visibleIndex === 0}
+                              aria-label={t("entity.columns.moveEarlier", { field: f.label ?? f.name })}
+                            >
+                              ‹
+                            </button>
+                            <button
+                              type="button"
+                              className="column-move-btn"
+                              onClick={() => handleMoveColumn(f.name, "later")}
+                              disabled={visibleIndex === visibleFields.length - 1}
+                              aria-label={t("entity.columns.moveLater", { field: f.label ?? f.name })}
+                            >
+                              ›
+                            </button>
+                          </span>
                           <span
                             className="column-resize-handle"
                             onMouseDown={(e) => startResize(e, f.name)}

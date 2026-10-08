@@ -2766,6 +2766,20 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
     setDraggedField(null);
   }
 
+  // Keyboard-operable fallback for the drag above -- mirrors the live
+  // preview's own handleMoveColumn (EntityPanel.tsx, round 478).
+  function handleMoveColumn(fieldName, direction) {
+    const visibleIndex = visibleFields.findIndex((f) => f.name === fieldName);
+    if (visibleIndex === -1) return;
+    const neighborIndex = direction === "earlier" ? visibleIndex - 1 : visibleIndex + 1;
+    if (neighborIndex < 0 || neighborIndex >= visibleFields.length) return;
+    const neighborName = visibleFields[neighborIndex].name;
+    const fullOrder = orderedFields.map((f) => f.name);
+    const next =
+      direction === "earlier" ? reorderColumns(fullOrder, fieldName, neighborName) : reorderColumns(fullOrder, neighborName, fieldName);
+    setColumnOrderState(setColumnOrder(entity.name, next));
+  }
+
   // Drag-to-resize a column header. Only attaches real mousemove/mouseup
   // listeners while a drag is actually in progress (resizingField set),
   // removing them the instant it ends -- not a permanent global listener
@@ -3907,7 +3921,7 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
                         onChange={toggleSelectAllVisible}
                       />
                     </th>
-                    {visibleFields.map((f) => {
+                    {visibleFields.map((f, visibleIndex) => {
                       const keyIndex = sortKeys.findIndex((k) => k.field === f.name);
                       const key = keyIndex === -1 ? null : sortKeys[keyIndex];
                       return (
@@ -3933,6 +3947,26 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
                             {key ? (key.direction === "asc" ? " ▲" : " ▼") : ""}
                             {key && sortKeys.length > 1 && <span className="sort-priority">{keyIndex + 1}</span>}
                           </button>
+                          <span className="column-move-buttons">
+                            <button
+                              type="button"
+                              className="column-move-btn"
+                              onClick={() => handleMoveColumn(f.name, "earlier")}
+                              disabled={visibleIndex === 0}
+                              aria-label={\`Move \${f.label} column earlier\`}
+                            >
+                              ‹
+                            </button>
+                            <button
+                              type="button"
+                              className="column-move-btn"
+                              onClick={() => handleMoveColumn(f.name, "later")}
+                              disabled={visibleIndex === visibleFields.length - 1}
+                              aria-label={\`Move \${f.label} column later\`}
+                            >
+                              ›
+                            </button>
+                          </span>
                           <span className="column-resize-handle" onMouseDown={(e) => startResize(e, f.name)} aria-hidden="true" />
                         </th>
                       );
@@ -4829,6 +4863,10 @@ th, td { text-align: start; padding: 8px 10px; border-bottom: 1px solid var(--bo
 .sort-priority { display: inline-flex; align-items: center; justify-content: center; min-width: 15px; height: 15px; margin-inline-start: 3px; padding: 0 3px; border-radius: 999px; background: var(--accent-soft); color: var(--accent-deep); font-size: 10px; font-weight: 700; vertical-align: middle; }
 .resizable-col { position: relative; }
 .resizable-col-drag-over { background: var(--accent-soft); }
+.column-move-buttons { display: inline-flex; margin-inline-start: 4px; gap: 2px; }
+.column-move-btn { background: none; border: none; padding: 0 2px; margin: 0; color: var(--muted); font: inherit; line-height: 1; cursor: pointer; }
+.column-move-btn:hover:not(:disabled), .column-move-btn:focus-visible { color: var(--text); }
+.column-move-btn:disabled { color: var(--muted); opacity: 0.35; cursor: default; }
 .column-resize-handle { position: absolute; top: 0; bottom: 0; inset-inline-end: 0; width: 6px; cursor: col-resize; user-select: none; touch-action: none; z-index: 1; }
 .entity-table-resized { table-layout: fixed; }
 .entity-table-resized th, .entity-table-resized td { overflow: hidden; text-overflow: ellipsis; }

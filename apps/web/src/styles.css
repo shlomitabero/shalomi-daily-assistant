@@ -1124,6 +1124,38 @@ th {
   background: var(--accent-soft);
 }
 
+.column-move-buttons {
+  display: inline-flex;
+  margin-inline-start: 4px;
+  gap: 2px;
+}
+
+.column-move-btn {
+  background: none;
+  border: none;
+  padding: 0 2px;
+  margin: 0;
+  color: var(--muted);
+  font: inherit;
+  line-height: 1;
+  cursor: pointer;
+  box-shadow: none;
+}
+
+.column-move-btn:hover:not(:disabled),
+.column-move-btn:focus-visible {
+  color: var(--text);
+  background: none;
+  transform: none;
+  box-shadow: none;
+}
+
+.column-move-btn:disabled {
+  color: var(--muted);
+  opacity: 0.35;
+  cursor: default;
+}
+
 .column-resize-handle {
   position: absolute;
   top: 0;

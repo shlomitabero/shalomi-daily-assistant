@@ -4330,6 +4330,69 @@ test("EntityPanel's table columns are drag-and-drop reorderable, persisting per 
   });
 });
 
+/**
+ * Regression test for round 478: column reorder (round 203, test above) was
+ * drag-and-drop ONLY -- no keyboard path existed at all, the same gap the
+ * Kanban board's own card drag (round 186) avoided by keeping its status
+ * <select> as an accessible fallback. Each header now also has "move
+ * earlier"/"move later" buttons that call the exact same reorderColumns
+ * path a drag would, reachable and operable with a plain click (and
+ * therefore with a keyboard, since a <button> is natively focusable and
+ * Enter/Space-activatable -- this suite's jsdom environment doesn't
+ * simulate real Tab-focus movement, so this test proves the buttons exist,
+ * are correctly enabled/disabled at the ends of the order, and perform the
+ * real reorder, which is what actually matters for keyboard reachability).
+ */
+test("EntityPanel's column headers have keyboard-operable 'move earlier'/'move later' buttons as a real fallback to drag-and-drop reorder", async () => {
+  await withJsdom(async () => {
+    const store: EntityRecord[] = [{ id: 1, createdAt: "x", name: "Acme Corp", status: "new" }];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = mockRecordsFetch(store) as typeof fetch;
+    try {
+      renderEntityPanel();
+      await waitForCondition(() => document.querySelector("table") !== null);
+
+      const headerText = () => [...document.querySelectorAll("thead th.resizable-col")].map((th) => th.querySelector(".sort-header")!.textContent);
+      const moveButtons = (th: Element) => th.querySelectorAll(".column-move-btn") as NodeListOf<HTMLButtonElement>;
+      assert.deepEqual(headerText(), ["Name", "Status"], "columns must start in the entity's own natural field order");
+
+      const headers = () => document.querySelectorAll("thead th.resizable-col");
+      const [nameEarlier, nameLater] = moveButtons(headers()[0]);
+      const [statusEarlier, statusLater] = moveButtons(headers()[1]);
+
+      assert.equal(nameEarlier.disabled, true, "the first column's 'move earlier' button must be disabled -- there's nothing before it");
+      assert.equal(nameLater.disabled, false, "the first column's 'move later' button must be enabled");
+      assert.equal(statusEarlier.disabled, false, "the last column's 'move earlier' button must be enabled");
+      assert.equal(statusLater.disabled, true, "the last column's 'move later' button must be disabled -- there's nothing after it");
+
+      fireEvent.click(nameLater);
+      await waitForCondition(() => headerText()[0] === "Status");
+      assert.deepEqual(headerText(), ["Status", "Name"], "clicking 'move later' on Name must move it past Status, the same result dragging it there would give");
+
+      const store2 = JSON.parse(localStorage.getItem("forge.columnOrder") ?? "{}");
+      assert.deepEqual(store2["proj1:Deal"], ["status", "name"], "the keyboard-driven reorder must persist to real localStorage exactly like the drag-and-drop one does");
+
+      // Disabled state must have flipped along with the order: Status is now
+      // first (its own "earlier" must disable), Name is now last (its own
+      // "later" must disable).
+      const [statusEarlierAfter] = moveButtons(document.querySelectorAll("thead th.resizable-col")[0]);
+      const [, nameLaterAfter] = moveButtons(document.querySelectorAll("thead th.resizable-col")[1]);
+      assert.equal(statusEarlierAfter.disabled, true, "Status, now first, must have its 'move earlier' button disabled");
+      assert.equal(nameLaterAfter.disabled, true, "Name, now last, must have its 'move later' button disabled");
+
+      // Clicking "move earlier" on the now-last Name column must undo it,
+      // landing back at the original order -- the same operation expressed
+      // from the other column, proving both directions actually work.
+      const [nameEarlierAfter] = moveButtons(document.querySelectorAll("thead th.resizable-col")[1]);
+      fireEvent.click(nameEarlierAfter);
+      await waitForCondition(() => headerText()[0] === "Name");
+      assert.deepEqual(headerText(), ["Name", "Status"], "clicking 'move earlier' on Name must move it back before Status");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
 // Deliberately shares a field NAME ("name") with DEAL_ENTITY, in a different
 // position -- if Deal's leftover in-memory column order ["status", "name"]
 // ever leaked into Courier's own render (the reset effect not reloading
