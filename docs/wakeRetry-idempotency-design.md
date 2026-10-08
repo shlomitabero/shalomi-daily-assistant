@@ -126,7 +126,8 @@ a theoretical one.
   append routes (the pipeline itself takes real time, so the "it already
   fully finished" window only opens once the whole build/refine duration has
   elapsed) but the most expensive one to hit (a full AI-driven rebuild, not
-  a one-line append).
+  a one-line append). **See the round-482 addendum at the end of this
+  document for a concrete (but still unimplemented) design closing this gap.**
 - **`POST /projects/:id/answers`** — `routes/projects.ts:644-699`. Same
   `activePipelines` guard, same residual gap, same AI-call cost, scoped to
   the pre-build spec-review step instead of a built project.
@@ -228,3 +229,124 @@ serve as a permanent audit log.
    assumes replaying the original response verbatim (simplest, matches what
    the client expected the first time), but a reviewer closer to the product
    side may prefer a different signal for observability.
+
+## Addendum (round 482): a concrete design for the one remaining gap — `/refine`'s SSE stream
+
+**Status: design only, no code written this round either** — the same
+discipline this document itself established in round 470, reaffirmed every
+round since (471-481) that chose a fresh Explore survey over touching this.
+Round 482's own survey came back genuinely empty (an honest, legitimate
+result this session's own standing guidance explicitly allows — "a clean
+round is a legitimate outcome"), so this round went deeper on the one
+large candidate left instead of forcing a weak bug report.
+
+**First, a correction to this doc's own "Full inventory" section above**:
+re-reading `routes/projects.ts` line by line this round confirms `/build`'s
+"double-guarded already, no gap" verdict is still exactly right — the
+`project.status === "built"` check rejects a delayed retry landing *after*
+a first `/build` already succeeded, on top of `activePipelines` rejecting
+one landing *during*. `/refine` has no equivalent for the "after" case:
+`project.status` stays `"built"` throughout a refine (there is no
+`"refining"` status), so nothing server-side distinguishes "a genuinely new
+refine instruction" from "the exact same instruction, replayed by a client
+retry that landed after the first one already fully finished."
+
+**Second, the actual reachability of that gap, confirmed by reading the
+client side** (`apps/web/src/api.ts`'s `streamPipeline`/`fetchApi`): a
+build/refine's *initial* POST goes through `fetchWithWakeRetry` exactly like
+every other request (`fetchApi` wraps every call in it, no exception for
+streaming routes) — so the retry-on-connection-failure risk this whole
+document is about applies to `/refine`'s opening handshake the same as any
+other POST. But a network failure *after* the SSE stream has already started
+is a different code path: `streamPipeline`'s own read loop (`api.ts:460-474`)
+catches a `reader.read()` failure and throws a plain `NETWORK_ERROR`
+directly to the caller — it does **not** re-enter `fetchWithWakeRetry`, so
+there is no automatic client-side retry once bytes have started arriving.
+The realistic risk is therefore specifically: the initial POST is accepted
+and the server starts running the real pipeline, but the response's opening
+handshake is slow enough (a cold-start-adjacent delay, or a transient
+connection hiccup before the first SSE byte is flushed) that
+`fetchWithWakeRetry` gives up on that attempt and retries the same POST —
+landing, in the unlucky case, after the original attempt has since finished
+server-side. This is a narrower window than the document's original framing
+suggested (it is about the pre-first-byte handshake specifically, not an
+arbitrary mid-stream drop), but it is real, and it is the single most
+expensive route in the whole inventory to hit (a full AI-driven rebuild, a
+second checkpoint, non-deterministic duplicate spec changes).
+
+**The mechanism**: generalize `withIdempotency`'s existing
+guard-insert-record shape from a single `{status, body}` JSON value to an
+ordered array of SSE events, since that's the only structural difference —
+the guard logic (check `in_progress`/`done`, insert, clean up on throw) is
+identical:
+
+```ts
+async function withIdempotencyStream(
+  db: ForgeDatabase,
+  key: string | undefined,
+  userId: string,
+  route: string,
+  res: Response,
+  run: () => AsyncGenerator<AgentStepEvent>,
+): Promise<void> {
+  res.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-cache", connection: "keep-alive" });
+  if (!key) {
+    for await (const event of run()) res.write(`data: ${JSON.stringify(event)}\n\n`);
+    return res.end();
+  }
+  pruneExpiredIdempotencyRecords(db, IDEMPOTENCY_TTL_MS);
+  const existing = getIdempotencyRecord(db, key);
+  if (existing?.status === "in_progress") throw new HttpError(409, "...", "DUPLICATE_REQUEST_IN_PROGRESS");
+  if (existing?.status === "done") {
+    for (const event of JSON.parse(existing.responseBody!) as AgentStepEvent[]) res.write(`data: ${JSON.stringify(event)}\n\n`);
+    return res.end();
+  }
+  insertIdempotencyRecord(db, key, userId, route);
+  const recorded: AgentStepEvent[] = [];
+  try {
+    for await (const event of run()) {
+      recorded.push(event);
+      res.write(`data: ${JSON.stringify(event)}\n\n`);
+    }
+    completeIdempotencyRecord(db, key, 200, JSON.stringify(recorded));
+  } catch (err) {
+    deleteIdempotencyRecord(db, key);
+    throw err;
+  } finally {
+    res.end();
+  }
+}
+```
+
+This reuses every existing piece (`idempotency_keys` table, its TTL prune,
+the insert/complete/delete helpers) unchanged — the only new code is this
+one stream-shaped wrapper, called from `/refine` in place of today's
+`streamPipeline` call, with `X-Idempotency-Key` added to `streamRefine`
+(`api.ts`) the same way `createProject` already generates one. `/build`
+needs no equivalent change (see the correction above — it already has no
+gap). A replayed "done" stream writes every event back-to-back with no
+artificial delay between them, same simplicity tradeoff as the existing
+JSON-route replay; the client's own `onEvent` handler already processes
+events as fast as they arrive with no timing assumption, so instant replay
+is not a behavior change the UI needs to account for.
+
+**Why this round still stops at the design**, not an implementation: this
+touches the exact request path round 163's own incident lives in (a
+build/refine request that is slow, retried, and user-visible if handled
+wrong), and the standing instruction every round since 475 has repeated —
+*never implement `/refine` in haste* — applies with full force here. This
+addendum exists so a future round that does take it on starts from a
+reviewed plan instead of reasoning it out from scratch under time pressure.
+
+## Open questions this addendum adds
+
+4. **Whether `/build` truly needs zero changes** — this round's own
+   reasoning above concludes yes, but a future implementer should re-verify
+   the `project.status === "built"` guard still holds exactly as described
+   before trusting this addendum's "no gap" verdict secondhand.
+5. **Testing a stream-shaped idempotency guard** — the existing JSON-route
+   tests simulate a retry by calling `withIdempotency` twice with the same
+   key; the stream equivalent needs a fake `Response`-like object (or the
+   real one, as `app.test.ts`'s own SSE tests already construct) to assert
+   the *replayed* events match the *original* ones byte-for-byte, not just
+   that *some* events came back.
