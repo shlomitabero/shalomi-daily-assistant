@@ -3295,6 +3295,112 @@ test("the exported EntityView's 'd' shortcut duplicates the focused row via the 
 });
 
 /**
+ * Round 489's finding: EntityView's own j/k/x/d/Delete/Enter and "n"
+ * keyboard shortcuts (all above) only ever guarded against isTypingTarget,
+ * never against the exported app's one overlay dialog, GlobalSearch, being
+ * open on top of the table -- unlike the live Forge AI preview, which has
+ * guarded every one of its own table shortcuts with isAnyDialogOpen() since
+ * round 365, for exactly this reason: GlobalSearch has several focusable,
+ * non-input controls (its own Close button, recent-search chips, "Show
+ * all"), so isTypingTarget alone doesn't catch focus landing on one of
+ * those while the user believes they're inside the search modal. Confirms
+ * "d" silently duplicates the focused row underneath GlobalSearch while it
+ * is mounted, and that the same keypress works normally again once
+ * GlobalSearch is closed (proving the guard is real, not just always-on).
+ */
+test("the exported EntityView's 'd' shortcut does not fire while GlobalSearch is open on top of the table", async () => {
+  const files = generateExportFiles(project);
+  const dir = writeGeneratedWebComponent(files);
+  const store = [
+    { id: 1, name: "Acme Corp", status: "New" },
+    { id: 2, name: "Globex", status: "Won" },
+  ];
+  const originalFetch = globalThis.fetch;
+  let postCount = 0;
+  globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
+    const method = init?.method ?? "GET";
+    if (method === "GET" && input === "/api/Customer") {
+      return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    if (method === "GET") {
+      return new Response(JSON.stringify({ records: [] }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    if (method === "POST" && input === "/api/Customer") {
+      postCount += 1;
+      const body = JSON.parse(init!.body as string);
+      const record = { id: 3, ...body };
+      store.push(record);
+      return new Response(JSON.stringify({ record }), { status: 201, headers: { "content-type": "application/json" } });
+    }
+    throw new Error(`unexpected request ${method} ${input}`);
+  }) as typeof fetch;
+
+  try {
+    await withRealLocalStorage(async () => {
+      const { EntityView } = await import(path.join(dir, "web", "src", "components", "EntityView.jsx"));
+      const { GlobalSearch } = await import(path.join(dir, "web", "src", "components", "GlobalSearch.jsx"));
+      const customerEntity = project.spec.entities.find((e) => e.name === "Customer")!;
+      const props = {
+        entity: customerEntity,
+        highlightRecordId: null,
+        onHighlightHandled: () => {},
+        onJumpToRecord: () => {},
+        onRecordCountChange: () => {},
+      };
+
+      const { container } = render(React.createElement(EntityView, props));
+      for (let i = 0; i < 40; i++) {
+        if (container.querySelectorAll("tbody tr").length === 2) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+      assert.equal(container.querySelectorAll("tbody tr").length, 2, "expected both records to have loaded");
+
+      await act(async () => {
+        fireEvent.keyDown(window, { key: "j" });
+      });
+      const focused = container.querySelector(".record-row-focused") as HTMLElement;
+      assert.equal(focused.getAttribute("data-record-id"), "1", "sanity check: 'j' must have focused the first row");
+
+      const searchRender = render(
+        React.createElement(GlobalSearch, {
+          entities: project.spec.entities,
+          onClose: () => {},
+          onJumpToEntity: () => {},
+          onJumpToRecord: () => {},
+        }),
+      );
+      assert.match(searchRender.container.textContent ?? "", /Search everything/, "sanity check: GlobalSearch must actually be mounted");
+
+      await act(async () => {
+        fireEvent.keyDown(window, { key: "d" });
+      });
+      assert.equal(postCount, 0, "'d' must not duplicate the background row while GlobalSearch is open on top of it");
+      assert.equal(container.querySelectorAll("tbody tr").length, 2, "no new row may appear while the search overlay is open");
+
+      searchRender.unmount();
+
+      await act(async () => {
+        fireEvent.keyDown(window, { key: "d" });
+      });
+      for (let i = 0; i < 40; i++) {
+        if (container.querySelectorAll("tbody tr").length === 3) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+      assert.equal(postCount, 1, "'d' must work normally again once GlobalSearch has closed");
+      assert.equal(container.querySelectorAll("tbody tr").length, 3, "the duplicate must actually appear now that the overlay is gone");
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    cleanup();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
  * New in this round: porting the live preview's own Escape shortcut
  * (clear the table's multi-row selection) to the exported app's
  * EntityView.jsx. "x" above lets a keyboard-only user build a
@@ -4627,7 +4733,7 @@ test("the exported app includes a real cross-entity global search, ported from t
   const globalSearchJsx = files.find((f) => f.path === "web/src/components/GlobalSearch.jsx")!.content;
   // Reuses EntityView's own matchesSearch/recordDisplayLabel rather than
   // re-implementing the matching rule a second time.
-  assert.match(globalSearchJsx, /import \{ matchesSearch, recordDisplayLabel \} from ".\/EntityView\.jsx"/);
+  assert.match(globalSearchJsx, /import \{ matchesSearch, recordDisplayLabel, markSearchDialogOpen, markSearchDialogClosed \} from ".\/EntityView\.jsx"/);
   assert.match(globalSearchJsx, /export function GlobalSearch/);
   assert.match(globalSearchJsx, /global-search-group-selected/);
   assert.match(globalSearchJsx, /ArrowDown/);

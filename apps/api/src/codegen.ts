@@ -2520,6 +2520,34 @@ export function isTypingTarget(target) {
   return tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT";
 }
 
+// The exported app's only overlay dialog is GlobalSearch -- unlike the live
+// Forge AI preview (which shares a single isAnyDialogOpen() guard across
+// eight dialogs via useDialogFocusTrap.ts), one module-scoped flag is
+// enough here. EntityView's own window-level j/k/x/d/n keydown handlers
+// need to read "is the search dialog open right now" synchronously inside a
+// native event handler, not re-render in response to it: without this,
+// pressing "d"/"x"/"Enter"/"n" while focus sits on a non-input control
+// inside the open search overlay (its Close button, a recent-search chip,
+// "Show all") silently duplicated/selected/edited/discarded a background
+// table row the user wasn't even looking at, since isTypingTarget alone
+// only catches focus on a real text input.
+let searchDialogOpenCount = 0;
+
+export function isSearchDialogOpen() {
+  return searchDialogOpenCount > 0;
+}
+
+// GlobalSearch.jsx is a separate module from this one, so it can't mutate
+// searchDialogOpenCount directly -- these two exports are its only way to
+// flip the flag on/off as it mounts/unmounts.
+export function markSearchDialogOpen() {
+  searchDialogOpenCount += 1;
+}
+
+export function markSearchDialogClosed() {
+  searchDialogOpenCount -= 1;
+}
+
 /** Shared list + form UI used by every entity's own component file. */
 export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJumpToRecord, onRecordCountChange }) {
   const [records, setRecords] = useState([]);
@@ -3012,7 +3040,7 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
   useEffect(() => {
     if (viewMode !== "table") return;
     function handleKeyDown(e) {
-      if (isTypingTarget(e.target)) return;
+      if (isTypingTarget(e.target) || isSearchDialogOpen()) return;
       // Grouping/collapse-aware, unlike a flat visibleRecords.map(): a
       // collapsed group's records are skipped from the <tbody> entirely
       // (see the table body render below), so navigating or acting on them
@@ -3063,7 +3091,7 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
   useEffect(() => {
     function handleKeyDown(e) {
       if (e.key !== "n") return;
-      if (isTypingTarget(e.target)) return;
+      if (isTypingTarget(e.target) || isSearchDialogOpen()) return;
       e.preventDefault();
       startCreateNew();
     }
@@ -4188,7 +4216,7 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
 function renderGlobalSearchJsx(): string {
   return `import { useEffect, useRef, useState } from "react";
 import { listRecords } from "../api.js";
-import { matchesSearch, recordDisplayLabel } from "./EntityView.jsx";
+import { matchesSearch, recordDisplayLabel, markSearchDialogOpen, markSearchDialogClosed } from "./EntityView.jsx";
 
 // Fetches every entity's own records once, then searches all of them using
 // that same result set as matchesSearch's relatedRecords -- so a relation
@@ -4324,6 +4352,15 @@ export function GlobalSearch({ entities, onClose, onJumpToEntity, onJumpToRecord
   // handleShowAll's own relation-field matches resolve to the real display
   // label, not a raw foreign-key id, with zero extra network calls.
   const lastRecordsByEntityRef = useRef({});
+
+  // Flips isSearchDialogOpen() on while this overlay is mounted, so
+  // EntityView's own table keyboard shortcuts stop firing underneath it.
+  useEffect(() => {
+    markSearchDialogOpen();
+    return () => {
+      markSearchDialogClosed();
+    };
+  }, []);
 
   useEffect(() => {
     if (copyStatus === "idle") return;
