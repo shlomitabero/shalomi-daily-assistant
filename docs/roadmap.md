@@ -26289,6 +26289,18 @@ Full suite green: **837 tests** in `@forge/web` (+1), **416 tests** in `@forge/a
 
 **Topic status**: this specific gap is closed. The wakeRetry `/refine` idempotency candidate (design-complete since round 482) remains open, implementation still deliberately deferred pending an explicit future decision. Everything else still open from rounds 378-482 remains open and unchanged.
 
+### Round 484: the same keyboard-accessibility gap recurred in a sibling file round 483 didn't touch
+
+**The candidate**: a tenth consecutive fresh Explore survey, prompted to specifically check other component families for round 483's exact inconsistency pattern (some siblings in a copied family get proper keyboard treatment, others don't), found the identical bug recurring in a different file: `SpecListItemRemover.tsx`'s four components -- `RoleChip`, `AssumptionItem`, `EntitySummaryItem`, `FieldChip` -- power the *pre-build* spec-review screen's own click-to-rename for roles, assumptions, entity labels, and field labels. Each rendered its trigger as a bare `<span>`/`<strong>` with only `onClick`: no `tabIndex`, no `role`, no `onKeyDown`. This file's own header comment says it mirrors `EntityLabelEditor`'s click-to-edit pattern "exactly" -- it faithfully copied the busy/error/save/cancel logic, but only the mouse half of the interaction, not the keyboard half that `EntityLabelEditor` itself gained in round 483.
+
+**The investigation**: read the full file directly (not just the subagent's excerpt) and confirmed all four `onKeyDown` handlers already present in the file are on the edit-mode `<input>` elements (Escape-to-cancel only), never on the four display-mode triggers. Grepped `App.tsx` to confirm `RoleChip`/`EntitySummaryItem`/`AssumptionItem` are genuinely rendered (not dead code) and `FieldChip` is rendered inside `EntitySummaryItem`. Grepped `codegen.ts` for all four component names: no matches -- this screen only exists pre-build, in the live app, so there's no exported-app duplicate to carry the same fix.
+
+**The fix**: added the identical `role="button"`/`tabIndex={0}`/`onKeyDown` (`Enter`/`Space` calls `rename.startEditing()`, with `preventDefault()`) pattern round 483 used, to all four trigger elements.
+
+**Regression-proof**: added one new test per component to the existing `SpecListItemRemover.test.ts` asserting `role="button"`/`tabIndex="0"` and that `keyDown` with `Enter` opens edit mode. Backed up the implementation file, reverted it via `git checkout --` (keeping the new tests), ran the file's full test suite: exactly the 4 new tests failed with the predicted outcome (Enter never opened edit mode), all 28 pre-existing tests in the file still passed. Restored from backup, confirmed byte-identical via `diff`. Full suite + root build: `@forge/db` 136, `@forge/shared` 16, `@forge/spec-engine` 109, `@forge/api` 437, `@forge/web` 851 (+4), `npm run build` clean.
+
+**Topic status**: this specific recurrence is closed. Given that the same gap has now appeared in two separate copied component families (round 483, round 484), a future survey considering this topic area should check whether any other inline-edit/dialog/dropdown component family still has the same inconsistency, rather than assuming it was a one-off. The wakeRetry `/refine` idempotency candidate (design-complete since round 482) remains open and deliberately deferred. Everything else still open from rounds 378-483 remains open and unchanged.
+
 Each phase assumes the previous one is genuinely working, not merely
 scaffolded — see `docs/ADR/0001-initial-architecture.md` and
 `docs/ADR/0002-auth-pipeline-time-machine.md` for the specific tradeoffs
