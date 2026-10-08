@@ -19,7 +19,17 @@ export interface AppTemplate {
   nameHe: string;
   description: string;
   descriptionHe: string;
+  /** The Hebrew-labeled spec (this app is Hebrew-first; see /projects/from-template). */
   spec: ProductSpec;
+  /**
+   * The same entities/fields as `spec`, with every entity/field label and
+   * enum label in English instead of Hebrew, so a user who picks English
+   * UI gets a fully English generated app, not Hebrew content under
+   * English chrome. Entity names, field names, types, and relationTo must
+   * stay byte-identical to `spec`'s -- only display text differs (see
+   * templates.test.ts's "spec and specEn describe the same shape" test).
+   */
+  specEn: ProductSpec;
 }
 
 type EntitySpec = ProductSpec["entities"][number];
@@ -116,6 +126,73 @@ const RESTAURANT_ENTITIES: EntitySpec[] = [
   },
 ];
 
+const RESTAURANT_ENTITIES_EN: EntitySpec[] = [
+  {
+    name: "MenuItem",
+    label: "Menu Item",
+    description: "An item on the restaurant's menu",
+    fields: [
+      { name: "name", label: "Dish Name", type: "text", required: true },
+      {
+        name: "category",
+        label: "Category",
+        type: "enum",
+        required: true,
+        enumValues: ["appetizer", "main", "dessert", "drink"],
+        enumLabels: { appetizer: "Appetizer", main: "Main Course", dessert: "Dessert", drink: "Drink" },
+      },
+      { name: "price", label: "Price", type: "number", required: true },
+      { name: "available", label: "Available on Menu", type: "boolean" },
+      { name: "description", label: "Description", type: "longtext" },
+    ],
+  },
+  {
+    name: "RestaurantTable",
+    label: "Table",
+    description: "A physical table in the restaurant",
+    fields: [
+      { name: "number", label: "Table Number", type: "number", required: true },
+      { name: "seats", label: "Seats", type: "number" },
+      {
+        name: "status",
+        label: "Status",
+        type: "enum",
+        required: true,
+        enumValues: ["free", "occupied", "reserved"],
+        enumLabels: { free: "Free", occupied: "Occupied", reserved: "Reserved" },
+      },
+    ],
+  },
+  {
+    name: "Customer",
+    label: "Customer",
+    fields: [
+      { name: "name", label: "Name", type: "text", required: true },
+      { name: "phone", label: "Phone", type: "text" },
+      { name: "email", label: "Email", type: "text" },
+      { name: "notes", label: "Notes", type: "longtext" },
+    ],
+  },
+  {
+    name: "Order",
+    label: "Order",
+    fields: [
+      { name: "customer", label: "Customer", type: "relation", relationTo: "Customer" },
+      { name: "table", label: "Table", type: "relation", relationTo: "RestaurantTable" },
+      {
+        name: "status",
+        label: "Order Status",
+        type: "enum",
+        required: true,
+        enumValues: ["pending", "preparing", "served", "paid"],
+        enumLabels: { pending: "Pending", preparing: "Preparing", served: "Served", paid: "Paid" },
+      },
+      { name: "total", label: "Total Amount", type: "number" },
+      { name: "notes", label: "Notes", type: "longtext" },
+    ],
+  },
+];
+
 const CRM_ENTITIES: EntitySpec[] = [
   {
     name: "Customer",
@@ -165,6 +242,59 @@ const CRM_ENTITIES: EntitySpec[] = [
       { name: "dueDate", label: "תאריך יעד", type: "date" },
       { name: "done", label: "בוצע", type: "boolean" },
       { name: "deal", label: "עסקה", type: "relation", relationTo: "Deal" },
+    ],
+  },
+];
+
+const CRM_ENTITIES_EN: EntitySpec[] = [
+  {
+    name: "Customer",
+    label: "Customer",
+    fields: [
+      { name: "name", label: "Name", type: "text", required: true },
+      { name: "company", label: "Company", type: "text" },
+      { name: "email", label: "Email", type: "text" },
+      { name: "phone", label: "Phone", type: "text" },
+      { name: "notes", label: "Notes", type: "longtext" },
+    ],
+  },
+  {
+    name: "Contact",
+    label: "Contact",
+    fields: [
+      { name: "name", label: "Name", type: "text", required: true },
+      { name: "jobTitle", label: "Job Title", type: "text" },
+      { name: "email", label: "Email", type: "text" },
+      { name: "phone", label: "Phone", type: "text" },
+      { name: "customer", label: "Customer", type: "relation", relationTo: "Customer" },
+    ],
+  },
+  {
+    name: "Deal",
+    label: "Deal",
+    fields: [
+      { name: "title", label: "Title", type: "text", required: true },
+      { name: "customer", label: "Customer", type: "relation", relationTo: "Customer" },
+      {
+        name: "stage",
+        label: "Stage",
+        type: "enum",
+        required: true,
+        enumValues: ["lead", "qualified", "proposal", "won", "lost"],
+        enumLabels: { lead: "Lead", qualified: "Qualified", proposal: "Proposal", won: "Won", lost: "Lost" },
+      },
+      { name: "value", label: "Value", type: "number" },
+      { name: "closeDate", label: "Expected Close Date", type: "date" },
+    ],
+  },
+  {
+    name: "Task",
+    label: "Task",
+    fields: [
+      { name: "title", label: "Title", type: "text", required: true },
+      { name: "dueDate", label: "Due Date", type: "date" },
+      { name: "done", label: "Done", type: "boolean" },
+      { name: "deal", label: "Deal", type: "relation", relationTo: "Deal" },
     ],
   },
 ];
@@ -232,6 +362,69 @@ const PROJECT_TRACKER_ENTITIES: EntitySpec[] = [
   },
 ];
 
+const PROJECT_TRACKER_ENTITIES_EN: EntitySpec[] = [
+  {
+    name: "TeamMember",
+    label: "Team Member",
+    fields: [
+      { name: "name", label: "Name", type: "text", required: true },
+      { name: "email", label: "Email", type: "text" },
+      { name: "jobTitle", label: "Job Title", type: "text" },
+    ],
+  },
+  {
+    name: "Project",
+    label: "Project",
+    fields: [
+      { name: "name", label: "Project Name", type: "text", required: true },
+      { name: "description", label: "Description", type: "longtext" },
+      {
+        name: "status",
+        label: "Status",
+        type: "enum",
+        required: true,
+        enumValues: ["planning", "active", "onhold", "completed"],
+        enumLabels: { planning: "Planning", active: "Active", onhold: "On Hold", completed: "Completed" },
+      },
+      { name: "owner", label: "Owner", type: "relation", relationTo: "TeamMember" },
+    ],
+  },
+  {
+    name: "Milestone",
+    label: "Milestone",
+    fields: [
+      { name: "title", label: "Title", type: "text", required: true },
+      { name: "dueDate", label: "Due Date", type: "date" },
+      { name: "done", label: "Completed", type: "boolean" },
+      { name: "project", label: "Project", type: "relation", relationTo: "Project" },
+    ],
+  },
+  {
+    name: "Task",
+    label: "Task",
+    fields: [
+      { name: "title", label: "Title", type: "text", required: true },
+      { name: "assignee", label: "Assignee", type: "relation", relationTo: "TeamMember" },
+      { name: "project", label: "Project", type: "relation", relationTo: "Project" },
+      {
+        name: "status",
+        label: "Status",
+        type: "enum",
+        required: true,
+        enumValues: ["todo", "inprogress", "done"],
+        enumLabels: { todo: "To Do", inprogress: "In Progress", done: "Done" },
+      },
+      {
+        name: "priority",
+        label: "Priority",
+        type: "enum",
+        enumValues: ["low", "medium", "high"],
+        enumLabels: { low: "Low", medium: "Medium", high: "High" },
+      },
+    ],
+  },
+];
+
 const VOLUNTEER_ENTITIES: EntitySpec[] = [
   {
     name: "Volunteer",
@@ -261,6 +454,39 @@ const VOLUNTEER_ENTITIES: EntitySpec[] = [
       { name: "volunteer", label: "מתנדב/ת", type: "relation", relationTo: "Volunteer" },
       { name: "timeRange", label: "טווח שעות", type: "text" },
       { name: "confirmed", label: "מאושרת", type: "boolean" },
+    ],
+  },
+];
+
+const VOLUNTEER_ENTITIES_EN: EntitySpec[] = [
+  {
+    name: "Volunteer",
+    label: "Volunteer",
+    fields: [
+      { name: "name", label: "Name", type: "text", required: true },
+      { name: "phone", label: "Phone", type: "text" },
+      { name: "email", label: "Email", type: "text" },
+      { name: "skills", label: "Skills", type: "text" },
+    ],
+  },
+  {
+    name: "VolunteerEvent",
+    label: "Event",
+    fields: [
+      { name: "name", label: "Event Name", type: "text", required: true },
+      { name: "date", label: "Date", type: "date" },
+      { name: "location", label: "Location", type: "text" },
+      { name: "description", label: "Description", type: "longtext" },
+    ],
+  },
+  {
+    name: "Shift",
+    label: "Shift",
+    fields: [
+      { name: "event", label: "Event", type: "relation", relationTo: "VolunteerEvent" },
+      { name: "volunteer", label: "Volunteer", type: "relation", relationTo: "Volunteer" },
+      { name: "timeRange", label: "Time Range", type: "text" },
+      { name: "confirmed", label: "Confirmed", type: "boolean" },
     ],
   },
 ];
@@ -309,6 +535,55 @@ const APPOINTMENTS_ENTITIES: EntitySpec[] = [
         required: true,
         enumValues: ["scheduled", "completed", "cancelled", "noshow"],
         enumLabels: { scheduled: "קבוע", completed: "הושלם", cancelled: "בוטל", noshow: "לא הגיע" },
+      },
+    ],
+  },
+];
+
+const APPOINTMENTS_ENTITIES_EN: EntitySpec[] = [
+  {
+    name: "Customer",
+    label: "Customer",
+    fields: [
+      { name: "name", label: "Name", type: "text", required: true },
+      { name: "phone", label: "Phone", type: "text" },
+      { name: "email", label: "Email", type: "text" },
+      { name: "notes", label: "Notes", type: "longtext" },
+    ],
+  },
+  {
+    name: "Staff",
+    label: "Staff",
+    fields: [
+      { name: "name", label: "Name", type: "text", required: true },
+      { name: "specialty", label: "Specialty", type: "text" },
+      { name: "phone", label: "Phone", type: "text" },
+    ],
+  },
+  {
+    name: "Service",
+    label: "Service",
+    fields: [
+      { name: "name", label: "Service Name", type: "text", required: true },
+      { name: "durationMinutes", label: "Duration (minutes)", type: "number" },
+      { name: "price", label: "Price", type: "number" },
+    ],
+  },
+  {
+    name: "Appointment",
+    label: "Appointment",
+    fields: [
+      { name: "customer", label: "Customer", type: "relation", relationTo: "Customer" },
+      { name: "staff", label: "Staff Member", type: "relation", relationTo: "Staff" },
+      { name: "service", label: "Service", type: "relation", relationTo: "Service" },
+      { name: "date", label: "Date & Time", type: "date", required: true },
+      {
+        name: "status",
+        label: "Status",
+        type: "enum",
+        required: true,
+        enumValues: ["scheduled", "completed", "cancelled", "noshow"],
+        enumLabels: { scheduled: "Scheduled", completed: "Completed", cancelled: "Cancelled", noshow: "No-show" },
       },
     ],
   },
@@ -380,6 +655,72 @@ const INVENTORY_ENTITIES: EntitySpec[] = [
   },
 ];
 
+const INVENTORY_ENTITIES_EN: EntitySpec[] = [
+  {
+    name: "Supplier",
+    label: "Supplier",
+    fields: [
+      { name: "name", label: "Supplier Name", type: "text", required: true },
+      { name: "phone", label: "Phone", type: "text" },
+      { name: "email", label: "Email", type: "text" },
+      { name: "notes", label: "Notes", type: "longtext" },
+    ],
+  },
+  {
+    name: "Product",
+    label: "Product",
+    fields: [
+      { name: "name", label: "Product Name", type: "text", required: true },
+      { name: "sku", label: "SKU", type: "text" },
+      { name: "price", label: "Price", type: "number" },
+      { name: "quantity", label: "Quantity in Stock", type: "number" },
+      { name: "supplier", label: "Supplier", type: "relation", relationTo: "Supplier" },
+      {
+        name: "category",
+        label: "Category",
+        type: "enum",
+        enumValues: ["raw", "finished", "packaging"],
+        enumLabels: { raw: "Raw Material", finished: "Finished Product", packaging: "Packaging" },
+      },
+    ],
+  },
+  {
+    name: "PurchaseOrder",
+    label: "Purchase Order",
+    fields: [
+      { name: "supplier", label: "Supplier", type: "relation", relationTo: "Supplier" },
+      {
+        name: "status",
+        label: "Status",
+        type: "enum",
+        required: true,
+        enumValues: ["draft", "ordered", "received", "cancelled"],
+        enumLabels: { draft: "Draft", ordered: "Ordered", received: "Received", cancelled: "Cancelled" },
+      },
+      { name: "orderDate", label: "Order Date", type: "date" },
+      { name: "total", label: "Total Amount", type: "number" },
+    ],
+  },
+  {
+    name: "StockMovement",
+    label: "Stock Movement",
+    fields: [
+      { name: "product", label: "Product", type: "relation", relationTo: "Product" },
+      {
+        name: "movementType",
+        label: "Movement Type",
+        type: "enum",
+        required: true,
+        enumValues: ["in", "out", "adjustment"],
+        enumLabels: { in: "In", out: "Out", adjustment: "Adjustment" },
+      },
+      { name: "quantity", label: "Quantity", type: "number", required: true },
+      { name: "date", label: "Date", type: "date" },
+      { name: "notes", label: "Notes", type: "longtext" },
+    ],
+  },
+];
+
 export const TEMPLATES: AppTemplate[] = [
   {
     id: "restaurant",
@@ -392,6 +733,11 @@ export const TEMPLATES: AppTemplate[] = [
       summary: "מערכת לניהול מסעדה -- תפריט, שולחנות, לקוחות והזמנות.",
       roles: ["Manager", "Staff"],
       entities: RESTAURANT_ENTITIES,
+    }),
+    specEn: spec({
+      summary: "A restaurant management system -- menu, tables, customers and orders.",
+      roles: ["Manager", "Staff"],
+      entities: RESTAURANT_ENTITIES_EN,
     }),
   },
   {
@@ -406,6 +752,11 @@ export const TEMPLATES: AppTemplate[] = [
       roles: ["Sales Rep", "Manager"],
       entities: CRM_ENTITIES,
     }),
+    specEn: spec({
+      summary: "A CRM system for managing customers, contacts, deals and follow-up tasks.",
+      roles: ["Sales Rep", "Manager"],
+      entities: CRM_ENTITIES_EN,
+    }),
   },
   {
     id: "project-tracker",
@@ -418,6 +769,11 @@ export const TEMPLATES: AppTemplate[] = [
       summary: "מערכת למעקב פרויקטים -- אבני דרך, משימות ואנשי צוות.",
       roles: ["Project Manager", "Team Member"],
       entities: PROJECT_TRACKER_ENTITIES,
+    }),
+    specEn: spec({
+      summary: "A project tracking system -- milestones, tasks and team members.",
+      roles: ["Project Manager", "Team Member"],
+      entities: PROJECT_TRACKER_ENTITIES_EN,
     }),
   },
   {
@@ -432,6 +788,11 @@ export const TEMPLATES: AppTemplate[] = [
       roles: ["Coordinator", "Volunteer"],
       entities: VOLUNTEER_ENTITIES,
     }),
+    specEn: spec({
+      summary: "A volunteer management system -- events and shift scheduling.",
+      roles: ["Coordinator", "Volunteer"],
+      entities: VOLUNTEER_ENTITIES_EN,
+    }),
   },
   {
     id: "appointments",
@@ -445,6 +806,11 @@ export const TEMPLATES: AppTemplate[] = [
       roles: ["Staff", "Customer"],
       entities: APPOINTMENTS_ENTITIES,
     }),
+    specEn: spec({
+      summary: "An appointment management system -- clients, staff, services and scheduled appointments.",
+      roles: ["Staff", "Customer"],
+      entities: APPOINTMENTS_ENTITIES_EN,
+    }),
   },
   {
     id: "inventory",
@@ -457,6 +823,11 @@ export const TEMPLATES: AppTemplate[] = [
       summary: "מערכת לניהול מלאי -- מוצרים, ספקים, הזמנות רכש ותנועות מלאי.",
       roles: ["Warehouse Manager", "Buyer"],
       entities: INVENTORY_ENTITIES,
+    }),
+    specEn: spec({
+      summary: "An inventory management system -- products, suppliers, purchase orders and stock movements.",
+      roles: ["Warehouse Manager", "Buyer"],
+      entities: INVENTORY_ENTITIES_EN,
     }),
   },
 ];

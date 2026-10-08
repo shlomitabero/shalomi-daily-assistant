@@ -1656,6 +1656,50 @@ test("POST /projects/from-template with lang: \"en\" uses the template's English
   });
 });
 
+/**
+ * Regression test for round 492's finding: `lang: "en"` translated the
+ * project's own name/description, but `spec` (the actual entities/fields)
+ * stayed Hebrew-only -- an English-UI user picking a template got English
+ * chrome around Hebrew entity/field labels and enum values. Confirms the
+ * created project's spec itself carries English labels, not just its name.
+ */
+test("POST /projects/from-template with lang: \"en\" also gives the project's own entities/fields English labels, not just its name", async () => {
+  await withServer(async (baseUrl) => {
+    const token = await signup(baseUrl, "templates-use-en-spec@example.com");
+    const res = await fetch(`${baseUrl}/api/projects/from-template`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ templateId: "crm", lang: "en" }),
+    });
+    assert.equal(res.status, 201);
+    const { project } = (await res.json()) as {
+      project: { spec: { entities: { name: string; label?: string; fields: { name: string; label?: string; enumLabels?: Record<string, string> }[] }[] } };
+    };
+    const deal = project.spec.entities.find((e) => e.name === "Deal");
+    assert.ok(deal, "the CRM template must include a Deal entity");
+    assert.equal(deal!.label, "Deal", "the Deal entity's own label must be English, not Hebrew, when lang: \"en\" is requested");
+    const stageField = deal!.fields.find((f) => f.name === "stage");
+    assert.ok(stageField, "the Deal entity must include a stage field");
+    assert.equal(stageField!.label, "Stage", "the stage field's own label must be English, not Hebrew");
+    assert.equal(stageField!.enumLabels?.won, "Won", "the stage field's enum labels must be English, not Hebrew");
+  });
+});
+
+test("POST /projects/from-template without lang (defaulting to Hebrew) keeps the project's entities/fields in Hebrew", async () => {
+  await withServer(async (baseUrl) => {
+    const token = await signup(baseUrl, "templates-use-he-spec@example.com");
+    const res = await fetch(`${baseUrl}/api/projects/from-template`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ templateId: "crm" }),
+    });
+    assert.equal(res.status, 201);
+    const { project } = (await res.json()) as { project: { spec: { entities: { name: string; label?: string }[] } } };
+    const deal = project.spec.entities.find((e) => e.name === "Deal");
+    assert.equal(deal!.label, "עסקה", "with no lang requested, the project's own entities must default to Hebrew labels, matching its name/description");
+  });
+});
+
 test("POST /projects/from-template 404s on an unknown templateId", async () => {
   await withServer(async (baseUrl) => {
     const token = await signup(baseUrl, "templates-use3@example.com");

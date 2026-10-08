@@ -429,11 +429,14 @@ export function createProjectsRouter(db: ForgeDatabase, provider: SpecProvider |
    * precedent /projects/:id/clone already established, just sourcing the
    * spec from the static TEMPLATES catalog instead of an existing project.
    * `lang` picks which of the template's two display-text pairs becomes the
-   * new project's name/description (both are real, human-authored text in
-   * their respective language, not a machine translation of one): this
-   * app is Hebrew-first, so anything other than an explicit "en" falls back
-   * to the Hebrew copy, matching /projects/:id/clone's own Hebrew-first
-   * suffix choice just above.
+   * new project's name/description, AND which of its two specs (`spec` vs
+   * `specEn`) becomes the project's entities -- both are real, human-authored
+   * text/labels in their respective language, not a machine translation of
+   * one, so an English-UI user gets a fully English generated app instead
+   * of English chrome around Hebrew entity/field labels. This app is
+   * Hebrew-first, so anything other than an explicit "en" falls back to the
+   * Hebrew copy, matching /projects/:id/clone's own Hebrew-first suffix
+   * choice just above.
    */
   router.post(
     "/projects/from-template",
@@ -454,7 +457,7 @@ export function createProjectsRouter(db: ForgeDatabase, provider: SpecProvider |
           ownerId: req.userId!,
           name: useEnglish ? template.name : template.nameHe,
           description: useEnglish ? template.description : template.descriptionHe,
-          spec: template.spec,
+          spec: useEnglish ? template.specEn : template.spec,
         });
         return { status: 201, body: { project } };
       });
