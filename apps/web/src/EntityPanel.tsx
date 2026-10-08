@@ -1083,14 +1083,21 @@ export function EntityPanel({
   // Table/Board/Calendar view is scoped per project+entity too. Falls back
   // to "table" if the persisted choice needs a board/date field this entity
   // no longer has (e.g. the field was removed), instead of rendering a view
-  // toggle button that isn't even shown.
+  // toggle button that isn't even shown. Keyed on boardFieldName/dateFieldName
+  // (not just projectId/entity.name), same as collapsedBoardColumns' own
+  // effect above: EntityPanel doesn't remount when a Refine mutates the
+  // currently-active entity's own fields in place (App.tsx keys it by
+  // entity.name alone), so without this a Board/Calendar view surviving a
+  // refine that removed its own board/date field left viewMode stuck on
+  // the now-invalid mode -- the table rendered correctly, but the
+  // group-by select stayed hidden (its own gate checks viewMode ===
+  // "table") and no view-toggle button showed as active.
+  const dateFieldName = dateField?.name ?? "";
   useEffect(() => {
     const stored = getViewModePreference(projectId, entity.name);
-    const stillValid =
-      stored === "table" || (stored === "board" && boardField) || (stored === "calendar" && dateField);
+    const stillValid = stored === "table" || (stored === "board" && boardFieldName) || (stored === "calendar" && dateFieldName);
     setViewMode(stillValid ? stored : "table");
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [projectId, entity.name]);
+  }, [projectId, entity.name, boardFieldName, dateFieldName]);
 
   // Same reasoning as viewMode's own effect just above -- the chosen
   // multi-column sort is scoped per project+entity too (round 250).

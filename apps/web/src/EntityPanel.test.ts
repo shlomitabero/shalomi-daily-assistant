@@ -3998,6 +3998,84 @@ test("EntityPanel's board-column collapse state does not leak from one board fie
 });
 
 /**
+ * Round 490's finding: the viewMode-revalidation effect's own doc comment
+ * claims it falls back to "table" when the persisted view needs a
+ * board/date field the entity no longer has, but its dependency array was
+ * only [projectId, entity.name] -- missing boardFieldName/dateFieldName,
+ * unlike the sibling collapsedBoardColumns effect right above it in the
+ * real file (confirmed by round 486's own regression test above, which
+ * already exercises that effect's correct dependency list). EntityPanel
+ * doesn't remount when a refine mutates the currently-active entity's own
+ * fields in place (App.tsx keys it by entity.name alone), so switching to
+ * Board view and then having a refine remove the board-eligible field left
+ * viewMode stuck on "board" even though the board itself correctly fell
+ * back to rendering the table: the group-by select stayed hidden (its own
+ * gate checks viewMode === "table") and no view-toggle button showed as
+ * active.
+ */
+test("EntityPanel falls back viewMode to 'table' when a schema edit removes the field the current Board view depends on, without remounting", async () => {
+  await withJsdom(async () => {
+    const statusField = {
+      name: "status",
+      label: "Status",
+      type: "enum" as const,
+      required: true,
+      enumValues: ["new", "won"],
+      enumLabels: { new: "New", won: "Won" },
+    };
+    const isPriorityField = { name: "isPriority", label: "Priority", type: "boolean" as const, required: false };
+    const dueDateField = { name: "dueDate", label: "Due date", type: "date" as const, required: false };
+    const entityWithBoard: Entity = {
+      name: "Deal",
+      label: "Deal",
+      fields: [{ name: "name", label: "Name", type: "text", required: true }, statusField, isPriorityField, dueDateField],
+    };
+    const entityWithoutBoard: Entity = {
+      name: "Deal",
+      label: "Deal",
+      fields: [{ name: "name", label: "Name", type: "text", required: true }, isPriorityField, dueDateField],
+    };
+    const store: EntityRecord[] = [
+      { id: 1, createdAt: "x", name: "Acme Corp", status: "new", isPriority: true, dueDate: "2026-01-01" },
+    ];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = mockRecordsFetch(store) as typeof fetch;
+    try {
+      const view = renderEntityPanel({ entity: entityWithBoard, allEntities: [entityWithBoard] });
+      await waitForCondition(() => document.querySelector(".entity-toolbar") !== null);
+
+      const boardToggle = document.querySelectorAll(".view-toggle-btn")[1] as HTMLButtonElement;
+      fireEvent.click(boardToggle);
+      await waitForCondition(() => document.querySelectorAll(".board-column").length > 0);
+
+      // Simulate a refine that removes "status" -- the only board-eligible
+      // field -- while staying on the exact same entity.name ("Deal"), the
+      // same way App.tsx's real key={entity.name} never remounts for this.
+      view.rerender(buildEntityPanelElement({ entity: entityWithoutBoard, allEntities: [entityWithoutBoard] }));
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 1);
+
+      assert.equal(document.querySelectorAll(".board-column").length, 0, "the board itself must no longer render");
+      assert.ok(
+        document.querySelector(".entity-group-by"),
+        "the group-by select (gated on viewMode === 'table') must reappear once viewMode genuinely falls back to 'table', even though 'isPriority' (a groupable boolean field) is still present",
+      );
+      const toggleButtons = Array.from(document.querySelectorAll(".view-toggle-btn"));
+      assert.equal(toggleButtons.length, 2, "with 'status' gone but 'dueDate' still present, only the Board button must disappear -- Table and Calendar stay");
+      assert.ok(
+        toggleButtons[0].classList.contains("view-toggle-btn-active"),
+        "the remaining Table button must show as active -- not stuck reflecting a stale 'board' viewMode with no button showing active at all",
+      );
+      assert.ok(
+        !toggleButtons[1].classList.contains("view-toggle-btn-active"),
+        "the Calendar button must not show as active either",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * New in this round: the table view had no way to move between rows
  * without reaching for the mouse. j/k (and ArrowDown/ArrowUp) move a
  * keyboard focus between visible rows, and Enter opens the focused row for
