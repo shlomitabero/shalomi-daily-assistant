@@ -114,6 +114,21 @@ test("clicking the description enters edit mode, and saving a real change calls 
   });
 });
 
+/** Mirrors ProjectNameEditor.test.ts's own keyboard-focus test for the identical gap in this sibling component. */
+test("the description paragraph is keyboard-focusable and Enter opens edit mode", async () => {
+  await withJsdom(async () => {
+    renderEditor(() => {});
+
+    const paragraph = document.querySelector(".project-description") as HTMLElement;
+    assert.equal(paragraph.getAttribute("role"), "button");
+    assert.equal(paragraph.getAttribute("tabIndex"), "0");
+
+    fireEvent.keyDown(paragraph, { key: "Enter" });
+    await waitForCondition(() => document.querySelector(".project-description-edit textarea") !== null);
+    assert.ok(document.querySelector(".project-description-edit textarea"), "Enter should have entered edit mode");
+  });
+});
+
 /** Mirrors ProjectNameEditor.test.ts's own Escape test -- same rationale for not exercising the `cancelling` ref itself under jsdom. */
 test("pressing Escape while editing cancels without saving, and returns to the read-only view", async () => {
   await withJsdom(async () => {

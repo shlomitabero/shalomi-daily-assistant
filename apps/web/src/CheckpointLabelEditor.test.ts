@@ -112,6 +112,21 @@ test("clicking the checkpoint label enters edit mode, and saving a real change c
   });
 });
 
+/** Mirrors ProjectNameEditor.test.ts's own keyboard-focus test for the identical gap in this sibling component. */
+test("the checkpoint label is keyboard-focusable and Enter opens edit mode", async () => {
+  await withJsdom(async () => {
+    renderEditor(() => {});
+
+    const label = document.querySelector(".checkpoint-label") as HTMLElement;
+    assert.equal(label.getAttribute("role"), "button");
+    assert.equal(label.getAttribute("tabIndex"), "0");
+
+    fireEvent.keyDown(label, { key: "Enter" });
+    await waitForCondition(() => document.querySelector(".checkpoint-label-edit input") !== null);
+    assert.ok(document.querySelector(".checkpoint-label-edit input"), "Enter should have entered edit mode");
+  });
+});
+
 /**
  * Locks in the observable outcome of pressing Escape, the same narrower
  * (but real) contract EntityLabelEditor.test.ts's identical test documents

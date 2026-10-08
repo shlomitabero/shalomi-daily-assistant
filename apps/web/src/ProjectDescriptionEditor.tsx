@@ -77,7 +77,18 @@ export function ProjectDescriptionEditor({
 
   if (!editing) {
     return (
-      <p className="project-description" onClick={startEditing} title={t("spec.description.edit")}>
+      <p
+        className="project-description"
+        onClick={startEditing}
+        title={t("spec.description.edit")}
+        role="button"
+        tabIndex={0}
+        onKeyDown={(e) => {
+          if (e.key !== "Enter" && e.key !== " ") return;
+          e.preventDefault();
+          startEditing();
+        }}
+      >
         {project.description}
         <span className="project-description-edit-icon" aria-hidden="true">
           ✏️

@@ -64,7 +64,18 @@ export function CheckpointLabelEditor({
 
   if (!editing) {
     return (
-      <strong className="checkpoint-label" onClick={startEditing} title={t("history.renameLabel")}>
+      <strong
+        className="checkpoint-label"
+        onClick={startEditing}
+        title={t("history.renameLabel")}
+        role="button"
+        tabIndex={0}
+        onKeyDown={(e) => {
+          if (e.key !== "Enter" && e.key !== " ") return;
+          e.preventDefault();
+          startEditing();
+        }}
+      >
         {checkpoint.label}
         <span className="checkpoint-label-edit-icon" aria-hidden="true">
           ✏️

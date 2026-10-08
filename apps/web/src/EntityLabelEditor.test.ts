@@ -120,6 +120,21 @@ test("clicking the entity label enters edit mode, and saving a real change calls
   });
 });
 
+/** Mirrors ProjectNameEditor.test.ts's own keyboard-focus test for the identical gap in this sibling component. */
+test("the entity label heading is keyboard-focusable and Enter opens edit mode", async () => {
+  await withJsdom(async () => {
+    renderEditor(() => {});
+
+    const heading = document.querySelector(".entity-label") as HTMLElement;
+    assert.equal(heading.getAttribute("role"), "button");
+    assert.equal(heading.getAttribute("tabIndex"), "0");
+
+    fireEvent.keyDown(heading, { key: "Enter" });
+    await waitForCondition(() => document.querySelector(".entity-label-edit input") !== null);
+    assert.ok(document.querySelector(".entity-label-edit input"), "Enter should have entered edit mode");
+  });
+});
+
 /**
  * Locks in the observable outcome of pressing Escape, the same narrower
  * (but real) contract ProjectNameEditor.test.ts's identical test documents

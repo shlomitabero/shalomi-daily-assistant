@@ -71,7 +71,18 @@ export function ProjectNameEditor({ project, onRenamed }: { project: Project; on
 
   if (!editing) {
     return (
-      <h1 className="project-name" onClick={startEditing} title={t("preview.renameProject")}>
+      <h1
+        className="project-name"
+        onClick={startEditing}
+        title={t("preview.renameProject")}
+        role="button"
+        tabIndex={0}
+        onKeyDown={(e) => {
+          if (e.key !== "Enter" && e.key !== " ") return;
+          e.preventDefault();
+          startEditing();
+        }}
+      >
         {project.name}
         <span className="project-name-edit-icon" aria-hidden="true">
           ✏️

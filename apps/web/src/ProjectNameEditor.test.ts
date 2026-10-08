@@ -115,6 +115,26 @@ test("clicking the project name enters edit mode, and saving a real change calls
 });
 
 /**
+ * Keyboard-only access: the heading must be focusable and activatable with
+ * Enter, not just a mouse click, since this is the project's only path to
+ * renaming it. Mirrors the keyboard pattern already used by EntityPanel.tsx's
+ * calendar-day cells (role="button" + tabIndex={0} + onKeyDown on Enter/Space).
+ */
+test("the project name heading is keyboard-focusable and Enter opens edit mode", async () => {
+  await withJsdom(async () => {
+    renderEditor(() => {});
+
+    const heading = document.querySelector(".project-name") as HTMLElement;
+    assert.equal(heading.getAttribute("role"), "button");
+    assert.equal(heading.getAttribute("tabIndex"), "0");
+
+    fireEvent.keyDown(heading, { key: "Enter" });
+    await waitForCondition(() => document.querySelector(".project-name-edit input") !== null);
+    assert.ok(document.querySelector(".project-name-edit input"), "Enter should have entered edit mode");
+  });
+});
+
+/**
  * Locks in the observable outcome of pressing Escape: no rename request,
  * no onRenamed call, back to the read-only view showing the original
  * name. This does NOT exercise the `cancelling` ref guard itself --

@@ -69,7 +69,18 @@ export function EntityLabelEditor({
 
   if (!editing) {
     return (
-      <h3 className="entity-label" onClick={startEditing} title={t("entity.renameLabel")}>
+      <h3
+        className="entity-label"
+        onClick={startEditing}
+        title={t("entity.renameLabel")}
+        role="button"
+        tabIndex={0}
+        onKeyDown={(e) => {
+          if (e.key !== "Enter" && e.key !== " ") return;
+          e.preventDefault();
+          startEditing();
+        }}
+      >
         {currentLabel}
         <span className="entity-label-edit-icon" aria-hidden="true">
           ✏️
