@@ -46,6 +46,18 @@ export async function withIdempotency<T>(
   pruneExpiredIdempotencyRecords(db, IDEMPOTENCY_TTL_MS);
 
   const existing = getIdempotencyRecord(db, key);
+  // `existing.userId`/`existing.route` are stored specifically to scope a
+  // key to the one request it was chosen for (see the table's own doc
+  // comment in packages/db/src/idempotency.ts), but were never actually
+  // compared against the *current* request before replaying "done" or
+  // rejecting "in_progress" below -- a key reused across users or routes
+  // (whether by a client bug or a guessed/forged header value, since this
+  // header is entirely client-supplied) would silently get back another
+  // request's cached response, or block on another request's in-flight
+  // one, with no relation to its own route or project at all.
+  if (existing && (existing.userId !== userId || existing.route !== route)) {
+    throw new HttpError(409, "This idempotency key was already used for a different request", "IDEMPOTENCY_KEY_MISMATCH");
+  }
   if (existing?.status === "in_progress") {
     throw new HttpError(409, "This request is already being processed", "DUPLICATE_REQUEST_IN_PROGRESS");
   }

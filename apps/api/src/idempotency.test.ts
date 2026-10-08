@@ -105,6 +105,55 @@ test("withIdempotency clears the key's row when the guarded work throws, so a re
 });
 
 /**
+ * `userId`/`route` are stored on every row specifically to scope a key to
+ * the one request it was chosen for (see packages/db/src/idempotency.ts's
+ * own doc comment), but the lookup used to only ever filter by `key`. A
+ * key reused across a different user or a different route must never
+ * replay or block against that other request -- it has no relation to it
+ * at all, and today's header is entirely client-supplied with no other
+ * validation, so this is the only server-side defense against exactly
+ * that reuse.
+ */
+test("withIdempotency rejects a key that was already used by a different user or route, instead of replaying or blocking against an unrelated request", async () => {
+  const db = setup();
+  const first = await withIdempotency(db, "shared-key", "user1", "POST /projects/A/roles", async () => {
+    return { status: 200, body: { project: "A" } };
+  });
+  assert.deepEqual(first.body, { project: "A" });
+
+  let calls = 0;
+  await assert.rejects(
+    () =>
+      withIdempotency(db, "shared-key", "user1", "POST /projects/B/roles", async () => {
+        calls += 1;
+        return { status: 200, body: { project: "B" } };
+      }),
+    (err: unknown) => {
+      assert.ok(err instanceof HttpError);
+      assert.equal(err.status, 409);
+      assert.equal(err.code, "IDEMPOTENCY_KEY_MISMATCH");
+      return true;
+    },
+  );
+  assert.equal(calls, 0, "a route mismatch must reject outright, not run project B's own request");
+
+  await assert.rejects(
+    () =>
+      withIdempotency(db, "shared-key", "user2", "POST /projects/A/roles", async () => {
+        calls += 1;
+        return { status: 200, body: { project: "A-for-user2" } };
+      }),
+    (err: unknown) => {
+      assert.ok(err instanceof HttpError);
+      assert.equal(err.status, 409);
+      assert.equal(err.code, "IDEMPOTENCY_KEY_MISMATCH");
+      return true;
+    },
+  );
+  assert.equal(calls, 0, "a userId mismatch must reject outright too, even on the exact same route");
+});
+
+/**
  * The flip side of "replays the cached response": without the opportunistic
  * prune inside withIdempotency, a 'done' row's cached response would be
  * replayed forever, never expiring, turning the table into a permanent
