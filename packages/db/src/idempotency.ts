@@ -55,6 +55,22 @@ export function completeIdempotencyRecord(db: ForgeDatabase, key: string, respon
 }
 
 /**
+ * Deletes every row (whether "in_progress" or "done") older than maxAgeMs.
+ * This is what actually makes the table "deliberately short-lived" per the
+ * doc comment above -- without it, a "done" row is never removed by
+ * anything else and the table grows by one row (holding a full JSON
+ * response body) per guarded request forever. Also self-heals a row
+ * orphaned "in_progress" by a server crash mid-request (deleteIdempotencyRecord's
+ * own catch-path never runs in that case), which the docs/
+ * wakeRetry-idempotency-design.md TTL discussion didn't call out by name
+ * but falls out of the same age-based cutoff for free.
+ */
+export function pruneExpiredIdempotencyRecords(db: ForgeDatabase, maxAgeMs: number): void {
+  const cutoff = new Date(Date.now() - maxAgeMs).toISOString();
+  db.prepare("DELETE FROM idempotency_keys WHERE createdAt < ?").run(cutoff);
+}
+
+/**
  * Called when the guarded work throws instead of completing: an
  * "in_progress" row for a request that actually failed must not be left
  * behind, or every future retry with that same key would be wrongly

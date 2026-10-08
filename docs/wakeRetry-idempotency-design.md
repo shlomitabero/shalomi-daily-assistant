@@ -209,9 +209,13 @@ serve as a permanent audit log.
 
 ## Open questions for whoever implements this
 
-1. **TTL length** for the `idempotency_keys` table — 24h is a reasonable
+1. ~~**TTL length** for the `idempotency_keys` table — 24h is a reasonable
    starting guess (far longer than any realistic retry sequence) but is a
-   product/ops judgment call, not a technical one.
+   product/ops judgment call, not a technical one.~~ **Resolved (round 480)**:
+   implemented as the "opportunistically on each insert" option this doc
+   itself named above, with the suggested 24h cutoff — see
+   `pruneExpiredIdempotencyRecords` in `packages/db/src/idempotency.ts`,
+   called from `withIdempotency` before every lookup.
 2. **Collaborator/multi-tab edge case**: two different browser tabs
    legitimately submitting the *same* logical action (e.g. two collaborators
    both clicking "Build" around the same moment) would each generate their

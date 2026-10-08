@@ -103,3 +103,32 @@ test("withIdempotency clears the key's row when the guarded work throws, so a re
   assert.equal(calls, 1, "the retry must actually run the work, not be wrongly rejected as a duplicate of the failed attempt");
   assert.deepEqual(result, { status: 201, body: { ok: true } });
 });
+
+/**
+ * The flip side of "replays the cached response": without the opportunistic
+ * prune inside withIdempotency, a 'done' row's cached response would be
+ * replayed forever, never expiring, turning the table into a permanent
+ * cache rather than the short-lived retry-window mechanism the design doc
+ * calls for. Backdates the existing row's createdAt well past the 24h TTL
+ * (same raw-SQL pattern apps/api/src/twin.test.ts already uses) and
+ * confirms a same-key call afterward re-runs the work instead of replaying
+ * the stale cached body.
+ */
+test("withIdempotency treats a key whose row has aged out past the TTL as brand-new, not a cached replay", async () => {
+  const db = setup();
+  let calls = 0;
+  const run = async () => {
+    calls += 1;
+    return { status: 201, body: { attempt: calls } };
+  };
+  const first = await withIdempotency(db, "aged-key", "user1", "POST /projects", run);
+  assert.deepEqual(first.body, { attempt: 1 });
+
+  const oneDayMs = 24 * 60 * 60 * 1000;
+  const twoDaysAgo = new Date(Date.now() - 2 * oneDayMs).toISOString();
+  db.prepare("UPDATE idempotency_keys SET createdAt = ? WHERE key = ?").run(twoDaysAgo, "aged-key");
+
+  const second = await withIdempotency(db, "aged-key", "user1", "POST /projects", run);
+  assert.equal(calls, 2, "a key whose row aged out past the TTL must run the work again, not replay the stale cached response");
+  assert.deepEqual(second.body, { attempt: 2 });
+});

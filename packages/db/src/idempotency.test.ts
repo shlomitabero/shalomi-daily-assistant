@@ -7,6 +7,7 @@ import {
   insertIdempotencyRecord,
   completeIdempotencyRecord,
   deleteIdempotencyRecord,
+  pruneExpiredIdempotencyRecords,
 } from "./idempotency.js";
 
 function setup() {
@@ -52,4 +53,35 @@ test("deleteIdempotencyRecord removes the row so a retry with the same key is tr
 test("deleteIdempotencyRecord on a key that doesn't exist is a harmless no-op", () => {
   const db = setup();
   assert.doesNotThrow(() => deleteIdempotencyRecord(db, "never-inserted"));
+});
+
+/**
+ * Without this, a "done" row is never removed by anything else -- the
+ * table (which stores a full JSON response body per row) grows by one row
+ * per guarded request forever. Backdates two rows' createdAt directly via
+ * raw SQL (the same pattern apps/api/src/twin.test.ts already uses to
+ * simulate an old record) rather than waiting real time, then prunes with
+ * a 24h cutoff and confirms only the genuinely-old row is gone.
+ */
+test("pruneExpiredIdempotencyRecords deletes only rows older than maxAgeMs, done or in_progress alike", () => {
+  const db = setup();
+  insertIdempotencyRecord(db, "old-done", "user1", "POST /projects");
+  completeIdempotencyRecord(db, "old-done", 201, JSON.stringify({ ok: true }));
+  insertIdempotencyRecord(db, "old-in-progress", "user1", "POST /projects");
+  insertIdempotencyRecord(db, "fresh", "user1", "POST /projects");
+
+  const oneDayMs = 24 * 60 * 60 * 1000;
+  const twoDaysAgo = new Date(Date.now() - 2 * oneDayMs).toISOString();
+  db.prepare("UPDATE idempotency_keys SET createdAt = ? WHERE key = ?").run(twoDaysAgo, "old-done");
+  db.prepare("UPDATE idempotency_keys SET createdAt = ? WHERE key = ?").run(twoDaysAgo, "old-in-progress");
+
+  pruneExpiredIdempotencyRecords(db, oneDayMs);
+
+  assert.equal(getIdempotencyRecord(db, "old-done"), undefined, "an old 'done' row must be pruned, not kept forever");
+  assert.equal(
+    getIdempotencyRecord(db, "old-in-progress"),
+    undefined,
+    "an old 'in_progress' row (e.g. orphaned by a server crash mid-request) must also be pruned",
+  );
+  assert.ok(getIdempotencyRecord(db, "fresh"), "a row created just now must survive a 24h prune");
 });

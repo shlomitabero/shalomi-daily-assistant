@@ -3,9 +3,17 @@ import {
   insertIdempotencyRecord,
   completeIdempotencyRecord,
   deleteIdempotencyRecord,
+  pruneExpiredIdempotencyRecords,
   type ForgeDatabase,
 } from "@forge/db";
 import { HttpError } from "./httpError.js";
+
+/**
+ * 24h: "far longer than any realistic retry sequence," per the design
+ * doc's own open-question answer -- this table only needs to cover a
+ * single retry sequence's own window, not serve as a permanent audit log.
+ */
+const IDEMPOTENCY_TTL_MS = 24 * 60 * 60 * 1000;
 
 /**
  * The server-side half of the idempotency-key mechanism designed in
@@ -29,6 +37,13 @@ export async function withIdempotency<T>(
   run: () => Promise<{ status: number; body: T }>,
 ): Promise<{ status: number; body: T }> {
   if (!key) return run();
+
+  // Opportunistic cleanup (the design doc's own suggested alternative to a
+  // scheduled sweep, since this app has no cron/scheduler infrastructure):
+  // runs before the lookup below so a key whose own row has aged out is
+  // treated as brand-new rather than replayed from a stale cached response
+  // forever.
+  pruneExpiredIdempotencyRecords(db, IDEMPOTENCY_TTL_MS);
 
   const existing = getIdempotencyRecord(db, key);
   if (existing?.status === "in_progress") {

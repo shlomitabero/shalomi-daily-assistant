@@ -90,5 +90,6 @@ export {
   insertIdempotencyRecord,
   completeIdempotencyRecord,
   deleteIdempotencyRecord,
+  pruneExpiredIdempotencyRecords,
   type IdempotencyRecord,
 } from "./idempotency.js";
