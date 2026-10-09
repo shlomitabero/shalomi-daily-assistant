@@ -8,8 +8,8 @@ export const SOURCE_DEFINITIONS = [
     name: 'מוצרים דיגיטליים מבוססי AI',
     category: 'digital_products',
     description: 'יצירת מוצר דיגיטלי (מדריך, תבנית, כלי עבודה) בעזרת AI ומכירתו דרך דף תשלום אמיתי. זהו מסלול ההכנסה הראשון שמומש מקצה לקצה.',
-    requiredEnv: ['ANTHROPIC_API_KEY', 'PADDLE_API_KEY', 'PADDLE_CLIENT_TOKEN', 'PADDLE_PRICE_ID'],
-    howToConnect: 'הגדר את ANTHROPIC_API_KEY (console.anthropic.com) ואת 4 משתני ה-Paddle (vendors.paddle.com) כמשתני סביבה בשרת.',
+    requiredEnv: ['ANTHROPIC_API_KEY', 'PADDLE_API_KEY', 'PADDLE_CLIENT_TOKEN', 'PADDLE_WEBHOOK_SECRET'],
+    howToConnect: 'הגדר את ANTHROPIC_API_KEY (console.anthropic.com) ואת שלושת משתני ה-Paddle (vendors.paddle.com → Authentication + Notifications) כמשתני סביבה בשרת.',
   },
   {
     id: 'financial_markets',
