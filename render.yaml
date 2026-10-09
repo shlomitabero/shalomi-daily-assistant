@@ -1,0 +1,26 @@
+services:
+  - type: web
+    name: profit-ai
+    runtime: node
+    plan: free
+    buildCommand: npm install && npm run build
+    startCommand: npm run start --workspace=server
+    envVars:
+      - key: JWT_SECRET
+        generateValue: true
+      - key: OWNER_PASSWORD
+        sync: false
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: PADDLE_API_KEY
+        sync: false
+      - key: PADDLE_CLIENT_TOKEN
+        sync: false
+      - key: PADDLE_WEBHOOK_SECRET
+        sync: false
+      - key: PADDLE_ENV
+        value: sandbox
+      - key: DEFAULT_PRODUCT_PRICE_USD
+        value: "9"
+      - key: MARKET_DATA_API_KEY
+        sync: false

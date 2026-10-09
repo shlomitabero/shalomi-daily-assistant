@@ -1,0 +1,87 @@
+// File-backed data store. Every route/engine goes through this module's
+// get/where/insert/update, never touches the filesystem directly — so
+// swapping this for a real Postgres repository (same function signatures)
+// is the entire migration to production. This is a personal single-owner
+// tool, not a multi-tenant SaaS, so there is no users table.
+import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { nanoid } from 'nanoid';
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const DATA_DIR = join(__dirname, '..', '..', 'data');
+const DB_FILE = join(DATA_DIR, 'db.json');
+
+const TABLES = [
+  'settings', 'sources', 'opportunities', 'ledger', 'actions_log',
+  'approvals', 'financial_watchlist', 'paper_trades', 'digests',
+];
+
+function emptyState() {
+  const state = {};
+  for (const t of TABLES) state[t] = {};
+  return state;
+}
+
+let state = load();
+
+function load() {
+  if (existsSync(DB_FILE)) {
+    try {
+      const raw = JSON.parse(readFileSync(DB_FILE, 'utf-8'));
+      return { ...emptyState(), ...raw };
+    } catch {
+      return emptyState();
+    }
+  }
+  return emptyState();
+}
+
+function persist() {
+  if (!existsSync(DATA_DIR)) mkdirSync(DATA_DIR, { recursive: true });
+  writeFileSync(DB_FILE, JSON.stringify(state, null, 2));
+}
+
+export function makeId(prefix) {
+  return `${prefix}_${nanoid(10)}`;
+}
+
+function table(name) {
+  return {
+    get(id) {
+      return state[name][id] ?? null;
+    },
+    all() {
+      return Object.values(state[name]);
+    },
+    where(predicate) {
+      return Object.values(state[name]).filter(predicate);
+    },
+    insert(row) {
+      state[name][row.id] = row;
+      persist();
+      return row;
+    },
+    update(id, patch) {
+      const existing = state[name][id];
+      if (!existing) return null;
+      const updated = { ...existing, ...patch };
+      state[name][id] = updated;
+      persist();
+      return updated;
+    },
+    delete(id) {
+      const existed = Boolean(state[name][id]);
+      delete state[name][id];
+      if (existed) persist();
+      return existed;
+    },
+  };
+}
+
+export const db = Object.fromEntries(TABLES.map((t) => [t, table(t)]));
+
+// Test-only: reset all tables to empty without touching disk.
+export function __resetForTests() {
+  state = emptyState();
+}
