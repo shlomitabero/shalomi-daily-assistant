@@ -218,21 +218,38 @@ test("a connection that drops after being fully connected (not a QR timeout) sur
 test("sendMessage succeeds once connected, addressing the real WhatsApp JID format", async () => {
   const { manager, createdSockets } = setupManager();
   await manager.connect("proj1");
-  createdSockets[0].sock.user = { id: "15550001111:1@s.whatsapp.net" };
+  createdSockets[0].sock.user = { id: "972501234567:1@s.whatsapp.net" };
+  createdSockets[0].emitConnectionUpdate({ connection: "open" });
+
+  const result = await manager.sendMessage("proj1", "972509998888", "שלום!");
+  assert.equal(result.ok, true);
+  assert.deepEqual(createdSockets[0].sendCalls, [{ jid: "972509998888@s.whatsapp.net", text: "שלום!" }]);
+});
+
+test("sendMessage refuses honestly when 'to' is a bare local-format number missing its country code, instead of addressing a wrong/nonexistent JID", async () => {
+  // This app's own seed data and Hebrew templates store phone numbers in
+  // exactly this local format (e.g. "050-123-4567"), and EntityPanel's
+  // "Send WhatsApp" row action feeds a record's raw stored value straight
+  // through -- this is the common real path, not a contrived edge case.
+  const { manager, createdSockets } = setupManager();
+  await manager.connect("proj1");
+  createdSockets[0].sock.user = { id: "972501234567:1@s.whatsapp.net" };
   createdSockets[0].emitConnectionUpdate({ connection: "open" });
 
   const result = await manager.sendMessage("proj1", "050-123-4567", "שלום!");
-  assert.equal(result.ok, true);
-  assert.deepEqual(createdSockets[0].sendCalls, [{ jid: "501234567@s.whatsapp.net", text: "שלום!" }]);
+  assert.equal(result.ok, false);
+  assert.equal(result.error, "missing_country_code");
+  assert.deepEqual(createdSockets[0].sendCalls, []);
 });
 
 test("sendMessage builds a real, fully-qualified JID for a number typed with a 00 international access code", async () => {
   // Unlike the local-format case above ("050-123-4567" -> missing its
-  // country code entirely, a known, separate, already-accepted gap), a
-  // number typed as "00972-50-123-4567" (the international access code
-  // convention) IS meant to resolve to a fully-qualified number -- it
-  // must not keep a spurious leading "0" that was never part of the
-  // number, which would address a wrong/nonexistent JID.
+  // country code entirely, now refused honestly instead of silently
+  // mis-addressed), a number typed as "00972-50-123-4567" (the
+  // international access code convention) IS meant to resolve to a
+  // fully-qualified number -- it must not keep a spurious leading "0"
+  // that was never part of the number, which would address a
+  // wrong/nonexistent JID.
   const { manager, createdSockets } = setupManager();
   await manager.connect("proj1");
   createdSockets[0].sock.user = { id: "15550001111:1@s.whatsapp.net" };

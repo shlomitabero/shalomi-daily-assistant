@@ -392,6 +392,25 @@ export class WhatsAppWebManager {
     if (!phone) {
       return { ok: false, error: "invalid_phone_number" };
     }
+    // `to` may be stored/typed in local format with no country code at all
+    // (e.g. "050-123-4567" -> "501234567") -- this app's own seed data and
+    // Hebrew templates store phone fields exactly this way, and EntityPanel's
+    // "Send WhatsApp" row action feeds a record's raw field value straight
+    // through, so this is the common path, not a rare edge case. Silently
+    // building a JID from it anyway would address a wrong/nonexistent
+    // number while still reporting success -- exactly the quiet-wrong-
+    // success this function's own "abc" check above already refuses to
+    // allow. There's no reliable way to *infer* the missing country code
+    // for an arbitrary contact (unlike findMatchingRecord's suffix
+    // comparison in whatsapp.ts, which only ever compares the same number
+    // against itself in two formats), so refuse honestly instead of
+    // guessing: a real international number including its country code is
+    // never shorter than the connected account's own number for a
+    // plausible same-country contact.
+    const ownNumber = session.phoneNumber ? normalizePhone(session.phoneNumber) : "";
+    if (ownNumber && phone.length < ownNumber.length) {
+      return { ok: false, error: "missing_country_code" };
+    }
     try {
       const jid = `${phone}@s.whatsapp.net`;
       await session.sock.sendMessage(jid, { text: body });
