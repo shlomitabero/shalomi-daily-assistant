@@ -403,7 +403,7 @@ test("generated server.js actually enforces foreign keys: deleting a record anot
   assert.match(serverJs, /db\.exec\("PRAGMA foreign_keys = ON;"\);/);
   assert.match(
     serverJs,
-    /const references = field\.type === "relation" && field\.relationTo \? ` REFERENCES \$\{q\(field\.relationTo\)\}\(id\)` : "";\n {4}columns\.push\(`\$\{q\(field\.name\)\} \$\{sqlType\(field\.type\)\}\$\{field\.required \? " NOT NULL" : ""\}\$\{references\}`\);/,
+    /const references = field\.type === "relation" && field\.relationTo && ENTITY_NAMES\.has\(field\.relationTo\) \? ` REFERENCES \$\{q\(field\.relationTo\)\}\(id\)` : "";\n {4}columns\.push\(`\$\{q\(field\.name\)\} \$\{sqlType\(field\.type\)\}\$\{field\.required \? " NOT NULL" : ""\}\$\{references\}`\);/,
   );
 
   const dir = mkdtempSync(path.join(tmpdir(), "codegen-fk-test-"));
@@ -475,6 +475,90 @@ test("generated server.js actually enforces foreign keys: deleting a record anot
     const secondCourier = (await secondCourierRes.json()).record;
     const okDeleteRes = await fetch(`http://localhost:${port}/api/Courier/${secondCourier.id}`, { method: "DELETE" });
     assert.equal(okDeleteRes.status, 204, "an unreferenced record must still delete normally");
+  } finally {
+    child.kill();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
+ * New in this round: a relation field's `relationTo` can go dangling -- a
+ * later refine regenerates the whole spec from plain prose with no access
+ * to the previous structure (see pipeline.ts's own computeImpact/
+ * architectEvent comments), so it's entirely plausible for an entity to be
+ * renamed or dropped while another entity's relation field keeps its old
+ * relationTo string, unnoticed, since ProductSpecSchema only requires
+ * relationTo to be a non-empty string, never that it names a real entity.
+ * migrate.ts's own diffAndMigrate already guards this exact case
+ * (`entityNames.has(field.relationTo)`), and codegen.ts's own generated
+ * frontend code already filters ALL_ENTITIES the same way -- but the
+ * generated server.js's own table-creation loop (above) had no such guard,
+ * so it emitted a REFERENCES clause pointing at a table that's never
+ * created. SQLite only checks a FK's target at write time, not at CREATE
+ * TABLE time, so this broke silently until someone tried to write a row --
+ * and then it broke every write to that table, including ones that never
+ * touch the dangling relation field at all, with a cryptic
+ * "no such table: main.Driver" instead of any actionable message.
+ */
+test("generated server.js omits a relation field's REFERENCES clause when relationTo doesn't name any real entity, instead of breaking every insert into that table", async () => {
+  const danglingRelationProject: Project = {
+    ...project,
+    spec: {
+      ...project.spec,
+      entities: [
+        {
+          name: "Order",
+          fields: [
+            { name: "item", type: "text", required: true },
+            { name: "driverId", type: "relation", required: false, relationTo: "Driver" },
+          ],
+        },
+      ],
+    },
+  };
+  const files = generateExportFiles(danglingRelationProject);
+  const serverJs = files.find((f) => f.path === "server.js")!.content;
+  assert.doesNotMatch(serverJs, /REFERENCES "Driver"/, "no real Driver entity exists, so no REFERENCES clause to it should be emitted");
+
+  const dir = mkdtempSync(path.join(tmpdir(), "codegen-dangling-fk-test-"));
+  const repoRoot = path.resolve(import.meta.dirname, "../../..");
+  symlinkSync(path.join(repoRoot, "node_modules"), path.join(dir, "node_modules"));
+  writeFileSync(path.join(dir, "server.js"), serverJs);
+
+  const port = 54000 + Math.floor(Math.random() * 5000);
+  const child = spawn(process.execPath, ["--experimental-sqlite", "server.js"], {
+    cwd: dir,
+    env: { ...process.env, PORT: String(port) },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  let stderr = "";
+  child.stderr.on("data", (chunk) => {
+    stderr += chunk.toString();
+  });
+
+  try {
+    const deadline = Date.now() + 5000;
+    let lastErr: unknown;
+    while (Date.now() < deadline) {
+      if (child.exitCode !== null) throw new Error(`server.js exited early (code ${child.exitCode}):\n${stderr}`);
+      try {
+        await fetch(`http://localhost:${port}/api/entities`);
+        break;
+      } catch (err) {
+        lastErr = err;
+        await new Promise((r) => setTimeout(r, 100));
+      }
+    }
+    if (child.exitCode !== null) throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
+
+    const orderRes = await fetch(`http://localhost:${port}/api/Order`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ item: "Pizza" }),
+    });
+    assert.equal(orderRes.status, 201, "a record with no dangling-relation value set must still be creatable");
+    const order = (await orderRes.json()).record;
+    assert.equal(order.item, "Pizza");
   } finally {
     child.kill();
     rmSync(dir, { recursive: true, force: true });

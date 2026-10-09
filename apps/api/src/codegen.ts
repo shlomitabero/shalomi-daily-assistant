@@ -325,6 +325,8 @@ function sqlType(type) {
   return "TEXT";
 }
 
+const ENTITY_NAMES = new Set(ENTITIES.map((e) => e.name));
+
 for (const entity of ENTITIES) {
   assertSafe(entity.name);
   const columns = ["id INTEGER PRIMARY KEY AUTOINCREMENT", "createdAt TEXT NOT NULL"];
@@ -336,7 +338,14 @@ for (const entity of ENTITIES) {
     // link to the target table. SQLite allows this to forward-reference a
     // table that's declared later in ENTITIES; the constraint is only
     // checked when a row is actually written, not at CREATE TABLE time.
-    const references = field.type === "relation" && field.relationTo ? \` REFERENCES \${q(field.relationTo)}(id)\` : "";
+    // Requires relationTo to actually name one of ENTITIES' own entities --
+    // a dangling relationTo (e.g. the target entity got renamed/removed by a
+    // later refine, leaving this field's own relationTo string stale) would
+    // otherwise reference a table that's never created, which makes every
+    // single insert into THIS table fail with "no such table", not just
+    // writes that actually set the relation field. Mirrors migrate.ts's own
+    // entityNames.has(field.relationTo) guard.
+    const references = field.type === "relation" && field.relationTo && ENTITY_NAMES.has(field.relationTo) ? \` REFERENCES \${q(field.relationTo)}(id)\` : "";
     columns.push(\`\${q(field.name)} \${sqlType(field.type)}\${field.required ? " NOT NULL" : ""}\${references}\`);
   }
   db.exec(\`CREATE TABLE IF NOT EXISTS \${q(entity.name)} (\${columns.join(", ")})\`);
