@@ -688,6 +688,16 @@ function FieldInput({
         </select>
       );
     }
+    // loadRelated's own fetch deliberately swallows ANY failure (network
+    // blip, auth race) into an empty array, not undefined -- so a single
+    // transient fetch error leaves relatedEntityRecords genuinely empty
+    // rather than still-loading. Without this fallback, a record whose
+    // relation field already holds a real id would have no matching
+    // <option> and the browser would silently blank the controlled select,
+    // the same "stale value has no <option>" bug class the enum branch
+    // below already guards against (round 508).
+    const currentRelationId = value === "" || value === null || value === undefined ? null : Number(value);
+    const hasCurrentRelationOption = currentRelationId === null || relatedEntityRecords.some((r) => Number(r.id) === currentRelationId);
     return (
       <select
         required={field.required}
@@ -698,6 +708,7 @@ function FieldInput({
         onKeyDown={onKeyDown}
       >
         <option value="">{t("entity.select")}</option>
+        {!hasCurrentRelationOption && <option value={currentRelationId as number}>{`#${currentRelationId}`}</option>}
         {relatedEntityRecords.map((r) => (
           <option key={r.id as number} value={r.id as number}>
             {recordDisplayLabel(relatedEntity, r)}

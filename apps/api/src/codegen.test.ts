@@ -7759,6 +7759,97 @@ test("the exported EntityView's self-referencing relation field picker includes 
 });
 
 /**
+ * Round 515's finding, also fixed the same round in EntityPanel.tsx (live
+ * preview): FieldInput's relation branch had no fallback for a stored id
+ * missing from relatedEntityRecords -- unlike the enum branch a few lines
+ * below it (round 508's own fix, which re-injects a synthetic <option>
+ * for a stale value). loadRelated's own fetch deliberately swallows ANY
+ * failure into an empty array, not undefined, so a single transient
+ * fetch error wipes out every real option and a record whose relation
+ * field already holds a real, valid value renders that field as
+ * blank/unselected. Confirms the exported app's own select now keeps the
+ * record's real stored courier id selectable (via a synthetic "#9"
+ * option) even when the related-entity fetch outright fails.
+ */
+test("the exported EntityView's relation field keeps the record's real stored value selectable even when the related-entity fetch fails", async () => {
+  const courierEntity: Entity = { name: "Courier", label: "Courier", fields: [{ name: "name", label: "Name", type: "text", required: true }] };
+  const orderEntity: Entity = {
+    name: "Order",
+    label: "Order",
+    fields: [
+      { name: "item", label: "Item", type: "text", required: true },
+      { name: "courierId", label: "Courier", type: "relation", relationTo: "Courier", required: true },
+    ],
+  };
+  const withRelationProject: Project = {
+    ...project,
+    spec: { ...project.spec, entities: [courierEntity, orderEntity] },
+  };
+  const files = generateExportFiles(withRelationProject);
+  const dir = writeGeneratedWebComponent(files);
+  const store: EntityRecord[] = [{ id: 1, item: "Pizza", courierId: 9 }];
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async (input: string) => {
+    if (input === "/api/Order") {
+      return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    if (input === "/api/Courier") {
+      // An HTTP error response, not a thrown/rejected fetch -- loadRelated's
+      // own catch swallows the resulting thrown Error into [] either way,
+      // but a rejected fetch() could trip up any retry wrapper this file's
+      // own request() helper might use; a real 4xx/5xx avoids that entirely.
+      return new Response(JSON.stringify({ error: "boom" }), { status: 500, headers: { "content-type": "application/json" } });
+    }
+    throw new Error(`unexpected request ${input}`);
+  }) as typeof fetch;
+
+  try {
+    await withRealLocalStorage(async () => {
+      const { EntityView } = await import(path.join(dir, "web", "src", "components", "EntityView.jsx"));
+      const props = {
+        entity: orderEntity,
+        highlightRecordId: null,
+        onHighlightHandled: () => {},
+        onJumpToRecord: () => {},
+        onRecordCountChange: () => {},
+      };
+
+      const { container } = render(React.createElement(EntityView, props));
+      for (let i = 0; i < 40; i++) {
+        if (container.querySelectorAll("tbody tr").length === 1) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+
+      const editButton = container.querySelector(".row-actions button") as HTMLButtonElement;
+      await act(async () => {
+        fireEvent.click(editButton);
+      });
+
+      let courierSelect: HTMLSelectElement | null = null;
+      for (let i = 0; i < 40; i++) {
+        courierSelect = container.querySelector(".record-form select") as HTMLSelectElement | null;
+        if (courierSelect !== null && !courierSelect.disabled) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+
+      assert.equal(
+        courierSelect!.value,
+        "9",
+        "the select must reflect the record's real stored courier id even though the related-entity fetch failed and returned no options",
+      );
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    cleanup();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
  * New in this round (440): a long-standing, known-but-deprioritized gap
  * from round 375's own notes, mirrored here in the exported standalone
  * app's own hand-duplicated FieldInput (apps/api/src/codegen.ts). Its

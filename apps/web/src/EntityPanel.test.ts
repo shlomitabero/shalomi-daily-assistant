@@ -5479,6 +5479,73 @@ test("EntityPanel's relation field never falls back to a raw, unvalidated number
 });
 
 /**
+ * Round 515's finding: FieldInput's relation branch had no fallback for a
+ * stored id missing from relatedEntityRecords -- unlike the enum branch a
+ * few lines below it (round 508's own fix), which re-injects a synthetic
+ * <option> for a stale value no longer in field.enumValues. The relation
+ * branch's own loadRelated effect (above) deliberately swallows ANY
+ * related-entity fetch failure into an empty array (`catch { return
+ * [name, []] }`), not undefined -- so a single transient fetch error wipes
+ * out every real option, and a record whose relation field already holds
+ * a real, valid value renders that field as blank/unselected, exactly the
+ * "real value doesn't match any <option>" bug class round 508 already
+ * fixed for enum. Confirms the select now keeps the record's real stored
+ * courier id selectable (via a synthetic "#9" option) even when the
+ * related-entity fetch outright fails.
+ */
+test("EntityPanel's relation field keeps the record's real stored value selectable even when the related-entity fetch fails", async () => {
+  await withJsdom(async () => {
+    const orderEntity: Entity = {
+      name: "Order",
+      label: "Order",
+      fields: [
+        { name: "item", label: "Item", type: "text", required: true },
+        { name: "courierId", label: "Courier", type: "relation", relationTo: "Courier", required: true },
+      ],
+    };
+    const courierEntity: Entity = { name: "Courier", label: "Courier", fields: [{ name: "name", label: "Name", type: "text", required: true }] };
+    const store: EntityRecord[] = [{ id: 1, createdAt: "x", item: "Pizza", courierId: 9 }];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string) => {
+      if (input === "/api/projects/proj1/entities/Order") {
+        return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      if (input === "/api/projects/proj1/entities/Courier") {
+        // An HTTP error response, not a thrown/rejected fetch -- the latter
+        // is what fetchWithWakeRetry (wakeRetry.ts) treats as a cold-start
+        // connection failure and retries for up to ~101s+, which this test
+        // has no interest in exercising. A real 4xx/5xx is returned
+        // immediately per that file's own contract, and loadRelated's catch
+        // swallows the resulting thrown Error into [] just as fast.
+        return new Response(JSON.stringify({ error: "boom" }), { status: 500, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${input}`);
+    }) as typeof fetch;
+    try {
+      renderEntityPanel({ entity: orderEntity, allEntities: [orderEntity, courierEntity] });
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 1);
+
+      const editButton = document.querySelector(".row-actions button") as HTMLButtonElement;
+      fireEvent.click(editButton);
+
+      await waitForCondition(() => {
+        const select = document.querySelector(".record-form select") as HTMLSelectElement | null;
+        return select !== null && !select.disabled;
+      });
+
+      const courierSelect = document.querySelector(".record-form select") as HTMLSelectElement;
+      assert.equal(
+        courierSelect.value,
+        "9",
+        "the select must reflect the record's real stored courier id even though the related-entity fetch failed and returned no options",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * New in this round: the search box's own matchesSearch fell through to
  * the raw stored foreign-key id for a relation field, so typing the exact
  * name a relation cell visibly shows (e.g. "Dana", resolved via

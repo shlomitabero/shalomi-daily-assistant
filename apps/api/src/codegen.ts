@@ -2450,6 +2450,16 @@ function FieldInput({ entity, field, value, onChange, relatedEntity, relatedEnti
         </select>
       );
     }
+    // loadRelated's own fetch deliberately swallows ANY failure into an
+    // empty array, not undefined -- so a transient fetch error leaves
+    // relatedEntityRecords genuinely empty rather than still-loading.
+    // Mirrors the live preview's own fix (EntityPanel.tsx, round 515):
+    // without this, a record whose relation field already holds a real id
+    // would have no matching <option> and the browser would silently
+    // blank the controlled select, the same bug class the enum branch
+    // below already guards against.
+    const currentRelationId = value === "" || value === null || value === undefined ? null : Number(value);
+    const hasCurrentRelationOption = currentRelationId === null || relatedEntityRecords.some((r) => Number(r.id) === currentRelationId);
     return (
       <select
         id={id}
@@ -2461,6 +2471,7 @@ function FieldInput({ entity, field, value, onChange, relatedEntity, relatedEnti
         onKeyDown={onKeyDown}
       >
         <option value="">…</option>
+        {!hasCurrentRelationOption && <option value={currentRelationId}>{\`#\${currentRelationId}\`}</option>}
         {relatedEntityRecords.map((r) => (
           <option key={r.id} value={r.id}>
             {recordDisplayLabel(relatedEntity, r)}
