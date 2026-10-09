@@ -404,11 +404,19 @@ export class WhatsAppWebManager {
     // for an arbitrary contact (unlike findMatchingRecord's suffix
     // comparison in whatsapp.ts, which only ever compares the same number
     // against itself in two formats), so refuse honestly instead of
-    // guessing: a real international number including its country code is
-    // never shorter than the connected account's own number for a
-    // plausible same-country contact.
-    const ownNumber = session.phoneNumber ? normalizePhone(session.phoneNumber) : "";
-    if (ownNumber && phone.length < ownNumber.length) {
+    // guessing. Counting the *raw* string's leading zeros (before
+    // normalizePhone's own stripping) distinguishes the two real cases its
+    // own doc comment already establishes, without comparing digit counts
+    // against any other number (which breaks across countries -- a US
+    // number is 11 digits total, shorter than an Israeli number's 12, so
+    // comparing lengths against the connected account's own number wrongly
+    // flagged every legitimate cross-country send): exactly one leading
+    // zero is the local trunk prefix (country code missing), two is the
+    // "00" international access code (already fully qualified), and zero
+    // is either already-international or untaggable either way.
+    const rawDigits = to.replace(/\D/g, "");
+    const leadingZeros = rawDigits.length - rawDigits.replace(/^0+/, "").length;
+    if (leadingZeros === 1) {
       return { ok: false, error: "missing_country_code" };
     }
     try {

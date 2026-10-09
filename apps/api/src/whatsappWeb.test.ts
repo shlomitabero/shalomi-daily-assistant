@@ -260,6 +260,24 @@ test("sendMessage builds a real, fully-qualified JID for a number typed with a 0
   assert.deepEqual(createdSockets[0].sendCalls, [{ jid: "972501234567@s.whatsapp.net", text: "שלום!" }]);
 });
 
+test("sendMessage sends successfully to an already-fully-qualified number from a shorter-numbered country than the connected account's own number", async () => {
+  // Israeli numbers (connected account here) are 12 digits once normalized;
+  // a fully-qualified US number ("+1 202-555-0123") is only 11 -- comparing
+  // digit *counts* against the connected account's own number (an earlier,
+  // now-replaced version of this check) would wrongly flag every such
+  // cross-country send as missing its country code, even though it already
+  // has one. The actual signal (exactly one leading zero in the raw input)
+  // must not depend on any other number at all.
+  const { manager, createdSockets } = setupManager();
+  await manager.connect("proj1");
+  createdSockets[0].sock.user = { id: "972501234567:1@s.whatsapp.net" };
+  createdSockets[0].emitConnectionUpdate({ connection: "open" });
+
+  const result = await manager.sendMessage("proj1", "+1 202-555-0123", "hi");
+  assert.equal(result.ok, true);
+  assert.deepEqual(createdSockets[0].sendCalls, [{ jid: "12025550123@s.whatsapp.net", text: "hi" }]);
+});
+
 test("sendMessage refuses honestly when not connected, instead of pretending to send", async () => {
   const { manager } = setupManager();
   const result = await manager.sendMessage("proj1", "972500000000", "hi");
