@@ -246,9 +246,18 @@ export function diffAndMigrate(
     // coincidentally-matching field reused rather than reported.
     // previousEntities is guaranteed collision-free internally by that same
     // upstream schema check, so at most one other known name can match.
+    // The comparison itself must be case-insensitive: SQLite compares ASCII
+    // identifiers case-insensitively even when double-quoted (the same fact
+    // ProductSpecSchema's own findCaseInsensitiveDuplicateEntityNames refine
+    // exists to guard against within one spec -- confirmed directly against
+    // this project's SQLite binding), so an entity named "order" colliding
+    // with a since-removed "Order" from this project's own history is just
+    // as real a collision as a sanitized-character collision, and a plain
+    // `===` here would silently miss it.
+    const tableLower = table.toLowerCase();
     if (!prevEntity) {
       const collidingName = Array.from(allKnownEntityNames(db, projectId, previousSpec)).find(
-        (name) => name !== entity.name && tableNameFor(projectId, name) === table,
+        (name) => name !== entity.name && tableNameFor(projectId, name).toLowerCase() === tableLower,
       );
       if (collidingName) {
         throw new ValidationError(

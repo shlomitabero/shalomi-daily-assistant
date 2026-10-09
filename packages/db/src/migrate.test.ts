@@ -887,6 +887,49 @@ test("diffAndMigrate also refuses the collision when the removed entity vanished
   assert.equal(stillThere[0].phone, "050-1234567");
 });
 
+/**
+ * A third angle on the same collision guard (rounds 496/497 fixed how far
+ * back in history it looks; this is about the comparison itself): SQLite
+ * compares ASCII table identifiers case-insensitively even when
+ * double-quoted -- the exact fact ProductSpecSchema's own
+ * findCaseInsensitiveDuplicateEntityNames refine exists to guard against
+ * within one spec (see the "two entities whose names collide when compared
+ * case-insensitively" test above). A plain `===` on the sanitized table
+ * names would miss a collision that differs only by letter case, even
+ * though the colliding name is sitting right there in allKnownEntityNames.
+ */
+test("diffAndMigrate refuses the collision even when the colliding entity's name differs from the removed one only by letter case", () => {
+  const db = openDatabase(":memory:");
+  const baseSpec: ProductSpec = {
+    ...spec,
+    entities: [...spec.entities, { name: "Order2", fields: [{ name: "note", type: "text", required: true }] }],
+  };
+  applyMigrations(db, "proj1", baseSpec);
+  const orderRecord = insertRecord(db, "proj1", baseSpec.entities[2], { note: "secret old data" });
+  assert.equal(orderRecord.note, "secret old data");
+
+  // Refine: remove "Order2" and introduce "order2" -- a different literal
+  // entity name (so the exact-name prevEntity lookup doesn't apply), but
+  // tableNameFor sanitizes both to table names SQLite treats as identical.
+  const nextSpec: ProductSpec = {
+    ...spec,
+    entities: [...spec.entities, { name: "order2", fields: [{ name: "price", type: "number", required: true }] }],
+  };
+  assert.throws(
+    () => diffAndMigrate(db, "proj1", baseSpec, nextSpec),
+    (err: unknown) => {
+      assert.ok(err instanceof ValidationError);
+      assert.match((err as Error).message, /order2/);
+      assert.match((err as Error).message, /Order2/);
+      return true;
+    },
+  );
+
+  const stillThere = listRecords(db, "proj1", baseSpec.entities[2]);
+  assert.equal(stillThere.length, 1);
+  assert.equal(stillThere[0].note, "secret old data");
+});
+
 test("generateCreateTableStatements quotes identifiers so a field named after a SQL reserved keyword doesn't break the statement", () => {
   // Table names are always safe (tableNameFor prefixes with
   // "entity_<projectId>_", so the bare identifier can never literally be a
