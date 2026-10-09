@@ -39,7 +39,6 @@ export const api = {
   generate: (body) => request('/generate', { method: 'POST', body }),
   history: () => request('/history'),
   billingConfigured: () => request('/billing/configured'),
-  checkout: () => request('/billing/checkout', { method: 'POST' }),
   portal: () => request('/billing/portal', { method: 'POST' }),
   adminStats: () => request('/admin/stats'),
 };

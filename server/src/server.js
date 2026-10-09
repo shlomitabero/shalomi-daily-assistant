@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 
 import { authRouter } from './routes/auth.js';
 import { generateRouter } from './routes/generate.js';
-import { billingRouter, stripeWebhookHandler } from './routes/billing.js';
+import { billingRouter, paddleWebhookHandler } from './routes/billing.js';
 import { adminRouter } from './routes/admin.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -15,9 +15,9 @@ const PORT = process.env.PORT || 4000;
 const app = express();
 app.use(cors());
 
-// Stripe needs the raw body to verify the webhook signature, so this is
+// Paddle needs the raw body to verify the webhook signature, so this is
 // mounted before the global express.json() parser below.
-app.post('/api/billing/webhook', express.raw({ type: 'application/json' }), stripeWebhookHandler);
+app.post('/api/billing/webhook', express.raw({ type: 'application/json' }), paddleWebhookHandler);
 
 app.use(express.json());
 
@@ -25,7 +25,7 @@ app.get('/api/health', (req, res) => res.json({
   ok: true,
   name: 'CopyBolt',
   aiConfigured: Boolean(process.env.ANTHROPIC_API_KEY),
-  billingConfigured: Boolean(process.env.STRIPE_SECRET_KEY && process.env.STRIPE_PRICE_ID),
+  billingConfigured: Boolean(process.env.PADDLE_API_KEY && process.env.PADDLE_CLIENT_TOKEN && process.env.PADDLE_PRICE_ID),
 }));
 
 app.use('/api', authRouter);

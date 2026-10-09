@@ -21,7 +21,7 @@ adminRouter.get('/admin/stats', requireAuth, requireAdmin, (req, res) => {
   const activeSubs = db.subscriptions.where((s) => ['active', 'trialing'].includes(s.status));
   const today = todayKey();
 
-  const pricePerMonth = Number(process.env.STRIPE_PRICE_AMOUNT_USD ?? 9);
+  const pricePerMonth = Number(process.env.PRO_PRICE_USD ?? 9);
   const mrr = activeSubs.length * pricePerMonth;
 
   const last7 = dayKeysBack(7).map((day) => ({

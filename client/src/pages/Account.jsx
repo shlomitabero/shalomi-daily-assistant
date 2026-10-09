@@ -4,29 +4,40 @@ import { api } from '../api.js';
 import { useAuth } from '../context/AuthContext.jsx';
 
 export default function Account() {
-  const { user } = useAuth();
-  const [billingConfigured, setBillingConfigured] = useState(false);
+  const { user, refresh } = useAuth();
+  const [billing, setBilling] = useState({ configured: false });
+  const [paddleReady, setPaddleReady] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [copied, setCopied] = useState(false);
 
   useEffect(() => {
-    api.billingConfigured().then((r) => setBillingConfigured(r.configured)).catch(() => {});
-  }, []);
+    api.billingConfigured().then((b) => {
+      setBilling(b);
+      if (b.configured && window.Paddle) {
+        if (b.sandbox) window.Paddle.Environment.set('sandbox');
+        window.Paddle.Initialize({
+          token: b.clientToken,
+          eventCallback(event) {
+            // The webhook updates our DB a moment after Paddle's overlay
+            // reports success, so give it a beat before refreshing.
+            if (event.name === 'checkout.completed') setTimeout(refresh, 2000);
+          },
+        });
+        setPaddleReady(true);
+      }
+    }).catch(() => {});
+  }, [refresh]);
 
   const referralLink = `${window.location.origin}/signup?ref=${user?.referralCode}`;
 
-  async function onCheckout() {
-    setError('');
-    setBusy(true);
-    try {
-      const { url } = await api.checkout();
-      window.location.href = url;
-    } catch (err) {
-      setError(err.data?.error || err.message);
-    } finally {
-      setBusy(false);
-    }
+  function onCheckout() {
+    if (!paddleReady) return;
+    window.Paddle.Checkout.open({
+      items: [{ priceId: billing.priceId, quantity: 1 }],
+      customer: { email: user.email },
+      customData: { userId: user.id },
+    });
   }
 
   async function onPortal() {
@@ -58,12 +69,12 @@ export default function Account() {
           <h3>Your plan</h3>
           <p>{user?.isPaid ? 'You are on Pro — unlimited generations.' : 'You are on the Free plan — 5 generations/day plus referral bonuses.'}</p>
           {error && <p className="form-error">{error}</p>}
-          {!billingConfigured ? (
+          {!billing.configured ? (
             <p className="hint">Billing isn't configured on this deployment yet, so upgrades aren't available right now.</p>
           ) : user?.isPaid ? (
             <button className="btn btn-primary" onClick={onPortal} disabled={busy}>Manage billing</button>
           ) : (
-            <button className="btn btn-primary" onClick={onCheckout} disabled={busy}>Upgrade to Pro — $9/mo</button>
+            <button className="btn btn-primary" onClick={onCheckout} disabled={!paddleReady}>Upgrade to Pro — $9/mo</button>
           )}
         </section>
 

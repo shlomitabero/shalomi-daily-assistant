@@ -1,95 +1,100 @@
-import Stripe from 'stripe';
 import { Router } from 'express';
 import { db, makeId } from '../db/store.js';
 import { requireAuth } from '../middleware/auth.js';
+import { verifyPaddleSignature } from '../engine/paddleSignature.js';
 
-function getStripe() {
-  const key = process.env.STRIPE_SECRET_KEY;
-  return key ? new Stripe(key) : null;
+// Paddle is the merchant of record: it is the seller, handles tax/VAT
+// compliance worldwide, and pays the account holder out directly — unlike
+// Stripe, which doesn't support payouts to Israeli merchant accounts.
+function paddleApiBase() {
+  return process.env.PADDLE_ENV === 'sandbox' ? 'https://sandbox-api.paddle.com' : 'https://api.paddle.com';
 }
 
-function originOf(req) {
-  return req.headers.origin || `${req.protocol}://${req.get('host')}`;
+function isConfigured() {
+  return Boolean(process.env.PADDLE_API_KEY && process.env.PADDLE_CLIENT_TOKEN && process.env.PADDLE_PRICE_ID);
 }
 
 function upsertSubscription({ userId, customerId, subscriptionId, status }) {
   const existing = db.subscriptions.where((s) => s.user_id === userId)[0];
   if (existing) {
-    db.subscriptions.update(existing.id, { stripe_customer_id: customerId, stripe_subscription_id: subscriptionId, status });
+    db.subscriptions.update(existing.id, { paddle_customer_id: customerId, paddle_subscription_id: subscriptionId, status });
   } else {
     db.subscriptions.insert({
-      id: makeId('sub'), user_id: userId, stripe_customer_id: customerId,
-      stripe_subscription_id: subscriptionId, status, created_at: new Date().toISOString(),
+      id: makeId('sub'), user_id: userId, paddle_customer_id: customerId,
+      paddle_subscription_id: subscriptionId, status, created_at: new Date().toISOString(),
     });
   }
 }
 
 export const billingRouter = Router();
 
+// The client-side token and price ID are not secrets — Paddle.js needs them
+// in the browser to open its own checkout overlay directly, so the frontend
+// never has to ask our server to start a checkout session.
 billingRouter.get('/billing/configured', (req, res) => {
-  res.json({ configured: Boolean(process.env.STRIPE_SECRET_KEY && process.env.STRIPE_PRICE_ID) });
-});
-
-billingRouter.post('/billing/checkout', requireAuth, async (req, res) => {
-  const stripe = getStripe();
-  if (!stripe || !process.env.STRIPE_PRICE_ID) {
-    return res.status(503).json({ error: 'billing is not configured yet' });
-  }
-  const user = req.user;
-  const existingSub = db.subscriptions.where((s) => s.user_id === user.id)[0];
-  let customerId = existingSub?.stripe_customer_id;
-  if (!customerId) {
-    const customer = await stripe.customers.create({ email: user.email, metadata: { userId: user.id } });
-    customerId = customer.id;
-  }
-  const origin = originOf(req);
-  const session = await stripe.checkout.sessions.create({
-    mode: 'subscription',
-    customer: customerId,
-    line_items: [{ price: process.env.STRIPE_PRICE_ID, quantity: 1 }],
-    success_url: `${origin}/?checkout=success`,
-    cancel_url: `${origin}/?checkout=cancelled`,
-    metadata: { userId: user.id },
+  res.json({
+    configured: isConfigured(),
+    clientToken: process.env.PADDLE_CLIENT_TOKEN || null,
+    priceId: process.env.PADDLE_PRICE_ID || null,
+    sandbox: process.env.PADDLE_ENV === 'sandbox',
   });
-  res.json({ url: session.url });
 });
 
 billingRouter.post('/billing/portal', requireAuth, async (req, res) => {
-  const stripe = getStripe();
-  if (!stripe) return res.status(503).json({ error: 'billing is not configured yet' });
+  if (!isConfigured()) return res.status(503).json({ error: 'billing is not configured yet' });
   const sub = db.subscriptions.where((s) => s.user_id === req.user.id)[0];
-  if (!sub?.stripe_customer_id) return res.status(400).json({ error: 'no billing account yet — subscribe first' });
-  const session = await stripe.billingPortal.sessions.create({ customer: sub.stripe_customer_id, return_url: originOf(req) });
-  res.json({ url: session.url });
+  if (!sub?.paddle_customer_id) return res.status(400).json({ error: 'no billing account yet — subscribe first' });
+
+  let response;
+  try {
+    response = await fetch(`${paddleApiBase()}/customers/${sub.paddle_customer_id}/portal-sessions`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${process.env.PADDLE_API_KEY}`, 'content-type': 'application/json' },
+      body: JSON.stringify(sub.paddle_subscription_id ? { subscription_ids: [sub.paddle_subscription_id] } : {}),
+    });
+  } catch (err) {
+    console.error('Paddle portal session request failed', err.message);
+    return res.status(502).json({ error: 'could not reach the billing provider, try again' });
+  }
+  if (!response.ok) {
+    console.error('Paddle portal session request failed', response.status, await response.text());
+    return res.status(502).json({ error: 'could not open the billing portal, try again' });
+  }
+  const { data } = await response.json();
+  res.json({ url: data.urls.general.overview });
 });
 
-// Mounted separately in server.js with express.raw() — Stripe signature
+// Mounted separately in server.js with express.raw() — signature
 // verification needs the exact raw request body, not the parsed JSON the
 // rest of the app uses.
-export function stripeWebhookHandler(req, res) {
-  const stripe = getStripe();
-  if (!stripe) return res.status(503).end();
-
-  let event;
-  try {
-    event = stripe.webhooks.constructEvent(req.body, req.headers['stripe-signature'], process.env.STRIPE_WEBHOOK_SECRET);
-  } catch (err) {
-    console.error('Stripe webhook signature check failed:', err.message);
-    return res.status(400).send(`Webhook Error: ${err.message}`);
+export function paddleWebhookHandler(req, res) {
+  const rawBody = req.body.toString('utf8');
+  const valid = verifyPaddleSignature({
+    rawBody,
+    signatureHeader: req.headers['paddle-signature'],
+    secret: process.env.PADDLE_WEBHOOK_SECRET,
+  });
+  if (!valid) {
+    console.error('Paddle webhook signature check failed');
+    return res.status(400).send('invalid signature');
   }
 
-  if (event.type === 'checkout.session.completed') {
-    const session = event.data.object;
-    const userId = session.metadata?.userId;
+  const event = JSON.parse(rawBody);
+  const subscription = event.data;
+
+  if (['subscription.created', 'subscription.updated', 'subscription.canceled'].includes(event.event_type)) {
+    // custom_data is set during checkout (see Account.jsx's Paddle.Checkout.open
+    // call) and Paddle copies it onto the resulting subscription, which is how
+    // we tie a Paddle subscription back to one of our own user accounts.
+    const userId = subscription.custom_data?.userId;
     if (userId) {
-      upsertSubscription({ userId, customerId: session.customer, subscriptionId: session.subscription, status: 'active' });
+      upsertSubscription({
+        userId,
+        customerId: subscription.customer_id,
+        subscriptionId: subscription.id,
+        status: subscription.status,
+      });
     }
-  }
-
-  if (event.type === 'customer.subscription.updated' || event.type === 'customer.subscription.deleted') {
-    const subscription = event.data.object;
-    const existing = db.subscriptions.where((s) => s.stripe_subscription_id === subscription.id)[0];
-    if (existing) db.subscriptions.update(existing.id, { status: subscription.status });
   }
 
   res.json({ received: true });

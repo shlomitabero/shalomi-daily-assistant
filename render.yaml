@@ -12,11 +12,15 @@ services:
         sync: false
       - key: ANTHROPIC_API_KEY
         sync: false
-      - key: STRIPE_SECRET_KEY
+      - key: PADDLE_API_KEY
         sync: false
-      - key: STRIPE_PRICE_ID
+      - key: PADDLE_CLIENT_TOKEN
         sync: false
-      - key: STRIPE_PRICE_AMOUNT_USD
+      - key: PADDLE_PRICE_ID
+        sync: false
+      - key: PADDLE_WEBHOOK_SECRET
+        sync: false
+      - key: PADDLE_ENV
+        value: sandbox
+      - key: PRO_PRICE_USD
         value: "9"
-      - key: STRIPE_WEBHOOK_SECRET
-        sync: false
