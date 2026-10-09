@@ -4207,6 +4207,71 @@ test("EntityPanel drops a field filter when a live refine removes the exact fiel
 });
 
 /**
+ * Regression test for round 500's finding: sortKeys' own re-validation
+ * effect (sibling to viewMode's and fieldFilters', fixed in rounds 490 and
+ * 493 respectively) was never given the same fix -- it only dropped a sort
+ * key referencing a removed field on [projectId, entity.name] (an actual
+ * tab switch), never while the tab stays mounted through a live Refine.
+ * With a dead key still occupying an earlier array index than a surviving
+ * one, the surviving key's own priority badge stayed misnumbered (showing
+ * "2" with no "1" anywhere) and its <th> reported the wrong aria-sort
+ * (keyIndex !== 0, so "none" instead of the real sort direction) --
+ * visually and for assistive tech it looked like sorting had silently
+ * broken, even though the surviving key was still the only one doing
+ * anything. Confirms a two-key sort (status, then name) collapses to a
+ * single, properly-numbered/aria-reported key once a refine removes
+ * "status" without remounting.
+ */
+test("EntityPanel drops a dead sort key when a live refine removes its field, instead of misnumbering the surviving key's priority badge", async () => {
+  await withJsdom(async () => {
+    const store: EntityRecord[] = [
+      { id: 1, createdAt: "x", name: "Acme Corp", status: "new" },
+      { id: 2, createdAt: "x", name: "Globex", status: "won" },
+    ];
+    const entityWithoutStatus: Entity = {
+      name: "Deal",
+      label: "Deal",
+      fields: [{ name: "name", label: "Name", type: "text", required: true }],
+    };
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = mockRecordsFetch(store) as typeof fetch;
+    try {
+      const view = renderEntityPanel();
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 2);
+
+      const statusHeader = Array.from(document.querySelectorAll("thead th button.sort-header")).find((el) =>
+        /Status/.test(el.textContent ?? ""),
+      ) as HTMLButtonElement;
+      const nameHeader = Array.from(document.querySelectorAll("thead th button.sort-header")).find((el) =>
+        /Name/.test(el.textContent ?? ""),
+      ) as HTMLButtonElement;
+      fireEvent.click(statusHeader);
+      fireEvent.click(nameHeader, { shiftKey: true });
+      await waitForCondition(() => document.querySelectorAll(".sort-priority").length === 2);
+      assert.equal(nameHeader.closest("th")!.getAttribute("aria-sort"), "none", "name starts as the second, non-primary sort key");
+
+      // Simulate a refine that removes "status" -- the primary sort key's
+      // own field -- while staying on the exact same entity.name ("Deal"),
+      // the same way App.tsx's real key={entity.name} never remounts for
+      // this.
+      view.rerender(buildEntityPanelElement({ entity: entityWithoutStatus, allEntities: [entityWithoutStatus] }));
+
+      await waitForCondition(() => document.querySelectorAll(".sort-priority").length === 0);
+      const nameHeaderAfter = Array.from(document.querySelectorAll("thead th button.sort-header")).find((el) =>
+        /Name/.test(el.textContent ?? ""),
+      ) as HTMLButtonElement;
+      assert.equal(
+        nameHeaderAfter.closest("th")!.getAttribute("aria-sort"),
+        "ascending",
+        "the surviving 'name' key must become the sole, primary sort key -- reported via aria-sort -- not stuck at a stale secondary index",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * New in this round: the table view had no way to move between rows
  * without reaching for the mouse. j/k (and ArrowDown/ArrowUp) move a
  * keyboard focus between visible rows, and Enter opens the focused row for

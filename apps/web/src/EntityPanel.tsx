@@ -1105,14 +1105,21 @@ export function EntityPanel({
   // the combined reset effect above) and never persisted at all, so a
   // deliberately-set sort didn't even survive clicking to another tab and
   // back. Drops any persisted key referencing a field this entity no
-  // longer has (e.g. the field was removed), instead of sorting by
-  // something that isn't even shown.
+  // longer has (e.g. the field was removed) -- keyed on fieldNamesKey (not
+  // just projectId/entity.name), same as viewMode's own effect above:
+  // EntityPanel doesn't remount when a Refine mutates the currently-active
+  // entity's own fields in place, so without this a dead key left over
+  // from a field a refine then removed stayed in sortKeys forever even
+  // though it no longer affects row order -- the Clear-sort button stayed
+  // visible with nothing to clear, and a surviving second sort key kept
+  // its stale array index, misnumbering its own priority badge and
+  // reporting the wrong column via aria-sort.
+  const fieldNamesKey = useMemo(() => entity.fields.map((f) => f.name).join(","), [entity.fields]);
   useEffect(() => {
-    const validFieldNames = new Set(entity.fields.map((f) => f.name));
+    const validFieldNames = new Set(fieldNamesKey ? fieldNamesKey.split(",") : []);
     validFieldNames.add("createdAt");
     setSortKeys(getSortKeysPreference(projectId, entity.name).filter((k) => validFieldNames.has(k.field)));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [projectId, entity.name]);
+  }, [projectId, entity.name, fieldNamesKey]);
 
   // Same reasoning as sortKeys' own effect just above -- the chosen per-field
   // enum filters are scoped per project+entity too. Previously fieldFilters
@@ -1121,14 +1128,12 @@ export function EntityPanel({
   // didn't even survive clicking to another tab and back, unlike this
   // entity's sort order, grouping, hidden columns, and column widths, every
   // one of which already survives the same switch. Drops any persisted
-  // filter referencing a field this entity no longer has -- keyed on
-  // fieldNamesKey (not just projectId/entity.name), same as viewMode's own
-  // effect above: EntityPanel doesn't remount when a Refine mutates the
-  // currently-active entity's own fields in place, so without this a filter
-  // set on a field a refine then removed left visibleRecords's own
-  // `r[fieldName] === value` check comparing against `undefined` forever,
-  // silently hiding every record with no visible indication why.
-  const fieldNamesKey = useMemo(() => entity.fields.map((f) => f.name).join(","), [entity.fields]);
+  // filter referencing a field this entity no longer has, for the same
+  // live-refine reason sortKeys' own effect above now also keys on
+  // fieldNamesKey: without it, a filter set on a field a refine then
+  // removed left visibleRecords's own `r[fieldName] === value` check
+  // comparing against `undefined` forever, silently hiding every record
+  // with no visible indication why.
   useEffect(() => {
     const validFieldNames = new Set(fieldNamesKey ? fieldNamesKey.split(",") : []);
     const persisted = getFieldFiltersPreference(projectId, entity.name);
