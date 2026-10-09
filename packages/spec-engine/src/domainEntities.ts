@@ -286,7 +286,18 @@ export const DOMAIN_ENTITY_RULES: DomainEntityRule[] = [
       // "product" (round 449) has the identical problem: it's a substring
       // of "production" ("a video production studio"), an ordinary word
       // with nothing to do with selling or tracking products.
-      /\bproduct(s)?\b/, "inventory", /\bstock(s)?\b/, "מוצר", "מוצרים", "מלאי",
+      /\bproduct(s)?\b/, "inventory", /\bstock(s)?\b/, "מוצר", "מוצרים",
+      // Bare "מלאי" ("inventory/stock") is a substring of two unrelated,
+      // ordinary Hebrew words (round 518): WorkOrder's own "חשמלאי"/
+      // "חשמלאים" ("electrician(s)") and the common adjective "מלאים"
+      // ("full", plural) -- e.g. "ארונות מלאים" ("full cabinets") has
+      // nothing to do with retail inventory. JS regex's `\b` only
+      // recognizes ASCII word characters, so it can't bound a Hebrew
+      // word the way it bounds "stock"/"product" above; a lookbehind for
+      // the "חש" prefix plus a lookahead against the "ם" plural suffix
+      // excludes exactly these two collisions while "מלאי" still matches
+      // as its own word (e.g. "ניהול מלאי", "המלאי", "במלאי").
+      /(?<!חש)מלאי(?!ם)/,
     ],
     labelHe: "מוצרים",
     descriptionHe: "פריט שהעסק מוכר או עוקב אחריו.",

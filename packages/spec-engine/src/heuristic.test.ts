@@ -1046,3 +1046,35 @@ test("MenuItem's 'מנה' keyword doesn't spuriously match 'מנהלים' (manag
   const restaurant = await provider.generate("אפליקציה לניהול תפריט ומנות למסעדה");
   assert.ok(restaurant.entities.some((e) => e.name === "MenuItem"));
 });
+
+/**
+ * Regression test for round 518's finding: Product's bare "מלאי"
+ * ("inventory/stock") keyword is a substring of two unrelated, ordinary
+ * Hebrew words -- WorkOrder's own "חשמלאי"/"חשמלאים" ("electrician(s)")
+ * and the common adjective "מלאים" ("full", plural). An electrician/
+ * field-service app description, or any description using "full" as a
+ * plural adjective, has nothing to do with retail inventory, so Product
+ * spuriously matched in both cases. Fixed with a lookbehind/lookahead
+ * regex that excludes exactly these two collisions while "מלאי" still
+ * matches as its own word.
+ */
+test("Product's 'מלאי' keyword doesn't spuriously match 'חשמלאי' (electrician) or 'מלאים' (full)", async () => {
+  const provider = new HeuristicSpecProvider();
+
+  const electrician = await provider.generate("אפליקציה לניהול קריאות שירות לחשמלאים עם לקוחות וטכנאים");
+  assert.ok(
+    !electrician.entities.some((e) => e.name === "Product"),
+    "'חשמלאים' (electricians) alone must not spuriously match Product via a bare 'מלאי' substring",
+  );
+
+  const fullAdjective = await provider.generate("אפליקציה למעקב אחרי ארונות מלאים במחסן");
+  assert.ok(
+    !fullAdjective.entities.some((e) => e.name === "Product"),
+    "'מלאים' (full, plural adjective) alone must not spuriously match Product via a bare 'מלאי' substring",
+  );
+
+  // The real business term still works, including with a definite
+  // article/preposition prefix and no suffix at all.
+  const inventory = await provider.generate("אפליקציה לניהול מלאי בחנות");
+  assert.ok(inventory.entities.some((e) => e.name === "Product"), "'מלאי' must still match Product");
+});
