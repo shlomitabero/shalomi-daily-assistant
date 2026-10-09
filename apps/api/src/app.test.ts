@@ -5472,6 +5472,80 @@ test("deleting your account requires a valid session, the same as any other auth
 });
 
 /**
+ * New in this round (510): GET /projects (listProjectsForUser) silently
+ * drops any project whose stored spec no longer parses against today's
+ * ProductSpecSchema (a real, expected case for a project written by an
+ * older app version -- tryRowToProject's own comment). DeleteAccountPanel.tsx
+ * used to derive the project ids it hands to App.tsx for localStorage
+ * cleanup (projectPreferenceCleanup.ts) straight from this same lenient
+ * listing -- the exact gap DELETE /auth/account's own server-side cleanup
+ * already avoids via listOwnedProjectIds (round 411). GET /projects/mine-ids
+ * is the client-reachable equivalent: this confirms it still returns a
+ * stale-spec owned project (written directly, bypassing insertProject,
+ * standing in for an older app version's row) and a stale-spec shared
+ * project both, exactly where GET /projects would silently exclude them.
+ */
+test("GET /projects/mine-ids still returns an owned or shared project whose stored spec no longer parses against today's schema, unlike GET /projects", async () => {
+  await withServer(async (baseUrl, db) => {
+    const ownerToken = await signup(baseUrl, "mine-ids-owner1@example.com");
+    const collaboratorToken = await signup(baseUrl, "mine-ids-collaborator1@example.com");
+    const collaboratorUser = findUserByEmail(db, "mine-ids-collaborator1@example.com")!;
+
+    const createRes = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: authHeaders(ownerToken),
+      body: JSON.stringify({ description: "A CRM with customers and deals." }),
+    });
+    const { project: goodOwnedProject } = (await createRes.json()) as { project: { id: string } };
+    await fetch(`${baseUrl}/api/projects/${goodOwnedProject.id}/collaborators`, {
+      method: "POST",
+      headers: authHeaders(ownerToken),
+      body: JSON.stringify({ email: "mine-ids-collaborator1@example.com" }),
+    });
+
+    // Written directly via raw SQL (bypassing insertProject, which would
+    // itself require a valid spec) with no `roles` field, standing in for a
+    // project written by an older app version -- one owned by this same
+    // owner, one shared with this same collaborator.
+    db.prepare(
+      "INSERT INTO projects (id, ownerId, name, description, spec_json, status, createdAt) VALUES (?, ?, ?, ?, ?, ?, ?)",
+    ).run("mine-ids-stale-owned", findUserByEmail(db, "mine-ids-owner1@example.com")!.id, "Stale owned", "test", JSON.stringify({ summary: "test", entities: [] }), "draft", new Date().toISOString());
+    db.prepare(
+      "INSERT INTO projects (id, ownerId, name, description, spec_json, status, createdAt) VALUES (?, ?, ?, ?, ?, ?, ?)",
+    ).run("mine-ids-stale-shared", "some-other-owner", "Stale shared", "test", JSON.stringify({ summary: "test", entities: [] }), "draft", new Date().toISOString());
+    db.prepare("INSERT INTO project_collaborators (projectId, userId, addedAt) VALUES (?, ?, ?)").run(
+      "mine-ids-stale-shared",
+      collaboratorUser.id,
+      new Date().toISOString(),
+    );
+
+    const lenientRes = await fetch(`${baseUrl}/api/projects`, { headers: authHeaders(ownerToken) });
+    const { projects: lenientProjects } = (await lenientRes.json()) as { projects: { id: string }[] };
+    assert.ok(
+      !lenientProjects.some((p) => p.id === "mine-ids-stale-owned"),
+      "sanity check: GET /projects must actually exclude the stale-spec project, or this test isn't exercising the gap",
+    );
+
+    const ownerIdsRes = await fetch(`${baseUrl}/api/projects/mine-ids`, { headers: authHeaders(ownerToken) });
+    assert.equal(ownerIdsRes.status, 200);
+    const ownerIds = (await ownerIdsRes.json()) as { ownedProjectIds: string[]; sharedProjectIds: string[] };
+    assert.deepEqual(
+      ownerIds.ownedProjectIds.slice().sort(),
+      [goodOwnedProject.id, "mine-ids-stale-owned"].sort(),
+      "GET /projects/mine-ids must see the stale owned project too -- it never parses spec_json at all, so it can't miss a row this way",
+    );
+
+    const collaboratorIdsRes = await fetch(`${baseUrl}/api/projects/mine-ids`, { headers: authHeaders(collaboratorToken) });
+    const collaboratorIds = (await collaboratorIdsRes.json()) as { ownedProjectIds: string[]; sharedProjectIds: string[] };
+    assert.deepEqual(
+      collaboratorIds.sharedProjectIds.slice().sort(),
+      [goodOwnedProject.id, "mine-ids-stale-shared"].sort(),
+      "GET /projects/mine-ids must see the stale shared project too, scoped correctly as 'shared' rather than 'owned'",
+    );
+  });
+});
+
+/**
  * New in this round (424): DELETE /auth/account used to only revoke this
  * account's sessions AFTER its whole per-project cleanup loop finished --
  * and that loop awaits a genuine network round-trip (whatsapp.disconnect's

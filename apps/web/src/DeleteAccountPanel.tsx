@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { deleteAccount, listProjects } from "./api.js";
+import { deleteAccount, listMyProjectIds } from "./api.js";
 import { formatDeleteAccountSummary } from "./deleteAccountSummary.js";
 import { useTranslation } from "./i18n/LanguageContext.js";
 import { useDialogFocusTrap } from "./useDialogFocusTrap.js";
@@ -48,19 +48,23 @@ export function DeleteAccountPanel({
   const [sharedProjectIds, setSharedProjectIds] = useState<string[]>([]);
   const dialogRef = useDialogFocusTrap<HTMLDivElement>(onClose);
 
-  // Fetches the real project list itself (rather than trusting App.tsx's own
-  // myProjects, which is only ever populated while `view === "home"` -- this
-  // panel can just as easily be opened from a project's own preview screen,
-  // where myProjects would still be empty), so the warning's own project
-  // count is accurate regardless of which screen this was opened from.
+  // Fetches the real project id lists itself (rather than trusting App.tsx's
+  // own myProjects, which is only ever populated while `view === "home"` --
+  // this panel can just as easily be opened from a project's own preview
+  // screen, where myProjects would still be empty), so the warning's own
+  // project count is accurate regardless of which screen this was opened
+  // from. Uses listMyProjectIds, not listProjects: the latter silently drops
+  // any project whose stored spec no longer parses against today's schema
+  // (a real, expected case for an older project), which would leave that
+  // project's own localStorage preference entries un-swept forever once
+  // this account -- the only one that could ever reach them again -- is
+  // gone (see listMyProjectIds' own doc comment).
   useEffect(() => {
-    listProjects()
-      .then(({ projects }) => {
-        const owned = projects.filter((p) => p.ownerId === userId);
-        const shared = projects.filter((p) => p.ownerId !== userId);
-        setProjectSummary({ owned: owned.length, shared: shared.length });
-        setOwnedProjectIds(owned.map((p) => p.id));
-        setSharedProjectIds(shared.map((p) => p.id));
+    listMyProjectIds()
+      .then(({ ownedProjectIds, sharedProjectIds }) => {
+        setProjectSummary({ owned: ownedProjectIds.length, shared: sharedProjectIds.length });
+        setOwnedProjectIds(ownedProjectIds);
+        setSharedProjectIds(sharedProjectIds);
       })
       .catch(() => setProjectSummary(null));
   }, [userId]);

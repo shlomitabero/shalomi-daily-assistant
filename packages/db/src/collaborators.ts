@@ -59,6 +59,22 @@ export function removeAllCollaborationsForUser(db: ForgeDatabase, userId: string
   db.prepare("DELETE FROM project_collaborators WHERE userId = ?").run(userId);
 }
 
+/**
+ * The complement to listOwnedProjectIds (projects.ts): every project id this
+ * user has collaborator access to, queried directly off this table alone so
+ * it never touches projects.spec_json -- unlike listProjectsForUser, which
+ * silently drops a project whose stored spec no longer parses against
+ * today's (stricter) ProductSpecSchema. A caller that needs the real,
+ * complete set of ids this user can reach -- not a user-facing listing of
+ * project details -- should use this instead.
+ */
+export function listCollaboratedProjectIds(db: ForgeDatabase, userId: string): string[] {
+  const rows = db.prepare("SELECT projectId FROM project_collaborators WHERE userId = ?").all(userId) as {
+    projectId: string;
+  }[];
+  return rows.map((r) => r.projectId);
+}
+
 export function listCollaborators(db: ForgeDatabase, projectId: string): ProjectCollaborator[] {
   const rows = db
     .prepare(

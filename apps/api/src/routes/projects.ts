@@ -10,6 +10,8 @@ import {
   renameCheckpoint,
   deleteCheckpoint,
   listProjectsForUser,
+  listOwnedProjectIds,
+  listCollaboratedProjectIds,
   diffAndMigrate,
   describeMigrationHazards,
   updateProjectSpec,
@@ -469,6 +471,27 @@ export function createProjectsRouter(db: ForgeDatabase, provider: SpecProvider |
     "/projects",
     asyncRoute(async (req, res) => {
       res.json({ projects: listProjectsForUser(db, req.userId!) });
+    }),
+  );
+
+  /**
+   * The robust complement to GET /projects above: that listing goes through
+   * listProjectsForUser, which silently drops any project whose stored spec
+   * no longer parses against today's ProductSpecSchema (a real, expected
+   * case for an older project -- see tryRowToProject's own comment). A
+   * caller that needs the actual, complete set of project ids this user can
+   * reach -- not a user-facing listing of project details -- needs this
+   * instead, the same reason DELETE /auth/account uses listOwnedProjectIds
+   * rather than listProjectsForUser for its own deletion sweep. Registered
+   * before /projects/:id so this literal path is never captured as an :id.
+   */
+  router.get(
+    "/projects/mine-ids",
+    asyncRoute(async (req, res) => {
+      res.json({
+        ownedProjectIds: listOwnedProjectIds(db, req.userId!),
+        sharedProjectIds: listCollaboratedProjectIds(db, req.userId!),
+      });
     }),
   );
 

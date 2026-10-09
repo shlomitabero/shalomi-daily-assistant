@@ -283,6 +283,17 @@ export function listProjects(): Promise<{ projects: Project[] }> {
   return request("/projects");
 }
 
+/**
+ * The robust complement to listProjects above (DeleteAccountPanel.tsx):
+ * that listing silently drops any project whose stored spec no longer
+ * parses against today's schema, which would leave that project's own
+ * localStorage preference entries un-swept forever after account deletion.
+ * This never parses spec_json at all, so it can't miss one.
+ */
+export function listMyProjectIds(): Promise<{ ownedProjectIds: string[]; sharedProjectIds: string[] }> {
+  return request("/projects/mine-ids");
+}
+
 /** See createProject's own doc comment for why this generates one idempotency key per call, here protecting against a duplicate clone of the same source project. */
 export function cloneProject(projectId: string): Promise<{ project: Project }> {
   return request(`/projects/${projectId}/clone`, { method: "POST", headers: { "x-idempotency-key": crypto.randomUUID() } });

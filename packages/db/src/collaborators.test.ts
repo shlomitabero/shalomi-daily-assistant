@@ -9,6 +9,7 @@ import {
   removeAllCollaborationsForUser,
   isCollaborator,
   listCollaborators,
+  listCollaboratedProjectIds,
 } from "./collaborators.js";
 
 function setup() {
@@ -68,6 +69,27 @@ test("listCollaborators only returns collaborators for the requested project, no
 test("removeCollaborator on a user who was never added is a harmless no-op, not an error", () => {
   const db = setup();
   assert.doesNotThrow(() => removeCollaborator(db, "proj1", "never-added"));
+});
+
+/**
+ * New in this round: the robust complement to projects.ts's
+ * listOwnedProjectIds, for the exact same reason -- DeleteAccountPanel.tsx
+ * used to derive its sharedProjectIds (used for localStorage cleanup after
+ * account deletion) from listProjects(), which silently drops any project
+ * whose stored spec no longer parses against today's schema. This table
+ * alone never touches a project's spec_json at all, so it can't miss a row
+ * that way -- confirmed here by covering both a project this user has no
+ * access to and multiple projects they do.
+ */
+test("listCollaboratedProjectIds returns every project id this user collaborates on, and nothing for a project they have no access to", () => {
+  const db = setup();
+  addCollaborator(db, "proj1", "user1");
+  addCollaborator(db, "proj2", "user1");
+  addCollaborator(db, "proj3", "someone-else");
+
+  assert.deepEqual(listCollaboratedProjectIds(db, "user1").slice().sort(), ["proj1", "proj2"]);
+  assert.deepEqual(listCollaboratedProjectIds(db, "someone-else"), ["proj3"]);
+  assert.deepEqual(listCollaboratedProjectIds(db, "never-invited"), []);
 });
 
 /**

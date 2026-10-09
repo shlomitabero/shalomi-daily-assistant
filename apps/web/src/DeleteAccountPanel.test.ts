@@ -76,11 +76,31 @@ function renderPanel(opts?: {
   );
 }
 
-/** Wraps a test's own fetch mock so `GET /api/projects` (fetched unconditionally on mount for the real project-count summary) is answered without every existing test needing to know or care about it. */
-function withListProjectsStub(projects: Project[], handleOther: (input: string, init?: RequestInit) => Promise<Response>) {
+/**
+ * Wraps a test's own fetch mock so `GET /api/projects/mine-ids` (fetched
+ * unconditionally on mount for the real project-count summary and the real
+ * ids passed to onDeleted) is answered without every existing test needing
+ * to know or care about it. Derives owned/shared ids by filtering the same
+ * `Project[]` fixture these tests already build (via makeProject) against
+ * `userId`, mirroring what the real server-side route computes from
+ * listOwnedProjectIds/listCollaboratedProjectIds -- the robust ids
+ * endpoint, not GET /api/projects (see round 510: that lenient listing
+ * silently drops any project whose stored spec fails to parse, which used
+ * to leave its projectId-keyed localStorage entries un-swept forever).
+ */
+function withListProjectsStub(
+  projects: Project[],
+  handleOther: (input: string, init?: RequestInit) => Promise<Response>,
+  userId = "user1",
+) {
   return (async (input: string, init?: RequestInit) => {
-    if ((init?.method ?? "GET") === "GET" && input === "/api/projects") {
-      return new Response(JSON.stringify({ projects }), { status: 200, headers: { "content-type": "application/json" } });
+    if ((init?.method ?? "GET") === "GET" && input === "/api/projects/mine-ids") {
+      const ownedProjectIds = projects.filter((p) => p.ownerId === userId).map((p) => p.id);
+      const sharedProjectIds = projects.filter((p) => p.ownerId !== userId).map((p) => p.id);
+      return new Response(JSON.stringify({ ownedProjectIds, sharedProjectIds }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
     }
     return handleOther(input, init);
   }) as typeof fetch;
@@ -331,6 +351,62 @@ test("shows the real owned-vs-shared project counts once the real fetch resolves
         summary,
         /access to 1 more shared projects/,
         "must attribute the real SHARED count (1) to the 'shared, access removed' phrase specifically",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
+ * New in this round (510): listProjects()/GET /api/projects silently drops
+ * any project whose stored spec no longer parses against today's
+ * ProductSpecSchema (a real, expected case for a project written by an
+ * older app version). This panel used to derive its ids from exactly that
+ * lenient listing, so such a project's id never reached onDeleted, and its
+ * own ~18 projectId-keyed localStorage entries (projectPreferenceCleanup.ts)
+ * were left orphaned forever once the account that could reach them was
+ * gone. Simulates that gap directly: GET /api/projects/mine-ids (the robust
+ * endpoint this panel now uses) returns a bare id for an owned project that
+ * has no parseable Project object at all -- standing in for the stale-spec
+ * row -- and confirms it still reaches both the summary count and
+ * onDeleted's owned-ids argument. GET /api/projects itself is stubbed to
+ * throw if called at all, proving this panel no longer depends on it.
+ */
+test("still counts and passes along an owned project id that GET /api/projects/mine-ids reports but no parseable Project exists for (a stale stored spec)", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      if ((init?.method ?? "GET") === "GET" && input === "/api/projects/mine-ids") {
+        return new Response(JSON.stringify({ ownedProjectIds: ["p1", "stale-spec-project"], sharedProjectIds: [] }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      if (init?.method === "DELETE" && input === "/api/auth/account") {
+        return new Response(null, { status: 204 });
+      }
+      throw new Error(`unexpected request ${init?.method ?? "GET"} ${input} -- this panel must never call GET /api/projects itself`);
+    }) as typeof fetch;
+
+    let receivedOwnedIds: string[] | null = null;
+    try {
+      renderPanel({ userId: "user1", onDeleted: (ownedIds) => (receivedOwnedIds = ownedIds) });
+      await waitForCondition(() => document.querySelector(".delete-account-summary") !== null);
+      assert.match(
+        document.querySelector(".delete-account-summary")!.textContent ?? "",
+        /2 projects you own will be permanently deleted/,
+        "the stale-spec project must still be counted among 'owned', not silently dropped",
+      );
+
+      typeConfirmation("dana@example.com");
+      fireEvent.submit(document.querySelector("form")!);
+
+      await waitForCondition(() => receivedOwnedIds !== null);
+      assert.deepEqual(
+        receivedOwnedIds,
+        ["p1", "stale-spec-project"],
+        "the stale-spec project's id must still reach onDeleted so its localStorage entries actually get swept",
       );
     } finally {
       globalThis.fetch = originalFetch;

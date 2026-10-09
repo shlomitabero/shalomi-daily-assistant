@@ -37,6 +37,7 @@ export {
   removeAllCollaborationsForUser,
   isCollaborator,
   listCollaborators,
+  listCollaboratedProjectIds,
 } from "./collaborators.js";
 export {
   ensureUsersTable,
