@@ -3140,6 +3140,105 @@ test("the exported EntityView's Print list button (nothing selected) excludes re
 });
 
 /**
+ * Regression test for round 499's finding: mirrors the same-named test in
+ * EntityPanel.test.ts. Round 487's own fix (confirmed via git history) only
+ * touched the Export CSV/Copy/Print *actions* to use the grouping/collapse-
+ * aware effectivelyVisibleRecords, never the three buttons' own `disabled`
+ * props, which still gated on the flat visibleRecords.length -- so with
+ * every group collapsed (visibleRecords still > 0, effectivelyVisibleRecords
+ * === 0) and nothing selected, the exported app's buttons stayed enabled
+ * even though clicking them now produces an effectively-empty result.
+ */
+test("the exported EntityView's Export CSV/Copy/Print buttons disable once every group is collapsed, leaving nothing visible", async () => {
+  const files = generateExportFiles(project);
+  const dir = writeGeneratedWebComponent(files);
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async () => ({
+    ok: true,
+    status: 200,
+    json: async () => ({
+      records: [
+        { id: 1, name: "Acme Corp", status: "New" },
+        { id: 2, name: "Beta Inc", status: "Won" },
+      ],
+    }),
+  })) as typeof fetch;
+
+  try {
+    await withRealLocalStorage(async () => {
+      const { EntityView } = await import(path.join(dir, "web", "src", "components", "EntityView.jsx"));
+      const customerEntity = project.spec.entities.find((e) => e.name === "Customer")!;
+      const props = {
+        entity: customerEntity,
+        highlightRecordId: null,
+        onHighlightHandled: () => {},
+        onJumpToRecord: () => {},
+        onRecordCountChange: () => {},
+      };
+
+      const { container } = render(React.createElement(EntityView, props));
+      for (let i = 0; i < 40; i++) {
+        if (container.querySelectorAll("tbody tr").length === 2) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+
+      const exportBtn = container.querySelector(".csv-export-btn") as HTMLButtonElement;
+      const copyBtn = container.querySelector(".copy-records-btn") as HTMLButtonElement;
+      const printListBtn = Array.from(container.querySelectorAll("button")).find((b) => b.textContent?.includes("Print"))!;
+      assert.equal(exportBtn.disabled, false, "with records visible and grouping off, Export CSV must start enabled");
+
+      const groupBySelect = container.querySelector(".entity-group-by") as HTMLSelectElement;
+      await act(async () => {
+        fireEvent.change(groupBySelect, { target: { value: "status" } });
+      });
+      for (let i = 0; i < 40; i++) {
+        if (container.querySelectorAll(".entity-group-header-row").length === 2) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+
+      // Collapse BOTH groups -- visibleRecords (the flat, pre-collapse list)
+      // still has 2 records, but effectivelyVisibleRecords is now empty.
+      // Note: "tbody tr" includes the group *header* rows themselves (see
+      // the sibling collapsed-group test above, which counts headers +
+      // remaining data rows together), so with 2 groups the count never
+      // reaches 0 -- it's the data rows specifically that must vanish.
+      for (const headerRow of Array.from(container.querySelectorAll(".entity-group-header-row"))) {
+        await act(async () => {
+          fireEvent.click(headerRow.querySelector(".entity-group-toggle") as HTMLButtonElement);
+        });
+      }
+      assert.ok(!container.textContent?.includes("Acme Corp") && !container.textContent?.includes("Beta Inc"), "every record row must actually be hidden before testing the buttons");
+
+      assert.equal(exportBtn.disabled, true, "Export CSV must disable once every group is collapsed and nothing is visible");
+      assert.equal(copyBtn.disabled, true, "Copy must disable once every group is collapsed and nothing is visible");
+      assert.equal(printListBtn.disabled, true, "Print list must disable once every group is collapsed and nothing is visible");
+
+      // Re-expanding one group restores a real visible record, so the
+      // buttons must re-enable rather than staying stuck disabled.
+      const firstToggle = container.querySelector(".entity-group-header-row .entity-group-toggle") as HTMLButtonElement;
+      await act(async () => {
+        fireEvent.click(firstToggle);
+      });
+      assert.ok(
+        container.textContent?.includes("Acme Corp") || container.textContent?.includes("Beta Inc"),
+        "re-expanding one group must reveal its own record row",
+      );
+      assert.equal(exportBtn.disabled, false, "Export CSV must re-enable once a group is re-expanded");
+      assert.equal(copyBtn.disabled, false, "Copy must re-enable once a group is re-expanded");
+      assert.equal(printListBtn.disabled, false, "Print list must re-enable once a group is re-expanded");
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    cleanup();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
  * New in this round: porting the live preview's own "x" shortcut
  * (toggle the focused row's own selection checkbox) to the exported
  * app's EntityView.jsx. j/k/Enter above let a keyboard-only user
@@ -4105,7 +4204,7 @@ test("the exported EntityView's Export CSV routes through selectedOrAllRecords, 
 
   const exportBtnSrc = entityViewJsx.match(/<button\s+type="button"\s+className="csv-export-btn"[\s\S]*?<\/button>/)?.[0];
   assert.ok(exportBtnSrc, "expected to find the csv-export-btn button in generated output");
-  assert.match(exportBtnSrc!, /disabled=\{selectedIds\.size === 0 && visibleRecords\.length === 0\}/);
+  assert.match(exportBtnSrc!, /disabled=\{selectedIds\.size === 0 && effectivelyVisibleRecords\.length === 0\}/);
   assert.match(exportBtnSrc!, /selectedIds\.size > 0/, "the button label must reflect a real selection count");
 });
 
@@ -4136,7 +4235,7 @@ test("the exported EntityView renders a real Copy button that writes the selecti
 
   const copyBtnSrc = entityViewJsx.match(/<button\s+type="button"\s+className="copy-records-btn"[\s\S]*?<\/button>/)?.[0];
   assert.ok(copyBtnSrc, "expected to find the copy-records-btn button in generated output");
-  assert.match(copyBtnSrc!, /disabled=\{selectedIds\.size === 0 && visibleRecords\.length === 0\}/);
+  assert.match(copyBtnSrc!, /disabled=\{selectedIds\.size === 0 && effectivelyVisibleRecords\.length === 0\}/);
   assert.match(copyBtnSrc!, /copyStatus === "copied"/);
   assert.match(copyBtnSrc!, /copyStatus === "failed"/);
 

@@ -2477,7 +2477,7 @@ export function EntityPanel({
               type="button"
               className="secondary copy-records-btn"
               onClick={handleCopy}
-              disabled={selectedIds.size === 0 && visibleRecords.length === 0}
+              disabled={selectedIds.size === 0 && effectivelyVisibleRecords.length === 0}
               aria-live="polite"
               aria-atomic="true"
             >
@@ -2493,7 +2493,7 @@ export function EntityPanel({
               type="button"
               className="secondary csv-export-btn"
               onClick={handleExportCsv}
-              disabled={selectedIds.size === 0 && visibleRecords.length === 0}
+              disabled={selectedIds.size === 0 && effectivelyVisibleRecords.length === 0}
             >
               {selectedIds.size > 0 ? t("entity.exportCsv.selected", { count: selectedIds.size }) : t("entity.exportCsv")}
             </button>
@@ -2501,7 +2501,7 @@ export function EntityPanel({
               type="button"
               className="secondary"
               onClick={() => setShowPrintList(true)}
-              disabled={selectedIds.size === 0 && visibleRecords.length === 0}
+              disabled={selectedIds.size === 0 && effectivelyVisibleRecords.length === 0}
             >
               {selectedIds.size > 0 ? t("entity.printList.selected", { count: selectedIds.size }) : t("entity.printList")}
             </button>

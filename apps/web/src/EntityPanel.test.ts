@@ -2816,6 +2816,68 @@ test("EntityPanel's Print list button (nothing selected) excludes records hidden
 });
 
 /**
+ * Regression test for round 499's finding: round 487 (above) fixed Export
+ * CSV/Copy/Print's own actions to use the grouping/collapse-aware
+ * effectivelyVisibleRecords instead of the flat visibleRecords, but never
+ * touched the three buttons' own `disabled` props, which still gated on
+ * visibleRecords.length -- so with every group collapsed (visibleRecords
+ * still > 0, effectivelyVisibleRecords === 0) and nothing selected, the
+ * buttons stayed enabled even though clicking them now produces an
+ * effectively-empty CSV/copy/print with no visible records at all.
+ */
+test("EntityPanel's Export CSV/Copy/Print buttons disable once every group is collapsed, leaving nothing visible", async () => {
+  await withJsdom(async () => {
+    const store: EntityRecord[] = [
+      { id: 1, name: "Acme Corp", status: "new" },
+      { id: 2, name: "Beta Inc", status: "won" },
+    ];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = mockRecordsFetch(store) as typeof fetch;
+    try {
+      renderEntityPanel();
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 2);
+
+      const exportBtn = document.querySelector(".csv-export-btn") as HTMLButtonElement;
+      const copyBtn = document.querySelector(".copy-records-btn") as HTMLButtonElement;
+      const printListBtn = Array.from(document.querySelectorAll("button")).find((b) => b.textContent?.includes("Print"))!;
+      assert.strictEqual(exportBtn.disabled, false, "with records visible and grouping off, Export CSV must start enabled");
+
+      const groupBySelect = document.querySelector(".entity-group-by") as HTMLSelectElement;
+      fireEvent.change(groupBySelect, { target: { value: "status" } });
+      await waitForCondition(() => document.querySelectorAll(".entity-group-header-row").length === 2);
+
+      // Collapse BOTH groups -- visibleRecords (the flat, pre-collapse list)
+      // still has 2 records, but effectivelyVisibleRecords is now empty.
+      // Note: "table tbody tr" includes the group *header* rows themselves
+      // (confirmed by the sibling collapsed-group tests above, which count
+      // headers + remaining data rows together), so with 2 groups the count
+      // never reaches 0 -- it's the data rows specifically that must vanish.
+      for (const headerRow of Array.from(document.querySelectorAll(".entity-group-header-row"))) {
+        fireEvent.click(headerRow.querySelector(".entity-group-toggle") as HTMLButtonElement);
+      }
+      await waitForCondition(
+        () => !Array.from(document.querySelectorAll("table tbody tr")).some((r) => r.textContent?.includes("Acme Corp") || r.textContent?.includes("Beta Inc")),
+      );
+
+      assert.strictEqual(exportBtn.disabled, true, "Export CSV must disable once every group is collapsed and nothing is visible");
+      assert.strictEqual(copyBtn.disabled, true, "Copy must disable once every group is collapsed and nothing is visible");
+      assert.strictEqual(printListBtn.disabled, true, "Print list must disable once every group is collapsed and nothing is visible");
+
+      // Re-expanding one group restores a real visible record, so the
+      // buttons must re-enable rather than staying stuck disabled.
+      const firstToggle = document.querySelector(".entity-group-header-row .entity-group-toggle") as HTMLButtonElement;
+      fireEvent.click(firstToggle);
+      await waitForCondition(() => Array.from(document.querySelectorAll("table tbody tr")).some((r) => r.textContent?.includes("Acme Corp") || r.textContent?.includes("Beta Inc")));
+      assert.strictEqual(exportBtn.disabled, false, "Export CSV must re-enable once a group is re-expanded");
+      assert.strictEqual(copyBtn.disabled, false, "Copy must re-enable once a group is re-expanded");
+      assert.strictEqual(printListBtn.disabled, false, "Print list must re-enable once a group is re-expanded");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * New in this round (441): a long-standing, known-but-deprioritized small
  * candidate from round 377's own notes -- confirmed still present in the
  * current stylesheet. `.print-field` is `display: flex` with `dd` at

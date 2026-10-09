@@ -3858,7 +3858,7 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
               type="button"
               className="copy-records-btn"
               onClick={handleCopy}
-              disabled={selectedIds.size === 0 && visibleRecords.length === 0}
+              disabled={selectedIds.size === 0 && effectivelyVisibleRecords.length === 0}
               aria-live="polite"
               aria-atomic="true"
             >
@@ -3874,7 +3874,7 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
               type="button"
               className="csv-export-btn"
               onClick={handleExportCsv}
-              disabled={selectedIds.size === 0 && visibleRecords.length === 0}
+              disabled={selectedIds.size === 0 && effectivelyVisibleRecords.length === 0}
             >
               {selectedIds.size > 0 ? <>⬇️ Export {selectedIds.size} selected</> : "⬇️ Export CSV"}
             </button>
@@ -3882,7 +3882,7 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
               type="button"
               className="print-list-btn"
               onClick={() => setShowPrintList(true)}
-              disabled={selectedIds.size === 0 && visibleRecords.length === 0}
+              disabled={selectedIds.size === 0 && effectivelyVisibleRecords.length === 0}
             >
               {selectedIds.size > 0 ? <>🖨️ Print {selectedIds.size} selected</> : "🖨️ Print list"}
             </button>
