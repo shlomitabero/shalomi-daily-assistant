@@ -534,7 +534,7 @@ const APPOINTMENTS_ENTITIES: EntitySpec[] = [
         type: "enum",
         required: true,
         enumValues: ["scheduled", "completed", "cancelled", "noshow"],
-        enumLabels: { scheduled: "קבוע", completed: "הושלם", cancelled: "בוטל", noshow: "לא הגיע" },
+        enumLabels: { scheduled: "מתוכנן", completed: "הושלם", cancelled: "בוטל", noshow: "לא הגיע" },
       },
     ],
   },

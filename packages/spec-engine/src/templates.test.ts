@@ -136,3 +136,27 @@ test("every relation field's relationTo names an entity that actually exists in 
     }
   }
 });
+
+/**
+ * Round 516's finding: the "Appointments & Clients" template's Hebrew
+ * Appointment.status enum mapped "scheduled" to "קבוע" (meaning "fixed" /
+ * "permanent" / "standing" in Hebrew), not "scheduled". This codebase
+ * already translates this exact concept correctly and consistently
+ * elsewhere -- domainEntities.ts's own heuristic Appointment entity uses
+ * "מתוכנן" and its WorkOrder entity uses "מתוזמנת" -- and "קבוע" appeared
+ * nowhere else in spec-engine, confirming it was an isolated mistranslation,
+ * not an intentional alternate wording. A Hebrew-UI user booking a one-off
+ * appointment would see its status rendered as "standing/recurring", a
+ * materially different and misleading meaning.
+ */
+test("the Appointments template's Hebrew status enum doesn't mistranslate \"scheduled\" as \"recurring/standing\"", () => {
+  const appointmentsTemplate = TEMPLATES.find((t) => t.id === "appointments");
+  assert.ok(appointmentsTemplate, "expected an \"appointments\" template to exist");
+  const appointmentEntity = appointmentsTemplate!.spec.entities.find((e) => e.name === "Appointment");
+  assert.ok(appointmentEntity, "expected the Appointments template to declare an Appointment entity");
+  const statusField = appointmentEntity!.fields.find((f) => f.name === "status");
+  assert.ok(statusField && "enumLabels" in statusField && statusField.enumLabels, "expected Appointment.status to have enumLabels");
+  const scheduledLabel = (statusField as { enumLabels: Record<string, string> }).enumLabels.scheduled;
+  assert.notEqual(scheduledLabel, "קבוע", "\"scheduled\" must not be mistranslated as \"קבוע\" (fixed/permanent/standing)");
+  assert.equal(scheduledLabel, "מתוכנן", "\"scheduled\" should match this codebase's own established translation (domainEntities.ts's Appointment entity)");
+});
