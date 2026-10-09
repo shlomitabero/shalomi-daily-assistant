@@ -2904,7 +2904,13 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
   const visibleFields = useMemo(() => orderedFields.filter((f) => !hiddenFields.has(f.name)), [orderedFields, hiddenFields]);
 
   function handleToggleColumn(fieldName) {
-    const visibleCount = entity.fields.length - hiddenFields.size;
+    // hiddenFields.size alone over-counts once it holds a name from a field
+    // that no longer exists on this entity -- e.g. a user re-running a newer
+    // export of the same project in a browser that still has an older
+    // export's localStorage for this origin. Count only the hidden names
+    // that still name a real field.
+    const hiddenCount = entity.fields.filter((f) => hiddenFields.has(f.name)).length;
+    const visibleCount = entity.fields.length - hiddenCount;
     if (!hiddenFields.has(fieldName) && visibleCount <= 1) return; // keep at least one column visible
     setHiddenFields(toggleColumnVisibility(entity.name, fieldName));
   }

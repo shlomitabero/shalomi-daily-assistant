@@ -1364,7 +1364,12 @@ export function EntityPanel({
   );
 
   function handleToggleColumn(fieldName: string) {
-    const visibleCount = entity.fields.length - hiddenFields.size;
+    // hiddenFields.size alone over-counts once it holds a name from a field
+    // that no longer exists on this entity (e.g. after a refine renamed or
+    // removed a field while this same entity tab stayed open without a
+    // remount) -- count only the hidden names that still name a real field.
+    const hiddenCount = entity.fields.filter((f) => hiddenFields.has(f.name)).length;
+    const visibleCount = entity.fields.length - hiddenCount;
     if (!hiddenFields.has(fieldName) && visibleCount <= 1) return; // keep at least one column visible
     setHiddenFields(toggleFieldVisibility(projectId, entity.name, fieldName));
   }

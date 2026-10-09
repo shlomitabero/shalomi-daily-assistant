@@ -6591,6 +6591,50 @@ test("the exported app's BoardCard move select and FieldInput's enum select both
 });
 
 /**
+ * New in this round: handleToggleColumn's own "keep at least one column
+ * visible" guard computed how many columns are actually visible as
+ * `entity.fields.length - hiddenFields.size`. That undercounts the real
+ * visible column count once hiddenFields holds a name that isn't one of
+ * this entity's current fields -- e.g. a user re-running a newer export of
+ * the same project in a browser that still has an older export's
+ * localStorage for "forge_hidden_columns", naming a field the newer export
+ * no longer has. The phantom entry gets counted as if it were hiding a real
+ * column, wrongly convincing the guard that only one column is left
+ * visible and refusing to let the user hide a column that was never
+ * blanked out in the first place. Extracts the real generated
+ * hiddenCount/visibleCount computation (same "real generated code via new
+ * Function" standard this file already uses) and confirms a phantom hidden
+ * name is never counted toward visibleCount.
+ */
+test("the exported app's handleToggleColumn never counts a stale hiddenFields entry (naming a field that no longer exists) toward its visible-column guard", () => {
+  const entityViewJsx = generateExportFiles(project).find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+
+  const visibleCountSrc = entityViewJsx.match(/    const hiddenCount = [\s\S]*?\n    const visibleCount = [^\n]*\n/)?.[0];
+  assert.ok(visibleCountSrc, "expected to find handleToggleColumn's real generated visibleCount computation");
+  const computeVisibleCount = new Function("entity", "hiddenFields", `${visibleCountSrc}\nreturn visibleCount;`) as (
+    entity: { fields: { name: string }[] },
+    hiddenFields: Set<string>,
+  ) => number;
+
+  const entity = { fields: [{ name: "name" }, { name: "status" }] };
+  assert.equal(
+    computeVisibleCount(entity, new Set(["stage"])),
+    2,
+    "a hidden name for a field that no longer exists must not be counted -- both real fields are still visible",
+  );
+  assert.equal(
+    computeVisibleCount(entity, new Set(["status"])),
+    1,
+    "hiding a real field must still count normally",
+  );
+  assert.equal(
+    computeVisibleCount(entity, new Set(["status", "stage"])),
+    1,
+    "a real hidden field plus a phantom one must count only the real one",
+  );
+});
+
+/**
  * New in this round: the exported app's own GlobalSearch.jsx had the
  * identical gap the live preview's own GlobalSearchPanel.tsx did --
  * ArrowDown/ArrowUp moved the highlighted result group's CSS class, but

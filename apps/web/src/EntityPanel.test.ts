@@ -996,6 +996,73 @@ test("EntityPanel's board card 'move' select shows the record's real stale statu
 });
 
 /**
+ * Regression test for round 509's finding: hiddenFields' own persisted-load
+ * effect is one of 4 siblings (alongside recentSearches, columnOrderState,
+ * columnWidths, groupFieldName) that never got the fieldNamesKey
+ * re-validation fix given to viewMode/fieldFilters/sortKeys (rounds 490,
+ * 493, 500) -- but unlike those three, hiddenFields has a *second*, simpler
+ * way to end up holding a name for a field that no longer exists: a stale
+ * localStorage entry left over from a field that was since removed (e.g. a
+ * previous refine, or in the exported standalone app, a user re-running a
+ * newer export of the same project in a browser that still has an older
+ * export's localStorage). handleToggleColumn's own "keep at least one
+ * column visible" guard computed visibleCount as
+ * `entity.fields.length - hiddenFields.size`, which counts that phantom
+ * entry as if it were hiding a real column -- undercounting how many
+ * columns are actually visible and wrongly refusing to hide a column that
+ * was never blanked out in the first place. Seeds localStorage with a
+ * hidden-fields entry naming a field ("stage") that isn't one of this
+ * entity's real fields, confirms both real columns (Name, Status) still
+ * render as visible and checked, then confirms the Status checkbox can
+ * still be unchecked -- hiding it -- instead of silently refusing because
+ * the phantom "stage" entry made the guard think only one column was
+ * really visible already.
+ */
+test("EntityPanel's Columns menu can still hide a real column when hiddenFields holds a stale name for a field that no longer exists", async () => {
+  await withJsdom(async () => {
+    localStorage.setItem("forge.hiddenColumns", JSON.stringify({ "proj1:Deal": ["stage"] }));
+    const store: EntityRecord[] = [
+      { id: 1, name: "Acme Corp", status: "new" },
+      { id: 2, name: "Globex", status: "won" },
+    ];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = mockRecordsFetch(store) as typeof fetch;
+    try {
+      renderEntityPanel();
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 2);
+      assert.equal(
+        document.querySelectorAll("thead th").length,
+        5,
+        "a stale 'stage' entry naming no real field must not hide anything -- both Name and Status must still render",
+      );
+
+      const columnsBtn = document.querySelector(".columns-menu-btn") as HTMLButtonElement;
+      fireEvent.click(columnsBtn);
+      const checkboxes = Array.from(document.querySelectorAll(".columns-menu-item input[type=checkbox]")) as HTMLInputElement[];
+      assert.equal(checkboxes.length, 2, "expected one checkbox per real field (Name, Status) -- never one for the phantom 'stage' entry");
+      assert.ok(
+        checkboxes.every((c) => c.checked),
+        "both real columns must start checked (visible), since the stale entry doesn't name either of them",
+      );
+
+      const statusCheckbox = Array.from(document.querySelectorAll(".columns-menu-item")).find((el) =>
+        /Status/.test(el.textContent ?? ""),
+      )!.querySelector("input") as HTMLInputElement;
+      fireEvent.click(statusCheckbox);
+
+      await waitForCondition(() => document.querySelectorAll("thead th").length === 4);
+      assert.doesNotMatch(
+        document.querySelector("thead")!.textContent ?? "",
+        /Status/,
+        "Status must actually hide -- the phantom 'stage' entry must not make the guard think Status is the last visible column",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * New in this round: a "Filter by <field>" dropdown next to the search box,
  * scoped to whichever enum field the board view already uses (findBoardField
  * -- usually "status"/"stage"), so a long table can be narrowed to one
