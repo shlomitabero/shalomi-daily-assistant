@@ -749,7 +749,18 @@ function AppContent() {
    * manually hit Logout. Mirrors handleAccountDeleted's own
    * clearToken+reset-to-home sequence below, just reactively instead of
    * after a specific user action, and without a redundant server call
-   * (the session is already gone server-side).
+   * (the session is already gone server-side) -- plus one reset neither
+   * handleLogout nor handleAccountDeleted needs: whatsappPrefillTo. Both
+   * of those only ever run from a Logout/Delete-account button click, and
+   * useDialogFocusTrap's own inert-background guard already makes every
+   * such button unreachable while WhatsAppPanel is open, so by the time
+   * either handler runs, WhatsAppPanel's own onClose/onJumpTo* callbacks
+   * have already cleared this. This effect is the one path that forces the
+   * same sign-out from an async 401 instead of a click, so it's the one
+   * way to land back on the login screen with WhatsAppPanel still mounted
+   * and whatsappPrefillTo never cleared -- surfacing on the next login, in
+   * the same tab, as a stale phone number silently pre-filled into the
+   * WhatsApp panel's "To" field from a completely unrelated prior session.
    */
   useEffect(() => {
     return subscribeAuthExpired(() => {
@@ -757,6 +768,16 @@ function AppContent() {
       setUser(null);
       setProject(null);
       setView("home");
+      setDescription("");
+      clearIdeaDraft();
+      setError(null);
+      setActiveEntity(null);
+      setSelectedAnswers({});
+      setAdditionalRequest("");
+      setRefineText("");
+      setRefineHistory([]);
+      setRefineHistorySearch("");
+      setWhatsappPrefillTo(null);
     });
   }, []);
 

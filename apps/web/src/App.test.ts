@@ -2400,8 +2400,22 @@ test("App's handleReorderEntityTab reorders entity tabs on drop and persists via
  * handleAccountDeleted already uses elsewhere in this file -- forcing the
  * `if (!user) return <AuthScreen />` branch instead of leaving the person
  * stuck on a dead session.
+ *
+ * Extended in round 502: the effect's own doc comment claims it "mirrors
+ * handleAccountDeleted's own clearToken+reset-to-home sequence", but it
+ * only ever reset 3 of handleAccountDeleted's ~10 pieces of state -- most
+ * concretely, whatsappPrefillTo (set by a per-record "Send WhatsApp"
+ * action, cleared only by WhatsAppPanel's own onClose/onJumpTo* callbacks)
+ * survived this exact reset. Since this effect is the one path back to
+ * the login screen that fires from an async 401 rather than a button
+ * click, it's the one path useDialogFocusTrap's inert-background guard
+ * can't block while WhatsAppPanel is open -- so a session invalidated
+ * while the panel sat open left a stale phone number silently pre-filled
+ * into the next login's WhatsApp "To" field (WhatsAppPanel's own
+ * `useState(() => prefillTo ?? "")` lazy init reads it fresh on the next
+ * mount), risking a message sent to the wrong person entirely.
  */
-test("App's subscribeAuthExpired effect clears the token and resets user/project/view to force the login screen", () => {
+test("App's subscribeAuthExpired effect clears the token and resets user/project/view/whatsappPrefillTo/etc to force the login screen", () => {
   const appSrc = readFileSync(new URL("./App.tsx", import.meta.url), "utf8");
   const effectMatch = appSrc.match(/ {2}useEffect\(\(\) => \{\n {4}return subscribeAuthExpired\(\(\) => \{[\s\S]*?\n {2}\}, \[\]\);\n/);
   assert.ok(effectMatch, "expected to find the subscribeAuthExpired effect in App.tsx");
@@ -2412,6 +2426,16 @@ test("App's subscribeAuthExpired effect clears the token and resets user/project
   let userSet: unknown = "untouched";
   let projectSet: unknown = "untouched";
   let viewSet: unknown = "untouched";
+  let descriptionSet: unknown = "untouched";
+  let ideaDraftCleared = false;
+  let errorSet: unknown = "untouched";
+  let activeEntitySet: unknown = "untouched";
+  let selectedAnswersSet: unknown = "untouched";
+  let additionalRequestSet: unknown = "untouched";
+  let refineTextSet: unknown = "untouched";
+  let refineHistorySet: unknown = "untouched";
+  let refineHistorySearchSet: unknown = "untouched";
+  let whatsappPrefillToSet: unknown = "untouched";
 
   const fn = new Function(
     "useEffect",
@@ -2420,6 +2444,16 @@ test("App's subscribeAuthExpired effect clears the token and resets user/project
     "setUser",
     "setProject",
     "setView",
+    "setDescription",
+    "clearIdeaDraft",
+    "setError",
+    "setActiveEntity",
+    "setSelectedAnswers",
+    "setAdditionalRequest",
+    "setRefineText",
+    "setRefineHistory",
+    "setRefineHistorySearch",
+    "setWhatsappPrefillTo",
     `${code}`,
   ) as (
     useEffect: (effect: () => void, deps: unknown[]) => void,
@@ -2428,6 +2462,16 @@ test("App's subscribeAuthExpired effect clears the token and resets user/project
     setUser: (v: unknown) => void,
     setProject: (v: unknown) => void,
     setView: (v: unknown) => void,
+    setDescription: (v: unknown) => void,
+    clearIdeaDraft: () => void,
+    setError: (v: unknown) => void,
+    setActiveEntity: (v: unknown) => void,
+    setSelectedAnswers: (v: unknown) => void,
+    setAdditionalRequest: (v: unknown) => void,
+    setRefineText: (v: unknown) => void,
+    setRefineHistory: (v: unknown) => void,
+    setRefineHistorySearch: (v: unknown) => void,
+    setWhatsappPrefillTo: (v: unknown) => void,
   ) => void;
 
   fn(
@@ -2442,6 +2486,18 @@ test("App's subscribeAuthExpired effect clears the token and resets user/project
     (v) => (userSet = v),
     (v) => (projectSet = v),
     (v) => (viewSet = v),
+    (v) => (descriptionSet = v),
+    () => {
+      ideaDraftCleared = true;
+    },
+    (v) => (errorSet = v),
+    (v) => (activeEntitySet = v),
+    (v) => (selectedAnswersSet = v),
+    (v) => (additionalRequestSet = v),
+    (v) => (refineTextSet = v),
+    (v) => (refineHistorySet = v),
+    (v) => (refineHistorySearchSet = v),
+    (v) => (whatsappPrefillToSet = v),
   );
 
   assert.ok(subscribedListener, "the effect must call subscribeAuthExpired with a real listener");
@@ -2452,6 +2508,20 @@ test("App's subscribeAuthExpired effect clears the token and resets user/project
   assert.equal(userSet, null, "must clear user so the `if (!user) return <AuthScreen />` branch takes over");
   assert.equal(projectSet, null, "must clear the open project too, not leave stale project state behind");
   assert.equal(viewSet, "home", "must reset view to home so a later re-login lands on the home screen, not a dead view");
+  assert.equal(descriptionSet, "", "must clear the idea description, same as handleAccountDeleted");
+  assert.equal(ideaDraftCleared, true, "must clear the persisted idea draft, same as handleAccountDeleted");
+  assert.equal(errorSet, null, "must clear any stale error banner, same as handleAccountDeleted");
+  assert.equal(activeEntitySet, null, "must clear activeEntity so a later project doesn't inherit a stale tab name");
+  assert.deepEqual(selectedAnswersSet, {}, "must clear selectedAnswers, same as handleAccountDeleted");
+  assert.equal(additionalRequestSet, "", "must clear additionalRequest, same as handleAccountDeleted");
+  assert.equal(refineTextSet, "", "must clear refineText, same as handleAccountDeleted");
+  assert.deepEqual(refineHistorySet, [], "must clear refineHistory, same as handleAccountDeleted");
+  assert.equal(refineHistorySearchSet, "", "must clear refineHistorySearch, same as handleAccountDeleted");
+  assert.equal(
+    whatsappPrefillToSet,
+    null,
+    "must clear whatsappPrefillTo, the one reset neither handleLogout nor handleAccountDeleted needs (their own trigger buttons are inert-blocked while WhatsAppPanel is open) but this async-401 path does",
+  );
 });
 
 /**
