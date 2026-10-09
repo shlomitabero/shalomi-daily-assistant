@@ -527,7 +527,7 @@ const APPOINTMENTS_ENTITIES: EntitySpec[] = [
       { name: "customer", label: "לקוח", type: "relation", relationTo: "Customer" },
       { name: "staff", label: "איש צוות", type: "relation", relationTo: "Staff" },
       { name: "service", label: "שירות", type: "relation", relationTo: "Service" },
-      { name: "date", label: "תאריך ושעה", type: "date", required: true },
+      { name: "date", label: "תאריך", type: "date", required: true },
       {
         name: "status",
         label: "סטטוס",
@@ -576,7 +576,7 @@ const APPOINTMENTS_ENTITIES_EN: EntitySpec[] = [
       { name: "customer", label: "Customer", type: "relation", relationTo: "Customer" },
       { name: "staff", label: "Staff Member", type: "relation", relationTo: "Staff" },
       { name: "service", label: "Service", type: "relation", relationTo: "Service" },
-      { name: "date", label: "Date & Time", type: "date", required: true },
+      { name: "date", label: "Date", type: "date", required: true },
       {
         name: "status",
         label: "Status",
