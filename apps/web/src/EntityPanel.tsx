@@ -1398,11 +1398,25 @@ export function EntityPanel({
   // rendered when at least one visible field is numeric.
   const hasNumericVisibleField = useMemo(() => visibleFields.some((f) => f.type === "number"), [visibleFields]);
 
-  /** Exactly the records the calendar grid's current month is showing -- the same computation handleExportIcs uses, kept separate so the export button can disable itself when the visible month is genuinely empty, not just when the whole entity has no records. */
+  /**
+   * Exactly the records the calendar grid's current month is showing -- the
+   * same computation handleExportIcs uses, kept separate so the export
+   * button can disable itself when the visible month is genuinely empty,
+   * not just when the whole entity has no records.
+   *
+   * buildCalendarMonth deliberately puts the SAME record into every day
+   * cell a ranged record (endField) spans, so a multi-night Rental shows up
+   * on each night's chip in the on-screen grid. Flattening that per-day
+   * grouping straight into the export list would hand buildCalendarIcs the
+   * same record once per day it occupies, producing N duplicate VEVENTs for
+   * one booking -- deduping by id here keeps one entry per record while
+   * still restricting to the records actually visible this month.
+   */
   const icsMonthRecords = useMemo(() => {
     if (!dateField) return [];
     const days = buildCalendarMonth(visibleRecords, dateField, calendarMonth.getFullYear(), calendarMonth.getMonth(), endDateField);
-    return days.filter((d) => d.inCurrentMonth).flatMap((d) => d.records);
+    const flat = days.filter((d) => d.inCurrentMonth).flatMap((d) => d.records);
+    return Array.from(new Map(flat.map((r) => [r.id, r])).values());
   }, [visibleRecords, dateField, endDateField, calendarMonth]);
 
   // Grouping the plain table by a small-value-space field (enum/boolean) --

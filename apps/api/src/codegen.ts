@@ -3004,10 +3004,17 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
   // Exactly the records the calendar grid's current month is showing -- lets
   // the ICS export button disable itself when the visible month is
   // genuinely empty, not just when the whole entity has no records.
+  // buildCalendarMonth deliberately puts the SAME record into every day
+  // cell a ranged record (endField) spans, so a multi-night Rental shows up
+  // on each night's chip in the grid -- flattening that straight into the
+  // export list would hand buildCalendarIcs the same record once per day it
+  // occupies, producing N duplicate VEVENTs for one booking, so this dedupes
+  // by id. Mirrors the live preview's own EntityPanel.tsx.
   const icsMonthRecords = useMemo(() => {
     if (!dateField) return [];
     const days = buildCalendarMonth(visibleRecords, dateField, calendarMonth.getFullYear(), calendarMonth.getMonth(), endDateField);
-    return days.filter((d) => d.inCurrentMonth).flatMap((d) => d.records);
+    const flat = days.filter((d) => d.inCurrentMonth).flatMap((d) => d.records);
+    return Array.from(new Map(flat.map((r) => [r.id, r])).values());
   }, [visibleRecords, dateField, endDateField, calendarMonth]);
 
   // Scrolls the just-highlighted row into view once it's actually in the

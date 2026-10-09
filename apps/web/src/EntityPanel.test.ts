@@ -2197,6 +2197,104 @@ test("EntityPanel's ICS export button only appears in calendar view, and is disa
   });
 });
 
+const RENTAL_ENTITY: Entity = {
+  name: "Rental",
+  label: "Rental",
+  fields: [
+    { name: "title", label: "Title", type: "text", required: true },
+    { name: "startDate", label: "Start Date", type: "date", required: true },
+    { name: "endDate", label: "End Date", type: "date", required: true },
+  ],
+};
+
+function mockRentalListFetch(store: EntityRecord[]) {
+  return async (input: string, init?: RequestInit): Promise<Response> => {
+    const method = init?.method ?? "GET";
+    if (method === "GET" && input === "/api/projects/proj1/entities/Rental") {
+      return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    throw new Error(`mockRentalListFetch: unexpected request ${method} ${input}`);
+  };
+}
+
+function renderRentalPanel() {
+  return render(
+    React.createElement(
+      ThemeProvider,
+      null,
+      React.createElement(
+        LanguageProvider,
+        null,
+        React.createElement(EntityPanel, {
+          projectId: "proj1",
+          entity: RENTAL_ENTITY,
+          allEntities: [RENTAL_ENTITY],
+          onEntityRenamed: () => {},
+        }),
+      ),
+    ),
+  );
+}
+
+/**
+ * New in this round: buildCalendarMonth deliberately puts the SAME ranged
+ * record into every day cell it spans (startDate/endDate), so a multi-night
+ * Rental's chip shows up on every night of the stay in the on-screen grid --
+ * that's correct and already covered elsewhere. But icsMonthRecords reused
+ * that exact per-day grouping to build the flat list handed to
+ * buildCalendarIcs, which emits one VEVENT per entry -- so a single 3-day
+ * stay was exported as 3 byte-identical VEVENT blocks (same UID, same
+ * DTSTART/DTEND) instead of the one event a "take it with you" export
+ * should produce. Confirms a single ranged record whose stay is fully
+ * inside the exported month downloads exactly one VEVENT, not one per
+ * night.
+ */
+test("EntityPanel's ICS export emits exactly one VEVENT per ranged record, not one per day it spans", async () => {
+  await withJsdom(async () => {
+    const today = isoDateToday();
+    const twoDaysLater = (() => {
+      const d = new Date();
+      d.setDate(d.getDate() + 2);
+      const pad = (n: number) => String(n).padStart(2, "0");
+      return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+    })();
+    const store: EntityRecord[] = [{ id: 1, title: "Dana's stay", startDate: today, endDate: twoDaysLater }];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = mockRentalListFetch(store) as typeof fetch;
+    const originalCreateObjectURL = (URL as unknown as { createObjectURL?: (b: Blob) => string }).createObjectURL;
+    const originalRevokeObjectURL = (URL as unknown as { revokeObjectURL?: (u: string) => void }).revokeObjectURL;
+    let capturedBlob: Blob | null = null;
+    (URL as unknown as { createObjectURL: (b: Blob) => string }).createObjectURL = (b: Blob) => {
+      capturedBlob = b;
+      return "blob:mock-url";
+    };
+    (URL as unknown as { revokeObjectURL: (u: string) => void }).revokeObjectURL = () => {};
+    try {
+      renderRentalPanel();
+      await waitForCondition(() => document.querySelector(".entity-toolbar") !== null);
+
+      const calendarToggle = document.querySelectorAll(".view-toggle-btn")[1] as HTMLButtonElement;
+      fireEvent.click(calendarToggle);
+      await waitForCondition(() => document.querySelector(".ics-export-btn") !== null);
+
+      const icsBtn = document.querySelector(".ics-export-btn") as HTMLButtonElement;
+      assert.equal(icsBtn.disabled, false, "the ranged record is in the current month, so the export button must be enabled");
+      fireEvent.click(icsBtn);
+
+      await waitForCondition(() => capturedBlob !== null);
+      const icsText = await (capturedBlob as unknown as Blob).text();
+      const veventCount = (icsText.match(/BEGIN:VEVENT/g) ?? []).length;
+      assert.equal(veventCount, 1, "a single 3-day stay must export as exactly one VEVENT, not one per night it spans");
+      const uidLines = icsText.match(/UID:Rental-1@forge-ai/g) ?? [];
+      assert.equal(uidLines.length, 1, "the record's UID must appear exactly once, confirming it wasn't duplicated");
+    } finally {
+      globalThis.fetch = originalFetch;
+      if (originalCreateObjectURL) (URL as unknown as { createObjectURL: (b: Blob) => string }).createObjectURL = originalCreateObjectURL;
+      if (originalRevokeObjectURL) (URL as unknown as { revokeObjectURL: (u: string) => void }).revokeObjectURL = originalRevokeObjectURL;
+    }
+  });
+});
+
 const CUSTOMER_ENTITY: Entity = {
   name: "Customer",
   label: "Customer",
