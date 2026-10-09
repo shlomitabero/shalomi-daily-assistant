@@ -1777,6 +1777,17 @@ function matchesImportHeader(header, field) {
 function buildImportRecords(fields, rows) {
   if (rows.length === 0) return { records: [], errors: [] };
 
+  // Unlike number/enum/date below, a boolean cell used to have no
+  // rejection path at all: anything outside this exact true-list
+  // (including a Hebrew "כן"/"לא", "no", or a typo) silently became
+  // false with zero error reported -- mirrors the same fix in
+  // entityFormatting.ts's buildImportRecords. Declared inside the
+  // function (not module scope) so this file's own tests can extract
+  // and run buildImportRecords in isolation via regex, as they already
+  // do for isValidDate/matchesImportHeader.
+  const BOOLEAN_TRUE_VALUES = ["true", "1", "yes", "כן"];
+  const BOOLEAN_FALSE_VALUES = ["false", "0", "no", "לא"];
+
   const requiredRelation = fields.find((f) => f.type === "relation" && f.required);
   if (requiredRelation) {
     return {
@@ -1830,7 +1841,15 @@ function buildImportRecords(fields, rows) {
       }
 
       if (field.type === "boolean") {
-        record[field.name] = ["true", "1", "yes"].includes(raw.toLowerCase());
+        const lower = raw.toLowerCase();
+        if (BOOLEAN_TRUE_VALUES.includes(lower)) {
+          record[field.name] = true;
+        } else if (BOOLEAN_FALSE_VALUES.includes(lower)) {
+          record[field.name] = false;
+        } else {
+          rowError = \`Row \${rowIndex + 1}: "\${raw}" isn't a recognized yes/no value for field "\${field.label || field.name}".\`;
+          break;
+        }
       } else if (field.type === "number") {
         const n = Number(raw);
         if (Number.isNaN(n)) {

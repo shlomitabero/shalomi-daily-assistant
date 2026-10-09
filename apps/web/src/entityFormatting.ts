@@ -1091,6 +1091,17 @@ function unescapeCsvGuard(raw: string): string {
 }
 
 /**
+ * Unlike number/enum/date below, a boolean cell used to have no rejection
+ * path at all: anything outside this exact true-list (including a Hebrew
+ * "כן"/"לא", "no", or a plain typo) silently became `false` with zero
+ * error reported -- the one field type in this whole import path where an
+ * unrecognized value failed closed and quiet instead of surfacing a clear,
+ * row-numbered error like every other type does.
+ */
+const BOOLEAN_TRUE_VALUES = ["true", "1", "yes", "כן"];
+const BOOLEAN_FALSE_VALUES = ["false", "0", "no", "לא"];
+
+/**
  * Turns parsed CSV rows into record payloads matching `fields`' types --
  * the reverse of `fieldDisplayValue`, so a file this app exported (or a
  * hand-edited copy of one) round-trips back in. Columns are matched to
@@ -1159,7 +1170,15 @@ export function buildImportRecords(fields: Field[], rows: string[][]): ImportRes
       }
 
       if (field.type === "boolean") {
-        record[field.name] = ["true", "1", "yes"].includes(raw.toLowerCase());
+        const lower = raw.toLowerCase();
+        if (BOOLEAN_TRUE_VALUES.includes(lower)) {
+          record[field.name] = true;
+        } else if (BOOLEAN_FALSE_VALUES.includes(lower)) {
+          record[field.name] = false;
+        } else {
+          rowError = `Row ${rowIndex + 1}: "${raw}" isn't a recognized yes/no value for field "${field.label ?? field.name}".`;
+          break;
+        }
       } else if (field.type === "number") {
         const n = Number(raw);
         if (Number.isNaN(n)) {

@@ -1268,6 +1268,39 @@ test("buildImportRecords coerces booleans, numbers, and enum labels back to thei
   ]);
 });
 
+/**
+ * Round 514's finding: unlike number/enum/date (each of which rejects an
+ * unparseable cell with a row-numbered error), a boolean cell had no
+ * rejection path at all -- any value outside the exact true-list silently
+ * became `false`, with zero entry in result.errors. For a Hebrew-first app,
+ * a shop owner re-importing a spreadsheet with "כן"/"לא" (the natural way
+ * to write yes/no by hand) got every true-valued row silently flipped to
+ * false, reported as a clean, error-free import -- the single most
+ * dangerous failure mode (quietly wrong data reported as success) in an
+ * otherwise consistently-validated import path.
+ */
+test("buildImportRecords rejects an unrecognized boolean value instead of silently defaulting it to false", () => {
+  const fields: Field[] = [
+    { name: "name", type: "text", required: true },
+    { name: "active", label: "Active", type: "boolean", required: false },
+  ];
+  const rows = [
+    ["name", "Active"],
+    ["Dana", "כן"], // Hebrew "yes" -- must resolve to true, not silently false
+    ["Yossi", "לא"], // Hebrew "no" -- must resolve to false explicitly
+    ["Noa", "maybe"], // unrecognized -- must be a row error, not a silent false
+    ["Tal", "false"],
+  ];
+  const result = buildImportRecords(fields, rows);
+  assert.deepEqual(result.records, [
+    { name: "Dana", active: true },
+    { name: "Yossi", active: false },
+    { name: "Tal", active: false },
+  ]);
+  assert.equal(result.errors.length, 1);
+  assert.match(result.errors[0], /Row 3.*"maybe".*Active/);
+});
+
 test("buildImportRecords skips a row missing a required field and reports which row and field", () => {
   const fields: Field[] = [
     { name: "name", label: "Name", type: "text", required: true },

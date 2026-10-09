@@ -4932,6 +4932,59 @@ test("the exported EntityView's CSV import rejects a date field value that isn't
 });
 
 /**
+ * Round 514's finding, also fixed the same round in entityFormatting.ts
+ * (live preview): unlike number/enum/date (each rejects an unparseable
+ * cell with a row-numbered error), the exported app's own buildImportRecords
+ * had no rejection path for an unrecognized boolean value at all -- it
+ * silently became false with zero error reported. Executes the actual
+ * generated buildImportRecords function (extracted from real codegen
+ * output, not reimplemented here) so a future edit to this template can't
+ * silently reintroduce the gap.
+ */
+test("the exported EntityView's CSV import rejects an unrecognized boolean value instead of silently defaulting it to false", () => {
+  const boolProject: Project = {
+    ...project,
+    spec: {
+      ...project.spec,
+      entities: [
+        {
+          name: "Task",
+          label: "Task",
+          fields: [
+            { name: "name", label: "Name", type: "text", required: true },
+            { name: "active", label: "Active", type: "boolean", required: false },
+          ],
+        },
+      ],
+    },
+  };
+  const entityViewJsx = generateExportFiles(boolProject).find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+
+  const isValidDateSrc = entityViewJsx.match(/const DATE_FORMAT[\s\S]*?\nfunction isValidDate\(value\) \{[\s\S]*?\n\}\n/)?.[0];
+  const headerSrc = entityViewJsx.match(/function matchesImportHeader\(header, field\) \{[\s\S]*?\n\}\n/)?.[0];
+  const importSrc = entityViewJsx.match(/function buildImportRecords\(fields, rows\) \{[\s\S]*?\n\}\n/)?.[0];
+  assert.ok(isValidDateSrc && headerSrc && importSrc, "expected to find isValidDate/matchesImportHeader/buildImportRecords in generated output");
+
+  const buildImportRecords = new Function(`${isValidDateSrc}\n${headerSrc}\n${importSrc}\nreturn buildImportRecords;`)();
+
+  const fields = boolProject.spec.entities[0].fields;
+  const rows = [
+    ["Name", "Active"],
+    ["Dana", "כן"], // Hebrew "yes" -- must resolve to true, not silently false
+    ["Yossi", "לא"], // Hebrew "no" -- must resolve to false explicitly
+    ["Noa", "maybe"], // unrecognized -- must be a row error, not a silent false
+  ];
+  const { records, errors } = buildImportRecords(fields, rows);
+
+  assert.deepEqual(records, [
+    { name: "Dana", active: true },
+    { name: "Yossi", active: false },
+  ]);
+  assert.equal(errors.length, 1);
+  assert.match(errors[0], /Row 3: "maybe" isn't a recognized yes\/no value/);
+});
+
+/**
  * Regression test for a real bug found by round 287's Explore survey and
  * fixed the same round in both entityFormatting.ts (live preview) and here:
  * two fields on the same entity can share a label (FieldLabelEditor enforces
