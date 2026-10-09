@@ -45,6 +45,7 @@ export const api = {
   createDigitalProduct: (topic, audience) => request('/opportunities/digital-product', { method: 'POST', body: { topic, audience } }),
   updateOpportunity: (id, patch) => request(`/opportunities/${id}`, { method: 'PATCH', body: patch }),
   publishOpportunity: (id) => request(`/opportunities/${id}/publish`, { method: 'POST' }),
+  runAutonomousScan: () => request('/opportunities/autonomous-scan', { method: 'POST' }),
 
   getApprovals: () => request('/approvals'),
   approve: (opportunityId, actionType) => request('/approvals', { method: 'POST', body: { opportunityId, actionType } }),

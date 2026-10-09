@@ -18,6 +18,7 @@ import { financialRouter } from './routes/financial.js';
 import { digestRouter } from './routes/digest.js';
 import { syncSources } from './services/sources.js';
 import { generateDailyDigest } from './services/digest.js';
+import { runAutonomousScan } from './services/autonomousScan.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PORT = process.env.PORT || 4000;
@@ -76,6 +77,13 @@ cron.schedule('0 7 * * *', () => {
   } catch (err) {
     console.error('scheduled daily job failed', err);
   }
+});
+
+// The actual "keep looking for revenue" loop — runs every few hours, not
+// just once a day, so the system is genuinely searching on its own rather
+// than waiting for the owner to type in a topic.
+cron.schedule('0 */4 * * *', () => {
+  runAutonomousScan().catch((err) => console.error('autonomous scan failed', err));
 });
 
 app.listen(PORT, () => {

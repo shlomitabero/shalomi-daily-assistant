@@ -32,10 +32,18 @@ export async function draftProduct({ topic, audience }) {
   const prompt = buildProductPrompt({ topic, audience });
   const msg = await client.messages.create({
     model: MODEL,
-    max_tokens: 1500,
+    max_tokens: 4000,
     messages: [{ role: 'user', content: prompt }],
   });
   const text = msg.content.filter((b) => b.type === 'text').map((b) => b.text).join('\n');
-  const parsed = JSON.parse(text);
+  const parsed = JSON.parse(extractJson(text));
   return { demo: false, ...parsed };
+}
+
+// The model sometimes wraps its JSON in a little prose or markdown fences
+// despite being told not to — pull out just the {...} block rather than
+// failing outright on a decorated response.
+export function extractJson(text) {
+  const match = text.match(/\{[\s\S]*\}/);
+  return match ? match[0] : text;
 }

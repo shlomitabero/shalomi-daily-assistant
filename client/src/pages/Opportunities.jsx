@@ -9,6 +9,8 @@ export default function Opportunities() {
   const [topic, setTopic] = useState('');
   const [audience, setAudience] = useState('');
   const [busy, setBusy] = useState(false);
+  const [scanBusy, setScanBusy] = useState(false);
+  const [scanResult, setScanResult] = useState(null);
   const [error, setError] = useState('');
 
   function refresh() {
@@ -34,12 +36,37 @@ export default function Opportunities() {
     }
   }
 
+  async function onScanNow() {
+    setScanBusy(true);
+    setScanResult(null);
+    try {
+      const result = await api.runAutonomousScan();
+      setScanResult(result);
+      refresh();
+    } catch (err) {
+      setScanResult({ ran: false, reason: err.data?.error || err.message });
+    } finally {
+      setScanBusy(false);
+    }
+  }
+
   return (
     <div className="page">
       <h1>הזדמנויות</h1>
 
+      <div className="card">
+        <h3>סריקה אוטונומית</h3>
+        <p className="hint">המערכת סורקת לבד כל כמה שעות ומחפשת רעיון למוצר חדש. אפשר גם להריץ עכשיו ידנית לבדיקה.</p>
+        <button className="btn btn-ghost" onClick={onScanNow} disabled={scanBusy}>{scanBusy ? 'סורק…' : 'סרוק עכשיו'}</button>
+        {scanResult && (
+          <p className={scanResult.ran ? 'positive' : 'hint'}>
+            {scanResult.ran ? `נוצרה הזדמנות: ${scanResult.opportunity?.title}` : `לא נוצר דבר: ${scanResult.reason}`}
+          </p>
+        )}
+      </div>
+
       <form className="card form" onSubmit={onCreate}>
-        <h3>מוצר דיגיטלי חדש (AI)</h3>
+        <h3>מוצר דיגיטלי חדש (ידני)</h3>
         <label>
           נושא
           <input value={topic} onChange={(e) => setTopic(e.target.value)} placeholder="לדוגמה: ניהול תזרים מזומנים לעצמאים" />

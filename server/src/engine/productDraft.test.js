@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { buildProductPrompt, draftProduct } from './productDraft.js';
+import { buildProductPrompt, draftProduct, extractJson } from './productDraft.js';
 
 test('buildProductPrompt includes the topic and audience and asks for raw JSON', () => {
   const prompt = buildProductPrompt({ topic: 'personal budgeting', audience: 'freelancers' });
@@ -21,4 +21,18 @@ test('draftProduct falls back to a clearly-labeled demo draft with no ANTHROPIC_
   } finally {
     if (original !== undefined) process.env.ANTHROPIC_API_KEY = original;
   }
+});
+
+test('extractJson strips prose the model adds despite being told not to', () => {
+  const text = 'Sure, here is the JSON:\n{"title": "x"}\nLet me know if you need anything else!';
+  assert.equal(extractJson(text), '{"title": "x"}');
+});
+
+test('extractJson strips markdown code fences around the JSON', () => {
+  const text = '```json\n{"title": "x"}\n```';
+  assert.equal(extractJson(text), '{"title": "x"}');
+});
+
+test('extractJson returns the raw text unchanged when there is no JSON object to find', () => {
+  assert.equal(extractJson('not json at all'), 'not json at all');
 });
