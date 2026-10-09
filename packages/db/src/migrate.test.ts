@@ -3,7 +3,7 @@ import { test } from "node:test";
 import type { ProductSpec } from "@forge/shared";
 import { openDatabase } from "./connection.js";
 import { applyMigrations, describeMigrationHazards, diffAndMigrate, generateCreateTableStatements } from "./migrate.js";
-import { insertRecord, listRecords } from "./repository.js";
+import { insertRecord, listRecords, ValidationError } from "./repository.js";
 
 const spec: ProductSpec = {
   summary: "test",
@@ -784,6 +784,52 @@ test("two entities whose names collide when compared case-insensitively silently
   // "order" entity would never get a "status" column: every write meant
   // for it would actually hit the "Order" table's "total" column instead.
   assert.deepEqual(tables.map((t) => t.name), ["entity_proj1_Order"]);
+});
+
+/**
+ * The cross-refine twin of the case-insensitive-collision test above:
+ * ProductSpecSchema's findSanitizedIdentifierCollisions only ever checks
+ * entities WITHIN one spec, so it can never catch a brand-new entity whose
+ * sanitized table name collides with a DIFFERENT entity that existed in an
+ * earlier spec and has since been removed -- previousSpec is the only
+ * place diffAndMigrate (or anything else) still has a handle on that
+ * removed entity's name. Without this round's fix, the removed entity's
+ * real rows would keep sitting in the stale table and silently surface as
+ * records of the new, differently-named entity.
+ */
+test("diffAndMigrate refuses to silently merge a brand-new entity into a removed entity's stale table when their sanitized names collide", () => {
+  const db = openDatabase(":memory:");
+  const baseSpec: ProductSpec = {
+    ...spec,
+    entities: [...spec.entities, { name: "לקוח", fields: [{ name: "phone", type: "text", required: true }] }],
+  };
+  applyMigrations(db, "proj1", baseSpec);
+  const customerRecord = insertRecord(db, "proj1", baseSpec.entities[2], { phone: "050-1234567" });
+  assert.equal(customerRecord.phone, "050-1234567");
+
+  // Refine: remove "לקוח" entirely and introduce an unrelated-looking "מוצר"
+  // entity -- same length, different word, but tableNameFor sanitizes both
+  // down to the identical "entity_proj1_____" table name.
+  const nextSpec: ProductSpec = {
+    ...spec,
+    entities: [...spec.entities, { name: "מוצר", fields: [{ name: "price", type: "number", required: true }] }],
+  };
+  assert.throws(
+    () => diffAndMigrate(db, "proj1", baseSpec, nextSpec),
+    (err: unknown) => {
+      assert.ok(err instanceof ValidationError);
+      assert.match((err as Error).message, /מוצר/);
+      assert.match((err as Error).message, /לקוח/);
+      return true;
+    },
+  );
+
+  // The real proof this isn't just a reported warning: "לקוח"'s real row
+  // must still be sitting in the table, completely untouched, not merged
+  // into or overwritten by anything "מוצר"-shaped.
+  const stillThere = listRecords(db, "proj1", baseSpec.entities[2]);
+  assert.equal(stillThere.length, 1);
+  assert.equal(stillThere[0].phone, "050-1234567");
 });
 
 test("generateCreateTableStatements quotes identifiers so a field named after a SQL reserved keyword doesn't break the statement", () => {

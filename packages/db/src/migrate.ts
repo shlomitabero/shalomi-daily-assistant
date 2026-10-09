@@ -1,6 +1,7 @@
 import type { Entity, Field, ProductSpec } from "@forge/shared";
 import type { ForgeDatabase } from "./connection.js";
 import { assertSafeIdentifier, quoteIdentifier, tableNameFor } from "./identifiers.js";
+import { ValidationError } from "./repository.js";
 
 function sqlTypeFor(field: Field): string {
   switch (field.type) {
@@ -197,6 +198,32 @@ export function diffAndMigrate(
     const table = tableNameFor(projectId, entity.name);
     const prevEntity = previousEntities.get(entity.name);
     const currentColumns = existingColumns(db, table);
+
+    // tableNameFor sanitizes an entity name by replacing every non-ASCII-
+    // alphanumeric character with "_", so two differently-named entities
+    // can collapse to the identical physical table name (most plausibly
+    // two non-ASCII names of the same length, e.g. Hebrew). ProductSpecSchema
+    // already rejects that WITHIN one spec (findSanitizedIdentifierCollisions),
+    // but it only ever sees one spec at a time -- it has no way to know
+    // that today's entity name collides with a DIFFERENT entity that
+    // existed in previousSpec and has since been removed from the current
+    // one. Without this check, the "entity absent from previousSpec" branch
+    // below would treat that stale, unrelated table as a benign same-entity
+    // reuse: the removed entity's real rows would keep sitting in the table
+    // and silently surface as records of today's new, differently-named
+    // entity, with any coincidentally-matching field reused rather than
+    // reported. previousEntities is guaranteed collision-free internally by
+    // that same upstream schema check, so at most one other entry can match.
+    if (!prevEntity) {
+      const collidingPrevEntity = previousSpec.entities.find(
+        (e) => e.name !== entity.name && tableNameFor(projectId, e.name) === table,
+      );
+      if (collidingPrevEntity) {
+        throw new ValidationError(
+          `Entity "${entity.name}" sanitizes to the same database table as entity "${collidingPrevEntity.name}" from the project's previous version -- refusing to silently merge their data. Choose a name that differs in its ASCII letters/digits, not just punctuation or non-ASCII characters.`,
+        );
+      }
+    }
 
     if (!prevEntity && currentColumns.size === 0) {
       db.exec(statements[index]);
