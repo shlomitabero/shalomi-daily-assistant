@@ -957,6 +957,45 @@ test("EntityPanel's board view collects a record with an unrecognized status int
 });
 
 /**
+ * Regression coverage for a real bug found alongside the "(other)" column
+ * fix above: that fix stopped the record from vanishing from the board, but
+ * never gave its own per-card "move" <select> an <option> for the stale
+ * value itself -- only the field's current enumValues get <option>s. A
+ * controlled <select> whose value matches no <option> is silently blanked
+ * by the browser (selectedIndex -1), so the one place meant to show/change
+ * a card's current stage showed nothing at all for exactly the records this
+ * feature exists to handle, even though the same value renders correctly
+ * everywhere else (the badge, CSV export, the column it's grouped into).
+ */
+test("EntityPanel's board card 'move' select shows the record's real stale status, not a blank selection", async () => {
+  await withJsdom(async () => {
+    const store: EntityRecord[] = [
+      { id: 1, name: "Acme Corp", status: "new" },
+      { id: 2, name: "Globex", status: "archived" },
+    ];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = mockRecordsFetch(store) as typeof fetch;
+    try {
+      renderEntityPanel();
+      await waitForCondition(() => document.querySelector(".entity-toolbar") !== null);
+
+      const boardToggle = document.querySelectorAll(".view-toggle-btn")[1] as HTMLButtonElement;
+      fireEvent.click(boardToggle);
+      await waitForCondition(() => document.querySelectorAll(".board-column").length === 4);
+
+      const otherColumn = Array.from(document.querySelectorAll(".board-column")).find((col) =>
+        col.querySelector(".board-column-header")?.textContent?.includes("Other"),
+      );
+      const moveSelect = otherColumn!.querySelector(".board-card-move") as HTMLSelectElement;
+      assert.ok(moveSelect, "expected the card's own move select to render");
+      assert.equal(moveSelect.value, "archived", "the select must reflect the record's real stored status, not blank out");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * New in this round: a "Filter by <field>" dropdown next to the search box,
  * scoped to whichever enum field the board view already uses (findBoardField
  * -- usually "status"/"stage"), so a long table can be narrowed to one

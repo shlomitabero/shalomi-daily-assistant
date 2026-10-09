@@ -2372,6 +2372,15 @@ function RecordListPrintSheet({ entity, fields, records, relatedRecords, show })
 // actions the table row has.
 function BoardCard({ entity, boardField, record, relatedRecords, hasMoveError, onMove, onEdit, onDuplicate, onDelete, onJumpToRecord }) {
   const otherFields = entity.fields.filter((f) => f.name !== boardField.name);
+  // A record can land in the board's "(other)" column (see groupByField) when
+  // its stored value is a legacy one no longer in boardField.enumValues --
+  // migrate.ts only ever adds columns on refine, it never rewrites existing
+  // row data. Without this, the <select> below would have no <option>
+  // matching the controlled value, so the browser silently blanks it
+  // (selectedIndex -1) instead of showing the record's real stage.
+  const currentBoardValue = String(record[boardField.name] ?? "");
+  const knownBoardValues = uniqueEnumValues(boardField.enumValues);
+  const boardOptionValues = currentBoardValue && !knownBoardValues.includes(currentBoardValue) ? [currentBoardValue, ...knownBoardValues] : knownBoardValues;
   return (
     <div className={hasMoveError ? "board-card board-card-move-error" : "board-card"} draggable onDragStart={(e) => e.dataTransfer.setData("text/plain", String(record.id))}>
       {otherFields.map((f) => (
@@ -2385,8 +2394,8 @@ function BoardCard({ entity, boardField, record, relatedRecords, hasMoveError, o
           />
         </div>
       ))}
-      <select className="board-card-move" value={record[boardField.name] ?? ""} onChange={(e) => onMove(e.target.value)}>
-        {uniqueEnumValues(boardField.enumValues).map((v) => (
+      <select className="board-card-move" value={currentBoardValue} onChange={(e) => onMove(e.target.value)}>
+        {boardOptionValues.map((v) => (
           <option key={v} value={v}>
             {(boardField.enumLabels && boardField.enumLabels[v]) || v}
           </option>
@@ -2455,12 +2464,22 @@ function FieldInput({ entity, field, value, onChange, relatedEntity, relatedEnti
     );
   }
   if (field.type === "enum") {
+    // A record can carry a legacy value no longer in field.enumValues (e.g.
+    // after an AI refine renamed/restructured the field's options --
+    // migrate.ts only ever adds columns, it never rewrites existing row
+    // data). Without an <option> for it, the controlled value below matches
+    // nothing and the browser silently blanks the select instead of showing
+    // the record's real stored value (same root cause BoardCard's own move
+    // select has, see its own comment).
+    const currentEnumValue = String(value ?? "");
+    const knownEnumValues = uniqueEnumValues(field.enumValues);
+    const enumOptionValues = currentEnumValue && !knownEnumValues.includes(currentEnumValue) ? [currentEnumValue, ...knownEnumValues] : knownEnumValues;
     return (
-      <select id={id} required={field.required} value={value ?? ""} onChange={(e) => onChange(e.target.value)} autoFocus={autoFocus} onBlur={onBlur} onKeyDown={onKeyDown}>
+      <select id={id} required={field.required} value={currentEnumValue} onChange={(e) => onChange(e.target.value)} autoFocus={autoFocus} onBlur={onBlur} onKeyDown={onKeyDown}>
         <option value="" disabled>
           …
         </option>
-        {uniqueEnumValues(field.enumValues).map((v) => (
+        {enumOptionValues.map((v) => (
           <option key={v} value={v}>
             {(field.enumLabels && field.enumLabels[v]) || v}
           </option>

@@ -6451,7 +6451,7 @@ test("the exported EntityView's FieldInput wires field.required into the real re
   const booleanBranch = fieldInputSrc!.match(/field\.type === "boolean"[\s\S]{0,200}\}\n\s*\}/)?.[0];
   assert.doesNotMatch(booleanBranch ?? "", /required=\{field\.required\}/, "the boolean checkbox branch must NOT be required-wired");
 
-  const enumBranch = fieldInputSrc!.match(/field\.type === "enum"[\s\S]{0,200}/)?.[0];
+  const enumBranch = fieldInputSrc!.match(/field\.type === "enum"[\s\S]{0,1200}/)?.[0];
   assert.match(enumBranch ?? "", /required=\{field\.required\}/, "the enum <select> branch must be required-wired");
 
   const longtextBranch = fieldInputSrc!.match(/field\.type === "longtext"[\s\S]{0,150}/)?.[0];
@@ -6500,22 +6500,93 @@ test("the exported app's uniqueEnumValues de-dupes real generated code, and ever
   const boardCardSrc = entityViewJsx.match(/function BoardCard\(\{[\s\S]*?\n\}\n/)?.[0];
   assert.match(
     boardCardSrc ?? "",
-    /\{uniqueEnumValues\(boardField\.enumValues\)\.map/,
+    /const knownBoardValues = uniqueEnumValues\(boardField\.enumValues\);/,
     "the board card's move dropdown must route boardField.enumValues through uniqueEnumValues",
+  );
+  assert.match(
+    boardCardSrc ?? "",
+    /\{boardOptionValues\.map/,
+    "the board card's move dropdown must render boardOptionValues (knownBoardValues plus a stale current value, if any), not the deduped list alone",
   );
 
   const fieldInputSrc = entityViewJsx.match(/function FieldInput\(\{[\s\S]*?\n\}\n/)?.[0];
-  const enumBranch = fieldInputSrc!.match(/field\.type === "enum"[\s\S]{0,400}/)?.[0];
+  const enumBranch = fieldInputSrc!.match(/field\.type === "enum"[\s\S]{0,1200}/)?.[0];
   assert.match(
     enumBranch ?? "",
-    /\{uniqueEnumValues\(field\.enumValues\)\.map/,
+    /const knownEnumValues = uniqueEnumValues\(field\.enumValues\);/,
     "the add/edit form's enum <select> must route field.enumValues through uniqueEnumValues",
+  );
+  assert.match(
+    enumBranch ?? "",
+    /\{enumOptionValues\.map/,
+    "the add/edit form's enum <select> must render enumOptionValues (knownEnumValues plus a stale current value, if any), not the deduped list alone",
   );
 
   assert.match(
     entityViewJsx,
     /uniqueEnumValues\(f\.enumValues\)\.map/,
     "the toolbar's filter-by-field <select> must route f.enumValues through uniqueEnumValues",
+  );
+});
+
+/**
+ * New in this round: a record can carry a legacy enum value no longer in
+ * the field's current enumValues (e.g. after an AI refine renamed the
+ * field's options -- migrate.ts only ever adds columns on refine, it never
+ * rewrites existing row data; this is exactly the scenario the board's own
+ * "(other)" column, added in an earlier round, exists to handle without
+ * dropping the record). That earlier fix never touched BoardCard's own move
+ * <select> or FieldInput's add/edit-form enum <select>, both of which only
+ * ever rendered <option>s for the field's current enumValues -- a
+ * controlled <select> whose value matches no <option> is silently blanked
+ * by the browser (selectedIndex -1), so the record's real stage/value
+ * appeared as a blank selection instead of its actual stored value.
+ * Extracts the real generated option-list computation for both branches
+ * (same "real generated code via new Function" standard this file already
+ * uses for uniqueEnumValues) and calls it directly with a stale value.
+ */
+test("the exported app's BoardCard move select and FieldInput's enum select both include an <option> for a stale value outside the field's current enumValues", () => {
+  const entityViewJsx = generateExportFiles(project).find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+
+  const helperSrc = entityViewJsx.match(/function uniqueEnumValues\(values\) \{[\s\S]*?\n\}\n/)?.[0];
+  assert.ok(helperSrc, "expected to find a real generated uniqueEnumValues helper");
+
+  const boardLogicSrc = entityViewJsx.match(/  const currentBoardValue = [\s\S]*?\n  const boardOptionValues = [^\n]*\n/)?.[0];
+  assert.ok(boardLogicSrc, "expected to find BoardCard's real generated option-list computation");
+  const computeBoardOptions = new Function(
+    "record",
+    "boardField",
+    `${helperSrc}\n${boardLogicSrc}\nreturn boardOptionValues;`,
+  ) as (record: Record<string, unknown>, boardField: { name: string; enumValues?: string[] }) => string[];
+
+  assert.deepEqual(
+    computeBoardOptions({ status: "archived" }, { name: "status", enumValues: ["new", "won"] }),
+    ["archived", "new", "won"],
+    "a stale value not in enumValues must get its own leading option, not be silently dropped from the select",
+  );
+  assert.deepEqual(
+    computeBoardOptions({ status: "new" }, { name: "status", enumValues: ["new", "won"] }),
+    ["new", "won"],
+    "a value already in enumValues must not be duplicated",
+  );
+  assert.deepEqual(
+    computeBoardOptions({}, { name: "status", enumValues: ["new", "won"] }),
+    ["new", "won"],
+    "a missing/empty value must not add a spurious blank option",
+  );
+
+  const enumLogicSrc = entityViewJsx.match(/    const currentEnumValue = [\s\S]*?\n    const enumOptionValues = [^\n]*\n/)?.[0];
+  assert.ok(enumLogicSrc, "expected to find FieldInput's real generated enum option-list computation");
+  const computeEnumOptions = new Function(
+    "value",
+    "field",
+    `${helperSrc}\n${enumLogicSrc}\nreturn enumOptionValues;`,
+  ) as (value: unknown, field: { enumValues?: string[] }) => string[];
+
+  assert.deepEqual(
+    computeEnumOptions("archived", { enumValues: ["new", "won"] }),
+    ["archived", "new", "won"],
+    "the add/edit form's enum select must offer the record's stale value too, not just the current enumValues",
   );
 });
 
