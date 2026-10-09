@@ -731,7 +731,7 @@ export const TEMPLATES: AppTemplate[] = [
     descriptionHe: "תפריט, שולחנות, לקוחות והזמנות -- מוכן להרצה.",
     spec: spec({
       summary: "מערכת לניהול מסעדה -- תפריט, שולחנות, לקוחות והזמנות.",
-      roles: ["Manager", "Staff"],
+      roles: ["מנהל/ת", "צוות"],
       entities: RESTAURANT_ENTITIES,
     }),
     specEn: spec({
@@ -749,7 +749,7 @@ export const TEMPLATES: AppTemplate[] = [
     descriptionHe: "לקוחות, אנשי קשר, עסקאות ומשימות מעקב.",
     spec: spec({
       summary: "מערכת CRM לניהול לקוחות, אנשי קשר, עסקאות ומשימות מעקב.",
-      roles: ["Sales Rep", "Manager"],
+      roles: ["נציג/ת מכירות", "מנהל/ת"],
       entities: CRM_ENTITIES,
     }),
     specEn: spec({
@@ -767,7 +767,7 @@ export const TEMPLATES: AppTemplate[] = [
     descriptionHe: "פרויקטים, אבני דרך, משימות ואנשי צוות.",
     spec: spec({
       summary: "מערכת למעקב פרויקטים -- אבני דרך, משימות ואנשי צוות.",
-      roles: ["Project Manager", "Team Member"],
+      roles: ["מנהל/ת פרויקט", "חבר/ת צוות"],
       entities: PROJECT_TRACKER_ENTITIES,
     }),
     specEn: spec({
@@ -785,7 +785,7 @@ export const TEMPLATES: AppTemplate[] = [
     descriptionHe: "מתנדבים, אירועים וניהול משמרות.",
     spec: spec({
       summary: "מערכת לניהול מתנדבים, אירועים ושיבוץ משמרות.",
-      roles: ["Coordinator", "Volunteer"],
+      roles: ["רכז/ת", "מתנדב/ת"],
       entities: VOLUNTEER_ENTITIES,
     }),
     specEn: spec({
@@ -803,7 +803,7 @@ export const TEMPLATES: AppTemplate[] = [
     descriptionHe: "לקוחות, צוות, שירותים ותורים מתוזמנים.",
     spec: spec({
       summary: "מערכת לניהול תורים -- לקוחות, צוות, שירותים ותורים מתוזמנים.",
-      roles: ["Staff", "Customer"],
+      roles: ["צוות", "לקוח/ה"],
       entities: APPOINTMENTS_ENTITIES,
     }),
     specEn: spec({
@@ -821,7 +821,7 @@ export const TEMPLATES: AppTemplate[] = [
     descriptionHe: "מוצרים, ספקים, הזמנות רכש ותנועות מלאי.",
     spec: spec({
       summary: "מערכת לניהול מלאי -- מוצרים, ספקים, הזמנות רכש ותנועות מלאי.",
-      roles: ["Warehouse Manager", "Buyer"],
+      roles: ["מנהל/ת מחסן", "קניין/ית"],
       entities: INVENTORY_ENTITIES,
     }),
     specEn: spec({

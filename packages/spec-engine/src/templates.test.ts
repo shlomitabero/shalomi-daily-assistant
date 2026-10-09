@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { ProductSpecSchema } from "@forge/shared";
+import { isHebrewText } from "./domainEntities.js";
 import { TEMPLATES } from "./templates.js";
 
 test("every template exposes a schema-valid ProductSpec, in both languages", () => {
@@ -159,4 +160,35 @@ test("the Appointments template's Hebrew status enum doesn't mistranslate \"sche
   const scheduledLabel = (statusField as { enumLabels: Record<string, string> }).enumLabels.scheduled;
   assert.notEqual(scheduledLabel, "קבוע", "\"scheduled\" must not be mistranslated as \"קבוע\" (fixed/permanent/standing)");
   assert.equal(scheduledLabel, "מתוכנן", "\"scheduled\" should match this codebase's own established translation (domainEntities.ts's Appointment entity)");
+});
+
+/**
+ * Round 517's finding: every template's `roles` array was plain English,
+ * reused byte-for-byte between the Hebrew `spec` and the English `specEn`
+ * -- unlike every other display field (entity/field labels, enumLabels,
+ * summary), which already has a real Hebrew/English split. heuristic.ts's
+ * own matchRoles() already translates roles to Hebrew via ROLE_RULES's
+ * labelHe when isHebrew is true, so templates were the one spec-generation
+ * path that skipped this established convention. A Hebrew-UI user picking
+ * any template (POST /projects/from-template) saw English role chips (e.g.
+ * "Manager", "Staff") on the otherwise fully-Hebrew spec review screen
+ * (apps/web/src/App.tsx's spec.roles.heading section).
+ */
+test("every template's Hebrew spec.roles are genuinely Hebrew, not reused English strings from specEn", () => {
+  for (const template of TEMPLATES) {
+    assert.ok(template.spec.roles.length > 0, `template "${template.id}" has an empty roles array`);
+    assert.deepEqual(
+      template.spec.roles.length,
+      template.specEn.roles.length,
+      `template "${template.id}": spec and specEn must declare the same number of roles`,
+    );
+    for (const role of template.spec.roles) {
+      assert.ok(isHebrewText(role), `template "${template.id}": Hebrew spec.roles contains a non-Hebrew role "${role}"`);
+    }
+    assert.notDeepEqual(
+      template.spec.roles,
+      template.specEn.roles,
+      `template "${template.id}": spec.roles must not be byte-identical to specEn.roles`,
+    );
+  }
 });
