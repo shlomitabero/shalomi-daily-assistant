@@ -313,6 +313,46 @@ test("real WhatsApp messages produce a 'WhatsApp Messages.csv' entry, correctly 
   );
 });
 
+/**
+ * New in this round: every entity's own CSV in this same ZIP already
+ * shows Hebrew headers whenever the project's own fields are Hebrew
+ * (field.label) -- but the hardcoded "WhatsApp Messages.csv" entry
+ * stayed in English regardless, the one file in a Hebrew project's whole
+ * backup its own owner couldn't read. Confirms the header row and the
+ * Incoming/Outgoing direction values switch to Hebrew for a project whose
+ * own description is Hebrew, using the exact same isHebrewText(project.
+ * description) signal this file's own caller already uses elsewhere
+ * (routes/projects.ts's "בנייה ראשונית"/"(עותק)").
+ */
+test("a Hebrew-described project's WhatsApp Messages.csv gets real Hebrew headers and direction labels, not the hardcoded English ones", () => {
+  const heProject: Project = { ...project, description: "אפליקציה לניהול לקוחות והזמנות" };
+  const db = createTestDb(heProject);
+  const first = insertWhatsAppMessage(db, {
+    projectId: heProject.id,
+    direction: "in",
+    fromNumber: "+972501111111",
+    toNumber: "+972502222222",
+    body: "מתי אפשר לקבל את ההזמנה?",
+    matchedLabel: "Dana Levi",
+    status: "received",
+  });
+  const second = insertWhatsAppMessage(db, {
+    projectId: heProject.id,
+    direction: "out",
+    fromNumber: "+972502222222",
+    toNumber: "+972501111111",
+    body: "מחר בבוקר",
+    status: "sent",
+  });
+
+  const entries = generateBackupZipEntries(db, heProject);
+  const csv = entries.find((e) => e.path === "WhatsApp Messages.csv")!.content.replace(/^﻿/, "");
+  const lines = csv.split("\r\n");
+  assert.equal(lines[0], "כיוון,מאת,אל,הודעה,רשומה מותאמת,סטטוס,תאריך");
+  assert.equal(lines[1], `יוצאת,'+972502222222,'+972501111111,מחר בבוקר,,sent,${second.createdAt}`);
+  assert.equal(lines[2], `נכנסת,'+972501111111,'+972502222222,מתי אפשר לקבל את ההזמנה?,Dana Levi,received,${first.createdAt}`);
+});
+
 test("a WhatsApp message containing a comma is CSV-escaped like any other field, and the createdAt timestamp is real, not blank", () => {
   const db = createTestDb(project);
   const inserted = insertWhatsAppMessage(db, {

@@ -1,5 +1,6 @@
 import type { Entity, EntityRecord, Field, Project } from "@forge/shared";
 import { listRecords, listWhatsAppMessages, type ForgeDatabase, type WhatsAppMessage } from "@forge/db";
+import { isHebrewText } from "@forge/spec-engine";
 import { recordDisplayLabel } from "./displayField.js";
 
 /**
@@ -136,11 +137,28 @@ function collectAllWhatsAppMessages(db: ForgeDatabase, projectId: string): Whats
   return all;
 }
 
-function whatsappMessagesToCsv(messages: WhatsAppMessage[]): string {
-  const header = ["Direction", "From", "To", "Message", "Matched Record", "Status", "Date"].map(csvEscape).join(",");
+/**
+ * Every entity's own CSV in this same ZIP already shows real Hebrew
+ * column headers whenever the project's own fields are Hebrew (entityToCsv
+ * above uses field.label, the project's own language). This hardcoded
+ * entry sat in English regardless, the one file in the whole backup a
+ * Hebrew-speaking shop owner couldn't read -- same isHebrewText(project.
+ * description) signal this file's own caller (routes/projects.ts) already
+ * uses for "בנייה ראשונית"/"(עותק)" elsewhere in this exact codebase.
+ */
+function whatsappMessagesToCsv(messages: WhatsAppMessage[], isHebrew: boolean): string {
+  const header = (
+    isHebrew
+      ? ["כיוון", "מאת", "אל", "הודעה", "רשומה מותאמת", "סטטוס", "תאריך"]
+      : ["Direction", "From", "To", "Message", "Matched Record", "Status", "Date"]
+  )
+    .map(csvEscape)
+    .join(",");
+  const incomingLabel = isHebrew ? "נכנסת" : "Incoming";
+  const outgoingLabel = isHebrew ? "יוצאת" : "Outgoing";
   const rows = messages.map((m) =>
     [
-      m.direction === "in" ? "Incoming" : "Outgoing",
+      m.direction === "in" ? incomingLabel : outgoingLabel,
       m.fromNumber,
       m.toNumber,
       m.body,
@@ -218,7 +236,7 @@ export function generateBackupZipEntries(db: ForgeDatabase, project: Project): {
   if (whatsappMessages.length > 0) {
     entries.push({
       path: uniqueWhatsAppLogPath(entries.map((e) => e.path)),
-      content: "﻿" + whatsappMessagesToCsv(whatsappMessages),
+      content: "﻿" + whatsappMessagesToCsv(whatsappMessages, isHebrewText(project.description)),
     });
   }
 
