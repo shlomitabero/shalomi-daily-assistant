@@ -1005,6 +1005,35 @@ test("Property's 'listing' keyword doesn't spuriously match 'enlisting'", async 
   assert.ok(realListings.entities.some((e) => e.name === "Property"), "'listings' must still match Property");
 });
 
+/**
+ * Regression test for round 501's finding: Appointment's bare "reservation"
+ * keyword is a substring of the unrelated, ordinary word "preservation" --
+ * a historic/data/wildlife-preservation description has nothing to do with
+ * booking a customer appointment, so it spuriously matched this entity too.
+ * Fixed with the same `\b`-bounded RegExp pattern (plus the "(s)?" plural
+ * handling) this file's other collision fixes already use.
+ */
+test("Appointment's 'reservation' keyword doesn't spuriously match 'preservation'", async () => {
+  const provider = new HeuristicSpecProvider();
+
+  const preservation = await provider.generate(
+    "An app for a historic preservation nonprofit to track buildings, donors, and fundraising campaigns.",
+  );
+  assert.ok(
+    !preservation.entities.some((e) => e.name === "Appointment"),
+    "'preservation' alone must not spuriously match Appointment via a bare 'reservation' substring",
+  );
+
+  // The real word still works on its own, singular and plural (this
+  // description avoids this rule's other keywords -- "appointment",
+  // "booking" -- so a match here can only come from "reservation" itself).
+  const realReservation = await provider.generate("An app for a restaurant host to track each table reservation for the evening.");
+  assert.ok(realReservation.entities.some((e) => e.name === "Appointment"), "'reservation' must still match Appointment");
+
+  const realReservations = await provider.generate("An app for a restaurant host to track all the table reservations for the evening.");
+  assert.ok(realReservations.entities.some((e) => e.name === "Appointment"), "'reservations' must still match Appointment");
+});
+
 test("MenuItem's 'מנה' keyword doesn't spuriously match 'מנהלים' (managers)", async () => {
   const provider = new HeuristicSpecProvider();
   const managers = await provider.generate("אפליקציה למעקב אחרי מנהלים בעסק");

@@ -116,7 +116,14 @@ export const DOMAIN_ENTITY_RULES: DomainEntityRule[] = [
     // existing test relied on bare "schedule" before removing it;
     // "appointment"/"booking"/"reservation" already cover the ordinary
     // case well enough on their own.
-    keywords: ["appointment", "booking", "reservation", "תורים", "פגישה", "פגישות"],
+    //
+    // Bare "reservation" (round 501) is a substring of the unrelated,
+    // ordinary word "preservation" (p-reservation), so any historic/data/
+    // wildlife-preservation description spuriously matched this entity too
+    // -- the same pitfall-1 shape as order/stock/driver/patient/deals/
+    // worker/courses/dish/product. \b-bounded, with the same "(s)?" plural
+    // handling those fixes already use, so "reservations" still matches.
+    keywords: ["appointment", "booking", /\breservations?\b/, "תורים", "פגישה", "פגישות"],
     labelHe: "תורים",
     descriptionHe: "פגישה מתוזמנת עם לקוח.",
     fieldLabelsHe: {
