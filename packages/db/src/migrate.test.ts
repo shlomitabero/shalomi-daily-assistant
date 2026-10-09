@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { ProductSpec } from "@forge/shared";
+import { ensureCheckpointsTable, insertCheckpoint } from "./checkpoints.js";
 import { openDatabase } from "./connection.js";
 import { applyMigrations, describeMigrationHazards, diffAndMigrate, generateCreateTableStatements } from "./migrate.js";
 import { insertRecord, listRecords, ValidationError } from "./repository.js";
@@ -827,6 +828,60 @@ test("diffAndMigrate refuses to silently merge a brand-new entity into a removed
   // The real proof this isn't just a reported warning: "לקוח"'s real row
   // must still be sitting in the table, completely untouched, not merged
   // into or overwritten by anything "מוצר"-shaped.
+  const stillThere = listRecords(db, "proj1", baseSpec.entities[2]);
+  assert.equal(stillThere.length, 1);
+  assert.equal(stillThere[0].phone, "050-1234567");
+});
+
+/**
+ * The multi-hop twin of the test directly above: the collision check it
+ * added only ever searches previousSpec.entities, which is just the ONE
+ * immediately preceding spec -- a real refine loop calls diffAndMigrate
+ * once per refine, each time with only that one hop of history
+ * (pipeline.ts's own call site never passes anything older). An entity
+ * removed on an EARLIER refine is already gone from previousSpec by the
+ * time a later, colliding entity shows up, so the one-hop check alone
+ * would miss it. ensureCheckpointsTable + insertCheckpoint (exactly what
+ * the real build/refine pipeline does after every successful
+ * diffAndMigrate) populate checkpoint_entity_history, the durable ledger
+ * allKnownEntityNames also consults -- this is the fix.
+ */
+test("diffAndMigrate also refuses the collision when the removed entity vanished two refines ago, not just the one immediately before", () => {
+  const db = openDatabase(":memory:");
+  ensureCheckpointsTable(db);
+
+  const baseSpec: ProductSpec = {
+    ...spec,
+    entities: [...spec.entities, { name: "לקוח", fields: [{ name: "phone", type: "text", required: true }] }],
+  };
+  applyMigrations(db, "proj1", baseSpec);
+  insertCheckpoint(db, { id: "cp1", projectId: "proj1", label: "Initial build", kind: "build", spec: baseSpec });
+  const customerRecord = insertRecord(db, "proj1", baseSpec.entities[2], { phone: "050-1234567" });
+  assert.equal(customerRecord.phone, "050-1234567");
+
+  // Refine 1: remove "לקוח" entirely. No collision yet -- nothing new is
+  // being added this hop.
+  const spec1: ProductSpec = { ...spec };
+  diffAndMigrate(db, "proj1", baseSpec, spec1);
+  insertCheckpoint(db, { id: "cp2", projectId: "proj1", label: "Refine: drop לקוח", kind: "refine", spec: spec1 });
+
+  // Refine 2: previousSpec is now spec1, which no longer mentions "לקוח" at
+  // all -- the one-hop check alone would see nothing to collide with. Adds
+  // "מוצר", whose sanitized table name still collides with "לקוח"'s old one.
+  const spec2: ProductSpec = {
+    ...spec,
+    entities: [...spec.entities, { name: "מוצר", fields: [{ name: "price", type: "number", required: true }] }],
+  };
+  assert.throws(
+    () => diffAndMigrate(db, "proj1", spec1, spec2),
+    (err: unknown) => {
+      assert.ok(err instanceof ValidationError);
+      assert.match((err as Error).message, /מוצר/);
+      assert.match((err as Error).message, /לקוח/);
+      return true;
+    },
+  );
+
   const stillThere = listRecords(db, "proj1", baseSpec.entities[2]);
   assert.equal(stillThere.length, 1);
   assert.equal(stillThere[0].phone, "050-1234567");

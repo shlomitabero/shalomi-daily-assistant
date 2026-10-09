@@ -1,7 +1,33 @@
 import type { Entity, Field, ProductSpec } from "@forge/shared";
 import type { ForgeDatabase } from "./connection.js";
+import { listHistoricalEntityNames } from "./checkpoints.js";
 import { assertSafeIdentifier, quoteIdentifier, tableNameFor } from "./identifiers.js";
 import { ValidationError } from "./repository.js";
+
+/**
+ * Names this project's entities have ever been known by, for the
+ * cross-refine sanitized-table-name collision check below. previousSpec's
+ * own entity names always count (no table needed), plus -- when the Time
+ * Machine checkpoint infrastructure has been set up (ensureCheckpointsTable;
+ * always true for the real app via store.ts, not necessarily true for a
+ * caller exercising diffAndMigrate in isolation) -- checkpoint_entity_history
+ * itself, a durable, append-only ledger of every entity name ever written
+ * to a checkpoint, written at insertCheckpoint and never pruned, which
+ * already exists specifically to answer "did this project ever have an
+ * entity named X" (currently used by deleteProject for exactly that
+ * question). Without it, the collision check below only ever sees one
+ * refine hop back: a sanitized-name collision with an entity removed TWO OR
+ * MORE refines ago -- already absent from previousSpec too by then -- would
+ * silently pass.
+ */
+function allKnownEntityNames(db: ForgeDatabase, projectId: string, previousSpec: ProductSpec): Set<string> {
+  const names = new Set(previousSpec.entities.map((e) => e.name));
+  const hasHistoryTable = db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'checkpoint_entity_history'").get();
+  if (hasHistoryTable) {
+    for (const name of listHistoricalEntityNames(db, projectId)) names.add(name);
+  }
+  return names;
+}
 
 function sqlTypeFor(field: Field): string {
   switch (field.type) {
@@ -206,21 +232,27 @@ export function diffAndMigrate(
     // already rejects that WITHIN one spec (findSanitizedIdentifierCollisions),
     // but it only ever sees one spec at a time -- it has no way to know
     // that today's entity name collides with a DIFFERENT entity that
-    // existed in previousSpec and has since been removed from the current
-    // one. Without this check, the "entity absent from previousSpec" branch
-    // below would treat that stale, unrelated table as a benign same-entity
-    // reuse: the removed entity's real rows would keep sitting in the table
-    // and silently surface as records of today's new, differently-named
-    // entity, with any coincidentally-matching field reused rather than
-    // reported. previousEntities is guaranteed collision-free internally by
-    // that same upstream schema check, so at most one other entry can match.
+    // existed at some point in this project's past and has since been
+    // removed. Checking previousSpec.entities alone (this round's original
+    // fix) only catches a collision with an entity removed on the IMMEDIATELY
+    // preceding refine; one removed two or more refines ago is already gone
+    // from previousSpec too, so allKnownEntityNames also consults the
+    // durable checkpoint_entity_history ledger, which remembers every entity
+    // name this project's spec has EVER contained. Without this check, the
+    // "entity absent from previousSpec" branch below would treat that stale,
+    // unrelated table as a benign same-entity reuse: the removed entity's
+    // real rows would keep sitting in the table and silently surface as
+    // records of today's new, differently-named entity, with any
+    // coincidentally-matching field reused rather than reported.
+    // previousEntities is guaranteed collision-free internally by that same
+    // upstream schema check, so at most one other known name can match.
     if (!prevEntity) {
-      const collidingPrevEntity = previousSpec.entities.find(
-        (e) => e.name !== entity.name && tableNameFor(projectId, e.name) === table,
+      const collidingName = Array.from(allKnownEntityNames(db, projectId, previousSpec)).find(
+        (name) => name !== entity.name && tableNameFor(projectId, name) === table,
       );
-      if (collidingPrevEntity) {
+      if (collidingName) {
         throw new ValidationError(
-          `Entity "${entity.name}" sanitizes to the same database table as entity "${collidingPrevEntity.name}" from the project's previous version -- refusing to silently merge their data. Choose a name that differs in its ASCII letters/digits, not just punctuation or non-ASCII characters.`,
+          `Entity "${entity.name}" sanitizes to the same database table as entity "${collidingName}", which existed earlier in this project's history -- refusing to silently merge their data. Choose a name that differs in its ASCII letters/digits, not just punctuation or non-ASCII characters.`,
         );
       }
     }
