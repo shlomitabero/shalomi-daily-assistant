@@ -1,0 +1,22 @@
+services:
+  - type: web
+    name: copybolt
+    runtime: node
+    plan: free
+    buildCommand: npm install && npm run build
+    startCommand: npm run start --workspace=server
+    envVars:
+      - key: JWT_SECRET
+        generateValue: true
+      - key: ADMIN_EMAIL
+        sync: false
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: STRIPE_SECRET_KEY
+        sync: false
+      - key: STRIPE_PRICE_ID
+        sync: false
+      - key: STRIPE_PRICE_AMOUNT_USD
+        value: "9"
+      - key: STRIPE_WEBHOOK_SECRET
+        sync: false
