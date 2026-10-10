@@ -35,3 +35,9 @@ test('a short trade loses when price rises', () => {
   const result = simulateTradeResult({ side: 'short', entryPrice: 100, exitPrice: 110, quantity: 10, feeRatePerSide: 0, slippageRate: 0 });
   assert.ok(result.netPnl < 0);
 });
+
+test('an unrecognized side throws instead of silently defaulting to short', () => {
+  assert.throws(() => simulateTradeResult({ side: 'Long', entryPrice: 100, exitPrice: 110, quantity: 10 }), /side must be "long" or "short"/);
+  assert.throws(() => simulateTradeResult({ side: 'buy', entryPrice: 100, exitPrice: 110, quantity: 10 }), /side must be "long" or "short"/);
+  assert.throws(() => simulateTradeResult({ entryPrice: 100, exitPrice: 110, quantity: 10 }), /side must be "long" or "short"/);
+});
