@@ -928,6 +928,79 @@ test("POST /projects/:id/roles retried with the same idempotency key after the f
   });
 });
 
+/**
+ * Regression test for a real bug found by round 528's Explore survey:
+ * withIdempotency's own mismatch guard (idempotency.ts) compares
+ * `existing.route` against the *current* request's `route` argument, but
+ * every real call site in this file used to pass the bare Express route
+ * template ("POST /projects/:id/roles"), never the actual project id --
+ * so the same key reused across two different projects by the same user
+ * matched on both userId and route, silently replaying the first
+ * project's cached response and skipping the second project's own role
+ * append entirely, with no error surfaced. Fixed by interpolating the
+ * real project id into the route string passed to withIdempotency, so a
+ * cross-project reuse is now correctly rejected with 409
+ * IDEMPOTENCY_KEY_MISMATCH -- the same outcome round 495 already
+ * established for a cross-user or cross-endpoint-type reuse -- instead of
+ * silently returning project A's stale data and skipping project B's own
+ * mutation.
+ */
+test("POST /projects/:id/roles for two different projects with the same reused idempotency key rejects the second request outright, instead of silently replaying the first project's cached response and skipping the second project's own mutation", async () => {
+  await withServer(async (baseUrl) => {
+    const token = await signup(baseUrl, "role-idem-cross-project@example.com");
+    const createA = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ description: "A CRM with customers and deals." }),
+    });
+    const { project: projectA } = (await createA.json()) as { project: { id: string; spec: { roles: string[] } } };
+    const createB = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ description: "An inventory tracker for a warehouse." }),
+    });
+    const { project: projectB } = (await createB.json()) as { project: { id: string; spec: { roles: string[] } } };
+    const originalRolesB = projectB.spec.roles.length;
+
+    const headers = { ...authHeaders(token), "x-idempotency-key": "cross-project-reused-key" };
+    const resA = await fetch(`${baseUrl}/api/projects/${projectA.id}/roles`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ role: "Warehouse Manager" }),
+    });
+    assert.equal(resA.status, 200);
+
+    const resB = await fetch(`${baseUrl}/api/projects/${projectB.id}/roles`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ role: "Loading Dock Supervisor" }),
+    });
+    assert.equal(resB.status, 409, "reusing project A's key for project B must be rejected outright, not silently replay project A's cached response as if it were a success");
+    const bodyB = (await resB.json()) as { code: string };
+    assert.equal(bodyB.code, "IDEMPOTENCY_KEY_MISMATCH");
+
+    const projectBRes = await fetch(`${baseUrl}/api/projects/${projectB.id}`, { headers: authHeaders(token) });
+    const { project: projectBAfter } = (await projectBRes.json()) as { project: { spec: { roles: string[] } } };
+    assert.equal(
+      projectBAfter.spec.roles.length,
+      originalRolesB,
+      "project B must be completely untouched -- neither silently mutated with project A's role nor left in some partial state",
+    );
+
+    // A fresh key for project B must still work normally.
+    const retryHeaders = { ...authHeaders(token), "x-idempotency-key": "project-b-own-fresh-key" };
+    const resBRetry = await fetch(`${baseUrl}/api/projects/${projectB.id}/roles`, {
+      method: "POST",
+      headers: retryHeaders,
+      body: JSON.stringify({ role: "Loading Dock Supervisor" }),
+    });
+    assert.equal(resBRetry.status, 200);
+    const bodyBRetry = (await resBRetry.json()) as { project: { spec: { roles: string[] } } };
+    assert.equal(bodyBRetry.project.spec.roles.length, originalRolesB + 1, "a fresh key for project B must append its own role normally");
+    assert.ok(bodyBRetry.project.spec.roles.includes("Loading Dock Supervisor"));
+  });
+});
+
 test("POST /projects/:id/assumptions retried with the same idempotency key after the first attempt already finished replays the original response instead of appending a second assumption", async () => {
   await withServer(async (baseUrl) => {
     const token = await signup(baseUrl, "assumption-idem1@example.com");

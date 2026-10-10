@@ -55,6 +55,16 @@ export async function withIdempotency<T>(
   // header is entirely client-supplied) would silently get back another
   // request's cached response, or block on another request's in-flight
   // one, with no relation to its own route or project at all.
+  //
+  // `route` must be the actual resource instance being mutated, not just
+  // the Express route *template* -- round 495 only ever compared the bare
+  // template (e.g. "POST /projects/:id/roles") since that's all every real
+  // call site passed, so the same key reused across two different
+  // projects (or entities) for the same user still matched on both
+  // userId and route, silently replaying the first project's cached
+  // response and skipping the second project's own mutation entirely.
+  // Round 528 fixed every per-resource call site in routes/projects.ts to
+  // interpolate the real project/entity id into this string instead.
   if (existing && (existing.userId !== userId || existing.route !== route)) {
     throw new HttpError(409, "This idempotency key was already used for a different request", "IDEMPOTENCY_KEY_MISMATCH");
   }

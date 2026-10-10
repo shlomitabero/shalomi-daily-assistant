@@ -572,7 +572,7 @@ export function createProjectsRouter(db: ForgeDatabase, provider: SpecProvider |
       const source = requireProjectAccess(db, req.params.id, req.userId!);
       const suffix = isHebrewText(source.description) ? " (עותק)" : " (copy)";
       const idempotencyKey = req.header("X-Idempotency-Key") || undefined;
-      const { status, body } = await withIdempotency(db, idempotencyKey, req.userId!, "POST /projects/:id/clone", async () => {
+      const { status, body } = await withIdempotency(db, idempotencyKey, req.userId!, `POST /projects/${source.id}/clone`, async () => {
         const cloned = insertProject(db, {
           id: randomUUID(),
           ownerId: req.userId!,
@@ -748,7 +748,7 @@ export function createProjectsRouter(db: ForgeDatabase, provider: SpecProvider |
       // again -- a second real AI call -- and overwrite project.spec a
       // second time.
       const idempotencyKey = req.header("X-Idempotency-Key") || undefined;
-      const { status, body } = await withIdempotency(db, idempotencyKey, req.userId!, "POST /projects/:id/answers", async () => {
+      const { status, body } = await withIdempotency(db, idempotencyKey, req.userId!, `POST /projects/${project.id}/answers`, async () => {
         activePipelines.add(project.id);
         try {
           const combinedDescription = `${project.description}\n\n${sections.join("\n\n")}`;
@@ -1286,7 +1286,7 @@ export function createProjectsRouter(db: ForgeDatabase, provider: SpecProvider |
         throw new HttpError(400, formatValidationError(parsed.error), "VALIDATION_ERROR");
       }
       const idempotencyKey = req.header("X-Idempotency-Key") || undefined;
-      const { status, body } = await withIdempotency(db, idempotencyKey, req.userId!, "POST /projects/:id/roles", async () => {
+      const { status, body } = await withIdempotency(db, idempotencyKey, req.userId!, `POST /projects/${project.id}/roles`, async () => {
         const nextSpec = { ...project.spec, roles: [...project.spec.roles, parsed.data.role] };
         const updated = updateProjectSpec(db, project.id, nextSpec);
         return { status: 200, body: { project: updated } };
@@ -1309,7 +1309,7 @@ export function createProjectsRouter(db: ForgeDatabase, provider: SpecProvider |
         throw new HttpError(400, formatValidationError(parsed.error), "VALIDATION_ERROR");
       }
       const idempotencyKey = req.header("X-Idempotency-Key") || undefined;
-      const { status, body } = await withIdempotency(db, idempotencyKey, req.userId!, "POST /projects/:id/assumptions", async () => {
+      const { status, body } = await withIdempotency(db, idempotencyKey, req.userId!, `POST /projects/${project.id}/assumptions`, async () => {
         const nextSpec = { ...project.spec, assumptions: [...project.spec.assumptions, parsed.data.assumption] };
         const updated = updateProjectSpec(db, project.id, nextSpec);
         return { status: 200, body: { project: updated } };
@@ -1513,7 +1513,7 @@ export function createProjectsRouter(db: ForgeDatabase, provider: SpecProvider |
         throw new HttpError(400, formatValidationError(parsed.error), "VALIDATION_ERROR");
       }
       const idempotencyKey = req.header("X-Idempotency-Key") || undefined;
-      const { status, body } = await withIdempotency(db, idempotencyKey, req.userId!, "POST /projects/:id/entities", async () => {
+      const { status, body } = await withIdempotency(db, idempotencyKey, req.userId!, `POST /projects/${project.id}/entities`, async () => {
         const name = deriveEntityName(parsed.data.label, project.spec.entities.map((e) => e.name));
         const newEntity: Entity = {
           name,
@@ -1568,7 +1568,7 @@ export function createProjectsRouter(db: ForgeDatabase, provider: SpecProvider |
         db,
         idempotencyKey,
         req.userId!,
-        "POST /projects/:id/entities/:entityName/fields",
+        `POST /projects/${project.id}/entities/${entity.name}/fields`,
         async () => {
           const name = deriveFieldName(parsed.data.label, entity.fields.map((f) => f.name));
           const newField: Field = { name, label: parsed.data.label, type: "text", required: false };
