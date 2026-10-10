@@ -5822,6 +5822,102 @@ test("EntityPanel's self-referencing relation field picker includes a record cre
 });
 
 /**
+ * Regression test for a real bug (round 540): the mount-time loadRelated
+ * effect and refresh() (round 438's own fix above) are two independent
+ * writers of relatedRecords[entity.name] for a self-referencing relation
+ * field. refresh() merges a newly-created record in immediately, but if
+ * loadRelated's own mount-time fetch for that same entity happens to
+ * resolve LATER (a slower initial page-load fetch racing a fast create),
+ * its stale, pre-creation snapshot wholesale-replaces relatedRecords,
+ * silently undoing round 438's fix and making the just-created record
+ * vanish from the relation picker again -- with no further user action.
+ */
+test("EntityPanel's self-referencing relation field picker keeps a just-created record visible even when the initial relation-data fetch resolves after the create", async () => {
+  await withJsdom(async () => {
+    const categoryEntity: Entity = {
+      name: "Category",
+      label: "Category",
+      fields: [
+        { name: "name", label: "Name", type: "text", required: true },
+        { name: "parentCategoryId", label: "Parent Category", type: "relation", relationTo: "Category", required: false },
+      ],
+    };
+    const store: EntityRecord[] = [{ id: 1, createdAt: "x", name: "Electronics", parentCategoryId: null }];
+    let nextId = 2;
+    const originalFetch = globalThis.fetch;
+    let heldGetResolve: (() => void) | null = null;
+    let sawFirstGet = false;
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      const method = init?.method ?? "GET";
+      if (input === "/api/projects/proj1/entities/Category") {
+        if (method === "GET") {
+          const snapshot = [...store];
+          // Only the very first GET (whichever of loadRelated's own effect
+          // or refresh()'s own mount-time call happens to fire first) is
+          // held open -- every later GET (refresh()'s own mount call if it
+          // runs second, and any later refresh() call) resolves immediately,
+          // modeling a realistic race: one slow initial fetch, one fast one.
+          if (!sawFirstGet) {
+            sawFirstGet = true;
+            await new Promise<void>((resolve) => {
+              heldGetResolve = resolve;
+            });
+          }
+          return new Response(JSON.stringify({ records: snapshot }), { status: 200, headers: { "content-type": "application/json" } });
+        }
+        if (method === "POST") {
+          const record = { id: nextId++, createdAt: "x", ...JSON.parse(init!.body as string) };
+          store.push(record);
+          return new Response(JSON.stringify({ record }), { status: 201, headers: { "content-type": "application/json" } });
+        }
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+    try {
+      renderEntityPanel({ entity: categoryEntity, allEntities: [categoryEntity] });
+      await waitForCondition(() => heldGetResolve !== null);
+
+      // Create "Office Supplies" while the held GET is still pending --
+      // this goes through refresh(), whose own mount-time GET already
+      // resolved (it wasn't the first one held).
+      const nameInput = document.querySelector('.record-form input[type="text"]') as HTMLInputElement;
+      const submitButton = document.querySelector(".record-form button[type=submit]") as HTMLButtonElement;
+      fireEvent.change(nameInput, { target: { value: "Office Supplies" } });
+      fireEvent.click(submitButton);
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 2);
+
+      const electronicsRow = Array.from(document.querySelectorAll("table tbody tr")).find((r) =>
+        /Electronics/.test(r.textContent ?? ""),
+      ) as HTMLElement;
+      const editButton = electronicsRow.querySelector(".row-actions button") as HTMLButtonElement;
+      fireEvent.click(editButton);
+
+      const parentSelect = document.querySelector(".record-form select") as HTMLSelectElement;
+      await waitForCondition(() => Array.from(parentSelect.options).some((o) => o.textContent === "Office Supplies"));
+      assert.ok(
+        Array.from(parentSelect.options).some((o) => o.textContent === "Office Supplies"),
+        "sanity check: the newly-created category must be selectable right after creation (round 438's own fix)",
+      );
+
+      // Now release the held-open GET -- loadRelated's own fetch (whichever
+      // request it actually was) finally resolves with its stale,
+      // pre-creation snapshot.
+      heldGetResolve!();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      const optionLabelsAfter = Array.from(parentSelect.options).map((o) => o.textContent);
+      assert.ok(
+        optionLabelsAfter.includes("Office Supplies"),
+        `expected "Office Supplies" to still be selectable after the delayed initial relation-fetch resolved, got options: ${optionLabelsAfter.join(", ")}`,
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * New in this round: clicking a relation cell's resolved label now jumps
  * straight to the related record on its own entity's tab, via the same
  * onJumpToRecord callback App.tsx already wires up for Global Search,
