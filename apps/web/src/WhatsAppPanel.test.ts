@@ -41,6 +41,7 @@ test("WhatsAppPanel's handleDisconnect resumes the background connected-poll aft
   let stopPollingCalls = 0;
   let stopConnectedPollingCalls = 0;
   const rejection = new Error("network error");
+  const messagesVersionRef = { current: 0 };
 
   const fn = new Function(
     "status",
@@ -48,6 +49,7 @@ test("WhatsAppPanel's handleDisconnect resumes the background connected-poll aft
     "stopPolling",
     "stopConnectedPolling",
     "disconnectWhatsApp",
+    "messagesVersionRef",
     "setStatus",
     "setMessages",
     "setHasMoreMessages",
@@ -67,6 +69,7 @@ test("WhatsAppPanel's handleDisconnect resumes the background connected-poll aft
     async () => {
       throw rejection;
     },
+    messagesVersionRef,
     () => {},
     () => {},
     () => {},
@@ -89,6 +92,7 @@ test("WhatsAppPanel's handleDisconnect resumes the background connected-poll aft
     1,
     "a failed disconnect while previously connected must resume the connected-poll it just stopped",
   );
+  assert.equal(messagesVersionRef.current, 0, "a disconnect request that never succeeded must not bump the version");
 });
 
 test("WhatsAppPanel's handleDisconnect does not resume connected-polling after a successful disconnect (the status is genuinely no longer connected)", async () => {
@@ -97,6 +101,7 @@ test("WhatsAppPanel's handleDisconnect does not resume connected-polling after a
 
   let startConnectedPollingCalls = 0;
   let capturedStatus: unknown;
+  const messagesVersionRef = { current: 7 };
 
   const fn = new Function(
     "status",
@@ -104,6 +109,7 @@ test("WhatsAppPanel's handleDisconnect does not resume connected-polling after a
     "stopPolling",
     "stopConnectedPolling",
     "disconnectWhatsApp",
+    "messagesVersionRef",
     "setStatus",
     "setMessages",
     "setHasMoreMessages",
@@ -117,6 +123,7 @@ test("WhatsAppPanel's handleDisconnect does not resume connected-polling after a
     () => {},
     () => {},
     async () => ({ status: "disconnected" }),
+    messagesVersionRef,
     (next: unknown) => {
       capturedStatus = next;
     },
@@ -133,6 +140,11 @@ test("WhatsAppPanel's handleDisconnect does not resume connected-polling after a
 
   assert.deepEqual(capturedStatus, { status: "disconnected" });
   assert.equal(startConnectedPollingCalls, 0, "a genuinely successful disconnect must not resume connected-polling");
+  assert.equal(
+    messagesVersionRef.current,
+    8,
+    "a genuinely successful disconnect must bump the version, the signal startPolling's own tick uses to discard a stale in-flight message fetch (round 530)",
+  );
 });
 
 /**
@@ -226,6 +238,204 @@ test("WhatsAppPanel's startPolling discards a getWhatsAppStatus response that re
   await tickPromise;
 
   assert.deepEqual(capturedStatuses, [], "a status that resolves after stopPolling() must never reach setStatus");
+});
+
+/**
+ * Sanity counterpart to the race test just below: with no concurrent
+ * disconnect, startPolling's own "becoming connected" branch must still
+ * apply the fetched message page and start connected-polling exactly like
+ * before the messagesVersionRef guard was added (round 530) -- the guard
+ * must only skip a stale fetch, never the normal non-racing path.
+ */
+test("WhatsAppPanel's startPolling applies the fetched message page and starts connected-polling when becoming connected, with no concurrent disconnect", async () => {
+  const stopMatch = whatsAppPanelSrc.match(/ {2}function stopPolling\(\) \{[\s\S]*?\n {2}\}\n/);
+  const startMatch = whatsAppPanelSrc.match(/ {2}function startPolling\(\) \{[\s\S]*?\n {2}\}\n/);
+  const { code } = transformSync(`${stopMatch![0]}\n${startMatch![0]}`, { loader: "ts" });
+
+  let tickFn: (() => Promise<void>) | undefined;
+  const fakeSetInterval = ((fn: () => Promise<void>) => {
+    tickFn = fn;
+    return 1 as unknown as ReturnType<typeof setInterval>;
+  }) as typeof setInterval;
+  const fakeClearInterval = (() => {
+    tickFn = undefined;
+  }) as typeof clearInterval;
+
+  const pollRef = { current: null as unknown };
+  const cancelInFlightPollRef = { current: null as (() => void) | null };
+  const pollFailuresRef = { current: 0 };
+  const messagesVersionRef = { current: 5 };
+  let startConnectedPollingCalls = 0;
+  let capturedMessages: unknown;
+  let capturedHasMore: unknown;
+
+  const { startPolling } = new Function(
+    "pollRef",
+    "cancelInFlightPollRef",
+    "pollFailuresRef",
+    "messagesVersionRef",
+    "setInterval",
+    "clearInterval",
+    "getWhatsAppStatus",
+    "setStatus",
+    "listWhatsAppMessages",
+    "setMessages",
+    "setHasMoreMessages",
+    "startConnectedPolling",
+    "setLoadError",
+    "MAX_CONSECUTIVE_POLL_FAILURES",
+    "POLL_INTERVAL_MS",
+    "projectId",
+    `${code}\nreturn { stopPolling, startPolling };`,
+  )(
+    pollRef,
+    cancelInFlightPollRef,
+    pollFailuresRef,
+    messagesVersionRef,
+    fakeSetInterval,
+    fakeClearInterval,
+    async () => ({ status: "connected" }),
+    () => {},
+    async () => ({ messages: [{ id: "m1" }], hasMore: true }),
+    (messages: unknown) => {
+      capturedMessages = messages;
+    },
+    (hasMore: unknown) => {
+      capturedHasMore = hasMore;
+    },
+    () => {
+      startConnectedPollingCalls += 1;
+    },
+    () => {},
+    5,
+    1500,
+    "proj1",
+  ) as { startPolling: () => void };
+
+  startPolling();
+  assert.ok(tickFn, "expected startPolling to register an interval callback");
+  await tickFn!();
+
+  assert.deepEqual(capturedMessages, [{ id: "m1" }]);
+  assert.equal(capturedHasMore, true);
+  assert.equal(startConnectedPollingCalls, 1, "becoming connected with no race must start connected-polling");
+});
+
+/**
+ * Regression test: startPolling's own "becoming connected" branch awaits
+ * listWhatsAppMessages, then unconditionally applied it via
+ * setMessages/setHasMoreMessages/startConnectedPolling -- even if a
+ * disconnect (handleDisconnect) happened server-side while that fetch was
+ * still in flight. stopPolling() running just above (as part of this exact
+ * same tick, transitioning out of "connecting"/"qr") sets this tick's own
+ * `cancelled` closure variable to true as a side effect every time, so a
+ * naive `if (cancelled) return;` check right after the await can't tell
+ * that apart from a genuine concurrent disconnect -- it would also wrongly
+ * discard the normal, non-racing result tested just above. The real fix
+ * (round 530) is the same messagesVersionRef idiom already proven for
+ * startConnectedPolling's own message-refresh (see the "never resurrects a
+ * message deleted" test below) and for handleDeleteMessage/
+ * handleClearHistory: handleDisconnect bumps the version after disconnect
+ * succeeds, and this tick only applies its fetch if nothing bumped the
+ * version while it awaited.
+ */
+test("WhatsAppPanel's startPolling discards a listWhatsAppMessages page fetched while becoming connected if a disconnect happened during that fetch", async () => {
+  const stopMatch = whatsAppPanelSrc.match(/ {2}function stopPolling\(\) \{[\s\S]*?\n {2}\}\n/);
+  const startMatch = whatsAppPanelSrc.match(/ {2}function startPolling\(\) \{[\s\S]*?\n {2}\}\n/);
+  const { code } = transformSync(`${stopMatch![0]}\n${startMatch![0]}`, { loader: "ts" });
+
+  let tickFn: (() => Promise<void>) | undefined;
+  const fakeSetInterval = ((fn: () => Promise<void>) => {
+    tickFn = fn;
+    return 1 as unknown as ReturnType<typeof setInterval>;
+  }) as typeof setInterval;
+  const fakeClearInterval = (() => {
+    tickFn = undefined;
+  }) as typeof clearInterval;
+
+  const pollRef = { current: null as unknown };
+  const cancelInFlightPollRef = { current: null as (() => void) | null };
+  const pollFailuresRef = { current: 0 };
+  const messagesVersionRef = { current: 0 };
+  let startConnectedPollingCalls = 0;
+  let setMessagesCalls = 0;
+  let setHasMoreMessagesCalls = 0;
+
+  let resolveFetchStarted!: () => void;
+  const fetchStarted = new Promise<void>((resolve) => {
+    resolveFetchStarted = resolve;
+  });
+  let releaseListMessages!: () => void;
+  const held = new Promise<void>((resolve) => {
+    releaseListMessages = resolve;
+  });
+
+  const { startPolling } = new Function(
+    "pollRef",
+    "cancelInFlightPollRef",
+    "pollFailuresRef",
+    "messagesVersionRef",
+    "setInterval",
+    "clearInterval",
+    "getWhatsAppStatus",
+    "setStatus",
+    "listWhatsAppMessages",
+    "setMessages",
+    "setHasMoreMessages",
+    "startConnectedPolling",
+    "setLoadError",
+    "MAX_CONSECUTIVE_POLL_FAILURES",
+    "POLL_INTERVAL_MS",
+    "projectId",
+    `${code}\nreturn { stopPolling, startPolling };`,
+  )(
+    pollRef,
+    cancelInFlightPollRef,
+    pollFailuresRef,
+    messagesVersionRef,
+    fakeSetInterval,
+    fakeClearInterval,
+    async () => ({ status: "connected" }),
+    () => {},
+    async () => {
+      resolveFetchStarted();
+      await held;
+      return { messages: [{ id: "m1" }], hasMore: true };
+    },
+    () => {
+      setMessagesCalls += 1;
+    },
+    () => {
+      setHasMoreMessagesCalls += 1;
+    },
+    () => {
+      startConnectedPollingCalls += 1;
+    },
+    () => {},
+    5,
+    1500,
+    "proj1",
+  ) as { startPolling: () => void };
+
+  startPolling();
+  assert.ok(tickFn, "expected startPolling to register an interval callback");
+  const tickPromise = tickFn!();
+
+  // Wait for the tick to actually reach its own listWhatsAppMessages call
+  // before simulating handleDisconnect's version bump -- a real network
+  // fetch would take real time, exactly like this held-open promise.
+  await fetchStarted;
+  messagesVersionRef.current += 1;
+  releaseListMessages();
+  await tickPromise;
+
+  assert.equal(setMessagesCalls, 0, "a disconnect mid-fetch must discard this tick's stale message page");
+  assert.equal(setHasMoreMessagesCalls, 0, "a disconnect mid-fetch must discard this tick's stale hasMore flag");
+  assert.equal(
+    startConnectedPollingCalls,
+    0,
+    "a disconnect mid-fetch must never restart connected-polling for a connection that's already gone",
+  );
 });
 
 /**

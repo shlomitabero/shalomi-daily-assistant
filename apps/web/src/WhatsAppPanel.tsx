@@ -311,10 +311,23 @@ export function WhatsAppPanel({
         if (next.status === "connected" || next.status === "disconnected") {
           stopPolling();
           if (next.status === "connected") {
+            // stopPolling() just above set this tick's own `cancelled` to
+            // true as a side effect (it nulls cancelInFlightPollRef, which
+            // *is* this closure) -- that's a normal part of every
+            // successful transition, not evidence of an external
+            // disconnect, so `cancelled` can no longer tell the two apart.
+            // The messagesVersionRef guard (same idiom as
+            // startConnectedPolling above, and handleDeleteMessage/
+            // handleClearHistory below) distinguishes them instead: only
+            // skip applying this fetch if something that actually mutated
+            // messages (e.g. handleDisconnect) ran during the await.
+            const versionBeforeFetch = messagesVersionRef.current;
             const { messages, hasMore } = await listWhatsAppMessages(projectId);
-            setMessages(messages);
-            setHasMoreMessages(hasMore);
-            startConnectedPolling();
+            if (messagesVersionRef.current === versionBeforeFetch) {
+              setMessages(messages);
+              setHasMoreMessages(hasMore);
+              startConnectedPolling();
+            }
           }
         }
       } catch (err) {
@@ -395,6 +408,11 @@ export function WhatsAppPanel({
     stopConnectedPolling();
     try {
       const next = await disconnectWhatsApp(projectId);
+      // Bumped before touching messages, same idiom as
+      // handleDeleteMessage/handleClearHistory below -- this is what lets
+      // startPolling's own tick (above) tell a genuine disconnect apart
+      // from its own stopPolling() self-cancellation side effect.
+      messagesVersionRef.current += 1;
       setStatus(next);
       setMessages([]);
       setHasMoreMessages(false);
