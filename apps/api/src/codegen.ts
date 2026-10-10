@@ -1622,9 +1622,16 @@ export function sortRecordsMulti(records, sortKeys, fields, relatedRecords) {
 // contains a comma, quote, or newline. A value starting with =, +, -, @, or
 // a tab/CR is prefixed with a leading single quote first -- spreadsheet
 // apps treat an unguarded cell like that as a formula (CSV/formula
-// injection, CWE-1236), and a stored field can hold arbitrary text.
+// injection, CWE-1236), and a stored field can hold arbitrary text. A value
+// that already starts with a literal "'" also gets one more "'" prefixed,
+// even though a single leading apostrophe already makes spreadsheet apps
+// treat the cell as plain text -- without that, a value like
+// "'-interesting" (a real apostrophe immediately followed by a guarded
+// character) exports to the exact same bytes as the guard applied to
+// "-interesting", so the import side below could not tell them apart and
+// silently dropped the real apostrophe.
 function csvEscape(value) {
-  const guarded = /^[=+\\-@\\t\\r]/.test(value) ? \`'\${value}\` : value;
+  const guarded = /^[=+\\-@\\t\\r']/.test(value) ? \`'\${value}\` : value;
   if (/[",\\r\\n]/.test(guarded)) {
     return \`"\${guarded.replace(/"/g, '""')}"\`;
   }
@@ -1822,12 +1829,14 @@ function buildImportRecords(fields, rows) {
       const trimmedCell = columnIndex === -1 ? "" : (row[columnIndex] || "").trim();
       // Reverses the leading "'" that csvEscape (this file's own guard
       // against CSV/formula injection, CWE-1236) prepends to a value
-      // starting with =, +, -, @, or a tab/CR -- without this,
-      // re-importing a CSV this app itself exported would permanently
-      // bake that guard apostrophe into the data. Only strips it when the
-      // next character is one of the guarded ones, so a value that
-      // genuinely starts with a literal "'" is left untouched.
-      const raw = trimmedCell[0] === "'" && /^[=+\\-@\\t\\r]/.test(trimmedCell.slice(1)) ? trimmedCell.slice(1) : trimmedCell;
+      // starting with =, +, -, @, a tab/CR, or a literal "'" itself --
+      // without this, re-importing a CSV this app itself exported would
+      // permanently bake that guard apostrophe into the data. Strips
+      // exactly one leading apostrophe whenever what follows is itself one
+      // of those same guarded characters (now including "'"), so a value
+      // that genuinely starts with a literal "'" followed by an ordinary
+      // character is left untouched.
+      const raw = trimmedCell[0] === "'" && /^[=+\\-@\\t\\r']/.test(trimmedCell.slice(1)) ? trimmedCell.slice(1) : trimmedCell;
 
       if (field.type === "relation") continue;
 

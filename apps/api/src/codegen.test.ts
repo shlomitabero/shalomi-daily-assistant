@@ -1757,10 +1757,13 @@ test("the exported EntityView renders a real CSV export button backed by RFC-418
   assert.match(entityViewJsx, /function recordsToCsv/);
   assert.match(entityViewJsx, /function csvEscape/);
   // CSV/formula injection guard (CWE-1236): a value starting with =, +, -,
-  // or @ must be prefixed with a leading single quote before the usual
-  // comma/quote wrapping, mirroring the same fix in the live-preview app's
-  // own entityFormatting.ts and the generated server.js's backup endpoint.
-  assert.match(entityViewJsx, /\^\[=\+\\-@\\t\\r\]/);
+  // @, or a literal "'" itself must be prefixed with a leading single
+  // quote before the usual comma/quote wrapping, mirroring the same fix in
+  // the live-preview app's own entityFormatting.ts and the generated
+  // server.js's backup endpoint. The leading "'" is included (round 526)
+  // so a value that genuinely starts with one stays distinguishable, on
+  // re-import, from csvEscape's own guard apostrophe.
+  assert.match(entityViewJsx, /\^\[=\+\\-@\\t\\r'\]/);
   assert.match(entityViewJsx, /handleExportCsv/);
   assert.match(entityViewJsx, /csv-export-btn/);
   assert.match(entityViewJsx, /new Blob\(\["\\uFEFF" \+ csv\]/);
@@ -5262,6 +5265,63 @@ test("the exported EntityView's CSV export and import round-trip a value csvEsca
     { name: "balance", label: "Balance", type: "number" },
   ];
   const original = { name: "Dana", notes: "-1 day late, call @dana", balance: -120.5 };
+
+  const csv = recordsToCsv(fields, [original], {});
+  const rows = parseCsv(csv);
+  const { records, errors } = buildImportRecords(fields, rows);
+
+  assert.deepEqual(errors, []);
+  assert.deepEqual(records, [original]);
+});
+
+/**
+ * Regression test for a real bug found by round 526's Explore survey:
+ * csvEscape and its designed inverse (the unescape expression inside
+ * buildImportRecords) only agreed on a value's exported bytes, not on the
+ * value's real content. A value that genuinely starts with a literal "'"
+ * immediately followed by one of =, +, -, @, a tab, or a CR (e.g.
+ * "'-interesting") exports to the exact same CSV bytes as csvEscape's own
+ * guard applied to the unguarded value ("-interesting"), so
+ * buildImportRecords could not tell the two apart and silently stripped
+ * the real leading apostrophe on every re-import. Fixed by having
+ * csvEscape also guard (and the unescape expression also strip) a literal
+ * leading "'", which keeps the leading-apostrophe count unambiguous no
+ * matter how many real ones a value starts with. Confirms the real
+ * generated recordsToCsv/parseCsv/buildImportRecords (not reimplemented
+ * here) now round-trip such values exactly.
+ */
+test("the exported EntityView's CSV export and import round-trip a value that genuinely starts with a literal apostrophe immediately followed by a guarded character, instead of losing the apostrophe", () => {
+  const files = generateExportFiles(project);
+  const entityViewJsx = files.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+
+  const csvEscapeSrc = entityViewJsx.match(/function csvEscape\(value\) \{[\s\S]*?\n\}\n/)?.[0];
+  const fieldDisplayValueSrc = entityViewJsx.match(/function fieldDisplayValue\(field, value, relatedRecords\) \{[\s\S]*?\n\}\n/)?.[0];
+  const recordsToCsvSrc = entityViewJsx.match(/function recordsToCsv\(fields, records, relatedRecords\) \{[\s\S]*?\n\}\n/)?.[0];
+  const parseCsvSrc = entityViewJsx.match(/function parseCsv\(text\) \{[\s\S]*?\n\}\n/)?.[0];
+  const headerSrc = entityViewJsx.match(/function matchesImportHeader\(header, field\) \{[\s\S]*?\n\}\n/)?.[0];
+  const isValidDateSrc = entityViewJsx.match(/const DATE_FORMAT[\s\S]*?\nfunction isValidDate\(value\) \{[\s\S]*?\n\}\n/)?.[0];
+  const importSrc = entityViewJsx.match(/function buildImportRecords\(fields, rows\) \{[\s\S]*?\n\}\n/)?.[0];
+  assert.ok(
+    csvEscapeSrc && fieldDisplayValueSrc && recordsToCsvSrc && parseCsvSrc && headerSrc && isValidDateSrc && importSrc,
+    "expected to find csvEscape/fieldDisplayValue/recordsToCsv/parseCsv/matchesImportHeader/isValidDate/buildImportRecords in generated output",
+  );
+
+  const { recordsToCsv, parseCsv, buildImportRecords } = new Function(
+    `${csvEscapeSrc}\n${fieldDisplayValueSrc}\n${recordsToCsvSrc}\n${parseCsvSrc}\n${isValidDateSrc}\n${headerSrc}\n${importSrc}\nreturn { recordsToCsv, parseCsv, buildImportRecords };`,
+  )();
+
+  const fields = [
+    { name: "name", label: "Name", type: "text" },
+    { name: "notes", label: "Notes", type: "text" },
+    { name: "handle", label: "Handle", type: "text" },
+    { name: "total", label: "Total", type: "text" },
+  ];
+  const original = {
+    name: "Dana",
+    notes: "'-interesting",
+    handle: "'@dana",
+    total: "'=totals pending",
+  };
 
   const csv = recordsToCsv(fields, [original], {});
   const rows = parseCsv(csv);

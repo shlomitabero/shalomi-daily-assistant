@@ -888,9 +888,21 @@ export function relationDisplayLabel(
  * CWE-1236) -- a field can hold arbitrary text (an AI-generated spec's
  * "notes" field, a WhatsApp-sourced message), not just values this app
  * itself ever wrote.
+ *
+ * A value that already starts with a literal "'" is also prefixed with
+ * one more "'", even though a single leading apostrophe already makes
+ * spreadsheet apps treat the cell as plain text on its own. Without this,
+ * a value like "'-interesting" (a real leading apostrophe immediately
+ * followed by a guarded character) is indistinguishable on import from
+ * "-interesting" after csvEscape's own guard -- both produce the exact
+ * same exported bytes, "'-interesting" -- so unescapeCsvGuard could not
+ * tell "strip the guard" apart from "leave this alone" and silently
+ * dropped the real apostrophe. Always bumping the leading-apostrophe count
+ * by exactly one keeps that count unambiguous no matter how many literal
+ * apostrophes the value actually starts with (see unescapeCsvGuard).
  */
 function csvEscape(value: string): string {
-  const guarded = /^[=+\-@\t\r]/.test(value) ? `'${value}` : value;
+  const guarded = /^[=+\-@\t\r']/.test(value) ? `'${value}` : value;
   if (/[",\r\n]/.test(guarded)) {
     return `"${guarded.replace(/"/g, '""')}"`;
   }
@@ -1076,18 +1088,21 @@ function matchesHeader(header: string, field: Field): boolean {
 /**
  * Reverses the leading "'" that csvEscape (recordsToCsv's own guard
  * against CSV/formula injection, CWE-1236) prepends to a value starting
- * with =, +, -, @, or a tab/CR. Without this, re-importing a CSV this app
- * itself just exported would permanently bake that guard apostrophe into
- * the data -- a text note like "-1 day late" would come back as the
- * literal string "'-1 day late", and a negative number would fail to
- * parse at all (Number("'-120.5") is NaN), rejecting an otherwise-valid
- * import row. Only strips the apostrophe when the character right after
- * it is one of the guarded ones -- the same condition csvEscape used to
- * add it -- so a value that genuinely starts with a literal "'" (e.g. a
- * name like "'Ohana") is left untouched.
+ * with =, +, -, @, a tab/CR, or a literal "'" itself. Without this,
+ * re-importing a CSV this app itself just exported would permanently bake
+ * that guard apostrophe into the data -- a text note like "-1 day late"
+ * would come back as the literal string "'-1 day late", and a negative
+ * number would fail to parse at all (Number("'-120.5") is NaN), rejecting
+ * an otherwise-valid import row. Strips exactly one leading apostrophe
+ * whenever what follows is itself one of those same guarded characters --
+ * the same condition csvEscape used to add it, now including "'" -- so a
+ * value that genuinely starts with a literal "'" followed by an ordinary
+ * character (e.g. a name like "'Ohana") is left untouched, while a value
+ * that starts with "'" followed by another "'" or by =, +, -, @, tab, or
+ * CR correctly loses only the one apostrophe csvEscape added.
  */
 function unescapeCsvGuard(raw: string): string {
-  return raw[0] === "'" && /^[=+\-@\t\r]/.test(raw.slice(1)) ? raw.slice(1) : raw;
+  return raw[0] === "'" && /^[=+\-@\t\r']/.test(raw.slice(1)) ? raw.slice(1) : raw;
 }
 
 /**

@@ -1224,6 +1224,36 @@ test("unescapeCsvGuard leaves a value that genuinely starts with a literal apost
   assert.deepEqual(records, [original]);
 });
 
+test("a value that genuinely starts with a literal apostrophe immediately followed by a guarded character round-trips exactly (a real bug: csvEscape and unescapeCsvGuard agreed only on content, so this collided byte-for-byte with csvEscape's own guard and lost the real apostrophe on import)", () => {
+  const fields: Field[] = [
+    { name: "name", label: "Name", type: "text", required: true },
+    { name: "notes", label: "Notes", type: "text", required: false },
+    { name: "handle", label: "Handle", type: "text", required: false },
+    { name: "total", label: "Total", type: "text", required: false },
+  ];
+  const original = {
+    name: "Dana",
+    notes: "'-interesting",
+    handle: "'@dana",
+    total: "'=totals pending",
+  };
+  const csv = recordsToCsv(fields, [original], "en");
+  const rows = parseCsv(csv);
+  const { records, errors } = buildImportRecords(fields, rows);
+  assert.deepEqual(errors, []);
+  assert.deepEqual(records, [original]);
+});
+
+test("a value with multiple literal leading apostrophes round-trips exactly regardless of what follows them", () => {
+  const fields: Field[] = [{ name: "name", label: "Name", type: "text", required: true }];
+  const original = { name: "''-double apostrophe" };
+  const csv = recordsToCsv(fields, [original], "en");
+  const rows = parseCsv(csv);
+  const { records, errors } = buildImportRecords(fields, rows);
+  assert.deepEqual(errors, []);
+  assert.deepEqual(records, [original]);
+});
+
 test("parseCsv accepts bare LF line endings too, not just CRLF", () => {
   const rows = parseCsv("Name,Amount\nDana,10\nYossi,20");
   assert.deepEqual(rows, [
