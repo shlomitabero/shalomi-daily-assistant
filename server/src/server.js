@@ -19,6 +19,7 @@ import { digestRouter } from './routes/digest.js';
 import { syncSources } from './services/sources.js';
 import { generateDailyDigest } from './services/digest.js';
 import { runAutonomousScan } from './services/autonomousScan.js';
+import { classifyApiError } from './engine/apiError.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PORT = process.env.PORT || 4000;
@@ -55,7 +56,8 @@ app.use('/api', digestRouter);
 
 app.use((err, req, res, next) => {
   console.error(err);
-  res.status(500).json({ error: 'internal server error' });
+  const { status, message } = classifyApiError(err);
+  res.status(status).json({ error: message });
 });
 
 const clientDist = join(__dirname, '..', '..', 'client', 'dist');
