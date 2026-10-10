@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { requireOwner } from '../middleware/auth.js';
+import { asyncHandler } from '../middleware/asyncHandler.js';
 import { db, makeId } from '../db/store.js';
 import { isMarketDataConnected, fetchQuote } from '../services/marketData.js';
 import { simulateTradeResult } from '../engine/paperTrading.js';
@@ -11,7 +12,7 @@ financialRouter.get('/financial/watchlist', requireOwner, (req, res) => {
   res.json({ watchlist: db.financial_watchlist.all(), connected: isMarketDataConnected() });
 });
 
-financialRouter.post('/financial/watchlist', requireOwner, async (req, res) => {
+financialRouter.post('/financial/watchlist', requireOwner, asyncHandler(async (req, res) => {
   const { symbol } = req.body ?? {};
   // A non-string symbol (an object, a number) would otherwise be stored
   // as-is and crash the whole Financial page's render — there's no error
@@ -40,7 +41,7 @@ financialRouter.post('/financial/watchlist', requireOwner, async (req, res) => {
     createdAt: new Date().toISOString(),
   });
   res.status(201).json({ entry });
-});
+}));
 
 const VALID_SIDES = ['long', 'short'];
 

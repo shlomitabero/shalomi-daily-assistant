@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { requireOwner } from '../middleware/auth.js';
+import { asyncHandler } from '../middleware/asyncHandler.js';
 import { db } from '../db/store.js';
 import { computeNetProfit } from '../engine/feasibility.js';
 import { rankOpportunities } from '../engine/ranking.js';
@@ -20,7 +21,7 @@ function withFeasibility(opportunity) {
 // The one proven end-to-end path: AI drafts a real digital product + sales
 // copy. Demand/revenue is left as missing data (never fabricated) until the
 // owner sets their own estimate on the card.
-opportunitiesRouter.post('/opportunities/digital-product', requireOwner, async (req, res) => {
+opportunitiesRouter.post('/opportunities/digital-product', requireOwner, asyncHandler(async (req, res) => {
   const { topic, audience } = req.body ?? {};
   if (!topic || !topic.trim()) return res.status(400).json({ error: 'topic is required' });
   if (!audience || !audience.trim()) return res.status(400).json({ error: 'audience is required' });
@@ -33,14 +34,14 @@ opportunitiesRouter.post('/opportunities/digital-product', requireOwner, async (
   }
 
   res.status(201).json({ opportunity: withFeasibility(opportunity) });
-});
+}));
 
 // Manually trigger the same scan the scheduler runs periodically — useful to
 // test the autonomous loop without waiting for the next scheduled run.
-opportunitiesRouter.post('/opportunities/autonomous-scan', requireOwner, async (req, res) => {
+opportunitiesRouter.post('/opportunities/autonomous-scan', requireOwner, asyncHandler(async (req, res) => {
   const result = await runAutonomousScan();
   res.json(result);
-});
+}));
 
 opportunitiesRouter.get('/opportunities', requireOwner, (req, res) => {
   const withFeas = db.opportunities.all().map(withFeasibility);
@@ -99,7 +100,7 @@ opportunitiesRouter.patch('/opportunities/:id', requireOwner, (req, res) => {
 // The gated, idempotent, audit-logged action that actually makes the
 // product public. Blocked unless the mode/approval/budget gate allows it
 // (research mode, no approval yet, or emergency stop).
-opportunitiesRouter.post('/opportunities/:id/publish', requireOwner, async (req, res) => {
+opportunitiesRouter.post('/opportunities/:id/publish', requireOwner, asyncHandler(async (req, res) => {
   const opportunity = db.opportunities.get(req.params.id);
   if (!opportunity) return res.status(404).json({ error: 'not found' });
   if (!isPaddleConfigured()) {
@@ -118,4 +119,4 @@ opportunitiesRouter.post('/opportunities/:id/publish', requireOwner, async (req,
 
   if (!result.allowed) return res.status(409).json({ error: result.reason, duplicate: Boolean(result.duplicate) });
   res.json({ opportunity: withFeasibility(db.opportunities.get(opportunity.id)) });
-});
+}));
