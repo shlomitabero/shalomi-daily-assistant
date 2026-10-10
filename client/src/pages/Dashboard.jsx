@@ -2,12 +2,19 @@ import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api } from '../api.js';
 
+const MODE_LABEL = {
+  research: 'מחקר בלבד — איתור והצגת הזדמנויות, שום דבר לא מתבצע לבד',
+  approve: 'דורש אישור — כל פעולה אמיתית (כמו פרסום מוצר) ממתינה לאישור שלך',
+  auto_limited: 'אוטומטי מוגבל — פועל לבד בתוך התקציב וההגבלות שהגדרת',
+};
+
 export default function Dashboard() {
   const [summary, setSummary] = useState(null);
   const [opportunities, setOpportunities] = useState([]);
   const [approvals, setApprovals] = useState([]);
   const [sources, setSources] = useState([]);
   const [entries, setEntries] = useState([]);
+  const [settings, setSettings] = useState(null);
   const [error, setError] = useState('');
 
   useEffect(() => {
@@ -17,13 +24,15 @@ export default function Dashboard() {
       api.getApprovals(),
       api.getSources(),
       api.getLedgerEntries(),
+      api.getSettings(),
     ])
-      .then(([s, o, a, src, led]) => {
+      .then(([s, o, a, src, led, set]) => {
         setSummary(s.summary);
         setOpportunities(o.opportunities);
         setApprovals(a.approvals.filter((x) => x.status === 'approved'));
         setSources(src.sources);
         setEntries(led.entries);
+        setSettings(set.settings);
       })
       .catch((err) => setError(err.data?.error || err.message));
   }, []);
@@ -46,11 +55,42 @@ export default function Dashboard() {
   }
 
   if (error) return <div className="page"><p className="form-error">{error}</p></div>;
-  if (!summary) return <div className="page-loading">טוען…</div>;
+  if (!summary || !settings) return <div className="page-loading">טוען…</div>;
+
+  const connectedCount = sources.filter((s) => s.connected).length;
+
+  // One concrete next step, picked in priority order, so there's always a
+  // clear answer to "what should I actually do now" instead of just numbers.
+  let nextStep = null;
+  if (!settings.budgetConfigured) {
+    nextStep = { text: 'עדיין לא הוגדר תקציב — בלי תקציב המערכת לא תפרסם ולא תוציא כסף אמיתי, גם במצב אוטומטי. הגדירי תקציב בהגדרות.', to: '/settings', cta: 'להגדרות' };
+  } else if (opportunities.length === 0) {
+    nextStep = { text: 'עדיין אין אף הזדמנות. אפשר לסרוק אוטומטית או ליצור מוצר דיגיטלי ידנית.', to: '/opportunities', cta: 'להזדמנויות' };
+  } else if (pendingApprovals.length > 0 && settings.mode === 'approve') {
+    nextStep = { text: `${pendingApprovals.length} פעולות ממתינות לאישור שלך ולא יתבצעו בלעדיו.`, to: '/approvals', cta: 'לאישורים' };
+  }
 
   return (
     <div className="page">
       <h1>היום</h1>
+
+      <div className="card">
+        <p style={{ margin: '0 0 6px', fontWeight: 700 }}>⚡ מה זה PROFIT AI</p>
+        <p className="hint" style={{ margin: 0 }}>
+          מנוע הכנסות אישי: מחפש הזדמנויות הכנסה אמיתיות, בונה עבורן כרטיס כדאיות כן (בלי להמציא ביקוש או מחיר),
+          ופועל על פיהן רק בתוך הגבולות שקבעת. לא מבטיח רווח — רק לא משקר על המספרים.
+        </p>
+        <p className="hint" style={{ margin: '8px 0 0' }}>
+          <strong style={{ color: 'var(--text)' }}>מצב נוכחי: </strong>{MODE_LABEL[settings.mode] ?? settings.mode}
+        </p>
+      </div>
+
+      {nextStep && (
+        <div className="card" style={{ borderColor: 'var(--accent)' }}>
+          <p style={{ margin: '0 0 10px' }}>👉 {nextStep.text}</p>
+          <Link className="btn btn-primary" to={nextStep.to}>{nextStep.cta}</Link>
+        </div>
+      )}
 
       <div className="cash-grid">
         <div className="cash-box cash-in">
@@ -105,7 +145,10 @@ export default function Dashboard() {
       </section>
 
       <section className="section">
-        <h2>מקורות הכנסה</h2>
+        <div className="section-header">
+          <h2>מקורות הכנסה ({connectedCount}/{sources.length} מחוברים)</h2>
+          <Link className="link" to="/sources">פרטים ←</Link>
+        </div>
         {sources.map((s) => (
           <div key={s.id} className="source-row">
             <span className={`dot ${s.connected ? 'dot-on' : 'dot-off'}`} />

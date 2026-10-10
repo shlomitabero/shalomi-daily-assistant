@@ -53,6 +53,10 @@ export default function Opportunities() {
   return (
     <div className="page">
       <h1>הזדמנויות</h1>
+      <p className="hint" style={{ marginTop: -10, marginBottom: 16 }}>
+        כל "הזדמנות" כאן היא מוצר דיגיטלי אמיתי (מדריך/תבנית/כלי) עם דף מכירה, שמוכן לפרסום בתשלום אמיתי —
+        לא רעיון כללי. אפשר לתת למערכת לחפש נושא לבד, או לבחור נושא בעצמך.
+      </p>
 
       <div className="card">
         <h3>סריקה אוטונומית</h3>

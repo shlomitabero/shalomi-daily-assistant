@@ -4,6 +4,7 @@ import Login from './pages/Login.jsx';
 import Dashboard from './pages/Dashboard.jsx';
 import Opportunities from './pages/Opportunities.jsx';
 import OpportunityDetail from './pages/OpportunityDetail.jsx';
+import Sources from './pages/Sources.jsx';
 import Approvals from './pages/Approvals.jsx';
 import Financial from './pages/Financial.jsx';
 import ActivityLog from './pages/ActivityLog.jsx';
@@ -26,6 +27,7 @@ export default function App() {
       <Route path="/" element={<Protected><Dashboard /></Protected>} />
       <Route path="/opportunities" element={<Protected><Opportunities /></Protected>} />
       <Route path="/opportunities/:id" element={<Protected><OpportunityDetail /></Protected>} />
+      <Route path="/sources" element={<Protected><Sources /></Protected>} />
       <Route path="/approvals" element={<Protected><Approvals /></Protected>} />
       <Route path="/financial" element={<Protected><Financial /></Protected>} />
       <Route path="/activity" element={<Protected><ActivityLog /></Protected>} />
