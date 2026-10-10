@@ -8845,6 +8845,98 @@ test("the exported GlobalSearch's 'Show all' button reveals every match beyond t
 });
 
 /**
+ * Round 519's finding: mirrors GlobalSearchPanel.test.ts's own new
+ * regression test. Unlike the handlers that submit a fresh query (both of
+ * which clear expandedSamples first), the exported app's Retry button
+ * called runSearch directly -- so a "Show all" expansion made before a
+ * partial-failure Retry survived the retry's own fresh fetch, leaving a
+ * stale sample on screen instead of the newly re-fetched data.
+ */
+test("the exported GlobalSearch's Retry button clears a stale 'Show all' expansion instead of keeping outdated samples", async () => {
+  const files = generateExportFiles(project);
+  const dir = writeGeneratedWebComponent(files);
+  const originalFetch = globalThis.fetch;
+  let customerCallCount = 0;
+  let serviceCallCount = 0;
+  globalThis.fetch = (async (input: string) => {
+    if (String(input).endsWith("/Customer")) {
+      customerCallCount += 1;
+      // Call 1 is the initial search, call 2 is "Show all"'s own re-fetch
+      // -- both still see the original 7 matches. Call 3 is the Retry's
+      // fresh fetch, where real-world data has since changed.
+      if (customerCallCount <= 2) {
+        const records = Array.from({ length: 7 }, (_, i) => ({ id: i + 1, name: `Widget item ${i + 1}` }));
+        return { ok: true, status: 200, json: async () => ({ records }) };
+      }
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ records: [{ id: 101, name: "Widget item FRESH-A" }, { id: 102, name: "Widget item FRESH-B" }] }),
+      };
+    }
+    serviceCallCount += 1;
+    if (serviceCallCount === 1) {
+      return { ok: false, status: 500, json: async () => ({ error: "Server exploded" }) };
+    }
+    return { ok: true, status: 200, json: async () => ({ records: [] }) };
+  }) as typeof fetch;
+
+  try {
+    const { GlobalSearch } = await import(path.join(dir, "web", "src", "components", "GlobalSearch.jsx"));
+    const { container } = render(
+      React.createElement(GlobalSearch, {
+        entities: project.spec.entities,
+        onClose: () => {},
+        onJumpToEntity: () => {},
+        onJumpToRecord: () => {},
+      }),
+    );
+
+    const input = container.querySelector(".global-search-input") as HTMLInputElement;
+    await act(async () => {
+      fireEvent.change(input, { target: { value: "widget" } });
+      fireEvent.submit(container.querySelector("form.global-search-form")!);
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    // Partial failure: Customer's 7 matches show (capped at a 5-row
+    // sample) alongside the error+Retry row from Service's failure.
+    assert.ok(container.querySelector(".error-retry-row") !== null, "expected the error+Retry row from Service's failure");
+    assert.equal(container.querySelectorAll(".global-search-hit-button").length, 5, "expected the default 5-row sample");
+
+    const showAllButton = container.querySelector(".global-search-show-all") as HTMLButtonElement;
+    assert.ok(showAllButton, "expected a 'Show all' button for Customer's 7 matches");
+    await act(async () => {
+      fireEvent.click(showAllButton);
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    assert.equal(container.querySelectorAll(".global-search-hit-button").length, 7, "expected the full 7-record 'Show all' sample before retrying");
+
+    const retryButton = container.querySelector(".error-retry-row button") as HTMLButtonElement;
+    await act(async () => {
+      fireEvent.click(retryButton);
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    assert.equal(container.querySelector(".error-retry-row"), null, "the error+Retry row must disappear once both entities succeed");
+    assert.equal(container.querySelectorAll(".global-search-hit-button").length, 2, "Retry must drop the stale 7-record expansion and show the fresh 2-record sample");
+    assert.match(container.textContent ?? "", /FRESH-A/);
+    assert.match(container.textContent ?? "", /FRESH-B/);
+    assert.doesNotMatch(container.textContent ?? "", /Widget item 7/, "the stale pre-retry sample must not survive the retry");
+  } finally {
+    globalThis.fetch = originalFetch;
+    cleanup();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
  * New in this round (439): the exported GlobalSearch's own Copy/Download
  * report (formatGlobalSearchReport) ignored "Show all" entirely -- it was
  * only ever given `results` (whose `.sample` stays capped at 5), never the

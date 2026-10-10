@@ -364,7 +364,14 @@ export function GlobalSearchPanel({
             <p className="error" role="status">
               {error}
             </p>
-            <button type="button" className="secondary small" onClick={() => runSearch(highlightQuery)}>
+            <button
+              type="button"
+              className="secondary small"
+              onClick={() => {
+                setExpandedSamples({});
+                runSearch(highlightQuery);
+              }}
+            >
               {t("search.retry")}
             </button>
           </div>

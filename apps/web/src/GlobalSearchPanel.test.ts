@@ -779,6 +779,89 @@ test("GlobalSearchPanel's 'Show all' button reveals every match beyond the defau
   });
 });
 
+/**
+ * Round 519's finding: unlike handleSubmit and handleRecentSearchClick (both
+ * of which call setExpandedSamples({}) before runSearch), the error banner's
+ * Retry button called runSearch directly -- so a "Show all" expansion made
+ * before a partial-failure Retry survived the retry's own fresh fetch,
+ * leaving a stale sample on screen (with a "jump to record" target that may
+ * no longer even exist) instead of the newly re-fetched data.
+ */
+test("GlobalSearchPanel's Retry button clears a stale 'Show all' expansion instead of keeping outdated samples", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    let customerCallCount = 0;
+    let orderCallCount = 0;
+    globalThis.fetch = (async (input: string): Promise<Response> => {
+      if (input === "/api/projects/proj1/entities/Customer") {
+        customerCallCount += 1;
+        // Call 1 is the initial search, call 2 is "Show all"'s own
+        // re-fetch -- both still see the original 7 matches. Call 3 is
+        // the Retry's fresh fetch, where real-world data has since
+        // changed to only 2 matches.
+        if (customerCallCount <= 2) {
+          const records: EntityRecord[] = Array.from({ length: 7 }, (_, i) => ({ id: i + 1, name: `Widget item ${i + 1}` }));
+          return new Response(JSON.stringify({ records }), { status: 200, headers: { "content-type": "application/json" } });
+        }
+        const records: EntityRecord[] = [{ id: 101, name: "Widget item FRESH-A" }, { id: 102, name: "Widget item FRESH-B" }];
+        return new Response(JSON.stringify({ records }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      if (input === "/api/projects/proj1/entities/Order") {
+        orderCallCount += 1;
+        if (orderCallCount === 1) {
+          return new Response(JSON.stringify({ error: "Server exploded" }), {
+            status: 500,
+            headers: { "content-type": "application/json" },
+          });
+        }
+        return new Response(JSON.stringify({ records: [] }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${input}`);
+    }) as typeof fetch;
+    try {
+      renderGlobalSearchPanel(() => {});
+
+      const input = document.querySelector(".global-search-input") as HTMLInputElement;
+      fireEvent.change(input, { target: { value: "widget" } });
+      fireEvent.submit(document.querySelector("form.global-search-form")!);
+
+      // Partial failure: Customer's 7 matches show (capped at a 5-row
+      // sample) alongside the error+Retry row from Order's failure.
+      await waitForCondition(
+        () => document.querySelector(".error-retry-row") !== null && document.querySelectorAll(".global-search-hit-button").length === 5,
+      );
+
+      const showAllButton = document.querySelector(".global-search-show-all") as HTMLButtonElement;
+      assert.ok(showAllButton, "expected a 'Show all' button for Customer's 7 matches");
+      fireEvent.click(showAllButton);
+      await waitForCondition(() => document.querySelectorAll(".global-search-hit-button").length === 7);
+      assert.ok(
+        Array.from(document.querySelectorAll(".global-search-hit-button")).some((el) => el.textContent?.includes("Widget item 7")),
+        "expected the full 7-record 'Show all' sample before retrying",
+      );
+
+      const retryButton = document.querySelector(".error-retry-row button") as HTMLButtonElement;
+      fireEvent.click(retryButton);
+
+      // After Retry, both entities succeed with fresh data -- the error row disappears.
+      await waitForCondition(() => document.querySelector(".error-retry-row") === null);
+      await waitForCondition(() => document.querySelectorAll(".global-search-hit-button").length === 2);
+
+      const hitTexts = Array.from(document.querySelectorAll(".global-search-hit-button")).map((el) => el.textContent ?? "");
+      assert.ok(
+        hitTexts.some((t) => t.includes("FRESH-A")) && hitTexts.some((t) => t.includes("FRESH-B")),
+        "Retry must show the freshly re-fetched records",
+      );
+      assert.ok(
+        !hitTexts.some((t) => t.includes("Widget item 7")),
+        "Retry must drop the stale 'Show all' expansion from before the retry, not keep showing the old 7-record sample",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
 /** The "Clear" link must wipe the recent-search list for real, not just hide it until the next reopen. */
 test("GlobalSearchPanel's recent-search 'Clear' link genuinely empties the persisted list, surviving a remount", async () => {
   await withJsdom(async () => {
