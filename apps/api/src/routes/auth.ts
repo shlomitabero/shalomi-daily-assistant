@@ -1,16 +1,22 @@
-import { randomBytes, randomUUID } from "node:crypto";
+import { createHash, randomBytes, randomInt, randomUUID, timingSafeEqual } from "node:crypto";
 import { Router } from "express";
 import { z } from "zod";
 import {
+  createLoginCode,
   createSession,
   createUser,
   deleteAllSessionsForUser,
+  deleteLoginCode,
+  deleteLoginCodesForUser,
   deleteOtherSessionsForUser,
   deleteSession,
   deleteUser,
   deleteProject,
   findUserByEmail,
+  findUserById,
+  getLoginCode,
   getPasswordHash,
+  incrementLoginCodeAttempts,
   listOwnedProjectIds,
   removeAllCollaborationsForUser,
   updatePasswordHash,
@@ -20,6 +26,7 @@ import {
 import { hashPassword, verifyPassword } from "../auth/password.js";
 import { extractBearerToken, requireAuth } from "../auth/middleware.js";
 import { formatValidationError, HttpError } from "../httpError.js";
+import type { EmailSender } from "../email.js";
 import type { WhatsAppWebManager } from "../whatsappWeb.js";
 
 const CredentialsSchema = z.object({
@@ -30,6 +37,10 @@ const CredentialsSchema = z.object({
   // which casing someone happens to type.
   email: z.string().email().transform((email) => email.toLowerCase()),
   password: z.string().min(8, "password must be at least 8 characters"),
+  // Client-supplied, same convention as POST /projects/from-template's own
+  // `lang` param (round 492) -- the server has no other way to know which
+  // language the login-code email should be written in.
+  lang: z.enum(["he", "en"]).optional(),
 });
 
 const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
@@ -38,6 +49,40 @@ const ChangePasswordSchema = z.object({
   currentPassword: z.string().min(1, "currentPassword is required"),
   newPassword: z.string().min(8, "newPassword must be at least 8 characters"),
 });
+
+const VerifyLoginCodeSchema = z.object({
+  loginCodeId: z.string().min(1, "loginCodeId is required"),
+  code: z.string().min(1, "code is required"),
+});
+
+const LOGIN_CODE_TTL_MS = 10 * 60 * 1000; // 10 minutes
+const MAX_LOGIN_CODE_ATTEMPTS = 5;
+
+function generateLoginCode(): string {
+  // randomInt, not Math.random -- this gates a real login, so it needs a
+  // cryptographically secure source the same way the session token
+  // (randomBytes) already does.
+  return String(randomInt(0, 1_000_000)).padStart(6, "0");
+}
+
+/**
+ * The code itself is never stored -- only this hash -- so a DB leak alone
+ * can't be replayed into a login the way a leaked session token could.
+ * Deliberately a fast hash, not hashPassword's scrypt: a 6-digit code's
+ * real defense is MAX_LOGIN_CODE_ATTEMPTS + the short TTL, not hash cost
+ * (unlike a password, which has no attempt limit of its own and must resist
+ * offline brute force on a leaked hash by itself).
+ */
+function hashLoginCode(code: string): string {
+  return createHash("sha256").update(code).digest("hex");
+}
+
+function loginCodeMatches(input: string, storedHash: string): boolean {
+  const inputHash = Buffer.from(hashLoginCode(input), "hex");
+  const stored = Buffer.from(storedHash, "hex");
+  if (inputHash.length !== stored.length) return false;
+  return timingSafeEqual(inputHash, stored);
+}
 
 /**
  * verifyPassword's scrypt call costs tens of milliseconds -- login used to
@@ -63,7 +108,7 @@ function issueSession(db: ForgeDatabase, userId: string): string {
   return token;
 }
 
-export function createAuthRouter(db: ForgeDatabase, whatsapp: WhatsAppWebManager): Router {
+export function createAuthRouter(db: ForgeDatabase, whatsapp: WhatsAppWebManager, emailSender: EmailSender): Router {
   const router = Router();
 
   router.post("/auth/signup", async (req, res, next) => {
@@ -94,7 +139,7 @@ export function createAuthRouter(db: ForgeDatabase, whatsapp: WhatsAppWebManager
       return;
     }
     try {
-      const { email, password } = parsed.data;
+      const { email, password, lang } = parsed.data;
       const record = findUserByEmail(db, email);
       // Always call verifyPassword, even when no such user exists (against
       // the dummy hash above) -- see dummyPasswordHashPromise's comment for why.
@@ -103,8 +148,80 @@ export function createAuthRouter(db: ForgeDatabase, whatsapp: WhatsAppWebManager
         next(new HttpError(401, "Invalid email or password", "INVALID_CREDENTIALS"));
         return;
       }
-      const token = issueSession(db, record.id);
-      res.json({ user: { id: record.id, email: record.email, createdAt: record.createdAt }, token });
+      // emailSender.configured is false whenever RESEND_API_KEY hasn't been
+      // set -- a deployment that never set up an email provider logs in
+      // exactly like before this feature existed. Setting that one
+      // environment variable is what turns the code step on at all.
+      if (!emailSender.configured) {
+        const token = issueSession(db, record.id);
+        res.json({ user: { id: record.id, email: record.email, createdAt: record.createdAt }, token });
+        return;
+      }
+      // At most one pending code per account at a time -- see
+      // deleteLoginCodesForUser's own doc comment.
+      deleteLoginCodesForUser(db, record.id);
+      const code = generateLoginCode();
+      const loginCodeId = randomUUID();
+      createLoginCode(db, {
+        id: loginCodeId,
+        userId: record.id,
+        codeHash: hashLoginCode(code),
+        expiresAt: new Date(Date.now() + LOGIN_CODE_TTL_MS).toISOString(),
+      });
+      const isHebrew = lang !== "en";
+      const subject = isHebrew ? `קוד ההתחברות שלך: ${code}` : `Your login code: ${code}`;
+      const body = isHebrew
+        ? `קוד ההתחברות שלך ל-Forge AI הוא: ${code}\n\nהקוד בתוקף ל-10 דקות. אם לא ניסית להתחבר, אפשר להתעלם מהודעה זו.`
+        : `Your Forge AI login code is: ${code}\n\nThis code expires in 10 minutes. If you didn't try to log in, you can ignore this email.`;
+      try {
+        await emailSender.send(record.email, subject, body);
+      } catch (err) {
+        // No code is valid without a successful send -- delete the row
+        // rather than leave a row around nobody can ever satisfy.
+        deleteLoginCode(db, loginCodeId);
+        next(new HttpError(502, `Failed to send the login code email: ${(err as Error).message}`, "EMAIL_SEND_FAILED"));
+        return;
+      }
+      res.json({ requiresCode: true, loginCodeId });
+    } catch (err) {
+      next(err);
+    }
+  });
+
+  /**
+   * The second step of the email-login-code flow above: the code itself was
+   * never sent back in the first response, only the opaque loginCodeId, so
+   * this is the one place that can actually complete a login once the code
+   * step is active.
+   */
+  router.post("/auth/login/verify-code", async (req, res, next) => {
+    const parsed = VerifyLoginCodeSchema.safeParse(req.body);
+    if (!parsed.success) {
+      next(new HttpError(400, formatValidationError(parsed.error), "VALIDATION_ERROR"));
+      return;
+    }
+    try {
+      const { loginCodeId, code } = parsed.data;
+      const pending = getLoginCode(db, loginCodeId);
+      const expired = !pending || new Date(pending.expiresAt).getTime() < Date.now() || pending.attempts >= MAX_LOGIN_CODE_ATTEMPTS;
+      if (expired) {
+        if (pending) deleteLoginCode(db, loginCodeId);
+        next(new HttpError(401, "This login code has expired. Please log in again.", "LOGIN_CODE_EXPIRED"));
+        return;
+      }
+      if (!loginCodeMatches(code, pending.codeHash)) {
+        incrementLoginCodeAttempts(db, loginCodeId);
+        next(new HttpError(401, "Incorrect code. Please try again.", "INVALID_LOGIN_CODE"));
+        return;
+      }
+      deleteLoginCode(db, loginCodeId);
+      const user = findUserById(db, pending.userId);
+      if (!user) {
+        next(new HttpError(401, "This account no longer exists", "USER_NOT_FOUND"));
+        return;
+      }
+      const token = issueSession(db, user.id);
+      res.json({ user, token });
     } catch (err) {
       next(err);
     }

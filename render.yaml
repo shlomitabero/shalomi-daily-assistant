@@ -10,3 +10,14 @@ services:
         value: 22.13.0
       - key: ANTHROPIC_API_KEY
         sync: false
+      # Optional: set this (Resend's API key, from resend.com) to turn on
+      # the extra email-login-code step on top of the password -- see
+      # apps/api/src/email.ts. Login works exactly as before if this is
+      # left unset.
+      - key: RESEND_API_KEY
+        sync: false
+      # Optional: defaults to Resend's own test sender if left unset, which
+      # needs no domain verification. Only worth setting once a real
+      # sending domain has been verified in the Resend dashboard.
+      - key: RESEND_FROM_EMAIL
+        sync: false

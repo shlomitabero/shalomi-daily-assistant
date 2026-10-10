@@ -251,3 +251,135 @@ test("AuthScreen's confirm-password field only appears in signup mode, never in 
     assert.equal(document.querySelectorAll('input[type="password"]').length, 1, "login mode must show only the single password field");
   });
 });
+
+/**
+ * The email field had neither `autoComplete` nor `name` at all, and
+ * PasswordInput's own `<input>` toggles its `type` between "password" and
+ * "text" for the show/hide eye icon -- browsers decide whether to offer to
+ * save/autofill a login form largely from these attributes, so a real user
+ * reported the browser never remembered their email or password here. This
+ * asserts the attributes a password manager actually keys off, in both
+ * modes (login's own autoComplete values differ from signup's).
+ */
+test("AuthScreen's email and password fields carry the autocomplete/name attributes a browser password manager needs to remember the login", async () => {
+  await withJsdom(() => {
+    renderAuthScreen(() => {});
+    // starts in signup mode
+    const emailInputSignup = document.querySelector('input[type="email"]') as HTMLInputElement;
+    assert.equal(emailInputSignup.name, "email");
+    assert.equal(emailInputSignup.autocomplete, "username");
+    const passwordInputSignup = document.querySelector('input[name="password"]') as HTMLInputElement;
+    assert.ok(passwordInputSignup, "password field must carry a name attribute");
+    assert.equal(passwordInputSignup.autocomplete, "new-password");
+
+    const toggleButton = document.querySelector("button.link-button") as HTMLButtonElement;
+    fireEvent.click(toggleButton);
+
+    const emailInputLogin = document.querySelector('input[type="email"]') as HTMLInputElement;
+    assert.equal(emailInputLogin.name, "email");
+    assert.equal(emailInputLogin.autocomplete, "username");
+    const passwordInputLogin = document.querySelector('input[name="password"]') as HTMLInputElement;
+    assert.equal(passwordInputLogin.autocomplete, "current-password");
+  });
+});
+
+/**
+ * Once RESEND_API_KEY is configured server-side, POST /auth/login no longer
+ * returns a token for a correct password -- it returns `{ requiresCode: true,
+ * loginCodeId }`, and the real login only completes once the matching code
+ * is submitted to /auth/login/verify-code. This drives that whole flow
+ * through real DOM events (login form -> code-entry form -> onAuthenticated),
+ * distinguishing the two requests by their URL rather than by call order.
+ */
+test("AuthScreen shows a code-entry step after a correct password returns requiresCode, and completes login once the right code is submitted", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    let verifyCodeBody: string | undefined;
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes("/auth/login/verify-code")) {
+        verifyCodeBody = init?.body as string;
+        return new Response(JSON.stringify({ user: { id: "u1", email: "dana@example.com" }, token: "tok" }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      return new Response(JSON.stringify({ requiresCode: true, loginCodeId: "code-id-1" }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }) as typeof fetch;
+    try {
+      let authenticatedUser: unknown;
+      renderAuthScreen((user) => {
+        authenticatedUser = user;
+      });
+
+      // switch to login mode
+      fireEvent.click(document.querySelector("button.link-button") as HTMLButtonElement);
+
+      const emailInput = document.querySelector('input[type="email"]') as HTMLInputElement;
+      const passwordInput = document.querySelector('input[name="password"]') as HTMLInputElement;
+      fireEvent.change(emailInput, { target: { value: "dana@example.com" } });
+      fireEvent.change(passwordInput, { target: { value: "correct-horse-battery" } });
+
+      await act(async () => {
+        fireEvent.submit(document.querySelector("form.auth-form")!);
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+
+      assert.equal(authenticatedUser, undefined, "requiresCode must not authenticate yet");
+      const codeInput = document.querySelector('input[inputmode="numeric"]') as HTMLInputElement;
+      assert.ok(codeInput, "the code-entry step must now be showing");
+      // the original email/password inputs must be gone, not just hidden
+      assert.equal(document.querySelector('input[type="email"]'), null);
+
+      fireEvent.change(codeInput, { target: { value: "123456" } });
+      await act(async () => {
+        fireEvent.submit(document.querySelector("form.auth-form")!);
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+
+      assert.deepEqual(authenticatedUser, { id: "u1", email: "dana@example.com" });
+      assert.equal(JSON.parse(verifyCodeBody!).loginCodeId, "code-id-1");
+      assert.equal(JSON.parse(verifyCodeBody!).code, "123456");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+test("AuthScreen's code-entry 'back' button returns to the login form and clears the entered code", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async () =>
+      new Response(JSON.stringify({ requiresCode: true, loginCodeId: "code-id-1" }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      })) as typeof fetch;
+    try {
+      renderAuthScreen(() => {});
+      fireEvent.click(document.querySelector("button.link-button") as HTMLButtonElement);
+      fireEvent.change(document.querySelector('input[type="email"]') as HTMLInputElement, { target: { value: "dana@example.com" } });
+      fireEvent.change(document.querySelector('input[name="password"]') as HTMLInputElement, { target: { value: "correct-horse-battery" } });
+
+      await act(async () => {
+        fireEvent.submit(document.querySelector("form.auth-form")!);
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+
+      assert.ok(document.querySelector('input[inputmode="numeric"]'), "must be on the code-entry step");
+
+      const backButton = document.querySelector("button.link-button") as HTMLButtonElement;
+      fireEvent.click(backButton);
+
+      assert.equal(document.querySelector('input[inputmode="numeric"]'), null, "must be back on the email/password form");
+      assert.ok(document.querySelector('input[type="email"]'), "email field must be showing again");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});

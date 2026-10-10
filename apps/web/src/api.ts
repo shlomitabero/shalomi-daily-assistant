@@ -199,8 +199,25 @@ export function signup(email: string, password: string): Promise<{ user: User; t
   return request("/auth/signup", { method: "POST", body: JSON.stringify({ email, password }) });
 }
 
-export function login(email: string, password: string): Promise<{ user: User; token: string }> {
-  return request("/auth/login", { method: "POST", body: JSON.stringify({ email, password }) });
+/**
+ * Once RESEND_API_KEY is configured server-side, a correct password no
+ * longer returns a token directly -- it returns `{ requiresCode: true,
+ * loginCodeId }` instead, and the caller (AuthScreen.tsx) must show the
+ * code-entry step and call verifyLoginCode to actually finish logging in.
+ * Without that env var set, the server still returns `{ user, token }`
+ * immediately, exactly as before this feature existed -- see
+ * routes/auth.ts's own `emailSender.configured` check.
+ */
+export function login(
+  email: string,
+  password: string,
+  lang: "he" | "en",
+): Promise<{ user: User; token: string } | { requiresCode: true; loginCodeId: string }> {
+  return request("/auth/login", { method: "POST", body: JSON.stringify({ email, password, lang }) });
+}
+
+export function verifyLoginCode(loginCodeId: string, code: string): Promise<{ user: User; token: string }> {
+  return request("/auth/login/verify-code", { method: "POST", body: JSON.stringify({ loginCodeId, code }) });
 }
 
 export function me(): Promise<{ user: User }> {

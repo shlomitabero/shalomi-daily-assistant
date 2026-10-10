@@ -23,6 +23,7 @@ export function PasswordInput({
   required,
   minLength,
   autoComplete,
+  name,
   showStrength,
 }: {
   value: string;
@@ -30,6 +31,7 @@ export function PasswordInput({
   required?: boolean;
   minLength?: number;
   autoComplete?: string;
+  name?: string;
   showStrength?: boolean;
 }) {
   const { t } = useTranslation();
@@ -59,6 +61,7 @@ export function PasswordInput({
           required={required}
           minLength={minLength}
           autoComplete={autoComplete}
+          name={name}
           value={value}
           onChange={(e) => onChange(e.target.value)}
           onKeyDown={checkCapsLock}

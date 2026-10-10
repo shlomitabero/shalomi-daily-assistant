@@ -94,3 +94,13 @@ export {
   pruneExpiredIdempotencyRecords,
   type IdempotencyRecord,
 } from "./idempotency.js";
+export {
+  ensureLoginCodesTable,
+  createLoginCode,
+  getLoginCode,
+  incrementLoginCodeAttempts,
+  deleteLoginCode,
+  deleteLoginCodesForUser,
+  pruneExpiredLoginCodes,
+  type LoginCodeRecord,
+} from "./loginCodes.js";

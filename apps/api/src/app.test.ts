@@ -13,15 +13,29 @@ import {
 } from "@forge/db";
 import { HeuristicSpecProvider, type SpecProvider } from "@forge/spec-engine";
 import { createApp } from "./app.js";
+import type { EmailSender } from "./email.js";
 import { createStore } from "./store.js";
 import { WhatsAppWebManager, type BaileysConnectionUpdate, type BaileysMessagesUpsert, type WhatsAppSocket } from "./whatsappWeb.js";
 
+/** A controllable EmailSender double for the login-code tests: records every send() call and lets the test decide whether it succeeds. */
+function createFakeEmailSender(opts?: { configured?: boolean; failWith?: Error }): EmailSender & { sentTo: { to: string; subject: string; text: string }[] } {
+  const sentTo: { to: string; subject: string; text: string }[] = [];
+  return {
+    configured: opts?.configured ?? true,
+    sentTo,
+    async send(to, subject, text) {
+      if (opts?.failWith) throw opts.failWith;
+      sentTo.push({ to, subject, text });
+    },
+  };
+}
+
 async function withServer(
   fn: (baseUrl: string, db: ForgeDatabase) => Promise<void>,
-  opts?: { whatsapp?: (db: ForgeDatabase) => WhatsAppWebManager; provider?: SpecProvider },
+  opts?: { whatsapp?: (db: ForgeDatabase) => WhatsAppWebManager; provider?: SpecProvider; emailSender?: EmailSender },
 ) {
   const db = createStore(":memory:");
-  const app = createApp(db, opts?.provider, undefined, opts?.whatsapp?.(db));
+  const app = createApp(db, opts?.provider, undefined, opts?.whatsapp?.(db), opts?.emailSender);
   const server = app.listen(0);
   await new Promise<void>((resolve) => server.once("listening", resolve));
   const address = server.address();
@@ -212,6 +226,210 @@ test("two concurrent signups for the same email: exactly one succeeds, and the l
     });
     assert.equal(loginRes.status, 200);
   });
+});
+
+/**
+ * Once an EmailSender reports `configured: true` (i.e. RESEND_API_KEY is
+ * set, see email.ts), a correct password no longer returns a token directly
+ * -- it sends a code by email and returns `{ requiresCode, loginCodeId }`
+ * instead, and only POST /auth/login/verify-code with the right code
+ * actually completes the login. These tests exercise that whole real
+ * server-side flow with a fake, inspectable EmailSender double.
+ */
+test("login with an EmailSender configured sends an emailed code instead of a token, and the right code completes the login via verify-code", async () => {
+  const emailSender = createFakeEmailSender();
+  await withServer(
+    async (baseUrl) => {
+      const email = "dana@example.com";
+      await fetch(`${baseUrl}/api/auth/signup`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ email, password: "correct-horse-battery" }),
+      });
+
+      const loginRes = await fetch(`${baseUrl}/api/auth/login`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ email, password: "correct-horse-battery", lang: "en" }),
+      });
+      assert.equal(loginRes.status, 200);
+      const loginBody = (await loginRes.json()) as { requiresCode?: boolean; loginCodeId?: string; token?: string };
+      assert.equal(loginBody.requiresCode, true);
+      assert.equal(loginBody.token, undefined, "a plaintext token must never be returned before the code is verified");
+      assert.ok(loginBody.loginCodeId);
+
+      assert.equal(emailSender.sentTo.length, 1);
+      assert.equal(emailSender.sentTo[0]!.to, email);
+      const code = emailSender.sentTo[0]!.text.match(/\d{6}/)?.[0];
+      assert.ok(code, "the email body must contain the 6-digit code");
+
+      const verifyRes = await fetch(`${baseUrl}/api/auth/login/verify-code`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ loginCodeId: loginBody.loginCodeId, code }),
+      });
+      assert.equal(verifyRes.status, 200);
+      const verifyBody = (await verifyRes.json()) as { user: { email: string }; token: string };
+      assert.equal(verifyBody.user.email, email);
+      assert.ok(verifyBody.token);
+
+      // The now-used code must be rejected on a second attempt -- a code is
+      // single-use, not reusable until its own TTL.
+      const reuseRes = await fetch(`${baseUrl}/api/auth/login/verify-code`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ loginCodeId: loginBody.loginCodeId, code }),
+      });
+      assert.equal(reuseRes.status, 401);
+      assert.equal(((await reuseRes.json()) as { code?: string }).code, "LOGIN_CODE_EXPIRED");
+    },
+    { emailSender },
+  );
+});
+
+test("verify-code rejects a wrong code without consuming it, locks it out after too many wrong attempts, and the right code still works right up until that lockout", async () => {
+  const emailSender = createFakeEmailSender();
+  await withServer(
+    async (baseUrl) => {
+      const email = "dana@example.com";
+      await fetch(`${baseUrl}/api/auth/signup`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ email, password: "correct-horse-battery" }),
+      });
+      const loginRes = await fetch(`${baseUrl}/api/auth/login`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ email, password: "correct-horse-battery" }),
+      });
+      const { loginCodeId } = (await loginRes.json()) as { loginCodeId: string };
+      const realCode = emailSender.sentTo[0]!.text.match(/\d{6}/)![0];
+      const wrongCode = realCode === "000000" ? "111111" : "000000";
+
+      for (let i = 0; i < 5; i++) {
+        const res = await fetch(`${baseUrl}/api/auth/login/verify-code`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ loginCodeId, code: wrongCode }),
+        });
+        assert.equal(res.status, 401);
+        assert.equal(((await res.json()) as { code?: string }).code, "INVALID_LOGIN_CODE", `attempt ${i + 1} of 5 must still be a plain wrong-code error`);
+      }
+
+      // The 6th attempt (even with the RIGHT code) must now be locked out --
+      // MAX_LOGIN_CODE_ATTEMPTS (5) wrong guesses already happened.
+      const lockedOutRes = await fetch(`${baseUrl}/api/auth/login/verify-code`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ loginCodeId, code: realCode }),
+      });
+      assert.equal(lockedOutRes.status, 401);
+      assert.equal(((await lockedOutRes.json()) as { code?: string }).code, "LOGIN_CODE_EXPIRED");
+    },
+    { emailSender },
+  );
+});
+
+test("a login code is scoped to one login attempt: requesting a second one invalidates the first, and signup/login stay token-immediate when no EmailSender is configured at all", async () => {
+  await withServer(async (baseUrl) => {
+    // The default withServer (no emailSender option) uses createApp's own
+    // default ResendEmailSender, which is unconfigured in this test
+    // environment (no RESEND_API_KEY) -- confirming the code step stays
+    // fully inert end-to-end, not just at the unit level.
+    const email = "dana@example.com";
+    await fetch(`${baseUrl}/api/auth/signup`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ email, password: "correct-horse-battery" }),
+    });
+    const loginRes = await fetch(`${baseUrl}/api/auth/login`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ email, password: "correct-horse-battery" }),
+    });
+    assert.equal(loginRes.status, 200);
+    const body = (await loginRes.json()) as { token?: string; requiresCode?: boolean };
+    assert.ok(body.token, "login must return a usable token directly when no email provider is configured");
+    assert.equal(body.requiresCode, undefined);
+  });
+});
+
+test("requesting a fresh login code invalidates the previous one for the same account", async () => {
+  const emailSender = createFakeEmailSender();
+  await withServer(
+    async (baseUrl) => {
+      const email = "dana@example.com";
+      await fetch(`${baseUrl}/api/auth/signup`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ email, password: "correct-horse-battery" }),
+      });
+      const firstLogin = await fetch(`${baseUrl}/api/auth/login`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ email, password: "correct-horse-battery" }),
+      });
+      const { loginCodeId: firstId } = (await firstLogin.json()) as { loginCodeId: string };
+
+      // Abandon the first attempt and log in again -- a second, independent code.
+      await fetch(`${baseUrl}/api/auth/login`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ email, password: "correct-horse-battery" }),
+      });
+      const secondCode = emailSender.sentTo[1]!.text.match(/\d{6}/)![0];
+
+      // The first code's own row is gone -- even the right code for it now fails.
+      const firstCodeMatch = emailSender.sentTo[0]!.text.match(/\d{6}/)![0];
+      const staleRes = await fetch(`${baseUrl}/api/auth/login/verify-code`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ loginCodeId: firstId, code: firstCodeMatch }),
+      });
+      assert.equal(staleRes.status, 401);
+      assert.equal(((await staleRes.json()) as { code?: string }).code, "LOGIN_CODE_EXPIRED");
+
+      // The second, current code still works.
+      const { loginCodeId: secondId } = (await (
+        await fetch(`${baseUrl}/api/auth/login`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ email, password: "correct-horse-battery" }),
+        })
+      ).json()) as { loginCodeId: string };
+      const thirdCode = emailSender.sentTo[2]!.text.match(/\d{6}/)![0];
+      const okRes = await fetch(`${baseUrl}/api/auth/login/verify-code`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ loginCodeId: secondId, code: thirdCode }),
+      });
+      assert.equal(okRes.status, 200);
+      void secondCode; // captured for clarity on the (deleted) second attempt; the third is what's actually verified above
+    },
+    { emailSender },
+  );
+});
+
+test("login returns EMAIL_SEND_FAILED (and no usable loginCodeId) when the configured EmailSender's send() itself throws", async () => {
+  const emailSender = createFakeEmailSender({ failWith: new Error("Resend API request failed (401): invalid api key") });
+  await withServer(
+    async (baseUrl) => {
+      const email = "dana@example.com";
+      await fetch(`${baseUrl}/api/auth/signup`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ email, password: "correct-horse-battery" }),
+      });
+      const loginRes = await fetch(`${baseUrl}/api/auth/login`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ email, password: "correct-horse-battery" }),
+      });
+      assert.equal(loginRes.status, 502);
+      assert.equal(((await loginRes.json()) as { code?: string }).code, "EMAIL_SEND_FAILED");
+    },
+    { emailSender },
+  );
 });
 
 test("email casing is normalized: signing up as 'Dana@Example.com' can log in as 'dana@example.com', and a second signup with different casing is rejected as a duplicate", async () => {

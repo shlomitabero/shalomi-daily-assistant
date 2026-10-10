@@ -9,6 +9,7 @@ import { createProjectsRouter } from "./routes/projects.js";
 import { createAuthRouter } from "./routes/auth.js";
 import { WhatsAppWebManager } from "./whatsappWeb.js";
 import { HttpError } from "./httpError.js";
+import { ResendEmailSender, type EmailSender } from "./email.js";
 
 /**
  * `staticDir` is the built web app (apps/web/dist). Passing it makes this
@@ -22,8 +23,22 @@ import { HttpError } from "./httpError.js";
  * their own instance with a fake socket factory (see whatsappWeb.test.ts
  * and the WhatsApp tests in app.test.ts) so they never touch the real
  * WhatsApp network.
+ *
+ * `emailSender` defaults to a real `ResendEmailSender` reading
+ * RESEND_API_KEY from the environment -- `.configured` is false whenever
+ * that variable isn't set, which is exactly what makes the login-code step
+ * (routes/auth.ts) stay off until someone deploying this app actually sets
+ * it up. Tests that want to exercise the code step inject their own fake
+ * sender (see the login-code tests in app.test.ts) instead of needing a
+ * real Resend account.
  */
-export function createApp(db: ForgeDatabase, provider?: SpecProvider, staticDir?: string, whatsapp?: WhatsAppWebManager): Express {
+export function createApp(
+  db: ForgeDatabase,
+  provider?: SpecProvider,
+  staticDir?: string,
+  whatsapp?: WhatsAppWebManager,
+  emailSender?: EmailSender,
+): Express {
   const app = express();
   // Render (and most single-service PaaS hosts) terminates TLS at a proxy
   // and forwards plain HTTP internally, so req.protocol would report
@@ -34,9 +49,10 @@ export function createApp(db: ForgeDatabase, provider?: SpecProvider, staticDir?
 
   const whatsappManager =
     whatsapp ?? new WhatsAppWebManager({ db, sessionsRootDir: path.join(os.tmpdir(), "forge-whatsapp-sessions") });
+  const resolvedEmailSender = emailSender ?? new ResendEmailSender();
 
   app.get("/api/health", (_req, res) => res.json({ status: "ok" }));
-  app.use("/api", createAuthRouter(db, whatsappManager));
+  app.use("/api", createAuthRouter(db, whatsappManager, resolvedEmailSender));
   app.use("/api", createProjectsRouter(db, provider, whatsappManager));
 
   if (staticDir && existsSync(staticDir)) {
