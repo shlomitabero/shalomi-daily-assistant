@@ -320,52 +320,72 @@ export function createAuthRouter(
    */
   router.delete("/auth/account", requireAuth(db), async (req, res, next) => {
     try {
-      // Revokes every session -- including this very request's own token --
-      // as the first thing this handler does, synchronously, before any of
-      // the real async I/O below. whatsapp.disconnect() awaits a genuine
-      // network round-trip (session.sock.logout(), see whatsappWeb.ts's own
-      // comment) whenever a project has a live WhatsApp connection, and that
-      // used to run while this account's token was still valid. Round 424:
-      // while suspended on that await, an unrelated POST /projects using
-      // the same still-valid token could create a brand-new project whose
-      // id was never in listOwnedProjectIds' own snapshot below (taken once,
-      // up front) -- and since projects.ownerId carries no foreign-key
-      // constraint to users.id, deleteUser further down still succeeded,
-      // permanently orphaning that project under a user id that no longer
-      // exists anywhere, reachable by no route ever again. Revoking first
-      // closes the window: any request racing this one now fails
-      // requireAuth before it can do anything, for the same reason the
-      // existing "the deleted user's own session token must stop working
-      // immediately" check below already expects.
-      deleteAllSessionsForUser(db, req.userId!);
       const ownedProjectIds = listOwnedProjectIds(db, req.userId!);
-      for (const projectId of ownedProjectIds) {
-        // Round 535: same activePipelines guard DELETE /projects/:id
-        // (routes/projects.ts) already sets around this exact await, for
-        // the exact same reason -- this loop's own whatsapp.disconnect()
-        // is a genuine network round-trip whenever that project has a
-        // live WhatsApp Web connection, and every ordinary quick mutation
-        // route in routes/projects.ts only *checks* activePipelines, never
-        // sets it. A collaborator on this project (whose own session this
-        // route never touches -- deleteAllSessionsForUser above only ever
-        // revokes the ACCOUNT BEING DELETED's own sessions) could use
-        // their own still-valid token to read the still-present project
-        // row during this window, run an edit to completion, and get back
-        // a 200 for a change that deleteProject() below erases moments
-        // later with no error ever reaching them.
-        if (activePipelines.has(projectId)) {
-          throw new HttpError(409, "A build or refine is already running for one of your projects", "PIPELINE_IN_PROGRESS");
-        }
-        activePipelines.add(projectId);
-        try {
+      // Round 537: the per-project loop below is destructive and
+      // irreversible one project at a time -- checking activePipelines
+      // only as each project is reached (as round 535 originally did)
+      // meant a LATER project's in-flight pipeline aborted the whole
+      // handler (409) only after every EARLIER project in the loop had
+      // already been permanently deleted, while deleteAllSessionsForUser
+      // (below) had already logged the owner out everywhere and
+      // removeAllCollaborationsForUser/deleteUser never ran -- a
+      // non-atomic "partial delete reported as failure" with no recovery
+      // and no account actually removed. Checking every owned project's
+      // activePipelines status up front, then reserving all of them in
+      // the same synchronous pass (no await in between, so nothing else
+      // on this single-threaded process can interleave), makes the whole
+      // operation all-or-nothing: either every owned project is free to
+      // delete and gets reserved before anything destructive starts, or
+      // the request fails immediately with nothing touched at all --
+      // sessions still valid, every project still intact.
+      if (ownedProjectIds.some((id) => activePipelines.has(id))) {
+        throw new HttpError(409, "A build or refine is already running for one of your projects", "PIPELINE_IN_PROGRESS");
+      }
+      for (const id of ownedProjectIds) activePipelines.add(id);
+      try {
+        // Revokes every session -- including this very request's own token --
+        // as the first thing this handler does once the check above has
+        // passed, synchronously, before any of the real async I/O below.
+        // whatsapp.disconnect() awaits a genuine network round-trip
+        // (session.sock.logout(), see whatsappWeb.ts's own comment)
+        // whenever a project has a live WhatsApp connection, and that used
+        // to run while this account's token was still valid. Round 424:
+        // while suspended on that await, an unrelated POST /projects using
+        // the same still-valid token could create a brand-new project whose
+        // id was never in listOwnedProjectIds' own snapshot above (taken
+        // once, up front) -- and since projects.ownerId carries no
+        // foreign-key constraint to users.id, deleteUser further down still
+        // succeeded, permanently orphaning that project under a user id
+        // that no longer exists anywhere, reachable by no route ever again.
+        // Revoking first closes the window: any request racing this one
+        // now fails requireAuth before it can do anything, for the same
+        // reason the existing "the deleted user's own session token must
+        // stop working immediately" check below already expects.
+        deleteAllSessionsForUser(db, req.userId!);
+        for (const projectId of ownedProjectIds) {
+          // Round 535: same activePipelines guard DELETE /projects/:id
+          // (routes/projects.ts) already sets around this exact await, for
+          // the exact same reason -- this loop's own whatsapp.disconnect()
+          // is a genuine network round-trip whenever that project has a
+          // live WhatsApp Web connection, and every ordinary quick mutation
+          // route in routes/projects.ts only *checks* activePipelines, never
+          // sets it. A collaborator on this project (whose own session this
+          // route never touches -- deleteAllSessionsForUser above only ever
+          // revokes the ACCOUNT BEING DELETED's own sessions) could use
+          // their own still-valid token to read the still-present project
+          // row during this window, run an edit to completion, and get back
+          // a 200 for a change that deleteProject() below erases moments
+          // later with no error ever reaching them. Already reserved for
+          // every owned project id above, so this loop never needs to
+          // re-check or re-add/remove per iteration.
           await whatsapp.disconnect(projectId).catch(() => {});
           deleteProject(db, projectId);
-        } finally {
-          activePipelines.delete(projectId);
         }
+        removeAllCollaborationsForUser(db, req.userId!);
+        deleteUser(db, req.userId!);
+      } finally {
+        for (const id of ownedProjectIds) activePipelines.delete(id);
       }
-      removeAllCollaborationsForUser(db, req.userId!);
-      deleteUser(db, req.userId!);
       res.status(204).end();
     } catch (err) {
       next(err);

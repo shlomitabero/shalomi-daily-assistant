@@ -4105,6 +4105,78 @@ test("POST .../whatsapp/send does not insert a permanently-orphaned message row 
   );
 });
 
+test("DELETE /auth/account is all-or-nothing: an in-flight pipeline on one owned project must not leave an earlier project in the same loop permanently deleted", async () => {
+  const gated = createGatedProvider();
+  await withServer(
+    async (baseUrl) => {
+      const email = `account-delete-atomic-${Math.random()}@example.com`;
+      const password = "correct-horse-battery";
+      const signupRes = await fetch(`${baseUrl}/api/auth/signup`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ email, password }),
+      });
+      const { token } = (await signupRes.json()) as { token: string };
+
+      // Project A is created and built first -- listOwnedProjectIds returns
+      // rows in insertion order, so the account-deletion loop reaches A
+      // before B and would delete it before ever reaching B's own guard.
+      const createARes = await fetch(`${baseUrl}/api/projects`, {
+        method: "POST",
+        headers: authHeaders(token),
+        body: JSON.stringify({ description: "A CRM with customers and deals." }),
+      });
+      const { project: projectA } = (await createARes.json()) as { project: { id: string } };
+      await collectSSE(await fetch(`${baseUrl}/api/projects/${projectA.id}/build`, { method: "POST", headers: authHeaders(token) }));
+
+      const createBRes = await fetch(`${baseUrl}/api/projects`, {
+        method: "POST",
+        headers: authHeaders(token),
+        body: JSON.stringify({ description: "A library with books and members." }),
+      });
+      const { project: projectB } = (await createBRes.json()) as { project: { id: string } };
+      await collectSSE(await fetch(`${baseUrl}/api/projects/${projectB.id}/build`, { method: "POST", headers: authHeaders(token) }));
+
+      // Arm the gate only now, so project A/B's own creation+build calls
+      // (already done above) are unaffected -- only B's upcoming /refine
+      // blocks.
+      gated.arm();
+      const refinePromise = fetch(`${baseUrl}/api/projects/${projectB.id}/refine`, {
+        method: "POST",
+        headers: authHeaders(token),
+        body: JSON.stringify({ instruction: "add a status field" }),
+      });
+      await gated.waitUntilStarted();
+
+      const deleteRes = await fetch(`${baseUrl}/api/auth/account`, { method: "DELETE", headers: authHeaders(token) });
+      const deleteBody = (await deleteRes.json()) as { code?: string };
+
+      gated.release();
+      const refineRes = await refinePromise;
+      if (refineRes.ok) await collectSSE(refineRes);
+
+      assert.equal(deleteRes.status, 409, "deletion must be rejected while any owned project has an in-flight pipeline");
+      assert.equal(deleteBody.code, "PIPELINE_IN_PROGRESS");
+
+      // The account itself must still exist -- re-login must succeed.
+      const reLoginRes = await fetch(`${baseUrl}/api/auth/login`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ email, password }),
+      });
+      assert.equal(reLoginRes.status, 200, "a rejected deletion must not have removed the account");
+      const { token: newToken } = (await reLoginRes.json()) as { token: string };
+
+      // Neither project may have been touched -- all-or-nothing.
+      const getARes = await fetch(`${baseUrl}/api/projects/${projectA.id}`, { headers: authHeaders(newToken) });
+      const getBRes = await fetch(`${baseUrl}/api/projects/${projectB.id}`, { headers: authHeaders(newToken) });
+      assert.equal(getARes.status, 200, "project A must survive a rejected, all-or-nothing deletion");
+      assert.equal(getBRes.status, 200, "project B must survive a rejected, all-or-nothing deletion");
+    },
+    { provider: gated.provider },
+  );
+});
+
 test("a user cannot restore another user's checkpoint into their own project by guessing/reusing its id", async () => {
   await withServer(async (baseUrl) => {
     const ownerToken = await signup(baseUrl, "owner2@example.com");
