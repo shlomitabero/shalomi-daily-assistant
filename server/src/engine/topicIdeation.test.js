@@ -1,6 +1,28 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { buildTopicPrompt, generateTopicIdea } from './topicIdeation.js';
+import { buildTopicPrompt, generateTopicIdea, isValidTopicIdea } from './topicIdeation.js';
+
+test('isValidTopicIdea accepts a complete idea', () => {
+  assert.equal(isValidTopicIdea({ topic: 'ניהול תקציב', audience: 'עצמאים' }), true);
+});
+
+test('isValidTopicIdea rejects a missing topic or audience', () => {
+  // This is the one path with no human reviewing the input before it's
+  // used — a missing field here would silently create a real stored
+  // opportunity literally built around "undefined".
+  assert.equal(isValidTopicIdea({ audience: 'עצמאים' }), false);
+  assert.equal(isValidTopicIdea({ topic: 'ניהול תקציב' }), false);
+});
+
+test('isValidTopicIdea rejects a blank topic or audience', () => {
+  assert.equal(isValidTopicIdea({ topic: '   ', audience: 'עצמאים' }), false);
+  assert.equal(isValidTopicIdea({ topic: 'ניהול תקציב', audience: '' }), false);
+});
+
+test('isValidTopicIdea rejects null/undefined input', () => {
+  assert.equal(isValidTopicIdea(null), false);
+  assert.equal(isValidTopicIdea(undefined), false);
+});
 
 test('buildTopicPrompt asks for raw JSON with topic and audience', () => {
   const prompt = buildTopicPrompt({});
