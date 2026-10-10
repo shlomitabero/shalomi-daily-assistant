@@ -351,8 +351,17 @@ export function WhatsAppPanel({
         setStatus(s);
         if (s.status === "connecting" || s.status === "qr") startPolling();
         if (s.status === "connected") {
+          // Same messagesVersionRef idiom as startPolling/startConnectedPolling
+          // below -- this fetch can still be in flight when handleDisconnect
+          // runs (e.g. the panel mounts already-connected and the user hits
+          // Disconnect before this resolves). Without the guard, this
+          // .then would unconditionally overwrite the empty log
+          // handleDisconnect just set with this stale, pre-disconnect page
+          // (round 541).
+          const versionBeforeFetch = messagesVersionRef.current;
           listWhatsAppMessages(projectId)
             .then(({ messages, hasMore }) => {
+              if (messagesVersionRef.current !== versionBeforeFetch) return;
               setMessages(messages);
               setHasMoreMessages(hasMore);
             })

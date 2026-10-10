@@ -439,6 +439,103 @@ test("WhatsAppPanel's startPolling discards a listWhatsAppMessages page fetched 
 });
 
 /**
+ * Regression test for round 541: loadInitialStatus's own "already connected
+ * when the panel mounts" branch was the one remaining listWhatsAppMessages
+ * call site with no messagesVersionRef guard -- every other fetch-then-
+ * setMessages call site in this file (startPolling's own "becoming
+ * connected" branch just above, startConnectedPolling's tick, handleSendTest,
+ * handleRetry, handleLoadMore) already captures the version before its fetch
+ * and skips applying a stale result. Without the guard here, mounting the
+ * panel while already connected (an entirely ordinary case) kicks off this
+ * fetch; if the user clicks Disconnect before it resolves, handleDisconnect
+ * bumps the version and clears the log (setMessages([])), but this fetch's
+ * `.then` would still unconditionally overwrite that empty log with the
+ * stale, pre-disconnect page once it resolves -- resurrecting messages the
+ * user just explicitly disconnected away from.
+ */
+test("WhatsAppPanel's loadInitialStatus discards a listWhatsAppMessages page fetched while already connected if a disconnect happened during that fetch", async () => {
+  const loadMatch = whatsAppPanelSrc.match(/ {2}function loadInitialStatus\(\) \{[\s\S]*?\n {2}\}\n/);
+  assert.ok(loadMatch, "expected to find loadInitialStatus in WhatsAppPanel.tsx");
+  const { code } = transformSync(loadMatch![0], { loader: "ts" });
+
+  const messagesVersionRef = { current: 0 };
+  let setMessagesCalls = 0;
+  let setHasMoreMessagesCalls = 0;
+  let startConnectedPollingCalls = 0;
+
+  let resolveFetchStarted!: () => void;
+  const fetchStarted = new Promise<void>((resolve) => {
+    resolveFetchStarted = resolve;
+  });
+  let releaseListMessages!: () => void;
+  const held = new Promise<void>((resolve) => {
+    releaseListMessages = resolve;
+  });
+
+  const { loadInitialStatus } = new Function(
+    "messagesVersionRef",
+    "setInitialLoadError",
+    "getWhatsAppStatus",
+    "setStatus",
+    "startPolling",
+    "listWhatsAppMessages",
+    "setMessages",
+    "setHasMoreMessages",
+    "startConnectedPolling",
+    "projectId",
+    `${code}\nreturn { loadInitialStatus };`,
+  )(
+    messagesVersionRef,
+    () => {},
+    async () => ({ status: "connected" }),
+    () => {},
+    () => {},
+    async () => {
+      resolveFetchStarted();
+      await held;
+      return { messages: [{ id: "m1" }], hasMore: true };
+    },
+    () => {
+      setMessagesCalls += 1;
+    },
+    () => {
+      setHasMoreMessagesCalls += 1;
+    },
+    () => {
+      startConnectedPollingCalls += 1;
+    },
+    "proj1",
+  ) as { loadInitialStatus: () => void };
+
+  loadInitialStatus();
+
+  // Wait for the mount-time fetch to actually reach its own
+  // listWhatsAppMessages call before simulating handleDisconnect's version
+  // bump -- a real network fetch would take real time, exactly like this
+  // held-open promise.
+  await fetchStarted;
+  messagesVersionRef.current += 1;
+  releaseListMessages();
+  await held;
+  // Let the held promise's own resolution propagate through the fetch's
+  // .then chain before asserting.
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  assert.equal(setMessagesCalls, 0, "a disconnect mid-mount-fetch must discard this fetch's stale message page");
+  assert.equal(
+    setHasMoreMessagesCalls,
+    0,
+    "a disconnect mid-mount-fetch must discard this fetch's stale hasMore flag",
+  );
+  assert.equal(
+    startConnectedPollingCalls,
+    1,
+    "startConnectedPolling is unconditional (not guarded by the version check) and must still run",
+  );
+});
+
+/**
  * Regression test for a real gap found by round 288's Explore survey: while
  * the panel was open and connected, startConnectedPolling only re-checked
  * whether the WhatsApp link itself was still alive -- it never re-fetched
