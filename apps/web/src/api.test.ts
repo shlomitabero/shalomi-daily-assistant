@@ -439,7 +439,13 @@ test("fetchApi aborts a request that hangs past its timeout, instead of leaving 
     // timer fires, so this is a real "still waiting" -> "now it fails"
     // transition, not a race.
     await Promise.resolve();
-    t.mock.timers.tick(220_000);
+    // Ticks exactly REQUEST_TIMEOUT_MS, not a hardcoded number -- a
+    // hardcoded value here silently stops testing anything the moment
+    // REQUEST_TIMEOUT_MS changes (round 525: it grew from 220s to 280s to
+    // cover /refine's two sequential Anthropic calls), since ticking past
+    // the OLD value no longer fires the NEW timer, leaving this test's own
+    // `pending` promise hanging forever instead of failing loudly.
+    t.mock.timers.tick(REQUEST_TIMEOUT_MS);
     await assert.rejects(pending, (err: Error) => {
       assert.match(err.message, /taking unusually long/);
       return true;
@@ -507,20 +513,42 @@ test("fetchApi does not falsely abort a slow-but-legitimate response that finish
  * alone (without updating the other) fails a fast, obvious unit test
  * instead of shipping the same bug a third time.
  */
-test("REQUEST_TIMEOUT_MS stays comfortably above the real worst-case legitimate request: the full wake-retry backoff plus a 60s Anthropic call", () => {
+/**
+ * Round 525: the test below originally asserted the budget against exactly
+ * ONE 60s Anthropic call -- true for /build (whose only possible call is
+ * the Debug agent's own requestSpecFix, and only if diffAndMigrate throws),
+ * but not for /refine. routes/projects.ts's /refine handler awaits
+ * generateSpec() *before* streamPipeline() ever writes response headers,
+ * then -- if the regenerated spec fails to migrate -- pipeline.ts's own
+ * Debug-agent-recovery flow awaits requestSpecFix() too, mid-stream. Both
+ * calls default to the same ANTHROPIC_REQUEST_TIMEOUT_MS and are gated by
+ * the exact same client-side AbortController, since the whole thing is one
+ * long-lived SSE connection from fetchApi's point of view -- so /refine's
+ * real worst case needs room for TWO 60s calls, not one, on top of the
+ * same cold-start retry budget. A constant sized for only one call would
+ * fail this legitimate combination (a cold start plus a migration that
+ * needs the Debug agent's fix) exactly like the original bug this file's
+ * other REQUEST_TIMEOUT_MS test already guards against.
+ */
+test("REQUEST_TIMEOUT_MS stays comfortably above the real worst-case legitimate request: the full wake-retry backoff plus /refine's two sequential 60s Anthropic calls", () => {
   const totalRetryBudgetMs = DEFAULT_DELAYS_MS.reduce((sum, d) => sum + d, 0);
   // Mirrors packages/spec-engine/src/anthropicFetch.ts's own
   // ANTHROPIC_REQUEST_TIMEOUT_MS -- not imported directly since apps/web
   // has no dependency on @forge/spec-engine (that package is server-side
   // only), so this constant is kept in sync by hand and this comment.
   const anthropicCallBudgetMs = 60_000;
-  const legitimateWorstCaseMs = totalRetryBudgetMs + anthropicCallBudgetMs;
+  // /refine's own generateSpec() (pre-stream) plus a possible
+  // requestSpecFix() (mid-stream, if the regenerated spec fails to
+  // migrate) -- see this test's own comment above for why that's two, not
+  // one, and why both still count against the same single AbortController.
+  const maxSequentialAnthropicCalls = 2;
+  const legitimateWorstCaseMs = totalRetryBudgetMs + maxSequentialAnthropicCalls * anthropicCallBudgetMs;
 
   assert.ok(
     REQUEST_TIMEOUT_MS > legitimateWorstCaseMs,
     `REQUEST_TIMEOUT_MS (${REQUEST_TIMEOUT_MS}ms) must exceed the real worst-case legitimate request ` +
-      `(${totalRetryBudgetMs}ms of retry backoff + ${anthropicCallBudgetMs}ms Anthropic call = ${legitimateWorstCaseMs}ms) -- ` +
-      `otherwise a legitimately slow but successful request gets falsely aborted, the exact bug this test guards against.`,
+      `(${totalRetryBudgetMs}ms of retry backoff + ${maxSequentialAnthropicCalls} x ${anthropicCallBudgetMs}ms Anthropic calls = ${legitimateWorstCaseMs}ms) -- ` +
+      `otherwise a legitimately slow but successful /refine request gets falsely aborted, the exact bug this test guards against.`,
   );
   // Some real margin beyond the bare minimum for request/response transfer,
   // JSON parsing, and DB writes -- not just barely more than the worst case.

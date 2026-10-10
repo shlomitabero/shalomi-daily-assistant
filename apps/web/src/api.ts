@@ -92,21 +92,30 @@ function notifyAuthExpired(): void {
  * loads, always says the server is old") showed that ceiling had zero
  * margin above Render's own documented worst case, which this app hits on
  * every visit while no keep-alive ping is running) -- so this value must
- * stay comfortably above 101s of cold-start retrying plus a 60s Anthropic
- * call that only *starts* once the connection finally succeeds: 101 + 60 =
- * 161s is the real worst-case legitimate total. An earlier version of this
- * same ceiling (100s) was already less than an even smaller 109s worst
- * case, producing exactly the false-positive "this is taking too long"
- * error this comment now warns against repeating -- confirmed by a real
- * report with a screenshot of that exact error on the enhance-and-build
- * flow. This value adds just under a minute of margin on top of the 161s
- * worst case for request/response transfer, JSON parsing, and DB writes,
- * rather than shaving it as close as possible to the theoretical minimum.
- * Whenever DEFAULT_DELAYS_MS's own total changes, this must be
- * recalculated too -- that exact mismatch is what caused the bug both
- * versions of this comment describe.
+ * stay comfortably above 101s of cold-start retrying plus however many 60s
+ * Anthropic calls one request can legitimately make before the connection
+ * ends. /build and most other routes make at most one (the Debug agent's
+ * own requestSpecFix, only if diffAndMigrate throws); /refine makes TWO:
+ * routes/projects.ts's own generateSpec() call, awaited *before*
+ * streamPipeline() ever writes response headers, plus that same
+ * requestSpecFix() fallback if the regenerated spec then fails to migrate --
+ * both still gated by this one AbortController, since it's a single
+ * long-lived SSE connection from the client's point of view. So the real
+ * worst case is 101 + 60 + 60 = 221s, not 101 + 60 = 161s -- an earlier
+ * version of this constant and its comment only counted one Anthropic call,
+ * which would have let this exact combination (a cold start plus a
+ * migration that needs the Debug agent's fix) be falsely aborted as "taking
+ * too long" even though the server was never stalled. (An even earlier
+ * version, 100s, was already less than a smaller 109s one-call worst case,
+ * producing that same false-positive on the enhance-and-build flow -- the
+ * bug this comment keeps needing to re-derive the math for.) This value
+ * adds just under a minute of margin on top of the 221s worst case for
+ * request/response transfer, JSON parsing, and DB writes, rather than
+ * shaving it as close as possible to the theoretical minimum. Whenever
+ * DEFAULT_DELAYS_MS's own total changes, or a route grows a third
+ * sequential Anthropic call, this must be recalculated too.
  */
-export const REQUEST_TIMEOUT_MS = 220_000;
+export const REQUEST_TIMEOUT_MS = 280_000;
 
 /**
  * Wraps fetchWithWakeRetry so that if the connection never succeeds within
