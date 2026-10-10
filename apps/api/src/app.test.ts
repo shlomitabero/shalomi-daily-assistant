@@ -63,7 +63,7 @@ async function withServer(
  * connect/status/send/disconnect HTTP surface can still be exercised
  * end-to-end against the app's own real running server.
  */
-function createFakeWhatsAppSocket() {
+function createFakeWhatsAppSocket(opts?: { logout?: () => Promise<void> }) {
   let connectionUpdateHandler: ((u: BaileysConnectionUpdate) => void) | undefined;
   let messagesUpsertHandler: ((u: BaileysMessagesUpsert) => void) | undefined;
   const sendCalls: { jid: string; text: string }[] = [];
@@ -79,7 +79,13 @@ function createFakeWhatsAppSocket() {
       sendCalls.push({ jid, text: content.text });
       return {};
     },
-    async logout() {},
+    // Real Baileys logout() is a network round-trip (a genuine await) --
+    // opts.logout lets a test hold that open with a controlled promise to
+    // deterministically land inside DELETE /projects/:id's own in-flight
+    // window, instead of racing real timers (round 530's own convention).
+    async logout() {
+      await opts?.logout?.();
+    },
   };
   return {
     sock,
@@ -89,13 +95,13 @@ function createFakeWhatsAppSocket() {
   };
 }
 
-function createTestWhatsAppManager(db: ForgeDatabase) {
+function createTestWhatsAppManager(db: ForgeDatabase, opts?: { logout?: () => Promise<void> }) {
   const createdSockets: ReturnType<typeof createFakeWhatsAppSocket>[] = [];
   const manager = new WhatsAppWebManager({
     db,
     sessionsRootDir: "/tmp/forge-whatsapp-apptest-sessions",
     createSocket: async () => {
-      const fake = createFakeWhatsAppSocket();
+      const fake = createFakeWhatsAppSocket(opts);
       createdSockets.push(fake);
       return { sock: fake.sock, saveCreds: async () => {} };
     },
@@ -3860,6 +3866,84 @@ test("deleting a project with a live WhatsApp connection tears the connection do
     {
       whatsapp: (db) => {
         const { manager, createdSockets: sockets } = createTestWhatsAppManager(db);
+        createdSockets = sockets;
+        return manager;
+      },
+    },
+  );
+});
+
+/**
+ * Regression test (round 534): DELETE /projects/:id's own real await --
+ * whatsapp.disconnect() -> a genuine network round-trip when a WhatsApp Web
+ * socket is connected -- used to run with no activePipelines protection of
+ * its own. Every ordinary quick mutation route (add a role, here) only
+ * *checks* activePipelines; it never sets it. During DELETE's own await
+ * window, such a route could read the still-present project row, run its
+ * whole update to completion, and return 200 for a change deleteProject()
+ * erases moments later with no error ever reaching that caller. Holds
+ * logout() open with a controlled promise (this file's own established
+ * technique for a deterministic race, not a real timer) to land exactly
+ * inside that window before firing the concurrent request.
+ */
+test("DELETE /projects/:id rejects a concurrent mutation that lands during its own WhatsApp-disconnect await, instead of silently discarding it", async () => {
+  let createdSockets: ReturnType<typeof createFakeWhatsAppSocket>[] = [];
+  let releaseLogout!: () => void;
+  const logoutHeld = new Promise<void>((resolve) => {
+    releaseLogout = resolve;
+  });
+  let resolveLogoutEntered!: () => void;
+  const logoutEntered = new Promise<void>((resolve) => {
+    resolveLogoutEntered = resolve;
+  });
+
+  await withServer(
+    async (baseUrl) => {
+      const token = await signup(baseUrl, "delete-race1@example.com");
+      const createRes = await fetch(`${baseUrl}/api/projects`, {
+        method: "POST",
+        headers: authHeaders(token),
+        body: JSON.stringify({ description: "A CRM with customers and deals." }),
+      });
+      const { project } = (await createRes.json()) as { project: { id: string } };
+
+      await fetch(`${baseUrl}/api/projects/${project.id}/integrations/whatsapp/connect`, { method: "POST", headers: authHeaders(token) });
+      createdSockets[0].sock.user = { id: "15550001111:1@s.whatsapp.net" };
+      createdSockets[0].emitConnectionUpdate({ connection: "open" });
+
+      const deletePromise = fetch(`${baseUrl}/api/projects/${project.id}`, { method: "DELETE", headers: authHeaders(token) });
+
+      // Wait for DELETE's own logout() await to actually be entered (same
+      // technique as round 424's "waits for logout() to actually be
+      // entered") before firing the concurrent mutation -- guarantees it
+      // lands inside the window, not before or after it.
+      await logoutEntered;
+
+      const roleRes = await fetch(`${baseUrl}/api/projects/${project.id}/roles`, {
+        method: "POST",
+        headers: authHeaders(token),
+        body: JSON.stringify({ role: "Race Tester" }),
+      });
+      const roleBody = (await roleRes.json()) as { code?: string };
+
+      releaseLogout();
+      const deleteRes = await deletePromise;
+
+      assert.equal(roleRes.status, 409, "a mutation landing during DELETE's own await must be rejected, not silently discarded");
+      assert.equal(roleBody.code, "PIPELINE_IN_PROGRESS");
+      assert.equal(deleteRes.status, 204);
+
+      const getAfter = await fetch(`${baseUrl}/api/projects/${project.id}`, { headers: authHeaders(token) });
+      assert.equal(getAfter.status, 404);
+    },
+    {
+      whatsapp: (db) => {
+        const { manager, createdSockets: sockets } = createTestWhatsAppManager(db, {
+          logout: async () => {
+            resolveLogoutEntered();
+            await logoutHeld;
+          },
+        });
         createdSockets = sockets;
         return manager;
       },

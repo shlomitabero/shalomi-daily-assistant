@@ -616,6 +616,16 @@ export function createProjectsRouter(db: ForgeDatabase, provider: SpecProvider |
    * permanently orphaned SQLite table with no project row ever pointing
    * at it again -- a real disk-space leak nothing else in this app ever
    * cleans up.
+   *
+   * This route itself now also *adds* to activePipelines (not just checks
+   * it) for the duration of its own async work, below -- the reverse
+   * direction of the same hazard: whatsapp.disconnect() is a genuine await
+   * (a real network round-trip when a WhatsApp Web socket is connected),
+   * and every ordinary quick mutation route in this file only checks
+   * activePipelines, never sets it. Without this, such a route could read
+   * the still-present project row during that window, run its whole
+   * update to completion, and return 200 for a change that deleteProject()
+   * erases moments later with no error ever reaching that caller.
    */
   router.delete(
     "/projects/:id",
@@ -624,8 +634,26 @@ export function createProjectsRouter(db: ForgeDatabase, provider: SpecProvider |
       if (activePipelines.has(project.id)) {
         throw new HttpError(409, "A build or refine is already running for this project", "PIPELINE_IN_PROGRESS");
       }
-      await whatsapp.disconnect(project.id).catch(() => {});
-      deleteProject(db, project.id);
+      // This route has its own genuine await (whatsapp.disconnect() -> a
+      // real network round-trip to the WhatsApp Web socket, when one is
+      // connected) before deleteProject() actually runs -- the same kind
+      // of gap /build/refine/answers/restore already guard against via
+      // activePipelines, just on this route's own side instead of a
+      // pipeline's. Without marking this project id busy for that window,
+      // any ordinary quick mutation route (add a role, rename, add an
+      // entity, ...) that only *checks* activePipelines -- never sets it
+      // itself -- can read the still-present project row, run its entire
+      // update to completion, and return 200 with what looks like a
+      // persisted change, moments before deleteProject() below erases the
+      // row (and that "persisted" change) out from under it with no error
+      // ever surfacing to that caller.
+      activePipelines.add(project.id);
+      try {
+        await whatsapp.disconnect(project.id).catch(() => {});
+        deleteProject(db, project.id);
+      } finally {
+        activePipelines.delete(project.id);
+      }
       res.status(204).end();
     }),
   );
