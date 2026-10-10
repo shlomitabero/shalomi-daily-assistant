@@ -290,6 +290,18 @@ export function createAuthRouter(
         return;
       }
       const newHash = await hashPassword(newPassword);
+      // Round 539: both scrypt calls above are genuine awaits (offloaded to
+      // libuv's threadpool -- see this file's own doc comment on
+      // hashPassword/verifyPassword), long enough for a concurrent DELETE
+      // /auth/account using this same still-valid token to run to
+      // completion and delete this user row entirely before either resolves.
+      // Without this re-check, the writes below would both silently affect
+      // zero rows and this handler would still report 204, as if the
+      // password change succeeded on an account that no longer exists.
+      if (!findUserById(db, req.userId!)) {
+        next(new HttpError(401, "This account no longer exists", "USER_NOT_FOUND"));
+        return;
+      }
       updatePasswordHash(db, req.userId!, newHash);
       deleteOtherSessionsForUser(db, req.userId!, extractBearerToken(req)!);
       res.status(204).end();

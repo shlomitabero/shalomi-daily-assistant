@@ -805,6 +805,57 @@ test("changing your password requires a valid session, the same as any other aut
   });
 });
 
+/**
+ * Regression test for a real bug: PATCH /auth/password's own writes
+ * (updatePasswordHash + deleteOtherSessionsForUser) ran unconditionally
+ * after its two genuine scrypt awaits (verifyPassword, then hashPassword --
+ * both offloaded to libuv's threadpool, see auth/password.ts's own comment,
+ * the same genuine await the "two concurrent signups" test above relies on
+ * for real overlap with no artificial gate needed). A concurrent DELETE
+ * /auth/account using the SAME still-valid token could delete the user row
+ * entirely while PATCH was still parked on one of those awaits -- both
+ * writes below would then silently affect zero rows, yet the handler still
+ * responded 204 as if the password change had succeeded on an account that
+ * no longer existed.
+ */
+test("changing your password while the same account is concurrently deleted must not report success on a change that was never written", async () => {
+  await withServer(async (baseUrl) => {
+    const email = `change-pw-vs-delete-${Date.now()}@example.com`;
+    const token = await signup(baseUrl, email);
+    // A couple of throwaway requests first, so the HTTP client's own
+    // connection machinery has settled before the timed race below --
+    // otherwise first-connection setup jitter can skew which request's
+    // handler genuinely starts first.
+    await fetch(`${baseUrl}/api/auth/me`, { headers: authHeaders(token) });
+    await fetch(`${baseUrl}/api/auth/me`, { headers: authHeaders(token) });
+
+    const patchPromise = fetch(`${baseUrl}/api/auth/password`, {
+      method: "PATCH",
+      headers: authHeaders(token),
+      body: JSON.stringify({ currentPassword: "correct-horse-battery", newPassword: "brand-new-password" }),
+    });
+    // DELETE has no genuine await of its own in this scenario (no projects,
+    // no live WhatsApp connection), so it needs a short head start for its
+    // synchronous session-revocation to land genuinely inside one of
+    // PATCH's own scrypt awaits, not before PATCH's handler has even begun.
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    const deleteRes = await fetch(`${baseUrl}/api/auth/account`, { method: "DELETE", headers: authHeaders(token) });
+    assert.equal(deleteRes.status, 204);
+
+    const patchRes = await patchPromise;
+    assert.notEqual(patchRes.status, 204, "must not report success once the account it targets no longer exists");
+    assert.equal(patchRes.status, 401);
+    assert.equal(((await patchRes.json()) as { code?: string }).code, "USER_NOT_FOUND");
+
+    const reSignupRes = await fetch(`${baseUrl}/api/auth/signup`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ email, password: "whatever-password" }),
+    });
+    assert.equal(reSignupRes.status, 201, "the email must be free to re-register -- the account was genuinely deleted, not left in some half-updated state");
+  });
+});
+
 test("project routes reject requests without a valid session", async () => {
   await withServer(async (baseUrl) => {
     const res = await fetch(`${baseUrl}/api/projects`);
