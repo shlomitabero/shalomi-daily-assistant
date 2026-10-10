@@ -1078,3 +1078,48 @@ test("Product's 'מלאי' keyword doesn't spuriously match 'חשמלאי' (elec
   const inventory = await provider.generate("אפליקציה לניהול מלאי בחנות");
   assert.ok(inventory.entities.some((e) => e.name === "Product"), "'מלאי' must still match Product");
 });
+
+/**
+ * Regression test for round 527's finding: bare "חיוב" ("charge"), used in
+ * both PAYMENT_KEYWORDS and the Invoice entry's keywords, is a substring
+ * of the ordinary, unrelated adjective/noun "חיובי"/"חיובית"/"חיוביות"
+ * ("positive"/"positivity") -- extremely natural phrasing for a feedback/
+ * review/survey app ("משוב חיובי", "ביקורת חיובית"). A description with no
+ * mention of money at all would still spuriously get a full Invoice
+ * entity and the "which payment provider" question, purely from this
+ * substring, the same collision class already fixed for "stripe"
+ * (round 460) and "מלאי" (round 518). Fixed with a lookahead regex that
+ * excludes "חיוב" immediately followed by "י" unless that "י" is itself
+ * followed by "ם" -- which still matches the real plural "חיובים"
+ * ("charges") while rejecting the "positive" forms.
+ */
+test("'חיוב' keyword doesn't spuriously match 'חיובי'/'חיובית'/'חיוביות' (positive)", async () => {
+  const provider = new HeuristicSpecProvider();
+
+  const positiveFeedback = await provider.generate("אפליקציה לאיסוף משוב חיובי מלקוחות על השירות שלנו");
+  assert.ok(
+    !positiveFeedback.entities.some((e) => e.name === "Invoice"),
+    "'חיובי' (positive) alone must not spuriously match Invoice via a bare 'חיוב' substring",
+  );
+  const positiveQuestion = positiveFeedback.openQuestions[0];
+  assert.equal(positiveQuestion.question, "האם האפליקציה צריכה לקבל תשלומים?");
+  assert.equal(positiveQuestion.recommendation, "בלי תשלומים");
+
+  const positiveReview = await provider.generate("מערכת לניהול ביקורות חיוביות ושליליות על מוצרים");
+  assert.ok(
+    !positiveReview.entities.some((e) => e.name === "Invoice"),
+    "'חיוביות' (positivity) alone must not spuriously match Invoice via a bare 'חיוב' substring",
+  );
+
+  // The real business terms still work: the bare word itself, and its
+  // real plural "חיובים" ("charges"), which shares the same "י" character
+  // immediately after "חיוב" that the positive forms do.
+  const billing = await provider.generate("אפליקציה לניהול חיוב חודשי למנויים");
+  assert.ok(billing.entities.some((e) => e.name === "Invoice"), "'חיוב' must still match Invoice");
+
+  const charges = await provider.generate("אפליקציה למעקב אחרי חיובים פתוחים של לקוחות");
+  assert.ok(charges.entities.some((e) => e.name === "Invoice"), "'חיובים' (charges) must still match Invoice");
+  const chargesQuestion = charges.openQuestions[0];
+  assert.equal(chargesQuestion.question, "באיזה ספק תשלומים כדאי להשתמש?");
+  assert.equal(chargesQuestion.recommendation, "Stripe");
+});

@@ -22,7 +22,17 @@ const PAYMENT_KEYWORDS: (string | RegExp)[] = [
   // a \b-bounded regex (rather than allowing an "s" suffix) also correctly
   // keeps rejecting "stripes" (the fabric pattern, plural).
   /\bstripe\b/,
-  "תשלום", "תשלומים", "חשבונית", "חיוב", "מנוי",
+  "תשלום", "תשלומים", "חשבונית",
+  // Bare "חיוב" ("charge") is a substring of the ordinary, unrelated
+  // adjective/noun "חיובי"/"חיובית"/"חיוביות" ("positive"/"positivity") --
+  // extremely natural phrasing for a feedback/review/survey app ("משוב
+  // חיובי", "ביקורת חיובית"), which has nothing to do with billing. JS's
+  // \b doesn't bound Hebrew (round 518's own fix for "מלאי" hit the same
+  // issue), so this excludes "חיוב" immediately followed by "י" unless
+  // that "י" is itself followed by "ם" -- which still matches the real
+  // plural "חיובים" ("charges") while rejecting the "positive" forms.
+  /חיוב(?!י(?!ם))/,
+  "מנוי",
 ];
 
 /**

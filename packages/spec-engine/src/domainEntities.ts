@@ -176,7 +176,11 @@ export const DOMAIN_ENTITY_RULES: DomainEntityRule[] = [
     },
   },
   {
-    keywords: ["invoice", "billing", "payment", "חשבונית", "חשבוניות", "חיוב", "חיובים"],
+    // Bare "חיוב" is a substring of the unrelated adjective/noun
+    // "חיובי"/"חיובית"/"חיוביות" ("positive"/"positivity") -- see the
+    // identical fix and its rationale in heuristic.ts's PAYMENT_KEYWORDS.
+    // "חיובים" is still matched explicitly as its own keyword below.
+    keywords: ["invoice", "billing", "payment", "חשבונית", "חשבוניות", /חיוב(?!י(?!ם))/, "חיובים"],
     labelHe: "חשבוניות",
     descriptionHe: "חשבון שנשלח ללקוח.",
     fieldLabelsHe: {
