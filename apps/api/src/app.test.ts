@@ -17,13 +17,43 @@ import type { EmailSender } from "./email.js";
 import { createStore } from "./store.js";
 import { WhatsAppWebManager, type BaileysConnectionUpdate, type BaileysMessagesUpsert, type WhatsAppSocket } from "./whatsappWeb.js";
 
-/** A controllable EmailSender double for the login-code tests: records every send() call and lets the test decide whether it succeeds. */
-function createFakeEmailSender(opts?: { configured?: boolean; failWith?: Error }): EmailSender & { sentTo: { to: string; subject: string; text: string }[] } {
+/**
+ * A controllable EmailSender double for the login-code tests: records every
+ * send() call and lets the test decide whether it succeeds. `gateFirstSend`
+ * (round 538) makes only the FIRST call to send() park on a manually
+ * released promise -- every later call resolves immediately -- the same
+ * "first-call-only gate" idiom as this file's own createGatedProvider(),
+ * applied to EmailSender.send instead of SpecProvider.generate, for testing
+ * two concurrent /auth/login calls racing each other's own network await.
+ */
+function createFakeEmailSender(
+  opts?: { configured?: boolean; failWith?: Error; gateFirstSend?: boolean },
+): EmailSender & {
+  sentTo: { to: string; subject: string; text: string }[];
+  waitUntilFirstSendStarted: () => Promise<void>;
+  releaseFirstSend: () => void;
+} {
   const sentTo: { to: string; subject: string; text: string }[] = [];
+  let sendCallCount = 0;
+  let releaseFirstSend: () => void = () => {};
+  let signalFirstSendStarted: () => void = () => {};
+  const firstSendStarted = new Promise<void>((res) => {
+    signalFirstSendStarted = res;
+  });
+  const firstSendGate = new Promise<void>((res) => {
+    releaseFirstSend = res;
+  });
   return {
     configured: opts?.configured ?? true,
     sentTo,
+    waitUntilFirstSendStarted: () => firstSendStarted,
+    releaseFirstSend: () => releaseFirstSend(),
     async send(to, subject, text) {
+      sendCallCount++;
+      if (opts?.gateFirstSend && sendCallCount === 1) {
+        signalFirstSendStarted();
+        await firstSendGate;
+      }
       if (opts?.failWith) throw opts.failWith;
       sentTo.push({ to, subject, text });
     },
@@ -416,6 +446,62 @@ test("requesting a fresh login code invalidates the previous one for the same ac
       });
       assert.equal(okRes.status, 200);
       void secondCode; // captured for clarity on the (deleted) second attempt; the third is what's actually verified above
+    },
+    { emailSender },
+  );
+});
+
+test("two concurrent /auth/login calls for the same account must not let one invalidate the other's row before that other's own response is sent", async () => {
+  const emailSender = createFakeEmailSender({ gateFirstSend: true });
+  await withServer(
+    async (baseUrl) => {
+      const email = "dana@example.com";
+      await fetch(`${baseUrl}/api/auth/signup`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ email, password: "correct-horse-battery" }),
+      });
+
+      // Request A's send() is the gate's first call -> parks until released.
+      const requestA = fetch(`${baseUrl}/api/auth/login`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ email, password: "correct-horse-battery" }),
+      });
+      await emailSender.waitUntilFirstSendStarted();
+
+      // Request B's send() is the gate's second call -> resolves immediately,
+      // so B's own write+respond can complete while A is still parked.
+      const resB = await fetch(`${baseUrl}/api/auth/login`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ email, password: "correct-horse-battery" }),
+      });
+      assert.equal(resB.status, 200);
+      const { loginCodeId: idB } = (await resB.json()) as { loginCodeId: string };
+
+      emailSender.releaseFirstSend();
+      const resA = await requestA;
+      assert.equal(resA.status, 200);
+      const { loginCodeId: idA } = (await resA.json()) as { loginCodeId: string };
+      assert.notEqual(idA, idB);
+
+      // A's response named idA -- that row must exist at this point, even
+      // though B's overlapping deleteLoginCodesForUser ran while A was
+      // still parked on its own send(). A wrong-code probe distinguishes
+      // "row exists" (INVALID_LOGIN_CODE) from "row is gone"
+      // (LOGIN_CODE_EXPIRED), without needing A's real 6-digit code.
+      const probeRes = await fetch(`${baseUrl}/api/auth/login/verify-code`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ loginCodeId: idA, code: "000000" }),
+      });
+      const probeBody = (await probeRes.json()) as { code?: string };
+      assert.equal(
+        probeBody.code,
+        "INVALID_LOGIN_CODE",
+        "request A's own loginCodeId must still name a row right after A's response carried it, not have been deleted out from under it by B's overlapping invalidation",
+      );
     },
     { emailSender },
   );

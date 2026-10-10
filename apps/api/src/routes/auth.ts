@@ -162,17 +162,8 @@ export function createAuthRouter(
         res.json({ user: { id: record.id, email: record.email, createdAt: record.createdAt }, token });
         return;
       }
-      // At most one pending code per account at a time -- see
-      // deleteLoginCodesForUser's own doc comment.
-      deleteLoginCodesForUser(db, record.id);
       const code = generateLoginCode();
       const loginCodeId = randomUUID();
-      createLoginCode(db, {
-        id: loginCodeId,
-        userId: record.id,
-        codeHash: hashLoginCode(code),
-        expiresAt: new Date(Date.now() + LOGIN_CODE_TTL_MS).toISOString(),
-      });
       const isHebrew = lang !== "en";
       const subject = isHebrew ? `קוד ההתחברות שלך: ${code}` : `Your login code: ${code}`;
       const body = isHebrew
@@ -181,12 +172,33 @@ export function createAuthRouter(
       try {
         await emailSender.send(record.email, subject, body);
       } catch (err) {
-        // No code is valid without a successful send -- delete the row
-        // rather than leave a row around nobody can ever satisfy.
-        deleteLoginCode(db, loginCodeId);
+        // Nothing was ever written, so there's no row to clean up here --
+        // unlike before this fix (round 538), the DB write now happens only
+        // after send() succeeds (see below), precisely to avoid needing
+        // this kind of compensating delete.
         next(new HttpError(502, `Failed to send the login code email: ${(err as Error).message}`, "EMAIL_SEND_FAILED"));
         return;
       }
+      // The insert (and the invalidation of any older pending code for this
+      // account -- see deleteLoginCodesForUser's own doc comment) happens
+      // only now, after the genuine network await above, with no further
+      // await before the response: two concurrent logins for the same
+      // account used to both run their insert *before* their own send()
+      // call, so whichever one's send() resolved first could invalidate the
+      // other's already-inserted row while that other request was still
+      // parked on its own send() -- that other request would then respond
+      // with a loginCodeId already deleted out from under it (round 538).
+      // Doing the write+respond here instead, synchronously, means nothing
+      // can interleave between this exact request minting its row and
+      // naming it in the response it sends -- the same "no await = no
+      // race" guarantee the rest of this codebase already relies on.
+      deleteLoginCodesForUser(db, record.id);
+      createLoginCode(db, {
+        id: loginCodeId,
+        userId: record.id,
+        codeHash: hashLoginCode(code),
+        expiresAt: new Date(Date.now() + LOGIN_CODE_TTL_MS).toISOString(),
+      });
       res.json({ requiresCode: true, loginCodeId });
     } catch (err) {
       next(err);
