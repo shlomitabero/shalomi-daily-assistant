@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { db, makeId } from '../db/store.js';
 import { verifyPaddleSignature } from '../engine/paddleSignature.js';
+import { extractTransactionAmount } from '../engine/paddleTransaction.js';
 import { logAction } from '../services/execution.js';
 import { isPaddleConfigured, paddleClientConfig } from '../services/paddle.js';
 
@@ -36,7 +37,18 @@ export function paddleWebhookHandler(req, res) {
       const alreadyRecorded = opportunityId && db.ledger.where((e) => e.externalId === txn.id).length > 0;
 
       if (opportunityId && !alreadyRecorded) {
-        const amount = Number(txn.details?.totals?.total ?? 0) / 100;
+        let amount;
+        try {
+          amount = extractTransactionAmount(txn);
+        } catch (err) {
+          // Never write a NaN/invalid amount to the ledger — every future
+          // totalSpentSoFar()/summarizeLedger() sum would then be
+          // permanently corrupted, not just this one transaction.
+          console.error('Paddle webhook: refusing to record a malformed transaction amount', err);
+          logAction({ type: 'sale_confirmed', detail: { opportunityId, transactionId: txn.id, error: err.message }, result: `blocked: ${err.message}` });
+          res.json({ received: true });
+          return;
+        }
         db.ledger.insert({
           id: makeId('led'),
           type: 'revenue',
