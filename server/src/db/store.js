@@ -9,7 +9,18 @@ import { fileURLToPath } from 'node:url';
 import { nanoid } from 'nanoid';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const DATA_DIR = join(__dirname, '..', '..', 'data');
+
+// On a platform like Railway, a plain relative path lives inside the
+// container's filesystem, which is thrown away and rebuilt fresh on every
+// deploy — there is nothing to attach a persistent volume to unless the
+// path is a fixed, known location. DATA_DIR lets the deploy pin that
+// location explicitly (e.g. a volume mounted at /data) while local dev and
+// tests keep working unchanged with no env var set.
+export function resolveDataDir(envValue, defaultDir) {
+  return envValue || defaultDir;
+}
+
+const DATA_DIR = resolveDataDir(process.env.DATA_DIR, join(__dirname, '..', '..', 'data'));
 const DB_FILE = join(DATA_DIR, 'db.json');
 
 const TABLES = [
