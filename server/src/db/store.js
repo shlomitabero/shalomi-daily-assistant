@@ -3,7 +3,7 @@
 // swapping this for a real Postgres repository (same function signatures)
 // is the entire migration to production. This is a personal single-owner
 // tool, not a multi-tenant SaaS, so there is no users table.
-import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
+import { readFileSync, writeFileSync, existsSync, mkdirSync, renameSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { nanoid } from 'nanoid';
@@ -30,7 +30,21 @@ function load() {
     try {
       const raw = JSON.parse(readFileSync(DB_FILE, 'utf-8'));
       return { ...emptyState(), ...raw };
-    } catch {
+    } catch (err) {
+      // A corrupt db.json silently swallowed here used to be catastrophic:
+      // the in-memory state would start empty, and the very first write
+      // anywhere in the app (even just `getSettings()` inserting its
+      // defaults on login) calls persist(), which overwrites DB_FILE with
+      // that near-empty state — permanently destroying the entire ledger,
+      // every opportunity, every approval, before the owner could ever
+      // notice. Back up the corrupt file first so it's recoverable, and
+      // log loudly so this shows up in the deploy logs instead of vanishing.
+      console.error(`db.json is corrupt and could not be parsed (${err.message}) — starting from empty state. The corrupt file has been preserved for recovery.`);
+      try {
+        renameSync(DB_FILE, `${DB_FILE}.corrupt-${Date.now()}`);
+      } catch (renameErr) {
+        console.error('could not back up the corrupt db.json', renameErr);
+      }
       return emptyState();
     }
   }
