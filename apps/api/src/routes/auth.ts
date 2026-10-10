@@ -108,7 +108,12 @@ function issueSession(db: ForgeDatabase, userId: string): string {
   return token;
 }
 
-export function createAuthRouter(db: ForgeDatabase, whatsapp: WhatsAppWebManager, emailSender: EmailSender): Router {
+export function createAuthRouter(
+  db: ForgeDatabase,
+  whatsapp: WhatsAppWebManager,
+  emailSender: EmailSender,
+  activePipelines: Set<string>,
+): Router {
   const router = Router();
 
   router.post("/auth/signup", async (req, res, next) => {
@@ -303,6 +308,15 @@ export function createAuthRouter(db: ForgeDatabase, whatsapp: WhatsAppWebManager
    * delete -- permanently orphaned, with the request still reporting
    * success. listOwnedProjectIds never parses spec_json at all, so it
    * can't miss a project this way.
+   *
+   * Round 535: the per-project loop below now also guards itself with the
+   * same `activePipelines` Set routes/projects.ts's own routes use (shared
+   * via app.ts, not declared separately here) -- this loop's own
+   * whatsapp.disconnect() await is the same reverse-direction hazard
+   * DELETE /projects/:id's own comment already documents, except here a
+   * COLLABORATOR's own still-valid session (never revoked by
+   * deleteAllSessionsForUser above, which only ever touches the account
+   * being deleted) is the one who could otherwise race it.
    */
   router.delete("/auth/account", requireAuth(db), async (req, res, next) => {
     try {
@@ -326,8 +340,29 @@ export function createAuthRouter(db: ForgeDatabase, whatsapp: WhatsAppWebManager
       deleteAllSessionsForUser(db, req.userId!);
       const ownedProjectIds = listOwnedProjectIds(db, req.userId!);
       for (const projectId of ownedProjectIds) {
-        await whatsapp.disconnect(projectId).catch(() => {});
-        deleteProject(db, projectId);
+        // Round 535: same activePipelines guard DELETE /projects/:id
+        // (routes/projects.ts) already sets around this exact await, for
+        // the exact same reason -- this loop's own whatsapp.disconnect()
+        // is a genuine network round-trip whenever that project has a
+        // live WhatsApp Web connection, and every ordinary quick mutation
+        // route in routes/projects.ts only *checks* activePipelines, never
+        // sets it. A collaborator on this project (whose own session this
+        // route never touches -- deleteAllSessionsForUser above only ever
+        // revokes the ACCOUNT BEING DELETED's own sessions) could use
+        // their own still-valid token to read the still-present project
+        // row during this window, run an edit to completion, and get back
+        // a 200 for a change that deleteProject() below erases moments
+        // later with no error ever reaching them.
+        if (activePipelines.has(projectId)) {
+          throw new HttpError(409, "A build or refine is already running for one of your projects", "PIPELINE_IN_PROGRESS");
+        }
+        activePipelines.add(projectId);
+        try {
+          await whatsapp.disconnect(projectId).catch(() => {});
+          deleteProject(db, projectId);
+        } finally {
+          activePipelines.delete(projectId);
+        }
       }
       removeAllCollaborationsForUser(db, req.userId!);
       deleteUser(db, req.userId!);

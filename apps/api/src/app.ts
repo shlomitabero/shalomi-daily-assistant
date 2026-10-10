@@ -51,9 +51,17 @@ export function createApp(
     whatsapp ?? new WhatsAppWebManager({ db, sessionsRootDir: path.join(os.tmpdir(), "forge-whatsapp-sessions") });
   const resolvedEmailSender = emailSender ?? new ResendEmailSender();
 
+  // Shared across both routers below (see createProjectsRouter's own
+  // comment on activePipelines) so DELETE /auth/account's per-project
+  // cleanup loop in routes/auth.ts can guard against the same
+  // concurrent-mutation-during-a-genuine-await hazard that every
+  // project-scoped route in routes/projects.ts already guards against --
+  // a Set private to just one of the two router modules couldn't do that.
+  const activePipelines = new Set<string>();
+
   app.get("/api/health", (_req, res) => res.json({ status: "ok" }));
-  app.use("/api", createAuthRouter(db, whatsappManager, resolvedEmailSender));
-  app.use("/api", createProjectsRouter(db, provider, whatsappManager));
+  app.use("/api", createAuthRouter(db, whatsappManager, resolvedEmailSender, activePipelines));
+  app.use("/api", createProjectsRouter(db, provider, whatsappManager, activePipelines));
 
   if (staticDir && existsSync(staticDir)) {
     app.use(express.static(staticDir));

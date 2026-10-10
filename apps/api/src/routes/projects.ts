@@ -321,7 +321,12 @@ async function streamPipeline(
   res.end();
 }
 
-export function createProjectsRouter(db: ForgeDatabase, provider: SpecProvider | undefined, whatsapp: WhatsAppWebManager): Router {
+export function createProjectsRouter(
+  db: ForgeDatabase,
+  provider: SpecProvider | undefined,
+  whatsapp: WhatsAppWebManager,
+  activePipelines: Set<string>,
+): Router {
   const router = Router();
   router.use(requireAuth(db));
 
@@ -343,8 +348,13 @@ export function createProjectsRouter(db: ForgeDatabase, provider: SpecProvider |
    * only writer of project.spec (a single Node process backs this whole
    * app -- see app.ts's own comment on `staticDir`), so there's nothing
    * this needs to survive a restart for.
+   *
+   * Round 535: constructed once in app.ts and passed in here (rather than
+   * declared locally, as before) so routes/auth.ts's DELETE /auth/account
+   * handler can guard its own per-project cleanup loop against the exact
+   * same hazard -- a Set private to this router's own closure couldn't be
+   * reached from another router module at all.
    */
-  const activePipelines = new Set<string>();
 
   /**
    * The Prompt Architect Agent: takes a short, rough idea and rewrites it

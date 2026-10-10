@@ -3951,6 +3951,86 @@ test("DELETE /projects/:id rejects a concurrent mutation that lands during its o
   );
 });
 
+test("DELETE /auth/account rejects a collaborator's concurrent mutation that lands during its own per-project WhatsApp-disconnect await, instead of silently discarding it", async () => {
+  let createdSockets: ReturnType<typeof createFakeWhatsAppSocket>[] = [];
+  let releaseLogout!: () => void;
+  const logoutHeld = new Promise<void>((resolve) => {
+    releaseLogout = resolve;
+  });
+  let resolveLogoutEntered!: () => void;
+  const logoutEntered = new Promise<void>((resolve) => {
+    resolveLogoutEntered = resolve;
+  });
+
+  await withServer(
+    async (baseUrl) => {
+      const ownerToken = await signup(baseUrl, "account-delete-race-owner@example.com");
+      const collabToken = await signup(baseUrl, "account-delete-race-collab@example.com");
+
+      const createRes = await fetch(`${baseUrl}/api/projects`, {
+        method: "POST",
+        headers: authHeaders(ownerToken),
+        body: JSON.stringify({ description: "A CRM with customers and deals." }),
+      });
+      const { project } = (await createRes.json()) as { project: { id: string } };
+
+      const inviteRes = await fetch(`${baseUrl}/api/projects/${project.id}/collaborators`, {
+        method: "POST",
+        headers: authHeaders(ownerToken),
+        body: JSON.stringify({ email: "account-delete-race-collab@example.com" }),
+      });
+      assert.equal(inviteRes.status, 201);
+
+      await fetch(`${baseUrl}/api/projects/${project.id}/integrations/whatsapp/connect`, { method: "POST", headers: authHeaders(ownerToken) });
+      createdSockets[0].sock.user = { id: "15550002222:1@s.whatsapp.net" };
+      createdSockets[0].emitConnectionUpdate({ connection: "open" });
+
+      const deletePromise = fetch(`${baseUrl}/api/auth/account`, { method: "DELETE", headers: authHeaders(ownerToken) });
+
+      // Same technique as DELETE /projects/:id's own race test above: wait
+      // for this loop's logout() await to actually be entered before
+      // firing the concurrent mutation, so it's guaranteed to land inside
+      // the window. Uses the COLLABORATOR's own token, not the owner's --
+      // deleteAllSessionsForUser only revokes the account being deleted,
+      // so the collaborator's session is still perfectly valid here.
+      await logoutEntered;
+
+      const roleRes = await fetch(`${baseUrl}/api/projects/${project.id}/roles`, {
+        method: "POST",
+        headers: authHeaders(collabToken),
+        body: JSON.stringify({ role: "Race Tester" }),
+      });
+      const roleBody = (await roleRes.json()) as { code?: string };
+
+      releaseLogout();
+      const deleteRes = await deletePromise;
+
+      assert.equal(
+        roleRes.status,
+        409,
+        "a collaborator's mutation landing during DELETE /auth/account's own per-project await must be rejected, not silently discarded",
+      );
+      assert.equal(roleBody.code, "PIPELINE_IN_PROGRESS");
+      assert.equal(deleteRes.status, 204);
+
+      const getAfter = await fetch(`${baseUrl}/api/projects/${project.id}`, { headers: authHeaders(collabToken) });
+      assert.equal(getAfter.status, 404);
+    },
+    {
+      whatsapp: (db) => {
+        const { manager, createdSockets: sockets } = createTestWhatsAppManager(db, {
+          logout: async () => {
+            resolveLogoutEntered();
+            await logoutHeld;
+          },
+        });
+        createdSockets = sockets;
+        return manager;
+      },
+    },
+  );
+});
+
 test("a user cannot restore another user's checkpoint into their own project by guessing/reusing its id", async () => {
   await withServer(async (baseUrl) => {
     const ownerToken = await signup(baseUrl, "owner2@example.com");
