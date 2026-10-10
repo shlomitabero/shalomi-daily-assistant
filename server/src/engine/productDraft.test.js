@@ -1,6 +1,40 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { buildProductPrompt, draftProduct, extractJson } from './productDraft.js';
+import { buildProductPrompt, draftProduct, extractJson, isValidDraftShape } from './productDraft.js';
+
+const VALID_DRAFT = {
+  title: 'מדריך תקציב', guide: 'תוכן המדריך כאן', salesHeadline: 'כותרת מכירה',
+  salesBullets: ['יתרון 1', 'יתרון 2', 'יתרון 3'], salesParagraph: 'פסקת מכירה',
+};
+
+test('isValidDraftShape accepts a complete draft', () => {
+  assert.equal(isValidDraftShape(VALID_DRAFT), true);
+});
+
+test('isValidDraftShape rejects a draft missing salesBullets entirely', () => {
+  // ProductPage.jsx (the public, unauthenticated sales page) does
+  // salesBullets.map(...) with no guard — a missing field here would crash
+  // that page for a real customer trying to buy, not just log an error.
+  const { salesBullets, ...withoutBullets } = VALID_DRAFT;
+  assert.equal(isValidDraftShape(withoutBullets), false);
+});
+
+test('isValidDraftShape rejects salesBullets that is not an array', () => {
+  assert.equal(isValidDraftShape({ ...VALID_DRAFT, salesBullets: 'not an array' }), false);
+});
+
+test('isValidDraftShape rejects an empty salesBullets array', () => {
+  assert.equal(isValidDraftShape({ ...VALID_DRAFT, salesBullets: [] }), false);
+});
+
+test('isValidDraftShape rejects a blank title', () => {
+  assert.equal(isValidDraftShape({ ...VALID_DRAFT, title: '   ' }), false);
+});
+
+test('isValidDraftShape rejects null/undefined input', () => {
+  assert.equal(isValidDraftShape(null), false);
+  assert.equal(isValidDraftShape(undefined), false);
+});
 
 test('buildProductPrompt includes the topic and audience and asks for raw JSON', () => {
   const prompt = buildProductPrompt({ topic: 'personal budgeting', audience: 'freelancers' });

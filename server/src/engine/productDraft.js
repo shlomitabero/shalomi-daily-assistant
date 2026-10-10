@@ -24,6 +24,24 @@ function demoDraft({ topic, audience }) {
   };
 }
 
+// A malformed or incomplete draft (a missing field, salesBullets not an
+// array) must never reach the database: it would store fine, but later
+// crash a React render with no graceful handling — OpportunityDetail.jsx
+// and, worse, the public unauthenticated sales page (ProductPage.jsx) both
+// do `salesBullets.map(...)` with no guard, so a real customer landing on
+// that product's page to buy it would see a blank crashed page instead.
+export function isValidDraftShape(parsed) {
+  return Boolean(
+    parsed &&
+    typeof parsed.title === 'string' && parsed.title.trim() &&
+    typeof parsed.guide === 'string' && parsed.guide.trim() &&
+    typeof parsed.salesHeadline === 'string' && parsed.salesHeadline.trim() &&
+    Array.isArray(parsed.salesBullets) && parsed.salesBullets.length > 0 &&
+    parsed.salesBullets.every((b) => typeof b === 'string' && b.trim()) &&
+    typeof parsed.salesParagraph === 'string' && parsed.salesParagraph.trim()
+  );
+}
+
 export async function draftProduct({ topic, audience }) {
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) return demoDraft({ topic, audience });
@@ -37,6 +55,9 @@ export async function draftProduct({ topic, audience }) {
   });
   const text = msg.content.filter((b) => b.type === 'text').map((b) => b.text).join('\n');
   const parsed = JSON.parse(extractJson(text));
+  if (!isValidDraftShape(parsed)) {
+    throw new Error('the AI returned a product draft missing required fields (title/guide/salesHeadline/salesBullets/salesParagraph)');
+  }
   return { demo: false, ...parsed };
 }
 
