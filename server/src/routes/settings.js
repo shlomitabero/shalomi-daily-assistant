@@ -20,10 +20,15 @@ settingsRouter.patch('/settings', requireOwner, (req, res) => {
     return res.status(400).json({ error: `mode must be one of ${VALID_MODES.join(', ')}` });
   }
   if ('budget' in patch) {
-    if (typeof patch.budget !== 'number' || patch.budget < 0) {
+    if (typeof patch.budget !== 'number' || !Number.isFinite(patch.budget) || patch.budget < 0) {
       return res.status(400).json({ error: 'budget must be a non-negative number' });
     }
     patch.budgetConfigured = true;
+  }
+  if ('maxLoss' in patch && patch.maxLoss !== null) {
+    if (typeof patch.maxLoss !== 'number' || !Number.isFinite(patch.maxLoss) || patch.maxLoss < 0) {
+      return res.status(400).json({ error: 'maxLoss must be null (no limit) or a non-negative number' });
+    }
   }
   res.json({ settings: updateSettings(patch) });
 });

@@ -9,8 +9,17 @@ export function canSpend({ amount, budgetConfigured, budget, spentSoFar = 0, max
   if (spentSoFar + amount > budget) {
     return { allowed: false, reason: `would exceed budget (${spentSoFar} + ${amount} > ${budget})` };
   }
-  if (maxLoss != null && lossSoFar + amount > maxLoss) {
-    return { allowed: false, reason: `would exceed the maximum acceptable loss (${lossSoFar} + ${amount} > ${maxLoss})` };
+  if (maxLoss != null) {
+    // A non-numeric maxLoss (e.g. corrupted data, a bad request that slipped
+    // past validation) must never silently disable this guardrail — "5 >
+    // 'abc'" is false in JS, so an invalid value would otherwise make every
+    // spend pass this check as if no loss limit were set at all.
+    if (!Number.isFinite(maxLoss)) {
+      return { allowed: false, reason: `maxLoss is set to an invalid value (${JSON.stringify(maxLoss)}) — fix it in settings before spending` };
+    }
+    if (lossSoFar + amount > maxLoss) {
+      return { allowed: false, reason: `would exceed the maximum acceptable loss (${lossSoFar} + ${amount} > ${maxLoss})` };
+    }
   }
   return { allowed: true, reason: null };
 }

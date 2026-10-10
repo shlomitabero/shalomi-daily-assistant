@@ -40,3 +40,17 @@ test('maxLoss is optional — omitting it only checks the budget', () => {
   const result = canSpend({ amount: 20, budgetConfigured: true, budget: 100, spentSoFar: 50 });
   assert.equal(result.allowed, true);
 });
+
+test('a non-numeric maxLoss fails safe (blocks) instead of silently disabling the guardrail', () => {
+  // "5 > 'abc'" is false in JS, so without an explicit guard this would
+  // otherwise let every spend through as if no loss limit were set.
+  const result = canSpend({ amount: 20, budgetConfigured: true, budget: 1000, maxLoss: 'abc', lossSoFar: 0 });
+  assert.equal(result.allowed, false);
+  assert.match(result.reason, /invalid value/);
+});
+
+test('a NaN maxLoss also fails safe', () => {
+  const result = canSpend({ amount: 20, budgetConfigured: true, budget: 1000, maxLoss: NaN, lossSoFar: 0 });
+  assert.equal(result.allowed, false);
+  assert.match(result.reason, /invalid value/);
+});
