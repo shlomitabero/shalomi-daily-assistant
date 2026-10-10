@@ -13,7 +13,13 @@ financialRouter.get('/financial/watchlist', requireOwner, (req, res) => {
 
 financialRouter.post('/financial/watchlist', requireOwner, async (req, res) => {
   const { symbol } = req.body ?? {};
-  if (!symbol) return res.status(400).json({ error: 'symbol is required' });
+  // A non-string symbol (an object, a number) would otherwise be stored
+  // as-is and crash the whole Financial page's render — there's no error
+  // boundary anywhere in this app, and React throws rendering a plain
+  // object as a child, not just that one row.
+  if (!symbol || typeof symbol !== 'string' || !symbol.trim()) {
+    return res.status(400).json({ error: 'symbol is required and must be a non-empty string' });
+  }
 
   let quote = null;
   if (isMarketDataConnected()) {
