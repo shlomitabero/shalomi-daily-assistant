@@ -286,6 +286,34 @@ test("insertRecord rejects a whitespace-only value for a required number field, 
 });
 
 /**
+ * Regression test (round 523): Number("Infinity")/Number("-Infinity") is
+ * Infinity, not NaN, so a NaN-only check let it through -- but a literal
+ * Infinity isn't valid JSON, so by the time any client request reaches
+ * here via JSON.stringify it has already silently become null. A raw
+ * "Infinity" string reaching coerceValue directly (e.g. a non-browser
+ * caller) must still be rejected as cleanly as any other bad number.
+ */
+test("insertRecord rejects \"Infinity\"/\"-Infinity\" for a number field, instead of silently accepting it", () => {
+  const invoice: Entity = {
+    name: "Invoice",
+    fields: [
+      { name: "label", type: "text", required: true },
+      { name: "amount", type: "number", required: false },
+    ],
+  };
+  const db = openDatabase(":memory:");
+  applyMigrations(db, "proj1", { ...spec, entities: [invoice] });
+
+  for (const value of ["Infinity", "-Infinity"]) {
+    assert.throws(
+      () => insertRecord(db, "proj1", invoice, { label: "Rent", amount: value }),
+      ValidationError,
+      `expected ${JSON.stringify(value)} to be rejected as not a real number`,
+    );
+  }
+});
+
+/**
  * Same bug, but for a required "relation" field: before the fix, a
  * whitespace-only value coerced to foreign key `0` and hit the real
  * `REFERENCES ... (id)` constraint (migrate.ts), throwing a bare SQLite

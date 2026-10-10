@@ -1181,7 +1181,13 @@ export function buildImportRecords(fields: Field[], rows: string[][]): ImportRes
         }
       } else if (field.type === "number") {
         const n = Number(raw);
-        if (Number.isNaN(n)) {
+        // Number.isFinite, not just !Number.isNaN: Number("Infinity") is
+        // Infinity, not NaN, so it passes a NaN-only check -- but
+        // JSON.stringify silently turns Infinity/-Infinity into null
+        // before the record ever leaves the browser, so an un-finite
+        // value here would otherwise become silent data loss, not an
+        // import error.
+        if (!Number.isFinite(n)) {
           rowError = `Row ${rowIndex + 1}: "${raw}" isn't a number for field "${field.label ?? field.name}".`;
           break;
         }

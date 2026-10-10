@@ -283,6 +283,91 @@ test("generated server.js rejects a date field value that isn't a real, well-for
 });
 
 /**
+ * Regression test (round 523): the exported standalone app's own coerce()
+ * -- same copy-pasted logic as packages/db/src/repository.ts's
+ * coerceValue -- checked a number field with `Number.isNaN` only, and
+ * `Number("Infinity")` is `Infinity`, not `NaN`, so it passed. A literal
+ * Infinity can't travel as real JSON (a client's own JSON.stringify would
+ * already have turned it into null before this ever ran), but a raw
+ * "Infinity"/"-Infinity" *string* reaching the generated server directly
+ * must still be rejected as cleanly as any other bad number, not silently
+ * stored. Reproduced here against a real spawned server, the same
+ * standard the date-field test above uses.
+ */
+test("generated server.js rejects \"Infinity\"/\"-Infinity\" for a number field", async () => {
+  const invoiceProject: Project = {
+    ...project,
+    spec: {
+      ...project.spec,
+      entities: [
+        {
+          name: "Invoice",
+          fields: [
+            { name: "client", type: "text", required: true },
+            { name: "amount", type: "number", required: false },
+          ],
+        },
+      ],
+    },
+  };
+  const files = generateExportFiles(invoiceProject);
+  const serverJs = files.find((f) => f.path === "server.js")!.content;
+
+  const dir = mkdtempSync(path.join(tmpdir(), "codegen-infinity-test-"));
+  const repoRoot = path.resolve(import.meta.dirname, "../../..");
+  symlinkSync(path.join(repoRoot, "node_modules"), path.join(dir, "node_modules"));
+  writeFileSync(path.join(dir, "server.js"), serverJs);
+
+  const port = 44000 + Math.floor(Math.random() * 5000);
+  const child = spawn(process.execPath, ["--experimental-sqlite", "server.js"], {
+    cwd: dir,
+    env: { ...process.env, PORT: String(port) },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  let stderr = "";
+  child.stderr.on("data", (chunk) => {
+    stderr += chunk.toString();
+  });
+
+  try {
+    const deadline = Date.now() + 5000;
+    let lastErr: unknown;
+    while (Date.now() < deadline) {
+      if (child.exitCode !== null) {
+        throw new Error(`server.js exited early (code ${child.exitCode}):\n${stderr}`);
+      }
+      try {
+        await fetch(`http://localhost:${port}/api/entities`);
+        break;
+      } catch (err) {
+        lastErr = err;
+        await new Promise((r) => setTimeout(r, 100));
+      }
+    }
+    if (child.exitCode !== null) throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
+
+    const validRes = await fetch(`http://localhost:${port}/api/Invoice`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ client: "Gamma Inc", amount: 500 }),
+    });
+    assert.equal(validRes.status, 201);
+
+    for (const bad of ["Infinity", "-Infinity"]) {
+      const badRes = await fetch(`http://localhost:${port}/api/Invoice`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ client: "Acme Corp", amount: bad }),
+      });
+      assert.equal(badRes.status, 400, `expected "${bad}" to be rejected as not a real number`);
+    }
+  } finally {
+    child.kill();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
  * Regression test: the exported standalone app's own coerce() -- same
  * copy-pasted logic as packages/db/src/repository.ts's coerceValue, round
  * 408 found and fixed in both places -- only checked a value against the
@@ -4982,6 +5067,61 @@ test("the exported EntityView's CSV import rejects an unrecognized boolean value
   ]);
   assert.equal(errors.length, 1);
   assert.match(errors[0], /Row 3: "maybe" isn't a recognized yes\/no value/);
+});
+
+/**
+ * Regression test (round 523, found by fuzzing the real CSV-import path
+ * rather than reading code): Number("Infinity")/Number("-Infinity") is
+ * Infinity, not NaN, so the number branch's NaN-only check let it through
+ * as a "valid" number -- but a client's actual POST body is produced via
+ * JSON.stringify, which silently turns Infinity/-Infinity into null
+ * before the request ever leaves the browser. So an "Infinity" cell in a
+ * CSV import was reported as a successful, error-free import while the
+ * value was actually discarded. Fixed the same round in entityFormatting.ts
+ * (live preview) and here, in the exported app's own templated copy.
+ * Executes the actual generated buildImportRecords function (extracted
+ * from real codegen output, not reimplemented here) so a future edit to
+ * this template can't silently reintroduce the gap.
+ */
+test("the exported EntityView's CSV import rejects \"Infinity\"/\"-Infinity\" as a number, instead of silently importing it as a value JSON.stringify will turn into null", () => {
+  const invoiceProject: Project = {
+    ...project,
+    spec: {
+      ...project.spec,
+      entities: [
+        {
+          name: "Invoice",
+          label: "Invoice",
+          fields: [
+            { name: "client", label: "Client", type: "text", required: true },
+            { name: "amount", label: "Amount", type: "number", required: false },
+          ],
+        },
+      ],
+    },
+  };
+  const entityViewJsx = generateExportFiles(invoiceProject).find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+
+  const isValidDateSrc = entityViewJsx.match(/const DATE_FORMAT[\s\S]*?\nfunction isValidDate\(value\) \{[\s\S]*?\n\}\n/)?.[0];
+  const headerSrc = entityViewJsx.match(/function matchesImportHeader\(header, field\) \{[\s\S]*?\n\}\n/)?.[0];
+  const importSrc = entityViewJsx.match(/function buildImportRecords\(fields, rows\) \{[\s\S]*?\n\}\n/)?.[0];
+  assert.ok(isValidDateSrc && headerSrc && importSrc, "expected to find isValidDate/matchesImportHeader/buildImportRecords in generated output");
+
+  const buildImportRecords = new Function(`${isValidDateSrc}\n${headerSrc}\n${importSrc}\nreturn buildImportRecords;`)();
+
+  const fields = invoiceProject.spec.entities[0].fields;
+  const rows = [
+    ["Client", "Amount"],
+    ["Acme Corp", "Infinity"],
+    ["Beta LLC", "-Infinity"],
+    ["Gamma Inc", "500"],
+  ];
+  const { records, errors } = buildImportRecords(fields, rows);
+
+  assert.deepEqual(records, [{ client: "Gamma Inc", amount: 500 }]);
+  assert.equal(errors.length, 2);
+  assert.match(errors[0], /Row 1.*Amount/);
+  assert.match(errors[1], /Row 2.*Amount/);
 });
 
 /**

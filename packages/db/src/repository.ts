@@ -47,7 +47,12 @@ function coerceValue(field: Field, raw: unknown): string | number | null {
     case "number":
     case "relation": {
       const num = Number(raw);
-      if (Number.isNaN(num)) {
+      // Number.isFinite, not just !Number.isNaN: Number("Infinity") is
+      // Infinity, not NaN. A client would never actually get this far
+      // with a literal Infinity (JSON.stringify turns it into null first),
+      // but a raw "Infinity"/"-Infinity" string reaching this function
+      // directly should still be rejected, not silently stored.
+      if (!Number.isFinite(num)) {
         throw new ValidationError(`Field "${field.name}" must be a number`);
       }
       return num;

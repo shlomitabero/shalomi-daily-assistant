@@ -378,7 +378,7 @@ function coerce(field, value) {
   }
   if (field.type === "number" || field.type === "relation") {
     const n = Number(value);
-    if (Number.isNaN(n)) throw new Error(\`Field "\${field.name}" must be a number\`);
+    if (!Number.isFinite(n)) throw new Error(\`Field "\${field.name}" must be a number\`);
     return n;
   }
   if (field.type === "boolean") return value === true || value === "true" || value === 1 || value === "1" ? 1 : 0;
@@ -1852,7 +1852,7 @@ function buildImportRecords(fields, rows) {
         }
       } else if (field.type === "number") {
         const n = Number(raw);
-        if (Number.isNaN(n)) {
+        if (!Number.isFinite(n)) {
           rowError = \`Row \${rowIndex + 1}: "\${raw}" isn't a number for field "\${field.label || field.name}".\`;
           break;
         }

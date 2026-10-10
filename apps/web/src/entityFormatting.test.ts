@@ -1341,6 +1341,32 @@ test("buildImportRecords reports an unparseable number and an invalid enum optio
   assert.match(result.errors[1], /Row 2.*Status/);
 });
 
+/**
+ * Regression test (round 523): Number("Infinity")/Number("-Infinity") is
+ * Infinity, not NaN, so a NaN-only check let it through as a "valid"
+ * number -- but JSON.stringify silently turns Infinity/-Infinity into
+ * null before the record ever reaches the server, so an unguarded
+ * "Infinity" cell in a CSV import was reported as a successful,
+ * error-free import while the value was actually discarded.
+ */
+test("buildImportRecords rejects \"Infinity\"/\"-Infinity\" as a number, instead of silently importing it as a value JSON.stringify will turn into null", () => {
+  const fields: Field[] = [
+    { name: "client", type: "text", required: true },
+    { name: "amount", label: "Amount", type: "number", required: false },
+  ];
+  const rows = [
+    ["client", "amount"],
+    ["Acme Corp", "Infinity"],
+    ["Beta LLC", "-Infinity"],
+    ["Gamma Inc", "500"],
+  ];
+  const result = buildImportRecords(fields, rows);
+  assert.deepEqual(result.records, [{ client: "Gamma Inc", amount: 500 }]);
+  assert.equal(result.errors.length, 2);
+  assert.match(result.errors[0], /Row 1.*Amount/);
+  assert.match(result.errors[1], /Row 2.*Amount/);
+});
+
 test("buildImportRecords rejects a date column value that isn't a real, well-formed calendar date", () => {
   const fields: Field[] = [
     { name: "name", type: "text", required: true },
