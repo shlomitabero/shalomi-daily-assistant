@@ -4,13 +4,20 @@
 // prices or demand" requirement.
 export function computeNetProfit({ revenueEstimate, costs = {} }) {
   const missing = [];
-  if (!revenueEstimate || typeof revenueEstimate.low !== 'number' || typeof revenueEstimate.high !== 'number') {
+  // Number.isFinite (not typeof) because typeof NaN is 'number' too — a
+  // corrupted or malformed revenueEstimate.low/high must count as missing,
+  // not pass this check and produce a NaN profit later.
+  if (!revenueEstimate || !Number.isFinite(revenueEstimate.low) || !Number.isFinite(revenueEstimate.high)) {
     missing.push('revenueEstimate');
   }
 
   let totalCost = 0;
   for (const [key, value] of Object.entries(costs)) {
     if (value === null || value === undefined) missing.push(`cost:${key}`);
+    // A non-numeric cost (e.g. a stray string) must never silently coerce
+    // into string concatenation (0 + "abc") and poison every later total —
+    // treat it the same as a missing cost instead.
+    else if (!Number.isFinite(value)) missing.push(`cost:${key}`);
     else totalCost += value;
   }
 
@@ -18,7 +25,9 @@ export function computeNetProfit({ revenueEstimate, costs = {} }) {
     return { status: 'incomplete', missing, totalCost: null, netProfit: null };
   }
 
-  const mid = revenueEstimate.mid ?? (revenueEstimate.low + revenueEstimate.high) / 2;
+  // A non-finite mid must not corrupt netProfit.mid alone while low/high
+  // stay valid — fall back to the midpoint instead of propagating a NaN.
+  const mid = Number.isFinite(revenueEstimate.mid) ? revenueEstimate.mid : (revenueEstimate.low + revenueEstimate.high) / 2;
   return {
     status: 'complete',
     missing: [],

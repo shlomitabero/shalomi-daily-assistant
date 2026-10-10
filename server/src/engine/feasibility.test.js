@@ -41,3 +41,24 @@ test('a net loss is reported as a negative profit, not clamped to zero', () => {
   assert.equal(result.status, 'complete');
   assert.ok(result.netProfit.high < 0);
 });
+
+test('a non-numeric cost is reported as missing instead of corrupting the total', () => {
+  // Naively doing "0 + 'abc'" string-concatenates to "0abc", which then
+  // poisons every later number it touches — this must be rejected instead.
+  const result = computeNetProfit({ revenueEstimate: { low: 100, high: 200 }, costs: { advertising: 10, shipping: 'abc' } });
+  assert.equal(result.status, 'incomplete');
+  assert.ok(result.missing.includes('cost:shipping'));
+});
+
+test('a NaN revenueEstimate.low is treated as missing, not as a number', () => {
+  // typeof NaN === 'number', so a typeof-only check would wrongly accept it.
+  const result = computeNetProfit({ revenueEstimate: { low: NaN, high: 200 }, costs: {} });
+  assert.equal(result.status, 'incomplete');
+  assert.ok(result.missing.includes('revenueEstimate'));
+});
+
+test('an invalid revenueEstimate.mid falls back to the midpoint instead of producing NaN', () => {
+  const result = computeNetProfit({ revenueEstimate: { low: 100, mid: 'abc', high: 200 }, costs: {} });
+  assert.equal(result.status, 'complete');
+  assert.equal(result.netProfit.mid, 150);
+});

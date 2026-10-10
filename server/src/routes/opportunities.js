@@ -55,6 +55,14 @@ opportunitiesRouter.get('/opportunities/:id', requireOwner, (req, res) => {
 
 const EDITABLE_FIELDS = ['revenueEstimate', 'costs', 'riskLevel', 'dataQuality', 'priceUSD', 'missingInfo'];
 
+// A non-finite value here wouldn't crash anything — it would silently
+// corrupt computeNetProfit's totals (NaN propagating through the profit
+// math) instead of being rejected, so the dashboard would show "₪NaN" to
+// the owner instead of a clear error. Reject it at the door.
+function isFiniteOrNullish(value) {
+  return value == null || (typeof value === 'number' && Number.isFinite(value));
+}
+
 opportunitiesRouter.patch('/opportunities/:id', requireOwner, (req, res) => {
   const opportunity = db.opportunities.get(req.params.id);
   if (!opportunity) return res.status(404).json({ error: 'not found' });
@@ -62,6 +70,24 @@ opportunitiesRouter.patch('/opportunities/:id', requireOwner, (req, res) => {
   for (const field of EDITABLE_FIELDS) {
     if (field in (req.body ?? {})) patch[field] = req.body[field];
   }
+
+  if ('revenueEstimate' in patch && patch.revenueEstimate !== null) {
+    const { low, mid, high } = patch.revenueEstimate ?? {};
+    if (!isFiniteOrNullish(low) || !isFiniteOrNullish(mid) || !isFiniteOrNullish(high)) {
+      return res.status(400).json({ error: 'revenueEstimate.low/mid/high must each be a finite number (or omitted)' });
+    }
+  }
+  if ('costs' in patch && patch.costs != null) {
+    for (const [key, value] of Object.entries(patch.costs)) {
+      if (!isFiniteOrNullish(value)) {
+        return res.status(400).json({ error: `costs.${key} must be a finite number or null (unknown)` });
+      }
+    }
+  }
+  if ('priceUSD' in patch && !isFiniteOrNullish(patch.priceUSD)) {
+    return res.status(400).json({ error: 'priceUSD must be a finite number' });
+  }
+
   const updated = db.opportunities.update(req.params.id, patch);
   res.json({ opportunity: withFeasibility(updated) });
 });
