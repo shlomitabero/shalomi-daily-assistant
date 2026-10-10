@@ -1052,6 +1052,23 @@ export function createProjectsRouter(
         throw new HttpError(409, "Connect WhatsApp before sending a message", "WHATSAPP_NOT_CONNECTED");
       }
       const result = await whatsapp.sendMessage(project.id, to, message);
+      // whatsapp.sendMessage() above is a genuine await (a real network
+      // round-trip to the WhatsApp Web socket) -- the same reverse-direction
+      // hazard DELETE /projects/:id's own comment documents for every other
+      // quick mutation route in this file. A concurrent DELETE /projects/:id
+      // can run to completion (including deleteWhatsAppData, which purges
+      // this project's existing whatsapp_messages rows) while this send is
+      // still suspended above. Without this re-check, the insertWhatsAppMessage
+      // call below would then create a BRAND NEW row for a project id that no
+      // longer exists -- whatsapp_messages.projectId carries no foreign key,
+      // so the insert would succeed silently, and since every reader route
+      // (GET .../messages, the backup ZIP, etc.) 404s via requireProjectAccess
+      // the instant the project is gone, that row would be permanently
+      // orphaned and unreachable through any route, forever, while this
+      // request still reports 200 { ok: true } as if nothing went wrong.
+      if (!getProject(db, project.id)) {
+        throw new HttpError(404, `Project "${project.id}" not found`, "PROJECT_NOT_FOUND");
+      }
       // Mirrors the matching an incoming message gets (see
       // WhatsAppWebManager.handleIncomingMessages): without this, the panel's
       // own log rendering (which falls back to the matched label only when

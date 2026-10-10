@@ -63,7 +63,7 @@ async function withServer(
  * connect/status/send/disconnect HTTP surface can still be exercised
  * end-to-end against the app's own real running server.
  */
-function createFakeWhatsAppSocket(opts?: { logout?: () => Promise<void> }) {
+function createFakeWhatsAppSocket(opts?: { logout?: () => Promise<void>; sendMessage?: () => Promise<void> }) {
   let connectionUpdateHandler: ((u: BaileysConnectionUpdate) => void) | undefined;
   let messagesUpsertHandler: ((u: BaileysMessagesUpsert) => void) | undefined;
   const sendCalls: { jid: string; text: string }[] = [];
@@ -75,8 +75,13 @@ function createFakeWhatsAppSocket(opts?: { logout?: () => Promise<void> }) {
       },
     },
     user: null,
+    // Real Baileys sendMessage() is a network round-trip (a genuine await) --
+    // opts.sendMessage lets a test hold that open with a controlled promise
+    // to deterministically land inside POST .../whatsapp/send's own in-flight
+    // window (round 536's own convention, mirroring opts.logout below).
     async sendMessage(jid, content) {
       sendCalls.push({ jid, text: content.text });
+      await opts?.sendMessage?.();
       return {};
     },
     // Real Baileys logout() is a network round-trip (a genuine await) --
@@ -95,7 +100,7 @@ function createFakeWhatsAppSocket(opts?: { logout?: () => Promise<void> }) {
   };
 }
 
-function createTestWhatsAppManager(db: ForgeDatabase, opts?: { logout?: () => Promise<void> }) {
+function createTestWhatsAppManager(db: ForgeDatabase, opts?: { logout?: () => Promise<void>; sendMessage?: () => Promise<void> }) {
   const createdSockets: ReturnType<typeof createFakeWhatsAppSocket>[] = [];
   const manager = new WhatsAppWebManager({
     db,
@@ -4022,6 +4027,75 @@ test("DELETE /auth/account rejects a collaborator's concurrent mutation that lan
           logout: async () => {
             resolveLogoutEntered();
             await logoutHeld;
+          },
+        });
+        createdSockets = sockets;
+        return manager;
+      },
+    },
+  );
+});
+
+test("POST .../whatsapp/send does not insert a permanently-orphaned message row when the project is deleted while the send is still in flight", async () => {
+  let createdSockets: ReturnType<typeof createFakeWhatsAppSocket>[] = [];
+  let releaseSend!: () => void;
+  const sendHeld = new Promise<void>((resolve) => {
+    releaseSend = resolve;
+  });
+  let resolveSendEntered!: () => void;
+  const sendEntered = new Promise<void>((resolve) => {
+    resolveSendEntered = resolve;
+  });
+
+  await withServer(
+    async (baseUrl) => {
+      const token = await signup(baseUrl, "send-delete-race@example.com");
+      const createRes = await fetch(`${baseUrl}/api/projects`, {
+        method: "POST",
+        headers: authHeaders(token),
+        body: JSON.stringify({ description: "A CRM with customers and deals." }),
+      });
+      const { project } = (await createRes.json()) as { project: { id: string } };
+
+      await fetch(`${baseUrl}/api/projects/${project.id}/integrations/whatsapp/connect`, { method: "POST", headers: authHeaders(token) });
+      createdSockets[0].sock.user = { id: "15550003333:1@s.whatsapp.net" };
+      createdSockets[0].emitConnectionUpdate({ connection: "open" });
+
+      // An internationally-formatted number is required: a bare
+      // local-format number is rejected synchronously by sendMessage's own
+      // missing_country_code check before ever reaching the held await.
+      const sendPromise = fetch(`${baseUrl}/api/projects/${project.id}/integrations/whatsapp/send`, {
+        method: "POST",
+        headers: authHeaders(token),
+        body: JSON.stringify({ to: "972501234567", message: "hello" }),
+      });
+
+      // Same technique as this file's other in-flight-await races: wait for
+      // the send's own await to actually be entered before deleting the
+      // project out from under it.
+      await sendEntered;
+
+      const deleteRes = await fetch(`${baseUrl}/api/projects/${project.id}`, { method: "DELETE", headers: authHeaders(token) });
+      assert.equal(deleteRes.status, 204);
+
+      const getAfterDelete = await fetch(`${baseUrl}/api/projects/${project.id}`, { headers: authHeaders(token) });
+      assert.equal(getAfterDelete.status, 404);
+
+      releaseSend();
+      const sendRes = await sendPromise;
+
+      assert.equal(
+        sendRes.status,
+        404,
+        "a send that resolves after its project was deleted must not report success or insert an orphaned message row",
+      );
+    },
+    {
+      whatsapp: (db) => {
+        const { manager, createdSockets: sockets } = createTestWhatsAppManager(db, {
+          sendMessage: async () => {
+            resolveSendEntered();
+            await sendHeld;
           },
         });
         createdSockets = sockets;
