@@ -21,14 +21,19 @@ export default function Dashboard() {
       .then(([s, o, a, src, led]) => {
         setSummary(s.summary);
         setOpportunities(o.opportunities);
-        setApprovals(a.approvals.filter((x) => x.status === 'approved' && !x.consumed));
+        setApprovals(a.approvals.filter((x) => x.status === 'approved'));
         setSources(src.sources);
         setEntries(led.entries);
       })
       .catch((err) => setError(err.data?.error || err.message));
   }, []);
 
-  const pendingApprovals = approvals; // approvals granted but opportunity not yet published count as "waiting to run"
+  // An approval has already done its job once its opportunity is published —
+  // only count ones whose opportunity is still a draft as "waiting to run".
+  const pendingApprovals = approvals.filter((a) => {
+    const opp = opportunities.find((o) => o.id === a.opportunityId);
+    return opp?.status === 'draft';
+  });
   const activeOpportunities = opportunities.filter((o) => o.status !== 'published' && o.status !== 'rejected');
 
   // Which source actually produced verified revenue vs. which only cost money with nothing to show.
