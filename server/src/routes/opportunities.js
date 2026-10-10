@@ -84,8 +84,12 @@ opportunitiesRouter.patch('/opportunities/:id', requireOwner, (req, res) => {
       }
     }
   }
-  if ('priceUSD' in patch && !isFiniteOrNullish(patch.priceUSD)) {
-    return res.status(400).json({ error: 'priceUSD must be a finite number' });
+  // priceUSD, unlike revenueEstimate/costs, is never meaningfully "unknown" —
+  // a product always has a real price — so null is rejected here too, not
+  // just non-numbers; `patch.priceUSD <= 0` alone would wrongly let null
+  // slip through on the "null <= 0" coercion.
+  if ('priceUSD' in patch && !(typeof patch.priceUSD === 'number' && Number.isFinite(patch.priceUSD) && patch.priceUSD > 0)) {
+    return res.status(400).json({ error: 'priceUSD must be a positive number' });
   }
 
   const updated = db.opportunities.update(req.params.id, patch);

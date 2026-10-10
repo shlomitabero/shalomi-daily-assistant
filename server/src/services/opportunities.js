@@ -1,5 +1,6 @@
 import { db, makeId } from '../db/store.js';
 import { draftProduct } from '../engine/productDraft.js';
+import { resolveDefaultPriceUSD } from '../engine/pricing.js';
 import { logAction } from './execution.js';
 
 // Shared by the owner's manual "new digital product" form and the
@@ -28,7 +29,7 @@ export async function createDigitalProductOpportunity({ topic, audience, created
     ],
     status: 'draft',
     productDraft: draft,
-    priceUSD: Number(process.env.DEFAULT_PRODUCT_PRICE_USD ?? 9),
+    priceUSD: resolveDefaultPriceUSD(process.env.DEFAULT_PRODUCT_PRICE_USD),
     paddlePriceId: null,
     slug: null,
     salesCount: 0,
