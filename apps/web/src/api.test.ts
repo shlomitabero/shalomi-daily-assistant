@@ -268,6 +268,39 @@ test("sendWhatsAppMessage passes through this route's own {ok:false, error} fail
   assert.deepEqual(result, { ok: false, error: "socket write failed" });
 });
 
+/**
+ * whatsappWeb.ts's sendMessage() can refuse honestly with one of three
+ * stable snake_case codes (not_connected, invalid_phone_number,
+ * missing_country_code) before this route's generic error middleware ever
+ * sees it -- round 554's own bug: these were shown to the user as the raw
+ * literal code (e.g. the text "missing_country_code" on screen) because
+ * the {ok:false, error} shape above was returned completely as-is, with no
+ * translation lookup at all, unlike the {error, code} shape just above.
+ * An arbitrary Baileys-internal failure message (anything NOT one of these
+ * three known codes) must still pass through raw, since it genuinely can't
+ * be translated -- confirmed by the "socket write failed" test above.
+ */
+test("sendWhatsAppMessage translates the three known machine-readable send-failure codes instead of showing the raw code literally", async () => {
+  const missingCountryCode = await withFakeFetch(
+    new Response(JSON.stringify({ ok: false, error: "missing_country_code" }), { status: 502 }),
+    () => sendWhatsAppMessage("proj1", "0501234567", "hi"),
+  );
+  assert.equal(missingCountryCode.ok, false);
+  assert.ok(!missingCountryCode.error!.includes("missing_country_code"), "the raw machine code must never reach the screen");
+
+  const invalidPhone = await withFakeFetch(new Response(JSON.stringify({ ok: false, error: "invalid_phone_number" }), { status: 502 }), () =>
+    sendWhatsAppMessage("proj1", "abc", "hi"),
+  );
+  assert.equal(invalidPhone.ok, false);
+  assert.ok(!invalidPhone.error!.includes("invalid_phone_number"));
+
+  const notConnected = await withFakeFetch(new Response(JSON.stringify({ ok: false, error: "not_connected" }), { status: 502 }), () =>
+    sendWhatsAppMessage("proj1", "972501234567", "hi"),
+  );
+  assert.equal(notConnected.ok, false);
+  assert.ok(!notConnected.error!.includes("not_connected"));
+});
+
 test("sendWhatsAppMessage normalizes the shared {error, code} error-middleware shape (e.g. a 409 'not connected') into {ok:false, error}, instead of returning a body with no 'ok' field at all", async () => {
   const result = await withFakeFetch(
     new Response(JSON.stringify({ error: "Connect WhatsApp before sending a message", code: "WHATSAPP_NOT_CONNECTED" }), {

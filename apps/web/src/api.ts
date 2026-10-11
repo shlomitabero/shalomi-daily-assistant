@@ -743,6 +743,17 @@ export interface WhatsAppSendResult {
   error?: string;
 }
 
+/**
+ * The three reasons WhatsAppWebManager.sendMessage can refuse honestly
+ * before ever reaching Baileys (whatsappWeb.ts) -- a stable, machine-
+ * readable snake_case code, unlike a genuine Baileys-internal send failure
+ * caught in that same function's own catch block (an arbitrary message
+ * with no fixed shape, so it can't be translated and is shown as-is).
+ * Mapped to the same `error.<CODE>` translation convention every other
+ * server error already uses, via resolveErrorMessage below.
+ */
+const KNOWN_WHATSAPP_SEND_ERROR_CODES = new Set(["not_connected", "invalid_phone_number", "missing_country_code"]);
+
 export async function sendWhatsAppMessage(projectId: string, to: string, message: string): Promise<WhatsAppSendResult> {
   const token = getToken();
   const res = await fetchApi(`/api/projects/${projectId}/integrations/whatsapp/send`, {
@@ -762,7 +773,12 @@ export async function sendWhatsAppMessage(projectId: string, to: string, message
   // -- normalize those too, so every caller can just check `.ok` without
   // needing to know which failure path produced the response.
   const body = (await res.json().catch(() => ({}))) as { ok?: boolean; error?: string; code?: string };
-  if (typeof body.ok === "boolean") return body as WhatsAppSendResult;
+  if (typeof body.ok === "boolean") {
+    if (!body.ok && body.error && KNOWN_WHATSAPP_SEND_ERROR_CODES.has(body.error)) {
+      return { ok: false, error: resolveErrorMessage({ code: `WHATSAPP_SEND_${body.error.toUpperCase()}`, error: body.error }) };
+    }
+    return body as WhatsAppSendResult;
+  }
   if (body.code === "SESSION_EXPIRED" || body.code === "AUTH_REQUIRED") notifyAuthExpired();
   return { ok: false, error: resolveErrorMessage(body) };
 }
