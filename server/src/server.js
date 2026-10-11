@@ -94,5 +94,10 @@ app.listen(PORT, () => {
   // TEMPORARY diagnostic — verifying the newly-attached Railway volume
   // actually persists data across a redeploy before trusting it. Remove
   // once confirmed.
-  console.log(`[persistence-check] DATA_DIR=${process.env.DATA_DIR ?? '(unset, using default relative path)'} settingsExists=${Boolean(db.settings.get('main'))} opportunityCount=${db.opportunities.all().length} ledgerCount=${db.ledger.all().length}`);
+  // syncSources() runs above on every boot and writes a row per source —
+  // if that row's id is the SAME across two boots (looked up by key, not
+  // freshly inserted), that proves the write landed on the volume and
+  // survived the redeploy, without needing any external write first.
+  const firstSource = db.sources.all()[0];
+  console.log(`[persistence-check] DATA_DIR=${process.env.DATA_DIR ?? '(unset, using default relative path)'} settingsExists=${Boolean(db.settings.get('main'))} opportunityCount=${db.opportunities.all().length} ledgerCount=${db.ledger.all().length} firstSourceId=${firstSource?.id ?? '(none)'} sourceCount=${db.sources.all().length}`);
 });
