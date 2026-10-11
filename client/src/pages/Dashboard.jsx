@@ -83,6 +83,7 @@ export default function Dashboard() {
         <p className="hint" style={{ margin: '8px 0 0' }}>
           <strong style={{ color: 'var(--text)' }}>מצב נוכחי: </strong>{MODE_LABEL[settings.mode] ?? settings.mode}
         </p>
+        <Link className="btn btn-ghost" to="/guide" style={{ marginTop: 10, display: 'inline-block' }}>📖 מדריך שימוש — איך מתחילים</Link>
       </div>
 
       {nextStep && (

@@ -113,6 +113,8 @@ export default function Settings() {
         <button className="btn btn-primary" type="submit" disabled={busy}>שמור</button>
       </form>
 
+      <Link className="link" to="/guide">מדריך שימוש ←</Link>
+      <br />
       <Link className="link" to="/sources">מקורות הכנסה ←</Link>
       <br />
       <Link className="link" to="/digests">סיכום יומי ←</Link>
