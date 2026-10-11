@@ -512,7 +512,23 @@ export const DOMAIN_ENTITY_RULES: DomainEntityRule[] = [
     },
   },
   {
-    keywords: ["student", "pupil", "learner", "תלמיד", "תלמידה", "תלמידים", "סטודנט", "סטודנטית"],
+    // Bare "pupil" (round 561) is a whole-word genuine polysemy collision,
+    // the same shape as "garage"/"garage sale" (454) and
+    // "property"/"intellectual property" (558), not a substring issue --
+    // "pupil" is also the ophthalmology/optometry term for part of the eye,
+    // so an eye-care description mentioning pupil size/dilation/reaction
+    // has nothing to do with a school. Excludes only those specific known
+    // eye-anatomy idioms via lookbehind/lookahead, same style as garage.
+    keywords: [
+      "student",
+      /\b(?<!dilated\s)pupils?\b(?!\s+(?:dilation|size|reaction|response))/,
+      "learner",
+      "תלמיד",
+      "תלמידה",
+      "תלמידים",
+      "סטודנט",
+      "סטודנטית",
+    ],
     labelHe: "תלמידים",
     descriptionHe: "מי שלומד במסגרת החינוכית.",
     fieldLabelsHe: { name: "שם", email: "אימייל", phone: "טלפון", status: "סטטוס לימודים" },

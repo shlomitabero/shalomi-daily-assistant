@@ -1332,3 +1332,48 @@ test("Manager's 'management' keyword doesn't spuriously match 'mismanagement'", 
   const realManagement = await provider.generate("An app to support property management operations for a landlord.");
   assert.ok(realManagement.roles.includes("Manager"), "'management' must still add the Manager role");
 });
+
+/**
+ * Regression test for round 561's finding: Student's bare "pupil" keyword
+ * is a whole-word genuine polysemy collision (not a substring issue) with
+ * the ophthalmology/optometry term "pupil" (the part of the eye) -- the
+ * same shape as the already-fixed "garage"/"garage sale" (round 454) and
+ * "property"/"intellectual property" (round 558) collisions, not the
+ * substring-in-a-longer-word shape. An eye-care description mentioning
+ * pupil size, dilation, or reaction has nothing to do with a school.
+ * Fixed by excluding the specific known eye-anatomy idioms via
+ * lookbehind/lookahead, the same disambiguation style this file's other
+ * polysemy fixes already use.
+ */
+test("Student's 'pupil' keyword doesn't spuriously match the eye-anatomy sense of 'pupil'", async () => {
+  const provider = new HeuristicSpecProvider();
+
+  const eyeSize = await provider.generate(
+    "An ophthalmology clinic app to record each patient's pupil size during an eye exam.",
+  );
+  assert.ok(
+    !eyeSize.entities.some((e) => e.name === "Student"),
+    "'pupil size' alone must not spuriously match Student via the eye-anatomy sense of 'pupil'",
+  );
+
+  const dilation = await provider.generate("An optometry app to track pupil dilation measurements for each patient.");
+  assert.ok(
+    !dilation.entities.some((e) => e.name === "Student"),
+    "'pupil dilation' alone must not spuriously match Student via the eye-anatomy sense of 'pupil'",
+  );
+
+  const dilatedPupils = await provider.generate("A clinic app to log dilated pupils and reflex response for patients.");
+  assert.ok(
+    !dilatedPupils.entities.some((e) => e.name === "Student"),
+    "'dilated pupils' alone must not spuriously match Student via the eye-anatomy sense of 'pupil'",
+  );
+
+  // The real school term still works on its own, singular and plural (these
+  // descriptions avoid this rule's other keywords -- "student", "learner",
+  // etc. -- so a match here can only come from "pupil"/"pupils" itself).
+  const realPupil = await provider.generate("An app for a school to track each pupil's attendance and homework.");
+  assert.ok(realPupil.entities.some((e) => e.name === "Student"), "'pupil' must still match Student");
+
+  const realPupils = await provider.generate("An app for a school to track all the pupils' attendance and homework.");
+  assert.ok(realPupils.entities.some((e) => e.name === "Student"), "'pupils' must still match Student");
+});
