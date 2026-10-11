@@ -65,6 +65,20 @@ test("deriveEntityName appends the first free numeric suffix on a case-insensiti
 });
 
 /**
+ * Round 555: unlike deriveFieldName's own numeral-led guard (round 549),
+ * deriveEntityName had none -- "2024 Sales" joined to "2024Sales", which
+ * passes EntitySchema and builds fine in the live preview (tableNameFor's
+ * permanent "entity_" prefix hides the leading digit there), but fails
+ * codegen.ts's assertSafe the moment the project is exported, since the
+ * exported app uses entity.name directly with no such prefix.
+ */
+test("deriveEntityName prefixes a numeral-led label so the result never starts with a digit", () => {
+  assert.equal(deriveEntityName("2024 Sales", []), "Entity2024Sales");
+  assert.equal(deriveEntityName("2024", []), "Entity2024");
+  assert.equal(deriveEntityName("3rd Party Vendors", []), "Entity3rdPartyVendors");
+});
+
+/**
  * deriveScreensForNewEntity is the entity-add route's own counterpart fix
  * for round 553: without it, a manually-added entity got zero spec.screens
  * entries, permanently undercounting the "N screens" HistoryPanel.tsx/

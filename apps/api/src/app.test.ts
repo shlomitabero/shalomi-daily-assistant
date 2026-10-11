@@ -3605,6 +3605,52 @@ test("adding an entity also adds screens for it, mirroring the project's existin
   });
 });
 
+/**
+ * Round 555: deriveEntityName had no guard against a numeral-led label --
+ * "2024 Sales" joined to "2024Sales", which passes EntitySchema and builds
+ * fine in the live preview (tableNameFor's permanent "entity_" prefix hides
+ * the leading digit there), but codegen.ts's exported-app generator uses
+ * entity.name directly with no such prefix, so assertSafe always rejected
+ * it with EXPORT_UNSAFE_IDENTIFIER the moment an otherwise-healthy project
+ * was exported. This is the same symptom as the non-ASCII-entity-name test
+ * above, but reached through the ordinary "Add Entity" UI with a plain
+ * English numeral-led label, not an AI-provided non-ASCII name.
+ */
+test("adding an entity with a numeral-led label still exports cleanly (round 555)", async () => {
+  await withServer(async (baseUrl) => {
+    const token = await signup(baseUrl, "entity-add-numeral@example.com");
+    const createRes = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ description: "A CRM with customers and deals." }),
+    });
+    const { project } = (await createRes.json()) as { project: { id: string } };
+
+    const addRes = await fetch(`${baseUrl}/api/projects/${project.id}/entities`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ label: "2024 Sales" }),
+    });
+    assert.equal(addRes.status, 200);
+    const { project: updated } = (await addRes.json()) as { project: { spec: { entities: { name: string }[] } } };
+    assert.ok(
+      updated.spec.entities.some((e) => e.name === "Entity2024Sales"),
+      "the derived entity name must not start with a digit",
+    );
+
+    const buildRes = await fetch(`${baseUrl}/api/projects/${project.id}/build`, {
+      method: "POST",
+      headers: authHeaders(token),
+    });
+    const events = await collectSSE(buildRes);
+    const forge = events.find((e) => e.agent === "Forge");
+    assert.equal(forge?.status, "success");
+
+    const exportRes = await fetch(`${baseUrl}/api/projects/${project.id}/export`, { headers: authHeaders(token) });
+    assert.equal(exportRes.status, 200, "exporting a numeral-led entity name must no longer throw EXPORT_UNSAFE_IDENTIFIER");
+  });
+});
+
 test("adding an entity on a project you have no access to still 404s, the same as any other project route", async () => {
   await withServer(async (baseUrl) => {
     const ownerToken = await signup(baseUrl, "entity-add-owner2@example.com");

@@ -143,6 +143,19 @@ export function deriveName(description: string): string {
  * falls back to "Entity" rather than producing the empty string
  * EntitySchema's `name: z.string().min(1)` would reject.
  *
+ * A numeral-led label ("2024 Sales", or bare "2024") joins to a name like
+ * "2024Sales" that passes EntitySchema (no identifier-shape guard) and
+ * builds fine in the live preview -- packages/db/src/identifiers.ts's
+ * `tableNameFor` always prepends a permanent "entity_" prefix, so the real
+ * SQL table name there never starts with a digit regardless of this
+ * function's own output. But codegen.ts's exported-app generator uses
+ * `entity.name` directly, with no such prefix, so `assertSafe`'s
+ * leading-letter requirement throws the moment the user exports an
+ * otherwise-healthy, already-built project (round 555; the round-549 fix
+ * below for deriveFieldName covers column names the same way, but never
+ * reaches this function). Prefixed with "Entity" the same way the "no
+ * ASCII letters at all" case already falls back to "Entity".
+ *
  * De-duplicates case-insensitively against the project's existing entity
  * names (SQLite's own case-insensitive identifier comparison -- see
  * ProductSpecSchema's own case-collision `.refine()` in @forge/shared) by
@@ -155,7 +168,8 @@ export function deriveEntityName(label: string, existingNames: string[]): string
     .split(/[^A-Za-z0-9]+/)
     .filter((w) => w.length > 0)
     .map((w) => w[0].toUpperCase() + w.slice(1).toLowerCase());
-  const base = words.join("") || "Entity";
+  const joined = words.join("") || "Entity";
+  const base = /^[0-9]/.test(joined) ? `Entity${joined}` : joined;
   const existingLower = new Set(existingNames.map((n) => n.toLowerCase()));
   if (!existingLower.has(base.toLowerCase())) return base;
   let suffix = 2;
@@ -190,10 +204,13 @@ export function deriveFieldName(label: string, existingNames: string[]): string 
   // name like "2024Sales" that passes FieldSchema (no identifier-shape
   // guard) but throws a raw "Unsafe column identifier" error from
   // assertSafeIdentifier the moment the project is actually built (round
-  // 549). Entity names get this same protection for free from
-  // tableNameFor's permanent "entity_" prefix; fields have no such prefix,
-  // so it's enforced here instead, the same way the "no ASCII letters at
-  // all" case already falls back to "field".
+  // 549). In the live preview, entity names get this same protection for
+  // free from tableNameFor's permanent "entity_" prefix; fields have no
+  // such prefix, so it's enforced here instead, the same way the "no ASCII
+  // letters at all" case already falls back to "field". (deriveEntityName
+  // above needs its own, separate version of this same guard for the
+  // exported codegen app, which uses entity.name with no such prefix --
+  // round 555.)
   const base = /^[0-9]/.test(joined) ? `field${joined[0].toUpperCase()}${joined.slice(1)}` : joined;
   const taken = new Set(["id", "createdat", ...existingNames.map((n) => n.toLowerCase())]);
   if (!taken.has(base.toLowerCase())) return base;
