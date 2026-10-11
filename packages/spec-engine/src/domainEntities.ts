@@ -1215,7 +1215,12 @@ export interface RoleRule {
 
 export const ROLE_RULES: Record<string, RoleRule> = {
   Admin: { keywords: ["admin", "administrator", "owner", "מנהל מערכת", "אדמין", "בעלים"], labelHe: "מנהל/ת ראשי/ת" },
-  Manager: { keywords: ["manager", "management", "מנהל", "מנהלת", "ניהול"], labelHe: "מנהל/ת" },
+  // Bare "management" (round 559) is the same bare-substring collision as
+  // Employee's "worker" below -- it's a substring of the unrelated,
+  // ordinary word "mismanagement", so a compliance/nonprofit description
+  // mentioning financial mismanagement spuriously fabricated a Manager
+  // role. \b-bounded here too.
+  Manager: { keywords: ["manager", /\bmanagement\b/, "מנהל", "מנהלת", "ניהול"], labelHe: "מנהל/ת" },
   // Same bare-substring collision as the Employee entity rule above
   // ("coworker" contains "worker") -- \b-bounded here too.
   Employee: { keywords: ["employee", "staff", /\bworkers?\b/, "team member", "עובד", "עובדת", "עובדים", "צוות"], labelHe: "עובד/ת" },

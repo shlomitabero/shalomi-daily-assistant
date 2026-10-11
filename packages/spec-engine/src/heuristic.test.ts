@@ -1301,3 +1301,34 @@ test("'חיוב' keyword doesn't spuriously match 'חיובי'/'חיובית'/'�
   assert.equal(chargesQuestion.question, "באיזה ספק תשלומים כדאי להשתמש?");
   assert.equal(chargesQuestion.recommendation, "Stripe");
 });
+
+/**
+ * Regression test for round 559's finding: ROLE_RULES.Manager's bare
+ * "management" keyword is a substring of the unrelated, ordinary word
+ * "mismanagement" -- the same pitfall-1 shape as reservation/preservation,
+ * booking/overbooking, and task/multitasking above, but on the ROLE_RULES
+ * table (which governs spec.roles) rather than DOMAIN_ENTITY_RULES. A
+ * compliance/nonprofit description that only mentions "mismanagement" (of
+ * funds, say) has no manager-role concept at all, yet spuriously got a
+ * fabricated "Manager" role shown to the user. Fixed with the same
+ * `\b`-bounded RegExp pattern this file's other collision fixes already
+ * use (matchesKeyword/ROLE_RULES already supported RegExp keywords since
+ * round 446's Employee/"worker" role-side fix).
+ */
+test("Manager's 'management' keyword doesn't spuriously match 'mismanagement'", async () => {
+  const provider = new HeuristicSpecProvider();
+
+  const mismanagement = await provider.generate(
+    "An app for a nonprofit to track grants and detect any financial mismanagement of donated funds.",
+  );
+  assert.ok(
+    !mismanagement.roles.includes("Manager"),
+    "'mismanagement' alone must not spuriously add a Manager role via a bare 'management' substring",
+  );
+
+  // The real word still works on its own (this description avoids this
+  // rule's other keywords -- "manager" itself, "ניהול" -- so a match here
+  // can only come from "management").
+  const realManagement = await provider.generate("An app to support property management operations for a landlord.");
+  assert.ok(realManagement.roles.includes("Manager"), "'management' must still add the Manager role");
+});
