@@ -37,7 +37,11 @@ const PAYMENT_KEYWORDS: (string | RegExp)[] = [
   // that "י" is itself followed by "ם" -- which still matches the real
   // plural "חיובים" ("charges") while rejecting the "positive" forms.
   /חיוב(?!י(?!ם))/,
-  "מנוי",
+  // Bare "מנוי" (round 563) is a substring of the ordinary plural
+  // "אומנויות"/"אמנויות" ("arts"/"crafts", as in "אומנויות לחימה" --
+  // martial arts) -- same collision class and fix as domainEntities.ts's
+  // own Subscription keyword (see that file's comment).
+  /מנוי(?!ות)/,
 ];
 
 /**

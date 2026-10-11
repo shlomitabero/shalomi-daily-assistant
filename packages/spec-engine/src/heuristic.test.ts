@@ -1425,3 +1425,56 @@ test("Event's 'כנס' keyword doesn't spuriously match conjugations of the כ.�
   const realConferences = await provider.generate("אפליקציה למעקב אחרי כנסים שונים ברחבי הארץ");
   assert.ok(realConferences.entities.some((e) => e.name === "Event"), "'כנסים' must still match Event");
 });
+
+/**
+ * Regression test for round 563's finding: Subscription's bare Hebrew
+ * keyword "מנוי" ("subscriber"/"subscription") -- and PAYMENT_KEYWORDS's
+ * own identical bare "מנוי" -- is a substring of the ordinary plural
+ * "אומנויות"/"אמנויות" ("arts"/"crafts"), as in the standard phrase
+ * "אומנויות לחימה" (martial arts). A plain martial-arts/dance-school
+ * description had nothing to do with recurring billing. JS's \b doesn't
+ * bound Hebrew (same reason round 518's "מלאי" and round 562's "כנס"
+ * fixes needed lookahead/lookbehind too), so this excludes "מנוי"
+ * immediately followed by the "ות" plural suffix that marks the
+ * unrelated "arts" word, while still matching "מנוי"/"מנויים".
+ */
+test("Subscription's 'מנוי' keyword doesn't spuriously match 'אומנויות' (arts/crafts)", async () => {
+  const provider = new HeuristicSpecProvider();
+
+  const martialArts = await provider.generate(
+    "אפליקציה לניהול מועדון אומנויות לחימה עם תלמידים ושיעורים",
+  );
+  assert.ok(
+    !martialArts.entities.some((e) => e.name === "Subscription"),
+    "'אומנויות לחימה' (martial arts) alone must not spuriously match Subscription via a bare 'מנוי' substring",
+  );
+  // Every spec gets exactly one payment open-question; its recommendation
+  // (not its mere presence) is what PAYMENT_KEYWORDS controls via
+  // needsPayments -- "אומנויות" alone must not flip it to recommending
+  // Stripe either.
+  const paymentQuestion = martialArts.openQuestions.find((q) => q.question.includes("תשלו"));
+  assert.ok(paymentQuestion);
+  assert.equal(
+    paymentQuestion!.recommendation,
+    "בלי תשלומים",
+    "'אומנויות' alone must not spuriously trigger PAYMENT_KEYWORDS either",
+  );
+
+  const artsSchool = await provider.generate("בית ספר לאמנויות מציע קורסים לציור ולפיסול");
+  assert.ok(
+    !artsSchool.entities.some((e) => e.name === "Subscription"),
+    "'אמנויות' (arts) alone must not spuriously match Subscription via a bare 'מנוי' substring",
+  );
+
+  // The real word still works, singular and plural (these descriptions
+  // avoid this rule's other keywords -- "subscription", "membership plan",
+  // etc. -- so a match here can only come from "מנוי"/"מנויים" itself).
+  const realSubscription = await provider.generate("אפליקציה לניהול מנוי בתשלום חוזר לחדר כושר");
+  assert.ok(realSubscription.entities.some((e) => e.name === "Subscription"), "'מנוי' must still match Subscription");
+
+  const realSubscriptions = await provider.generate("מערכת למעקב אחרי כל המנויים הפעילים במועדון");
+  assert.ok(
+    realSubscriptions.entities.some((e) => e.name === "Subscription"),
+    "'מנויים' must still match Subscription",
+  );
+});

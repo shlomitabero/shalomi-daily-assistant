@@ -830,7 +830,14 @@ export const DOMAIN_ENTITY_RULES: DomainEntityRule[] = [
   {
     keywords: [
       "subscription", "membership plan", "recurring billing", "subscription plan", "member management",
-      "מנוי", "מנויים", "חברות מועדון", "דמי חבר",
+      // Bare "מנוי" (round 563) is a substring of the ordinary plural
+      // "אומנויות"/"אמנויות" ("arts"/"crafts", as in "אומנויות לחימה" --
+      // martial arts), so a plain arts/crafts-school description spuriously
+      // matched Subscription. Hebrew has no \b (same reason round 518's
+      // "מלאי" and round 562's "כנס" fixes needed lookahead/lookbehind
+      // too); this excludes the specific "ות" plural suffix that marks the
+      // unrelated "arts" word while still matching "מנוי"/"מנויים".
+      /מנוי(?!ות)/, "חברות מועדון", "דמי חבר",
     ],
     labelHe: "מנויים",
     descriptionHe: "מנוי בתשלום חוזר של לקוח.",
