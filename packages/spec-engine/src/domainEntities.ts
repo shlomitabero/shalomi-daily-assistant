@@ -166,7 +166,17 @@ export const DOMAIN_ENTITY_RULES: DomainEntityRule[] = [
     // Employee entity for purely personal app descriptions. `\b`-bounded
     // here, same fix already applied to order/stock/driver/patient/deals
     // above for the identical collision shape.
-    keywords: ["employee", "staff", "team member", /\bworkers?\b/, "עובד", "עובדת", "עובדים", "צוות"],
+    keywords: [
+      "employee", "staff", "team member", /\bworkers?\b/,
+      // Bare "עובד"/"עובדת"/"עובדים" (round 565) are substrings of the
+      // pu'al passive-participle adjective "מעובד"/"מעובדת"/"מעובדים"/
+      // "מעובדות" ("processed", as in processed food/data/materials), an
+      // extremely common Hebrew word with nothing to do with staff. Hebrew
+      // has no \b (same reason round 518's "מלאי" and round 564's "מוצר"
+      // fixes needed lookbehind too); this excludes the specific "מ" pu'al
+      // prefix while still matching every real "עובד"-based phrasing.
+      /(?<!מ)עובד/, /(?<!מ)עובדת/, /(?<!מ)עובדים/, "צוות",
+    ],
     labelHe: "עובדים",
     descriptionHe: "מישהו שעובד בעסק.",
     fieldLabelsHe: { name: "שם", role: "תפקיד", email: "אימייל", active: "פעיל/ה" },
@@ -1262,8 +1272,13 @@ export const ROLE_RULES: Record<string, RoleRule> = {
   // role. \b-bounded here too.
   Manager: { keywords: ["manager", /\bmanagement\b/, "מנהל", "מנהלת", "ניהול"], labelHe: "מנהל/ת" },
   // Same bare-substring collision as the Employee entity rule above
-  // ("coworker" contains "worker") -- \b-bounded here too.
-  Employee: { keywords: ["employee", "staff", /\bworkers?\b/, "team member", "עובד", "עובדת", "עובדים", "צוות"], labelHe: "עובד/ת" },
+  // ("coworker" contains "worker") -- \b-bounded here too. Also same
+  // pu'al "מעובד" collision (round 565) as the Employee entity rule's own
+  // Hebrew keywords -- lookbehind-bounded here too.
+  Employee: {
+    keywords: ["employee", "staff", /\bworkers?\b/, "team member", /(?<!מ)עובד/, /(?<!מ)עובדת/, /(?<!מ)עובדים/, "צוות"],
+    labelHe: "עובד/ת",
+  },
   Customer: { keywords: ["customer portal", "client portal", "self-service", "פורטל לקוחות", "גישת לקוחות"], labelHe: "לקוח/ה" },
 };
 

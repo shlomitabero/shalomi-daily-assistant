@@ -1508,3 +1508,45 @@ test("Product's 'מוצר' keyword doesn't spuriously match 'מוצרט' (Mozart
   const realProducts = await provider.generate("אפליקציה לניהול מוצרים בחנות");
   assert.ok(realProducts.entities.some((e) => e.name === "Product"), "'מוצרים' must still match Product");
 });
+
+/**
+ * Regression test for round 565's finding: Employee's bare Hebrew
+ * keywords "עובד"/"עובדת"/"עובדים" ("employee"/"employee (f)"/
+ * "employees") -- in both DOMAIN_ENTITY_RULES and ROLE_RULES -- are
+ * substrings of the pu'al passive-participle adjective "מעובד"
+ * ("processed", as in processed food/data/materials), an extremely
+ * common Hebrew word with nothing to do with staff. A manufacturing
+ * description mentioning processed food had nothing to do with
+ * employees. JS's \b doesn't bound Hebrew (same reason round 518's
+ * "מלאי" and round 564's "מוצר" fixes needed lookbehind too), so this
+ * excludes the specific "מ" pu'al prefix while still matching
+ * "עובד"/"עובדת"/"עובדים" in every real phrasing.
+ */
+test("Employee's 'עובד' keyword doesn't spuriously match 'מעובד' (processed), for both the entity and the role", async () => {
+  const provider = new HeuristicSpecProvider();
+
+  const processedFood = await provider.generate(
+    "אפליקציה לניהול מפעל שמייצר מזון מעובד ומוכר אותו לחנויות",
+  );
+  assert.ok(
+    !processedFood.entities.some((e) => e.name === "Employee"),
+    "'מעובד' (processed) alone must not spuriously match Employee via a bare 'עובד' substring",
+  );
+  assert.ok(
+    !processedFood.roles.includes("עובד/ת"),
+    "'מעובד' (processed) alone must not spuriously add an Employee role via a bare 'עובד' substring",
+  );
+
+  // The real word still works, singular and plural, for both the entity
+  // and the role (these descriptions avoid this rule's other keywords --
+  // "staff", "צוות", etc. -- so a match here can only come from
+  // "עובד"/"עובדים" itself). Hebrew descriptions report roles via their
+  // Hebrew label ("עובד/ת"), not the English role name.
+  const realEmployee = await provider.generate("אפליקציה לניהול עובד אחד בחנות קטנה");
+  assert.ok(realEmployee.entities.some((e) => e.name === "Employee"), "'עובד' must still match Employee");
+  assert.ok(realEmployee.roles.includes("עובד/ת"), "'עובד' must still add the Employee role");
+
+  const realEmployees = await provider.generate("אפליקציה לניהול עובדים בחברה");
+  assert.ok(realEmployees.entities.some((e) => e.name === "Employee"), "'עובדים' must still match Employee");
+  assert.ok(realEmployees.roles.includes("עובד/ת"), "'עובדים' must still add the Employee role");
+});
