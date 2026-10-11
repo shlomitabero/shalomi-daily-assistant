@@ -25,7 +25,7 @@ export const SOURCE_DEFINITIONS = [
     category: 'affiliate',
     description: 'מעקב אחרי ביצועים בתוכניות שיווק שותפים שהצטרפת אליהן.',
     requiredEnv: ['AFFILIATE_API_KEY'],
-    howToConnect: 'עדיין לא נבנה חיבור ספציפי. ספר לי לאיזו תוכנית שיווק שותפים (ולאיזה API שלה) להתחבר, ואוסיף את החיבור.',
+    howToConnect: 'אין API אחד גנרי ל"שיווק שותפים" — כל תוכנית מנפיקה מפתח משלה לחשבון שאושר. דוגמה: Amazon Associates מנפיק גישת API רק לחשבון שכבר ביצע 3 מכירות לפחות ב-180 הימים האחרונים — זו דרישה של אמזון עצמה, לא ניתנת לעקיפה. תוכניות אחרות (למשל AliExpress Portals) לא דורשות היסטוריית מכירות. ספר לי לאיזו תוכנית ספציפית אתה כבר רשום ויש לך מפתח API ממנה, ואחבר אותה.',
   },
   {
     id: 'supplier_price_gaps',
@@ -33,7 +33,7 @@ export const SOURCE_DEFINITIONS = [
     category: 'arbitrage',
     description: 'השוואת מחירים בין ספקים ופלטפורמות שונות כדי לאתר פערי רווח אפשריים.',
     requiredEnv: ['SUPPLIER_API_KEY'],
-    howToConnect: 'עדיין לא נבנה חיבור ספציפי. ספר לי לאיזה ספקים/פלטפורמות להתחבר ואוסיף את החיבור.',
+    howToConnect: 'דוגמאות ל-API אמיתיים בתחום: AliExpress Open Platform (דורש App Key + App Secret מהרשמת מפתח) או CJ Dropshipping API (דורש CJ API token מהחשבון). בחר אחד, הירשם בו כמפתח, ושלח לי את המפתח שתקבל — אחבר אותו באמת. בלי מפתח אמיתי אין מה לחבר.',
   },
   {
     id: 'tenders_rfps',
@@ -41,7 +41,7 @@ export const SOURCE_DEFINITIONS = [
     category: 'tenders',
     description: 'סריקת מכרזים ציבוריים או עסקיים רלוונטיים לתחומי העניין שהגדרת.',
     requiredEnv: ['TENDERS_API_KEY'],
-    howToConnect: 'עדיין לא נבנה חיבור ספציפי. ספר לי לאיזו מערכת מכרזים (לדוגמה מערכת המכרזים הממשלתית) להתחבר ואוסיף את החיבור.',
+    howToConnect: 'מאגר המידע הפתוח הממשלתי data.gov.il חושף מכרזים ציבוריים בלי צורך במפתח API כלל — אבל צריך dataset ספציפי. היכנס ל-data.gov.il, חפש "מכרזים", ושלח לי את הקישור ל-dataset הרלוונטי (או את ה-resource_id שלו) — אבנה חיבור אמיתי בלי צורך במפתח.',
   },
 ];
 
