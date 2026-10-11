@@ -10,7 +10,18 @@ export function syncSources() {
     const existing = db.sources.where((s) => s.key === def.id)[0];
     const connected = isSourceConnected(def);
     if (existing) {
-      db.sources.update(existing.id, { connected, lastCheckedAt: now });
+      // name/description/howToConnect must be refreshed too, not just
+      // connected/lastCheckedAt — otherwise editing SOURCE_DEFINITIONS (e.g.
+      // fixing a howToConnect instruction) would silently never reach a
+      // source row created before the edit, since insert() only runs once.
+      db.sources.update(existing.id, {
+        connected,
+        lastCheckedAt: now,
+        name: def.name,
+        description: def.description,
+        howToConnect: def.howToConnect,
+        category: def.category,
+      });
     } else {
       db.sources.insert({
         id: makeId('src'),
