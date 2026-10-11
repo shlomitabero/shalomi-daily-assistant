@@ -46,6 +46,19 @@ export function DeleteAccountPanel({
   // eighteen projectId-keyed stores sat here forever, unlike the single-
   // project "leave" path.
   const [sharedProjectIds, setSharedProjectIds] = useState<string[]>([]);
+  // The mount-time listMyProjectIds() fetch below and handleSubmit are two
+  // independent, uncoordinated consumers of ownedProjectIds/sharedProjectIds:
+  // nothing ties submission to that fetch having settled. If the user
+  // types/pastes the confirmation email and submits before it resolves (a
+  // real network round trip -- entirely plausible if the email is already in
+  // a password manager or clipboard), handleSubmit would read the still-
+  // initial [] arrays and hand them to onDeleted even though deleteAccount()
+  // genuinely deleted real owned/shared projects server-side, silently
+  // skipping purgeProjectPreferences for all of them in App.tsx (round 542).
+  // Deliberately separate from projectSummary (which stays null on a FAILED
+  // fetch too, for display purposes) so a fetch failure never permanently
+  // blocks the user from deleting their own account.
+  const [idsFetchSettled, setIdsFetchSettled] = useState(false);
   const dialogRef = useDialogFocusTrap<HTMLDivElement>(onClose);
 
   // Fetches the real project id lists itself (rather than trusting App.tsx's
@@ -66,7 +79,8 @@ export function DeleteAccountPanel({
         setOwnedProjectIds(ownedProjectIds);
         setSharedProjectIds(sharedProjectIds);
       })
-      .catch(() => setProjectSummary(null));
+      .catch(() => setProjectSummary(null))
+      .finally(() => setIdsFetchSettled(true));
   }, [userId]);
 
   const canSubmit = confirmText.trim().toLowerCase() === email.toLowerCase();
@@ -74,7 +88,7 @@ export function DeleteAccountPanel({
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (!canSubmit) return;
+    if (!canSubmit || !idsFetchSettled) return;
     setBusy(true);
     setError(null);
     try {
@@ -116,7 +130,7 @@ export function DeleteAccountPanel({
             <button type="button" className="secondary" onClick={onClose} disabled={busy}>
               {t("deleteAccount.cancel")}
             </button>
-            <button type="submit" className="danger" disabled={busy || !canSubmit}>
+            <button type="submit" className="danger" disabled={busy || !canSubmit || !idsFetchSettled}>
               {busy ? t("deleteAccount.busy") : t("deleteAccount.submit")}
             </button>
           </div>

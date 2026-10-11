@@ -122,6 +122,10 @@ function typeConfirmation(value: string) {
   fireEvent.change(document.querySelector("input[type='text']")!, { target: { value } });
 }
 
+function submitButton(): HTMLButtonElement {
+  return document.querySelector("form button[type='submit']") as HTMLButtonElement;
+}
+
 test("typing the account's own email exactly and submitting calls the real DELETE /auth/account and fires onDeleted", async () => {
   await withJsdom(async () => {
     const originalFetch = globalThis.fetch;
@@ -138,6 +142,11 @@ test("typing the account's own email exactly and submitting calls the real DELET
     try {
       renderPanel({ onDeleted: () => (deletedCount += 1) });
       typeConfirmation("dana@example.com");
+      // Round 542: submitting is also gated on the mount-time project-ids
+      // fetch having settled, not just on the typed confirmation matching --
+      // wait for the submit button to actually become enabled first, the
+      // same signal a real user waits on.
+      await waitForCondition(() => !(submitButton().disabled));
       fireEvent.submit(document.querySelector("form")!);
 
       await waitForCondition(() => deletedCount === 1);
@@ -276,6 +285,7 @@ test("a server error is shown to the user instead of a silent failure, and onDel
     try {
       renderPanel({ onDeleted: () => (deletedCount += 1) });
       typeConfirmation("dana@example.com");
+      await waitForCondition(() => !(submitButton().disabled));
       fireEvent.submit(document.querySelector("form")!);
 
       await waitForCondition(() => document.querySelector(".error") !== null);
@@ -408,6 +418,80 @@ test("still counts and passes along an owned project id that GET /api/projects/m
         ["p1", "stale-spec-project"],
         "the stale-spec project's id must still reach onDeleted so its localStorage entries actually get swept",
       );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
+ * Regression test for round 542: the mount-time listMyProjectIds() fetch and
+ * handleSubmit are two independent, uncoordinated consumers of
+ * ownedProjectIds/sharedProjectIds -- nothing used to tie submission to that
+ * fetch having settled. If a user typed/pasted the confirmation email and
+ * submitted before it resolved (a real network round trip -- entirely
+ * plausible with the email already in a password manager or clipboard),
+ * handleSubmit read the still-initial [] arrays and handed them to
+ * onDeleted even though deleteAccount() genuinely deleted real owned/shared
+ * projects server-side, silently skipping purgeProjectPreferences for all
+ * of them in App.tsx. Holds the mine-ids fetch open with a controlled
+ * promise (this file's own first new mechanism for this, since every other
+ * test here uses a fetch that settles immediately) to deterministically
+ * land the submit attempt while it's still in flight.
+ */
+test("submitting before the mount-time project-ids fetch has resolved does not call deleteAccount with the wrong (empty) ids, and succeeds once it resolves", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    let releaseIdsFetch!: () => void;
+    const idsFetchGate = new Promise<void>((resolve) => {
+      releaseIdsFetch = resolve;
+    });
+    let deleteCalls = 0;
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      if ((init?.method ?? "GET") === "GET" && input === "/api/projects/mine-ids") {
+        await idsFetchGate;
+        return new Response(JSON.stringify({ ownedProjectIds: ["p1", "p2"], sharedProjectIds: ["p3"] }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      if (init?.method === "DELETE" && input === "/api/auth/account") {
+        deleteCalls += 1;
+        return new Response(null, { status: 204 });
+      }
+      throw new Error(`unexpected request ${init?.method ?? "GET"} ${input}`);
+    }) as typeof fetch;
+
+    let receivedOwnedIds: string[] | null = null;
+    let receivedSharedIds: string[] | null = null;
+    try {
+      renderPanel({
+        userId: "user1",
+        onDeleted: (ownedIds, sharedIds) => {
+          receivedOwnedIds = ownedIds;
+          receivedSharedIds = sharedIds;
+        },
+      });
+      typeConfirmation("dana@example.com");
+
+      // The ids fetch is still held open -- the submit button must reflect
+      // that, and attempting to submit anyway (e.g. via Enter, which also
+      // goes through this same form submit handler) must be a no-op rather
+      // than calling deleteAccount with the still-empty id arrays.
+      assert.ok(submitButton().disabled, "the submit button must stay disabled while the ids fetch is still in flight");
+      fireEvent.submit(document.querySelector("form")!);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      assert.equal(deleteCalls, 0, "submitting while the ids fetch is in flight must never call DELETE /auth/account");
+      assert.equal(receivedOwnedIds, null, "onDeleted must never fire with wrong (empty) ids while the fetch is still in flight");
+
+      releaseIdsFetch();
+      await waitForCondition(() => !submitButton().disabled);
+      fireEvent.submit(document.querySelector("form")!);
+
+      await waitForCondition(() => receivedOwnedIds !== null);
+      assert.equal(deleteCalls, 1, "the real DELETE /auth/account endpoint must have been called exactly once, once the ids fetch settled");
+      assert.deepEqual(receivedOwnedIds, ["p1", "p2"], "onDeleted must receive the real owned ids, not the stale empty array");
+      assert.deepEqual(receivedSharedIds, ["p3"], "onDeleted must receive the real shared ids, not the stale empty array");
     } finally {
       globalThis.fetch = originalFetch;
     }
