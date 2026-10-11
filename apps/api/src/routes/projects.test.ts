@@ -82,6 +82,23 @@ test("deriveFieldName falls back to 'field' when the label has no ASCII letters/
   assert.equal(deriveFieldName("מספר טלפון", []), "field");
 });
 
+/**
+ * Regression test for round 549's finding: a numeral-led label joins to a
+ * name that starts with a digit ("2024Sales"), which FieldSchema accepts
+ * (no identifier-shape guard) but packages/db/src/identifiers.ts's
+ * SAFE_IDENTIFIER (requires a leading letter) rejects at real build time --
+ * a field that looked accepted when added then crashes the build with a
+ * raw "Unsafe column identifier" error. Prefixing with "field" (the same
+ * fallback word the "no ASCII letters at all" case above already uses)
+ * guarantees a leading letter, the same protection entity names get for
+ * free from tableNameFor's permanent "entity_" prefix.
+ */
+test("deriveFieldName prefixes a numeral-led label so the result never starts with a digit", () => {
+  assert.equal(deriveFieldName("2024 Sales", []), "field2024Sales");
+  assert.equal(deriveFieldName("2024", []), "field2024");
+  assert.equal(deriveFieldName("3rd Quarter", []), "field3rdQuarter");
+});
+
 test("deriveFieldName appends the first free numeric suffix on a case-insensitive collision with an existing field on the same entity", () => {
   assert.equal(deriveFieldName("Phone", ["name"]), "phone");
   assert.equal(deriveFieldName("Phone", ["name", "phone"]), "phone2");

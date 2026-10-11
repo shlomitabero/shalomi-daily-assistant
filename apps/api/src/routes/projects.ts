@@ -184,7 +184,17 @@ export function deriveFieldName(label: string, existingNames: string[]): string 
     .split(/[^A-Za-z0-9]+/)
     .filter((w) => w.length > 0)
     .map((w, i) => (i === 0 ? w[0].toLowerCase() + w.slice(1).toLowerCase() : w[0].toUpperCase() + w.slice(1).toLowerCase()));
-  const base = words.join("") || "field";
+  const joined = words.join("") || "field";
+  // packages/db/src/identifiers.ts's SAFE_IDENTIFIER requires a leading
+  // letter -- a numeral-led label ("2024 Sales", or bare "2024") joins to a
+  // name like "2024Sales" that passes FieldSchema (no identifier-shape
+  // guard) but throws a raw "Unsafe column identifier" error from
+  // assertSafeIdentifier the moment the project is actually built (round
+  // 549). Entity names get this same protection for free from
+  // tableNameFor's permanent "entity_" prefix; fields have no such prefix,
+  // so it's enforced here instead, the same way the "no ASCII letters at
+  // all" case already falls back to "field".
+  const base = /^[0-9]/.test(joined) ? `field${joined[0].toUpperCase()}${joined.slice(1)}` : joined;
   const taken = new Set(["id", "createdat", ...existingNames.map((n) => n.toLowerCase())]);
   if (!taken.has(base.toLowerCase())) return base;
   let suffix = 2;
