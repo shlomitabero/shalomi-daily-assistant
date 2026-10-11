@@ -2646,6 +2646,15 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
   const [selectedIds, setSelectedIds] = useState(() => new Set());
   const [bulkEditField, setBulkEditField] = useState("");
   const [bulkEditValue, setBulkEditValue] = useState("");
+  // handleBulkDelete clears selectedIds synchronously, before any await, so
+  // the bulk-actions-bar vanishes on the next render and a second click
+  // can't land. handleBulkDuplicate/handleBulkUpdate below have no such
+  // synchronous step -- selectedIds is only touched after their own
+  // Promise.allSettled resolves -- so without this flag, double-clicking
+  // "Duplicate selected" while the first batch was still in flight started
+  // a second, independent batch of createRecord calls for the same ids,
+  // duplicating every selected record twice instead of once (round 544).
+  const [bulkActionBusy, setBulkActionBusy] = useState(false);
   const [copyStatus, setCopyStatus] = useState("idle");
   const [pendingDelete, setPendingDelete] = useState(null);
   // Mirrors pendingDelete so the unmount-flush effect and a second delete
@@ -3386,28 +3395,34 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
   // same reason handleDuplicate has none: duplicating creates rather than
   // destroys.
   async function handleBulkDuplicate() {
+    if (bulkActionBusy) return;
     const ids = [...selectedIds];
     if (ids.length === 0) return;
+    setBulkActionBusy(true);
     setError(null);
-    const results = await Promise.allSettled(
-      ids.map((id) => {
-        const record = records.find((r) => r.id === id);
-        const copy = {};
-        if (record) for (const f of entity.fields) copy[f.name] = record[f.name];
-        return createRecord(entity.name, copy);
-      }),
-    );
-    const failedIds = ids.filter((_, i) => results[i].status === "rejected");
-    setSelectedIds(new Set(failedIds));
-    if (failedIds.length > 0) {
-      const firstFailure = results.find((r) => r.status === "rejected");
-      setError(
-        failedIds.length === ids.length
-          ? firstFailure.reason.message
-          : \`\${failedIds.length} of \${ids.length} records could not be duplicated.\`,
+    try {
+      const results = await Promise.allSettled(
+        ids.map((id) => {
+          const record = records.find((r) => r.id === id);
+          const copy = {};
+          if (record) for (const f of entity.fields) copy[f.name] = record[f.name];
+          return createRecord(entity.name, copy);
+        }),
       );
+      const failedIds = ids.filter((_, i) => results[i].status === "rejected");
+      setSelectedIds(new Set(failedIds));
+      if (failedIds.length > 0) {
+        const firstFailure = results.find((r) => r.status === "rejected");
+        setError(
+          failedIds.length === ids.length
+            ? firstFailure.reason.message
+            : \`\${failedIds.length} of \${ids.length} records could not be duplicated.\`,
+        );
+      }
+      await refresh();
+    } finally {
+      setBulkActionBusy(false);
     }
-    await refresh();
   }
 
   // Changing a single shared field's value across several selected records
@@ -3417,21 +3432,27 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
   // isInlineEditableField fields (excludes relation), same reason the
   // inline cell editor itself is.
   async function handleBulkUpdate() {
+    if (bulkActionBusy) return;
     const ids = [...selectedIds];
     if (ids.length === 0 || !bulkEditField) return;
+    setBulkActionBusy(true);
     setError(null);
-    const results = await Promise.allSettled(ids.map((id) => updateRecord(entity.name, id, { [bulkEditField]: bulkEditValue })));
-    const failedIds = ids.filter((_, i) => results[i].status === "rejected");
-    setSelectedIds(new Set(failedIds));
-    if (failedIds.length > 0) {
-      const firstFailure = results.find((r) => r.status === "rejected");
-      setError(
-        failedIds.length === ids.length
-          ? firstFailure.reason.message
-          : \`\${failedIds.length} of \${ids.length} records could not be updated.\`,
-      );
+    try {
+      const results = await Promise.allSettled(ids.map((id) => updateRecord(entity.name, id, { [bulkEditField]: bulkEditValue })));
+      const failedIds = ids.filter((_, i) => results[i].status === "rejected");
+      setSelectedIds(new Set(failedIds));
+      if (failedIds.length > 0) {
+        const firstFailure = results.find((r) => r.status === "rejected");
+        setError(
+          failedIds.length === ids.length
+            ? firstFailure.reason.message
+            : \`\${failedIds.length} of \${ids.length} records could not be updated.\`,
+        );
+      }
+      await refresh();
+    } finally {
+      setBulkActionBusy(false);
     }
-    await refresh();
   }
 
   // A field's "empty" starting value depends on its type -- switching the
@@ -4129,12 +4150,12 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
                     <FieldInput entity={entity} field={entity.fields.find((f) => f.name === bulkEditField)} value={bulkEditValue} onChange={setBulkEditValue} />
                   )}
                   {bulkEditField && (
-                    <button type="button" onClick={handleBulkUpdate}>
-                      Apply to {selectedIds.size}
+                    <button type="button" disabled={bulkActionBusy} onClick={handleBulkUpdate}>
+                      {bulkActionBusy ? "Updating…" : \`Apply to \${selectedIds.size}\`}
                     </button>
                   )}
-                  <button type="button" onClick={handleBulkDuplicate}>
-                    📋 Duplicate selected
+                  <button type="button" disabled={bulkActionBusy} onClick={handleBulkDuplicate}>
+                    {bulkActionBusy ? "Duplicating…" : "📋 Duplicate selected"}
                   </button>
                   <button type="button" onClick={handleBulkDelete}>
                     🗑️ Delete selected

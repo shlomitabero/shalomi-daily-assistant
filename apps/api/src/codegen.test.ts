@@ -2141,7 +2141,7 @@ test("the exported EntityView's bulk-actions bar also supports duplicating and b
   );
   assert.match(entityViewJsx, /onClick=\{handleBulkUpdate\}/);
   assert.match(entityViewJsx, /onClick=\{handleBulkDuplicate\}/);
-  assert.match(entityViewJsx, /Apply to \{selectedIds\.size\}/);
+  assert.match(entityViewJsx, /Apply to \$\{selectedIds\.size\}/);
   assert.match(entityViewJsx, /📋 Duplicate selected/);
 
   const stylesCss = files.find((f) => f.path === "web/src/styles.css")!.content;
@@ -2189,18 +2189,22 @@ test("the exported EntityView's handleBulkDuplicate and handleBulkUpdate keep on
     let refreshCalled = 0;
     const createdCopies: Record<string, unknown>[] = [];
     const fn = new Function(
+      "bulkActionBusy",
       "entity",
       "records",
       "selectedIds",
+      "setBulkActionBusy",
       "setSelectedIds",
       "setError",
       "createRecord",
       "refresh",
       `${handleBulkDuplicateSrc}\nreturn handleBulkDuplicate;`,
     )(
+      false,
       { fields: [{ name: "name" }] },
       [{ id: 1, name: "A" }, { id: 2, name: "B" }, { id: 3, name: "C" }],
       new Set([1, 2, 3]),
+      () => {},
       (next: Set<number>) => (capturedSelectedIds = next),
       (msg: string) => (capturedError = msg),
       async (_entityName: string, copy: Record<string, unknown>) => {
@@ -2230,20 +2234,24 @@ test("the exported EntityView's handleBulkDuplicate and handleBulkUpdate keep on
     let refreshCalled = 0;
     const updatedIds: number[] = [];
     const fn = new Function(
+      "bulkActionBusy",
       "entity",
       "bulkEditField",
       "bulkEditValue",
       "selectedIds",
+      "setBulkActionBusy",
       "setSelectedIds",
       "setError",
       "updateRecord",
       "refresh",
       `${handleBulkUpdateSrc}\nreturn handleBulkUpdate;`,
     )(
+      false,
       { name: "Order" },
       "status",
       "Shipped",
       new Set([1, 2, 3]),
+      () => {},
       (next: Set<number>) => (capturedSelectedIds = next),
       (msg: string) => (capturedError = msg),
       async (_entityName: string, id: number, patch: Record<string, unknown>) => {
@@ -2268,20 +2276,24 @@ test("the exported EntityView's handleBulkDuplicate and handleBulkUpdate keep on
     let updateRecordCalled = 0;
     let refreshCalled = 0;
     const fn = new Function(
+      "bulkActionBusy",
       "entity",
       "bulkEditField",
       "bulkEditValue",
       "selectedIds",
+      "setBulkActionBusy",
       "setSelectedIds",
       "setError",
       "updateRecord",
       "refresh",
       `${handleBulkUpdateSrc}\nreturn handleBulkUpdate;`,
     )(
+      false,
       { name: "Order" },
       "",
       "",
       new Set([1, 2]),
+      () => {},
       () => {},
       () => {},
       async () => {
@@ -2295,6 +2307,90 @@ test("the exported EntityView's handleBulkDuplicate and handleBulkUpdate keep on
     assert.equal(updateRecordCalled, 0, "no field chosen must mean no update calls at all");
     assert.equal(refreshCalled, 0);
   }
+});
+
+/**
+ * Regression test (round 544): the exported EntityView's generated
+ * handleBulkDuplicate used to touch selectedIds only AFTER its own
+ * Promise.allSettled resolved, with no busy flag and no disabled attribute
+ * on its own button -- a second click while the first batch was still in
+ * flight started a fully independent second batch of createRecord calls
+ * for the same ids, duplicating every selected record twice instead of
+ * once. Mirrors the live preview's own equivalent test in
+ * apps/web/src/EntityPanel.test.ts: a fresh handler closure is built per
+ * simulated "click" (as a real re-render would bind one), and the first
+ * call's own createRecord calls are held open so a second click can land
+ * while bulkActionBusy is still true.
+ */
+test("the exported EntityView's generated handleBulkDuplicate refuses to start a second batch while a previous one is still in flight, and resumes normally once it finishes", async () => {
+  const entityViewJsx = generateExportFiles(project).find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+  const handleBulkDuplicateSrc = entityViewJsx.match(/async function handleBulkDuplicate\(\) \{[\s\S]*?\n  \}\n/)?.[0];
+  assert.ok(handleBulkDuplicateSrc, "expected to find handleBulkDuplicate in generated output");
+
+  const state = {
+    bulkActionBusy: false,
+    selectedIds: new Set([1, 2]),
+    error: undefined as string | null | undefined,
+  };
+  const createCalls: string[] = [];
+  let refreshCalled = 0;
+  let releaseCreate!: () => void;
+  const createGate = new Promise<void>((resolve) => {
+    releaseCreate = resolve;
+  });
+
+  function makeHandler() {
+    return new Function(
+      "bulkActionBusy",
+      "entity",
+      "records",
+      "selectedIds",
+      "setBulkActionBusy",
+      "setSelectedIds",
+      "setError",
+      "createRecord",
+      "refresh",
+      `${handleBulkDuplicateSrc}\nreturn handleBulkDuplicate;`,
+    )(
+      state.bulkActionBusy,
+      { fields: [{ name: "name" }] },
+      [{ id: 1, name: "A" }, { id: 2, name: "B" }],
+      state.selectedIds,
+      (v: boolean) => (state.bulkActionBusy = v),
+      (next: Set<number>) => (state.selectedIds = next),
+      (msg: string | null) => (state.error = msg),
+      async (_entityName: string, copy: Record<string, unknown>) => {
+        createCalls.push(copy.name as string);
+        await createGate;
+      },
+      async () => {
+        refreshCalled += 1;
+      },
+    ) as () => Promise<void>;
+  }
+
+  // First "click": starts the real batch, which marks itself busy
+  // synchronously (before its own await) and begins both creates.
+  const firstCall = makeHandler()();
+  await Promise.resolve();
+  assert.equal(state.bulkActionBusy, true, "the first invocation must mark itself busy before awaiting the real createRecord calls");
+  assert.deepEqual(createCalls.sort(), ["A", "B"], "the first invocation's own duplicate calls must have started");
+
+  // Second "click", landing while the first batch is still held open -- a
+  // real re-render would bind a fresh handler against the now-true
+  // bulkActionBusy, exactly like makeHandler() does here.
+  await makeHandler()();
+  assert.deepEqual(
+    createCalls.sort(),
+    ["A", "B"],
+    "a second invocation while the first batch is still in flight must never call createRecord again for the same ids",
+  );
+
+  releaseCreate();
+  await firstCall;
+  assert.equal(state.bulkActionBusy, false, "the busy flag must be cleared once the first (real) batch finishes");
+  assert.equal(refreshCalled, 1, "the first batch's own refresh must still run exactly once");
+  assert.equal(state.error, null, "a duplicate batch that genuinely succeeded must never report an error");
 });
 
 test("the exported EntityView renders a real Duplicate action (table and board views) that copies a record via a real createRecord call", () => {

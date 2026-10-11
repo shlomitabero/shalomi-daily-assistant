@@ -868,6 +868,16 @@ export function EntityPanel({
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
   const [bulkEditField, setBulkEditField] = useState("");
   const [bulkEditValue, setBulkEditValue] = useState<unknown>("");
+  // handleBulkDelete clears selectedIds synchronously, before any await, so
+  // the bulk-actions-bar (gated on selectedIds.size > 0) vanishes on the
+  // very next render and a second click can't land. handleBulkDuplicate and
+  // handleBulkUpdate below have no such synchronous step -- selectedIds is
+  // only touched after their own Promise.allSettled resolves -- so without
+  // this flag, double-clicking "Duplicate Selected" while the first batch
+  // was still in flight started a second, fully independent batch of
+  // createRecord calls for the same ids, duplicating every selected record
+  // twice instead of once (round 544).
+  const [bulkActionBusy, setBulkActionBusy] = useState(false);
   const [copyStatus, setCopyStatus] = useState<"idle" | "copied" | "failed">("idle");
   const [relatedRecords, setRelatedRecords] = useState<RelatedRecordsByEntity>({});
   const [importBusy, setImportBusy] = useState(false);
@@ -1862,28 +1872,34 @@ export function EntityPanel({
   // duplicates one at a time. No confirmation, for the same reason
   // handleDuplicate has none: duplicating creates rather than destroys.
   async function handleBulkDuplicate() {
+    if (bulkActionBusy) return;
     const ids = [...selectedIds];
     if (ids.length === 0) return;
+    setBulkActionBusy(true);
     setError(null);
-    const results = await Promise.allSettled(
-      ids.map((id) => {
-        const record = records.find((r) => (r.id as number) === id);
-        const copy: Record<string, unknown> = {};
-        if (record) for (const field of entity.fields) copy[field.name] = record[field.name];
-        return createRecord(projectId, entity.name, copy);
-      }),
-    );
-    const failedIds = ids.filter((_, i) => results[i].status === "rejected");
-    setSelectedIds(new Set(failedIds));
-    if (failedIds.length > 0) {
-      const firstFailure = results.find((r): r is PromiseRejectedResult => r.status === "rejected")!;
-      setError(
-        failedIds.length === ids.length
-          ? (firstFailure.reason as Error).message
-          : t("entity.bulk.duplicatePartialFailure", { failed: failedIds.length, total: ids.length }),
+    try {
+      const results = await Promise.allSettled(
+        ids.map((id) => {
+          const record = records.find((r) => (r.id as number) === id);
+          const copy: Record<string, unknown> = {};
+          if (record) for (const field of entity.fields) copy[field.name] = record[field.name];
+          return createRecord(projectId, entity.name, copy);
+        }),
       );
+      const failedIds = ids.filter((_, i) => results[i].status === "rejected");
+      setSelectedIds(new Set(failedIds));
+      if (failedIds.length > 0) {
+        const firstFailure = results.find((r): r is PromiseRejectedResult => r.status === "rejected")!;
+        setError(
+          failedIds.length === ids.length
+            ? (firstFailure.reason as Error).message
+            : t("entity.bulk.duplicatePartialFailure", { failed: failedIds.length, total: ids.length }),
+        );
+      }
+      await refresh();
+    } finally {
+      setBulkActionBusy(false);
     }
-    await refresh();
   }
 
   /**
@@ -1947,23 +1963,29 @@ export function EntityPanel({
    * records makes sense for.
    */
   async function handleBulkUpdate() {
+    if (bulkActionBusy) return;
     const ids = [...selectedIds];
     if (ids.length === 0 || !bulkEditField) return;
+    setBulkActionBusy(true);
     setError(null);
-    const results = await Promise.allSettled(
-      ids.map((id) => updateRecord(projectId, entity.name, id, { [bulkEditField]: bulkEditValue })),
-    );
-    const failedIds = ids.filter((_, i) => results[i].status === "rejected");
-    setSelectedIds(new Set(failedIds));
-    if (failedIds.length > 0) {
-      const firstFailure = results.find((r): r is PromiseRejectedResult => r.status === "rejected")!;
-      setError(
-        failedIds.length === ids.length
-          ? (firstFailure.reason as Error).message
-          : t("entity.bulk.updatePartialFailure", { failed: failedIds.length, total: ids.length }),
+    try {
+      const results = await Promise.allSettled(
+        ids.map((id) => updateRecord(projectId, entity.name, id, { [bulkEditField]: bulkEditValue })),
       );
+      const failedIds = ids.filter((_, i) => results[i].status === "rejected");
+      setSelectedIds(new Set(failedIds));
+      if (failedIds.length > 0) {
+        const firstFailure = results.find((r): r is PromiseRejectedResult => r.status === "rejected")!;
+        setError(
+          failedIds.length === ids.length
+            ? (firstFailure.reason as Error).message
+            : t("entity.bulk.updatePartialFailure", { failed: failedIds.length, total: ids.length }),
+        );
+      }
+      await refresh();
+    } finally {
+      setBulkActionBusy(false);
     }
-    await refresh();
   }
 
   /** A field's "empty" starting value depends on its type -- switching the
@@ -2774,12 +2796,12 @@ export function EntityPanel({
                     />
                   )}
                   {bulkEditField && (
-                    <button type="button" className="secondary" onClick={handleBulkUpdate}>
-                      {t("entity.bulk.apply", { count: selectedIds.size })}
+                    <button type="button" className="secondary" disabled={bulkActionBusy} onClick={handleBulkUpdate}>
+                      {bulkActionBusy ? t("entity.bulk.apply.busy") : t("entity.bulk.apply", { count: selectedIds.size })}
                     </button>
                   )}
-                  <button type="button" className="secondary" onClick={handleBulkDuplicate}>
-                    {t("entity.bulk.duplicateSelected")}
+                  <button type="button" className="secondary" disabled={bulkActionBusy} onClick={handleBulkDuplicate}>
+                    {bulkActionBusy ? t("entity.bulk.duplicateSelected.busy") : t("entity.bulk.duplicateSelected")}
                   </button>
                   <button type="button" className="danger" onClick={handleBulkDelete}>
                     {t("entity.bulk.deleteSelected")}

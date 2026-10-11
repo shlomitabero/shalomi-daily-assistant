@@ -74,6 +74,8 @@ test("EntityPanel's handleBulkDuplicate refreshes and keeps only the ids that ac
   ];
 
   const fn = new Function(
+    "bulkActionBusy",
+    "setBulkActionBusy",
     "t",
     "projectId",
     "entity",
@@ -85,6 +87,8 @@ test("EntityPanel's handleBulkDuplicate refreshes and keeps only the ids that ac
     "refresh",
     `${code}\nreturn handleBulkDuplicate;`,
   )(
+    false,
+    () => {},
     (key: string, params?: Record<string, unknown>) => (params ? `${key}:${JSON.stringify(params)}` : key),
     "proj1",
     entity,
@@ -135,6 +139,8 @@ test("EntityPanel's handleBulkDuplicate still surfaces the raw error message whe
   const records: EntityRecord[] = [{ id: 1, createdAt: "x", name: "Alice" }];
 
   const fn = new Function(
+    "bulkActionBusy",
+    "setBulkActionBusy",
     "t",
     "projectId",
     "entity",
@@ -146,6 +152,8 @@ test("EntityPanel's handleBulkDuplicate still surfaces the raw error message whe
     "refresh",
     `${code}\nreturn handleBulkDuplicate;`,
   )(
+    false,
+    () => {},
     (key: string) => key,
     "proj1",
     entity,
@@ -164,6 +172,99 @@ test("EntityPanel's handleBulkDuplicate still surfaces the raw error message whe
   await fn();
 
   assert.equal(capturedError, rejection.message);
+});
+
+/**
+ * Regression test (round 544): handleBulkDuplicate used to touch
+ * selectedIds only AFTER its own Promise.allSettled resolved, with no busy
+ * flag and no disabled attribute on its own button -- a second click while
+ * the first batch was still in flight started a fully independent second
+ * batch of createRecord calls for the same ids, duplicating every selected
+ * record twice instead of once. Mirrors round 543's analogous
+ * handleBulkDeleteProjects test in App.test.ts: a fresh handler closure is
+ * built per simulated "click" (as a real re-render would bind one), and the
+ * first call's own createRecord calls are held open so a second click can
+ * land while bulkActionBusy is still true.
+ */
+test("EntityPanel's handleBulkDuplicate refuses to start a second batch while a previous one is still in flight, and resumes normally once it finishes", async () => {
+  const handlerMatch = entityPanelSrc.match(/ {2}async function handleBulkDuplicate\(\) \{[\s\S]*?\n {2}\}\n/);
+  assert.ok(handlerMatch, "expected to find handleBulkDuplicate in EntityPanel.tsx");
+  const { code } = transformSync(handlerMatch![0], { loader: "ts" });
+
+  const entity: Entity = { name: "Customer", fields: [{ name: "name", type: "text", required: true }] };
+  const records: EntityRecord[] = [
+    { id: 1, createdAt: "x", name: "Alice" },
+    { id: 2, createdAt: "x", name: "Bob" },
+  ];
+
+  const state = {
+    bulkActionBusy: false,
+    selectedIds: new Set([1, 2]),
+    error: null as string | null,
+  };
+  const createCalls: string[] = [];
+  let refreshCalled = 0;
+  let releaseCreate!: () => void;
+  const createGate = new Promise<void>((resolve) => {
+    releaseCreate = resolve;
+  });
+
+  function makeHandler() {
+    return new Function(
+      "bulkActionBusy",
+      "setBulkActionBusy",
+      "t",
+      "projectId",
+      "entity",
+      "records",
+      "selectedIds",
+      "setError",
+      "createRecord",
+      "setSelectedIds",
+      "refresh",
+      `${code}\nreturn handleBulkDuplicate;`,
+    )(
+      state.bulkActionBusy,
+      (v: boolean) => (state.bulkActionBusy = v),
+      (key: string, params?: Record<string, unknown>) => (params ? `${key}:${JSON.stringify(params)}` : key),
+      "proj1",
+      entity,
+      records,
+      state.selectedIds,
+      (msg: string | null) => (state.error = msg),
+      async (_projectId: string, _entityName: string, copy: Record<string, unknown>) => {
+        createCalls.push(copy.name as string);
+        await createGate;
+      },
+      (next: Set<number>) => (state.selectedIds = next),
+      async () => {
+        refreshCalled += 1;
+      },
+    ) as () => Promise<void>;
+  }
+
+  // First "click": starts the real batch, which marks itself busy
+  // synchronously (before its own await) and begins both creates.
+  const firstCall = makeHandler()();
+  await Promise.resolve();
+  assert.equal(state.bulkActionBusy, true, "the first invocation must mark itself busy before awaiting the real createRecord calls");
+  assert.deepEqual(createCalls.sort(), ["Alice", "Bob"], "the first invocation's own duplicate calls must have started");
+
+  // Second "click", landing while the first batch is still held open -- a
+  // real re-render would bind a fresh handler against the now-true
+  // bulkActionBusy, exactly like makeHandler() does here.
+  await makeHandler()();
+  assert.deepEqual(
+    createCalls.sort(),
+    ["Alice", "Bob"],
+    "a second invocation while the first batch is still in flight must never call createRecord again for the same ids",
+  );
+
+  releaseCreate();
+  await firstCall;
+  assert.equal(state.bulkActionBusy, false, "the busy flag must be cleared once the first (real) batch finishes");
+  assert.equal(refreshCalled, 1, "the first batch's own refresh must still run exactly once");
+  assert.equal(state.error, null, "a duplicate batch that genuinely succeeded must never report an error");
 });
 
 /**
@@ -430,6 +531,8 @@ test("EntityPanel's handleBulkUpdate refreshes and keeps only the ids that actua
   const attemptedUpdates: { id: number; patch: Record<string, unknown> }[] = [];
 
   const fn = new Function(
+    "bulkActionBusy",
+    "setBulkActionBusy",
     "t",
     "projectId",
     "entity",
@@ -442,6 +545,8 @@ test("EntityPanel's handleBulkUpdate refreshes and keeps only the ids that actua
     "refresh",
     `${code}\nreturn handleBulkUpdate;`,
   )(
+    false,
+    () => {},
     (key: string, params?: Record<string, unknown>) => (params ? `${key}:${JSON.stringify(params)}` : key),
     "proj1",
     { name: "Order" },
@@ -495,6 +600,8 @@ test("EntityPanel's handleBulkUpdate does nothing when no field has been chosen 
   let updateCalled = false;
   let refreshCalled = false;
   const fn = new Function(
+    "bulkActionBusy",
+    "setBulkActionBusy",
     "t",
     "projectId",
     "entity",
@@ -507,6 +614,8 @@ test("EntityPanel's handleBulkUpdate does nothing when no field has been chosen 
     "refresh",
     `${code}\nreturn handleBulkUpdate;`,
   )(
+    false,
+    () => {},
     (key: string) => key,
     "proj1",
     { name: "Order" },
