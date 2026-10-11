@@ -1478,3 +1478,33 @@ test("Subscription's 'מנוי' keyword doesn't spuriously match 'אומנויו
     "'מנויים' must still match Subscription",
   );
 });
+
+/**
+ * Regression test for round 564's finding: Product's bare Hebrew keyword
+ * "מוצר" ("product") is a substring of "מוצרט" ("Mozart" transliterated
+ * into Hebrew). A concert/music-school description mentioning Mozart had
+ * nothing to do with retail inventory. JS's \b doesn't bound Hebrew (same
+ * reason round 518's "מלאי", round 562's "כנס", and round 563's "מנוי"
+ * fixes needed lookahead/lookbehind too), so this excludes the specific
+ * "ט" that marks "Mozart" while still matching "מוצר"/"מוצרים".
+ */
+test("Product's 'מוצר' keyword doesn't spuriously match 'מוצרט' (Mozart)", async () => {
+  const provider = new HeuristicSpecProvider();
+
+  const mozart = await provider.generate(
+    "אפליקציה למכירת כרטיסים להופעות של מוצרט לתלמידי המוסיקה",
+  );
+  assert.ok(
+    !mozart.entities.some((e) => e.name === "Product"),
+    "'מוצרט' (Mozart) alone must not spuriously match Product via a bare 'מוצר' substring",
+  );
+
+  // The real word still works, singular and plural (these descriptions
+  // avoid this rule's other keywords -- "inventory", "stock", etc. -- so a
+  // match here can only come from "מוצר"/"מוצרים" itself).
+  const realProduct = await provider.generate("אפליקציה לניהול מוצר אחד בחנות קטנה");
+  assert.ok(realProduct.entities.some((e) => e.name === "Product"), "'מוצר' must still match Product");
+
+  const realProducts = await provider.generate("אפליקציה לניהול מוצרים בחנות");
+  assert.ok(realProducts.entities.some((e) => e.name === "Product"), "'מוצרים' must still match Product");
+});

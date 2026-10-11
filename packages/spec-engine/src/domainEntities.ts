@@ -308,7 +308,15 @@ export const DOMAIN_ENTITY_RULES: DomainEntityRule[] = [
       // "product" (round 449) has the identical problem: it's a substring
       // of "production" ("a video production studio"), an ordinary word
       // with nothing to do with selling or tracking products.
-      /\bproduct(s)?\b/, "inventory", /\bstock(s)?\b/, "מוצר", "מוצרים",
+      /\bproduct(s)?\b/, "inventory", /\bstock(s)?\b/,
+      // Bare "מוצר" (round 564) is a substring of "מוצרט" ("Mozart"
+      // transliterated into Hebrew), so a concert/music-school description
+      // mentioning Mozart spuriously matched Product. Hebrew has no \b
+      // (same reason round 518's "מלאי", round 562's "כנס", and round
+      // 563's "מנוי" fixes needed lookahead/lookbehind too); this excludes
+      // the specific "ט" that marks "Mozart" while still matching
+      // "מוצר"/"מוצרים".
+      /מוצר(?!ט)/, "מוצרים",
       // Bare "מלאי" ("inventory/stock") is a substring of two unrelated,
       // ordinary Hebrew words (round 518): WorkOrder's own "חשמלאי"/
       // "חשמלאים" ("electrician(s)") and the common adjective "מלאים"
