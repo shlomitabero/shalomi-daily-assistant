@@ -780,6 +780,74 @@ test("GlobalSearchPanel's 'Show all' button reveals every match beyond the defau
 });
 
 /**
+ * Round 556's finding: handleShowAll's own fresh re-fetch (with no sample
+ * cap) always produced a correct, up-to-date `displayed` list, but never
+ * patched `result.totalMatches` itself -- so when a record disappeared
+ * between the original search and the "Show all" click (another tab, a
+ * collaborator, a WhatsApp-triggered write), the header kept showing the
+ * ORIGINAL (too-high) count, and the "Show all" button stayed visible
+ * promising more matches that no longer exist -- clicking it again just
+ * re-fetches the exact same, already-complete list forever.
+ */
+test("GlobalSearchPanel's 'Show all' button disappears once the fresh fetch reveals fewer real matches than the original search counted", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    let customerCallCount = 0;
+    globalThis.fetch = (async (input: string): Promise<Response> => {
+      if (input === "/api/projects/proj1/entities/Customer") {
+        customerCallCount += 1;
+        // Call 1 is the initial search: 7 matches, capped to a 5-row
+        // sample with a "Show all" button for the other 2. Call 2 is
+        // "Show all"'s own re-fetch -- by then, 2 records have been
+        // deleted elsewhere, so only 5 real matches remain.
+        const count = customerCallCount === 1 ? 7 : 5;
+        const records: EntityRecord[] = Array.from({ length: count }, (_, i) => ({ id: i + 1, name: `Widget item ${i + 1}` }));
+        return new Response(JSON.stringify({ records }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      if (input === "/api/projects/proj1/entities/Order") {
+        return new Response(JSON.stringify({ records: [] }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${input}`);
+    }) as typeof fetch;
+    try {
+      renderGlobalSearchPanel(() => {});
+
+      const input = document.querySelector(".global-search-input") as HTMLInputElement;
+      fireEvent.change(input, { target: { value: "widget" } });
+      fireEvent.submit(document.querySelector("form.global-search-form")!);
+      await waitForCondition(() => document.querySelectorAll(".global-search-hit-button").length === 5);
+
+      const showAllButton = document.querySelector(".global-search-show-all") as HTMLButtonElement;
+      assert.ok(showAllButton, "expected a 'Show all' button for the original 7-match count");
+      fireEvent.click(showAllButton);
+
+      // The fresh fetch only has 5 real matches left -- every one of them
+      // must now be shown, with nothing stale left over from the original 7.
+      await waitForCondition(() => document.querySelectorAll(".global-search-hit-button").length === 5);
+
+      // Checked as a boolean (not a bare assert.equal(node, null)) so a
+      // genuine failure here reports cleanly instead of node:test trying to
+      // serialize the still-attached React Fiber tree on the live button
+      // element for its diff message.
+      let showAllButtonGone = false;
+      try {
+        await waitForCondition(() => document.querySelector(".global-search-show-all") === null, 10);
+        showAllButtonGone = true;
+      } catch {
+        showAllButtonGone = false;
+      }
+      assert.equal(
+        showAllButtonGone,
+        true,
+        "the 'Show all' button must disappear once the fresh fetch shows every real match actually exists -- it must not keep promising 2 more matches that no longer exist, based on the original search's now-stale totalMatches",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * Round 519's finding: unlike handleSubmit and handleRecentSearchClick (both
  * of which call setExpandedSamples({}) before runSearch), the error banner's
  * Retry button called runSearch directly -- so a "Show all" expansion made

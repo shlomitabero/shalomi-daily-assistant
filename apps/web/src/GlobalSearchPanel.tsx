@@ -194,6 +194,18 @@ export function GlobalSearchPanel({
    * showing the NEW one -- wrong records, a `remaining` count that no
    * longer matches `totalMatches`, and "jump to record" targets that
    * don't correspond to anything the on-screen search actually matched.
+   *
+   * Also patches this entity's own `totalMatches` in `results` to this
+   * fresh fetch's real count (round 556): without it, data that changed
+   * since the original search -- a collaborator's edit, a WhatsApp-matched
+   * write, anything while the panel stayed open on the same, still-current
+   * query -- left the header's "N results" text and the `remaining`
+   * calculation reading the original search's now-stale count even though
+   * `displayed` already reflects this fetch's real, current data; a
+   * record added since then left the header undercounting what's on
+   * screen, and one removed left the "Show N more" button offering more
+   * results than actually exist, forever (clicking it just re-fetches the
+   * same already-complete list with no new rows to reveal).
    */
   async function handleShowAll(entityName: string) {
     const entity = entities.find((e) => e.name === entityName);
@@ -213,6 +225,9 @@ export function GlobalSearchPanel({
         lang,
       );
       setExpandedSamples((prev) => ({ ...prev, [entityName]: full?.sample ?? [] }));
+      setResults((prev) =>
+        prev.map((r) => (r.entityName === entityName ? { ...r, totalMatches: full?.sample.length ?? 0 } : r)),
+      );
     } finally {
       setShowAllLoading((prev) => {
         const next = new Set(prev);

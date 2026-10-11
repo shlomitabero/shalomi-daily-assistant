@@ -9379,6 +9379,84 @@ test("the exported GlobalSearch's 'Show all' button reveals every match beyond t
 });
 
 /**
+ * Round 556's finding: mirrors GlobalSearchPanel.test.ts's own new
+ * regression test. handleShowAll's own fresh re-fetch always produced a
+ * correct, up-to-date displayed sample, but never patched result.totalMatches
+ * itself -- so when real matches disappeared between the original search and
+ * the "Show all" click, the header kept the ORIGINAL (too-high) count, and
+ * the "Show all" button stayed visible promising more matches that no longer
+ * exist.
+ */
+test("the exported GlobalSearch's 'Show all' button disappears once the fresh fetch reveals fewer real matches than the original search counted", async () => {
+  const files = generateExportFiles(project);
+  const dir = writeGeneratedWebComponent(files);
+  const originalFetch = globalThis.fetch;
+  let customerCallCount = 0;
+  globalThis.fetch = (async (input: string) => {
+    if (String(input).endsWith("/Customer")) {
+      customerCallCount += 1;
+      // Call 1 is the initial search: 7 matches, capped to a 5-row sample
+      // with a "Show all" button for the other 2. Call 2 is "Show all"'s
+      // own re-fetch -- by then, 2 records have been deleted elsewhere, so
+      // only 5 real matches remain.
+      const count = customerCallCount === 1 ? 7 : 5;
+      const records = Array.from({ length: count }, (_, i) => ({ id: i + 1, name: `Widget item ${i + 1}` }));
+      return { ok: true, status: 200, json: async () => ({ records }) };
+    }
+    return { ok: true, status: 200, json: async () => ({ records: [] }) };
+  }) as typeof fetch;
+
+  try {
+    const { GlobalSearch } = await import(path.join(dir, "web", "src", "components", "GlobalSearch.jsx"));
+    const { container } = render(
+      React.createElement(GlobalSearch, {
+        entities: project.spec.entities,
+        onClose: () => {},
+        onJumpToEntity: () => {},
+        onJumpToRecord: () => {},
+      }),
+    );
+
+    const input = container.querySelector(".global-search-input") as HTMLInputElement;
+    await act(async () => {
+      fireEvent.change(input, { target: { value: "widget" } });
+      fireEvent.submit(container.querySelector("form.global-search-form")!);
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    assert.equal(container.querySelectorAll(".global-search-hit-button").length, 5, "expected the default 5-row sample");
+
+    const showAllButton = container.querySelector(".global-search-show-all") as HTMLButtonElement | null;
+    assert.ok(showAllButton, "expected a 'Show all' button for the original 7-match count");
+
+    await act(async () => {
+      fireEvent.click(showAllButton!);
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    // The fresh fetch only has 5 real matches left -- every one of them
+    // must now be shown, with nothing stale left over from the original 7.
+    assert.equal(container.querySelectorAll(".global-search-hit-button").length, 5, "expected every one of the 5 real matches, no more");
+    // Checked as a boolean (not a bare assert.equal(node, null)) so a
+    // genuine failure here reports cleanly instead of node:test trying to
+    // serialize the still-attached React Fiber tree on the live button
+    // element for its diff message.
+    assert.equal(
+      container.querySelector(".global-search-show-all") === null,
+      true,
+      "the 'Show all' button must disappear once the fresh fetch shows every real match actually exists -- it must not keep promising 2 more matches that no longer exist, based on the original search's now-stale totalMatches",
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+    cleanup();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
  * Round 519's finding: mirrors GlobalSearchPanel.test.ts's own new
  * regression test. Unlike the handlers that submit a fresh query (both of
  * which clear expandedSamples first), the exported app's Retry button

@@ -4541,7 +4541,11 @@ export function GlobalSearch({ entities, onClose, onJumpToEntity, onJumpToRecord
   // network round trip: without it, a new search started while this fetch
   // is still in flight resolves into expandedSamples anyway, merging a
   // sample matched against the OLD query into results now showing the NEW
-  // one.
+  // one. Also patches this entity's own totalMatches in results to this
+  // fresh fetch's real count: without it, data that changed since the
+  // original search left the header's "N results" text and the remaining
+  // calculation reading the original search's now-stale count even though
+  // the displayed rows already reflect this fetch's real, current data.
   async function handleShowAll(entityName) {
     const entity = entities.find((e) => e.name === entityName);
     if (!entity) return;
@@ -4552,6 +4556,7 @@ export function GlobalSearch({ entities, onClose, onJumpToEntity, onJumpToRecord
       if (searchRequestId.current !== requestId) return;
       const full = records.filter((r) => matchesSearch(r, entity.fields, query, lastRecordsByEntityRef.current));
       setExpandedSamples((prev) => ({ ...prev, [entityName]: full }));
+      setResults((prev) => prev.map((r) => (r.entityName === entityName ? { ...r, totalMatches: full.length } : r)));
     } finally {
       setShowAllLoading((prev) => {
         const next = new Set(prev);
