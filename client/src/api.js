@@ -22,6 +22,15 @@ async function request(path, { method = 'GET', body } = {}) {
 
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
+    if (res.status === 401) {
+      // Without this, an expired/invalid token leaves every page stuck
+      // showing a raw "not authenticated" error forever — authed state in
+      // AuthContext only ever changes on an explicit login()/logout() call,
+      // never on a failed request, so the owner would have no way back to
+      // the login screen short of manually clearing localStorage.
+      setToken(null);
+      window.dispatchEvent(new Event('auth:expired'));
+    }
     const err = new Error(data.error || 'שגיאה');
     err.status = res.status;
     err.data = data;
