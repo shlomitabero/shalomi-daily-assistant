@@ -5,13 +5,13 @@ import { canSpend } from './budget.js';
 test('blocks all spend when the emergency stop is active, even within budget', () => {
   const result = canSpend({ amount: 1, budgetConfigured: true, budget: 1000, emergencyStop: true });
   assert.equal(result.allowed, false);
-  assert.match(result.reason, /emergency stop/);
+  assert.match(result.reason, /עצירת חירום/);
 });
 
 test('blocks spend when no budget has ever been configured (budget defaults to zero)', () => {
   const result = canSpend({ amount: 1, budgetConfigured: false, budget: 0 });
   assert.equal(result.allowed, false);
-  assert.match(result.reason, /no budget/);
+  assert.match(result.reason, /לא הוגדר תקציב/);
 });
 
 test('blocks a non-positive spend amount', () => {
@@ -22,13 +22,13 @@ test('blocks a non-positive spend amount', () => {
 test('blocks a spend that would exceed the configured budget', () => {
   const result = canSpend({ amount: 60, budgetConfigured: true, budget: 100, spentSoFar: 50 });
   assert.equal(result.allowed, false);
-  assert.match(result.reason, /exceed budget/);
+  assert.match(result.reason, /יחרוג מהתקציב/);
 });
 
 test('blocks a spend that would exceed the max acceptable loss', () => {
   const result = canSpend({ amount: 30, budgetConfigured: true, budget: 1000, maxLoss: 100, lossSoFar: 90 });
   assert.equal(result.allowed, false);
-  assert.match(result.reason, /maximum acceptable loss/);
+  assert.match(result.reason, /הפסד המרבי המותר/);
 });
 
 test('allows a spend within budget and loss limits', () => {
@@ -46,11 +46,11 @@ test('a non-numeric maxLoss fails safe (blocks) instead of silently disabling th
   // otherwise let every spend through as if no loss limit were set.
   const result = canSpend({ amount: 20, budgetConfigured: true, budget: 1000, maxLoss: 'abc', lossSoFar: 0 });
   assert.equal(result.allowed, false);
-  assert.match(result.reason, /invalid value/);
+  assert.match(result.reason, /ערך לא תקין/);
 });
 
 test('a NaN maxLoss also fails safe', () => {
   const result = canSpend({ amount: 20, budgetConfigured: true, budget: 1000, maxLoss: NaN, lossSoFar: 0 });
   assert.equal(result.allowed, false);
-  assert.match(result.reason, /invalid value/);
+  assert.match(result.reason, /ערך לא תקין/);
 });

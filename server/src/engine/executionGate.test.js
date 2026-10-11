@@ -9,13 +9,13 @@ test('emergency stop blocks everything regardless of mode', () => {
 test('research mode never allows execution, even with an approval', () => {
   const result = checkExecutionGate({ mode: 'research', emergencyStop: false, hasApproval: true });
   assert.equal(result.allowed, false);
-  assert.match(result.reason, /research mode/);
+  assert.match(result.reason, /מצב מחקר/);
 });
 
 test('approve mode blocks without an explicit approval', () => {
   const result = checkExecutionGate({ mode: 'approve', emergencyStop: false, hasApproval: false });
   assert.equal(result.allowed, false);
-  assert.match(result.reason, /approval/);
+  assert.match(result.reason, /אישור/);
 });
 
 test('approve mode allows once this specific action has an approval', () => {
