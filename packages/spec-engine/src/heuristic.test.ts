@@ -1006,6 +1006,55 @@ test("Property's 'listing' keyword doesn't spuriously match 'enlisting'", async 
 });
 
 /**
+ * Regression test for round 558's finding: Property's bare "property"
+ * keyword is genuinely ambiguous English -- it means a real-estate asset
+ * in most descriptions, but "intellectual property" (patents/trademarks),
+ * "lost property" (a lost-and-found service), and "property damage" (an
+ * insurance/incident-tracking app) are all ordinary idioms with nothing to
+ * do with real estate. `\b` alone can't fix this (it's a whole word, not a
+ * substring), so the keyword now excludes only those specific phrases via
+ * lookbehind/lookahead, the same disambiguation style "garage"/"checkout"
+ * already use.
+ */
+test("Property's 'property' keyword doesn't spuriously match 'intellectual property', 'lost property', or 'property damage'", async () => {
+  const provider = new HeuristicSpecProvider();
+
+  const ipLaw = await provider.generate(
+    "Track intellectual property filings for our law firm, including patents and trademarks for clients.",
+  );
+  assert.ok(
+    !ipLaw.entities.some((e) => e.name === "Property"),
+    "'intellectual property' alone must not spuriously match Property via a bare 'property' keyword",
+  );
+
+  const lostProperty = await provider.generate(
+    "A lost-property office app for a train station, logging found items and owners.",
+  );
+  assert.ok(
+    !lostProperty.entities.some((e) => e.name === "Property"),
+    "'lost property' alone must not spuriously match Property via a bare 'property' keyword",
+  );
+
+  const propertyDamage = await provider.generate(
+    "Manages property damage claims reported by employees after an incident.",
+  );
+  assert.ok(
+    !propertyDamage.entities.some((e) => e.name === "Property"),
+    "'property damage' alone must not spuriously match Property via a bare 'property' keyword",
+  );
+
+  // The real word still works on its own, singular and plural (this
+  // description avoids this rule's other keywords -- "real estate",
+  // "listing", "apartment for rent" -- so a match here can only come from
+  // "property" itself).
+  const realProperty = await provider.generate("An app for a landlord to track each rental property and its tenants.");
+  assert.ok(realProperty.entities.some((e) => e.name === "Property"), "'property' must still match Property");
+
+  const realProperties = await provider.generate("An app for a landlord to track all the rental properties and their tenants.");
+  assert.ok(realProperties.entities.some((e) => e.name === "Property"), "'properties' must still match Property");
+});
+
+/**
  * Regression test for round 501's finding: Appointment's bare "reservation"
  * keyword is a substring of the unrelated, ordinary word "preservation" --
  * a historic/data/wildlife-preservation description has nothing to do with

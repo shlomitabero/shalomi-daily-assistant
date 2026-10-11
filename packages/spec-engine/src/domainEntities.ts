@@ -468,7 +468,18 @@ export const DOMAIN_ENTITY_RULES: DomainEntityRule[] = [
       // has nothing to do with real estate, so it spuriously matched
       // this entity. \b-bounded, same pitfall-1 shape as the fourteen
       // other collision fixes already in this file.
-      "property", "real estate", /\blisting(s)?\b/, "apartment for rent", "נכס", "נכסים",
+      //
+      // Bare "property" (round 558) is a whole, correctly-spelled word
+      // that's genuinely ambiguous: it means a real-estate asset in most
+      // descriptions, but "intellectual property" (patents/trademarks),
+      // "lost property" (a lost-and-found service), and "property damage"
+      // (an insurance/incident-tracking app) are all ordinary idioms with
+      // nothing to do with real estate. \b alone can't fix this (it's a
+      // whole word, not a substring) -- lookbehind/lookahead excludes only
+      // those specific phrases, the same disambiguation style "garage"
+      // (round 454) and "checkout" (round 550) already use.
+      /\b(?<!intellectual\s)(?<!lost[\s-])propert(?:y|ies)\b(?!\s+damage\b)/,
+      "real estate", /\blisting(s)?\b/, "apartment for rent", "נכס", "נכסים",
       "נדל\"ן", "דירה למכירה", "דירה להשכרה",
     ],
     labelHe: "נכסים",
