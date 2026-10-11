@@ -1194,20 +1194,24 @@ test("App's handleBulkDeleteProjects removes only the projects that actually suc
     // time -- here that's every currently-known project (initialMyProjects),
     // i.e. no active search/filter narrowing the visible list.
     const fn = new Function(
+      "bulkDeleteBusy",
       "window",
       "t",
       "deleteProject",
       "visibleSelectedProjectIds",
+      "setBulkDeleteBusy",
       "setError",
       "setMyProjects",
       "setSelectedProjectIds",
       "purgeProjectPreferences",
       `${code}\nreturn handleBulkDeleteProjects;`,
     )(
+      false,
       { confirm: (message: string) => (confirmCalls.push(message), opts.confirmReturns) },
       (key: string, params?: Record<string, unknown>) => (params ? `${key}:${JSON.stringify(params)}` : key),
       opts.deleteProjectFn,
       visibleSelectedIds(state.selectedProjectIds, initialMyProjects.map((p) => p.id)),
+      () => {},
       (v: string | null) => (state.error = v),
       (updater: (prev: Project[]) => Project[]) => (state.myProjects = updater(state.myProjects)),
       (next: Set<string>) => (state.selectedProjectIds = next),
@@ -1289,22 +1293,26 @@ test("App's handleBulkDeleteProjects only ever deletes visible+selected projects
   const purgeCalls: string[] = [];
   const state = { myProjects: [a, b] as Project[], selectedProjectIds: null as Set<string> | null };
   const fn = new Function(
+    "bulkDeleteBusy",
     "window",
     "t",
     "deleteProject",
     "visibleSelectedProjectIds",
+    "setBulkDeleteBusy",
     "setError",
     "setMyProjects",
     "setSelectedProjectIds",
     "purgeProjectPreferences",
     `${code}\nreturn handleBulkDeleteProjects;`,
   )(
+    false,
     { confirm: () => true },
     (key: string, params?: Record<string, unknown>) => (params ? `${key}:${JSON.stringify(params)}` : key),
     async (id: string) => {
       attempted.push(id);
     },
     visibleSelectedIds(new Set(["a", "b"]), ["a"]),
+    () => {},
     () => {},
     (updater: (prev: Project[]) => Project[]) => (state.myProjects = updater(state.myProjects)),
     (next: Set<string>) => (state.selectedProjectIds = next),
@@ -1315,6 +1323,101 @@ test("App's handleBulkDeleteProjects only ever deletes visible+selected projects
   assert.deepEqual(attempted, ["a"], "must attempt to delete only the visible+selected project, never the hidden-but-raw-selected one");
   assert.deepEqual(state.myProjects, [b], "only the visible+selected project (a) must actually be removed -- the hidden one (b) must remain untouched");
   assert.deepEqual(purgeCalls, ["a"], "must purge client-side preferences only for the visible+selected project actually deleted, never the hidden one");
+});
+
+/**
+ * Regression test for round 543: unlike the single-row delete/duplicate
+ * buttons on this same screen (gated on deletingId/cloningId), nothing
+ * previously tied a second invocation of handleBulkDeleteProjects to the
+ * first one still being in flight -- clicking "Delete Selected" twice in
+ * quick succession started two fully independent batches of DELETE
+ * requests for the exact same ids. The first batch's requests succeed;
+ * the second batch's each hit a 404 (row already gone) or 409
+ * PIPELINE_IN_PROGRESS server-side, so its own Promise.allSettled sees
+ * every entry rejected and reports the whole bulk delete as failed, even
+ * though every project was genuinely already deleted by the winning first
+ * batch. Models a real re-render by constructing a fresh handler closure
+ * (mirroring how a real onClick handler is rebound on every render) each
+ * time `bulkDeleteBusy` changes, exactly as React would.
+ */
+test("App's handleBulkDeleteProjects refuses to start a second batch while a previous one is still in flight, and resumes normally once it finishes", async () => {
+  const appSrc = readFileSync(new URL("./App.tsx", import.meta.url), "utf8");
+  const handlerMatch = appSrc.match(/ {2}async function handleBulkDeleteProjects\(\) \{[\s\S]*?\n {2}\}\n/);
+  assert.ok(handlerMatch, "expected to find handleBulkDeleteProjects in App.tsx");
+  const { code } = transformSync(handlerMatch![0], { loader: "ts" });
+
+  const a = makeProject([makeEntity("Customer")]);
+  a.id = "a";
+  const b = makeProject([makeEntity("Customer")]);
+  b.id = "b";
+
+  const state = {
+    myProjects: [a, b] as Project[],
+    selectedProjectIds: new Set(["a", "b"]),
+    bulkDeleteBusy: false,
+    error: null as string | null,
+  };
+  const confirmCalls: number[] = [];
+  const deleteCalls: string[] = [];
+  let releaseDelete!: () => void;
+  const deleteGate = new Promise<void>((resolve) => {
+    releaseDelete = resolve;
+  });
+
+  function makeHandler() {
+    return new Function(
+      "bulkDeleteBusy",
+      "window",
+      "t",
+      "deleteProject",
+      "visibleSelectedProjectIds",
+      "setBulkDeleteBusy",
+      "setError",
+      "setMyProjects",
+      "setSelectedProjectIds",
+      "purgeProjectPreferences",
+      `${code}\nreturn handleBulkDeleteProjects;`,
+    )(
+      state.bulkDeleteBusy,
+      {
+        confirm: () => {
+          confirmCalls.push(1);
+          return true;
+        },
+      },
+      (key: string, params?: Record<string, unknown>) => (params ? `${key}:${JSON.stringify(params)}` : key),
+      async (id: string) => {
+        deleteCalls.push(id);
+        await deleteGate;
+      },
+      visibleSelectedIds(state.selectedProjectIds, state.myProjects.map((p) => p.id)),
+      (v: boolean) => (state.bulkDeleteBusy = v),
+      (v: string | null) => (state.error = v),
+      (updater: (prev: Project[]) => Project[]) => (state.myProjects = updater(state.myProjects)),
+      (next: Set<string>) => (state.selectedProjectIds = next),
+      () => {},
+    ) as () => Promise<void>;
+  }
+
+  // First "click": starts the real batch, which immediately marks itself
+  // busy (synchronously, before its own await) and begins both deletes.
+  const firstCall = makeHandler()();
+  await Promise.resolve();
+  assert.equal(state.bulkDeleteBusy, true, "the first invocation must mark itself busy before awaiting the real delete calls");
+  assert.deepEqual(deleteCalls.sort(), ["a", "b"], "the first invocation's own deletes must have started");
+
+  // Second "click", landing while the first batch is still held open --
+  // a real re-render would bind a fresh handler against the now-true
+  // bulkDeleteBusy, exactly like makeHandler() does here.
+  await makeHandler()();
+  assert.equal(confirmCalls.length, 1, "a second invocation while the first batch is still in flight must never even prompt for confirmation again");
+  assert.deepEqual(deleteCalls.sort(), ["a", "b"], "a second invocation while the first batch is still in flight must never call deleteProject again for the same ids");
+
+  releaseDelete();
+  await firstCall;
+  assert.equal(state.bulkDeleteBusy, false, "the busy flag must be cleared once the first (real) batch finishes");
+  assert.deepEqual(state.myProjects, [], "both projects must be removed once the first batch's own deletes actually succeeded");
+  assert.equal(state.error, null, "a bulk delete that genuinely succeeded must never report an error");
 });
 
 /**

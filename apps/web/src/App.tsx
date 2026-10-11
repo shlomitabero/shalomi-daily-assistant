@@ -485,6 +485,17 @@ function AppContent() {
   const [projectStatusFilter, setProjectStatusFilterState] = useState<ProjectStatusFilter>(() => getProjectStatusFilter());
   const [cloningId, setCloningId] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  // Mirrors cloningId/deletingId's own busy-guard idiom for the single-row
+  // actions right below -- without it, "Delete Selected" has nothing
+  // disabling it (or itself) for the whole Promise.allSettled round trip,
+  // so a second click before the first batch resolves starts a second,
+  // fully independent deletion of the exact same already-selected ids. The
+  // first batch's requests succeed; the second batch's requests each hit a
+  // 404 (row already gone) or 409 PIPELINE_IN_PROGRESS server-side, so
+  // Promise.allSettled sees every one of them rejected and reports the
+  // bulk delete as having failed -- even though every project was, in
+  // fact, already deleted by the winning first batch (round 543).
+  const [bulkDeleteBusy, setBulkDeleteBusy] = useState(false);
   const [selectedProjectIds, setSelectedProjectIds] = useState<Set<string>>(new Set());
   const [refineHistory, setRefineHistory] = useState<RefineHistoryEntry[]>([]);
   const [refineHistorySearch, setRefineHistorySearch] = useState("");
@@ -952,23 +963,29 @@ function AppContent() {
   // a single rejected delete (a dropped connection, a project someone else
   // already removed) must not hide the ones that *did* succeed.
   async function handleBulkDeleteProjects() {
+    if (bulkDeleteBusy) return;
     const ids = [...visibleSelectedProjectIds];
     if (ids.length === 0) return;
     if (!window.confirm(t("home.myProjects.bulk.confirmDelete", { count: ids.length }))) return;
+    setBulkDeleteBusy(true);
     setError(null);
-    const results = await Promise.allSettled(ids.map((id) => deleteProject(id)));
-    const failedIds = ids.filter((_, i) => results[i].status === "rejected");
-    const succeededIds = new Set(ids.filter((_, i) => results[i].status === "fulfilled"));
-    setMyProjects((prev) => prev.filter((p) => !succeededIds.has(p.id)));
-    for (const id of succeededIds) purgeProjectPreferences(id);
-    setSelectedProjectIds(new Set(failedIds));
-    if (failedIds.length > 0) {
-      const firstFailure = results.find((r): r is PromiseRejectedResult => r.status === "rejected")!;
-      setError(
-        failedIds.length === ids.length
-          ? (firstFailure.reason as Error).message
-          : t("home.myProjects.bulk.partialFailure", { failed: failedIds.length, total: ids.length }),
-      );
+    try {
+      const results = await Promise.allSettled(ids.map((id) => deleteProject(id)));
+      const failedIds = ids.filter((_, i) => results[i].status === "rejected");
+      const succeededIds = new Set(ids.filter((_, i) => results[i].status === "fulfilled"));
+      setMyProjects((prev) => prev.filter((p) => !succeededIds.has(p.id)));
+      for (const id of succeededIds) purgeProjectPreferences(id);
+      setSelectedProjectIds(new Set(failedIds));
+      if (failedIds.length > 0) {
+        const firstFailure = results.find((r): r is PromiseRejectedResult => r.status === "rejected")!;
+        setError(
+          failedIds.length === ids.length
+            ? (firstFailure.reason as Error).message
+            : t("home.myProjects.bulk.partialFailure", { failed: failedIds.length, total: ids.length }),
+        );
+      }
+    } finally {
+      setBulkDeleteBusy(false);
     }
   }
 
@@ -1485,8 +1502,8 @@ function AppContent() {
               {visibleSelectedProjectIds.size > 0 && (
                 <div className="bulk-actions-bar">
                   <span>{t("home.myProjects.bulk.selectedCount", { count: visibleSelectedProjectIds.size })}</span>
-                  <button type="button" className="danger" onClick={handleBulkDeleteProjects}>
-                    {t("home.myProjects.bulk.deleteSelected")}
+                  <button type="button" className="danger" disabled={bulkDeleteBusy} onClick={handleBulkDeleteProjects}>
+                    {bulkDeleteBusy ? t("home.myProjects.bulk.deleteSelected.busy") : t("home.myProjects.bulk.deleteSelected")}
                   </button>
                 </div>
               )}
