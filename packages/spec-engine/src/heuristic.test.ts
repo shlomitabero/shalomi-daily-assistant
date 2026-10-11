@@ -1066,6 +1066,45 @@ test("Donation's 'donation' keyword doesn't spuriously match 'condonation'", asy
   assert.ok(realDonations.entities.some((e) => e.name === "Donation"), "'donations' must still match Donation");
 });
 
+/**
+ * Regression test for round 550's finding: Order's bare "checkout" keyword
+ * (and PAYMENT_KEYWORDS's own identical bare "checkout") is genuinely
+ * ambiguous English -- it means an e-commerce purchase in most
+ * descriptions, but is equally the ordinary word for a library's book
+ * checkout process, with nothing to do with orders or payments. `\b` alone
+ * can't fix this (it's a whole word, not a substring), so both lists now
+ * require a specific e-commerce phrase ("checkout page"/"checkout flow"/
+ * "online checkout") instead of the bare word.
+ */
+test("Order's 'checkout' keyword doesn't spuriously match a library's book checkout", async () => {
+  const provider = new HeuristicSpecProvider();
+
+  const library = await provider.generate(
+    "An app for our local library to manage book checkout, returns, and member records.",
+  );
+  assert.ok(
+    !library.entities.some((e) => e.name === "Order"),
+    "a library's book checkout must not spuriously match Order via a bare 'checkout' substring",
+  );
+  // Every spec gets exactly one payment open-question; its wording/
+  // recommendation (not its mere presence) is what PAYMENT_KEYWORDS
+  // controls via needsPayments -- "checkout" alone must not flip it to
+  // recommending Stripe.
+  const paymentQuestion = library.openQuestions.find((q) => q.question.toLowerCase().includes("payment"));
+  assert.ok(paymentQuestion);
+  assert.equal(
+    paymentQuestion!.recommendation,
+    "No payments",
+    "a library's book checkout must not spuriously trigger PAYMENT_KEYWORDS either",
+  );
+
+  // The real e-commerce phrase still works (this description avoids this
+  // rule's other keywords -- "order", "purchase", "delivery" -- so a match
+  // here can only come from the checkout phrase itself).
+  const realCheckout = await provider.generate("An online store where customers browse products and complete a checkout page to buy them.");
+  assert.ok(realCheckout.entities.some((e) => e.name === "Order"), "a real 'checkout page' must still match Order");
+});
+
 test("MenuItem's 'מנה' keyword doesn't spuriously match 'מנהלים' (managers)", async () => {
   const provider = new HeuristicSpecProvider();
   const managers = await provider.generate("אפליקציה למעקב אחרי מנהלים בעסק");

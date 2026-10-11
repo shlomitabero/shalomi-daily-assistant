@@ -13,7 +13,12 @@ import {
 } from "./domainEntities.js";
 
 const PAYMENT_KEYWORDS: (string | RegExp)[] = [
-  "payment", "invoice", "billing", "subscription", "checkout",
+  "payment", "invoice", "billing", "subscription",
+  // Bare "checkout" (round 550) is as genuinely ambiguous here as it is in
+  // domainEntities.ts's own Order keywords (see that file's own comment) --
+  // a library's book checkout or a hotel's checkout time has nothing to do
+  // with payments, so this list needs the same specific-phrase requirement.
+  "checkout page", "checkout flow", "online checkout",
   // Plain "stripe" would also match "striped"/"pinstripe" as a plain
   // substring (same collision class fixed elsewhere in this codebase, e.g.
   // domainEntities.ts's keyword matching) -- a clothing-store description

@@ -223,7 +223,19 @@ export const DOMAIN_ENTITY_RULES: DomainEntityRule[] = [
       // before "order") while still matching "order"/"orders" as a real
       // standalone word, including inside a hyphenated phrase like
       // "order-management".
-      /\border(s)?\b/, "purchase", "checkout", "delivery", "deliveries", "wolt",
+      // Bare "checkout" (round 550) is a whole word that's genuinely
+      // ambiguous: it means an e-commerce purchase in most descriptions, but
+      // "checkout" is equally the ordinary word for a library's book
+      // checkout/return process or a hotel's checkout time -- neither has
+      // anything to do with orders or payments. Unlike the substring pitfall
+      // "order" itself needed \b for, \b alone can't fix this since
+      // "checkout" word-boundary-matches correctly in "book checkout" too --
+      // requiring one of the specific e-commerce phrases below (the same
+      // style this file's "garage sale" disambiguation already uses) keeps
+      // matching a real online-store description without matching a
+      // library/hotel one that happens to use the bare word.
+      /\border(s)?\b/, "purchase", "checkout page", "checkout flow", "online checkout",
+      "delivery", "deliveries", "wolt",
       "הזמנה", "הזמנות", "רכישה", "רכישות", "משלוח", "משלוחים", "וולט",
     ],
     labelHe: "הזמנות",
