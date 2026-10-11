@@ -459,6 +459,15 @@ function AppContent() {
   const [backupDone, setBackupDone] = useState(false);
   const [showTwin, setShowTwin] = useState(false);
   const [showWhatsApp, setShowWhatsApp] = useState(false);
+  // Mirrors showWhatsApp for checkUnread's closure below (round 560) --
+  // read inside the poll's own interval tick without putting showWhatsApp
+  // in that effect's dependency array, which would otherwise restart the
+  // whole poll (and its WHATSAPP_UNREAD_POLL_INTERVAL_MS timer) every time
+  // the panel opens or closes.
+  const showWhatsAppRef = useRef(showWhatsApp);
+  useEffect(() => {
+    showWhatsAppRef.current = showWhatsApp;
+  }, [showWhatsApp]);
   // Set alongside openPanel("whatsapp") by EntityPanel's "Send WhatsApp" row
   // action, so the panel opens with that record's number already in the
   // test-send box instead of the user having to copy/paste it themselves.
@@ -631,6 +640,18 @@ function AppContent() {
    * and only fetches the message list -- and only keeps polling -- while
    * actually connected, so a project that never connected WhatsApp (the
    * common case) costs nothing beyond one cheap status check.
+   *
+   * Being independent of WhatsAppPanel cuts both ways (round 560): this
+   * poll and WhatsAppPanel's own poll run on separate, unsynchronized
+   * schedules, so a tick landing between a new message arriving and
+   * WhatsAppPanel's own poll updating the "last seen" marker would count
+   * that message as unread and flash a stale nonzero badge next to a
+   * message the user is already looking at live in the open panel --
+   * openPanel("whatsapp") only zeroes the badge once, at the moment the
+   * panel opens, with nothing to re-suppress it afterward. checkUnread
+   * reads showWhatsAppRef.current to force the badge to 0 whenever the
+   * panel is currently open, instead of trusting the possibly-still-stale
+   * last-seen marker.
    */
   useEffect(() => {
     if (!project || project.status !== "built") {
@@ -655,7 +676,9 @@ function AppContent() {
         }
         const { messages } = await listWhatsAppMessages(projectId);
         if (cancelled) return;
-        setWhatsappUnreadCount(countUnreadWhatsAppMessages(messages, getWhatsAppLastSeenId(projectId)));
+        setWhatsappUnreadCount(
+          showWhatsAppRef.current ? 0 : countUnreadWhatsAppMessages(messages, getWhatsAppLastSeenId(projectId)),
+        );
         maybeNotifyNewWhatsAppMessages(messages, lastNotifiedWhatsAppIdRef, document.hidden, t);
       } catch {
         // A single failed background check isn't worth surfacing to the

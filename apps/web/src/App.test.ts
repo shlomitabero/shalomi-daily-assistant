@@ -2662,3 +2662,74 @@ test("the decorative 3D hero cube's CSS uses real 3D transforms and respects pre
   assert.ok(reducedMotionBlock, "expected a prefers-reduced-motion override in styles.css");
   assert.match(reducedMotionBlock!, /\.hero3d-cube[\s\S]*?animation:\s*none/, "the reduced-motion override must disable the cube's animation, not just leave it spinning");
 });
+
+/**
+ * Regression test for round 560's finding: the topbar's WhatsApp
+ * unread-badge poll (checkUnread, every WHATSAPP_UNREAD_POLL_INTERVAL_MS)
+ * runs on its own independent schedule from WhatsAppPanel's own poll
+ * (every CONNECTED_POLL_INTERVAL_MS), which is what actually keeps the
+ * "last seen" marker in storage up to date while the panel is open.
+ * openPanel("whatsapp") only zeroes the badge once, at the moment the
+ * panel opens -- nothing re-suppresses it afterward, so if checkUnread's
+ * own tick lands between a new message arriving and WhatsAppPanel's own
+ * poll catching up, the badge flashes a stale nonzero count next to a
+ * message the user is already looking at live in the open panel. Fixed
+ * by suppressing the badge to 0 whenever the panel is currently open,
+ * via a showWhatsAppRef mirroring the showWhatsApp state (read inside
+ * checkUnread's closure without restarting the poll's own interval).
+ */
+test("App's WhatsApp unread-badge poll suppresses a stale nonzero count while the panel is already open, instead of flashing a badge for a message already visible in the open log", async () => {
+  const appSrc = readFileSync(new URL("./App.tsx", import.meta.url), "utf8");
+  const handlerMatch = appSrc.match(/ {4}async function checkUnread\(\) \{[\s\S]*?\n {4}\}\n/);
+  assert.ok(handlerMatch, "expected to find checkUnread in App.tsx");
+  const { code } = transformSync(handlerMatch![0], { loader: "ts" });
+
+  function run(showWhatsAppCurrent: boolean) {
+    const state = { count: -1 };
+    const showWhatsAppRef = { current: showWhatsAppCurrent };
+    const fn = new Function(
+      "projectId",
+      "cancelled",
+      "getWhatsAppStatus",
+      "listWhatsAppMessages",
+      "countUnreadWhatsAppMessages",
+      "getWhatsAppLastSeenId",
+      "setWhatsappUnreadCount",
+      "maybeNotifyNewWhatsAppMessages",
+      "lastNotifiedWhatsAppIdRef",
+      "document",
+      "t",
+      "showWhatsAppRef",
+      `${code}\nreturn checkUnread;`,
+    )(
+      "project-1",
+      false,
+      async () => ({ status: "connected" }),
+      async () => ({ messages: [{ id: "msg-2" }], hasMore: false }),
+      // A real stale last-seen marker would count msg-2 as 1 unread --
+      // decoupled from the real counting logic here since this test is
+      // about the suppression wiring, not countUnreadWhatsAppMessages itself.
+      () => 1,
+      () => "msg-1",
+      (v: number) => (state.count = v),
+      () => {},
+      { current: null },
+      { hidden: false },
+      (key: string) => key,
+      showWhatsAppRef,
+    ) as () => Promise<void>;
+    return { fn, state };
+  }
+
+  const { fn: fnOpen, state: stateOpen } = run(true);
+  await fnOpen();
+  assert.equal(
+    stateOpen.count,
+    0,
+    "badge must stay 0 while the WhatsApp panel is already open, even if the stale last-seen marker would otherwise count a message as unread",
+  );
+
+  const { fn: fnClosed, state: stateClosed } = run(false);
+  await fnClosed();
+  assert.equal(stateClosed.count, 1, "badge must still show the real unread count while the panel is closed");
+});
