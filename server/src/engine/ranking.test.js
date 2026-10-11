@@ -38,6 +38,17 @@ test('a missing netProfitMid scores zero rather than crashing or faking a number
   assert.equal(scoreOpportunity({ ...base, netProfitMid: undefined }), 0);
 });
 
+test('a NaN netProfitMid scores zero instead of poisoning the score (typeof NaN is "number")', () => {
+  assert.equal(scoreOpportunity({ ...base, netProfitMid: NaN }), 0);
+});
+
+test('a NaN capitalRequired or timeToCashDays is treated as 0 instead of producing a NaN score', () => {
+  const withNaNCapital = scoreOpportunity({ ...base, capitalRequired: NaN });
+  const withNaNTime = scoreOpportunity({ ...base, timeToCashDays: NaN });
+  assert.equal(withNaNCapital, scoreOpportunity({ ...base, capitalRequired: 0 }));
+  assert.equal(withNaNTime, scoreOpportunity({ ...base, timeToCashDays: 0 }));
+});
+
 test('rankOpportunities sorts highest score first and a big-but-risky-and-slow deal can lose to a modest safe fast one', () => {
   const bigRiskySlow = { id: 'a', netProfitMid: 1000, capitalRequired: 5000, timeToCashDays: 90, riskLevel: 'high', dataQuality: 'unknown' };
   const smallSafeFast = { id: 'b', netProfitMid: 80, capitalRequired: 20, timeToCashDays: 1, riskLevel: 'low', dataQuality: 'verified' };
