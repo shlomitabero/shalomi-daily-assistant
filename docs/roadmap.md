@@ -27419,6 +27419,22 @@ Other candidates investigated and ruled out this round: `api.ts`'s `safeDownload
 
 **Topic status**: closed and pushed. No action needed from שלומי -- this was a cosmetic display glitch (a badge briefly showing "1" while the panel was already open and the message visibly present), not a functional break; the message itself was never actually missed or lost.
 
+### Round 561: Student's bare "pupil" keyword collided with the ophthalmology/optometry sense of "pupil"
+
+**The methodology**: a fresh survey agent was dispatched with an explicit denylist covering every mechanism mined in rounds 449-560 (including round 560's just-closed WhatsApp-polling race finding and round 559's ROLE_RULES/"mismanagement" finding), to find a genuinely new bug. The survey returned to the keyword-collision class, auditing keyword lists not yet checked.
+
+**The finding**: `packages/spec-engine/src/domainEntities.ts`'s Student entry kept a bare `"pupil"` string keyword. This is the whole-word-polysemy shape of this file's recurring collision class (the same shape as "garage"/"garage sale" round 454 and "property"/"intellectual property" round 558, not the substring-in-a-longer-word shape) -- "pupil" is also the ordinary ophthalmology/optometry term for the part of the eye that controls light, so an eye-care app description mentioning pupil size, dilation, or reaction had nothing to do with a school. Confirmed via a direct `matchEntities()` call against the real source tree: an ophthalmology-clinic description mentioning "pupil size" during an eye exam returned `['Student', 'Patient']`, fabricating a spurious Student entity.
+
+**Independent verification, including why this is NOT a duplicate of the closed list**: none of the already-closed collision pairs (stripe/מלאי/חיוב/reservation/shipping/donation/booking/task/garage/checkout/property/management, plus the dozen older ones) touch Student's own keyword list or the word "pupil" -- a genuinely new entity/word pair in the same established bug class, not a reopening. Confirmed `apps/api/src/codegen.ts` has no duplicate of `domainEntities.ts`/`matchEntities` to also patch -- same as every prior round in this class, this heuristic only runs at spec-generation time, before any export exists.
+
+**The fix**: the bare `"pupil"` keyword was replaced with `/\b(?<!dilated\s)pupils?\b(?!\s+(?:dilation|size|reaction|response))/` -- a lookbehind/lookahead pattern excluding only the specific known eye-anatomy idioms ("pupil dilation", "pupil size", "pupil reaction", "pupil response", "dilated pupil(s)"), verified against 7 cases (4 collision variants, 2 negative/positive reinforcements, and the real singular/plural school usage) via a standalone regex test before writing it into the file, mirroring the disambiguation style already established for "garage" and "property".
+
+**The tests**: one new test in `heuristic.test.ts`, mirroring the exact idiom of the existing "garage"/"garage sale" and "property"/"intellectual property" collision tests: confirms three distinct eye-anatomy phrasings ("pupil size", "pupil dilation", "dilated pupils") do NOT produce a spurious Student entity, then confirms the real keyword still matches both singular and plural school usage on its own.
+
+**Regression-proof**: backed up `domainEntities.ts`, reverted it via `git checkout --` (keeping the new test in place). The new test failed with the exact predicted shape -- 1 failure (the first of the three collision assertions), every other test in the file staying green. Restored from backup, confirmed byte-identical via `diff`. Re-ran clean: `heuristic.test.ts` 57/57 (+1), full `@forge/spec-engine` 123/123 (+1). Full monorepo `npm test` (shared 16, db 151, api 491, web 887 all unchanged; spec-engine 123 [+1]) and `npm run build` both clean. Commit `fdf2b72`.
+
+**Topic status**: closed and pushed. No action needed from שלומי -- this only affects a project description containing "pupil size", "pupil dilation", "pupil reaction", "pupil response", or "dilated pupil(s)" without otherwise describing a school, and only when the heuristic provider is in use (no API key, or the Anthropic provider failed).
+
 Each phase assumes the previous one is genuinely working, not merely
 scaffolded — see `docs/ADR/0001-initial-architecture.md` and
 `docs/ADR/0002-auth-pipeline-time-machine.md` for the specific tradeoffs
