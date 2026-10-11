@@ -1034,6 +1034,38 @@ test("Appointment's 'reservation' keyword doesn't spuriously match 'preservation
   assert.ok(realReservations.entities.some((e) => e.name === "Appointment"), "'reservations' must still match Appointment");
 });
 
+/**
+ * Regression test for round 548's finding: Donation's bare "donation"/
+ * "donations" keyword is a substring of the unrelated, ordinary legal/
+ * compliance phrase "condonation" (as in "condonation of delay", used to
+ * excuse a missed filing deadline) -- a law-firm/compliance description
+ * using that word has nothing to do with charitable donations, so it
+ * spuriously matched this entity too. Fixed with the same `\b`-bounded
+ * RegExp pattern (plus the "(s)?" plural handling) this file's other
+ * collision fixes already use.
+ */
+test("Donation's 'donation' keyword doesn't spuriously match 'condonation'", async () => {
+  const provider = new HeuristicSpecProvider();
+
+  const condonation = await provider.generate(
+    "An app for a law firm to track condonation of delay petitions filed by clients, with case status and hearing dates.",
+  );
+  assert.ok(
+    !condonation.entities.some((e) => e.name === "Donation"),
+    "'condonation' alone must not spuriously match Donation via a bare 'donation' substring",
+  );
+
+  // The real word still works on its own, singular and plural (this
+  // description avoids this rule's other keywords -- "donor", "nonprofit",
+  // "fundraising campaign" -- so a match here can only come from
+  // "donation" itself).
+  const realDonation = await provider.generate("An app for a charity to track each donation made by supporters.");
+  assert.ok(realDonation.entities.some((e) => e.name === "Donation"), "'donation' must still match Donation");
+
+  const realDonations = await provider.generate("An app for a charity to track all the donations made by supporters.");
+  assert.ok(realDonations.entities.some((e) => e.name === "Donation"), "'donations' must still match Donation");
+});
+
 test("MenuItem's 'מנה' keyword doesn't spuriously match 'מנהלים' (managers)", async () => {
   const provider = new HeuristicSpecProvider();
   const managers = await provider.generate("אפליקציה למעקב אחרי מנהלים בעסק");

@@ -839,8 +839,17 @@ export const DOMAIN_ENTITY_RULES: DomainEntityRule[] = [
     //    coincidental shared root between two unrelated words.
     // "תרומה"/"תרומות" (donation/donations) and "עמותה" (nonprofit) don't
     // have this problem and cover the same descriptions.
+    //
+    // Bare "donation"/"donations" (round 548) is a substring of the
+    // unrelated, ordinary word "condonation" (as in "condonation of delay",
+    // a standard legal/compliance phrase for excusing a missed deadline),
+    // so a law-firm/compliance description using that word spuriously
+    // matched this entity too -- the same pitfall-1 shape as
+    // reservation/shipping/order/stock/driver/patient/deals/worker/courses/
+    // dish/product. \b-bounded, with the same "(s)?" plural handling those
+    // fixes already use, so "donations" still matches.
     keywords: [
-      "donation", "donations", "donor", "nonprofit", "fundraising campaign",
+      /\bdonations?\b/, "donor", "nonprofit", "fundraising campaign",
       "תרומה", "תרומות", "עמותה",
     ],
     labelHe: "תרומות",
