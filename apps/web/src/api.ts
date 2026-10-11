@@ -333,8 +333,27 @@ export function updateProjectDescription(projectId: string, description: string)
   return request(`/projects/${projectId}/description`, { method: "PATCH", body: JSON.stringify({ description }) });
 }
 
+/**
+ * Every entity/field-scoped request below encodes `entityName`/`fieldName`
+ * into the URL path (here and in renameFieldLabel/addField/removeField/
+ * removeEntity/listRecords/createRecord/updateRecord/deleteRecord) -- a raw
+ * "/" in either would otherwise split the path into extra segments Express's
+ * single-segment `:entityName`/`:fieldName` route params can't match, 404ing
+ * every request that touches that entity/field, permanently (even its own
+ * rename/remove routes use the same shape). `deriveEntityName`/
+ * `deriveFieldName` (routes/projects.ts) already strip every non-alphanumeric
+ * character from a manually-added name, so this is unreachable through the
+ * UI; it's defense-in-depth against the one other path a name is set
+ * through -- the real Anthropic provider -- whose system prompt already
+ * requires a plain ASCII identifier (anthropic.ts) but, like any prompt
+ * instruction, isn't a hard guarantee. Same defense-in-depth posture already
+ * taken for the exact same assumed input in backup.ts's sanitizeZipEntryName.
+ * encodeURIComponent is a no-op for every name already in use (ASCII or
+ * Hebrew alike -- the browser already percent-encodes non-ASCII bytes on the
+ * wire either way), so this changes nothing for any project that works today.
+ */
 export function renameEntityLabel(projectId: string, entityName: string, label: string): Promise<{ project: Project }> {
-  return request(`/projects/${projectId}/entities/${entityName}/label`, { method: "PATCH", body: JSON.stringify({ label }) });
+  return request(`/projects/${projectId}/entities/${encodeURIComponent(entityName)}/label`, { method: "PATCH", body: JSON.stringify({ label }) });
 }
 
 export function renameFieldLabel(
@@ -343,7 +362,7 @@ export function renameFieldLabel(
   fieldName: string,
   label: string,
 ): Promise<{ project: Project }> {
-  return request(`/projects/${projectId}/entities/${entityName}/fields/${fieldName}/label`, {
+  return request(`/projects/${projectId}/entities/${encodeURIComponent(entityName)}/fields/${encodeURIComponent(fieldName)}/label`, {
     method: "PATCH",
     body: JSON.stringify({ label }),
   });
@@ -351,7 +370,7 @@ export function renameFieldLabel(
 
 /** See createProject's own doc comment for why this generates one idempotency key per call, here protecting against a duplicate field from the same click/retry. */
 export function addField(projectId: string, entityName: string, label: string): Promise<{ project: Project }> {
-  return request(`/projects/${projectId}/entities/${entityName}/fields`, {
+  return request(`/projects/${projectId}/entities/${encodeURIComponent(entityName)}/fields`, {
     method: "POST",
     headers: { "x-idempotency-key": crypto.randomUUID() },
     body: JSON.stringify({ label }),
@@ -359,7 +378,7 @@ export function addField(projectId: string, entityName: string, label: string): 
 }
 
 export function removeField(projectId: string, entityName: string, fieldName: string): Promise<{ project: Project }> {
-  return request(`/projects/${projectId}/entities/${entityName}/fields/${fieldName}`, { method: "DELETE" });
+  return request(`/projects/${projectId}/entities/${encodeURIComponent(entityName)}/fields/${encodeURIComponent(fieldName)}`, { method: "DELETE" });
 }
 
 export function deleteProject(projectId: string): Promise<void> {
@@ -431,7 +450,7 @@ export function renameAssumption(
 }
 
 export function removeEntity(projectId: string, entityName: string): Promise<{ project: Project }> {
-  return request(`/projects/${projectId}/entities/${entityName}`, { method: "DELETE" });
+  return request(`/projects/${projectId}/entities/${encodeURIComponent(entityName)}`, { method: "DELETE" });
 }
 
 /** See createProject's own doc comment for why this generates one idempotency key per call, here protecting against a duplicate entity from the same click/retry. */
@@ -638,7 +657,7 @@ export function deleteCheckpoint(projectId: string, checkpointId: string): Promi
 }
 
 export function listRecords(projectId: string, entityName: string): Promise<{ records: EntityRecord[] }> {
-  return request(`/projects/${projectId}/entities/${entityName}`);
+  return request(`/projects/${projectId}/entities/${encodeURIComponent(entityName)}`);
 }
 
 export function createRecord(
@@ -646,7 +665,7 @@ export function createRecord(
   entityName: string,
   data: Record<string, unknown>,
 ): Promise<{ record: EntityRecord }> {
-  return request(`/projects/${projectId}/entities/${entityName}`, {
+  return request(`/projects/${projectId}/entities/${encodeURIComponent(entityName)}`, {
     method: "POST",
     body: JSON.stringify(data),
   });
@@ -658,14 +677,14 @@ export function updateRecord(
   recordId: number,
   data: Record<string, unknown>,
 ): Promise<{ record: EntityRecord }> {
-  return request(`/projects/${projectId}/entities/${entityName}/${recordId}`, {
+  return request(`/projects/${projectId}/entities/${encodeURIComponent(entityName)}/${recordId}`, {
     method: "PATCH",
     body: JSON.stringify(data),
   });
 }
 
 export function deleteRecord(projectId: string, entityName: string, recordId: number): Promise<void> {
-  return request(`/projects/${projectId}/entities/${entityName}/${recordId}`, { method: "DELETE" });
+  return request(`/projects/${projectId}/entities/${encodeURIComponent(entityName)}/${recordId}`, { method: "DELETE" });
 }
 
 /** The owner never appears in `collaborators` itself (see collaborators.ts's own module comment -- their access comes from project.ownerId, not the join table), so the panel needs this separately to show who actually owns the project. Null only in the should-never-happen case of a dangling owner reference. */

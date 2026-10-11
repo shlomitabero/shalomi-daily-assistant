@@ -6,7 +6,10 @@ import {
   createWakeRefCounter,
   exportProject,
   listProjects,
+  listRecords,
   listTemplates,
+  removeField,
+  removeEntity,
   REQUEST_TIMEOUT_MS,
   safeDownloadName,
   sendWhatsAppMessage,
@@ -134,6 +137,44 @@ test("backupProject requests the backup endpoint and downloads it with a '-backu
     globalThis.fetch = original;
   }
   assert.equal(requestedUrl, "/api/projects/proj1/backup");
+});
+
+/**
+ * deriveEntityName/deriveFieldName (routes/projects.ts) strip every
+ * non-alphanumeric character before a manually-added name is ever stored, so
+ * this case can't reach the UI directly -- but the real Anthropic provider's
+ * system prompt only *asks* for a plain ASCII identifier (anthropic.ts), it
+ * doesn't enforce it, so an entity/field name containing "/" reaching the
+ * client isn't impossible. Before this fix, every one of these functions
+ * interpolated entityName/fieldName into the URL raw: a "/" would split the
+ * path into extra segments Express's single-segment `:entityName`/
+ * `:fieldName` route params can't match, 404ing every request for that
+ * entity/field permanently, including its own rename/remove routes. Same
+ * defense-in-depth posture already taken for this exact assumed input in
+ * backup.ts's sanitizeZipEntryName.
+ */
+test("listRecords/removeEntity/removeField percent-encode a '/' in an entity/field name instead of letting it split the URL path", async () => {
+  async function requestedUrlFor<T>(fn: () => Promise<T>): Promise<string | undefined> {
+    let requestedUrl: string | undefined;
+    const original = globalThis.fetch;
+    globalThis.fetch = (async (input: string) => {
+      requestedUrl = input;
+      return new Response(JSON.stringify({ records: [], project: {} }), { status: 200 });
+    }) as typeof fetch;
+    try {
+      await fn();
+    } finally {
+      globalThis.fetch = original;
+    }
+    return requestedUrl;
+  }
+
+  assert.equal(await requestedUrlFor(() => listRecords("proj1", "Profit/Loss")), "/api/projects/proj1/entities/Profit%2FLoss");
+  assert.equal(await requestedUrlFor(() => removeEntity("proj1", "Profit/Loss")), "/api/projects/proj1/entities/Profit%2FLoss");
+  assert.equal(
+    await requestedUrlFor(() => removeField("proj1", "Profit/Loss", "unit/price")),
+    "/api/projects/proj1/entities/Profit%2FLoss/fields/unit%2Fprice",
+  );
 });
 
 test("exportProject surfaces a translated error and never attempts the download when the request fails", async () => {
