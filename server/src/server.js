@@ -20,7 +20,6 @@ import { syncSources } from './services/sources.js';
 import { generateDailyDigest } from './services/digest.js';
 import { runAutonomousScan } from './services/autonomousScan.js';
 import { classifyApiError } from './engine/apiError.js';
-import { db } from './db/store.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PORT = process.env.PORT || 4000;
@@ -91,13 +90,4 @@ cron.schedule('0 */4 * * *', () => {
 
 app.listen(PORT, () => {
   console.log(`PROFIT AI server listening on http://localhost:${PORT}`);
-  // TEMPORARY diagnostic — verifying the newly-attached Railway volume
-  // actually persists data across a redeploy before trusting it. Remove
-  // once confirmed.
-  // syncSources() runs above on every boot and writes a row per source —
-  // if that row's id is the SAME across two boots (looked up by key, not
-  // freshly inserted), that proves the write landed on the volume and
-  // survived the redeploy, without needing any external write first.
-  const firstSource = db.sources.all()[0];
-  console.log(`[persistence-check] DATA_DIR=${process.env.DATA_DIR ?? '(unset, using default relative path)'} settingsExists=${Boolean(db.settings.get('main'))} opportunityCount=${db.opportunities.all().length} ledgerCount=${db.ledger.all().length} firstSourceId=${firstSource?.id ?? '(none)'} sourceCount=${db.sources.all().length}`);
 });
