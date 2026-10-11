@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { deriveEntityName, deriveFieldName, deriveName } from "./projects.js";
+import { deriveEntityName, deriveFieldName, deriveName, deriveScreensForNewEntity } from "./projects.js";
 
 /**
  * deriveName picks a project's display name from its free-text description
@@ -62,6 +62,46 @@ test("deriveEntityName appends the first free numeric suffix on a case-insensiti
   assert.equal(deriveEntityName("Payment", ["Customer", "Payment"]), "Payment2");
   assert.equal(deriveEntityName("payment", ["Customer", "Payment"]), "Payment2");
   assert.equal(deriveEntityName("Payment", ["Payment", "Payment2"]), "Payment3");
+});
+
+/**
+ * deriveScreensForNewEntity is the entity-add route's own counterpart fix
+ * for round 553: without it, a manually-added entity got zero spec.screens
+ * entries, permanently undercounting the "N screens" HistoryPanel.tsx/
+ * checkpointDiff.ts show for that project's initial-build checkpoint.
+ * There's no single universal screens shape across this app's three spec
+ * producers (heuristic.ts's List+Form per entity, templates.ts's List-only,
+ * or an AI-generated project's own arbitrary shape), so this mirrors
+ * whichever existing entity's own screens come last in the entities array.
+ */
+test("deriveScreensForNewEntity mirrors the last entity's own List+Form screens (heuristic.ts's shape)", () => {
+  const entities = [{ name: "Customer", label: "Customer", fields: [] }, { name: "Deal", label: "Deal", fields: [] }];
+  const screens = [
+    { name: "Dashboard", type: "dashboard" as const },
+    { name: "Customer List", type: "list" as const, entity: "Customer" },
+    { name: "Customer Form", type: "form" as const, entity: "Customer" },
+    { name: "Deal List", type: "list" as const, entity: "Deal" },
+    { name: "Deal Form", type: "form" as const, entity: "Deal" },
+  ];
+  assert.deepEqual(deriveScreensForNewEntity("Invoice", entities, screens), [
+    { name: "Invoice List", type: "list", entity: "Invoice" },
+    { name: "Invoice Form", type: "form", entity: "Invoice" },
+  ]);
+});
+
+test("deriveScreensForNewEntity mirrors a List-only shape (templates.ts's shape) instead of always assuming List+Form", () => {
+  const entities = [{ name: "Customer", label: "Customer", fields: [] }];
+  const screens = [
+    { name: "Dashboard", type: "dashboard" as const },
+    { name: "Customer", type: "list" as const, entity: "Customer" },
+  ];
+  assert.deepEqual(deriveScreensForNewEntity("Invoice", entities, screens), [{ name: "Invoice", type: "list", entity: "Invoice" }]);
+});
+
+test("deriveScreensForNewEntity falls back to a single plain List screen when no existing entity has any tagged screens", () => {
+  const entities = [{ name: "Customer", label: "Customer", fields: [] }];
+  const screens = [{ name: "Dashboard", type: "dashboard" as const }];
+  assert.deepEqual(deriveScreensForNewEntity("Invoice", entities, screens), [{ name: "Invoice", type: "list", entity: "Invoice" }]);
 });
 
 /**

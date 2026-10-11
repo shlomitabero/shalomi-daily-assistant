@@ -3263,6 +3263,41 @@ test("removing an entity that another entity's relation field still points to is
   });
 });
 
+/**
+ * Round 553: this route used to leave `spec.screens` completely untouched,
+ * so a removed entity's own screen entries (e.g. "Deal List"/"Deal Form")
+ * stayed in the spec forever, dangling and naming an entity that no longer
+ * exists -- baked permanently into the project's initial-build checkpoint,
+ * since /build passes spec.screens straight through with no regeneration.
+ */
+test("removing an entity also removes its own screens, instead of leaving dangling entries naming a deleted entity (round 553)", async () => {
+  await withServer(async (baseUrl) => {
+    const token = await signup(baseUrl, "entity-remove-screens@example.com");
+    const createRes = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ description: "A CRM with customers and deals." }),
+    });
+    const { project } = (await createRes.json()) as {
+      project: { id: string; spec: { entities: { name: string }[]; screens: { name: string; entity?: string }[] } };
+    };
+    assert.deepEqual(project.spec.entities.map((e) => e.name), ["Customer", "Deal"]);
+    assert.ok(project.spec.screens.some((s) => s.entity === "Deal"), "the fixture project must actually have Deal-tagged screens to remove");
+
+    const res = await fetch(`${baseUrl}/api/projects/${project.id}/entities/Deal`, {
+      method: "DELETE",
+      headers: authHeaders(token),
+    });
+    assert.equal(res.status, 200);
+    const { project: updated } = (await res.json()) as {
+      project: { spec: { entities: { name: string }[]; screens: { name: string; entity?: string }[] } };
+    };
+    assert.deepEqual(updated.spec.entities.map((e) => e.name), ["Customer"]);
+    assert.ok(!updated.spec.screens.some((s) => s.entity === "Deal"), "no screen should still reference the deleted Deal entity");
+    assert.ok(updated.spec.screens.some((s) => s.entity === "Customer"), "the surviving entity's own screens must be untouched");
+  });
+});
+
 test("removing an entity on a project you have no access to still 404s, the same as any other project route", async () => {
   await withServer(async (baseUrl) => {
     const ownerToken = await signup(baseUrl, "entity-remove-owner3@example.com");
@@ -3522,6 +3557,51 @@ test("adding a blank/whitespace-only entity label is rejected with 400 instead o
     const getRes = await fetch(`${baseUrl}/api/projects/${project.id}`, { headers: authHeaders(token) });
     const { project: unchanged } = (await getRes.json()) as { project: { spec: { entities: { name: string }[] } } };
     assert.deepEqual(unchanged.spec.entities, project.spec.entities);
+  });
+});
+
+/**
+ * Round 553: this route used to leave `spec.screens` completely untouched,
+ * so a manually-added entity got zero screens of its own -- permanently
+ * undercounting the "N screens" HistoryPanel.tsx/checkpointDiff.ts show for
+ * that project's initial-build checkpoint, since /build passes spec.screens
+ * straight through with no regeneration.
+ */
+test("adding an entity also adds screens for it, mirroring the project's existing per-entity screen shape (round 553)", async () => {
+  await withServer(async (baseUrl) => {
+    const token = await signup(baseUrl, "entity-add-screens@example.com");
+    const createRes = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ description: "A CRM with customers and deals." }),
+    });
+    const { project } = (await createRes.json()) as {
+      project: { id: string; spec: { entities: { name: string }[]; screens: { name: string; type: string; entity?: string }[] } };
+    };
+    assert.deepEqual(project.spec.entities.map((e) => e.name), ["Customer", "Deal"]);
+    const dealScreens = project.spec.screens.filter((s) => s.entity === "Deal");
+    assert.equal(dealScreens.length, 2, "heuristic.ts gives every entity its own List and Form screen");
+
+    const addRes = await fetch(`${baseUrl}/api/projects/${project.id}/entities`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ label: "Invoice" }),
+    });
+    assert.equal(addRes.status, 200);
+    const { project: updated } = (await addRes.json()) as {
+      project: { spec: { entities: { name: string }[]; screens: { name: string; type: string; entity?: string }[] } };
+    };
+    assert.deepEqual(updated.spec.entities.map((e) => e.name), ["Customer", "Deal", "Invoice"]);
+
+    const invoiceScreens = updated.spec.screens.filter((s) => s.entity === "Invoice");
+    assert.deepEqual(
+      invoiceScreens.map((s) => ({ name: s.name, type: s.type })),
+      [
+        { name: "Invoice List", type: "list" },
+        { name: "Invoice Form", type: "form" },
+      ],
+      "the new entity's screens must mirror the existing Deal List/Deal Form shape, not be left out entirely",
+    );
   });
 });
 

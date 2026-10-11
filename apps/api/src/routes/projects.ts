@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { Router, type Request, type Response, type NextFunction } from "express";
 import { z } from "zod";
-import type { Entity, Field, Project } from "@forge/shared";
+import type { Entity, Field, Project, Screen } from "@forge/shared";
 import {
   getCheckpoint,
   getProject,
@@ -200,6 +200,41 @@ export function deriveFieldName(label: string, existingNames: string[]): string 
   let suffix = 2;
   while (taken.has(`${base}${suffix}`.toLowerCase())) suffix += 1;
   return `${base}${suffix}`;
+}
+
+/**
+ * generateSpec's own screen-generation (heuristic.ts's buildScreens --
+ * Dashboard + List + Form per entity, or templates.ts's screensFor --
+ * Dashboard + List only) only ever runs once, at spec creation; the
+ * pre-build add/remove-entity routes below mutated `entities` directly
+ * while leaving `screens` completely untouched, so a manually-added entity
+ * got zero screens (undercounting "N screens" in HistoryPanel.tsx/
+ * checkpointDiff.ts, the spec's only two consumers of this field) and a
+ * manually-removed entity left its own dangling screen entries behind,
+ * naming an entity that no longer exists -- both baked permanently into
+ * the initial-build checkpoint, since /build passes project.spec straight
+ * through with no regeneration (round 553). Every screen a real generator
+ * produces for a given entity already carries that entity's own name in
+ * `screen.entity` (see both functions above), so instead of guessing which
+ * of the two conventions (or an AI-generated project's own arbitrary
+ * shape) this particular project uses, this mirrors whichever existing
+ * entity's own screens come last in `entities` -- the most likely to
+ * reflect the project's current real convention, including after a
+ * refine. Falls back to a single plain List screen (templates.ts's own
+ * minimal shape) when no entity has any tagged screens at all.
+ */
+export function deriveScreensForNewEntity(newEntityName: string, existingEntities: Entity[], screens: Screen[]): Screen[] {
+  for (let i = existingEntities.length - 1; i >= 0; i -= 1) {
+    const templateName = existingEntities[i].name;
+    const templateScreens = screens.filter((s) => s.entity === templateName);
+    if (templateScreens.length === 0) continue;
+    return templateScreens.map((s) => ({
+      ...s,
+      name: s.name.split(templateName).join(newEntityName),
+      entity: newEntityName,
+    }));
+  }
+  return [{ name: newEntityName, type: "list", entity: newEntityName }];
 }
 
 function findEntity(project: Project, entityName: string): Entity {
@@ -1536,6 +1571,7 @@ export function createProjectsRouter(
       const nextSpec = {
         ...project.spec,
         entities: project.spec.entities.filter((e) => e.name !== req.params.entityName),
+        screens: project.spec.screens.filter((s) => s.entity !== req.params.entityName),
       };
       const updated = updateProjectSpec(db, project.id, nextSpec);
       res.json({ project: updated });
@@ -1585,7 +1621,12 @@ export function createProjectsRouter(
           label: parsed.data.label,
           fields: [{ name: "name", type: "text", required: true }],
         };
-        const nextSpec = { ...project.spec, entities: [...project.spec.entities, newEntity] };
+        const newScreens = deriveScreensForNewEntity(name, project.spec.entities, project.spec.screens);
+        const nextSpec = {
+          ...project.spec,
+          entities: [...project.spec.entities, newEntity],
+          screens: [...project.spec.screens, ...newScreens],
+        };
         const updated = updateProjectSpec(db, project.id, nextSpec);
         return { status: 200, body: { project: updated } };
       });
