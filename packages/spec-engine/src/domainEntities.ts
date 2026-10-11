@@ -709,7 +709,16 @@ export const DOMAIN_ENTITY_RULES: DomainEntityRule[] = [
   {
     keywords: [
       "event planning", "conference", "wedding", "weddings", "trade show",
-      "אירוע", "אירועים", "כנס", "חתונה", "חתונות",
+      "אירוע", "אירועים",
+      // Bare "כנס" (round 562) is a substring of common כ.נ.ס
+      // ("to enter"/"to log in") verb conjugations -- "להיכנס" (to log
+      // in), "נכנס" (enters/logs in), "תיכנס"/"מתכנס"/"התכנסות" -- so a
+      // plain login-flow description spuriously matched Event. Hebrew
+      // has no \b (same reason round 518's "מלאי" and round 527's "חיוב"
+      // fixes needed lookbehind/lookahead too), so this excludes the
+      // specific known verb-conjugation prefixes directly.
+      /(?<!נ)(?<!תי)(?<!להי)(?<!מת)(?<!הת)כנס/,
+      "חתונה", "חתונות",
     ],
     labelHe: "אירועים",
     descriptionHe: "אירוע שהעסק מארגן או מנהל.",

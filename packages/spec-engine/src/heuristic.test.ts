@@ -1377,3 +1377,51 @@ test("Student's 'pupil' keyword doesn't spuriously match the eye-anatomy sense o
   const realPupils = await provider.generate("An app for a school to track all the pupils' attendance and homework.");
   assert.ok(realPupils.entities.some((e) => e.name === "Student"), "'pupils' must still match Student");
 });
+
+/**
+ * Regression test for round 562's finding: Event's bare Hebrew keyword
+ * "כנס" ("conference") is a substring of common conjugations of the
+ * כ.נ.ס root ("to enter"/"to log in") -- "להיכנס" (to log in), "נכנס"
+ * (logs in/enters), "תיכנס" (you'll log in), "מתכנס"/"התכנסות" (convenes/
+ * convening) -- the exact "event" ⊂ "prevents" substring pitfall this
+ * same entity's own Review-entity comment a few hundred lines up already
+ * warns about, but on the Hebrew side where JS's \b can't bound words at
+ * all (same reason round 518's "מלאי" and round 527's "חיוב" fixes needed
+ * lookbehind/lookahead instead). A plain employee/task-management app
+ * description mentioning a login flow had nothing to do with conferences.
+ * Fixed by excluding the specific known כ.נ.ס verb-conjugation prefixes
+ * via negative lookbehind, the same disambiguation style this file's
+ * other collision fixes already use.
+ */
+test("Event's 'כנס' keyword doesn't spuriously match conjugations of the כ.נ.ס root ('to log in'/'to enter')", async () => {
+  const provider = new HeuristicSpecProvider();
+
+  const login = await provider.generate(
+    "אפליקציה לניהול משימות לעובדים, כל עובד יכול להיכנס למערכת ולראות את המשימות שלו",
+  );
+  assert.ok(
+    !login.entities.some((e) => e.name === "Event"),
+    "'להיכנס' (to log in) alone must not spuriously match Event via a bare 'כנס' substring",
+  );
+
+  const enters = await provider.generate("המערכת שולחת התראה בכל פעם שעובד נכנס למשרד בבוקר");
+  assert.ok(
+    !enters.entities.some((e) => e.name === "Event"),
+    "'נכנס' (enters/logs in) alone must not spuriously match Event via a bare 'כנס' substring",
+  );
+
+  const convenes = await provider.generate("אפליקציה למעקב אחרי ועד בית שמתכנס כל חודש לדון בתקציב");
+  assert.ok(
+    !convenes.entities.some((e) => e.name === "Event"),
+    "'מתכנס' (convenes) alone must not spuriously match Event via a bare 'כנס' substring",
+  );
+
+  // The real word still works on its own, singular and plural (these
+  // descriptions avoid this rule's other keywords -- "אירוע"/"חתונה" etc.
+  // -- so a match here can only come from "כנס"/"כנסים" itself).
+  const realConference = await provider.generate("אפליקציה לניהול כנס מקצועי עם הרשמת משתתפים");
+  assert.ok(realConference.entities.some((e) => e.name === "Event"), "'כנס' must still match Event");
+
+  const realConferences = await provider.generate("אפליקציה למעקב אחרי כנסים שונים ברחבי הארץ");
+  assert.ok(realConferences.entities.some((e) => e.name === "Event"), "'כנסים' must still match Event");
+});
