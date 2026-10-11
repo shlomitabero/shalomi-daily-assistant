@@ -394,19 +394,45 @@ test("formatCheckpointCount reports 'shown of total' once a search has narrowed 
  * count, and the "current" marker land in the exported text -- not a
  * placeholder or the wrong checkpoint's data.
  */
+/**
+ * Regression test (round 547): this report's "N screens" line used to read
+ * checkpoint.spec.entities.length -- entities and screens are two
+ * genuinely different, differently-sized arrays (every real spec has a
+ * Dashboard screen plus a List/Form pair per entity, so screens.length is
+ * always greater than entities.length), so the exported count was simply
+ * wrong for every checkpoint. Each checkpoint below has a real screens
+ * array with a DIFFERENT length than its entities array, specifically to
+ * catch a regression back to entities.length.
+ */
 test("formatCheckpointHistory includes the project name, each checkpoint's own label, timestamp, and screen count", () => {
   const t = (key: string, params?: Record<string, string | number>) => translate("en", key, params);
-  const currentSpec = makeSpec([{ name: "Customer", label: "Customers", fields: [{ name: "name", type: "text", required: true }] }]);
+  const currentSpec: ProductSpec = {
+    ...makeSpec([{ name: "Customer", label: "Customers", fields: [{ name: "name", type: "text", required: true }] }]),
+    screens: [
+      { name: "Dashboard", type: "dashboard" },
+      { name: "Customer List", type: "list", entity: "Customer" },
+      { name: "Customer Form", type: "form", entity: "Customer" },
+    ],
+  };
   const checkpoints: Checkpoint[] = [
     {
       id: "cp2",
       projectId: "p1",
       label: "Refine: add invoice tracking",
       kind: "refine",
-      spec: makeSpec([
-        { name: "Customer", label: "Customers", fields: [{ name: "name", type: "text", required: true }] },
-        { name: "Invoice", label: "Invoices", fields: [{ name: "total", type: "number", required: true }] },
-      ]),
+      spec: {
+        ...makeSpec([
+          { name: "Customer", label: "Customers", fields: [{ name: "name", type: "text", required: true }] },
+          { name: "Invoice", label: "Invoices", fields: [{ name: "total", type: "number", required: true }] },
+        ]),
+        screens: [
+          { name: "Dashboard", type: "dashboard" },
+          { name: "Customer List", type: "list", entity: "Customer" },
+          { name: "Customer Form", type: "form", entity: "Customer" },
+          { name: "Invoice List", type: "list", entity: "Invoice" },
+          { name: "Invoice Form", type: "form", entity: "Invoice" },
+        ],
+      },
       createdAt: "2026-03-10T12:00:00.000Z",
     },
     {
@@ -424,8 +450,8 @@ test("formatCheckpointHistory includes the project name, each checkpoint's own l
   assert.match(report, /Flower Shop/);
   assert.match(report, /Refine: add invoice tracking/);
   assert.match(report, /Initial build/);
-  assert.match(report, /2 screens/, "the invoice-tracking checkpoint has 2 entities, must show '2 screens'");
-  assert.match(report, /1 screens/, "the initial-build checkpoint has 1 entity");
+  assert.match(report, /5 screens/, "the invoice-tracking checkpoint has 5 real screens, not its 2 entities");
+  assert.match(report, /3 screens/, "the initial-build checkpoint has 3 real screens, not its 1 entity");
 });
 
 test("formatCheckpointHistory marks exactly the checkpoint matching the current spec, not the newest one", () => {

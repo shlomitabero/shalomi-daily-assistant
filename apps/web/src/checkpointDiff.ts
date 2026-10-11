@@ -232,7 +232,9 @@ export function formatCheckpointHistory(
     const time = new Date(checkpoint.createdAt).toLocaleString(LOCALE[lang]);
     const current = isCheckpointCurrent(currentSpec, checkpoint.spec) ? ` [${t("history.current")}]` : "";
     lines.push(`${checkpoint.label}${current}`);
-    lines.push(`${time} — ${t("history.screenCount", { count: checkpoint.spec.entities.length })}`);
+    // count must read spec.screens, not spec.entities -- see HistoryPanel.tsx's
+    // own identical fix for why entities.length under-reports the real count.
+    lines.push(`${time} — ${t("history.screenCount", { count: checkpoint.spec.screens.length })}`);
     lines.push("");
   }
 

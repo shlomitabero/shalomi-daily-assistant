@@ -319,8 +319,12 @@ export function HistoryPanel({
                     <div className="muted small">
                       {new Date(checkpoint.createdAt).toLocaleString(LOCALE[lang])}
                     </div>
+                    {/* count must read spec.screens, not spec.entities -- the heuristic/
+                        template generators both emit more screens than entities
+                        (Dashboard plus a List/Form pair per entity), so entities.length
+                        under-reports the real screen count every time (round 547). */}
                     <div className="muted small">
-                      {t("history.screenCount", { count: checkpoint.spec.entities.length })}
+                      {t("history.screenCount", { count: checkpoint.spec.screens.length })}
                     </div>
                     <button
                       type="button"

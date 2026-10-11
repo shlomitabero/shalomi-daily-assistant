@@ -608,6 +608,70 @@ test("HistoryPanel marks the checkpoint matching the current spec with a 'Curren
 });
 
 /**
+ * Regression test (round 547): the checkpoint list's "N screens" line used
+ * to read checkpoint.spec.entities.length -- entities and screens are two
+ * genuinely different, differently-sized arrays (every real spec has a
+ * Dashboard screen plus a List/Form pair per entity, so screens.length is
+ * always greater than entities.length), so the displayed count was simply
+ * wrong for every checkpoint ever shown. Builds a checkpoint with 1 entity
+ * but 3 real screens and confirms the panel shows "3 screens", not "1
+ * screens" (which entities.length would have produced).
+ */
+test("HistoryPanel's screen-count line reads the checkpoint's real screens array, not its entities count", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    const checkpoint = makeCheckpoint("cp1", "Initial build");
+    checkpoint.spec = {
+      ...checkpoint.spec,
+      entities: [{ name: "Customer", fields: [{ name: "name", type: "text", required: true }] }],
+      screens: [
+        { name: "Dashboard", type: "dashboard" },
+        { name: "Customer List", type: "list", entity: "Customer" },
+        { name: "Customer Form", type: "form", entity: "Customer" },
+      ],
+    };
+
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/checkpoints") {
+        return new Response(JSON.stringify({ checkpoints: [checkpoint] }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+
+    try {
+      render(
+        React.createElement(
+          ThemeProvider,
+          null,
+          React.createElement(
+            LanguageProvider,
+            null,
+            React.createElement(HistoryPanel, {
+              projectId: "proj1",
+              projectName: "Test Project",
+              currentSpec: checkpoint.spec,
+              onRestored: () => {},
+              onClose: () => {},
+            }),
+          ),
+        ),
+      );
+      await waitForCondition(() => document.querySelectorAll(".checkpoint-list li").length === 1);
+
+      const item = document.querySelector(".checkpoint-list li") as HTMLElement;
+      assert.match(item.textContent ?? "", /3 screens/, "must show the real screens.length (3), not entities.length (1)");
+      assert.doesNotMatch(item.textContent ?? "", /\b1 screens\b/, "must never report entities.length as the screen count");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * New in this round: every build/refine adds one more checkpoint forever
  * (no cap, no delete), so a project with a long real history had no way to
  * find one specific checkpoint besides scrolling and reading every label.
