@@ -1981,6 +1981,86 @@ test("the exported EntityView's real generated buildCalendarIcs produces a genui
   assert.match(ics, /SUMMARY:Dana\\, Levi/, "a comma in the summary must be backslash-escaped per RFC 5545 §3.3.11");
 });
 
+// Regression test for round 551's finding: PRODID's own content
+// (entity.label) was pushed raw in the exported app's generated
+// buildCalendarIcs too, unlike UID/SUMMARY/DESCRIPTION which already go
+// through foldIcsLine -- reuses the exact same real-generated-code
+// extraction harness as the test immediately above, just with a long
+// entity label to force the raw line past 75 UTF-8 octets.
+test("the exported EntityView's real generated buildCalendarIcs folds a long PRODID line the same way it folds DESCRIPTION", () => {
+  const withDate: Project = {
+    ...project,
+    spec: {
+      ...project.spec,
+      entities: [
+        ...project.spec.entities,
+        {
+          name: "Appointment",
+          label: "לקוח ".repeat(30),
+          fields: [
+            { name: "customerName", label: "שם לקוח", type: "text", required: true },
+            { name: "date", label: "תאריך", type: "date", required: true },
+          ],
+        },
+      ],
+    },
+  };
+  const entityViewJsx = generateExportFiles(withDate).find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+
+  const pickDisplaySrc = entityViewJsx.match(/export function pickDisplayField\(entity\) \{[\s\S]*?\n\}\n/)?.[0]?.replace(/^export /, "");
+  const labelFieldSrc = entityViewJsx.match(/function calendarLabelField\(entity, dateField\) \{[\s\S]*?\n\}\n/)?.[0];
+  const pad2Src = entityViewJsx.match(/function icsPad2\(n\) \{[\s\S]*?\n\}\n/)?.[0];
+  const dateSrc = entityViewJsx.match(/function formatIcsDate\(date\) \{[\s\S]*?\n\}\n/)?.[0];
+  const tsSrc = entityViewJsx.match(/function formatIcsTimestamp\(date\) \{[\s\S]*?\n\}\n/)?.[0];
+  const escSrc = entityViewJsx.match(/function icsEscapeText\(value\) \{[\s\S]*?\n\}\n/)?.[0];
+  const utf8LenSrc = entityViewJsx.match(/function utf8ByteLength\(s\) \{[\s\S]*?\n\}\n/)?.[0];
+  const foldSrc = entityViewJsx.match(/function foldIcsLine\(line\) \{[\s\S]*?\n\}\n/)?.[0];
+  const buildSrc = entityViewJsx.match(
+    /function buildCalendarIcs\(entity, dateField, labelField, records, relatedRecords, now, endField\) \{[\s\S]*?\n\}\n/,
+  )?.[0];
+  assert.ok(
+    pickDisplaySrc && labelFieldSrc && pad2Src && dateSrc && tsSrc && escSrc && utf8LenSrc && foldSrc && buildSrc,
+    "expected to find every ICS helper function in the real generated output",
+  );
+
+  const relationStub = "function relationDisplayLabel() { return ''; }\n";
+  const buildCalendarIcs = new Function(
+    `${pickDisplaySrc}\n${labelFieldSrc}\n${pad2Src}\n${dateSrc}\n${tsSrc}\n${escSrc}\n${utf8LenSrc}\n${foldSrc}\n${relationStub}\n${buildSrc}\nreturn buildCalendarIcs;`,
+  )() as (entity: unknown, dateField: unknown, labelField: unknown, records: unknown[], relatedRecords: unknown, now: Date) => string;
+
+  const entity = {
+    name: "Appointment",
+    label: "לקוח ".repeat(30),
+    fields: [
+      { name: "customerName", label: "שם לקוח", type: "text" },
+      { name: "date", label: "תאריך", type: "date" },
+    ],
+  };
+  assert.ok(
+    new TextEncoder().encode(`PRODID:-//Forge AI//${entity.label}//EN`).length > 75,
+    "sanity check: this label makes the raw PRODID line exceed 75 UTF-8 octets",
+  );
+  const dateField = entity.fields[1];
+  const labelField = entity.fields[0];
+
+  const ics = buildCalendarIcs(entity, dateField, labelField, [], {}, new Date("2026-01-01T00:00:00Z"));
+  const lines = ics.split("\r\n");
+  const prodidLineIndex = lines.findIndex((l) => l.startsWith("PRODID:"));
+  assert.ok(prodidLineIndex >= 0);
+
+  const prodidPhysicalLines = [lines[prodidLineIndex]];
+  let i = prodidLineIndex;
+  while (lines[i + 1]?.startsWith(" ")) {
+    i += 1;
+    prodidPhysicalLines.push(lines[i]);
+  }
+  assert.ok(prodidPhysicalLines.length > 1, "a PRODID line this long in real bytes must actually be folded into more than one physical line");
+  for (const line of prodidPhysicalLines) {
+    const byteLength = new TextEncoder().encode(line).length;
+    assert.ok(byteLength <= 75, `every folded PRODID physical line must be <=75 UTF-8 octets, was ${byteLength}: ${JSON.stringify(line)}`);
+  }
+});
+
 // Regression test for the enum-field gap fixed this round: the exported
 // app's own buildCalendarIcs (ported from calendarIcs.ts) previously
 // showed an enum field's raw stored value in DESCRIPTION instead of its

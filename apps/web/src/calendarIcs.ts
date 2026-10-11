@@ -107,7 +107,12 @@ export function buildCalendarIcs(
   const lines: string[] = [
     "BEGIN:VCALENDAR",
     "VERSION:2.0",
-    `PRODID:-//Forge AI//${icsEscapeText(entity.label ?? entity.name)}//EN`,
+    // PRODID's own content (entity.label) is exactly as unbounded and
+    // user-controlled as UID/SUMMARY/DESCRIPTION below (EntitySchema.label
+    // has no length cap) -- missed when this line was first added, since a
+    // short, developer-chosen name never came close to the 75-octet limit
+    // foldIcsLine exists to enforce (round 551).
+    foldIcsLine(`PRODID:-//Forge AI//${icsEscapeText(entity.label ?? entity.name)}//EN`),
     "CALSCALE:GREGORIAN",
   ];
   for (const record of records) {

@@ -2145,7 +2145,7 @@ function foldIcsLine(line) {
 function buildCalendarIcs(entity, dateField, labelField, records, relatedRecords, now, endField) {
   const dtstamp = formatIcsTimestamp(now || new Date());
   const descriptionFields = entity.fields.filter((f) => f.name !== dateField.name && f.name !== labelField.name && f.name !== (endField && endField.name));
-  const lines = ["BEGIN:VCALENDAR", "VERSION:2.0", \`PRODID:-//Forge AI//\${icsEscapeText(entity.label || entity.name)}//EN\`, "CALSCALE:GREGORIAN"];
+  const lines = ["BEGIN:VCALENDAR", "VERSION:2.0", foldIcsLine(\`PRODID:-//Forge AI//\${icsEscapeText(entity.label || entity.name)}//EN\`), "CALSCALE:GREGORIAN"];
   for (const record of records) {
     const raw = record[dateField.name];
     if (raw === null || raw === undefined || raw === "") continue;

@@ -228,3 +228,36 @@ test("buildCalendarIcs folds a Hebrew DESCRIPTION line by real UTF-8 byte count,
     assert.ok(byteLength <= 75, `every folded physical line must be <=75 UTF-8 octets, was ${byteLength}: ${JSON.stringify(line)}`);
   }
 });
+
+/**
+ * Regression test for round 551's finding: PRODID's own content
+ * (entity.label) is exactly as unbounded as UID/SUMMARY/DESCRIPTION, which
+ * all already go through foldIcsLine -- but PRODID itself was pushed raw,
+ * so a long entity label produced an over-75-byte PRODID line a strict
+ * RFC 5545 parser could reject, the same failure mode foldIcsLine exists
+ * everywhere else in this function to prevent.
+ */
+test("buildCalendarIcs folds a long PRODID line the same way it folds DESCRIPTION", () => {
+  const longLabel = "לקוח ".repeat(30);
+  assert.ok(
+    new TextEncoder().encode(`PRODID:-//Forge AI//${longLabel}//EN`).length > 75,
+    "sanity check: this label makes the raw PRODID line exceed 75 UTF-8 octets",
+  );
+  const longEntity: Entity = { ...entity, label: longLabel };
+  const ics = buildCalendarIcs(longEntity, dateField, nameField, [], [], {});
+  const lines = ics.split("\r\n");
+  const prodidLineIndex = lines.findIndex((l) => l.startsWith("PRODID:"));
+  assert.ok(prodidLineIndex >= 0);
+
+  const prodidPhysicalLines = [lines[prodidLineIndex]];
+  let i = prodidLineIndex;
+  while (lines[i + 1]?.startsWith(" ")) {
+    i += 1;
+    prodidPhysicalLines.push(lines[i]);
+  }
+  assert.ok(prodidPhysicalLines.length > 1, "a PRODID line this long in real bytes must actually be folded into more than one physical line");
+  for (const line of prodidPhysicalLines) {
+    const byteLength = new TextEncoder().encode(line).length;
+    assert.ok(byteLength <= 75, `every folded PRODID physical line must be <=75 UTF-8 octets, was ${byteLength}: ${JSON.stringify(line)}`);
+  }
+});
