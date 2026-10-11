@@ -1067,6 +1067,64 @@ test("Donation's 'donation' keyword doesn't spuriously match 'condonation'", asy
 });
 
 /**
+ * Regression test for round 557's finding: Appointment's bare "booking"
+ * keyword is a substring of the unrelated, ordinary word "overbooking"
+ * (airline/hotel capacity management) -- the same pitfall-1 shape as
+ * reservation/preservation above. Fixed with the same `\b`-bounded RegExp
+ * pattern (plus the "(s)?" plural handling) this file's other collision
+ * fixes already use.
+ */
+test("Appointment's 'booking' keyword doesn't spuriously match 'overbooking'", async () => {
+  const provider = new HeuristicSpecProvider();
+
+  const overbooking = await provider.generate(
+    "An airline tool to track overbooking rates and flight seat capacity.",
+  );
+  assert.ok(
+    !overbooking.entities.some((e) => e.name === "Appointment"),
+    "'overbooking' alone must not spuriously match Appointment via a bare 'booking' substring",
+  );
+
+  // The real word still works on its own, singular and plural (this
+  // description avoids this rule's other keywords -- "appointment",
+  // "reservation" -- so a match here can only come from "booking" itself).
+  const realBooking = await provider.generate("An app for a salon to track each booking a client makes.");
+  assert.ok(realBooking.entities.some((e) => e.name === "Appointment"), "'booking' must still match Appointment");
+
+  const realBookings = await provider.generate("An app for a salon to track all the bookings clients make.");
+  assert.ok(realBookings.entities.some((e) => e.name === "Appointment"), "'bookings' must still match Appointment");
+});
+
+/**
+ * Regression test for round 557's finding: Task's bare "task" keyword is a
+ * substring of the unrelated, ordinary word "multitasking" (a personal-
+ * productivity/time-management skill) -- the same pitfall-1 shape as
+ * reservation/preservation and booking/overbooking above. Fixed with the
+ * same `\b`-bounded RegExp pattern (plus the "(s)?" plural handling) this
+ * file's other collision fixes already use.
+ */
+test("Task's 'task' keyword doesn't spuriously match 'multitasking'", async () => {
+  const provider = new HeuristicSpecProvider();
+
+  const multitasking = await provider.generate(
+    "A coaching app to help employees improve multitasking and focus skills during the workday.",
+  );
+  assert.ok(
+    !multitasking.entities.some((e) => e.name === "Task"),
+    "'multitasking' alone must not spuriously match Task via a bare 'task' substring",
+  );
+
+  // The real word still works on its own, singular and plural (this
+  // description avoids this rule's other keywords -- "todo", "action item"
+  // -- so a match here can only come from "task" itself).
+  const realTask = await provider.generate("An app for a team to track each task assigned to a member.");
+  assert.ok(realTask.entities.some((e) => e.name === "Task"), "'task' must still match Task");
+
+  const realTasks = await provider.generate("An app for a team to track all the tasks assigned to members.");
+  assert.ok(realTasks.entities.some((e) => e.name === "Task"), "'tasks' must still match Task");
+});
+
+/**
  * Regression test for round 550's finding: Order's bare "checkout" keyword
  * (and PAYMENT_KEYWORDS's own identical bare "checkout") is genuinely
  * ambiguous English -- it means an e-commerce purchase in most

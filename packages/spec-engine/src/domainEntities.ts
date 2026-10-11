@@ -123,7 +123,13 @@ export const DOMAIN_ENTITY_RULES: DomainEntityRule[] = [
     // -- the same pitfall-1 shape as order/stock/driver/patient/deals/
     // worker/courses/dish/product. \b-bounded, with the same "(s)?" plural
     // handling those fixes already use, so "reservations" still matches.
-    keywords: ["appointment", "booking", /\breservations?\b/, "תורים", "פגישה", "פגישות"],
+    //
+    // Bare "booking" (round 557) is a substring of the unrelated, ordinary
+    // word "overbooking" (airline/hotel capacity management, nothing to do
+    // with scheduling a customer appointment) -- the same pitfall-1 shape
+    // as reservation/preservation above. \b-bounded with the same "(s)?"
+    // plural handling, so "bookings" still matches.
+    keywords: ["appointment", /\bbookings?\b/, /\breservations?\b/, "תורים", "פגישה", "פגישות"],
     labelHe: "תורים",
     descriptionHe: "פגישה מתוזמנת עם לקוח.",
     fieldLabelsHe: {
@@ -603,7 +609,13 @@ export const DOMAIN_ENTITY_RULES: DomainEntityRule[] = [
     },
   },
   {
-    keywords: ["task", "todo", "to-do", "action item", "משימה", "משימות"],
+    // Bare "task" (round 557) is a substring of the unrelated, ordinary
+    // word "multitasking" (a personal-productivity/time-management skill,
+    // nothing to do with a tracked to-do item) -- the same pitfall-1 shape
+    // as reservation/preservation and booking/overbooking above. \b-bounded
+    // with the same "(s)?" plural handling those fixes already use, so
+    // "tasks" still matches.
+    keywords: [/\btasks?\b/, "todo", "to-do", "action item", "משימה", "משימות"],
     labelHe: "משימות",
     descriptionHe: "פעולה קונקרטית שצריך לבצע.",
     fieldLabelsHe: { title: "כותרת", assignee: "אחראי/ת", status: "סטטוס", dueDate: "תאריך יעד" },
