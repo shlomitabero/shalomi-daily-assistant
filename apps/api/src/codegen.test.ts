@@ -368,6 +368,95 @@ test("generated server.js rejects \"Infinity\"/\"-Infinity\" for a number field"
 });
 
 /**
+ * Regression test (round 546): the exported standalone app's own coerce()
+ * -- same copy-pasted logic as packages/db/src/repository.ts's
+ * coerceValue -- had no rejection path at all for its boolean branch,
+ * unlike number/relation, enum, and date right next to it: any value
+ * outside the exact true/false allowlist (a typo, "yes", a stray number)
+ * silently became `false` and was written to the DB with the request
+ * still reporting success (201). Round 514 fixed the same gap one layer
+ * up, in the CSV-import parser, but never touched this function -- the
+ * one every real record write (a direct POST to this server's own REST
+ * API, not just the CSV-import UI) funnels through. Reproduced here
+ * against a real spawned server, the same standard the date/number tests
+ * above already use for this exact function.
+ */
+test("generated server.js rejects a boolean field value outside the true/false allowlist, instead of silently storing it as false", async () => {
+  const customerProject: Project = {
+    ...project,
+    spec: {
+      ...project.spec,
+      entities: [
+        {
+          name: "Customer",
+          fields: [
+            { name: "name", type: "text", required: true },
+            { name: "vip", type: "boolean", required: false },
+          ],
+        },
+      ],
+    },
+  };
+  const files = generateExportFiles(customerProject);
+  const serverJs = files.find((f) => f.path === "server.js")!.content;
+
+  const dir = mkdtempSync(path.join(tmpdir(), "codegen-boolean-test-"));
+  const repoRoot = path.resolve(import.meta.dirname, "../../..");
+  symlinkSync(path.join(repoRoot, "node_modules"), path.join(dir, "node_modules"));
+  writeFileSync(path.join(dir, "server.js"), serverJs);
+
+  const port = 44000 + Math.floor(Math.random() * 5000);
+  const child = spawn(process.execPath, ["--experimental-sqlite", "server.js"], {
+    cwd: dir,
+    env: { ...process.env, PORT: String(port) },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  let stderr = "";
+  child.stderr.on("data", (chunk) => {
+    stderr += chunk.toString();
+  });
+
+  try {
+    const deadline = Date.now() + 5000;
+    let lastErr: unknown;
+    while (Date.now() < deadline) {
+      if (child.exitCode !== null) {
+        throw new Error(`server.js exited early (code ${child.exitCode}):\n${stderr}`);
+      }
+      try {
+        await fetch(`http://localhost:${port}/api/entities`);
+        break;
+      } catch (err) {
+        lastErr = err;
+        await new Promise((r) => setTimeout(r, 100));
+      }
+    }
+    if (child.exitCode !== null) throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
+
+    const validRes = await fetch(`http://localhost:${port}/api/Customer`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ name: "Alice", vip: true }),
+    });
+    assert.equal(validRes.status, 201);
+    const valid = await validRes.json();
+    assert.equal(valid.record.vip, true);
+
+    for (const bad of ["yes", "no", "TRUE", 2, "banana"]) {
+      const badRes = await fetch(`http://localhost:${port}/api/Customer`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ name: "Bob", vip: bad }),
+      });
+      assert.equal(badRes.status, 400, `expected ${JSON.stringify(bad)} to be rejected as an invalid boolean`);
+    }
+  } finally {
+    child.kill();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
  * Regression test: the exported standalone app's own coerce() -- same
  * copy-pasted logic as packages/db/src/repository.ts's coerceValue, round
  * 408 found and fixed in both places -- only checked a value against the

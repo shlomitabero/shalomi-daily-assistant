@@ -381,7 +381,11 @@ function coerce(field, value) {
     if (!Number.isFinite(n)) throw new Error(\`Field "\${field.name}" must be a number\`);
     return n;
   }
-  if (field.type === "boolean") return value === true || value === "true" || value === 1 || value === "1" ? 1 : 0;
+  if (field.type === "boolean") {
+    if (value === true || value === "true" || value === 1 || value === "1") return 1;
+    if (value === false || value === "false" || value === 0 || value === "0") return 0;
+    throw new Error(\`Field "\${field.name}" must be a boolean\`);
+  }
   if (field.type === "enum") {
     if (field.enumValues && !field.enumValues.includes(String(value))) {
       throw new Error(\`Field "\${field.name}" must be one of: \${field.enumValues.join(", ")}\`);

@@ -70,6 +70,46 @@ test("insertRecord rejects a value outside the enum", () => {
   );
 });
 
+/**
+ * Regression test (round 546): coerceValue's boolean branch used to have
+ * no rejection path at all, unlike every other branch in this same
+ * function (number/relation, enum, date) -- any value outside the exact
+ * true/false allowlist silently became `false` and was written to the DB
+ * with the write still reporting success. This is the actual
+ * persistence-layer validator every record write funnels through
+ * (routes/projects.ts passes req.body straight into insertRecord/
+ * updateRecord with no schema above it), so a malformed boolean from a
+ * direct API call -- not just the already-fixed CSV-import path (round
+ * 514) -- used to be silently corrupted rather than rejected.
+ */
+test("insertRecord accepts every recognized true/false form for a boolean field", () => {
+  const db = setup();
+  for (const [raw, expected] of [
+    [true, true],
+    ["true", true],
+    [1, true],
+    ["1", true],
+    [false, false],
+    ["false", false],
+    [0, false],
+    ["0", false],
+  ] as const) {
+    const created = insertRecord(db, "proj1", customer, { name: "Alice", vip: raw, status: "New" });
+    assert.equal(created.vip, expected, `expected ${JSON.stringify(raw)} to coerce to ${expected}`);
+  }
+});
+
+test("insertRecord rejects a boolean field value outside the true/false allowlist, instead of silently storing it as false", () => {
+  const db = setup();
+  for (const bad of ["yes", "no", "TRUE", "כן", "לא", 2, "banana"]) {
+    assert.throws(
+      () => insertRecord(db, "proj1", customer, { name: "Alice", vip: bad, status: "New" }),
+      ValidationError,
+      `expected ${JSON.stringify(bad)} to be rejected as an invalid boolean`,
+    );
+  }
+});
+
 const appointment: Entity = {
   name: "Appointment",
   fields: [

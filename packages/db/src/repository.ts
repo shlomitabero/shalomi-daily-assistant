@@ -57,8 +57,20 @@ function coerceValue(field: Field, raw: unknown): string | number | null {
       }
       return num;
     }
-    case "boolean":
-      return raw === true || raw === "true" || raw === 1 || raw === "1" ? 1 : 0;
+    case "boolean": {
+      // Unlike number/relation/enum/date below, this used to have no
+      // rejection path at all: a JSON request body's boolean field set to
+      // anything outside the exact true/false allowlist (a typo, "yes",
+      // 2, a stray string) silently became `false` and was written to the
+      // DB with the request still reporting success -- round 514 fixed
+      // the exact same gap one layer up, in the CSV-import parser, but
+      // never touched this function, the one every actual record write
+      // (including a direct API call, not just CSV import) funnels
+      // through.
+      if (raw === true || raw === "true" || raw === 1 || raw === "1") return 1;
+      if (raw === false || raw === "false" || raw === 0 || raw === "0") return 0;
+      throw new ValidationError(`Field "${field.name}" must be a boolean`);
+    }
     case "enum":
       if (field.enumValues && !field.enumValues.includes(String(raw))) {
         throw new ValidationError(
