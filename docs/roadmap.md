@@ -27209,6 +27209,22 @@ Other candidates investigated and ruled out this round: `api.ts`'s `safeDownload
 
 **Topic status**: closed and pushed. No action needed from שלומי -- this only affects the displayed/exported "screens" figure in the Time Machine history list and its downloadable timeline report; it now always matches the real number of screens in that checkpoint's spec.
 
+### Round 548: the "Donation" domain entity spuriously matched the ordinary word "condonation"
+
+**The methodology**: a fresh survey agent was dispatched with an explicit denylist covering every mechanism mined in rounds 542-547 (busy-guards, missing-call-sites, validation-layer gaps, the entities-vs-screens display bug, and every domain-entity/keyword pair already fixed), to find a genuinely new keyword-collision instance rather than a repeat of an already-closed mechanism.
+
+**The finding**: `domainEntities.ts`'s Donation rule kept its "donation"/"donations" keywords as plain, unbounded strings (`lower.includes(kw)` in `matchesKeyword`, `heuristic.ts`), unlike the dozen-plus other keyword-collision fixes already in this same file. "donation" is a literal substring of the ordinary, unrelated legal/compliance phrase "condonation" (as in "condonation of delay", a standard term for excusing a missed filing deadline), so any law-firm or compliance-tracking description using that word spuriously produced a full charitable-Donation entity (`donorName`/`amount`/`campaign`/`status` fields) alongside the entities the description actually asked for.
+
+**Independent verification**: read the Donation rule directly in `domainEntities.ts` (line ~843) and confirmed `"donation"`/`"donations"` were bare strings with no `\b`-bounding, unlike the neighboring "shipping" fix (round 455) at line ~880 which already uses `/\bshipping\b/`. Read `matchesKeyword`/`matchEntities` in `heuristic.ts` and confirmed string keywords match via plain `lower.includes(kw)`. Confirmed programmatically that `"condonation".includes("donation")` and `"condonations".includes("donations")` are both `true`. Ran a real repro through `HeuristicSpecProvider.generate()` with a law-firm/condonation-of-delay description and confirmed the generated spec included a spurious `Donation` entity alongside the correct `Customer`/`Case` entities. Confirmed via `git log -S'"donation"'` that this keyword has been unbounded since the entity was first added (round 64) and was never previously flagged or fixed. Confirmed no `codegen.ts` duplicate exists -- domain-entity keyword matching is a spec-engine-only concern, never ported to the exported standalone app.
+
+**The fix**: replaced the bare `"donation"`, `"donations"` strings with a single `\b`-bounded `/\bdonations?\b/` RegExp -- the same pattern (plus the "(s)?" plural handling) this file's other collision fixes (reservation, shipping, stripe, מלאי, חיוב) already use.
+
+**The test**: added a new regression test in `heuristic.test.ts` mirroring the existing reservation/preservation test's exact idiom -- confirms a condonation-of-delay law-firm description no longer matches `Donation`, while a real charity/donation description (singular and plural) still does.
+
+**Regression-proof**: backed up `domainEntities.ts`, reverted it via `git checkout --` (keeping the new test in place), and confirmed the exact predicted failure against the old code (the condonation description still spuriously matched `Donation`). Restored the file from backup, confirmed byte-identical via `diff`. Re-ran the full test file clean (`heuristic.test.ts` 51/51). Full monorepo `npm test` (spec-engine 117/117, up from round 547's 116 by exactly the one new test; shared 16, db 151, api 481, web 882 all unchanged) and `npm run build` both clean. Commit `36ab94d`.
+
+**Topic status**: closed and pushed. No action needed from שלומי -- this only affects the narrow case of an app description that happens to use the word "condonation" (a legal/compliance term unrelated to charity); such a description no longer gets a spurious, irrelevant Donation entity, while every real donation/charity description still works exactly as before.
+
 Each phase assumes the previous one is genuinely working, not merely
 scaffolded — see `docs/ADR/0001-initial-architecture.md` and
 `docs/ADR/0002-auth-pipeline-time-machine.md` for the specific tradeoffs
