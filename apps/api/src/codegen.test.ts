@@ -6751,6 +6751,75 @@ test("the exported EntityView supports double-click inline cell editing, ported 
 });
 
 /**
+ * Regression test (round 545): the exported EntityView's generated
+ * commitInlineEdit had the same gap as the live preview's own -- it cleared
+ * editingCell without first setting suppressCellBlurCommitRef, unlike
+ * cancelInlineEdit right below it. A real native blur-after-unmount firing
+ * with the stale pre-commit closure (whose own editingCell/cellDraft are
+ * still the OLD non-null values) went on to fire a second real
+ * commitInlineEdit() for the exact value Enter had just saved, sending a
+ * redundant PATCH. Mirrors the live preview's own equivalent test in
+ * apps/web/src/EntityPanel.test.ts: builds fresh handler closures per
+ * simulated "render", starts a real commit, then invokes that SAME render's
+ * own handleCellBlur() (the stale closure a real blur would call) and
+ * confirms it does not send a second updateRecord call.
+ */
+test("the exported EntityView's generated inline cell editor suppresses a stale post-commit blur instead of sending a second real PATCH for the same value", async () => {
+  const entityViewJsx = generateExportFiles(project).find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+
+  const commitSrc = entityViewJsx.match(/async function commitInlineEdit\(\) \{[\s\S]*?\n {2}\}\n/)?.[0];
+  const cancelSrc = entityViewJsx.match(/function cancelInlineEdit\(\) \{[\s\S]*?\n {2}\}\n/)?.[0];
+  const blurSrc = entityViewJsx.match(/function handleCellBlur\(\) \{[\s\S]*?\n {2}\}\n/)?.[0];
+  assert.ok(commitSrc && cancelSrc && blurSrc, "expected to find commitInlineEdit/cancelInlineEdit/handleCellBlur in generated output");
+
+  const state: { editingCell: { recordId: number; field: string } | null; cellDraft: unknown } = {
+    editingCell: { recordId: 1, field: "name" },
+    cellDraft: "New Value",
+  };
+  const suppressCellBlurCommitRef = { current: false };
+  const updateCalls: unknown[] = [];
+  let refreshCalled = 0;
+
+  function makeHandlers() {
+    return new Function(
+      "editingCell",
+      "cellDraft",
+      "suppressCellBlurCommitRef",
+      "entity",
+      "setEditingCell",
+      "updateRecord",
+      "refresh",
+      "setError",
+      "setMoveErrorId",
+      `${commitSrc}\n${cancelSrc}\n${blurSrc}\nreturn { commitInlineEdit, handleCellBlur };`,
+    )(
+      state.editingCell,
+      state.cellDraft,
+      suppressCellBlurCommitRef,
+      { name: "Customer" },
+      (next: unknown) => (state.editingCell = next as typeof state.editingCell),
+      async (_entityName: string, _id: number, patch: Record<string, unknown>) => {
+        updateCalls.push(patch);
+      },
+      async () => {
+        refreshCalled += 1;
+      },
+      () => {},
+      () => {},
+    ) as { commitInlineEdit: () => Promise<void>; handleCellBlur: () => void };
+  }
+
+  const handlersAtCommit = makeHandlers();
+  const commitPromise = handlersAtCommit.commitInlineEdit();
+  handlersAtCommit.handleCellBlur();
+  await commitPromise;
+
+  assert.deepEqual(updateCalls, [{ name: "New Value" }], "the stale post-commit blur must not send a second updateRecord call for the same value");
+  assert.equal(refreshCalled, 1, "the real commit's own refresh must still run exactly once");
+  assert.equal(suppressCellBlurCommitRef.current, false, "the flag must be consumed (reset to false) by the stale blur it suppressed");
+});
+
+/**
  * New in this round: the exported app's FieldInput had the identical bug
  * the live preview did -- a "number" field's <input type="number"> carried
  * no `step`, defaulting to the HTML5 spec's step="1" and silently

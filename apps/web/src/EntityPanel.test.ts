@@ -5353,6 +5353,87 @@ test("EntityPanel's inline cell editor commits a real PATCH on Enter and updates
 });
 
 /**
+ * Regression test (round 545): commitInlineEdit (the Enter-commit path)
+ * used to clear editingCell without first setting suppressCellBlurCommitRef,
+ * unlike cancelInlineEdit (Escape) right below it. Removing the input from
+ * the DOM after a commit can still fire a real native blur event using a
+ * stale pre-commit closure, whose own editingCell/cellDraft are still the
+ * OLD non-null values -- so that stale blur went on to fire a SECOND real
+ * commitInlineEdit() for the exact value Enter had just saved, sending a
+ * redundant PATCH that could clobber a concurrent edit to the same field
+ * landing in the gap between the two requests. Modeled on the same
+ * extraction idiom this file's bulk-action busy-guard tests use: builds a
+ * fresh set of handler closures per simulated "render" (bound to the
+ * CURRENT editingCell/cellDraft/suppressCellBlurCommitRef state, exactly as
+ * a real re-render would rebind them), starts a real commit via the
+ * render's own commitInlineEdit() (as Enter's onKeyDown does), then invokes
+ * that SAME render's own handleCellBlur() -- the stale closure a real
+ * native blur-after-unmount would call -- and confirms it does not send a
+ * second updateRecord call.
+ */
+test("EntityPanel's inline cell editor suppresses a stale post-commit blur instead of sending a second real PATCH for the same value", async () => {
+  const commitSrc = entityPanelSrc.match(/ {2}async function commitInlineEdit\(\) \{[\s\S]*?\n {2}\}\n/)?.[0];
+  const cancelSrc = entityPanelSrc.match(/ {2}function cancelInlineEdit\(\) \{[\s\S]*?\n {2}\}\n/)?.[0];
+  const blurSrc = entityPanelSrc.match(/ {2}function handleCellBlur\(\) \{[\s\S]*?\n {2}\}\n/)?.[0];
+  assert.ok(commitSrc && cancelSrc && blurSrc, "expected to find commitInlineEdit/cancelInlineEdit/handleCellBlur in EntityPanel.tsx");
+  const { code } = transformSync(`${commitSrc}\n${cancelSrc}\n${blurSrc}`, { loader: "ts" });
+
+  const state = {
+    editingCell: { recordId: 1, field: "name" } as { recordId: number; field: string } | null,
+    cellDraft: "New Value" as unknown,
+  };
+  const suppressCellBlurCommitRef = { current: false };
+  const updateCalls: unknown[] = [];
+  let refreshCalled = 0;
+
+  function makeHandlers() {
+    return new Function(
+      "editingCell",
+      "cellDraft",
+      "suppressCellBlurCommitRef",
+      "projectId",
+      "entity",
+      "setEditingCell",
+      "updateRecord",
+      "refresh",
+      "setError",
+      "setMoveErrorId",
+      `${code}\nreturn { commitInlineEdit, handleCellBlur };`,
+    )(
+      state.editingCell,
+      state.cellDraft,
+      suppressCellBlurCommitRef,
+      "proj1",
+      { name: "Customer" },
+      (next: unknown) => (state.editingCell = next as typeof state.editingCell),
+      async (_projectId: string, _entityName: string, _id: number, patch: Record<string, unknown>) => {
+        updateCalls.push(patch);
+      },
+      async () => {
+        refreshCalled += 1;
+      },
+      () => {},
+      () => {},
+    ) as { commitInlineEdit: () => Promise<void>; handleCellBlur: () => void };
+  }
+
+  // Enter's onKeyDown calls this render's own commitInlineEdit() directly.
+  const handlersAtCommit = makeHandlers();
+  const commitPromise = handlersAtCommit.commitInlineEdit();
+
+  // The real native blur-after-unmount fires using the SAME stale closure
+  // that started the commit -- its own editingCell/cellDraft are still the
+  // pre-commit non-null values, exactly like the real browser race.
+  handlersAtCommit.handleCellBlur();
+
+  await commitPromise;
+
+  assert.deepEqual(updateCalls, [{ name: "New Value" }], "the stale post-commit blur must not send a second updateRecord call for the same value");
+  assert.equal(refreshCalled, 1, "the real commit's own refresh must still run exactly once");
+  assert.equal(suppressCellBlurCommitRef.current, false, "the flag must be consumed (reset to false) by the stale blur it suppressed");
+});
+
+/**
  * The complement to the commit test above: Escape must discard the
  * in-progress draft and never touch the server at all. This is also the
  * regression test for the suppressCellBlurCommitRef race described in

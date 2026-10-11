@@ -3490,10 +3490,14 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
     setCellDraft(record[field.name]);
   }
 
+  // Sets the suppress flag before clearing editingCell, for the same
+  // reason cancelInlineEdit below does -- a stale blur after unmount can
+  // otherwise fire a second real commitInlineEdit() for the same value.
   async function commitInlineEdit() {
     if (!editingCell) return;
     const { recordId, field } = editingCell;
     const value = cellDraft;
+    suppressCellBlurCommitRef.current = true;
     setEditingCell(null);
     try {
       await updateRecord(entity.name, recordId, { [field]: value });

@@ -2195,10 +2195,19 @@ export function EntityPanel({
     setCellDraft(record[field.name]);
   }
 
+  // Sets the suppress flag *before* clearing editingCell, for the same
+  // reason cancelInlineEdit below does: removing the input from the DOM
+  // (React's re-render after setEditingCell(null)) can still fire a real
+  // native blur event, and without the flag that blur reads a stale
+  // closure's still-non-null editingCell/cellDraft and fires a SECOND real
+  // commitInlineEdit() for the value Enter already just saved -- a
+  // redundant PATCH that can clobber a concurrent edit to the same field
+  // landing in the gap between the two requests (round 545).
   async function commitInlineEdit() {
     if (!editingCell) return;
     const { recordId, field } = editingCell;
     const value = cellDraft;
+    suppressCellBlurCommitRef.current = true;
     setEditingCell(null);
     try {
       await updateRecord(projectId, entity.name, recordId, { [field]: value });
