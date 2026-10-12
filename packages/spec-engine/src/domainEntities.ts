@@ -1275,7 +1275,15 @@ export const DOMAIN_ENTITY_RULES: DomainEntityRule[] = [
     // tolerance for related entities co-firing (e.g. Ticket + Customer).
     keywords: [
       "legal case", "law firm", "case management", "legal matter",
-      "תיק משפטי", "תיקים משפטיים", "עורך דין", "עורכת דין",
+      "תיק משפטי", "תיקים משפטיים",
+      // "עורך דין"/"עורכת דין" (attorney) had no plural entries (round 578).
+      // "עורך" ends in the word-final sofit-kaf ("ך"); its plural "עורכי"
+      // swaps it for a regular kaf ("כ") -- a different Unicode character,
+      // the same shape round 577 found for "מוסך"/"מוסכים". "עורכת"'s
+      // plural "עורכות" has the analogous ת→ות gap round 576 found for
+      // "עמותה"/"עמותות". Either plural-only phrasing ("עורכי דין"/
+      // "עורכות דין") matched no domain entity at all.
+      "עורך דין", "עורכי דין", "עורכת דין", "עורכות דין",
     ],
     labelHe: "תיקים",
     descriptionHe: "תיק משפטי שמנוהל עבור לקוח.",

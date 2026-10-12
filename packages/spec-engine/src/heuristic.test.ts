@@ -1806,3 +1806,32 @@ test("Vehicle's 'מוסך' keyword also matches its plural 'מוסכים', which
   const singular = await provider.generate("אפליקציה לניהול מוסך אחד בעיר, עם מעקב סטטוס.");
   assert.ok(singular.entities.some((e) => e.name === "Vehicle"), "'מוסך' (singular) must still match Vehicle");
 });
+
+/**
+ * Regression test for round 578's finding: Case's Hebrew keywords
+ * "עורך דין" (attorney) and "עורכת דין" (female attorney) had no plural
+ * entries. "עורך" ends in the word-final sofit-kaf ("ך"); its plural
+ * "עורכי" swaps it for a regular kaf ("כ") -- the same bug shape round
+ * 577 found for "מוסך"/"מוסכים". "עורכת"'s plural "עורכות" has the
+ * analogous ת→ות gap round 576 found for "עמותה"/"עמותות". Either
+ * plural-only phrasing matched no domain entity at all. The test
+ * sentences contain no other Case keyword ("תיק", "law firm", "legal
+ * matter", etc.) or any sibling entity's keyword, so they isolate the
+ * plural keywords alone -- the same vacuous-test pitfall round 576's own
+ * first test attempt fell into.
+ */
+test("Case's 'עורך דין'/'עורכת דין' keywords also match their plurals 'עורכי דין'/'עורכות דין', which aren't substrings of the singulars", async () => {
+  const provider = new HeuristicSpecProvider();
+
+  const mascPlural = await provider.generate("אפליקציה למעקב אחרי עורכי דין במשרד.");
+  assert.ok(mascPlural.entities.some((e) => e.name === "Case"), "'עורכי דין' (attorneys, plural) alone must match Case");
+
+  const mascSingular = await provider.generate("אפליקציה למעקב אחרי עורך דין במשרד.");
+  assert.ok(mascSingular.entities.some((e) => e.name === "Case"), "'עורך דין' (singular) must still match Case");
+
+  const femPlural = await provider.generate("אפליקציה למעקב אחרי עורכות דין במשרד.");
+  assert.ok(femPlural.entities.some((e) => e.name === "Case"), "'עורכות דין' (female attorneys, plural) alone must match Case");
+
+  const femSingular = await provider.generate("אפליקציה למעקב אחרי עורכת דין במשרד.");
+  assert.ok(femSingular.entities.some((e) => e.name === "Case"), "'עורכת דין' (female singular) must still match Case");
+});
