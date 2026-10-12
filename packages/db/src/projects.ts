@@ -5,6 +5,7 @@ import { tableNameFor, quoteIdentifier } from "./identifiers.js";
 import { deleteCheckpointsForProject, extractEntityNamesFromSpecJson, listAllCheckpointedEntityNames, listHistoricalEntityNames } from "./checkpoints.js";
 import { removeAllCollaborators } from "./collaborators.js";
 import { deleteWhatsAppData } from "./whatsapp.js";
+import { deleteAutomationRulesForProject } from "./automations.js";
 
 export function ensureProjectsTable(db: ForgeDatabase): void {
   db.exec(`
@@ -237,6 +238,7 @@ export function deleteProject(db: ForgeDatabase, projectId: string): void {
   deleteCheckpointsForProject(db, projectId);
   removeAllCollaborators(db, projectId);
   deleteWhatsAppData(db, projectId);
+  deleteAutomationRulesForProject(db, projectId);
   db.prepare("DELETE FROM projects WHERE id = ?").run(projectId);
 }
 

@@ -33,6 +33,11 @@ import {
   findUserByEmail,
   findUserById,
   countRecords,
+  listAutomationRules,
+  insertAutomationRule,
+  updateAutomationRule,
+  deleteAutomationRule,
+  NotFoundError,
   type ForgeDatabase,
 } from "@forge/db";
 import type { SpecProvider } from "@forge/spec-engine";
@@ -47,6 +52,7 @@ import { buildZip } from "../zip.js";
 import { computeBusinessTwin } from "../twin.js";
 import type { WhatsAppWebManager } from "../whatsappWeb.js";
 import { findMatchingRecord } from "../whatsapp.js";
+import { runAutomationsForRecordChange } from "../automations.js";
 
 const CreateProjectSchema = z.object({
   description: z.string().min(1, "description is required"),
@@ -74,6 +80,46 @@ const AnswerQuestionsSchema = z.object({
 const WhatsAppSendSchema = z.object({
   to: z.string().min(1, "to is required"),
   message: z.string().min(1, "message is required"),
+});
+
+/**
+ * Only "send_whatsapp" exists today, modeled as a single-value enum
+ * (rather than a bare string literal baked into the handler) so adding a
+ * second action type later is an additive schema change, not a rewrite.
+ */
+const CreateAutomationRuleSchema = z
+  .object({
+    trigger: z.enum(["record_created", "field_equals"]),
+    fieldName: z.string().min(1).optional(),
+    fieldValue: z.string().min(1).optional(),
+    actionType: z.literal("send_whatsapp"),
+    toMode: z.enum(["static", "field"]),
+    toNumber: z.string().min(1).optional(),
+    toField: z.string().min(1).optional(),
+    messageTemplate: z.string().min(1, "messageTemplate is required"),
+  })
+  .refine((data) => data.trigger !== "field_equals" || (!!data.fieldName && !!data.fieldValue), {
+    message: "fieldName and fieldValue are required when trigger is field_equals",
+    path: ["fieldName"],
+  })
+  .refine((data) => data.toMode !== "static" || !!data.toNumber, {
+    message: "toNumber is required when toMode is static",
+    path: ["toNumber"],
+  })
+  .refine((data) => data.toMode !== "field" || !!data.toField, {
+    message: "toField is required when toMode is field",
+    path: ["toField"],
+  });
+
+const UpdateAutomationRuleSchema = z.object({
+  trigger: z.enum(["record_created", "field_equals"]).optional(),
+  fieldName: z.string().min(1).nullable().optional(),
+  fieldValue: z.string().min(1).nullable().optional(),
+  toMode: z.enum(["static", "field"]).optional(),
+  toNumber: z.string().min(1).nullable().optional(),
+  toField: z.string().min(1).nullable().optional(),
+  messageTemplate: z.string().min(1).optional(),
+  enabled: z.boolean().optional(),
 });
 
 const AddCollaboratorSchema = z.object({
@@ -1270,6 +1316,19 @@ export function createProjectsRouter(
         throw err;
       }
       res.status(201).json({ record });
+      // Deliberately not awaited -- see runAutomationsForRecordChange's own
+      // comment. A WhatsApp send is a real network round-trip, and this
+      // response has already gone out; nothing downstream of it should add
+      // latency to, or ever fail because of, an automation side effect.
+      void runAutomationsForRecordChange(
+        db,
+        whatsapp,
+        project,
+        entity,
+        "created",
+        record,
+        new Set(Object.keys(req.body ?? {})),
+      );
     }),
   );
 
@@ -1769,6 +1828,15 @@ export function createProjectsRouter(
         throw err;
       }
       res.json({ record });
+      void runAutomationsForRecordChange(
+        db,
+        whatsapp,
+        project,
+        entity,
+        "updated",
+        record,
+        new Set(Object.keys(req.body ?? {})),
+      );
     }),
   );
 
@@ -1802,6 +1870,93 @@ export function createProjectsRouter(
             "Cannot delete this record -- another record still references it through a relation field",
             "RECORD_HAS_DEPENDENT_RECORDS",
           );
+        }
+        throw err;
+      }
+      res.status(204).end();
+    }),
+  );
+
+  /**
+   * Automation rules: "when a record in this entity is created, or a
+   * field on it is set to a given value, send a WhatsApp message" -- the
+   * if-this-then-that layer on top of this app's existing WhatsApp
+   * integration. Storage lives in packages/db/src/automations.ts;
+   * evaluation and firing happens in automations.ts (this package),
+   * invoked fire-and-forget from the record create/update routes above.
+   * Access level matches the WhatsApp send route (requireProjectAccess,
+   * not requireProjectOwner) -- any collaborator who can edit records can
+   * already cause the same WhatsApp sends these rules automate.
+   */
+  router.get(
+    "/projects/:id/automations",
+    asyncRoute(async (req, res) => {
+      const project = requireProjectAccess(db, req.params.id, req.userId!);
+      res.json({ rules: listAutomationRules(db, project.id) });
+    }),
+  );
+
+  router.post(
+    "/projects/:id/entities/:entityName/automations",
+    asyncRoute(async (req, res) => {
+      const project = requireProjectAccess(db, req.params.id, req.userId!);
+      const entity = findEntity(project, req.params.entityName);
+      const parsed = CreateAutomationRuleSchema.safeParse(req.body ?? {});
+      if (!parsed.success) {
+        throw new HttpError(400, formatValidationError(parsed.error), "VALIDATION_ERROR");
+      }
+      const data = parsed.data;
+      if (data.trigger === "field_equals" && data.fieldName) {
+        findField(entity, data.fieldName);
+      }
+      if (data.toMode === "field" && data.toField) {
+        findField(entity, data.toField);
+      }
+      const rule = insertAutomationRule(db, {
+        projectId: project.id,
+        entityName: entity.name,
+        trigger: data.trigger,
+        fieldName: data.fieldName ?? null,
+        fieldValue: data.fieldValue ?? null,
+        actionType: data.actionType,
+        toMode: data.toMode,
+        toNumber: data.toNumber ?? null,
+        toField: data.toField ?? null,
+        messageTemplate: data.messageTemplate,
+      });
+      res.status(201).json({ rule });
+    }),
+  );
+
+  router.patch(
+    "/projects/:id/automations/:ruleId",
+    asyncRoute(async (req, res) => {
+      const project = requireProjectAccess(db, req.params.id, req.userId!);
+      const parsed = UpdateAutomationRuleSchema.safeParse(req.body ?? {});
+      if (!parsed.success) {
+        throw new HttpError(400, formatValidationError(parsed.error), "VALIDATION_ERROR");
+      }
+      try {
+        const rule = updateAutomationRule(db, project.id, req.params.ruleId, parsed.data);
+        res.json({ rule });
+      } catch (err) {
+        if (err instanceof NotFoundError) {
+          throw new HttpError(404, `Automation rule "${req.params.ruleId}" not found`, "AUTOMATION_RULE_NOT_FOUND");
+        }
+        throw err;
+      }
+    }),
+  );
+
+  router.delete(
+    "/projects/:id/automations/:ruleId",
+    asyncRoute(async (req, res) => {
+      const project = requireProjectAccess(db, req.params.id, req.userId!);
+      try {
+        deleteAutomationRule(db, project.id, req.params.ruleId);
+      } catch (err) {
+        if (err instanceof NotFoundError) {
+          throw new HttpError(404, `Automation rule "${req.params.ruleId}" not found`, "AUTOMATION_RULE_NOT_FOUND");
         }
         throw err;
       }

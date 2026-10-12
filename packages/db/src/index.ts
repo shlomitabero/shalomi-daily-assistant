@@ -104,3 +104,19 @@ export {
   pruneExpiredLoginCodes,
   type LoginCodeRecord,
 } from "./loginCodes.js";
+export {
+  ensureAutomationRulesTable,
+  insertAutomationRule,
+  getAutomationRule,
+  listAutomationRules,
+  listEnabledAutomationRulesForEntity,
+  updateAutomationRule,
+  recordAutomationRun,
+  deleteAutomationRule,
+  deleteAutomationRulesForProject,
+  type AutomationRule,
+  type AutomationTrigger,
+  type AutomationActionType,
+  type AutomationToMode,
+  type AutomationLastStatus,
+} from "./automations.js";

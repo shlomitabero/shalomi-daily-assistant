@@ -1,0 +1,227 @@
+import { randomUUID } from "node:crypto";
+import type { ForgeDatabase } from "./connection.js";
+import { NotFoundError } from "./repository.js";
+
+/**
+ * Automation rules: "when a record in this entity is created, or a field
+ * on it is set to a given value, send a WhatsApp message" -- the
+ * if-this-then-that layer on top of this app's existing WhatsApp
+ * integration (packages/db/src/whatsapp.ts). A rule is evaluated by
+ * apps/api/src/automations.ts on every record create/update; this module
+ * only owns storage. `actionType` is modeled as an enum of one value
+ * ("send_whatsapp") rather than hardcoded, so a future action type (e.g.
+ * an in-app notification) is an additive change, not a rewrite.
+ */
+export type AutomationTrigger = "record_created" | "field_equals";
+export type AutomationActionType = "send_whatsapp";
+export type AutomationToMode = "static" | "field";
+export type AutomationLastStatus = "sent" | "failed" | null;
+
+export interface AutomationRule {
+  id: string;
+  projectId: string;
+  entityName: string;
+  trigger: AutomationTrigger;
+  /** Required when trigger is "field_equals"; null for "record_created". */
+  fieldName: string | null;
+  /** Required when trigger is "field_equals"; null for "record_created". Compared as a string against the record's own field value. */
+  fieldValue: string | null;
+  actionType: AutomationActionType;
+  /** "static" sends to toNumber; "field" reads the destination number from the triggering record's own toField. */
+  toMode: AutomationToMode;
+  toNumber: string | null;
+  toField: string | null;
+  /** May reference the record's own fields as {{fieldName}} placeholders, interpolated at send time. */
+  messageTemplate: string;
+  enabled: boolean;
+  lastTriggeredAt: string | null;
+  lastStatus: AutomationLastStatus;
+  lastError: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export function ensureAutomationRulesTable(db: ForgeDatabase): void {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS automation_rules (
+      id TEXT PRIMARY KEY,
+      projectId TEXT NOT NULL,
+      entityName TEXT NOT NULL,
+      trigger TEXT NOT NULL,
+      fieldName TEXT,
+      fieldValue TEXT,
+      actionType TEXT NOT NULL,
+      toMode TEXT NOT NULL,
+      toNumber TEXT,
+      toField TEXT,
+      messageTemplate TEXT NOT NULL,
+      enabled INTEGER NOT NULL DEFAULT 1,
+      lastTriggeredAt TEXT,
+      lastStatus TEXT,
+      lastError TEXT,
+      createdAt TEXT NOT NULL,
+      updatedAt TEXT NOT NULL
+    )
+  `);
+}
+
+function rowToRule(row: Record<string, unknown>): AutomationRule {
+  return {
+    id: row.id as string,
+    projectId: row.projectId as string,
+    entityName: row.entityName as string,
+    trigger: row.trigger as AutomationTrigger,
+    fieldName: (row.fieldName as string | null) ?? null,
+    fieldValue: (row.fieldValue as string | null) ?? null,
+    actionType: row.actionType as AutomationActionType,
+    toMode: row.toMode as AutomationToMode,
+    toNumber: (row.toNumber as string | null) ?? null,
+    toField: (row.toField as string | null) ?? null,
+    messageTemplate: row.messageTemplate as string,
+    enabled: Boolean(row.enabled),
+    lastTriggeredAt: (row.lastTriggeredAt as string | null) ?? null,
+    lastStatus: (row.lastStatus as AutomationLastStatus) ?? null,
+    lastError: (row.lastError as string | null) ?? null,
+    createdAt: row.createdAt as string,
+    updatedAt: row.updatedAt as string,
+  };
+}
+
+export function insertAutomationRule(
+  db: ForgeDatabase,
+  rule: {
+    projectId: string;
+    entityName: string;
+    trigger: AutomationTrigger;
+    fieldName?: string | null;
+    fieldValue?: string | null;
+    actionType: AutomationActionType;
+    toMode: AutomationToMode;
+    toNumber?: string | null;
+    toField?: string | null;
+    messageTemplate: string;
+  },
+): AutomationRule {
+  const id = randomUUID();
+  const now = new Date().toISOString();
+  db.prepare(
+    `INSERT INTO automation_rules
+       (id, projectId, entityName, trigger, fieldName, fieldValue, actionType, toMode, toNumber, toField, messageTemplate, enabled, lastTriggeredAt, lastStatus, lastError, createdAt, updatedAt)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, NULL, NULL, NULL, ?, ?)`,
+  ).run(
+    id,
+    rule.projectId,
+    rule.entityName,
+    rule.trigger,
+    rule.fieldName ?? null,
+    rule.fieldValue ?? null,
+    rule.actionType,
+    rule.toMode,
+    rule.toNumber ?? null,
+    rule.toField ?? null,
+    rule.messageTemplate,
+    now,
+    now,
+  );
+  return getAutomationRule(db, rule.projectId, id)!;
+}
+
+export function getAutomationRule(db: ForgeDatabase, projectId: string, id: string): AutomationRule | undefined {
+  const row = db.prepare("SELECT * FROM automation_rules WHERE projectId = ? AND id = ?").get(projectId, id) as
+    | Record<string, unknown>
+    | undefined;
+  return row ? rowToRule(row) : undefined;
+}
+
+export function listAutomationRules(db: ForgeDatabase, projectId: string): AutomationRule[] {
+  const rows = db
+    .prepare("SELECT * FROM automation_rules WHERE projectId = ? ORDER BY createdAt ASC")
+    .all(projectId) as Record<string, unknown>[];
+  return rows.map(rowToRule);
+}
+
+/**
+ * Enabled rules scoped to one entity -- the hot-path list evaluated on
+ * every record create/update (apps/api/src/automations.ts), kept to only
+ * enabled rows so a disabled rule is never even considered a candidate.
+ */
+export function listEnabledAutomationRulesForEntity(db: ForgeDatabase, projectId: string, entityName: string): AutomationRule[] {
+  const rows = db
+    .prepare("SELECT * FROM automation_rules WHERE projectId = ? AND entityName = ? AND enabled = 1 ORDER BY createdAt ASC")
+    .all(projectId, entityName) as Record<string, unknown>[];
+  return rows.map(rowToRule);
+}
+
+export function updateAutomationRule(
+  db: ForgeDatabase,
+  projectId: string,
+  id: string,
+  patch: Partial<{
+    entityName: string;
+    trigger: AutomationTrigger;
+    fieldName: string | null;
+    fieldValue: string | null;
+    toMode: AutomationToMode;
+    toNumber: string | null;
+    toField: string | null;
+    messageTemplate: string;
+    enabled: boolean;
+  }>,
+): AutomationRule {
+  const existing = getAutomationRule(db, projectId, id);
+  if (!existing) {
+    throw new NotFoundError(`Automation rule ${id} not found in project ${projectId}`);
+  }
+  const next = { ...existing, ...patch };
+  db.prepare(
+    `UPDATE automation_rules SET
+       entityName = ?, trigger = ?, fieldName = ?, fieldValue = ?, toMode = ?, toNumber = ?, toField = ?, messageTemplate = ?, enabled = ?, updatedAt = ?
+     WHERE projectId = ? AND id = ?`,
+  ).run(
+    next.entityName,
+    next.trigger,
+    next.fieldName,
+    next.fieldValue,
+    next.toMode,
+    next.toNumber,
+    next.toField,
+    next.messageTemplate,
+    next.enabled ? 1 : 0,
+    new Date().toISOString(),
+    projectId,
+    id,
+  );
+  return getAutomationRule(db, projectId, id)!;
+}
+
+/**
+ * Records the outcome of the most recent automatic trigger -- surfaced in
+ * AutomationsPanel so a rule that silently keeps failing (e.g. WhatsApp
+ * disconnected) is visible, not a black box. Deliberately swallows a
+ * missing rule (no-op, no throw): called from fire-and-forget background
+ * code after the record mutation has already responded to the user, so a
+ * rule deleted in the few milliseconds since it was read must never turn
+ * an already-sent 200 response into a crash.
+ */
+export function recordAutomationRun(
+  db: ForgeDatabase,
+  projectId: string,
+  id: string,
+  outcome: { status: "sent" | "failed"; error?: string | null },
+): void {
+  db.prepare(
+    `UPDATE automation_rules SET lastTriggeredAt = ?, lastStatus = ?, lastError = ? WHERE projectId = ? AND id = ?`,
+  ).run(new Date().toISOString(), outcome.status, outcome.error ?? null, projectId, id);
+}
+
+export function deleteAutomationRule(db: ForgeDatabase, projectId: string, id: string): void {
+  const result = db.prepare("DELETE FROM automation_rules WHERE projectId = ? AND id = ?").run(projectId, id);
+  if (result.changes === 0) {
+    throw new NotFoundError(`Automation rule ${id} not found in project ${projectId}`);
+  }
+}
+
+/** Part of deleteProject's cleanup (projects.ts), mirroring deleteWhatsAppData's own convention. */
+export function deleteAutomationRulesForProject(db: ForgeDatabase, projectId: string): void {
+  db.prepare("DELETE FROM automation_rules WHERE projectId = ?").run(projectId);
+}

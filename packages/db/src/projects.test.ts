@@ -14,6 +14,7 @@ import {
   getWhatsAppConnection,
   listWhatsAppMessages,
 } from "./whatsapp.js";
+import { ensureAutomationRulesTable, insertAutomationRule, listAutomationRules } from "./automations.js";
 import {
   ensureProjectsTable,
   deleteProject,
@@ -226,13 +227,14 @@ test("updateProjectDescription changes only the description, leaving every other
   assert.deepEqual(updated.spec, project.spec);
 });
 
-test("deleteProject removes the project row, its real generated data table, checkpoints, collaborators, and WhatsApp history -- not just some of them", () => {
+test("deleteProject removes the project row, its real generated data table, checkpoints, collaborators, WhatsApp history, and automation rules -- not just some of them", () => {
   const db = openDatabase(":memory:");
   ensureProjectsTable(db);
   ensureProjectCollaboratorsTable(db);
   ensureCheckpointsTable(db);
   ensureWhatsAppConnectionsTable(db);
   ensureWhatsAppMessagesTable(db);
+  ensureAutomationRulesTable(db);
 
   const project = insertProject(db, {
     id: "to-delete",
@@ -254,6 +256,15 @@ test("deleteProject removes the project row, its real generated data table, chec
     body: "hi",
     status: "received",
   });
+  insertAutomationRule(db, {
+    projectId: project.id,
+    entityName: "Customer",
+    trigger: "record_created",
+    actionType: "send_whatsapp",
+    toMode: "field",
+    toField: "phone",
+    messageTemplate: "Welcome!",
+  });
 
   // A second, untouched project proves deleteProject scopes every cleanup
   // query to the deleted project's id -- not a blunt "wipe everything"
@@ -270,6 +281,15 @@ test("deleteProject removes the project row, its real generated data table, chec
   insertCheckpoint(db, { id: "cp-other", projectId: other.id, label: "build", kind: "build", spec: other.spec });
   addCollaborator(db, other.id, "collaborator1");
   recordWhatsAppConnected(db, other.id, "15559999999");
+  insertAutomationRule(db, {
+    projectId: other.id,
+    entityName: "Customer",
+    trigger: "record_created",
+    actionType: "send_whatsapp",
+    toMode: "field",
+    toField: "phone",
+    messageTemplate: "Welcome!",
+  });
 
   assert.equal(record.id > 0, true, "sanity check: the record was really inserted before deleting");
 
@@ -280,6 +300,7 @@ test("deleteProject removes the project row, its real generated data table, chec
   assert.equal(isCollaborator(db, project.id, "collaborator1"), false, "collaborator grant should be gone");
   assert.equal(getWhatsAppConnection(db, project.id), undefined, "WhatsApp connection row should be gone");
   assert.deepEqual(listWhatsAppMessages(db, project.id), { messages: [], hasMore: false }, "WhatsApp message log should be gone");
+  assert.deepEqual(listAutomationRules(db, project.id), [], "automation rules should be gone");
   assert.throws(
     () => db.prepare(`SELECT * FROM "entity_to_delete_Customer"`).all(),
     /no such table/,
@@ -291,6 +312,7 @@ test("deleteProject removes the project row, its real generated data table, chec
   assert.equal(listCheckpoints(db, other.id).length, 1, "the other project's checkpoint must survive");
   assert.equal(isCollaborator(db, other.id, "collaborator1"), true, "the other project's collaborator must survive");
   assert.notEqual(getWhatsAppConnection(db, other.id), undefined, "the other project's WhatsApp connection must survive");
+  assert.equal(listAutomationRules(db, other.id).length, 1, "the other project's automation rule must survive");
   const otherCount = db.prepare(`SELECT COUNT(*) as c FROM "entity_keep_me_Customer"`).get() as { c: number };
   assert.equal(otherCount.c, 1, "the other project's real data table and its row must survive");
 });
@@ -317,6 +339,7 @@ test("deleteProject drops the real data table of an entity that was added then l
   ensureProjectCollaboratorsTable(db);
   ensureWhatsAppConnectionsTable(db);
   ensureWhatsAppMessagesTable(db);
+  ensureAutomationRulesTable(db);
 
   const buildSpec: ProductSpec = validSpec;
   const project = insertProject(db, {
@@ -392,6 +415,7 @@ test("deleteProject still drops a real data table even when the one checkpoint t
   ensureProjectCollaboratorsTable(db);
   ensureWhatsAppConnectionsTable(db);
   ensureWhatsAppMessagesTable(db);
+  ensureAutomationRulesTable(db);
 
   const buildSpec: ProductSpec = validSpec;
   const project = insertProject(db, {
@@ -464,6 +488,7 @@ test("deleteProject still drops the real data table of an entity from a checkpoi
   ensureProjectCollaboratorsTable(db);
   ensureWhatsAppConnectionsTable(db);
   ensureWhatsAppMessagesTable(db);
+  ensureAutomationRulesTable(db);
 
   const buildSpec: ProductSpec = validSpec;
   const project = insertProject(db, {
@@ -561,6 +586,7 @@ test("deleteProject still drops the real data table, checkpoints, collaborators,
   ensureProjectCollaboratorsTable(db);
   ensureWhatsAppConnectionsTable(db);
   ensureWhatsAppMessagesTable(db);
+  ensureAutomationRulesTable(db);
 
   const buildSpec: ProductSpec = validSpec;
   // No FOREIGN KEY ties any of these to a real `projects` row (confirmed
