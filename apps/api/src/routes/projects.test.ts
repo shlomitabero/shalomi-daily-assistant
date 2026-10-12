@@ -7,6 +7,7 @@ import {
   deriveFieldName,
   deriveName,
   deriveScreensForNewEntity,
+  findAutomationRuleInvariantViolation,
 } from "./projects.js";
 
 /**
@@ -227,4 +228,68 @@ test("computeChangedFields returns an empty set when nothing actually changed", 
   const before = { id: 1, createdAt: "2026-01-01", status: "Delivered", notes: "same" };
   const after = { id: 1, createdAt: "2026-01-01", status: "Delivered", notes: "same" };
   assert.deepEqual(computeChangedFields(order, before, after), new Set());
+});
+
+/**
+ * findAutomationRuleInvariantViolation backs the PATCH automation-rule
+ * route's validation of the MERGED result (existing rule + patch), not
+ * just the patch in isolation -- CreateAutomationRuleSchema already
+ * enforces these same three invariants with zod .refine() on create, but
+ * UpdateAutomationRuleSchema's fields are all .optional() (a PATCH only
+ * sends what it's changing), so there's no single static shape a zod
+ * .refine() can run against; a PATCH that only sends `{"toMode":"field"}`
+ * on a rule created with toMode:"static" (so toField is still null) used
+ * to save silently without ever checking the two together.
+ */
+const recordCreatedRule = {
+  trigger: "record_created" as const,
+  fieldName: null,
+  fieldValue: null,
+  toMode: "static" as const,
+  toNumber: "+15551234567",
+  toField: null,
+};
+
+test("findAutomationRuleInvariantViolation accepts a valid record_created + static-destination rule", () => {
+  assert.equal(findAutomationRuleInvariantViolation(recordCreatedRule), null);
+});
+
+test("findAutomationRuleInvariantViolation accepts a valid field_equals + field-destination rule", () => {
+  assert.equal(
+    findAutomationRuleInvariantViolation({
+      trigger: "field_equals",
+      fieldName: "status",
+      fieldValue: "Delivered",
+      toMode: "field",
+      toNumber: null,
+      toField: "customerPhone",
+    }),
+    null,
+  );
+});
+
+test("findAutomationRuleInvariantViolation rejects field_equals with no fieldName/fieldValue", () => {
+  assert.match(
+    findAutomationRuleInvariantViolation({ ...recordCreatedRule, trigger: "field_equals" }) ?? "",
+    /fieldName and fieldValue are required/,
+  );
+});
+
+test("findAutomationRuleInvariantViolation rejects toMode:static with no toNumber", () => {
+  assert.match(
+    findAutomationRuleInvariantViolation({ ...recordCreatedRule, toNumber: null }) ?? "",
+    /toNumber is required/,
+  );
+});
+
+/**
+ * The exact repro this fix targets: a PATCH that switches toMode to
+ * "field" without also setting toField (because the rule was created
+ * with toMode:"static" and has never had a toField value) must be
+ * rejected, not silently saved as a rule that can never resolve a
+ * destination.
+ */
+test("findAutomationRuleInvariantViolation rejects toMode:field with no toField, e.g. after a toMode-only PATCH on a static rule", () => {
+  const afterToModeOnlyPatch = { ...recordCreatedRule, toMode: "field" as const };
+  assert.match(findAutomationRuleInvariantViolation(afterToModeOnlyPatch) ?? "", /toField is required/);
 });

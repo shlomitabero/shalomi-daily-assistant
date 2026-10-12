@@ -35,11 +35,14 @@ import {
   findUserById,
   countRecords,
   listAutomationRules,
+  getAutomationRule,
   insertAutomationRule,
   updateAutomationRule,
   deleteAutomationRule,
   NotFoundError,
   type ForgeDatabase,
+  type AutomationTrigger,
+  type AutomationToMode,
 } from "@forge/db";
 import type { SpecProvider } from "@forge/spec-engine";
 import { enhancePrompt, generateSpec, isHebrewText, TEMPLATES } from "@forge/spec-engine";
@@ -122,6 +125,40 @@ const UpdateAutomationRuleSchema = z.object({
   messageTemplate: z.string().min(1).optional(),
   enabled: z.boolean().optional(),
 });
+
+/**
+ * The same three cross-field invariants CreateAutomationRuleSchema's own
+ * .refine() chain enforces, as a plain function instead of a zod schema --
+ * a PATCH only sends the fields it's actually changing (UpdateAutomation-
+ * RuleSchema's own fields are all .optional()), so there's no single
+ * static shape to run zod's .refine() against; the PATCH route instead
+ * merges the patch onto the existing stored rule (the same `{ ...existing,
+ * ...patch }` updateAutomationRule itself does) and validates THAT merged
+ * result here. Without this, a PATCH could silently save an internally
+ * inconsistent rule -- e.g. `{"toMode":"field"}` on a rule created with
+ * toMode:"static" produces toMode:"field" with a still-null toField,
+ * which can never resolve a destination and will keep recording a
+ * "no destination configured" failure on every future fire.
+ */
+export function findAutomationRuleInvariantViolation(rule: {
+  trigger: AutomationTrigger;
+  fieldName: string | null;
+  fieldValue: string | null;
+  toMode: AutomationToMode;
+  toNumber: string | null;
+  toField: string | null;
+}): string | null {
+  if (rule.trigger === "field_equals" && !(rule.fieldName && rule.fieldValue)) {
+    return "fieldName and fieldValue are required when trigger is field_equals";
+  }
+  if (rule.toMode === "static" && !rule.toNumber) {
+    return "toNumber is required when toMode is static";
+  }
+  if (rule.toMode === "field" && !rule.toField) {
+    return "toField is required when toMode is field";
+  }
+  return null;
+}
 
 const AddCollaboratorSchema = z.object({
   // Every stored account email is lowercased at signup (see auth.ts's
@@ -1959,6 +1996,27 @@ export function createProjectsRouter(
       const parsed = UpdateAutomationRuleSchema.safeParse(req.body ?? {});
       if (!parsed.success) {
         throw new HttpError(400, formatValidationError(parsed.error), "VALIDATION_ERROR");
+      }
+      const existing = getAutomationRule(db, project.id, req.params.ruleId);
+      if (!existing) {
+        throw new HttpError(404, `Automation rule "${req.params.ruleId}" not found`, "AUTOMATION_RULE_NOT_FOUND");
+      }
+      // Validate the merged result (the same `{ ...existing, ...patch }`
+      // updateAutomationRule itself does), not just the patch in
+      // isolation -- see findAutomationRuleInvariantViolation's own
+      // comment for why a patch-only check would miss an inconsistency
+      // this merge creates against a field the patch doesn't even touch.
+      const next = { ...existing, ...parsed.data };
+      const invariantError = findAutomationRuleInvariantViolation(next);
+      if (invariantError) {
+        throw new HttpError(400, invariantError, "VALIDATION_ERROR");
+      }
+      const entity = findEntity(project, existing.entityName);
+      if (next.trigger === "field_equals" && next.fieldName) {
+        findField(entity, next.fieldName);
+      }
+      if (next.toMode === "field" && next.toField) {
+        findField(entity, next.toField);
       }
       try {
         const rule = updateAutomationRule(db, project.id, req.params.ruleId, parsed.data);
