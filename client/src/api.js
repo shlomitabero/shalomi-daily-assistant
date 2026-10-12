@@ -67,6 +67,7 @@ export const api = {
 
   getFinancialWatchlist: () => request('/financial/watchlist'),
   addToWatchlist: (symbol) => request('/financial/watchlist', { method: 'POST', body: { symbol } }),
+  refreshWatchlistEntry: (id) => request(`/financial/watchlist/${id}/refresh`, { method: 'POST' }),
   paperTrade: (trade) => request('/financial/paper-trade', { method: 'POST', body: trade }),
   getPaperTrades: () => request('/financial/paper-trades'),
 

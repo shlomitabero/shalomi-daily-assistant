@@ -9,6 +9,7 @@ export default function Financial() {
   const [symbol, setSymbol] = useState('');
   const [trade, setTrade] = useState({ symbol: '', side: 'long', entryPrice: '', exitPrice: '', quantity: '' });
   const [error, setError] = useState('');
+  const [refreshingId, setRefreshingId] = useState(null);
 
   function refresh() {
     api.getFinancialWatchlist().then((r) => { setWatchlist(r.watchlist); setConnected(r.connected); });
@@ -26,6 +27,19 @@ export default function Financial() {
       refresh();
     } catch (err) {
       setError(err.data?.error || err.message);
+    }
+  }
+
+  async function onRefreshSymbol(id) {
+    setError('');
+    setRefreshingId(id);
+    try {
+      await api.refreshWatchlistEntry(id);
+      refresh();
+    } catch (err) {
+      setError(err.data?.error || err.message);
+    } finally {
+      setRefreshingId(null);
     }
   }
 
@@ -60,6 +74,14 @@ export default function Financial() {
             <span className={`dot ${w.connected ? 'dot-on' : 'dot-off'}`} />
             <span>{w.symbol}</span>
             <span>{w.lastPrice != null ? `$${w.lastPrice}` : 'לא מחובר'}</span>
+            <button
+              className="btn btn-ghost"
+              onClick={() => onRefreshSymbol(w.id)}
+              disabled={refreshingId === w.id || !connected}
+              title={!connected ? 'מקור נתוני שוק לא מחובר' : undefined}
+            >
+              {refreshingId === w.id ? 'מרענן…' : 'רענן מחיר'}
+            </button>
           </div>
         ))}
       </div>

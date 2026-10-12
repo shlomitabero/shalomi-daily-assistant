@@ -43,6 +43,34 @@ financialRouter.post('/financial/watchlist', requireOwner, asyncHandler(async (r
   res.status(201).json({ entry });
 }));
 
+// Without this, a watchlist entry's price/connected status was frozen
+// forever at whatever it was when added — a symbol added before
+// MARKET_DATA_API_KEY was configured would show "not connected" even
+// years after it was, and even a fully-connected entry's price never
+// updated past the moment it was first added. There was no way back to
+// current data short of deleting and re-adding the symbol (and there's
+// no delete route either).
+financialRouter.post('/financial/watchlist/:id/refresh', requireOwner, asyncHandler(async (req, res) => {
+  const entry = db.financial_watchlist.get(req.params.id);
+  if (!entry) return res.status(404).json({ error: 'not found' });
+  if (!isMarketDataConnected()) return res.status(503).json({ error: 'market data source is not connected' });
+
+  let quote;
+  try {
+    quote = await fetchQuote(entry.symbol);
+  } catch (err) {
+    return res.status(502).json({ error: `could not fetch a quote: ${err.message}` });
+  }
+
+  const updated = db.financial_watchlist.update(entry.id, {
+    dataSource: 'twelvedata',
+    lastPrice: quote.price,
+    lastUpdatedAt: quote.fetchedAt,
+    connected: true,
+  });
+  res.json({ entry: updated });
+}));
+
 const VALID_SIDES = ['long', 'short'];
 
 // Simulation only — never touches the real ledger. Real trading requires a
