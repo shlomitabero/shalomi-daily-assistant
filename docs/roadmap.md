@@ -27777,4 +27777,20 @@ The bug itself has two independent failure modes, both from the same root cause 
 
 **Topic status**: closed and pushed. No action needed from שלומי -- a café-business description mentioning cafés only in the Hebrew plural now correctly fabricates a MenuItem entity instead of falling back to the generic Item entity; singular descriptions are unaffected. The missing-plural bug class has now surfaced on seven separate entities across at least three distinct Hebrew-morphology mechanisms (ה→ות, sofit-letter swap, and now an irregular construct plural) -- it remains a legitimately recurring, productive class to audit systematically. The survey also flagged Course's bare `"כיתה"` (classroom) missing its plural `"כיתות"` (`domainEntities.ts` line 600, a standard ה→ות gap) as a confirmed-but-unfixed backup candidate for a future round, independently re-verified via real repro (plural-only → `['Item']`, singular → `['Course']`).
 
+### Round 583: Course's "כיתה" (classroom/class) had no plural entry -- an eighth missing-plural instance, carried over from round 582's survey
+
+**The methodology**: round 582's own survey had already identified and repro-confirmed this exact candidate as a standing backup. With a ready, already-evidenced candidate in hand, this round skipped dispatching a fresh survey agent and went straight to independent re-verification before implementing, per the same carried-over-candidate process variant used in rounds 577, 580, and 581.
+
+**The finding**: `packages/spec-engine/src/domainEntities.ts`'s Course entity carried the bare singular `"כיתה"` (classroom/class) with no plural entry. Its plural `"כיתות"` replaces the word-final ה with ות mid-word -- the same general ה→ות gap shape rounds 576, 579, 580, and 581 already found elsewhere in this file. A description phrased only in the plural matched no Course-specific keyword at all.
+
+**Independent verification**: grepped `domainEntities.ts` directly for the phrase myself, confirming only the singular form existed in the keyword array (line 600), with no plural sibling anywhere in the file. Reproduced directly against the real `HeuristicSpecProvider.generate()` via `npx tsx`: a plural-only description ("ניהול כיתות בבית ספר") returned `['Item']`; the singular form ("כיתה אחת") returned `['Course']` -- confirming the plural-only phrasing was the one that failed.
+
+**The fix**: added `"כיתות"` as its own keyword entry alongside the existing singular.
+
+**The tests**: one new test in `heuristic.test.ts`, with both test sentences checked to contain none of Course's other keywords ("courses", "curriculum", "lesson(s)", "קורס"/"קורסים", "שיעור"/"שיעורים") before finalizing, isolating the classroom phrase alone. Confirms the plural-only description matches Course, and the singular-only description still matches too.
+
+**Regression-proof**: backed up `domainEntities.ts`, reverted it via `git checkout --` (keeping the new test in `heuristic.test.ts`). The new test failed with the exact predicted mismatch on its first assertion, correctly isolated and not vacuous, every other test (144 of 145) staying green. Restored from backup, confirmed byte-identical via `diff`, then re-ran green: spec-engine suite 145/145 (+1). Full monorepo `npm test` (shared 16, db 151, api 494, web 888 all unchanged; spec-engine 145 [+1]) and `npm run build` both clean. Commit `d8e584e`.
+
+**Topic status**: closed and pushed. No action needed from שלומי -- a school/education-business description mentioning classes only in the Hebrew plural now correctly fabricates a Course entity instead of falling back to the generic Item entity; singular descriptions are unaffected. The missing-plural bug class has now surfaced on eight separate entities across at least three distinct Hebrew-morphology mechanisms -- still a legitimately recurring, productive class to audit systematically. No further standing backup candidate is currently known; a future round should run a fresh systematic audit to find the next instance, or treat the class as a default-priority direction when no other finding is ready.
+
 Each phase assumes the previous one is genuinely working, not merely
