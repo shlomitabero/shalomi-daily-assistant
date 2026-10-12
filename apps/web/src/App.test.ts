@@ -706,7 +706,7 @@ test("removeRefineHistoryEntry drops only the matching entry, leaving the rest (
 test("App's openPanel closes every other overlay panel when opening one, instead of letting them stack, and zeroes the WhatsApp unread badge only when opening the WhatsApp panel", () => {
   const appSrc = readFileSync(new URL("./App.tsx", import.meta.url), "utf8");
   const handlerMatch = appSrc.match(
-    / {2}function openPanel\(panel: "history" \| "twin" \| "whatsapp" \| "collaborators" \| "search" \| "shortcuts"\) \{[\s\S]*?\n {2}\}\n/,
+    / {2}function openPanel\(panel: "history" \| "twin" \| "whatsapp" \| "automations" \| "collaborators" \| "search" \| "shortcuts"\) \{[\s\S]*?\n {2}\}\n/,
   );
   assert.ok(handlerMatch, "expected to find openPanel in App.tsx");
   const { code } = transformSync(handlerMatch![0], { loader: "ts" });
@@ -716,6 +716,7 @@ test("App's openPanel closes every other overlay panel when opening one, instead
       history: false,
       twin: false,
       whatsapp: false,
+      automations: false,
       collaborators: false,
       search: false,
       shortcuts: false,
@@ -725,6 +726,7 @@ test("App's openPanel closes every other overlay panel when opening one, instead
       "setShowHistory",
       "setShowTwin",
       "setShowWhatsApp",
+      "setShowAutomations",
       "setShowCollaborators",
       "setShowSearch",
       "setShowShortcuts",
@@ -734,6 +736,7 @@ test("App's openPanel closes every other overlay panel when opening one, instead
       (v: boolean) => (state.history = v),
       (v: boolean) => (state.twin = v),
       (v: boolean) => (state.whatsapp = v),
+      (v: boolean) => (state.automations = v),
       (v: boolean) => (state.collaborators = v),
       (v: boolean) => (state.search = v),
       (v: boolean) => (state.shortcuts = v),
@@ -746,10 +749,19 @@ test("App's openPanel closes every other overlay panel when opening one, instead
     return state;
   }
 
-  const closed = { history: false, twin: false, whatsapp: false, collaborators: false, search: false, shortcuts: false };
+  const closed = {
+    history: false,
+    twin: false,
+    whatsapp: false,
+    automations: false,
+    collaborators: false,
+    search: false,
+    shortcuts: false,
+  };
   assert.deepEqual(run("history"), { ...closed, history: true, whatsappUnreadResetCalls: 0 });
   assert.deepEqual(run("twin"), { ...closed, twin: true, whatsappUnreadResetCalls: 0 });
   assert.deepEqual(run("whatsapp"), { ...closed, whatsapp: true, whatsappUnreadResetCalls: 1 });
+  assert.deepEqual(run("automations"), { ...closed, automations: true, whatsappUnreadResetCalls: 0 });
   assert.deepEqual(run("collaborators"), { ...closed, collaborators: true, whatsappUnreadResetCalls: 0 });
   assert.deepEqual(run("search"), { ...closed, search: true, whatsappUnreadResetCalls: 0 });
   assert.deepEqual(run("shortcuts"), { ...closed, shortcuts: true, whatsappUnreadResetCalls: 0 });
@@ -2150,7 +2162,7 @@ test("App's preview keydown handler opens the shortcuts cheat-sheet on '?' (guar
     "expected the '?' branch to guard on isEditableEventTarget before opening the shortcuts panel",
   );
 
-  const openPanelMatch = appSrc.match(/function openPanel\(panel: "history" \| "twin" \| "whatsapp" \| "collaborators" \| "search" \| "shortcuts"\) \{[\s\S]*?\n {2}\}\n/);
+  const openPanelMatch = appSrc.match(/function openPanel\(panel: "history" \| "twin" \| "whatsapp" \| "automations" \| "collaborators" \| "search" \| "shortcuts"\) \{[\s\S]*?\n {2}\}\n/);
   assert.ok(openPanelMatch, "expected openPanel's own type union to include 'shortcuts'");
   assert.match(openPanelMatch![0], /setShowShortcuts\(panel === "shortcuts"\);/);
 });

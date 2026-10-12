@@ -32,6 +32,7 @@ import { EntityPanel } from "./EntityPanel.js";
 import { GlobalSearchPanel } from "./GlobalSearchPanel.js";
 import { HistoryPanel } from "./HistoryPanel.js";
 import { WhatsAppPanel } from "./WhatsAppPanel.js";
+import { AutomationsPanel } from "./AutomationsPanel.js";
 import { CollaboratorsPanel } from "./CollaboratorsPanel.js";
 import { ChangePasswordPanel } from "./ChangePasswordPanel.js";
 import { DeleteAccountPanel } from "./DeleteAccountPanel.js";
@@ -459,6 +460,7 @@ function AppContent() {
   const [backupDone, setBackupDone] = useState(false);
   const [showTwin, setShowTwin] = useState(false);
   const [showWhatsApp, setShowWhatsApp] = useState(false);
+  const [showAutomations, setShowAutomations] = useState(false);
   // Mirrors showWhatsApp for checkUnread's closure below (round 560) --
   // read inside the poll's own interval tick without putting showWhatsApp
   // in that effect's dependency array, which would otherwise restart the
@@ -603,8 +605,8 @@ function AppContent() {
   useEffect(() => subscribeWakeStatus(setWaking), []);
 
   /**
-   * The six overlay panels (History, Business Twin, WhatsApp,
-   * Collaborators, Search, Shortcuts) are each a full-screen backdrop (see
+   * The seven overlay panels (History, Business Twin, WhatsApp,
+   * Automations, Collaborators, Search, Shortcuts) are each a full-screen backdrop (see
    * "history-overlay" in styles.css) -- opening one without closing the
    * others (e.g. Ctrl+K for search while History is already open from a
    * toolbar click) used to stack two of them at once instead of replacing
@@ -612,10 +614,11 @@ function AppContent() {
    * boolean to true and never touched the rest. Routes every open through
    * here so opening any one panel always closes the rest first.
    */
-  function openPanel(panel: "history" | "twin" | "whatsapp" | "collaborators" | "search" | "shortcuts") {
+  function openPanel(panel: "history" | "twin" | "whatsapp" | "automations" | "collaborators" | "search" | "shortcuts") {
     setShowHistory(panel === "history");
     setShowTwin(panel === "twin");
     setShowWhatsApp(panel === "whatsapp");
+    setShowAutomations(panel === "automations");
     setShowCollaborators(panel === "collaborators");
     setShowSearch(panel === "search");
     setShowShortcuts(panel === "shortcuts");
@@ -1390,18 +1393,22 @@ function AppContent() {
           <span className="tagline">{t("brand.tagline")}</span>
         </div>
         <div className="topbar-right">
-          <ThemeSwitcher />
-          <LanguageSwitcher />
-          <span className="muted small">{user.email}</span>
-          <button type="button" className="secondary" onClick={() => setShowChangePassword(true)}>
-            {t("topbar.changePassword")}
-          </button>
-          <button type="button" className="secondary" onClick={() => setShowDeleteAccount(true)}>
-            {t("topbar.deleteAccount")}
-          </button>
-          <button type="button" className="secondary" onClick={handleLogout}>
-            {t("topbar.logout")}
-          </button>
+          <div className="topbar-controls">
+            <ThemeSwitcher />
+            <LanguageSwitcher />
+          </div>
+          <div className="topbar-account">
+            <span className="muted small topbar-account-email">{user.email}</span>
+            <button type="button" className="secondary" onClick={() => setShowChangePassword(true)}>
+              {t("topbar.changePassword")}
+            </button>
+            <button type="button" className="secondary" onClick={handleLogout}>
+              {t("topbar.logout")}
+            </button>
+            <button type="button" className="danger" onClick={() => setShowDeleteAccount(true)}>
+              {t("topbar.deleteAccount")}
+            </button>
+          </div>
         </div>
       </header>
 
@@ -1615,7 +1622,7 @@ function AppContent() {
             </button>
             <button
               type="button"
-              className="secondary"
+              className="button-ai"
               disabled={busy || enhanceBusy || !description.trim()}
               onClick={handleEnhanceAndBuild}
             >
@@ -1848,6 +1855,9 @@ function AppContent() {
                   </span>
                 )}
               </button>
+              <button type="button" className="secondary" onClick={() => openPanel("automations")}>
+                {t("preview.automations")}
+              </button>
               <button type="button" className="secondary" onClick={() => openPanel("collaborators")}>
                 {t("preview.collaborators")}
               </button>
@@ -2066,6 +2076,10 @@ function AppContent() {
               }}
               prefillTo={whatsappPrefillTo}
             />
+          )}
+
+          {showAutomations && (
+            <AutomationsPanel projectId={project.id} project={project} onClose={() => setShowAutomations(false)} />
           )}
 
           {showCollaborators && (

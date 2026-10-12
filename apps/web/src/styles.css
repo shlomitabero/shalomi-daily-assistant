@@ -80,6 +80,42 @@ body {
   flex-wrap: wrap;
 }
 
+.topbar-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/*
+ * Groups identity (email) and account-level actions into one visual
+ * cluster, separated from the theme/language controls by a divider --
+ * previously all five controls sat in one undifferentiated row with no
+ * grouping, so a glance at the topbar couldn't tell "preferences" apart
+ * from "my account" (serious UI/UX pass, שלומי request). Buttons here use
+ * the compact .topbar-account button modifier (smaller padding/font than
+ * the app's default button size) so the extra divider/gap this grouping
+ * needs doesn't push the row into an awkward wrap on common widths --
+ * these are secondary toolbar actions, not primary CTAs, and read better
+ * at a toolbar scale.
+ */
+.topbar-account {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-inline-start: 12px;
+  border-inline-start: 1px solid var(--border-soft);
+  flex-wrap: wrap;
+}
+
+.topbar-account-email {
+  white-space: nowrap;
+}
+
+.topbar-account button {
+  padding: 7px 14px;
+  font-size: 13px;
+}
+
 .topbar-title {
   display: flex;
   flex-direction: column;
@@ -403,8 +439,26 @@ h2 {
 .hero3d {
   display: flex;
   justify-content: center;
+  align-items: center;
   margin: 4px 0 20px;
   perspective: 600px;
+  position: relative;
+}
+
+/*
+ * A soft ambient glow beneath the cube -- without it the cube reads as a
+ * small flat shape floating in empty space, especially in a still frame
+ * between animation steps. The glow gives it a grounded, lit-from-within
+ * presence instead.
+ */
+.hero3d::before {
+  content: "";
+  position: absolute;
+  width: 140px;
+  height: 90px;
+  background: radial-gradient(ellipse, var(--accent-soft) 0%, transparent 70%);
+  filter: blur(4px);
+  z-index: -1;
 }
 
 .hero3d-cube {
@@ -711,6 +765,27 @@ button.secondary:hover:not(:disabled) {
   border-color: var(--steel);
   box-shadow: var(--shadow-sm);
   transform: none;
+}
+
+/*
+ * The AI-enhance CTA is a real alternative path (rewrite + build
+ * immediately), not a dismissive/cancel-style action -- it previously
+ * reused .secondary's plain white fill, which read as muted/disabled next
+ * to the primary orange button. A soft accent-tinted fill gives it real
+ * visual presence without competing with the primary CTA's solid fill.
+ */
+button.button-ai {
+  background: var(--accent-soft);
+  color: var(--accent-deep);
+  border: 1px solid var(--accent-soft);
+  box-shadow: none;
+}
+
+button.button-ai:hover:not(:disabled) {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  box-shadow: var(--shadow-sm);
+  transform: translateY(-1px);
 }
 
 button.danger {
@@ -2538,6 +2613,81 @@ button.sort-header:hover:not(:disabled) {
   background: var(--accent-soft);
   color: var(--accent-deep);
   border-color: var(--accent-soft);
+}
+
+.automations-whatsapp-hint {
+  color: var(--warning);
+}
+
+.automations-list {
+  list-style: none;
+  margin: 12px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.automations-rule-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 12px 14px;
+  background: var(--surface-raised);
+}
+
+.automations-rule-info {
+  min-width: 0;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.automations-rule-condition {
+  font-weight: 600;
+}
+
+.automations-rule-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+  flex-wrap: wrap;
+}
+
+.automations-chip-enabled {
+  background: var(--success-soft);
+  color: var(--success);
+  border-color: var(--success-soft);
+}
+
+.automations-chip-disabled {
+  background: var(--border-soft);
+  color: var(--muted);
+}
+
+.automations-new-heading {
+  margin-top: 24px;
+}
+
+.automations-create-form {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 8px;
+}
+
+.automations-create-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--muted);
 }
 
 .twin-panel {

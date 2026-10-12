@@ -812,3 +812,70 @@ export function clearWhatsAppMessages(projectId: string): Promise<void> {
 export function deleteWhatsAppMessage(projectId: string, messageId: string): Promise<void> {
   return request(`/projects/${projectId}/integrations/whatsapp/messages/${messageId}`, { method: "DELETE" });
 }
+
+export type AutomationTrigger = "record_created" | "field_equals";
+export type AutomationToMode = "static" | "field";
+
+export interface AutomationRuleView {
+  id: string;
+  entityName: string;
+  trigger: AutomationTrigger;
+  fieldName: string | null;
+  fieldValue: string | null;
+  toMode: AutomationToMode;
+  toNumber: string | null;
+  toField: string | null;
+  messageTemplate: string;
+  enabled: boolean;
+  lastTriggeredAt: string | null;
+  lastStatus: "sent" | "failed" | null;
+  lastError: string | null;
+}
+
+export function listAutomationRules(projectId: string): Promise<{ rules: AutomationRuleView[] }> {
+  return request(`/projects/${projectId}/automations`);
+}
+
+export function createAutomationRule(
+  projectId: string,
+  entityName: string,
+  data: {
+    trigger: AutomationTrigger;
+    fieldName?: string;
+    fieldValue?: string;
+    actionType: "send_whatsapp";
+    toMode: AutomationToMode;
+    toNumber?: string;
+    toField?: string;
+    messageTemplate: string;
+  },
+): Promise<{ rule: AutomationRuleView }> {
+  return request(`/projects/${projectId}/entities/${entityName}/automations`, {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
+}
+
+export function updateAutomationRule(
+  projectId: string,
+  ruleId: string,
+  patch: Partial<{
+    trigger: AutomationTrigger;
+    fieldName: string | null;
+    fieldValue: string | null;
+    toMode: AutomationToMode;
+    toNumber: string | null;
+    toField: string | null;
+    messageTemplate: string;
+    enabled: boolean;
+  }>,
+): Promise<{ rule: AutomationRuleView }> {
+  return request(`/projects/${projectId}/automations/${ruleId}`, {
+    method: "PATCH",
+    body: JSON.stringify(patch),
+  });
+}
+
+export function deleteAutomationRule(projectId: string, ruleId: string): Promise<void> {
+  return request(`/projects/${projectId}/automations/${ruleId}`, { method: "DELETE" });
+}

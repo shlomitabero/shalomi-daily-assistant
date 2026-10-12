@@ -1,0 +1,312 @@
+import { useEffect, useMemo, useState } from "react";
+import type { Entity, Project } from "@forge/shared";
+import {
+  createAutomationRule,
+  deleteAutomationRule,
+  listAutomationRules,
+  updateAutomationRule,
+  type AutomationRuleView,
+  type AutomationToMode,
+  type AutomationTrigger,
+} from "./api.js";
+import { useTranslation } from "./i18n/LanguageContext.js";
+import { useDialogFocusTrap } from "./useDialogFocusTrap.js";
+
+const LOCALE: Record<string, string> = { he: "he-IL", en: "en-US" };
+
+/**
+ * If-this-then-that automation rules on top of this app's existing
+ * WhatsApp integration: "when a record in this entity is created, or a
+ * field on it is set to a given value, send a WhatsApp message." Firing
+ * happens server-side (apps/api/src/automations.ts) on every record
+ * create/update -- this panel only manages the rules themselves (create,
+ * enable/disable, delete) and shows each rule's most recent outcome.
+ * Structurally mirrors CollaboratorsPanel.tsx (list + add-form + remove,
+ * same overlay/dialog chrome), the most similarly-scoped existing panel.
+ */
+export function AutomationsPanel({
+  projectId,
+  project,
+  onClose,
+}: {
+  projectId: string;
+  project: Project;
+  onClose: () => void;
+}) {
+  const { t, lang } = useTranslation();
+  const [rules, setRules] = useState<AutomationRuleView[] | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [busyRuleId, setBusyRuleId] = useState<string | null>(null);
+  const dialogRef = useDialogFocusTrap<HTMLDivElement>(onClose);
+
+  const entities = project.spec.entities;
+  const [entityName, setEntityName] = useState(entities[0]?.name ?? "");
+  const [trigger, setTrigger] = useState<AutomationTrigger>("record_created");
+  const [fieldName, setFieldName] = useState("");
+  const [fieldValue, setFieldValue] = useState("");
+  const [toMode, setToMode] = useState<AutomationToMode>("field");
+  const [toField, setToField] = useState("");
+  const [toNumber, setToNumber] = useState("");
+  const [messageTemplate, setMessageTemplate] = useState("");
+  const [createBusy, setCreateBusy] = useState(false);
+
+  const selectedEntity: Entity | undefined = useMemo(
+    () => entities.find((e) => e.name === entityName),
+    [entities, entityName],
+  );
+
+  // Keep the field/toField selects pointed at a real field whenever the
+  // chosen entity changes (including on first render) -- an empty/stale
+  // selection here would otherwise submit a field name that doesn't exist
+  // on the newly-chosen entity.
+  useEffect(() => {
+    if (!selectedEntity) return;
+    if (!selectedEntity.fields.some((f) => f.name === fieldName)) {
+      setFieldName(selectedEntity.fields[0]?.name ?? "");
+    }
+    if (!selectedEntity.fields.some((f) => f.name === toField)) {
+      setToField(selectedEntity.fields[0]?.name ?? "");
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [entityName]);
+
+  function loadRules() {
+    setLoadError(null);
+    listAutomationRules(projectId)
+      .then(({ rules }) => setRules(rules))
+      .catch((err) => setLoadError((err as Error).message));
+  }
+
+  useEffect(() => {
+    loadRules();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [projectId]);
+
+  async function handleCreate(e: React.FormEvent) {
+    e.preventDefault();
+    if (!selectedEntity || !messageTemplate.trim()) return;
+    if (trigger === "field_equals" && (!fieldName || !fieldValue.trim())) return;
+    if (toMode === "field" && !toField) return;
+    if (toMode === "static" && !toNumber.trim()) return;
+    setCreateBusy(true);
+    setError(null);
+    try {
+      const { rule } = await createAutomationRule(projectId, selectedEntity.name, {
+        trigger,
+        fieldName: trigger === "field_equals" ? fieldName : undefined,
+        fieldValue: trigger === "field_equals" ? fieldValue.trim() : undefined,
+        actionType: "send_whatsapp",
+        toMode,
+        toField: toMode === "field" ? toField : undefined,
+        toNumber: toMode === "static" ? toNumber.trim() : undefined,
+        messageTemplate: messageTemplate.trim(),
+      });
+      setRules((prev) => [...(prev ?? []), rule]);
+      setFieldValue("");
+      setToNumber("");
+      setMessageTemplate("");
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setCreateBusy(false);
+    }
+  }
+
+  async function handleToggle(rule: AutomationRuleView) {
+    setBusyRuleId(rule.id);
+    setError(null);
+    try {
+      const { rule: updated } = await updateAutomationRule(projectId, rule.id, { enabled: !rule.enabled });
+      setRules((prev) => (prev ?? []).map((r) => (r.id === rule.id ? updated : r)));
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setBusyRuleId(null);
+    }
+  }
+
+  async function handleDelete(rule: AutomationRuleView) {
+    if (!window.confirm(t("automations.confirmDelete"))) return;
+    setBusyRuleId(rule.id);
+    setError(null);
+    try {
+      await deleteAutomationRule(projectId, rule.id);
+      setRules((prev) => (prev ?? []).filter((r) => r.id !== rule.id));
+    } catch (err) {
+      setError((err as Error).message);
+      setBusyRuleId(null);
+    }
+  }
+
+  function describeRule(rule: AutomationRuleView): string {
+    return rule.trigger === "record_created"
+      ? t("automations.rule.when.created", { entity: rule.entityName })
+      : t("automations.rule.when.fieldEquals", { field: rule.fieldName ?? "", entity: rule.entityName, value: rule.fieldValue ?? "" });
+  }
+
+  function describeDestination(rule: AutomationRuleView): string {
+    const destination =
+      rule.toMode === "field"
+        ? t("automations.rule.sendsField", { field: rule.toField ?? "" })
+        : t("automations.rule.sendsStatic", { number: rule.toNumber ?? "" });
+    return t("automations.rule.sends", { destination });
+  }
+
+  function describeLastRun(rule: AutomationRuleView): string {
+    if (!rule.lastTriggeredAt) return t("automations.lastRun.never");
+    const time = new Date(rule.lastTriggeredAt).toLocaleString(LOCALE[lang]);
+    return rule.lastStatus === "sent"
+      ? t("automations.lastRun.sent", { time })
+      : t("automations.lastRun.failed", { time, error: rule.lastError ?? "" });
+  }
+
+  return (
+    <div className="history-overlay">
+      <div className="history-panel" ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby="automations-panel-title">
+        <div className="history-header">
+          <h2 id="automations-panel-title">{t("automations.title")}</h2>
+          <button type="button" className="secondary" onClick={onClose}>
+            {t("history.close")}
+          </button>
+        </div>
+        <p className="muted small">{t("automations.description")}</p>
+        <p className="muted small automations-whatsapp-hint">{t("automations.whatsappRequired")}</p>
+
+        {error && (
+          <p className="error" role="status">
+            {error}
+          </p>
+        )}
+        {loadError && (
+          <div className="error-retry-row">
+            <p className="error" role="status">
+              {loadError}
+            </p>
+            <button type="button" className="secondary small" onClick={loadRules}>
+              {t("automations.retry")}
+            </button>
+          </div>
+        )}
+
+        {rules === null && !loadError ? (
+          <p className="muted" role="status">
+            {t("automations.loading")}
+          </p>
+        ) : (
+          <>
+            {rules !== null && rules.length === 0 && <p className="muted small">{t("automations.empty")}</p>}
+            <ul className="automations-list">
+              {rules?.map((rule) => (
+                <li key={rule.id} className="automations-rule-row">
+                  <div className="automations-rule-info">
+                    <div className="automations-rule-condition">{describeRule(rule)}</div>
+                    <div className="muted small">{describeDestination(rule)}</div>
+                    <div className="muted small">{rule.messageTemplate}</div>
+                    <div className="muted small">{describeLastRun(rule)}</div>
+                  </div>
+                  <div className="automations-rule-actions">
+                    <span className={`chip ${rule.enabled ? "automations-chip-enabled" : "automations-chip-disabled"}`}>
+                      {rule.enabled ? t("automations.status.enabled") : t("automations.status.disabled")}
+                    </span>
+                    <button type="button" className="secondary small" onClick={() => handleToggle(rule)} disabled={busyRuleId !== null}>
+                      {rule.enabled ? t("automations.disable") : t("automations.enable")}
+                    </button>
+                    <button type="button" className="danger small" onClick={() => handleDelete(rule)} disabled={busyRuleId !== null}>
+                      {t("automations.delete")}
+                    </button>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          </>
+        )}
+
+        <h3 className="automations-new-heading">{t("automations.new.heading")}</h3>
+        <form className="automations-create-form" onSubmit={handleCreate}>
+          <label>
+            {t("automations.entity.label")}
+            <select value={entityName} onChange={(e) => setEntityName(e.target.value)}>
+              {entities.map((e) => (
+                <option key={e.name} value={e.name}>
+                  {e.label ?? e.name}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          <label>
+            {t("automations.trigger.label")}
+            <select value={trigger} onChange={(e) => setTrigger(e.target.value as AutomationTrigger)}>
+              <option value="record_created">{t("automations.trigger.recordCreated")}</option>
+              <option value="field_equals">{t("automations.trigger.fieldEquals")}</option>
+            </select>
+          </label>
+
+          {trigger === "field_equals" && selectedEntity && (
+            <>
+              <label>
+                {t("automations.field.label")}
+                <select value={fieldName} onChange={(e) => setFieldName(e.target.value)}>
+                  {selectedEntity.fields.map((f) => (
+                    <option key={f.name} value={f.name}>
+                      {f.label ?? f.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <input
+                type="text"
+                placeholder={t("automations.fieldValue.placeholder")}
+                aria-label={t("automations.fieldValue.placeholder")}
+                value={fieldValue}
+                onChange={(e) => setFieldValue(e.target.value)}
+              />
+            </>
+          )}
+
+          <label>
+            {t("automations.toMode.label")}
+            <select value={toMode} onChange={(e) => setToMode(e.target.value as AutomationToMode)}>
+              <option value="field">{t("automations.toMode.field")}</option>
+              <option value="static">{t("automations.toMode.static")}</option>
+            </select>
+          </label>
+
+          {toMode === "field" && selectedEntity ? (
+            <select value={toField} onChange={(e) => setToField(e.target.value)} aria-label={t("automations.toField.placeholder")}>
+              {selectedEntity.fields.map((f) => (
+                <option key={f.name} value={f.name}>
+                  {f.label ?? f.name}
+                </option>
+              ))}
+            </select>
+          ) : (
+            <input
+              type="text"
+              placeholder={t("automations.toNumber.placeholder")}
+              aria-label={t("automations.toNumber.placeholder")}
+              value={toNumber}
+              onChange={(e) => setToNumber(e.target.value)}
+            />
+          )}
+
+          <label>
+            {t("automations.messageTemplate.label")}
+            <textarea
+              rows={3}
+              placeholder={t("automations.messageTemplate.placeholder")}
+              value={messageTemplate}
+              onChange={(e) => setMessageTemplate(e.target.value)}
+            />
+          </label>
+          <p className="muted small">{t("automations.messageTemplate.hint")}</p>
+
+          <button type="submit" disabled={createBusy || !messageTemplate.trim()}>
+            {createBusy ? t("automations.create.busy") : t("automations.create")}
+          </button>
+        </form>
+      </div>
+    </div>
+  );
+}
