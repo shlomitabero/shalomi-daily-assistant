@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { Router, type Request, type Response, type NextFunction } from "express";
 import { z } from "zod";
-import type { Entity, Field, Project, Screen } from "@forge/shared";
+import type { Entity, EntityRecord, Field, Project, Screen } from "@forge/shared";
 import {
   getCheckpoint,
   getProject,
@@ -20,6 +20,7 @@ import {
   deleteProject,
   insertRecord,
   listRecords,
+  getRecord,
   updateRecord,
   deleteRecord,
   insertWhatsAppMessage,
@@ -298,6 +299,28 @@ export function deriveScreensForNewEntity(newEntityName: string, existingEntitie
     }));
   }
   return [{ name: newEntityName, type: "list", entity: newEntityName }];
+}
+
+/**
+ * The field_equals automation trigger must only fire when the matching
+ * field actually transitioned value as part of THIS update -- see
+ * matchesTrigger's own doc comment in automations.ts. The PATCH record
+ * route used to pass `new Set(Object.keys(req.body))` as "changed
+ * fields", trusting that the request body only contained touched fields.
+ * EntityPanel's main edit form (and any future caller) submits every
+ * field on every save, not a diff, so that made a field_equals rule
+ * re-fire on every unrelated edit to a record that already matched --
+ * e.g. a customer getting a duplicate "order delivered" WhatsApp message
+ * every time an unrelated note on an already-delivered order was edited.
+ * Comparing the pre- and post-update records gives the real transition
+ * regardless of what the request body happened to include.
+ */
+export function computeChangedFields(
+  entity: Entity,
+  before: EntityRecord | undefined,
+  after: EntityRecord,
+): Set<string> {
+  return new Set(entity.fields.map((f) => f.name).filter((name) => !before || before[name] !== after[name]));
 }
 
 function findEntity(project: Project, entityName: string): Entity {
@@ -1812,6 +1835,7 @@ export function createProjectsRouter(
       }
       const entity = findEntity(project, req.params.entityName);
       const recordId = parseRecordId(req.params.recordId);
+      const before = getRecord(db, project.id, entity, recordId);
       // Same FOREIGN KEY constraint translation as the POST route above --
       // see its own comment for why this is reachable through the real UI.
       let record: ReturnType<typeof updateRecord>;
@@ -1835,7 +1859,7 @@ export function createProjectsRouter(
         entity,
         "updated",
         record,
-        new Set(Object.keys(req.body ?? {})),
+        computeChangedFields(entity, before, record),
       );
     }),
   );

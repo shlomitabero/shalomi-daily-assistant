@@ -1,6 +1,13 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { deriveEntityName, deriveFieldName, deriveName, deriveScreensForNewEntity } from "./projects.js";
+import type { Entity } from "@forge/shared";
+import {
+  computeChangedFields,
+  deriveEntityName,
+  deriveFieldName,
+  deriveName,
+  deriveScreensForNewEntity,
+} from "./projects.js";
 
 /**
  * deriveName picks a project's display name from its free-text description
@@ -172,4 +179,52 @@ test("deriveFieldName appends the first free numeric suffix on a case-insensitiv
 test("deriveFieldName treats the built-in 'id'/'createdAt' column names as already taken", () => {
   assert.equal(deriveFieldName("Id", []), "id2");
   assert.equal(deriveFieldName("Created At", []), "createdAt2");
+});
+
+/**
+ * computeChangedFields backs the PATCH record route's "changed fields" set
+ * passed to runAutomationsForRecordChange. Before this fix the route used
+ * `new Set(Object.keys(req.body))` -- which EntityPanel.tsx's main edit
+ * form (and the exported app's own equivalent) always fully populates with
+ * every field on every save, not just the ones the user actually touched.
+ * That made a field_equals automation (e.g. "when status becomes
+ * Delivered, text the customer") re-fire on every later unrelated edit to
+ * an already-matching record, since "status" was always present in the
+ * body even though its value never changed. computeChangedFields instead
+ * compares the real pre- and post-update field values, so only a field
+ * whose value actually transitioned counts as "changed" -- regardless of
+ * what keys the request body happened to include.
+ */
+const order: Entity = {
+  name: "Order",
+  label: "Order",
+  fields: [
+    { name: "status", label: "Status", type: "enum", required: true, enumValues: ["New", "Delivered"] },
+    { name: "notes", label: "Notes", type: "text", required: false },
+  ],
+};
+
+test("computeChangedFields excludes a field whose value is resubmitted unchanged", () => {
+  const before = { id: 1, createdAt: "2026-01-01", status: "Delivered", notes: "old" };
+  // The full-form resubmit case: every field is present in `after`, but
+  // only "notes" actually differs from `before`.
+  const after = { id: 1, createdAt: "2026-01-01", status: "Delivered", notes: "new" };
+  assert.deepEqual(computeChangedFields(order, before, after), new Set(["notes"]));
+});
+
+test("computeChangedFields includes a field that genuinely transitioned value", () => {
+  const before = { id: 1, createdAt: "2026-01-01", status: "New", notes: "old" };
+  const after = { id: 1, createdAt: "2026-01-01", status: "Delivered", notes: "old" };
+  assert.deepEqual(computeChangedFields(order, before, after), new Set(["status"]));
+});
+
+test("computeChangedFields returns every field when there is no prior record to compare against", () => {
+  const after = { id: 1, createdAt: "2026-01-01", status: "New", notes: "" };
+  assert.deepEqual(computeChangedFields(order, undefined, after), new Set(["status", "notes"]));
+});
+
+test("computeChangedFields returns an empty set when nothing actually changed", () => {
+  const before = { id: 1, createdAt: "2026-01-01", status: "Delivered", notes: "same" };
+  const after = { id: 1, createdAt: "2026-01-01", status: "Delivered", notes: "same" };
+  assert.deepEqual(computeChangedFields(order, before, after), new Set());
 });
