@@ -423,6 +423,14 @@ export const DOMAIN_ENTITY_RULES: DomainEntityRule[] = [
     keywords: [
       "menu", /\bdish(es)?\b/, "food item", "restaurant", "cafe", "מסעדה", "מסעדות",
       "תפריט", "מנות", "בית קפה",
+      // "בית קפה" (café) had no plural entry (round 582). Unlike this
+      // file's other missing-plural fixes (576-581, all a ה→ות swap or a
+      // sofit-letter swap), "בית" (house) forms its plural with the
+      // irregular construct form "בתי" (houses of) -- a letter-order
+      // change (ב-י-ת -> ב-ת-י), not a suffix. "בתי קפה" (cafés) is not a
+      // substring superset of "בית קפה" either way, so a plural-only
+      // phrasing matched no domain entity at all.
+      "בתי קפה",
     ],
     labelHe: "פריטי תפריט",
     descriptionHe: "מנה או מוצר בתפריט של מסעדה או בית קפה.",

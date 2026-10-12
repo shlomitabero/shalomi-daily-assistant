@@ -1929,3 +1929,29 @@ test("WorkOrder's 'עבודת תחזוקה' keyword also matches its plural 'ע�
     "'עבודת תחזוקה' (singular) must still match WorkOrder",
   );
 });
+
+/**
+ * Regression test for round 582's finding: MenuItem's Hebrew keyword
+ * "בית קפה" (café) had no plural entry. Unlike the other missing-plural
+ * fixes (rounds 576-581, all a ה→ות or sofit-letter swap), "בית"'s plural
+ * "בתי" is an irregular construct form with a letter-order change, not a
+ * suffix -- "בתי קפה" is not a substring superset of "בית קפה" either way.
+ * The test sentences contain none of MenuItem's other keywords ("menu",
+ * "dish(es)", "food item", "restaurant", "cafe", "מסעדה"/"מסעדות",
+ * "תפריט", "מנות"), isolating the café phrase alone.
+ */
+test("MenuItem's 'בית קפה' keyword also matches its irregular plural 'בתי קפה', which isn't a substring of the singular", async () => {
+  const provider = new HeuristicSpecProvider();
+
+  const pluralOnly = await provider.generate("אני רוצה לנהל רשת של בתי קפה בעיר, עם מעקב סטטוס.");
+  assert.ok(
+    pluralOnly.entities.some((e) => e.name === "MenuItem"),
+    "'בתי קפה' (cafés, plural) alone must match MenuItem",
+  );
+
+  const singular = await provider.generate("אני רוצה לנהל בית קפה אחד בעיר, עם מעקב סטטוס.");
+  assert.ok(
+    singular.entities.some((e) => e.name === "MenuItem"),
+    "'בית קפה' (singular) must still match MenuItem",
+  );
+});
