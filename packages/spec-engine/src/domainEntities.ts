@@ -750,7 +750,14 @@ export const DOMAIN_ENTITY_RULES: DomainEntityRule[] = [
       // fixes needed lookbehind/lookahead too), so this excludes the
       // specific known verb-conjugation prefixes directly.
       /(?<!נ)(?<!תי)(?<!להי)(?<!מת)(?<!הת)כנס/,
-      "חתונה", "חתונות",
+      // Bare "חתונה"/"חתונות" (round 575) are substrings of "תחתונה"/
+      // "תחתונות" ("lower [clothing]"/"underwear", e.g. "הלבשה תחתונה"),
+      // an unrelated, common clothing/lingerie term -- "תחתונה" is
+      // literally "ת" + "חתונה" letter-for-letter. Hebrew has no \b, so a
+      // plain underwear-store description spuriously matched Event. This
+      // excludes the specific "ת" prefix directly, same approach as the
+      // "כנס" fix just above.
+      /(?<!ת)חתונה/, /(?<!ת)חתונות/,
     ],
     labelHe: "אירועים",
     descriptionHe: "אירוע שהעסק מארגן או מנהל.",

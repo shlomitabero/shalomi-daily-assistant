@@ -1724,3 +1724,38 @@ test("Employee's 'staff' keyword doesn't spuriously match 'Staffordshire', for b
   assert.ok(staffApp.entities.some((e) => e.name === "Employee"), "'staff' must still match Employee");
   assert.ok(staffApp.roles.includes("Employee"), "'staff' must still add the Employee role");
 });
+
+/**
+ * Regression test for round 575's finding: Event's bare "חתונה"
+ * (wedding) and "חתונות" (weddings) keywords are substrings of
+ * "תחתונה"/"תחתונות" ("lower [clothing]"/"underwear", e.g. the common
+ * phrase "הלבשה תחתונה" -- lingerie) -- a plain underwear/lingerie-store
+ * description has nothing to do with weddings or events, so it
+ * spuriously fabricated an Event entity purely from "תחתונה" containing
+ * "חתונה" letter-for-letter. Hebrew has no `\b`, so this is fixed with a
+ * negative lookbehind excluding the specific "ת" prefix, the same
+ * approach this file's own "כנס" fix (round 562) already uses right
+ * above it in the same keyword array.
+ */
+test("Event's 'חתונה'/'חתונות' keywords don't spuriously match 'תחתונה'/'תחתונות' (lower clothing/underwear)", async () => {
+  const provider = new HeuristicSpecProvider();
+
+  const underwearSingular = await provider.generate("חנות הלבשה תחתונה לנשים, עם מעקב מלאי ומחירים.");
+  assert.ok(
+    !underwearSingular.entities.some((e) => e.name === "Event"),
+    "'תחתונה' (lower clothing, singular) alone must not spuriously match Event via a bare 'חתונה' substring",
+  );
+
+  const underwearPlural = await provider.generate("ניהול מלאי של תחתונות וחזיות בחנות הלבשה.");
+  assert.ok(
+    !underwearPlural.entities.some((e) => e.name === "Event"),
+    "'תחתונות' (underwear, plural) alone must not spuriously match Event via a bare 'חתונות' substring",
+  );
+
+  // The real wedding/event terms still work, singular and plural.
+  const realWedding = await provider.generate("אפליקציה לניהול חתונה, כולל מקום, קיבולת וסטטוס.");
+  assert.ok(realWedding.entities.some((e) => e.name === "Event"), "'חתונה' must still match Event");
+
+  const realWeddingsPlural = await provider.generate("אפליקציה לניהול חתונות ואירועים, כולל מקום וקיבולת.");
+  assert.ok(realWeddingsPlural.entities.some((e) => e.name === "Event"), "'חתונות' must still match Event");
+});
