@@ -8293,6 +8293,143 @@ test("the exported EntityView's self-referencing relation field picker includes 
 });
 
 /**
+ * Round 540's own fix (EntityPanel.tsx, live preview) was never ported to
+ * the exported app's EntityView.jsx: the mount-time loadRelated effect and
+ * refresh() (round 438's own fix, confirmed present above) are two
+ * independent writers of relatedRecords[entity.name] for a self-referencing
+ * relation field. refresh() merges a newly-created record in immediately,
+ * but if loadRelated's own mount-time fetch for that same entity happens to
+ * resolve LATER (a slower initial page-load fetch racing a fast create),
+ * its stale, pre-creation snapshot wholesale-replaces relatedRecords,
+ * silently undoing round 438's fix. Mirrors EntityPanel.test.ts's own
+ * round-540 regression test, adapted to the exported app's fetch URLs.
+ */
+test("the exported EntityView's self-referencing relation field picker keeps a just-created record visible even when the initial relation-data fetch resolves after the create", async () => {
+  const categoryEntity: Entity = {
+    name: "Category",
+    label: "Category",
+    fields: [
+      { name: "name", label: "Name", type: "text", required: true },
+      { name: "parentCategoryId", label: "Parent Category", type: "relation", relationTo: "Category", required: false },
+    ],
+  };
+  const categoryProject: Project = {
+    ...project,
+    spec: { ...project.spec, entities: [categoryEntity] },
+  };
+  const files = generateExportFiles(categoryProject);
+  const dir = writeGeneratedWebComponent(files);
+  const originalFetch = globalThis.fetch;
+  const store: { id: number; name: string; parentCategoryId: number | null }[] = [
+    { id: 1, name: "Electronics", parentCategoryId: null },
+  ];
+  let nextId = 2;
+  let heldGetResolve: (() => void) | null = null;
+  let sawFirstGet = false;
+  globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
+    const method = init?.method ?? "GET";
+    if (input === "/api/Category") {
+      if (method === "GET") {
+        const snapshot = [...store];
+        // Only the very first GET (whichever of loadRelated's own effect or
+        // refresh()'s own mount-time call happens to fire first) is held
+        // open -- every later GET resolves immediately, modeling a
+        // realistic race: one slow initial fetch, one fast one.
+        if (!sawFirstGet) {
+          sawFirstGet = true;
+          await new Promise<void>((resolve) => {
+            heldGetResolve = resolve;
+          });
+        }
+        return new Response(JSON.stringify({ records: snapshot }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      if (method === "POST") {
+        const record = { id: nextId++, ...JSON.parse(init!.body as string) };
+        store.push(record);
+        return new Response(JSON.stringify({ record }), { status: 201, headers: { "content-type": "application/json" } });
+      }
+    }
+    throw new Error(`unexpected request ${method} ${input}`);
+  }) as typeof fetch;
+
+  try {
+    await withRealLocalStorage(async () => {
+      const { EntityView } = await import(path.join(dir, "web", "src", "components", "EntityView.jsx"));
+      const props = {
+        entity: categoryEntity,
+        highlightRecordId: null,
+        onHighlightHandled: () => {},
+        onJumpToRecord: () => {},
+        onRecordCountChange: () => {},
+      };
+
+      const { container } = render(React.createElement(EntityView, props));
+      for (let i = 0; i < 40; i++) {
+        if (heldGetResolve !== null) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+      assert.ok(heldGetResolve, "expected the initial relation-data fetch to be held open");
+
+      // Create "Office Supplies" while the held GET is still pending --
+      // this goes through refresh(), whose own mount-time GET already
+      // resolved (it wasn't the first one held).
+      const nameInput = container.querySelector('.record-form input[type="text"]') as HTMLInputElement;
+      const submitButton = container.querySelector(".record-form button[type=submit]") as HTMLButtonElement;
+      await act(async () => {
+        fireEvent.change(nameInput, { target: { value: "Office Supplies" } });
+        fireEvent.click(submitButton);
+      });
+      for (let i = 0; i < 40; i++) {
+        if (container.querySelectorAll("tbody tr").length === 2) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+      assert.equal(container.querySelectorAll("tbody tr").length, 2, "expected the newly created category to appear in the table");
+
+      const electronicsRow = Array.from(container.querySelectorAll("tbody tr")).find((r) =>
+        /Electronics/.test(r.textContent ?? ""),
+      ) as HTMLElement;
+      const editButton = electronicsRow.querySelector(".row-actions button") as HTMLButtonElement;
+      await act(async () => {
+        fireEvent.click(editButton);
+      });
+
+      const parentSelect = container.querySelector(".record-form select") as HTMLSelectElement;
+      assert.ok(parentSelect, "expected the self-relation field to render as a real <select>");
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      });
+      assert.ok(
+        Array.from(parentSelect.options).some((o) => o.textContent === "Office Supplies"),
+        "sanity check: the newly-created category must be selectable right after creation (round 438's own fix)",
+      );
+
+      // Now release the held-open GET -- loadRelated's own fetch (whichever
+      // request it actually was) finally resolves with its stale,
+      // pre-creation snapshot.
+      await act(async () => {
+        heldGetResolve!();
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      });
+
+      const optionLabelsAfter = Array.from(parentSelect.options).map((o) => o.textContent);
+      assert.ok(
+        optionLabelsAfter.includes("Office Supplies"),
+        `expected "Office Supplies" to still be selectable after the delayed initial relation-fetch resolved, got options: ${optionLabelsAfter.join(", ")}`,
+      );
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    cleanup();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
  * Round 515's finding, also fixed the same round in EntityPanel.tsx (live
  * preview): FieldInput's relation branch had no fallback for a stored id
  * missing from relatedEntityRecords -- unlike the enum branch a few lines

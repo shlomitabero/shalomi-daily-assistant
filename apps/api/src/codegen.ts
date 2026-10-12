@@ -2705,13 +2705,29 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
 
   useEffect(() => {
     let cancelled = false;
+    // A self-referencing relation target (entity.name itself, e.g.
+    // Category.parentCategoryId -> Category) is deliberately excluded from
+    // this effect's own fetch -- refresh() below already owns keeping
+    // relatedRecords[entity.name] in sync (round 438), merging a
+    // newly-created record in immediately. Fetching it here too made this
+    // effect a SECOND writer of that same slot: if this effect's own
+    // mount-time fetch happened to resolve after refresh() had already
+    // merged a freshly-created record in, this effect's stale, pre-creation
+    // snapshot would wholesale-replace relatedRecords, silently undoing
+    // round 438's fix the moment a user created a same-entity record
+    // quickly enough. Mirrors the live preview's own fix (EntityPanel.tsx,
+    // round 540).
+    const isSelfReferencing = relationTargets.includes(entity.name);
+    const otherTargets = relationTargets.filter((name) => name !== entity.name);
     async function loadRelated() {
-      if (relationTargets.length === 0) {
-        setRelatedRecords({});
+      if (otherTargets.length === 0) {
+        if (!cancelled) {
+          setRelatedRecords((prev) => (isSelfReferencing ? { [entity.name]: prev[entity.name] } : {}));
+        }
         return;
       }
       const entries = await Promise.all(
-        relationTargets.map(async (name) => {
+        otherTargets.map(async (name) => {
           try {
             const { records: related } = await listRecords(name);
             return [name, related];
@@ -2720,13 +2736,18 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
           }
         }),
       );
-      if (!cancelled) setRelatedRecords(Object.fromEntries(entries));
+      if (!cancelled) {
+        setRelatedRecords((prev) => ({
+          ...Object.fromEntries(entries),
+          ...(isSelfReferencing ? { [entity.name]: prev[entity.name] } : {}),
+        }));
+      }
     }
     loadRelated();
     return () => {
       cancelled = true;
     };
-  }, [relationTargets]);
+  }, [relationTargets, entity.name]);
 
   // Reports this entity's own record count back to the caller whenever
   // records changes -- every mutation already funnels through setRecords,
