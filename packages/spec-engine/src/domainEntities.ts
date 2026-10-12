@@ -1213,6 +1213,12 @@ export const DOMAIN_ENTITY_RULES: DomainEntityRule[] = [
     keywords: [
       "work order", "field service", "service call", "repair job", "maintenance request",
       "קריאת שירות", "קריאות שירות", "עבודת תחזוקה", "טכנאי", "אינסטלטור", "חשמלאי",
+      // "עבודת תחזוקה" (maintenance job) had no plural entry (round 581).
+      // Its plural "עבודות תחזוקה" swaps the word-final ה for ות mid-word,
+      // the same construct-state gap shape rounds 576-580 already found
+      // for "עמותה", "פוליסת ביטוח", and "דירה למכירה"/"דירה להשכרה". A
+      // plural-only phrasing matched no WorkOrder-specific keyword at all.
+      "עבודות תחזוקה",
     ],
     labelHe: "קריאות שירות",
     descriptionHe: "עבודת תיקון או תחזוקה מתוזמנת שהעסק מבצע עבור לקוח.",

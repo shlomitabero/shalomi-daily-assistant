@@ -1902,3 +1902,30 @@ test("Property's 'דירה למכירה'/'דירה להשכרה' keywords also m
     "'דירה להשכרה' (singular) must still match Property",
   );
 });
+
+/**
+ * Regression test for round 581's finding: WorkOrder's Hebrew keyword
+ * "עבודת תחזוקה" (maintenance job) had no plural entry. The plural
+ * "עבודות תחזוקה" replaces the ה with ות mid-word, the same
+ * construct-state gap shape rounds 576-580 found for "עמותה", "פוליסת
+ * ביטוח", and "דירה למכירה"/"דירה להשכרה". The test sentences contain
+ * none of WorkOrder's other keywords ("work order", "field service",
+ * "service call", "repair job", "maintenance request", "קריאת
+ * שירות"/"קריאות שירות", "טכנאי", "אינסטלטור", "חשמלאי"), isolating the
+ * maintenance-job phrase alone.
+ */
+test("WorkOrder's 'עבודת תחזוקה' keyword also matches its plural 'עבודות תחזוקה', which isn't a substring of the singular", async () => {
+  const provider = new HeuristicSpecProvider();
+
+  const pluralOnly = await provider.generate("המערכת עוקבת אחרי עבודות תחזוקה שבוצעו בבניין במהלך השנה.");
+  assert.ok(
+    pluralOnly.entities.some((e) => e.name === "WorkOrder"),
+    "'עבודות תחזוקה' (maintenance jobs, plural) alone must match WorkOrder",
+  );
+
+  const singular = await provider.generate("המערכת עוקבת אחרי עבודת תחזוקה אחת שבוצעה בבניין במהלך השנה.");
+  assert.ok(
+    singular.entities.some((e) => e.name === "WorkOrder"),
+    "'עבודת תחזוקה' (singular) must still match WorkOrder",
+  );
+});
