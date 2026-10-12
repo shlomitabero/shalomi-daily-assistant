@@ -31,3 +31,12 @@ export function resultLabel(result) {
   if (!label) return result;
   return rest.length ? `${label}: ${rest.join(': ')}` : label;
 }
+
+// riskLevel ('low'/'medium'/'high') already had a Hebrew <select> in
+// OpportunityDetail's edit form, but the opportunities list rendered the
+// same raw English value as plain text right next to it.
+const RISK_LEVEL_LABEL = { low: 'נמוכה', medium: 'בינונית', high: 'גבוהה' };
+
+export function riskLevelLabel(level) {
+  return RISK_LEVEL_LABEL[level] ?? level;
+}
