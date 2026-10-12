@@ -1740,6 +1740,34 @@ test("the exported EntityView's findDateField recognizes 'scheduledDate' as a kn
   assert.equal(findDateField(fields)?.name, "scheduledDate");
 });
 
+/**
+ * Regression test for round 573's finding: DATE_FIELD_NAME_HINTS had no
+ * "startdate" entry, so the exported app's findDateField only picked
+ * startDate over endDate by luck of field-declaration order -- an entity
+ * declaring endDate before startDate silently picked endDate as the
+ * "start" field and lost the whole date range (findEndDateField then had
+ * nothing left to pair it with). Runs the real generated
+ * findDateField/findEndDateField, not a reimplementation.
+ */
+test("the exported EntityView's findDateField picks startDate over endDate regardless of field-declaration order", () => {
+  const entityViewJsx = generateExportFiles(project).find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+  const findDateFieldSrc = entityViewJsx.match(/const DATE_FIELD_NAME_HINTS[\s\S]*?\nfunction findDateField\(fields\) \{[\s\S]*?\n\}\n/)?.[0];
+  const findEndDateFieldSrc = entityViewJsx.match(/const END_DATE_FIELD_NAME_HINTS[\s\S]*?\nfunction findEndDateField\(fields, startField\) \{[\s\S]*?\n\}\n/)?.[0];
+  assert.ok(findDateFieldSrc && findEndDateFieldSrc, "expected to find DATE_FIELD_NAME_HINTS/findDateField and END_DATE_FIELD_NAME_HINTS/findEndDateField in generated output");
+
+  const { findDateField, findEndDateField } = new Function(
+    `${findDateFieldSrc}\n${findEndDateFieldSrc}\nreturn { findDateField, findEndDateField };`,
+  )() as { findDateField: (fields: unknown[]) => { name: string } | null; findEndDateField: (fields: unknown[], startField: { name: string }) => { name: string } | null };
+  const fieldsEndFirst = [
+    { name: "guestName", type: "text" },
+    { name: "endDate", type: "date" },
+    { name: "startDate", type: "date" },
+  ];
+  const start = findDateField(fieldsEndFirst)!;
+  assert.equal(start.name, "startDate", "startDate must win even when endDate is declared first in the fields array");
+  assert.equal(findEndDateField(fieldsEndFirst, start)?.name, "endDate", "endDate must still pair correctly as the range's end");
+});
+
 // Regression test: the same UTC-vs-local mismatch as the CalendarView test
 // above, but in the main record table's per-cell date renderer (Cell,
 // reused by the table, the Kanban board, and global search results) --

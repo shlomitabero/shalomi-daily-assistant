@@ -2014,8 +2014,11 @@ function groupRecordsByField(records, field) {
 // Picks the date field an entity's records should be plotted on a calendar
 // by, if any -- prefers a field literally named "date" or a few other
 // common date-ish names, then falls back to the first date field; returns
-// null for an entity with no date field at all.
-const DATE_FIELD_NAME_HINTS = ["date", "appointmentdate", "scheduleddate", "eventdate", "duedate"];
+// null for an entity with no date field at all. "startdate" (round 573) is
+// here for the same reason "enddate" is in END_DATE_FIELD_NAME_HINTS below --
+// without it, a startDate/endDate pair only picked startDate as the start
+// field by luck of field-declaration order.
+const DATE_FIELD_NAME_HINTS = ["date", "appointmentdate", "scheduleddate", "eventdate", "duedate", "startdate"];
 function findDateField(fields) {
   const dateFields = fields.filter((f) => f.type === "date");
   if (dateFields.length === 0) return null;

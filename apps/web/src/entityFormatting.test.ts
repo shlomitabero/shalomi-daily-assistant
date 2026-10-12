@@ -754,6 +754,27 @@ test("findEndDateField finds the matching end-of-range field, matching the domai
   assert.equal(findEndDateField(fields, start)?.name, "endDate");
 });
 
+/**
+ * Regression test for round 573's finding: DATE_FIELD_NAME_HINTS had no
+ * "startdate" entry (unlike END_DATE_FIELD_NAME_HINTS, which does have
+ * "enddate"), so a startDate/endDate pair only picked startDate as the
+ * start field by luck of field-declaration order -- the built-in Rental
+ * entity happens to declare startDate first, but an entity declaring
+ * endDate first (equally valid JSON) silently picked endDate as the
+ * "start" and lost the whole date range, since findEndDateField then had
+ * nothing left to pair it with.
+ */
+test("findDateField picks startDate over endDate regardless of field-declaration order", () => {
+  const fieldsEndFirst: Field[] = [
+    { name: "guestName", type: "text", required: true },
+    { name: "endDate", type: "date", required: false },
+    { name: "startDate", type: "date", required: false },
+  ];
+  const start = findDateField(fieldsEndFirst)!;
+  assert.equal(start.name, "startDate", "startDate must win even when endDate is declared first in the fields array");
+  assert.equal(findEndDateField(fieldsEndFirst, start)?.name, "endDate", "endDate must still pair correctly as the range's end");
+});
+
 test("findEndDateField returns null for an entity with only one date field", () => {
   const fields: Field[] = [{ name: "scheduledDate", type: "date", required: true }];
   const start = findDateField(fields)!;

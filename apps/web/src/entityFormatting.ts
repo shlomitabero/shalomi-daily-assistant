@@ -628,7 +628,7 @@ export function groupByField(
   return columns;
 }
 
-const DATE_FIELD_NAME_HINTS = ["date", "appointmentdate", "scheduleddate", "eventdate", "duedate"];
+const DATE_FIELD_NAME_HINTS = ["date", "appointmentdate", "scheduleddate", "eventdate", "duedate", "startdate"];
 
 /**
  * Picks the date field an entity's records should be plotted on a calendar
@@ -637,6 +637,13 @@ const DATE_FIELD_NAME_HINTS = ["date", "appointmentdate", "scheduleddate", "even
  * field literally named "date" (the domain library's own convention) or a
  * few other common date-ish names, then falls back to the first date
  * field; returns null for an entity with no date field at all.
+ *
+ * "startdate" (round 573) is in this list for the same reason "enddate" is
+ * in END_DATE_FIELD_NAME_HINTS below: without it, a startDate/endDate pair
+ * (the domain library's own Rental entity, and any AI-generated spec using
+ * that same convention) only picked startDate as the start field by luck
+ * of field-declaration order -- an entity declaring endDate before
+ * startDate silently picked endDate instead, losing the whole date range.
  */
 export function findDateField(fields: Field[]): Field | null {
   const dateFields = fields.filter((f) => f.type === "date");
