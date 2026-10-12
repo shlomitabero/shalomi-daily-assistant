@@ -700,7 +700,17 @@ export const DOMAIN_ENTITY_RULES: DomainEntityRule[] = [
       // since "garage" word-boundary-matches correctly in "garage sale"
       // too -- the negative lookahead excludes only that specific phrase.
       /\bgarage\b(?!\s+sales?\b)/, /\bmechanic(s)?\b/, "car dealership",
-      "רכב", "רכבים", "מוסך", "מכונאי", "כלי רכב",
+      // Bare "רכב" (round 567) is a literal prefix-substring of "רכבת"
+      // ("train") and its plural "רכבות" ("trains") -- extremely common
+      // everyday words (Israel Railways is "רכבת ישראל"), with nothing to
+      // do with cars, so a train/station-management description spuriously
+      // matched this entity. Same unbounded-Hebrew-substring shape as every
+      // other fix in this file (round 518 מלאי, round 563 מנוי, round 564
+      // מוצר, round 565 עובד, etc.). The negative lookahead excludes "רכב"
+      // immediately followed by an optional "ו" then "ת" (covering both
+      // "רכבת" and "רכבות"), while still matching real usage like "רכב",
+      // "רכבים" (vehicles, plural), "ברכב", and "כלי רכב".
+      /רכב(?!ו?ת)/, "מוסך", "מכונאי", "כלי רכב",
     ],
     labelHe: "כלי רכב",
     descriptionHe: "רכב שהעסק מטפל בו, משכיר, או עוקב אחריו.",

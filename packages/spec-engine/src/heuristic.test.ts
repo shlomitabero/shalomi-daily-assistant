@@ -934,6 +934,45 @@ test("Vehicle's 'garage' keyword doesn't spuriously match 'garage sale'", async 
 });
 
 /**
+ * Regression test for a real bug found in round 567: Vehicle's bare "רכב"
+ * ("car"/"vehicle") keyword is a literal prefix-substring of the ordinary,
+ * extremely common Hebrew word "רכבת" ("train") and its plural "רכבות"
+ * ("trains") -- Israel Railways is "רכבת ישראל" -- so a train/station
+ * description spuriously matched Vehicle even though it has nothing to do
+ * with cars. Same unbounded-Hebrew-substring shape as every other fix in
+ * this file (round 518 "מלאי", round 563 "מנוי", round 564 "מוצר", round
+ * 565 "עובד"), fixed with the same negative-lookahead style.
+ */
+test("Vehicle's 'רכב' keyword doesn't spuriously match 'רכבת'/'רכבות' (train/trains)", async () => {
+  const provider = new HeuristicSpecProvider();
+
+  const trainStation = await provider.generate(
+    "אפליקציה לניהול תחנות רכבת, לוחות זמנים ומעקב אחרי כרטיסי נוסעים.",
+  );
+  assert.ok(
+    !trainStation.entities.some((e) => e.name === "Vehicle"),
+    "'רכבת' (train) alone must not spuriously match Vehicle via a bare 'רכב' substring",
+  );
+
+  const trains = await provider.generate(
+    "מערכת לניהול רכבות, תחנות, ומכירת כרטיסים לנוסעים.",
+  );
+  assert.ok(
+    !trains.entities.some((e) => e.name === "Vehicle"),
+    "'רכבות' (trains) alone must not spuriously match Vehicle via a bare 'רכב' substring",
+  );
+
+  // The real word still works, singular and plural (these descriptions
+  // avoid this rule's other keywords -- "מוסך", "מכונאי", "כלי רכב" --
+  // so a match here can only come from "רכב"/"רכבים" itself).
+  const realVehicle = await provider.generate("אפליקציה למעקב אחרי רכב אחד של העסק.");
+  assert.ok(realVehicle.entities.some((e) => e.name === "Vehicle"), "'רכב' must still match Vehicle");
+
+  const realVehicles = await provider.generate("ניהול צי רכבים להשכרה.");
+  assert.ok(realVehicles.entities.some((e) => e.name === "Vehicle"), "'רכבים' must still match Vehicle");
+});
+
+/**
  * Regression test for a real bug found in a fresh systematic survey in
  * round 455: Shipment's bare "shipping" keyword is a substring of
  * "worshipping" -- an ordinary word in a church/congregation attendance
