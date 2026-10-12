@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { api } from '../api.js';
+import { opportunityStatusLabel, sourceLabel } from '../labels.js';
 
 export default function OpportunityDetail() {
   const { id } = useParams();
@@ -83,7 +84,7 @@ export default function OpportunityDetail() {
     <div className="page">
       <Link className="link" to="/opportunities">← חזרה לכל ההזדמנויות</Link>
       <h1>{opp.title}</h1>
-      <p className="hint">מקור: {opp.source} · סטטוס: {opp.status}</p>
+      <p className="hint">מקור: {sourceLabel(opp.source)} · סטטוס: {opportunityStatusLabel(opp.status)}</p>
 
       <div className="card">
         <h3>מה זה, מי משלם, ולמה</h3>

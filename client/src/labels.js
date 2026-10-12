@@ -49,3 +49,27 @@ const SIDE_LABEL = { long: 'לונג', short: 'שורט' };
 export function sideLabel(side) {
   return SIDE_LABEL[side] ?? side;
 }
+
+// opportunity.status ('draft'/'published'/'rejected') already had a Hebrew
+// badge on the opportunities list, but the opportunity detail page showed
+// the raw English value in its own header line.
+const OPPORTUNITY_STATUS_LABEL = { draft: 'טיוטה', published: 'פורסם', rejected: 'נדחה' };
+
+export function opportunityStatusLabel(status) {
+  return OPPORTUNITY_STATUS_LABEL[status] ?? status;
+}
+
+// opportunity.source is a SOURCE_DEFINITIONS id (server/src/engine/
+// sourceDefinitions.js) — the opportunity detail page showed this raw
+// snake_case id instead of the source's real Hebrew name.
+const SOURCE_LABEL = {
+  ai_digital_products: 'מוצרים דיגיטליים מבוססי AI',
+  financial_markets: 'שווקים פיננסיים',
+  affiliate_programs: 'שיווק שותפים ותוכניות תגמול',
+  supplier_price_gaps: 'פערי מחירים בין ספקים',
+  tenders_rfps: 'מכרזים ובקשות הצעות מחיר',
+};
+
+export function sourceLabel(source) {
+  return SOURCE_LABEL[source] ?? source;
+}
