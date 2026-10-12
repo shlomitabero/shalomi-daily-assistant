@@ -1657,3 +1657,37 @@ test("Vendor's 'ספק' keyword doesn't spuriously match the unrelated 'doubt' i
   const realVendors = await provider.generate("אנחנו עסק קטן שצריך לנהל ספקים ורכש.");
   assert.ok(realVendors.entities.some((e) => e.name === "Vendor"), "'ספקים' must still match Vendor");
 });
+
+/**
+ * Regression test for round 572's finding: InsuranceClaim's bare Hebrew
+ * keyword "תביעה" is the ordinary, generic word for "claim"/"lawsuit" in
+ * Hebrew, used constantly in general legal contexts ("הגשת תביעה", "תביעה
+ * אזרחית") with zero connection to insurance. A plain law-firm/legal-case
+ * description mentioning a client's claim spuriously matched
+ * InsuranceClaim. Unlike this file's substring-within-a-word fixes
+ * (רכב/מלאי/מוצר/etc.), this is whole-word polysemy, same shape as
+ * "property"/"garage"/"pupil" -- but the fix here is simpler: "תביעת
+ * ביטוח"/"תביעות ביטוח" already cover every genuine insurance phrasing on
+ * their own, so the redundant bare word is just removed, not regex-guarded.
+ */
+test("InsuranceClaim's 'תביעה' keyword doesn't spuriously match the generic legal sense of 'claim'/'lawsuit'", async () => {
+  const provider = new HeuristicSpecProvider();
+
+  const legalCase = await provider.generate(
+    "אפליקציה לניהול תיקים משפטיים למשרד עורכי דין, כולל מעקב אחר תביעה של לקוח, סטטוס תיק ותאריך אירוע.",
+  );
+  assert.ok(
+    !legalCase.entities.some((e) => e.name === "InsuranceClaim"),
+    "'תביעה' (claim/lawsuit) alone in a law-firm description must not spuriously match InsuranceClaim",
+  );
+
+  // The real phrase still works, singular and plural (these descriptions
+  // avoid this rule's other keywords -- "insurance claim", "policyholder",
+  // etc. -- so a match here can only come from "תביעת ביטוח"/"תביעות
+  // ביטוח" itself).
+  const realInsurance = await provider.generate("אפליקציה לניהול תביעת ביטוח של בעלי פוליסה, כולל סכום וסטטוס.");
+  assert.ok(realInsurance.entities.some((e) => e.name === "InsuranceClaim"), "'תביעת ביטוח' must still match InsuranceClaim");
+
+  const realInsurancePlural = await provider.generate("אפליקציה לטיפול בתביעות ביטוח מבעלי פוליסה");
+  assert.ok(realInsurancePlural.entities.some((e) => e.name === "InsuranceClaim"), "'תביעות ביטוח' must still match InsuranceClaim");
+});

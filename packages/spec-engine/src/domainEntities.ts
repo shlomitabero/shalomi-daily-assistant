@@ -1008,9 +1008,18 @@ export const DOMAIN_ENTITY_RULES: DomainEntityRule[] = [
     },
   },
   {
+    // Bare "תביעה" (round 572) is the ordinary, generic Hebrew word for
+    // "claim"/"lawsuit" -- used constantly in general legal contexts
+    // ("הגשת תביעה", "תביעה אזרחית") with zero connection to insurance, so
+    // any law-firm/legal-case description spuriously matched this entity.
+    // Unlike this file's substring-within-a-word fixes (רכב/מלאי/etc.),
+    // this is whole-word polysemy (same shape as "property"/"garage"),
+    // but there's an even simpler fix here: "תביעת ביטוח"/"תביעות ביטוח"
+    // already cover every genuine insurance phrasing on their own, so the
+    // redundant bare word is just removed rather than regex-guarded.
     keywords: [
       "insurance claim", "insurance claims", "claims processing", "policy holder", "policyholder",
-      "תביעת ביטוח", "תביעות ביטוח", "פוליסת ביטוח", "תביעה",
+      "תביעת ביטוח", "תביעות ביטוח", "פוליסת ביטוח",
     ],
     labelHe: "תביעות ביטוח",
     descriptionHe: "תביעה שהוגשה על ידי בעל פוליסה.",
