@@ -1605,3 +1605,55 @@ test("Employee's 'עובד' keyword doesn't spuriously match 'מעובד' (proce
   assert.ok(realEmployees.entities.some((e) => e.name === "Employee"), "'עובדים' must still match Employee");
   assert.ok(realEmployees.roles.includes("עובד/ת"), "'עובדים' must still add the Employee role");
 });
+
+/**
+ * Regression test for round 571's finding: Vendor's bare Hebrew keyword
+ * "ספק" ("supplier"/"vendor") is a true Hebrew homograph, not just an
+ * unbounded substring like the file's other fixes -- the identical
+ * spelling "ספק" is also the ordinary word for "doubt", used in extremely
+ * common filler idioms like "ללא ספק"/"אין ספק"/"בלי ספק" (undoubtedly/no
+ * doubt) and "מוטל בספק" (in doubt). A plain task-management description
+ * that happened to include "ללא ספק" as filler spuriously matched Vendor,
+ * even though it has nothing to do with purchasing or suppliers. JS's \b
+ * doesn't bound Hebrew (same reason round 518's "מלאי", round 562's
+ * "כנס", round 563's "מנוי", round 564's "מוצר", round 565's "עובד", and
+ * round 567's "רכב" fixes needed lookahead/lookbehind), so this excludes
+ * "ספק" immediately preceded by those specific idiom words, while still
+ * matching real usage like "ספק"/"ספקים".
+ */
+test("Vendor's 'ספק' keyword doesn't spuriously match the unrelated 'doubt' idioms sharing the same spelling", async () => {
+  const provider = new HeuristicSpecProvider();
+
+  const noDoubtTasks = await provider.generate(
+    "אפליקציה לניהול משימות לעסק קטן. ללא ספק הצוות שלנו צריך את זה.",
+  );
+  assert.ok(
+    !noDoubtTasks.entities.some((e) => e.name === "Vendor"),
+    "'ללא ספק' (undoubtedly) alone must not spuriously match Vendor via a bare 'ספק' substring",
+  );
+
+  const noDoubtHelp = await provider.generate(
+    "אפליקציה לניהול משימות לעסק קטן. אין ספק שזה יעזור לנו.",
+  );
+  assert.ok(
+    !noDoubtHelp.entities.some((e) => e.name === "Vendor"),
+    "'אין ספק' (no doubt) alone must not spuriously match Vendor via a bare 'ספק' substring",
+  );
+
+  const inDoubt = await provider.generate(
+    "אפליקציה לניהול משימות לעסק קטן. בלי ספק זה ישתלם, אבל התוצאה מוטל בספק.",
+  );
+  assert.ok(
+    !inDoubt.entities.some((e) => e.name === "Vendor"),
+    "'בלי ספק'/'מוטל בספק' alone must not spuriously match Vendor via a bare 'ספק' substring",
+  );
+
+  // The real word still works, singular and plural (this description
+  // avoids this rule's other keywords -- "vendor", "procurement", etc. --
+  // so a match here can only come from "ספק"/"ספקים" itself).
+  const realVendor = await provider.generate("אנחנו עסק קטן שצריך לנהל ספק אחד שמספק לנו חומרי גלם.");
+  assert.ok(realVendor.entities.some((e) => e.name === "Vendor"), "'ספק' must still match Vendor");
+
+  const realVendors = await provider.generate("אנחנו עסק קטן שצריך לנהל ספקים ורכש.");
+  assert.ok(realVendors.entities.some((e) => e.name === "Vendor"), "'ספקים' must still match Vendor");
+});

@@ -1037,12 +1037,21 @@ export const DOMAIN_ENTITY_RULES: DomainEntityRule[] = [
   },
   {
     // "ספק"/"ספקים" (vendor/supplier) -- who the business buys FROM, the
-    // mirror image of Customer (who it sells TO). No existing keyword
-    // shares this root, and "supplier"/"vendor" don't collide with any
-    // short English keyword either.
+    // mirror image of Customer (who it sells TO). "supplier"/"vendor"
+    // don't collide with any short English keyword. But bare "ספק" is a
+    // true Hebrew homograph, not just an unbounded substring (round 571):
+    // it's also the ordinary word for "doubt", used in extremely common
+    // filler idioms like "ללא ספק"/"אין ספק"/"בלי ספק" (undoubtedly/no
+    // doubt) and "מוטל בספק" (in doubt) -- none about purchasing at all.
+    // JS has no \b for Hebrew (same reason round 518's "מלאי", round
+    // 562's "כנס", round 563's "מנוי", round 564's "מוצר", round 565's
+    // "עובד", and round 567's "רכב" needed lookahead/lookbehind), so this
+    // excludes "ספק" immediately preceded by those specific idiom words
+    // and excludes the "ות" plural suffix that marks "ספקות" (doubts),
+    // while still matching real usage like "ספק"/"ספקים".
     keywords: [
       "vendor", "vendors", "supplier", "suppliers", "procurement",
-      "ספק", "ספקים", "רכש",
+      /(?<!ללא )(?<!אין )(?<!בלי )(?<!מוטל ב)ספק(?!ות)/, "ספקים", "רכש",
     ],
     labelHe: "ספקים",
     descriptionHe: "גורם עסקי שהעסק קונה ממנו סחורה או שירותים.",
