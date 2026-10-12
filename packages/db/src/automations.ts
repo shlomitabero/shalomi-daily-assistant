@@ -225,3 +225,34 @@ export function deleteAutomationRule(db: ForgeDatabase, projectId: string, id: s
 export function deleteAutomationRulesForProject(db: ForgeDatabase, projectId: string): void {
   db.prepare("DELETE FROM automation_rules WHERE projectId = ?").run(projectId);
 }
+
+/**
+ * Called from the entity-removal route (routes/projects.ts), the same
+ * place that already prunes project.spec.screens for the deleted entity
+ * (round 553) -- without this, a rule created against the deleted entity
+ * stayed enabled forever, and deriveEntityName only dedupes against the
+ * entities that currently exist, so a *later, unrelated* entity reusing
+ * the same auto-derived name would silently resurrect it.
+ */
+export function deleteAutomationRulesForEntity(db: ForgeDatabase, projectId: string, entityName: string): void {
+  db.prepare("DELETE FROM automation_rules WHERE projectId = ? AND entityName = ?").run(projectId, entityName);
+}
+
+/**
+ * Called from the field-removal route. A rule can reference a field two
+ * ways -- as the field_equals trigger's own fieldName, or as a toMode:
+ * "field" destination's toField -- so both are checked. Scoped by
+ * entityName too, the same way deleteAutomationRulesForEntity is, since
+ * fieldName/toField are plain strings that could otherwise coincide with
+ * an unrelated entity's own field of the same name.
+ */
+export function deleteAutomationRulesForField(
+  db: ForgeDatabase,
+  projectId: string,
+  entityName: string,
+  fieldName: string,
+): void {
+  db.prepare(
+    "DELETE FROM automation_rules WHERE projectId = ? AND entityName = ? AND (fieldName = ? OR toField = ?)",
+  ).run(projectId, entityName, fieldName, fieldName);
+}

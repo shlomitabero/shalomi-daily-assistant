@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { ProductSpec } from "@forge/shared";
+import { ensureAutomationRulesTable, getAutomationRule, insertAutomationRule } from "./automations.js";
 import { ensureCheckpointsTable, insertCheckpoint } from "./checkpoints.js";
 import { openDatabase } from "./connection.js";
 import { applyMigrations, describeMigrationHazards, diffAndMigrate, generateCreateTableStatements } from "./migrate.js";
@@ -1013,4 +1014,90 @@ test("describeMigrationHazards reports nothing for new_table/new_column entries,
       " Note: entity_proj1_Order.customerId (Customer → Courier) kept pointing at the original related table — existing data was not re-linked." +
       " Note: entity_proj1_Order.driverId (→ Driver) is a relation field reusing a column that was never linked to anything — existing and new values in it are not protected against pointing at a record that doesn't exist.",
   );
+});
+
+/**
+ * Round 588: an automation rule referencing an entity or field diffAndMigrate
+ * removes from the spec used to stay in the automation_rules table forever,
+ * enabled and unaware anything changed -- harmless by itself (the record
+ * routes that would fire it already 404 via findEntity/findField), but
+ * deriveEntityName/deriveFieldName only dedupe against names that currently
+ * exist, so a LATER refine that reintroduces the same name resurrects the
+ * stale rule against an entity/field it was never actually written for.
+ */
+test("diffAndMigrate deletes automation rules for an entity removed from the spec", () => {
+  const db = openDatabase(":memory:");
+  ensureAutomationRulesTable(db);
+  applyMigrations(db, "proj1", spec);
+  const rule = insertAutomationRule(db, {
+    projectId: "proj1",
+    entityName: "Order",
+    trigger: "field_equals",
+    fieldName: "total",
+    fieldValue: "100",
+    actionType: "send_whatsapp",
+    toMode: "static",
+    toNumber: "+15551234567",
+    messageTemplate: "Order total hit {{total}}",
+  });
+
+  const nextSpec: ProductSpec = { ...spec, entities: [spec.entities[0]] };
+  diffAndMigrate(db, "proj1", spec, nextSpec);
+
+  assert.equal(getAutomationRule(db, "proj1", rule.id), undefined);
+});
+
+test("diffAndMigrate deletes an automation rule referencing a field removed from a surviving entity, as either its trigger field or its destination field, but leaves an unrelated rule alone", () => {
+  const db = openDatabase(":memory:");
+  ensureAutomationRulesTable(db);
+  applyMigrations(db, "proj1", spec);
+  // References "status" as the field_equals trigger.
+  const statusTriggerRule = insertAutomationRule(db, {
+    projectId: "proj1",
+    entityName: "Customer",
+    trigger: "field_equals",
+    fieldName: "status",
+    fieldValue: "Won",
+    actionType: "send_whatsapp",
+    toMode: "static",
+    toNumber: "+15551234567",
+    messageTemplate: "Deal won!",
+  });
+  // References "status" only as the toMode:"field" destination -- a
+  // different column than the trigger, same removed field.
+  const statusDestinationRule = insertAutomationRule(db, {
+    projectId: "proj1",
+    entityName: "Customer",
+    trigger: "record_created",
+    actionType: "send_whatsapp",
+    toMode: "field",
+    toField: "status",
+    messageTemplate: "New customer!",
+  });
+  // References "name", a field that survives the refine below -- must not
+  // be touched, proving this isn't just "every rule on the entity dies".
+  const survivingRule = insertAutomationRule(db, {
+    projectId: "proj1",
+    entityName: "Customer",
+    trigger: "field_equals",
+    fieldName: "name",
+    fieldValue: "Alice",
+    actionType: "send_whatsapp",
+    toMode: "static",
+    toNumber: "+15551234567",
+    messageTemplate: "Hi Alice!",
+  });
+
+  const nextSpec: ProductSpec = {
+    ...spec,
+    entities: [
+      { ...spec.entities[0], fields: spec.entities[0].fields.filter((f) => f.name !== "status") },
+      spec.entities[1],
+    ],
+  };
+  diffAndMigrate(db, "proj1", spec, nextSpec);
+
+  assert.equal(getAutomationRule(db, "proj1", statusTriggerRule.id), undefined);
+  assert.equal(getAutomationRule(db, "proj1", statusDestinationRule.id), undefined);
+  assert.ok(getAutomationRule(db, "proj1", survivingRule.id), "the rule on the surviving 'name' field must not be deleted");
 });

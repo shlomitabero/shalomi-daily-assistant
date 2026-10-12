@@ -114,6 +114,8 @@ export {
   recordAutomationRun,
   deleteAutomationRule,
   deleteAutomationRulesForProject,
+  deleteAutomationRulesForEntity,
+  deleteAutomationRulesForField,
   type AutomationRule,
   type AutomationTrigger,
   type AutomationActionType,

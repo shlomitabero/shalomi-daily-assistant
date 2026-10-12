@@ -1,5 +1,6 @@
 import type { Entity, Field, ProductSpec } from "@forge/shared";
 import type { ForgeDatabase } from "./connection.js";
+import { deleteAutomationRulesForEntity, deleteAutomationRulesForField, ensureAutomationRulesTable } from "./automations.js";
 import { listHistoricalEntityNames } from "./checkpoints.js";
 import { assertSafeIdentifier, quoteIdentifier, tableNameFor } from "./identifiers.js";
 import { ValidationError } from "./repository.js";
@@ -459,6 +460,39 @@ export function diffAndMigrate(
       changes.push({ type: "new_column", table, column: columnName });
     }
   });
+
+  // An entity or field this spec change (refine, the Debug Agent's retry,
+  // checkpoint restore) drops from the spec can leave a stale automation
+  // rule referencing a name that no longer exists -- harmless by itself,
+  // since the record routes that would fire it already 404 via
+  // findEntity/findField first. But deriveEntityName/deriveFieldName
+  // (routes/projects.ts) only dedupe against names that currently exist,
+  // so a LATER spec change that reintroduces the same name (plausible: an
+  // AI-regenerated spec for the same business tends to reconverge on the
+  // same obvious names, e.g. "Order"/"status") silently resurrects the
+  // stale rule against an entity/field it was never actually written
+  // for. Cleaned up here, not in the API routes, so every diffAndMigrate
+  // caller is covered uniformly, the same way this function's own
+  // migrations already are additive/removal-symmetric per call site.
+  // ensureAutomationRulesTable is idempotent (CREATE TABLE IF NOT
+  // EXISTS) -- called here rather than assumed, since diffAndMigrate is
+  // also exercised directly (migrate.test.ts) against a bare
+  // openDatabase(":memory:") that never goes through store.ts's own
+  // centralized table setup.
+  ensureAutomationRulesTable(db);
+  for (const prevEntity of previousSpec.entities) {
+    if (!entityNames.has(prevEntity.name)) {
+      deleteAutomationRulesForEntity(db, projectId, prevEntity.name);
+      continue;
+    }
+    const nextEntity = nextSpec.entities.find((e) => e.name === prevEntity.name)!;
+    const nextFieldNames = new Set(nextEntity.fields.map((f) => f.name));
+    for (const prevField of prevEntity.fields) {
+      if (!nextFieldNames.has(prevField.name)) {
+        deleteAutomationRulesForField(db, projectId, prevEntity.name, prevField.name);
+      }
+    }
+  }
 
   return changes;
 }
