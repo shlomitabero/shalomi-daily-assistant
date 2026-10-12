@@ -1043,7 +1043,13 @@ export const DOMAIN_ENTITY_RULES: DomainEntityRule[] = [
     // redundant bare word is just removed rather than regex-guarded.
     keywords: [
       "insurance claim", "insurance claims", "claims processing", "policy holder", "policyholder",
-      "תביעת ביטוח", "תביעות ביטוח", "פוליסת ביטוח",
+      "תביעת ביטוח", "תביעות ביטוח",
+      // "פוליסת ביטוח" (insurance policy) had no plural entry (round 579).
+      // It's the construct-state singular of "פוליסה"; the plural
+      // construct "פוליסות ביטוח" replaces the ה with ות mid-word, so
+      // "פוליסת" is not a substring of "פוליסות" -- the same ה→ות gap
+      // shape round 576 found for "עמותה"/"עמותות".
+      "פוליסת ביטוח", "פוליסות ביטוח",
     ],
     labelHe: "תביעות ביטוח",
     descriptionHe: "תביעה שהוגשה על ידי בעל פוליסה.",

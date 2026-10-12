@@ -1835,3 +1835,31 @@ test("Case's 'עורך דין'/'עורכת דין' keywords also match their plu
   const femSingular = await provider.generate("אפליקציה למעקב אחרי עורכת דין במשרד.");
   assert.ok(femSingular.entities.some((e) => e.name === "Case"), "'עורכת דין' (female singular) must still match Case");
 });
+
+/**
+ * Regression test for round 579's finding: InsuranceClaim's Hebrew
+ * keyword "פוליסת ביטוח" (insurance policy) had no plural entry. It's
+ * the construct-state singular of "פוליסה"; the plural construct
+ * "פוליסות ביטוח" replaces the ה with ות mid-word, so "פוליסת" is not a
+ * substring of "פוליסות" -- the same ה→ות gap shape round 576 found for
+ * "עמותה"/"עמותות". A description using only the plural matched no
+ * domain entity at all. The test sentences contain none of
+ * InsuranceClaim's other keywords ("insurance claim(s)", "claims
+ * processing", "policy holder"/"policyholder", "תביעת ביטוח"/"תביעות
+ * ביטוח"), isolating the policy keyword alone.
+ */
+test("InsuranceClaim's 'פוליסת ביטוח' keyword also matches its plural 'פוליסות ביטוח', which isn't a substring of the singular", async () => {
+  const provider = new HeuristicSpecProvider();
+
+  const pluralOnly = await provider.generate("המערכת מנהלת רשימה של פוליסות ביטוח של העסק ומעדכנת אותן כל חודש.");
+  assert.ok(
+    pluralOnly.entities.some((e) => e.name === "InsuranceClaim"),
+    "'פוליסות ביטוח' (insurance policies, plural) alone must match InsuranceClaim",
+  );
+
+  const singular = await provider.generate("המערכת מנהלת רשימה של פוליסת ביטוח של העסק ומעדכנת אותה כל חודש.");
+  assert.ok(
+    singular.entities.some((e) => e.name === "InsuranceClaim"),
+    "'פוליסת ביטוח' (singular) must still match InsuranceClaim",
+  );
+});
