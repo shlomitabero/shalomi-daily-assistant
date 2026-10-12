@@ -462,6 +462,15 @@ export const DOMAIN_ENTITY_RULES: DomainEntityRule[] = [
       // same collision class as Order's "order" fix above. \b-bounded so
       // "driver"/"drivers" still matches as a real standalone word.
       "courier", /\bdriver(s)?\b/, "delivery person", "שליח", "שליחים", "נהג", "נהגים",
+      // "delivery person" had no plural entry (round 584). Unlike this
+      // file's other missing-plural fixes (576-583, all Hebrew ה→ות or
+      // sofit-letter swaps, or an irregular Hebrew construct plural),
+      // this one is English: "person" has the irregular plural "people",
+      // a wholly different word with zero textual overlap with
+      // "person", so "delivery person" is not a substring of "delivery
+      // people" either way. A description using only the plural
+      // phrasing matched no Courier-specific keyword at all.
+      "delivery people",
     ],
     labelHe: "שליחים",
     descriptionHe: "מי שמבצע את המשלוח ללקוח.",

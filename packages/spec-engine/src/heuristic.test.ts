@@ -1980,3 +1980,35 @@ test("Course's 'כיתה' keyword also matches its plural 'כיתות', which is
     "'כיתה' (singular) must still match Course",
   );
 });
+
+/**
+ * Regression test for round 584's finding: Courier's English keyword
+ * "delivery person" had no plural entry. Unlike every other
+ * missing-plural fix in this file (rounds 576-583, all Hebrew ה→ות,
+ * sofit-letter, or construct-state gaps), this one is English: "person"
+ * has the irregular plural "people", a completely different word with
+ * zero textual overlap with "person", so "delivery person" is not a
+ * substring of "delivery people" either way. The test sentences
+ * contain none of Courier's other keywords ("courier", "driver(s)",
+ * "שליח"/"שליחים", "נהג"/"נהגים"), isolating the delivery-staff phrase
+ * alone.
+ */
+test("Courier's 'delivery person' keyword also matches its irregular plural 'delivery people', which isn't a substring of the singular", async () => {
+  const provider = new HeuristicSpecProvider();
+
+  const plural = await provider.generate(
+    "A food delivery app that tracks customers, orders, and delivery people who bring food to customers' homes.",
+  );
+  assert.ok(
+    plural.entities.some((e) => e.name === "Courier"),
+    "'delivery people' (plural) alone must match Courier",
+  );
+
+  const singular = await provider.generate(
+    "A food delivery app that tracks customers, orders, and a delivery person who brings food to customers' homes.",
+  );
+  assert.ok(
+    singular.entities.some((e) => e.name === "Courier"),
+    "'delivery person' (singular) must still match Courier",
+  );
+});
