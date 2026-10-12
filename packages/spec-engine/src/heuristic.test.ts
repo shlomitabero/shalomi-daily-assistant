@@ -1759,3 +1759,25 @@ test("Event's 'חתונה'/'חתונות' keywords don't spuriously match 'תח�
   const realWeddingsPlural = await provider.generate("אפליקציה לניהול חתונות ואירועים, כולל מקום וקיבולת.");
   assert.ok(realWeddingsPlural.entities.some((e) => e.name === "Event"), "'חתונות' must still match Event");
 });
+
+/**
+ * Regression test for round 576's finding: Donation's Hebrew keyword
+ * "עמותה" (nonprofit) had no plural entry. Unlike most of this file's
+ * Hebrew nouns, the plural "עמותות" replaces the final ה with ות rather
+ * than appending a suffix, so it is not a substring of "עמותה" the way
+ * "תרומה"/"תרומות" already are -- a description using only the plural
+ * matched no domain entity at all (it fell back to the generic Item
+ * entity), even though it is unambiguously describing nonprofits.
+ */
+test("Donation's 'עמותה' keyword also matches its plural 'עמותות', which isn't a substring of the singular", async () => {
+  const provider = new HeuristicSpecProvider();
+
+  const pluralOnly = await provider.generate("מערכת לניהול עמותות בארץ, כולל מעקב סטטוס.");
+  assert.ok(
+    pluralOnly.entities.some((e) => e.name === "Donation"),
+    "'עמותות' (nonprofits, plural) alone must match Donation",
+  );
+
+  const singular = await provider.generate("אפליקציה לניהול עמותה אחת, כולל מעקב סטטוס.");
+  assert.ok(singular.entities.some((e) => e.name === "Donation"), "'עמותה' (singular) must still match Donation");
+});

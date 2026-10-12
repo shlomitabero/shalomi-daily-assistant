@@ -954,9 +954,15 @@ export const DOMAIN_ENTITY_RULES: DomainEntityRule[] = [
     // reservation/shipping/order/stock/driver/patient/deals/worker/courses/
     // dish/product. \b-bounded, with the same "(s)?" plural handling those
     // fixes already use, so "donations" still matches.
+    //
+    // "עמותה" had no plural entry (round 576): unlike most of this file's
+    // Hebrew nouns, the plural "עמותות" replaces the final ה with ות rather
+    // than appending a suffix, so it is not a substring of "עמותה" the way
+    // "תרומה"/"תרומות" already are -- a description using only the plural
+    // matched no domain entity at all.
     keywords: [
       /\bdonations?\b/, "donor", "nonprofit", "fundraising campaign",
-      "תרומה", "תרומות", "עמותה",
+      "תרומה", "תרומות", "עמותה", "עמותות",
     ],
     labelHe: "תרומות",
     descriptionHe: "תרומה שנתרמה על ידי תורם.",
