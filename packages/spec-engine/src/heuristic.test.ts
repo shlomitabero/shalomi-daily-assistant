@@ -122,6 +122,22 @@ test("asks about payments for a membership/subscription description phrased with
   assert.equal(paymentQuestion!.recommendation, "Stripe");
 });
 
+test("asks about payments (recommending Stripe) for a rental-business description, even though it names none of PAYMENT_KEYWORDS", async () => {
+  // "tool rental"/"rental business" match the Rental entity but share no
+  // substring with "payment"/"billing"/"invoice"/"checkout"/"stripe"/
+  // "subscription" -- renting items out for a fee is plainly a paid
+  // transaction, so recommending "No payments" here would be actively
+  // wrong, not just an incomplete guess. Regression test for round 566's
+  // finding that Rental (added after BILLING_ENTITY_NAMES was introduced)
+  // was never added to that set.
+  const provider = new HeuristicSpecProvider();
+  const spec = await provider.generate("A tool rental business for a hardware store.");
+  assert.deepEqual(spec.entities.map((e) => e.name), ["Rental"]);
+  const paymentQuestion = spec.openQuestions.find((q) => q.question.toLowerCase().includes("payment"));
+  assert.ok(paymentQuestion);
+  assert.equal(paymentQuestion!.recommendation, "Stripe");
+});
+
 test("does not ask about payments for a clothing-store description mentioning 'striped' shirts, but still asks when 'stripe' itself is used", async () => {
   // Regression test for a real bug found by a round 460 Explore survey:
   // PAYMENT_KEYWORDS's bare "stripe" hint matched via plain .includes(),

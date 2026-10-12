@@ -59,8 +59,15 @@ const PAYMENT_KEYWORDS: (string | RegExp)[] = [
  * entities will keep getting added over time (see domainEntities.ts) and a
  * keyword-only check would need updating in lockstep forever; checking the
  * entity itself is the one place this can't silently drift out of sync.
+ *
+ * Round 566: this list itself can still drift out of sync with
+ * domainEntities.ts -- Rental (added later, see round 57's own changelog)
+ * was never added here, so a rental-business description ("rent out tools
+ * to customers") matched only Rental and got recommended "No payments",
+ * even though renting items out for a fee is definitionally a paid
+ * transaction. Added "Rental" below.
  */
-const BILLING_ENTITY_NAMES = new Set(["Invoice", "Order", "Donation", "Subscription"]);
+const BILLING_ENTITY_NAMES = new Set(["Invoice", "Order", "Donation", "Subscription", "Rental"]);
 
 interface HebrewLabels {
   labelHe: string;
