@@ -1955,3 +1955,28 @@ test("MenuItem's 'בית קפה' keyword also matches its irregular plural 'בת
     "'בית קפה' (singular) must still match MenuItem",
   );
 });
+
+/**
+ * Regression test for round 583's finding: Course's Hebrew keyword
+ * "כיתה" (classroom/class) had no plural entry. Its plural "כיתות"
+ * replaces the ה with ות mid-word, the same construct-state gap shape
+ * rounds 576-582 found elsewhere in this file. The test sentences
+ * contain none of Course's other keywords ("courses", "curriculum",
+ * "lesson(s)", "קורס"/"קורסים", "שיעור"/"שיעורים"), isolating the
+ * classroom phrase alone.
+ */
+test("Course's 'כיתה' keyword also matches its plural 'כיתות', which isn't a substring of the singular", async () => {
+  const provider = new HeuristicSpecProvider();
+
+  const pluralOnly = await provider.generate("ניהול כיתות בבית ספר, עם מעקב סטטוס.");
+  assert.ok(
+    pluralOnly.entities.some((e) => e.name === "Course"),
+    "'כיתות' (classes, plural) alone must match Course",
+  );
+
+  const singular = await provider.generate("ניהול כיתה אחת בבית ספר, עם מעקב סטטוס.");
+  assert.ok(
+    singular.entities.some((e) => e.name === "Course"),
+    "'כיתה' (singular) must still match Course",
+  );
+});

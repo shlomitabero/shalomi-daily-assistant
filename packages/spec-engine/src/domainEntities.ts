@@ -597,7 +597,15 @@ export const DOMAIN_ENTITY_RULES: DomainEntityRule[] = [
     // not adding a singular "course" keyword alongside it: "course" alone
     // would collide with "of course" and "golf course", both far more
     // common than any real education-app phrasing that needs it.
-    keywords: [/\bcourses\b/, "curriculum", "lesson", "lessons", "קורס", "קורסים", "שיעור", "שיעורים", "כיתה"],
+    keywords: [
+      /\bcourses\b/, "curriculum", "lesson", "lessons", "קורס", "קורסים", "שיעור", "שיעורים", "כיתה",
+      // "כיתה" (classroom/class) had no plural entry (round 583). Its
+      // plural "כיתות" swaps the word-final ה for ות mid-word, the same
+      // construct-state gap shape rounds 576-582 already found elsewhere
+      // in this file. A plural-only phrasing matched no Course-specific
+      // keyword at all.
+      "כיתות",
+    ],
     labelHe: "קורסים",
     descriptionHe: "קורס או שיעור שהעסק מלמד.",
     fieldLabelsHe: { name: "שם הקורס", instructor: "מדריך/ה", startDate: "תאריך התחלה", capacity: "מקום למספר תלמידים" },
