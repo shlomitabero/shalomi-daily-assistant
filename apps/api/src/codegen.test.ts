@@ -1040,7 +1040,10 @@ test("the exported EntityView's table toolbar has one filter dropdown per qualif
   assert.match(entityViewJsx, /function findFilterableEnumFields\(fields\) \{/);
   assert.match(entityViewJsx, /function findFilterableFields\(fields\) \{/);
   assert.match(entityViewJsx, /const filterableFields = useMemo\(\(\) => findFilterableFields\(entity\.fields\), \[entity\.fields\]\);/);
-  assert.match(entityViewJsx, /const \[fieldFilters, setFieldFilters\] = useState\(\(\) => getPersistedFieldFilters\(entity\.name\)\);/);
+  assert.match(
+    entityViewJsx,
+    /const \[fieldFilters, setFieldFilters\] = useState\(\(\) => sanitizeFieldFilters\(getPersistedFieldFilters\(entity\.name\), entity\.fields\)\);/,
+  );
   assert.match(entityViewJsx, /\{filterableFields\.map\(\(f\) => \(/);
   assert.match(entityViewJsx, /className="entity-status-filter"/);
   // The filter must actually apply to visibleRecords, not just render inert dropdowns
@@ -7824,6 +7827,70 @@ test("the exported EntityView's per-field enum filter actually survives an unmou
         "the restored filter must actually narrow the rendered rows again, not just show as selected while listing everything",
       );
       secondMount.unmount();
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    cleanup();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
+ * Round 570: a stale fieldFilters entry naming a field the current export's
+ * entity no longer has -- reachable without any live refine (this exported
+ * app's schema is frozen at export time) by loading a newer export of the
+ * same project in a browser that still holds an older export's localStorage
+ * for that origin, keyed only by entity name with no export-version
+ * dimension (the same reachability path round 509 already established for
+ * the sibling hiddenFields bug). Before this fix, visibleRecords' own
+ * Object.entries(fieldFilters).every(...) check hid EVERY record once the
+ * filtered field no longer existed on any of them (r[fieldName] becomes
+ * undefined while the stale value stays truthy), with no "Clear filters"
+ * button to recover if that field was the entity's only filterable one.
+ */
+test("the exported EntityView drops a stale fieldFilters entry naming a field the current entity no longer has, instead of hiding every record with no recovery", async () => {
+  const files = generateExportFiles(project);
+  const dir = writeGeneratedWebComponent(files);
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async () => ({
+    ok: true,
+    status: 200,
+    json: async () => ({
+      records: [
+        { id: 1, name: "Alice", status: "New" },
+        { id: 2, name: "Bob", status: "Won" },
+      ],
+    }),
+  })) as typeof fetch;
+
+  try {
+    await withRealLocalStorage(async () => {
+      // Simulates an older export's leftover filter naming a field
+      // ("priority") the current export's Customer entity doesn't have.
+      localStorage.setItem("forge_field_filters", JSON.stringify({ Customer: { priority: "high" } }));
+
+      const { EntityView } = await import(path.join(dir, "web", "src", "components", "EntityView.jsx"));
+      const customerEntity = project.spec.entities.find((e) => e.name === "Customer")!;
+      const props = {
+        entity: customerEntity,
+        highlightRecordId: null,
+        onHighlightHandled: () => {},
+        onJumpToRecord: () => {},
+        onRecordCountChange: () => {},
+      };
+
+      const { container } = render(React.createElement(EntityView, props));
+      for (let i = 0; i < 40; i++) {
+        if (container.querySelectorAll("tbody tr").length > 0) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+      assert.equal(
+        container.querySelectorAll("tbody tr").length,
+        2,
+        "both records must still render -- a stale filter naming a removed field must never hide every record",
+      );
     });
   } finally {
     globalThis.fetch = originalFetch;

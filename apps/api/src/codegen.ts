@@ -1152,6 +1152,27 @@ function getPersistedFieldFilters(entityName) {
   const filters = store[entityName];
   return filters && typeof filters === "object" && !Array.isArray(filters) ? filters : {};
 }
+// Drops any persisted filter naming a field entity.fields no longer has.
+// The live preview's own round-493 fix only needed a live-refine
+// re-validation effect, since its schema can change while a tab stays
+// mounted -- this exported app's schema is frozen at export time, so no
+// such effect runs here either, but round 509 already established a
+// different, simpler reachability path for the same stale-localStorage
+// shape: loading a newer export of the same project in a browser that
+// still holds an older export's localStorage for that origin (keyed only
+// by entity name, with no export-version dimension). A stale filter here
+// doesn't just render a wrong value -- visibleRecords' own .every() check
+// hides EVERY record once the filtered field no longer exists on any of
+// them, with no visible "Clear filters" button to recover if that was the
+// entity's only filterable field (round 570).
+function sanitizeFieldFilters(filters, fields) {
+  const fieldNames = new Set(fields.map((f) => f.name));
+  const cleaned = {};
+  for (const [name, value] of Object.entries(filters)) {
+    if (fieldNames.has(name)) cleaned[name] = value;
+  }
+  return cleaned;
+}
 function setPersistedFieldFilters(entityName, filters) {
   const store = readFieldFiltersStore();
   const cleaned = {};
@@ -2635,7 +2656,7 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
   const [editingId, setEditingId] = useState(null);
   const [search, setSearch] = useState("");
   const [recentSearches, setRecentSearches] = useState(() => getEntityRecentSearches(entity.name));
-  const [fieldFilters, setFieldFilters] = useState(() => getPersistedFieldFilters(entity.name));
+  const [fieldFilters, setFieldFilters] = useState(() => sanitizeFieldFilters(getPersistedFieldFilters(entity.name), entity.fields));
   const [groupFieldName, setGroupFieldName] = useState(() => getPersistedGroupField(entity.name));
   const [collapsedGroups, setCollapsedGroups] = useState(() => new Set(getPersistedCollapsedGroups(entity.name, groupFieldName)));
   const [collapsedBoardColumns, setCollapsedBoardColumns] = useState(
@@ -2819,7 +2840,7 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
     setEditingId(null);
     setSearch("");
     setRecentSearches(getEntityRecentSearches(entity.name));
-    setFieldFilters(getPersistedFieldFilters(entity.name));
+    setFieldFilters(sanitizeFieldFilters(getPersistedFieldFilters(entity.name), entity.fields));
     setGroupFieldName(getPersistedGroupField(entity.name));
     setSortKeys(getPersistedSortKeys(entity.name));
     setViewMode(getPersistedViewMode(entity.name));
