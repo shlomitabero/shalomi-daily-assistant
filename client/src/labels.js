@@ -40,3 +40,12 @@ const RISK_LEVEL_LABEL = { low: 'נמוכה', medium: 'בינונית', high: '�
 export function riskLevelLabel(level) {
   return RISK_LEVEL_LABEL[level] ?? level;
 }
+
+// Paper-trade side ('long'/'short') already had a Hebrew <select> on the
+// Financial page's trade form, but the trade history list below it showed
+// the same raw English value next to the symbol.
+const SIDE_LABEL = { long: 'לונג', short: 'שורט' };
+
+export function sideLabel(side) {
+  return SIDE_LABEL[side] ?? side;
+}

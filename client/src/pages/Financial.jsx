@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { api } from '../api.js';
+import { sideLabel } from '../labels.js';
 
 export default function Financial() {
   const [watchlist, setWatchlist] = useState([]);
@@ -85,7 +86,7 @@ export default function Financial() {
         <h2>עסקאות מדומות אחרונות</h2>
         {trades.map((t) => (
           <div key={t.id} className="opp-row">
-            <span>{t.symbol} ({t.side})</span>
+            <span>{t.symbol} ({sideLabel(t.side)})</span>
             <span className={t.netPnl >= 0 ? 'positive' : 'negative'}>${t.netPnl.toFixed(2)} <span className="demo-badge">סימולציה</span></span>
           </div>
         ))}
