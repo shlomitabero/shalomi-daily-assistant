@@ -1781,3 +1781,28 @@ test("Donation's 'עמותה' keyword also matches its plural 'עמותות', wh
   const singular = await provider.generate("אפליקציה לניהול עמותה אחת, כולל מעקב סטטוס.");
   assert.ok(singular.entities.some((e) => e.name === "Donation"), "'עמותה' (singular) must still match Donation");
 });
+
+/**
+ * Regression test for round 577's finding: Vehicle's Hebrew keyword
+ * "מוסך" (garage) had no plural entry. Its plural "מוסכים" swaps the
+ * word-final sofit-kaf ("ך") for a regular kaf ("כ") -- a different
+ * Unicode character -- so "מוסך" is not a substring of "מוסכים" the way
+ * most of this file's Hebrew nouns are of their own plurals. A
+ * description using only the plural ("רשת מוסכים") matched no domain
+ * entity at all. The test sentences deliberately avoid every other
+ * Vehicle keyword ("רכב", "מכונאי", "כלי רכב", "garage", "mechanic", "car
+ * dealership") so the assertion isolates "מוסך"/"מוסכים" alone, the same
+ * vacuous-test pitfall round 576's own first test attempt fell into.
+ */
+test("Vehicle's 'מוסך' keyword also matches its plural 'מוסכים', which isn't a substring of the singular", async () => {
+  const provider = new HeuristicSpecProvider();
+
+  const pluralOnly = await provider.generate("אפליקציה לניהול רשת מוסכים ברחבי הארץ, עם מעקב סטטוס.");
+  assert.ok(
+    pluralOnly.entities.some((e) => e.name === "Vehicle"),
+    "'מוסכים' (garages, plural) alone must match Vehicle",
+  );
+
+  const singular = await provider.generate("אפליקציה לניהול מוסך אחד בעיר, עם מעקב סטטוס.");
+  assert.ok(singular.entities.some((e) => e.name === "Vehicle"), "'מוסך' (singular) must still match Vehicle");
+});

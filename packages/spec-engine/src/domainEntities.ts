@@ -714,7 +714,14 @@ export const DOMAIN_ENTITY_RULES: DomainEntityRule[] = [
       // immediately followed by an optional "ו" then "ת" (covering both
       // "רכבת" and "רכבות"), while still matching real usage like "רכב",
       // "רכבים" (vehicles, plural), "ברכב", and "כלי רכב".
-      /רכב(?!ו?ת)/, "מוסך", "מכונאי", "כלי רכב",
+      /רכב(?!ו?ת)/,
+      // Bare "מוסך" (garage, round 577) had no plural entry. Its plural
+      // "מוסכים" swaps the word-final sofit-kaf ("ך") for a regular kaf
+      // ("כ") -- a different Unicode character -- so "מוסך" is not a
+      // substring of "מוסכים" the way most of this file's Hebrew nouns
+      // are of their own plurals. A description using only the plural
+      // ("רשת מוסכים") matched no domain entity at all.
+      "מוסך", "מוסכים", "מכונאי", "כלי רכב",
     ],
     labelHe: "כלי רכב",
     descriptionHe: "רכב שהעסק מטפל בו, משכיר, או עוקב אחריו.",
