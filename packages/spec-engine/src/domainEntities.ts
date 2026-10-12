@@ -503,6 +503,13 @@ export const DOMAIN_ENTITY_RULES: DomainEntityRule[] = [
       /\b(?<!intellectual\s)(?<!lost[\s-])propert(?:y|ies)\b(?!\s+damage\b)/,
       "real estate", /\blisting(s)?\b/, "apartment for rent", "נכס", "נכסים",
       "נדל\"ן", "דירה למכירה", "דירה להשכרה",
+      // "דירה למכירה"/"דירה להשכרה" (apartment for sale/rent) had no plural
+      // entries (round 580). Their plurals "דירות למכירה"/"דירות להשכרה"
+      // swap the word-final ה for ות mid-word, the same construct-state gap
+      // shape rounds 576-579 already found for "עמותה"/"עמותות",
+      // "עורכת דין"/"עורכות דין", and "פוליסת ביטוח"/"פוליסות ביטוח". A
+      // plural-only phrasing matched no domain entity at all.
+      "דירות למכירה", "דירות להשכרה",
     ],
     labelHe: "נכסים",
     descriptionHe: "נכס נדל\"ן למכירה או להשכרה.",

@@ -1863,3 +1863,42 @@ test("InsuranceClaim's 'פוליסת ביטוח' keyword also matches its plural
     "'פוליסת ביטוח' (singular) must still match InsuranceClaim",
   );
 });
+
+/**
+ * Regression test for round 580's finding: Property's Hebrew keywords
+ * "דירה למכירה"/"דירה להשכרה" (apartment for sale/rent) had no plural
+ * entries. The plurals "דירות למכירה"/"דירות להשכרה" replace the ה with
+ * ות mid-word, the same construct-state gap shape rounds 576-579 found
+ * for "עמותה"/"עמותות", "מוסך"/"מוסכים", "עורך/עורכת דין", and "פוליסת
+ * ביטוח". A description using only the plural matched no domain entity
+ * at all. The test sentences contain none of Property's other keywords
+ * ("property"/"properties", "real estate", "listing(s)", "apartment for
+ * rent", "נכס"/"נכסים", "נדל\"ן"), isolating each phrase alone.
+ */
+test("Property's 'דירה למכירה'/'דירה להשכרה' keywords also match their plurals 'דירות למכירה'/'דירות להשכרה', which aren't substrings of the singulars", async () => {
+  const provider = new HeuristicSpecProvider();
+
+  const pluralSale = await provider.generate("האפליקציה מרכזת דירות למכירה בעיר אחת, עם מעקב סטטוס.");
+  assert.ok(
+    pluralSale.entities.some((e) => e.name === "Property"),
+    "'דירות למכירה' (apartments for sale, plural) alone must match Property",
+  );
+
+  const singularSale = await provider.generate("האפליקציה מרכזת דירה למכירה אחת בעיר, עם מעקב סטטוס.");
+  assert.ok(
+    singularSale.entities.some((e) => e.name === "Property"),
+    "'דירה למכירה' (singular) must still match Property",
+  );
+
+  const pluralRent = await provider.generate("האפליקציה מרכזת דירות להשכרה בעיר אחת, עם מעקב סטטוס.");
+  assert.ok(
+    pluralRent.entities.some((e) => e.name === "Property"),
+    "'דירות להשכרה' (apartments for rent, plural) alone must match Property",
+  );
+
+  const singularRent = await provider.generate("האפליקציה מרכזת דירה להשכרה אחת בעיר, עם מעקב סטטוס.");
+  assert.ok(
+    singularRent.entities.some((e) => e.name === "Property"),
+    "'דירה להשכרה' (singular) must still match Property",
+  );
+});
