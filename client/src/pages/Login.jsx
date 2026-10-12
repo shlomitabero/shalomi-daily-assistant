@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext.jsx';
 
 export default function Login() {
-  const { login } = useAuth();
+  const { login, sessionExpired } = useAuth();
   const navigate = useNavigate();
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
@@ -28,6 +28,7 @@ export default function Login() {
       <div className="auth-card">
         <div className="brand">⚡ PROFIT AI</div>
         <p className="hint">מנוע הכנסות אוטונומי — כלי אישי, לא ציבורי.</p>
+        {sessionExpired && <p className="hint" style={{ color: 'var(--accent)' }}>ההתחברות הקודמת פגה — יש להתחבר מחדש.</p>}
         <form onSubmit={onSubmit}>
           <label>
             סיסמה
