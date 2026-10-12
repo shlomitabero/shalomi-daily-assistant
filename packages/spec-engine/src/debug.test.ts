@@ -59,6 +59,33 @@ test("requestSpecFix still extracts the JSON when the model adds prose around a 
   assert.equal(result.entities[0].name, "Customer");
 });
 
+test("requestSpecFix correctly parses a clean JSON response whose own entity description contains a markdown code fence, matching anthropic.ts's own fix for the same bug", async () => {
+  const fixedSpecWithFenceInDescription = {
+    ...brokenSpec,
+    entities: [
+      {
+        name: "Snippet",
+        fields: [{ name: "fullName", type: "text", required: true }],
+        description: "Use ```js\ncode\n``` for formatting",
+      },
+    ],
+  };
+  const fakeFetch = (async () =>
+    new Response(JSON.stringify({ content: [{ type: "text", text: JSON.stringify(fixedSpecWithFenceInDescription) }] }), {
+      status: 200,
+    })) as unknown as typeof fetch;
+  const result = await requestSpecFix(brokenSpec, "some error", { apiKey: "test-key", fetchImpl: fakeFetch });
+  assert.equal(result.entities[0].name, "Snippet");
+});
+
+test("requestSpecFix correctly parses JSON preceded by prose that itself contains a brace, matching anthropic.ts's own fix for the same bug", async () => {
+  const withBracyProse = "Note: the schema format uses {} for objects. " + JSON.stringify(brokenSpec);
+  const fakeFetch = (async () =>
+    new Response(JSON.stringify({ content: [{ type: "text", text: withBracyProse }] }), { status: 200 })) as unknown as typeof fetch;
+  const result = await requestSpecFix(brokenSpec, "some error", { apiKey: "test-key", fetchImpl: fakeFetch });
+  assert.equal(result.entities[0].name, "Customer");
+});
+
 test("requestSpecFix throws a descriptive error when the response body isn't valid JSON, instead of an unwrapped SyntaxError", async () => {
   const fakeFetch = (async () => new Response("not json at all {", { status: 200 })) as unknown as typeof fetch;
   await assert.rejects(

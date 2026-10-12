@@ -135,21 +135,44 @@ export class AnthropicSpecProvider implements SpecProvider {
 
 /**
  * Strips markdown code fences and any surrounding prose if the model wrapped
- * or introduced its JSON despite instructions. The fence regex is not
- * anchored to the whole string, so a fenced block preceded/followed by prose
- * (e.g. "Here's the spec:\n```json\n{...}\n```") still gets unwrapped
- * instead of being handed to JSON.parse as-is. If there's no fenced block at
- * all, falls back to the substring between the first "{" and the last "}".
+ * or introduced its JSON despite instructions. First tries the whole
+ * response as-is: when it's already valid JSON, every heuristic below is
+ * skipped, which matters because the fence regex otherwise has no way to
+ * tell a real wrapping fence from a markdown fence that merely appears
+ * inside a genuine JSON string value (e.g. an entity description containing
+ * a code sample) -- round 568, found by fuzzing but misfiled in round 533 as
+ * a duplicate of this same function's copy in debug.ts, which was never
+ * actually fixed either. The fence regex is not anchored to the whole
+ * string, so a fenced block preceded/followed by prose (e.g. "Here's the
+ * spec:\n```json\n{...}\n```") still gets unwrapped instead of being handed
+ * to JSON.parse as-is. If there's no fenced block at all, falls back to
+ * scanning each "{" in turn (not just the first) paired with the last "}",
+ * so prose preceding the real JSON and containing its own brace (also round
+ * 568) is skipped in favor of whichever "{" actually yields valid JSON.
  */
 function extractJson(text: string): string {
   const trimmed = text.trim();
+  try {
+    JSON.parse(trimmed);
+    return trimmed;
+  } catch {
+    // not valid JSON as-is; fall through to the heuristics below
+  }
+
   const fenceMatch = trimmed.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
   if (fenceMatch) return fenceMatch[1];
 
-  const start = trimmed.indexOf("{");
   const end = trimmed.lastIndexOf("}");
-  if (start !== -1 && end !== -1 && end > start) {
-    return trimmed.slice(start, end + 1);
+  if (end !== -1) {
+    for (let start = trimmed.indexOf("{"); start !== -1 && start < end; start = trimmed.indexOf("{", start + 1)) {
+      const candidate = trimmed.slice(start, end + 1);
+      try {
+        JSON.parse(candidate);
+        return candidate;
+      } catch {
+        // this "{" wasn't the real start; try the next one
+      }
+    }
   }
   return trimmed;
 }

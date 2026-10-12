@@ -23,21 +23,35 @@ export interface RequestSpecFixOptions {
 
 /**
  * Strips markdown code fences and any surrounding prose if the model wrapped
- * or introduced its JSON despite instructions. Not anchored to the whole
- * string, so a fenced block preceded/followed by prose still gets unwrapped
- * (see the identical fix and its rationale in anthropic.ts). Falls back to
- * the substring between the first "{" and the last "}" when there's no
- * fenced block at all.
+ * or introduced its JSON despite instructions. First tries the whole
+ * response as-is, skipping every heuristic below when it's already valid
+ * JSON, and falls back to scanning each "{" in turn (not just the first)
+ * paired with the last "}" (see the identical fix and its rationale in
+ * anthropic.ts -- round 568).
  */
 function extractJson(text: string): string {
   const trimmed = text.trim();
+  try {
+    JSON.parse(trimmed);
+    return trimmed;
+  } catch {
+    // not valid JSON as-is; fall through to the heuristics below
+  }
+
   const fenceMatch = trimmed.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
   if (fenceMatch) return fenceMatch[1];
 
-  const start = trimmed.indexOf("{");
   const end = trimmed.lastIndexOf("}");
-  if (start !== -1 && end !== -1 && end > start) {
-    return trimmed.slice(start, end + 1);
+  if (end !== -1) {
+    for (let start = trimmed.indexOf("{"); start !== -1 && start < end; start = trimmed.indexOf("{", start + 1)) {
+      const candidate = trimmed.slice(start, end + 1);
+      try {
+        JSON.parse(candidate);
+        return candidate;
+      } catch {
+        // this "{" wasn't the real start; try the next one
+      }
+    }
   }
   return trimmed;
 }

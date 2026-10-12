@@ -53,6 +53,38 @@ test("generate() still extracts the JSON when the model adds prose around a fenc
   assert.equal(spec.entities[0]!.name, "Customer");
 });
 
+test("generate() correctly parses a clean JSON response whose own entity description contains a markdown code fence, instead of the fence regex matching inside the string value", async () => {
+  const specWithFenceInDescription = {
+    ...VALID_SPEC,
+    entities: [
+      {
+        name: "Snippet",
+        fields: [{ name: "description", type: "longtext", required: false }],
+        description: "Use ```js\ncode\n``` for formatting",
+      },
+    ],
+  };
+  const fakeFetch = (async () =>
+    new Response(JSON.stringify({ content: [{ type: "text", text: JSON.stringify(specWithFenceInDescription) }] }), {
+      status: 200,
+    })) as unknown as typeof fetch;
+
+  const provider = new AnthropicSpecProvider({ apiKey: "test-key", fetchImpl: fakeFetch });
+  const spec = await provider.generate("a code-snippet sharing app");
+  assert.equal(spec.entities[0]!.name, "Snippet");
+});
+
+test("generate() correctly parses JSON preceded by prose that itself contains a brace, instead of indexOf grabbing the prose's own brace", async () => {
+  const withBracyProse =
+    "Note: the schema format uses {} for objects. " + JSON.stringify(VALID_SPEC);
+  const fakeFetch = (async () =>
+    new Response(JSON.stringify({ content: [{ type: "text", text: withBracyProse }] }), { status: 200 })) as unknown as typeof fetch;
+
+  const provider = new AnthropicSpecProvider({ apiKey: "test-key", fetchImpl: fakeFetch });
+  const spec = await provider.generate("a CRM for my business");
+  assert.equal(spec.entities[0]!.name, "Customer");
+});
+
 test("generate() throws a descriptive error when the response body isn't valid JSON, instead of an unwrapped SyntaxError", async () => {
   const fakeFetch = (async () => new Response("not json at all {", { status: 200 })) as unknown as typeof fetch;
   const provider = new AnthropicSpecProvider({ apiKey: "test-key", fetchImpl: fakeFetch });
