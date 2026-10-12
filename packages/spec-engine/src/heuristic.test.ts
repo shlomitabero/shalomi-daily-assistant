@@ -1691,3 +1691,36 @@ test("InsuranceClaim's 'תביעה' keyword doesn't spuriously match the generic
   const realInsurancePlural = await provider.generate("אפליקציה לטיפול בתביעות ביטוח מבעלי פוליסה");
   assert.ok(realInsurancePlural.entities.some((e) => e.name === "InsuranceClaim"), "'תביעות ביטוח' must still match InsuranceClaim");
 });
+
+/**
+ * Regression test for round 574's finding: Employee's bare "staff"
+ * keyword (used both in DOMAIN_ENTITY_RULES and ROLE_RULES) is a
+ * substring of "Staffordshire" (the dog breed) -- a plain dog-breeding
+ * app description had nothing to do with HR/staff management, so it
+ * spuriously fabricated both an Employee entity AND an Employee role.
+ * Fixed with the same `\b`-bounded RegExp pattern this file's own
+ * "worker"/"coworker" fix (round 446) already uses for the identical
+ * collision shape, right next to it in the same keyword arrays.
+ */
+test("Employee's 'staff' keyword doesn't spuriously match 'Staffordshire', for both the entity and the role", async () => {
+  const provider = new HeuristicSpecProvider();
+
+  const dogBreeding = await provider.generate(
+    "An app to track Staffordshire Terrier puppies I breed and sell, including their vaccination records and buyer info.",
+  );
+  assert.ok(
+    !dogBreeding.entities.some((e) => e.name === "Employee"),
+    "'Staffordshire' alone must not spuriously match Employee via a bare 'staff' substring",
+  );
+  assert.ok(
+    !dogBreeding.roles.includes("Employee"),
+    "'Staffordshire' alone must not spuriously add an Employee role via a bare 'staff' substring",
+  );
+
+  // The real HR/staff term still works, for both the entity and the role
+  // (this description avoids the rule's other keywords -- "employee",
+  // "worker", etc. -- so a match here can only come from "staff" itself).
+  const staffApp = await provider.generate("An app to manage our retail staff and their shift schedules.");
+  assert.ok(staffApp.entities.some((e) => e.name === "Employee"), "'staff' must still match Employee");
+  assert.ok(staffApp.roles.includes("Employee"), "'staff' must still add the Employee role");
+});

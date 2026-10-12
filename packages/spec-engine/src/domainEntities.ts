@@ -166,8 +166,12 @@ export const DOMAIN_ENTITY_RULES: DomainEntityRule[] = [
     // Employee entity for purely personal app descriptions. `\b`-bounded
     // here, same fix already applied to order/stock/driver/patient/deals
     // above for the identical collision shape.
+    // "staff" (round 574): the same bare-substring shape, this time a
+    // match on "Staffordshire" (the dog breed) -- a dog-breeding app
+    // description had nothing to do with HR/staff management either.
+    // `\b`-bounded the same way "worker" already is, right above.
     keywords: [
-      "employee", "staff", "team member", /\bworkers?\b/,
+      "employee", /\bstaff\b/, "team member", /\bworkers?\b/,
       // Bare "עובד"/"עובדת"/"עובדים" (round 565) are substrings of the
       // pu'al passive-participle adjective "מעובד"/"מעובדת"/"מעובדים"/
       // "מעובדות" ("processed", as in processed food/data/materials), an
@@ -1302,9 +1306,11 @@ export const ROLE_RULES: Record<string, RoleRule> = {
   // Same bare-substring collision as the Employee entity rule above
   // ("coworker" contains "worker") -- \b-bounded here too. Also same
   // pu'al "מעובד" collision (round 565) as the Employee entity rule's own
-  // Hebrew keywords -- lookbehind-bounded here too.
+  // Hebrew keywords -- lookbehind-bounded here too. Also same "staff"/
+  // "Staffordshire" collision (round 574) as the Employee entity rule's
+  // own fix above -- \b-bounded here too.
   Employee: {
-    keywords: ["employee", "staff", /\bworkers?\b/, "team member", /(?<!מ)עובד/, /(?<!מ)עובדת/, /(?<!מ)עובדים/, "צוות"],
+    keywords: ["employee", /\bstaff\b/, /\bworkers?\b/, "team member", /(?<!מ)עובד/, /(?<!מ)עובדת/, /(?<!מ)עובדים/, "צוות"],
     labelHe: "עובד/ת",
   },
   Customer: { keywords: ["customer portal", "client portal", "self-service", "פורטל לקוחות", "גישת לקוחות"], labelHe: "לקוח/ה" },
