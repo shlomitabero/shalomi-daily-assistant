@@ -844,6 +844,12 @@ export const DOMAIN_ENTITY_RULES: DomainEntityRule[] = [
     keywords: [
       "equipment rental", "rent out", "rental business", "tool rental", "gear rental",
       "ציוד להשכרה", "השכרת ציוד", "השכרת רכב",
+      // "השכרת ציוד"/"השכרת רכב" (construct-state singulars) had no plural
+      // entry (round 585). Their plurals "השכרות ציוד"/"השכרות רכב" swap the
+      // word-final ת for ות mid-word, the same construct-state gap shape
+      // rounds 576-584 already found elsewhere in this file. A plural-only
+      // phrasing matched no Rental-specific keyword at all.
+      "השכרות ציוד", "השכרות רכב",
     ],
     labelHe: "השכרות",
     descriptionHe: "פריט שהושכר ללקוח לתקופה מוגדרת.",

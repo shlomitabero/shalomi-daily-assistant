@@ -2012,3 +2012,31 @@ test("Courier's 'delivery person' keyword also matches its irregular plural 'del
     "'delivery person' (singular) must still match Courier",
   );
 });
+
+/**
+ * Regression test for round 585's finding: Rental's Hebrew construct-state
+ * keyword "השכרת ציוד" (equipment rental) had no plural entry. Its plural
+ * "השכרות ציוד" swaps the word-final ת for ות mid-word, the same
+ * construct-state gap shape rounds 576-584 already found elsewhere in this
+ * file. The test sentence contains none of Rental's other keywords, nor
+ * any other entity's keyword, isolating the equipment-rental phrase alone.
+ */
+test("Rental's 'השכרת ציוד' keyword also matches its plural 'השכרות ציוד', which isn't a substring of the singular", async () => {
+  const provider = new HeuristicSpecProvider();
+
+  const plural = await provider.generate(
+    "העסק שלנו מתמחה בהשכרות ציוד בניה ללקוחות פרטיים ועסקיים, עם מעקב סטטוס.",
+  );
+  assert.ok(
+    plural.entities.some((e) => e.name === "Rental"),
+    "'השכרות ציוד' (plural) alone must match Rental",
+  );
+
+  const singular = await provider.generate(
+    "העסק שלנו מתמחה בהשכרת ציוד בניה ללקוחות פרטיים ועסקיים, עם מעקב סטטוס.",
+  );
+  assert.ok(
+    singular.entities.some((e) => e.name === "Rental"),
+    "'השכרת ציוד' (singular) must still match Rental",
+  );
+});
