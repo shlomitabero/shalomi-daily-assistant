@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { api } from '../api.js';
+import { actionTypeLabel, resultLabel } from '../labels.js';
 
 export default function ActivityLog() {
   const [actions, setActions] = useState([]);
@@ -14,8 +15,8 @@ export default function ActivityLog() {
       {actions.map((a) => (
         <div key={a.id} className="card log-row">
           <div className="log-row-top">
-            <span className="log-type">{a.type}</span>
-            <span className={`log-result ${a.result === 'success' ? 'positive' : a.result?.startsWith('blocked') ? 'muted' : 'negative'}`}>{a.result}</span>
+            <span className="log-type">{actionTypeLabel(a.type)}</span>
+            <span className={`log-result ${a.result === 'success' ? 'positive' : a.result?.startsWith('blocked') ? 'muted' : 'negative'}`}>{resultLabel(a.result)}</span>
           </div>
           <span className="log-time">{new Date(a.createdAt).toLocaleString('he-IL')}</span>
         </div>

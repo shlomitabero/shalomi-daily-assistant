@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api } from '../api.js';
+import { actionTypeLabel } from '../labels.js';
 
 const STATUS_LABEL = { approved: 'מאושר', rejected: 'נדחה' };
 
@@ -48,7 +49,7 @@ export default function Approvals() {
               <span className="opp-title">{opp?.title ?? a.opportunityId}</span>
               <span className="badge">{STATUS_LABEL[a.status] ?? a.status}</span>
             </div>
-            <p className="hint">פעולה: {a.actionType}{opp?.status === 'published' && ' — כבר בוצעה'}</p>
+            <p className="hint">פעולה: {actionTypeLabel(a.actionType)}{opp?.status === 'published' && ' — כבר בוצעה'}</p>
             <div className="field-row">
               <Link className="link" to={`/opportunities/${a.opportunityId}`}>לכרטיס ההזדמנות ←</Link>
               {stillActionable && (
