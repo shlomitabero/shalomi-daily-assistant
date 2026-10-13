@@ -376,6 +376,27 @@ function findField(entity: Entity, fieldName: string) {
   return field;
 }
 
+// An automation rule's field_equals trigger stores fieldValue as a plain
+// string and matchesTrigger (automations.ts) compares it with a byte-exact
+// `String(actual) === rule.fieldValue` -- no normalization at all. For a
+// boolean field, rowToRecord always yields a real JS boolean, so
+// String(actual) is always exactly "true" or "false"; anything else typed
+// into the free-text "Value" input (round 595's own finding: "yes", "1",
+// "כן" are all natural things to type) can never match, leaving the rule
+// permanently, silently dead -- no error, no indication anywhere. Same for
+// an enum field whose typed value doesn't exactly match one of its
+// enumValues. Rejecting here, at creation/update time, mirrors
+// repository.ts's own coerceValue boolean/enum checks exactly (same error
+// style) instead of letting a rule save successfully and never fire.
+function validateAutomationFieldValue(field: Field, fieldValue: string): void {
+  if (field.type === "boolean" && fieldValue !== "true" && fieldValue !== "false") {
+    throw new HttpError(400, `Field "${field.name}" must be "true" or "false"`, "VALIDATION_ERROR");
+  }
+  if (field.type === "enum" && field.enumValues && !field.enumValues.includes(fieldValue)) {
+    throw new HttpError(400, `Field "${field.name}" must be one of: ${field.enumValues.join(", ")}`, "VALIDATION_ERROR");
+  }
+}
+
 /**
  * `Number("abc")` is NaN, which SQLite's driver happily binds as a
  * parameter without throwing (verified empirically) -- so without this
@@ -1999,7 +2020,8 @@ export function createProjectsRouter(
       }
       const data = parsed.data;
       if (data.trigger === "field_equals" && data.fieldName) {
-        findField(entity, data.fieldName);
+        const field = findField(entity, data.fieldName);
+        if (data.fieldValue) validateAutomationFieldValue(field, data.fieldValue);
       }
       if (data.toMode === "field" && data.toField) {
         findField(entity, data.toField);
@@ -2044,7 +2066,8 @@ export function createProjectsRouter(
       }
       const entity = findEntity(project, existing.entityName);
       if (next.trigger === "field_equals" && next.fieldName) {
-        findField(entity, next.fieldName);
+        const field = findField(entity, next.fieldName);
+        if (next.fieldValue) validateAutomationFieldValue(field, next.fieldValue);
       }
       if (next.toMode === "field" && next.toField) {
         findField(entity, next.toField);

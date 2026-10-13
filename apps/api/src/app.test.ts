@@ -1320,6 +1320,91 @@ test("POST /projects/:id/entities/:entityName retried with the same idempotency 
 });
 
 /**
+ * Round 595's Explore survey found that an automation rule's field_equals
+ * trigger accepted ANY free-text fieldValue with no validation against the
+ * chosen field's actual possible values. matchesTrigger (automations.ts)
+ * compares with a byte-exact `String(actual) === rule.fieldValue` -- for a
+ * boolean field, rowToRecord always yields a real JS boolean, so
+ * String(actual) is always exactly "true" or "false"; typing "yes", "1", or
+ * "כן" (all natural things to type into the plain text "Value" input in
+ * AutomationsPanel.tsx) created a rule that could mathematically never
+ * fire, with no error anywhere and "Last run: never" indistinguishable from
+ * "hasn't happened yet." Same gap for an enum field whose typed value
+ * doesn't exactly match one of its enumValues. Confirmed this is a genuinely
+ * new root cause, distinct from rounds 586 (re-firing timing), 587
+ * (cross-field presence invariants), and 588 (cascade-delete on removal) --
+ * none of which validate fieldValue's content against the field's type.
+ * Fixed by rejecting at creation/update time via a new
+ * validateAutomationFieldValue() helper, mirroring repository.ts's own
+ * coerceValue boolean/enum checks exactly (same error message style)
+ * instead of letting a permanently-dead rule save successfully.
+ */
+test("creating or updating a field_equals automation rule with a fieldValue that can never match the field's real type is rejected with 400, instead of silently saving a permanently-dead rule", async () => {
+  await withServer(async (baseUrl) => {
+    const token = await signup(baseUrl, "automation-fieldvalue-type@example.com");
+    const createRes = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({
+        description:
+          "Build an appointment-management application for a beauty clinic. I need customers, appointments, employees, services, an admin dashboard and automatic appointment status tracking.",
+      }),
+    });
+    const { project } = (await createRes.json()) as { project: { id: string } };
+    const buildRes = await fetch(`${baseUrl}/api/projects/${project.id}/build`, { method: "POST", headers: authHeaders(token) });
+    await collectSSE(buildRes);
+
+    const baseRule = {
+      trigger: "field_equals",
+      actionType: "send_whatsapp",
+      toMode: "static",
+      toNumber: "+972500000000",
+      messageTemplate: "hi",
+    };
+
+    // Employee's "active" field is boolean -- "yes" can never equal the
+    // real stored String(true)/"true" a record will ever actually produce.
+    const badBooleanRes = await fetch(`${baseUrl}/api/projects/${project.id}/entities/Employee/automations`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ ...baseRule, fieldName: "active", fieldValue: "yes" }),
+    });
+    assert.equal(badBooleanRes.status, 400);
+    assert.equal(((await badBooleanRes.json()) as { code?: string }).code, "VALIDATION_ERROR");
+
+    // The exact literal "true" is a real value a boolean record can equal,
+    // so it must be accepted -- this isn't a blanket rejection of booleans.
+    const goodBooleanRes = await fetch(`${baseUrl}/api/projects/${project.id}/entities/Employee/automations`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ ...baseRule, fieldName: "active", fieldValue: "true" }),
+    });
+    assert.equal(goodBooleanRes.status, 201);
+    const { rule: createdRule } = (await goodBooleanRes.json()) as { rule: { id: string } };
+
+    // Appointment's "status" field is an enum -- a typo/mismatch can never
+    // equal any of its real enumValues.
+    const badEnumRes = await fetch(`${baseUrl}/api/projects/${project.id}/entities/Appointment/automations`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ ...baseRule, fieldName: "status", fieldValue: "scheduled" }),
+    });
+    assert.equal(badEnumRes.status, 400);
+    assert.equal(((await badEnumRes.json()) as { code?: string }).code, "VALIDATION_ERROR");
+
+    // A PATCH that would re-point an existing rule at an invalid value for
+    // its (possibly new) field must be rejected the same way as creation.
+    const patchRes = await fetch(`${baseUrl}/api/projects/${project.id}/automations/${createdRule.id}`, {
+      method: "PATCH",
+      headers: authHeaders(token),
+      body: JSON.stringify({ fieldValue: "yes" }),
+    });
+    assert.equal(patchRes.status, 400);
+    assert.equal(((await patchRes.json()) as { code?: string }).code, "VALIDATION_ERROR");
+  });
+});
+
+/**
  * Round 474 closes the design doc's other identified residual gap:
  * POST /projects/:id/answers. Unlike /build and /refine, this route
  * returns a plain JSON response (not an SSE stream) -- confirmed by
