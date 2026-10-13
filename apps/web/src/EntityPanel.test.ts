@@ -2510,6 +2510,97 @@ test("EntityPanel's ICS export emits exactly one VEVENT per ranged record, not o
   });
 });
 
+/**
+ * New in round 599: buildCalendarMonth deliberately renders a ranged
+ * record's SAME chip on every day it spans (confirmed by the ICS test
+ * above), and every one of those chip instances is equally draggable --
+ * but handleCalendarDrop used to always anchor the record's start field to
+ * whatever day the chip was dropped on, regardless of which day of the
+ * span was actually grabbed. Dragging the LAST night's own chip forward by
+ * one day silently relocated the entire booking's start by however many
+ * days separated the drop target from the record's stored start -- a
+ * result with no relationship to the one-day drag the user actually made.
+ * Confirms dragging the specific chip instance shown on the stay's last
+ * night shifts BOTH start and end by the real number of days dragged,
+ * matching what dragging a multi-day event on a real calendar app does.
+ */
+test("EntityPanel's calendar view shifts a ranged record by the days actually dragged, even when the dragged chip is NOT the record's start day", async () => {
+  await withJsdom(async () => {
+    const addDays = (n: number) => {
+      const d = new Date();
+      d.setDate(d.getDate() + n);
+      const pad = (v: number) => String(v).padStart(2, "0");
+      return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+    };
+    const dayNumber = (n: number) => {
+      const d = new Date();
+      d.setDate(d.getDate() + n);
+      return String(d.getDate());
+    };
+    // A 3-night stay: today (start) through today+2 (end/last night).
+    const store: EntityRecord[] = [{ id: 1, title: "Dana's stay", startDate: addDays(0), endDate: addDays(2) }];
+    let lastPatchBody: Record<string, unknown> | null = null;
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/entities/Rental") {
+        return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      const patchMatch = /^\/api\/projects\/proj1\/entities\/Rental\/(\d+)$/.exec(input);
+      if (method === "PATCH" && patchMatch) {
+        const id = Number(patchMatch[1]);
+        const record = store.find((r) => r.id === id)!;
+        lastPatchBody = JSON.parse(init!.body as string);
+        Object.assign(record, lastPatchBody);
+        return new Response(JSON.stringify({ record }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+    try {
+      renderRentalPanel();
+      await waitForCondition(() => document.querySelector(".entity-toolbar") !== null);
+
+      const calendarToggle = document.querySelectorAll(".view-toggle-btn")[1] as HTMLButtonElement;
+      fireEvent.click(calendarToggle);
+      await waitForCondition(() => document.querySelectorAll(".calendar-record-chip").length === 3);
+
+      function dayCellFor(n: number): HTMLElement {
+        const target = dayNumber(n);
+        return Array.from(document.querySelectorAll(".calendar-day")).find(
+          (el) => el.querySelector(".calendar-day-number")?.textContent === target && el.querySelector(".calendar-record-chip"),
+        ) as HTMLElement;
+      }
+      function makeDataTransfer() {
+        let payload = "";
+        return { setData: (_type: string, value: string) => (payload = value), getData: () => payload };
+      }
+
+      // Drag the LAST night's own chip instance (today+2, the stay's end
+      // day) forward by exactly one day, onto today+3 (empty, outside the stay).
+      const lastNightCell = dayCellFor(2);
+      const lastNightChip = lastNightCell.querySelector(".calendar-record-chip") as HTMLButtonElement;
+      const dropTargetDay = Array.from(document.querySelectorAll(".calendar-day-clickable")).find(
+        (el) => el.querySelector(".calendar-day-number")?.textContent === dayNumber(3),
+      ) as HTMLElement;
+      assert.ok(dropTargetDay, "expected to find today+3's day cell to drop onto");
+
+      const dataTransfer = makeDataTransfer();
+      fireEvent.dragStart(lastNightChip, { dataTransfer });
+      fireEvent.dragOver(dropTargetDay, { dataTransfer });
+      fireEvent.drop(dropTargetDay, { dataTransfer });
+
+      await waitForCondition(() => lastPatchBody !== null);
+      assert.deepEqual(
+        lastPatchBody,
+        { startDate: addDays(1), endDate: addDays(3) },
+        "dragging the LAST night's chip forward by one day must shift the whole range by one day (start and end both +1), not jump the start to the drop target",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
 const CUSTOMER_ENTITY: Entity = {
   name: "Customer",
   label: "Customer",

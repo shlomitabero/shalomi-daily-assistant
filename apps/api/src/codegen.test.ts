@@ -1505,7 +1505,7 @@ test("the exported EntityView's calendar record chips are drag-and-drop-able ont
     entityViewJsx,
     /className=\{record\.id === moveErrorId \? "calendar-record-chip calendar-record-chip-move-error" : "calendar-record-chip"\}\s*draggable\s*onDragStart=\{\(e\) => \{/,
   );
-  assert.match(entityViewJsx, /e\.dataTransfer\.setData\("text\/plain", String\(record\.id\)\);\s*e\.dataTransfer\.effectAllowed = "move";/);
+  assert.match(entityViewJsx, /e\.dataTransfer\.setData\("text\/plain", `\$\{record\.id\}\|\$\{dayKey\}`\);\s*e\.dataTransfer\.effectAllowed = "move";/);
   // The day cell itself must be a real drop target, highlighted only while actually dragged over.
   assert.match(entityViewJsx, /onDragOver=\{\s*day\.inCurrentMonth\s*\?\s*\(e\) => \{\s*e\.preventDefault\(\);\s*setDragOverDay\(dayKey\);\s*\}\s*: undefined\s*\}/);
   assert.match(
@@ -1514,13 +1514,16 @@ test("the exported EntityView's calendar record chips are drag-and-drop-able ont
   );
   assert.match(entityViewJsx, /isDragOver = day\.inCurrentMonth && dragOverDay === dayKey;/);
   assert.match(entityViewJsx, /if \(isDragOver\) dayClasses\.push\("calendar-day-drag-over"\);/);
-  assert.match(entityViewJsx, /onReschedule=\{\(record, date\) => handleCalendarDrop\(record, dateField\.name, date\)\}/);
+  assert.match(
+    entityViewJsx,
+    /onReschedule=\{\(record, date, originDay\) => handleCalendarDrop\(record, dateField\.name, date, originDay\)\}/,
+  );
 
   // handleCalendarDrop must guard against a real no-op (dropping a chip back onto the day it's already on) before ever calling handleMove.
-  const dropSrc = entityViewJsx.match(/function handleCalendarDrop\(record, dateFieldName, date\) \{[\s\S]*?\n {2}\}\n/)?.[0];
+  const dropSrc = entityViewJsx.match(/function handleCalendarDrop\(record, dateFieldName, date, originDay\) \{[\s\S]*?\n {2}\}\n/)?.[0];
   assert.ok(dropSrc, "expected to find handleCalendarDrop in generated output");
   assert.match(dropSrc!, /const value = formatDateForInput\(date\);/);
-  assert.match(dropSrc!, /if \(String\(record\[dateFieldName\] \?\? ""\) === value\) return;/);
+  assert.match(dropSrc!, /if \(originValue === value\) return;/);
   assert.match(dropSrc!, /void handleMoveFields\(record\.id, fields\);/);
 
   const stylesCss = files.find((f) => f.path === "web/src/styles.css")!.content;
@@ -1586,7 +1589,7 @@ test("the exported EntityView's handleCalendarDrop shifts a ranged entity's end-
   };
   const entityViewJsx = generateExportFiles(withRange).find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
 
-  const dropSrc = entityViewJsx.match(/function handleCalendarDrop\(record, dateFieldName, date\) \{[\s\S]*?\n {2}\}\n/)?.[0];
+  const dropSrc = entityViewJsx.match(/function handleCalendarDrop\(record, dateFieldName, date, originDay\) \{[\s\S]*?\n {2}\}\n/)?.[0];
   const formatDateSrc = entityViewJsx.match(/function formatDateForInput\(date\) \{[\s\S]*?\n\}\n/)?.[0];
   const parseFieldDateSrc = entityViewJsx.match(/const CALENDAR_DATE_FORMAT[\s\S]*?\nfunction parseFieldDate\(raw\) \{[\s\S]*?\n\}\n/)?.[0];
   assert.ok(dropSrc && formatDateSrc && parseFieldDateSrc, "expected to find handleCalendarDrop/formatDateForInput/parseFieldDate in generated output");
@@ -1603,7 +1606,7 @@ test("the exported EntityView's handleCalendarDrop shifts a ranged entity's end-
     },
     { name: "startDate" },
     { name: "endDate" },
-  ) as (record: { id: number; startDate: string; endDate: string }, dateFieldName: string, date: Date) => void;
+  ) as (record: { id: number; startDate: string; endDate: string }, dateFieldName: string, date: Date, originDay?: string) => void;
 
   handleCalendarDrop({ id: 9, startDate: "2026-03-10", endDate: "2026-03-12" }, "startDate", new Date(2026, 2, 12)); // 2 days later
   assert.deepEqual(
@@ -1611,6 +1614,81 @@ test("the exported EntityView's handleCalendarDrop shifts a ranged entity's end-
     [{ id: 9, fields: { startDate: "2026-03-12", endDate: "2026-03-14" } }],
     "endDate must shift by the same 2-day delta as startDate, keeping the 2-night duration",
   );
+});
+
+/**
+ * New in round 599: buildCalendarMonth deliberately renders a ranged
+ * record's SAME chip on every day it spans (e.g. a 3-night Rental's chip
+ * shows up on all 3 nights), and every one of those chip instances was
+ * equally draggable -- but handleCalendarDrop always anchored the record's
+ * START field to whatever day the chip was dropped on, regardless of which
+ * day of the span was actually grabbed. Dragging the LAST night's chip
+ * forward by one day (intending to extend the stay by one night) used to
+ * silently relocate the entire booking's start instead. Confirms
+ * originDay (the day cell the dragged chip instance actually belonged to,
+ * now carried through dataTransfer) is what the delta is computed from, so
+ * dragging a non-start day's chip shifts the whole range by the days
+ * actually dragged, preserving the gap between the grabbed day and the
+ * drop target -- not between the drop target and the record's own
+ * (unrelated to this drag) stored start date.
+ */
+test("the exported EntityView's handleCalendarDrop shifts a ranged entity by the days actually dragged, even when the chip dragged is NOT the record's start day", () => {
+  const withRange: Project = {
+    ...project,
+    spec: {
+      ...project.spec,
+      entities: [
+        ...project.spec.entities,
+        {
+          name: "Rental",
+          label: "השכרה",
+          fields: [
+            { name: "itemName", label: "שם הפריט", type: "text", required: true },
+            { name: "startDate", label: "תאריך התחלה", type: "date", required: true },
+            { name: "endDate", label: "תאריך סיום", type: "date", required: true },
+          ],
+        },
+      ],
+    },
+  };
+  const entityViewJsx = generateExportFiles(withRange).find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+
+  const dropSrc = entityViewJsx.match(/function handleCalendarDrop\(record, dateFieldName, date, originDay\) \{[\s\S]*?\n {2}\}\n/)?.[0];
+  const formatDateSrc = entityViewJsx.match(/function formatDateForInput\(date\) \{[\s\S]*?\n\}\n/)?.[0];
+  const parseFieldDateSrc = entityViewJsx.match(/const CALENDAR_DATE_FORMAT[\s\S]*?\nfunction parseFieldDate\(raw\) \{[\s\S]*?\n\}\n/)?.[0];
+  assert.ok(dropSrc && formatDateSrc && parseFieldDateSrc, "expected to find handleCalendarDrop/formatDateForInput/parseFieldDate in generated output");
+
+  const calls: Array<{ id: unknown; fields: Record<string, string> }> = [];
+  const handleCalendarDrop = new Function(
+    "handleMoveFields",
+    "dateField",
+    "endDateField",
+    `${formatDateSrc}\n${parseFieldDateSrc}\n${dropSrc}\nreturn handleCalendarDrop;`,
+  )(
+    (id: unknown, fields: Record<string, string>) => {
+      calls.push({ id, fields });
+    },
+    { name: "startDate" },
+    { name: "endDate" },
+  ) as (record: { id: number; startDate: string; endDate: string }, dateFieldName: string, date: Date, originDay?: string) => void;
+
+  // A 5-night stay, Jan 10 (start) through Jan 14 (end/last night). The
+  // chip shown on Jan 14 -- the LAST night, not the start -- is dragged one
+  // day forward onto Jan 15.
+  const record = { id: 1, startDate: "2026-01-10", endDate: "2026-01-14" };
+  handleCalendarDrop(record, "startDate", new Date(2026, 0, 15), "2026-01-14");
+  assert.deepEqual(
+    calls,
+    [{ id: 1, fields: { startDate: "2026-01-11", endDate: "2026-01-15" } }],
+    "dragging the LAST night's chip forward by one day must shift the whole range by one day (start 10->11, end 14->15), not jump start to the drop target (15)",
+  );
+
+  // Dropping that same last-night chip back onto the exact day it came
+  // from (Jan 14) must be a real no-op, even though Jan 14 is NOT the
+  // record's own start-field value (Jan 10).
+  calls.length = 0;
+  handleCalendarDrop(record, "startDate", new Date(2026, 0, 14), "2026-01-14");
+  assert.deepEqual(calls, [], "dropping a non-start-day chip back onto its own origin day must never call handleMoveFields");
 });
 
 /**

@@ -2300,10 +2300,11 @@ function CalendarView({ entity, dateField, endDateField, records, month, onPrevM
                 ? (e) => {
                     e.preventDefault();
                     setDragOverDay(null);
-                    const id = Number(e.dataTransfer.getData("text/plain"));
+                    const [idPart, originDay] = e.dataTransfer.getData("text/plain").split("|");
+                    const id = Number(idPart);
                     if (Number.isNaN(id)) return;
                     const record = records.find((r) => r.id === id);
-                    if (record) onReschedule(record, day.date);
+                    if (record) onReschedule(record, day.date, originDay);
                   }
                 : undefined
             }
@@ -2318,7 +2319,7 @@ function CalendarView({ entity, dateField, endDateField, records, month, onPrevM
                   draggable
                   onDragStart={(e) => {
                     e.stopPropagation();
-                    e.dataTransfer.setData("text/plain", String(record.id));
+                    e.dataTransfer.setData("text/plain", \`\${record.id}|\${dayKey}\`);
                     e.dataTransfer.effectAllowed = "move";
                   }}
                   onClick={(e) => {
@@ -3598,28 +3599,47 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
   // reschedules it there without opening the edit form. Reuses the same
   // handleMoveFields PATCH+refresh, just addressed by the date field's own
   // name and a freshly-formatted "YYYY-MM-DD" value. For a ranged entity
-  // (e.g. Rental's startDate/endDate), shifts endDate by the same number of
-  // days so the booking's real duration survives the drag instead of
-  // silently becoming an invalid (end before start) range. Mirrors the
-  // live preview's own EntityPanel.tsx (round 211, extended round 383).
-  function handleCalendarDrop(record, dateFieldName, date) {
+  // (e.g. Rental's startDate/endDate), buildCalendarMonth renders the SAME
+  // chip on every day the booking spans, and every instance is draggable --
+  // so the day actually dragged (originDay, carried through dataTransfer by
+  // the chip's own onDragStart) is not necessarily the record's current
+  // start day. Shifting BOTH start and end by the delta between the
+  // dropped-on day and originDay (rather than always anchoring start to the
+  // drop target) keeps the booking's real duration and moves it by exactly
+  // the days dragged, whichever day of the span was grabbed. When originDay
+  // is unavailable or equals the record's own start value (the common case
+  // of dragging the start day's chip), this reduces to the original
+  // start-anchored behavior. Mirrors the live preview's own EntityPanel.tsx
+  // (round 211, extended round 383, fixed round 599).
+  function handleCalendarDrop(record, dateFieldName, date, originDay) {
     const value = formatDateForInput(date);
-    if (String(record[dateFieldName] ?? "") === value) return;
-    const fields = { [dateFieldName]: value };
+    const originValue = originDay ?? String(record[dateFieldName] ?? "");
+    if (originValue === value) return;
+    const fields = {};
     if (endDateField && dateField && dateFieldName === dateField.name) {
       const rawOldStart = record[dateFieldName];
       const rawEnd = record[endDateField.name];
       if (rawOldStart !== null && rawOldStart !== undefined && rawOldStart !== "" && rawEnd !== null && rawEnd !== undefined && rawEnd !== "") {
         const oldStart = parseFieldDate(String(rawOldStart));
         const oldEnd = parseFieldDate(String(rawEnd));
-        if (!Number.isNaN(oldStart.getTime()) && !Number.isNaN(oldEnd.getTime()) && oldEnd.getTime() >= oldStart.getTime()) {
-          const deltaDays = Math.round((date.getTime() - oldStart.getTime()) / (24 * 60 * 60 * 1000));
+        const origin = parseFieldDate(originValue);
+        if (
+          !Number.isNaN(oldStart.getTime()) &&
+          !Number.isNaN(oldEnd.getTime()) &&
+          !Number.isNaN(origin.getTime()) &&
+          oldEnd.getTime() >= oldStart.getTime()
+        ) {
+          const deltaDays = Math.round((date.getTime() - origin.getTime()) / (24 * 60 * 60 * 1000));
+          const newStart = new Date(oldStart);
+          newStart.setDate(newStart.getDate() + deltaDays);
           const newEnd = new Date(oldEnd);
           newEnd.setDate(newEnd.getDate() + deltaDays);
+          fields[dateFieldName] = formatDateForInput(newStart);
           fields[endDateField.name] = formatDateForInput(newEnd);
         }
       }
     }
+    if (!fields[dateFieldName]) fields[dateFieldName] = value;
     void handleMoveFields(record.id, fields);
   }
 
@@ -4182,7 +4202,7 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
               onToday={() => setCalendarMonth(new Date())}
               onEdit={startEdit}
               onDayClick={(date) => startCreateForDate(date, dateField)}
-              onReschedule={(record, date) => handleCalendarDrop(record, dateField.name, date)}
+              onReschedule={(record, date, originDay) => handleCalendarDrop(record, dateField.name, date, originDay)}
               moveErrorId={moveErrorId}
             />
           ) : (

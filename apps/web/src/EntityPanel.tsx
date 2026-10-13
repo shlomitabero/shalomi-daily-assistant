@@ -483,7 +483,7 @@ function CalendarView({
   onToday: () => void;
   onEdit: (record: EntityRecord) => void;
   onDayClick: (date: Date) => void;
-  onReschedule: (record: EntityRecord, date: Date) => void;
+  onReschedule: (record: EntityRecord, date: Date, originDay?: string) => void;
   moveErrorId?: number | null;
 }) {
   const year = month.getFullYear();
@@ -574,10 +574,11 @@ function CalendarView({
                 ? (e) => {
                     e.preventDefault();
                     setDragOverDay(null);
-                    const id = Number(e.dataTransfer.getData("text/plain"));
+                    const [idPart, originDay] = e.dataTransfer.getData("text/plain").split("|");
+                    const id = Number(idPart);
                     if (Number.isNaN(id)) return;
                     const record = records.find((r) => (r.id as number) === id);
-                    if (record) onReschedule(record, day.date);
+                    if (record) onReschedule(record, day.date, originDay);
                   }
                 : undefined
             }
@@ -601,7 +602,14 @@ function CalendarView({
                     // stopping propagation here keeps the two interactions
                     // (drag-to-reschedule vs. click-to-edit) from fighting.
                     e.stopPropagation();
-                    e.dataTransfer.setData("text/plain", String(record.id));
+                    // A ranged record (e.g. Rental's startDate/endDate) renders this
+                    // same chip identically on every day it spans (see
+                    // buildCalendarMonth) -- carrying this specific chip instance's
+                    // own dayKey lets handleCalendarDrop shift the range by the
+                    // days actually dragged, instead of always anchoring the
+                    // record's start field to the drop target regardless of which
+                    // day of the span was grabbed.
+                    e.dataTransfer.setData("text/plain", `${record.id}|${dayKey}`);
                     e.dataTransfer.effectAllowed = "move";
                   }}
                   onClick={(e) => {
@@ -2154,31 +2162,48 @@ export function EntityPanel({
    * own name and a freshly-formatted "YYYY-MM-DD" value instead of a board
    * enum value.
    *
-   * For a ranged entity (e.g. Rental's startDate/endDate), dragging only
-   * the start day while leaving endDate untouched could push start past
-   * end -- an invalid range that buildCalendarMonth/buildCalendarIcs would
-   * then silently stop treating as a range at all. Shifting endDate by the
-   * same number of days keeps the booking's actual duration, which is what
-   * dragging a multi-day event on a real calendar app does too.
+   * For a ranged entity (e.g. Rental's startDate/endDate), buildCalendarMonth
+   * deliberately renders the SAME chip on every day the booking spans, and
+   * every one of those chip instances is draggable -- so the day actually
+   * dragged (originDay, carried through dataTransfer by the chip's own
+   * onDragStart) is not necessarily the record's current start day. Shifting
+   * BOTH start and end by the delta between the dropped-on day and originDay
+   * (rather than always anchoring start to the drop target) keeps the
+   * booking's actual duration and moves it by exactly the days dragged,
+   * whichever day of the span was grabbed -- what dragging a multi-day event
+   * on a real calendar app does. When originDay is unavailable (or equals
+   * the record's own start value, the common case of dragging the start
+   * day's chip), this reduces to the original start-anchored behavior.
    */
-  function handleCalendarDrop(record: EntityRecord, dateFieldName: string, date: Date) {
+  function handleCalendarDrop(record: EntityRecord, dateFieldName: string, date: Date, originDay?: string) {
     const value = formatDateForInput(date);
-    if (String(record[dateFieldName] ?? "") === value) return;
-    const fields: Record<string, string> = { [dateFieldName]: value };
+    const originValue = originDay ?? String(record[dateFieldName] ?? "");
+    if (originValue === value) return;
+    const fields: Record<string, string> = {};
     if (endDateField && dateField && dateFieldName === dateField.name) {
       const rawOldStart = record[dateFieldName];
       const rawEnd = record[endDateField.name];
       if (rawOldStart !== null && rawOldStart !== undefined && rawOldStart !== "" && rawEnd !== null && rawEnd !== undefined && rawEnd !== "") {
         const oldStart = parseFieldDate(String(rawOldStart));
         const oldEnd = parseFieldDate(String(rawEnd));
-        if (!Number.isNaN(oldStart.getTime()) && !Number.isNaN(oldEnd.getTime()) && oldEnd.getTime() >= oldStart.getTime()) {
-          const deltaDays = Math.round((date.getTime() - oldStart.getTime()) / (24 * 60 * 60 * 1000));
+        const origin = parseFieldDate(originValue);
+        if (
+          !Number.isNaN(oldStart.getTime()) &&
+          !Number.isNaN(oldEnd.getTime()) &&
+          !Number.isNaN(origin.getTime()) &&
+          oldEnd.getTime() >= oldStart.getTime()
+        ) {
+          const deltaDays = Math.round((date.getTime() - origin.getTime()) / (24 * 60 * 60 * 1000));
+          const newStart = new Date(oldStart);
+          newStart.setDate(newStart.getDate() + deltaDays);
           const newEnd = new Date(oldEnd);
           newEnd.setDate(newEnd.getDate() + deltaDays);
+          fields[dateFieldName] = formatDateForInput(newStart);
           fields[endDateField.name] = formatDateForInput(newEnd);
         }
       }
     }
+    if (!fields[dateFieldName]) fields[dateFieldName] = value;
     void handleMoveFields(record.id as number, fields);
   }
 
@@ -2778,7 +2803,7 @@ export function EntityPanel({
               onToday={() => setCalendarMonth(new Date())}
               onEdit={startEdit}
               onDayClick={(date) => startCreateForDate(date, dateField)}
-              onReschedule={(record, date) => handleCalendarDrop(record, dateField.name, date)}
+              onReschedule={(record, date, originDay) => handleCalendarDrop(record, dateField.name, date, originDay)}
               moveErrorId={moveErrorId}
             />
           ) : (
