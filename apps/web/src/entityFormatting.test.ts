@@ -1456,6 +1456,23 @@ test("buildImportRecords rejects a date column value that isn't a real, well-for
   }
 });
 
+test("buildImportRecords accepts a date column value in the year 0-99 range, instead of wrongly rejecting it as invalid", () => {
+  // new Date(Date.UTC(year, ...)) silently adds 1900 to a year 0-99 (legacy
+  // ECMA-262 behavior), so isValidDateString's own round-trip check used to
+  // fail a syntactically valid "0099-01-01" -- a real, well-formed date.
+  const fields: Field[] = [
+    { name: "name", type: "text", required: true },
+    { name: "dueDate", label: "Due Date", type: "date", required: true },
+  ];
+  const rows = [
+    ["name", "Due Date"],
+    ["Tal", "0099-01-01"],
+  ];
+  const result = buildImportRecords(fields, rows);
+  assert.equal(result.errors.length, 0);
+  assert.deepEqual(result.records, [{ name: "Tal", dueDate: "0099-01-01" }]);
+});
+
 test("buildImportRecords leaves an optional, unset date field null rather than rejecting an empty cell", () => {
   const fields: Field[] = [
     { name: "name", type: "text", required: true },
