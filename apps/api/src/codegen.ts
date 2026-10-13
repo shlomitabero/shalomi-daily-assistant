@@ -366,7 +366,12 @@ function isValidDate(value) {
   const year = Number(match[1]);
   const month = Number(match[2]);
   const day = Number(match[3]);
-  const parsed = new Date(Date.UTC(year, month - 1, day));
+  // Date.UTC(year, ...) silently adds 1900 to a year in 0-99 (legacy
+  // ECMA-262 behavior), which would wrongly reject "0099-01-01" -- so the
+  // date is built via setUTCFullYear, whose year argument has no such
+  // special-casing, instead of passed through Date.UTC.
+  const parsed = new Date(0);
+  parsed.setUTCFullYear(year, month - 1, day);
   return parsed.getUTCFullYear() === year && parsed.getUTCMonth() === month - 1 && parsed.getUTCDate() === day;
 }
 
@@ -1327,7 +1332,12 @@ function isValidDate(value) {
   const year = Number(match[1]);
   const month = Number(match[2]);
   const day = Number(match[3]);
-  const parsed = new Date(Date.UTC(year, month - 1, day));
+  // Date.UTC(year, ...) silently adds 1900 to a year in 0-99 (legacy
+  // ECMA-262 behavior), which would wrongly reject "0099-01-01" -- so the
+  // date is built via setUTCFullYear, whose year argument has no such
+  // special-casing, instead of passed through Date.UTC.
+  const parsed = new Date(0);
+  parsed.setUTCFullYear(year, month - 1, day);
   return parsed.getUTCFullYear() === year && parsed.getUTCMonth() === month - 1 && parsed.getUTCDate() === day;
 }
 

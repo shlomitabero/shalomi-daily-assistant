@@ -276,6 +276,18 @@ test("generated server.js rejects a date field value that isn't a real, well-for
       });
       assert.equal(badRes.status, 400, `expected "${bad}" to be rejected as an invalid date`);
     }
+
+    // new Date(Date.UTC(year, ...)) silently adds 1900 to a year 0-99
+    // (legacy ECMA-262 behavior), so the generated isValidDate's own
+    // round-trip check used to fail a syntactically valid "0099-01-01".
+    const oldYearRes = await fetch(`http://localhost:${port}/api/Appointment`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ customerName: "Dana", date: "0099-01-01" }),
+    });
+    assert.equal(oldYearRes.status, 201);
+    const oldYear = await oldYearRes.json();
+    assert.equal(oldYear.record.date, "0099-01-01");
   } finally {
     child.kill();
     rmSync(dir, { recursive: true, force: true });
@@ -5544,6 +5556,46 @@ test("the exported EntityView's CSV import rejects a date field value that isn't
   assert.equal(errors.length, 2);
   assert.match(errors[0], /Row 2: "2024-13-45" isn't a valid date/);
   assert.match(errors[1], /Row 3: "not-a-date" isn't a valid date/);
+});
+
+// Regression test: new Date(Date.UTC(year, ...)) silently adds 1900 to a
+// year 0-99 (legacy ECMA-262 behavior), so the generated isValidDate's own
+// round-trip check used to fail a syntactically valid "0099-01-01".
+test("the exported EntityView's CSV import accepts a date field value in the year 0-99 range", () => {
+  const dateProject: Project = {
+    ...project,
+    spec: {
+      ...project.spec,
+      entities: [
+        {
+          name: "Appointment",
+          label: "Appointment",
+          fields: [
+            { name: "date", label: "Date", type: "date", required: true },
+            { name: "notes", label: "Notes", type: "text" },
+          ],
+        },
+      ],
+    },
+  };
+  const entityViewJsx = generateExportFiles(dateProject).find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+
+  const isValidDateSrc = entityViewJsx.match(/const DATE_FORMAT[\s\S]*?\nfunction isValidDate\(value\) \{[\s\S]*?\n\}\n/)?.[0];
+  const headerSrc = entityViewJsx.match(/function matchesImportHeader\(header, field\) \{[\s\S]*?\n\}\n/)?.[0];
+  const importSrc = entityViewJsx.match(/function buildImportRecords\(fields, rows\) \{[\s\S]*?\n\}\n/)?.[0];
+  assert.ok(isValidDateSrc && headerSrc && importSrc, "expected to find isValidDate/matchesImportHeader/buildImportRecords in generated output");
+
+  const buildImportRecords = new Function(`${isValidDateSrc}\n${headerSrc}\n${importSrc}\nreturn buildImportRecords;`)();
+
+  const fields = dateProject.spec.entities[0].fields;
+  const rows = [
+    ["Date", "Notes"],
+    ["0099-01-01", "old year"],
+  ];
+  const { records, errors } = buildImportRecords(fields, rows);
+
+  assert.equal(errors.length, 0);
+  assert.deepEqual(records, [{ date: "0099-01-01", notes: "old year" }]);
 });
 
 /**
