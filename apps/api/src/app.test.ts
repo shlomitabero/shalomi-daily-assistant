@@ -1258,6 +1258,68 @@ test("POST /projects/:id/entities/:entityName/fields retried with the same idemp
 });
 
 /**
+ * Round 594's Explore survey found that docs/wakeRetry-idempotency-design.md's
+ * own inventory of mutating routes never mentioned
+ * POST /projects/:id/entities/:entityName (record creation) at all, and the
+ * route itself called insertRecord() with no withIdempotency() guard -- unlike
+ * every other unguarded-insert route the design doc did flag and rounds
+ * 471-474 already fixed. A dropped connection after the server finished
+ * inserting a real record but before the response reached the browser would
+ * make fetchWithWakeRetry (apps/web/src/wakeRetry.ts) resend the identical
+ * POST with the identical X-Idempotency-Key createRecord (apps/web/src/api.ts)
+ * generates, creating a duplicate record the user never asked for. Fixed the
+ * same way as the sibling /entities (add spec-entity) route: wrapped in
+ * withIdempotency(), with the fire-and-forget automation trigger moved inside
+ * the guarded callback so a replayed retry doesn't fire it twice.
+ */
+test("POST /projects/:id/entities/:entityName retried with the same idempotency key after the first attempt already finished replays the original response instead of inserting a second record", async () => {
+  await withServer(async (baseUrl) => {
+    const token = await signup(baseUrl, "record-create-idem1@example.com");
+    const createRes = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ description: "A small courier delivery business." }),
+    });
+    const { project } = (await createRes.json()) as { project: { id: string; spec: { entities: { name: string }[] } } };
+    assert.deepEqual(
+      project.spec.entities.map((e) => e.name).sort(),
+      ["Courier", "Order"],
+      "this description should match exactly Order (with a courierId relation) and Courier",
+    );
+
+    const buildRes = await fetch(`${baseUrl}/api/projects/${project.id}/build`, { method: "POST", headers: authHeaders(token) });
+    await collectSSE(buildRes);
+
+    const beforeRes = await fetch(`${baseUrl}/api/projects/${project.id}/entities/Courier`, { headers: authHeaders(token) });
+    const { records: seeded } = (await beforeRes.json()) as { records: { id: number }[] };
+    const originalCount = seeded.length;
+
+    const headers = { ...authHeaders(token), "x-idempotency-key": "record-create-repro-key" };
+    const firstRes = await fetch(`${baseUrl}/api/projects/${project.id}/entities/Courier`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ name: "Dave", status: "Available" }),
+    });
+    assert.equal(firstRes.status, 201);
+    const first = (await firstRes.json()) as { record: { id: number } };
+
+    const retryRes = await fetch(`${baseUrl}/api/projects/${project.id}/entities/Courier`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ name: "Dave", status: "Available" }),
+    });
+    assert.equal(retryRes.status, 201);
+    const retry = (await retryRes.json()) as { record: { id: number } };
+    assert.equal(retry.record.id, first.record.id, "the retry must return the exact same record, not a newly inserted one");
+    assert.deepEqual(retry, first, "the replayed response must be identical to what the first attempt actually returned");
+
+    const listRes = await fetch(`${baseUrl}/api/projects/${project.id}/entities/Courier`, { headers: authHeaders(token) });
+    const { records } = (await listRes.json()) as { records: { id: number }[] };
+    assert.equal(records.length, originalCount + 1, "exactly one new record must exist -- the retry must not have inserted a second row");
+  });
+});
+
+/**
  * Round 474 closes the design doc's other identified residual gap:
  * POST /projects/:id/answers. Unlike /build and /refine, this route
  * returns a plain JSON response (not an SSE stream) -- confirmed by

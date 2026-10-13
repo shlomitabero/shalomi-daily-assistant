@@ -660,6 +660,15 @@ export function listRecords(projectId: string, entityName: string): Promise<{ re
   return request(`/projects/${projectId}/entities/${encodeURIComponent(entityName)}`);
 }
 
+/**
+ * Round 594: the one real-effect mutation route missed when the
+ * X-Idempotency-Key mechanism (docs/wakeRetry-idempotency-design.md) was
+ * rolled out to every other mutating route in rounds 471-528 -- see the
+ * matching server-side comment on POST /projects/:id/entities/:entityName.
+ * A response lost in transit after this request already committed a new
+ * record server-side would otherwise leave fetchWithWakeRetry's retry to
+ * insert a second, fully duplicate row.
+ */
 export function createRecord(
   projectId: string,
   entityName: string,
@@ -667,6 +676,7 @@ export function createRecord(
 ): Promise<{ record: EntityRecord }> {
   return request(`/projects/${projectId}/entities/${encodeURIComponent(entityName)}`, {
     method: "POST",
+    headers: { "x-idempotency-key": crypto.randomUUID() },
     body: JSON.stringify(data),
   });
 }

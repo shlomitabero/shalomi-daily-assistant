@@ -1353,42 +1353,73 @@ export function createProjectsRouter(
       }
       const entity = findEntity(project, req.params.entityName);
       /**
-       * Same `PRAGMA foreign_keys = ON` constraint the DELETE route below
-       * already translates (round 292), but on the write side: a relation
-       * field's picker in EntityPanel.tsx is built from `relatedRecords`
-       * fetched earlier, so submitting a create/edit referencing a record
-       * another collaborator (or this same browser's own deferred-delete
-       * undo window) deleted in the meantime hits this exact constraint.
-       * Without this, app.ts's generic error handler turned it into an
-       * unexplained 500 instead of a message naming the actual problem.
+       * Round 594: the one business-record-mutation route this design's
+       * own "Full inventory of mutating routes" (docs/wakeRetry-idempotency-
+       * design.md) never actually listed -- every other real-effect POST
+       * (roles/assumptions/entities/fields/answers/project-create/clone)
+       * got withIdempotency protection in rounds 471-528, but record
+       * creation itself (the single most frequent write in the app --
+       * every "Add" form, duplicate, bulk-duplicate, and CSV-import row)
+       * was missed, plausibly because its URL (/entities/:entityName) so
+       * closely resembles the already-fixed spec-level /entities (add-
+       * entity-to-spec) route above. fetchWithWakeRetry (apps/web/src/
+       * wakeRetry.ts) retries on any thrown fetch() error, not just an
+       * HTTP error -- exactly the "sent, processed, lost on the way back"
+       * case this mechanism exists for -- so a response lost in transit
+       * after insertRecord already committed produced a second, fully
+       * duplicate row on retry.
        */
-      let record: ReturnType<typeof insertRecord>;
-      try {
-        record = insertRecord(db, project.id, entity, req.body ?? {});
-      } catch (err) {
-        if (err instanceof Error && err.message === "FOREIGN KEY constraint failed") {
-          throw new HttpError(
-            400,
-            "This record references another record that no longer exists",
-            "INVALID_RELATION_TARGET",
-          );
-        }
-        throw err;
-      }
-      res.status(201).json({ record });
-      // Deliberately not awaited -- see runAutomationsForRecordChange's own
-      // comment. A WhatsApp send is a real network round-trip, and this
-      // response has already gone out; nothing downstream of it should add
-      // latency to, or ever fail because of, an automation side effect.
-      void runAutomationsForRecordChange(
+      const idempotencyKey = req.header("X-Idempotency-Key") || undefined;
+      const { status, body } = await withIdempotency(
         db,
-        whatsapp,
-        project,
-        entity,
-        "created",
-        record,
-        new Set(Object.keys(req.body ?? {})),
+        idempotencyKey,
+        req.userId!,
+        `POST /projects/${project.id}/entities/${entity.name}`,
+        async () => {
+          /**
+           * Same `PRAGMA foreign_keys = ON` constraint the DELETE route
+           * below already translates (round 292), but on the write side:
+           * a relation field's picker in EntityPanel.tsx is built from
+           * `relatedRecords` fetched earlier, so submitting a create/edit
+           * referencing a record another collaborator (or this same
+           * browser's own deferred-delete undo window) deleted in the
+           * meantime hits this exact constraint. Without this, app.ts's
+           * generic error handler turned it into an unexplained 500
+           * instead of a message naming the actual problem.
+           */
+          let record: ReturnType<typeof insertRecord>;
+          try {
+            record = insertRecord(db, project.id, entity, req.body ?? {});
+          } catch (err) {
+            if (err instanceof Error && err.message === "FOREIGN KEY constraint failed") {
+              throw new HttpError(
+                400,
+                "This record references another record that no longer exists",
+                "INVALID_RELATION_TARGET",
+              );
+            }
+            throw err;
+          }
+          // Deliberately not awaited -- see runAutomationsForRecordChange's
+          // own comment. A WhatsApp send is a real network round-trip, and
+          // this response is about to go out; nothing downstream of it
+          // should add latency to, or ever fail because of, an automation
+          // side effect. Firing it inside this callback (rather than after
+          // withIdempotency resolves) keeps it from firing a second time on
+          // a replayed/cached retry, same as insertRecord itself above.
+          void runAutomationsForRecordChange(
+            db,
+            whatsapp,
+            project,
+            entity,
+            "created",
+            record,
+            new Set(Object.keys(req.body ?? {})),
+          );
+          return { status: 201, body: { record } };
+        },
       );
+      res.status(status).json(body);
     }),
   );
 
