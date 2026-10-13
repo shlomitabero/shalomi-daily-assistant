@@ -377,6 +377,7 @@ function coerce(field, value) {
     return null;
   }
   if (field.type === "number" || field.type === "relation") {
+    if (Array.isArray(value)) throw new Error(\`Field "\${field.name}" must be a number\`);
     const n = Number(value);
     if (!Number.isFinite(n)) throw new Error(\`Field "\${field.name}" must be a number\`);
     return n;

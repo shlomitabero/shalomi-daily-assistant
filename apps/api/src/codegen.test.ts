@@ -368,6 +368,88 @@ test("generated server.js rejects \"Infinity\"/\"-Infinity\" for a number field"
 });
 
 /**
+ * Regression test (round 604): the exported standalone app's own coerce()
+ * -- same copy-pasted logic as packages/db/src/repository.ts's
+ * coerceValue -- let an array value through its number/relation branch:
+ * JS's own Number([]) is 0 and Number([42]) is 42, not NaN, so
+ * Number.isFinite passed and the value was silently stored instead of
+ * rejected. Reproduced here against a real spawned server, the same
+ * standard the "Infinity" test above uses.
+ */
+test("generated server.js rejects an array value for a required number field", async () => {
+  const invoiceProject: Project = {
+    ...project,
+    spec: {
+      ...project.spec,
+      entities: [
+        {
+          name: "Invoice",
+          fields: [
+            { name: "client", type: "text", required: true },
+            { name: "amount", type: "number", required: true },
+          ],
+        },
+      ],
+    },
+  };
+  const files = generateExportFiles(invoiceProject);
+  const serverJs = files.find((f) => f.path === "server.js")!.content;
+
+  const dir = mkdtempSync(path.join(tmpdir(), "codegen-array-test-"));
+  const repoRoot = path.resolve(import.meta.dirname, "../../..");
+  symlinkSync(path.join(repoRoot, "node_modules"), path.join(dir, "node_modules"));
+  writeFileSync(path.join(dir, "server.js"), serverJs);
+
+  const port = 44000 + Math.floor(Math.random() * 5000);
+  const child = spawn(process.execPath, ["--experimental-sqlite", "server.js"], {
+    cwd: dir,
+    env: { ...process.env, PORT: String(port) },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  let stderr = "";
+  child.stderr.on("data", (chunk) => {
+    stderr += chunk.toString();
+  });
+
+  try {
+    const deadline = Date.now() + 5000;
+    let lastErr: unknown;
+    while (Date.now() < deadline) {
+      if (child.exitCode !== null) {
+        throw new Error(`server.js exited early (code ${child.exitCode}):\n${stderr}`);
+      }
+      try {
+        await fetch(`http://localhost:${port}/api/entities`);
+        break;
+      } catch (err) {
+        lastErr = err;
+        await new Promise((r) => setTimeout(r, 100));
+      }
+    }
+    if (child.exitCode !== null) throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
+
+    const validRes = await fetch(`http://localhost:${port}/api/Invoice`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ client: "Gamma Inc", amount: 500 }),
+    });
+    assert.equal(validRes.status, 201);
+
+    for (const bad of [[], [42]]) {
+      const badRes = await fetch(`http://localhost:${port}/api/Invoice`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ client: "Acme Corp", amount: bad }),
+      });
+      assert.equal(badRes.status, 400, `expected ${JSON.stringify(bad)} to be rejected, not coerced via Number()`);
+    }
+  } finally {
+    child.kill();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
  * Regression test (round 546): the exported standalone app's own coerce()
  * -- same copy-pasted logic as packages/db/src/repository.ts's
  * coerceValue -- had no rejection path at all for its boolean branch,
