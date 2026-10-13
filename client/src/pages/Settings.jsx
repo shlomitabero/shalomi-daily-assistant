@@ -53,10 +53,13 @@ export default function Settings() {
   }
 
   async function onToggleStop() {
+    setError('');
     setBusy(true);
     try {
       await api.updateSettings({ emergencyStop: !settings.emergencyStop });
       refresh();
+    } catch (err) {
+      setError(err.data?.error || err.message);
     } finally {
       setBusy(false);
     }
@@ -77,6 +80,7 @@ export default function Settings() {
         {settings.emergencyStop ? '🛑 עצירה פעילה — לחץ לביטול' : '⏹ עצירה מיידית'}
       </button>
       <p className="hint" style={{ margin: '-10px 0 16px' }}>עצירה מיידית חוסמת כל פעולה אמיתית (פרסום, חיוב) מיד, בלי קשר למצב הפעולה — לשימוש בכל רגע שמשהו נראה לא בסדר.</p>
+      {error && <p className="form-error">{error}</p>}
 
       <form className="card form" onSubmit={onSave}>
         <label>
@@ -109,7 +113,6 @@ export default function Settings() {
           </select>
         </label>
         <p className="hint" style={{ margin: '-4px 0 0' }}>{MODE_EXPLAIN[form.mode]}</p>
-        {error && <p className="form-error">{error}</p>}
         <button className="btn btn-primary" type="submit" disabled={busy}>שמור</button>
       </form>
 
