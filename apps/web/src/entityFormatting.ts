@@ -600,6 +600,26 @@ export function uniqueEnumValues(values: string[] | undefined): string[] {
 }
 
 /**
+ * The "(other)" overflow bucket groupByField/groupRecordsByField add for a
+ * record's legacy/unrecognized value needs its own key, distinct from every
+ * real declared enum value -- FieldSchema.enumValues has no restriction on
+ * its contents (see uniqueEnumValues' own doc comment on the sibling
+ * duplicate-values gap), so a spec can legitimately declare "__other__"
+ * itself as a real enum value. Without this, that real column and the
+ * synthetic overflow column collided on the identical key -- same React
+ * list key, same entry in EntityPanel.tsx's collapsedBoardColumns Set --
+ * so collapsing one silently collapsed the other too. Appending underscores
+ * until the key no longer matches anything in enumValues guarantees no
+ * collision, for any finite set of declared values.
+ */
+function otherGroupKey(enumValues: string[] | undefined): string {
+  const known = new Set(enumValues ?? []);
+  let key = "__other__";
+  while (known.has(key)) key += "_";
+  return key;
+}
+
+/**
  * Groups records into one column per declared enum value, in the enum's
  * own declared order (not first-seen order) -- including a value with zero
  * matching records, so an empty stage still shows as a column rather than
@@ -630,7 +650,7 @@ export function groupByField(
   const other = records.filter((r) => !known.has(String(r[field.name] ?? "")));
   if (other.length > 0) {
     columns.push({
-      value: "__other__",
+      value: otherGroupKey(field.enumValues),
       label: t ? t("entity.groupBy.other") : "Other",
       records: other,
       isOther: true,
@@ -1400,6 +1420,6 @@ export function groupRecordsByField(
     if (matched.length > 0) groups.push({ key: value, label: field.enumLabels?.[value] ?? value, records: matched });
   }
   const other = records.filter((r) => !known.has(String(r[field.name] ?? "")));
-  if (other.length > 0) groups.push({ key: "__other__", label: t("entity.groupBy.other"), records: other });
+  if (other.length > 0) groups.push({ key: otherGroupKey(field.enumValues), label: t("entity.groupBy.other"), records: other });
   return groups;
 }

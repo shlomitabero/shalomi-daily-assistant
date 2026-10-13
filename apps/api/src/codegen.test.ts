@@ -1075,11 +1075,13 @@ test("the exported EntityView's groupByField collects a record with an unrecogni
   const entityViewJsx = generateExportFiles(project).find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
   const groupByFieldSrc = entityViewJsx.match(/function groupByField\(records, field\) \{[\s\S]*?\n\}\n/)?.[0];
   assert.ok(groupByFieldSrc, "expected to find groupByField in generated output");
-  // groupByField calls uniqueEnumValues (round 443) -- must be in scope too.
+  // groupByField calls uniqueEnumValues (round 443) and otherGroupKey (round 608) -- both must be in scope too.
   const uniqueEnumValuesSrc = entityViewJsx.match(/function uniqueEnumValues\(values\) \{[\s\S]*?\n\}\n/)?.[0];
   assert.ok(uniqueEnumValuesSrc, "expected to find uniqueEnumValues in generated output");
+  const otherGroupKeySrc = entityViewJsx.match(/function otherGroupKey\(enumValues\) \{[\s\S]*?\n\}\n/)?.[0];
+  assert.ok(otherGroupKeySrc, "expected to find otherGroupKey in generated output");
 
-  const groupByField = new Function(`${uniqueEnumValuesSrc}\n${groupByFieldSrc}\nreturn groupByField;`)() as (
+  const groupByField = new Function(`${uniqueEnumValuesSrc}\n${otherGroupKeySrc}\n${groupByFieldSrc}\nreturn groupByField;`)() as (
     records: Record<string, unknown>[],
     field: { name: string; enumValues?: string[]; enumLabels?: Record<string, string> },
   ) => { value: string; label: string; records: unknown[]; isOther?: boolean }[];
@@ -1097,6 +1099,17 @@ test("the exported EntityView's groupByField collects a record with an unrecogni
 
   // No legacy value at all -- the "(other)" column must not be rendered.
   assert.equal(groupByField([{ id: 1, status: "won" }], field).find((c) => c.value === "__other__"), undefined);
+
+  // Round 608: enumValues has no restriction on its contents, so a spec can
+  // legitimately declare "__other__" itself as a real enum value -- the
+  // overflow bucket's own key must not collide with it.
+  const collisionField = { name: "status", enumValues: ["new", "__other__"] };
+  const collisionRecords = [{ id: 1, status: "new" }, { id: 2, status: "__other__" }, { id: 3, status: "archived" }];
+  const collisionColumns = groupByField(collisionRecords, collisionField);
+  const collisionValues = collisionColumns.map((c) => c.value);
+  assert.equal(new Set(collisionValues).size, collisionValues.length, "no two columns may share the same value/key");
+  assert.equal(collisionColumns.find((c) => c.value === "__other__")!.isOther, undefined, "the real declared enum column must never be marked isOther");
+  assert.deepEqual(collisionColumns.find((c) => c.isOther)!.records, [{ id: 3, status: "archived" }]);
 });
 
 /**

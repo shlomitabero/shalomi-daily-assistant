@@ -1964,6 +1964,20 @@ function findBoardField(fields) {
   return named || enumFields[0];
 }
 
+// The "(other)" overflow bucket below needs its own key, distinct from
+// every real declared enum value -- enumValues has no restriction on its
+// contents, so a spec can legitimately declare "__other__" itself as a
+// real enum value, colliding with the synthetic bucket's own React/Set
+// key (EntityView.jsx's collapsedBoardColumns) and silently collapsing
+// both together. Appending underscores until the key no longer matches
+// anything in enumValues guarantees no collision.
+function otherGroupKey(enumValues) {
+  const known = new Set(enumValues || []);
+  let key = "__other__";
+  while (known.has(key)) key += "_";
+  return key;
+}
+
 // Groups records into one column per declared enum value, in declared
 // order, including a value with zero matching records so an empty stage
 // still shows as a column instead of disappearing. A record whose stored
@@ -1983,7 +1997,7 @@ function groupByField(records, field) {
   const known = new Set(values);
   const other = records.filter((r) => !known.has(String(r[field.name] || "")));
   if (other.length > 0) {
-    columns.push({ value: "__other__", label: "Other", records: other, isOther: true });
+    columns.push({ value: otherGroupKey(field.enumValues), label: "Other", records: other, isOther: true });
   }
   return columns;
 }
@@ -2018,7 +2032,7 @@ function groupRecordsByField(records, field) {
     if (matched.length > 0) groups.push({ key: value, label: (field.enumLabels && field.enumLabels[value]) || value, records: matched });
   }
   const other = records.filter((r) => !known.has(String(r[field.name] || "")));
-  if (other.length > 0) groups.push({ key: "__other__", label: "Other", records: other });
+  if (other.length > 0) groups.push({ key: otherGroupKey(field.enumValues), label: "Other", records: other });
   return groups;
 }
 

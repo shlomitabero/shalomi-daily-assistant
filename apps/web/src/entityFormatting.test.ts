@@ -1653,6 +1653,39 @@ test("groupByField falls back to the raw 'Other' label when called without a tra
 });
 
 /**
+ * Round 608: field.enumValues has no restriction on its contents (see the
+ * duplicate-values regression test above), so a spec can legitimately
+ * declare "__other__" itself as a real enum value -- colliding with the
+ * synthetic overflow column's own hardcoded "__other__" value. EntityPanel.tsx
+ * keys its collapsedBoardColumns Set and React list by column.value, so
+ * collapsing the real declared column used to silently collapse the
+ * unrelated overflow column too (and vice versa). Fixed by deriving the
+ * overflow column's key so it can never match anything in enumValues.
+ */
+test("groupByField gives the '(other)' column a key distinct from a real declared enum value literally named \"__other__\"", () => {
+  const field: Field = {
+    name: "status",
+    type: "enum",
+    required: true,
+    enumValues: ["New", "__other__"],
+  };
+  const records = [
+    { id: 1, status: "New" },
+    { id: 2, status: "__other__" }, // matches the real declared value
+    { id: 3, status: "Legacy-Removed-Value" }, // a genuinely unrecognized value
+  ];
+  const columns = groupByField(records, field);
+  const values = columns.map((c) => c.value);
+  assert.equal(new Set(values).size, values.length, "no two columns may share the same value/key");
+  const realOtherColumn = columns.find((c) => c.value === "__other__")!;
+  assert.equal(realOtherColumn.isOther, undefined, "the real declared enum column must never be marked isOther");
+  assert.deepEqual(realOtherColumn.records.map((r) => r.id), [2]);
+  const overflowColumn = columns.find((c) => c.isOther)!;
+  assert.notEqual(overflowColumn.value, "__other__");
+  assert.deepEqual(overflowColumn.records.map((r) => r.id), [3]);
+});
+
+/**
  * Round 443: field.enumValues has no uniqueness constraint (the one
  * realistic way a real project ends up with a duplicate is an
  * AI-generated spec -- see uniqueEnumValues' own doc comment above).
@@ -1903,6 +1936,27 @@ test("groupRecordsByField never produces two groups for the same enum value, eve
     "a duplicate declared value must collapse to one group, not one group per occurrence (the empty 'Won' group is correctly omitted)",
   );
   assert.deepEqual(groups[0].records.map((r) => r.id), [1], "the single matching record must not be duplicated across two identical groups");
+});
+
+/**
+ * Round 608: same fix as groupByField's identical regression test above --
+ * a declared enum value literally named "__other__" used to collide with
+ * the overflow bucket's own hardcoded key.
+ */
+test("groupRecordsByField gives the '(other)' bucket a key distinct from a real declared enum value literally named \"__other__\"", () => {
+  const t = (key: string) => translate("en", key);
+  const field: Field = { name: "status", type: "enum", required: true, enumValues: ["New", "__other__"] };
+  const records = [
+    { id: 1, status: "New" },
+    { id: 2, status: "__other__" },
+    { id: 3, status: "Legacy-Removed-Value" },
+  ];
+  const groups = groupRecordsByField(records, field, t);
+  const keys = groups.map((g) => g.key);
+  assert.equal(new Set(keys).size, keys.length, "no two groups may share the same key");
+  assert.deepEqual(groups.find((g) => g.key === "__other__")!.records.map((r) => r.id), [2]);
+  const overflowGroup = groups.find((g) => g.key !== "New" && g.key !== "__other__")!;
+  assert.deepEqual(overflowGroup.records.map((r) => r.id), [3]);
 });
 
 test("groupRecordsByField groups by a boolean field into exactly true then false, omitting an empty side entirely", () => {
