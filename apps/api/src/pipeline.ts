@@ -44,7 +44,18 @@ const SENSITIVE_FIELD_HINTS: (string | RegExp)[] = [
   /(?:(?<![a-zA-Z])secret|Secret)(?![a-z])/,
   "apikey",
   "api_key",
-  "token",
+  // Plain "token" would also match "tokenizer"/"detokenize"/"retokenize" as
+  // a plain substring (lowercased: "**token**izer", "de**token**ize") --
+  // same collision class as "secret"/"secretary" just above, and "token" is
+  // an ordinary English word rather than an acronym like "ssn" below, so
+  // this mirrors the "secret" regex's shape exactly: original-case
+  // lowercase "token" only counts at a word start or right after a
+  // non-letter separator ("token", "token_value", "api_token"), an
+  // uppercase "Token" is always a valid word start wherever it appears
+  // ("authToken", "apiToken"), and either form is rejected when
+  // immediately followed by a lowercase letter, which rules out
+  // "tokenizer"/"detokenize"/"retokenize".
+  /(?:(?<![a-zA-Z])token|Token)(?![a-z])/,
   // Plain "ssn" would also match "businessName"/"className" as a plain
   // substring (lowercased: "busine**ssn**ame", "cla**ssn**ame") -- same
   // collision class as "secret"/"secretary" just above. "ssn" is normally

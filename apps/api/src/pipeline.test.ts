@@ -1046,6 +1046,67 @@ test("Security scan's 'ssn' hint doesn't spuriously flag 'businessName'/'classNa
 });
 
 /**
+ * Regression test for a real bug found by a round 590 survey: the same
+ * SENSITIVE_FIELD_HINTS array's bare "token" hint flagged fields via a
+ * plain substring check (`lowerName.includes("token")`), so entirely
+ * ordinary fields "tokenizer" and "detokenize" (lowercased:
+ * "**token**izer", "de**token**ize") tripped a false "looks sensitive"
+ * warning -- the exact same collision class as "secret"/"secretary" and
+ * "ssn"/"businessName" fixed just above in this same array, left unfixed
+ * on this sibling hint. Fixed the same way "secret" was: a regex against
+ * the field's original, un-lowercased name, checking for a word-start
+ * lowercase "token" or the capitalized "Token" form, each not immediately
+ * followed by a lowercase letter.
+ */
+test("Security scan's 'token' hint doesn't spuriously flag 'tokenizer'/'detokenize', but still catches token/authToken/token_value", () => {
+  const spec: ProductSpec = {
+    summary: "test",
+    personas: [],
+    roles: ["Admin"],
+    screens: [],
+    assumptions: [],
+    openQuestions: [],
+    entities: [
+      {
+        name: "Document",
+        fields: [
+          { name: "name", type: "text", required: true },
+          { name: "tokenizer", type: "text", required: false },
+          { name: "detokenize", type: "text", required: false },
+          { name: "token", type: "text", required: false },
+          { name: "authToken", type: "text", required: false },
+          { name: "token_value", type: "text", required: false },
+        ],
+      },
+    ],
+  };
+
+  const security = runSecurityScan("proj1", spec);
+
+  assert.ok(
+    !security.warnings.some((w) => w.includes('"Document.tokenizer"')),
+    "an ordinary 'tokenizer' field must not be flagged as looking sensitive",
+  );
+  assert.ok(
+    !security.warnings.some((w) => w.includes('"Document.detokenize"')),
+    "an ordinary 'detokenize' field must not be flagged as looking sensitive",
+  );
+  assert.ok(
+    security.warnings.some((w) => w.includes('"Document.token"')),
+    "'token' must still be flagged -- it's a genuinely sensitive field name",
+  );
+  assert.ok(
+    security.warnings.some((w) => w.includes('"Document.authToken"')),
+    "'authToken' must still be flagged",
+  );
+  assert.ok(
+    security.warnings.some((w) => w.includes('"Document.token_value"')),
+    "'token_value' must still be flagged",
+  );
+  assert.equal(security.warnings.length, 3, "exactly the 3 genuinely sensitive-sounding fields should be flagged, not 'tokenizer'/'detokenize' too");
+});
+
+/**
  * Real end-to-end proof of the same fix, run through the actual
  * runBuildPipeline a real build/refine uses (real migrations, real seed
  * data, every real agent step) rather than calling runSecurityScan in
