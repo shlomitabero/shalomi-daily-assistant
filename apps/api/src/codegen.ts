@@ -2995,9 +2995,11 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
   // the live preview's own EntityPanel.tsx (round 203).
   const orderedFields = useMemo(() => applyColumnOrder(entity.fields, columnOrder), [entity.fields, columnOrder]);
 
-  // Which columns actually render in the table -- CSV export intentionally
-  // ignores this and always includes every field, the same "whole-record
-  // action" distinction the live-preview app's own EntityPanel makes.
+  // Which columns actually render in the table -- CSV export and both print
+  // sheets (per-record RecordPrintSheet and the list's RecordListPrintSheet)
+  // intentionally ignore this and always include every field, the same
+  // "whole-record action" distinction the live-preview app's own EntityPanel
+  // makes.
   const visibleFields = useMemo(() => orderedFields.filter((f) => !hiddenFields.has(f.name)), [orderedFields, hiddenFields]);
 
   function handleToggleColumn(fieldName) {
@@ -4353,7 +4355,7 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
       <RecordPrintSheet entity={entity} record={recordToPrint} relatedRecords={relatedRecords} />
       <RecordListPrintSheet
         entity={entity}
-        fields={visibleFields}
+        fields={orderedFields}
         records={selectedOrAllRecords(records, effectivelyVisibleRecords, selectedIds)}
         relatedRecords={relatedRecords}
         show={showPrintList}

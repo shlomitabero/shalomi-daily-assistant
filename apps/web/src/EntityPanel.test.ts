@@ -3461,6 +3461,68 @@ test("EntityPanel's Columns menu hides/shows table columns, guards against hidin
 });
 
 /**
+ * New in this round: EntityPanel.tsx's own doc comment above visibleFields
+ * says CSV export and the print sheets are "whole-record actions" that
+ * deliberately ignore a hidden column, same as RecordPrintSheet (per-row
+ * Print) and handleExportCsv already do -- but RecordListPrintSheet's call
+ * site was passing visibleFields (the hidden-filtered list) instead of
+ * orderedFields, dropping a hidden column's data from "Print list" alone.
+ * Hides the Status column via the Columns menu first (as the test above
+ * does), confirming it's genuinely gone from the on-screen table, then
+ * opens Print list and confirms the SAME hidden field's data is still
+ * present there -- matching Export CSV and per-row Print's behavior on the
+ * identical hidden column, not the on-screen table's.
+ */
+test("EntityPanel's Print list action includes a column the user has hidden from the on-screen table, since it's a whole-record action like CSV export and per-record Print", async () => {
+  await withJsdom(async () => {
+    const store: EntityRecord[] = [
+      { id: 1, name: "Acme Corp", status: "new" },
+      { id: 2, name: "Globex", status: "won" },
+    ];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = mockRecordsFetch(store) as typeof fetch;
+    const originalPrint = window.print;
+    let printCalls = 0;
+    window.print = () => {
+      printCalls += 1;
+    };
+    try {
+      renderEntityPanel();
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 2);
+
+      const columnsBtn = document.querySelector(".columns-menu-btn") as HTMLButtonElement;
+      fireEvent.click(columnsBtn);
+      const statusCheckbox = Array.from(document.querySelectorAll(".columns-menu-item")).find((el) =>
+        /Status/.test(el.textContent ?? ""),
+      )!.querySelector("input") as HTMLInputElement;
+      fireEvent.click(statusCheckbox);
+
+      await waitForCondition(() => document.querySelectorAll("thead th").length === 4);
+      assert.doesNotMatch(
+        document.querySelector("thead")!.textContent ?? "",
+        /Status/,
+        "the on-screen table must have genuinely dropped the Status column",
+      );
+
+      const printListBtn = Array.from(document.querySelectorAll("button")).find((b) => b.textContent?.includes("Print list"))!;
+      fireEvent.click(printListBtn);
+      await waitForCondition(() => printCalls === 1);
+
+      const sheetText = document.querySelector(".print-list-sheet")!.textContent ?? "";
+      assert.match(
+        sheetText,
+        /Status/,
+        "Print list must still include the Status column header even though it's hidden from the on-screen table -- it's a whole-record action, same as CSV export",
+      );
+      assert.match(sheetText, /Won/, "Print list must still include the hidden column's actual data (Globex's status)");
+    } finally {
+      globalThis.fetch = originalFetch;
+      window.print = originalPrint;
+    }
+  });
+});
+
+/**
  * New in this round: GlobalSearchPanel's per-row "jump to record" click
  * (see GlobalSearchPanel.test.ts) carries a specific record id down through
  * App.tsx into a new highlightRecordId prop, so the person lands on the

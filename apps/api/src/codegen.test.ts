@@ -10459,3 +10459,105 @@ test("the exported EntityView's toolbar Print list button fills .print-list-shee
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+/**
+ * New in this round: the live preview's EntityPanel.tsx has the identical
+ * RecordListPrintSheet call site bug ported here -- it was passing
+ * visibleFields (the hidden-filtered column list) instead of orderedFields,
+ * dropping a hidden column's data from the exported app's "Print list"
+ * action too, even though its own CSV export and per-row Print correctly
+ * treat hiding a column as a table-view preference, not something that
+ * should affect a whole-record action. Hides the Status column via the
+ * Columns menu, confirms it's genuinely gone from the on-screen table, then
+ * confirms Print list still includes that column's real data.
+ */
+test("the exported EntityView's Print list action includes a column hidden from the on-screen table, since it's a whole-record action like CSV export and per-row Print", async () => {
+  const files = generateExportFiles(project);
+  const dir = writeGeneratedWebComponent(files);
+  const originalFetch = globalThis.fetch;
+  const store = [
+    { id: 1, name: "Acme Corp", status: "New" },
+    { id: 2, name: "Globex", status: "Won" },
+  ];
+  globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
+    const method = init?.method ?? "GET";
+    if (method === "GET" && input === "/api/Customer") {
+      return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    throw new Error(`unexpected request ${method} ${input}`);
+  }) as typeof fetch;
+  const originalPrint = window.print;
+  let printCalls = 0;
+  window.print = () => {
+    printCalls += 1;
+  };
+
+  try {
+    await withRealLocalStorage(async () => {
+      const { EntityView } = await import(path.join(dir, "web", "src", "components", "EntityView.jsx"));
+      const customerEntity = project.spec.entities.find((e) => e.name === "Customer")!;
+      const props = {
+        entity: customerEntity,
+        highlightRecordId: null,
+        onHighlightHandled: () => {},
+        onJumpToRecord: () => {},
+        onRecordCountChange: () => {},
+      };
+
+      const { container } = render(React.createElement(EntityView, props));
+      for (let i = 0; i < 40; i++) {
+        if (container.querySelectorAll("tbody tr").length === 2) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+
+      const columnsBtn = container.querySelector(".columns-menu-btn") as HTMLButtonElement;
+      await act(async () => {
+        fireEvent.click(columnsBtn);
+      });
+      const statusCheckbox = Array.from(container.querySelectorAll(".columns-menu-item")).find((el) =>
+        /סטטוס/.test(el.textContent ?? ""),
+      )!.querySelector("input") as HTMLInputElement;
+      await act(async () => {
+        fireEvent.click(statusCheckbox);
+      });
+      for (let i = 0; i < 40; i++) {
+        if (!/סטטוס/.test(container.querySelector("thead")!.textContent ?? "")) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+      assert.doesNotMatch(
+        container.querySelector("thead")!.textContent ?? "",
+        /סטטוס/,
+        "the on-screen table must have genuinely dropped the status column",
+      );
+
+      const printListButton = Array.from(container.querySelectorAll("button")).find((b) => b.textContent?.includes("Print"))!;
+      await act(async () => {
+        fireEvent.click(printListButton);
+      });
+      for (let i = 0; i < 40; i++) {
+        if (printCalls === 1) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+
+      assert.equal(printCalls, 1, "window.print must actually be called");
+      const sheetText = container.querySelector(".print-list-sheet")!.textContent ?? "";
+      assert.match(
+        sheetText,
+        /סטטוס/,
+        "Print list must still include the status column header even though it's hidden from the on-screen table",
+      );
+      assert.match(sheetText, /הצליח/, "Print list must still include the hidden column's actual data (Globex's status, via its enumLabels)");
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    window.print = originalPrint;
+    cleanup();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});

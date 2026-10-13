@@ -1396,9 +1396,10 @@ export function EntityPanel({
   // natural order for a field the persisted order doesn't mention).
   const orderedFields = useMemo(() => applyColumnOrder(entity.fields, columnOrder), [entity.fields, columnOrder]);
 
-  // Which columns actually render in the table -- CSV export and the print
-  // sheet intentionally ignore this and always include every field, since
-  // those are whole-record actions, not "what's currently on screen".
+  // Which columns actually render in the table -- CSV export and both print
+  // sheets (per-record RecordPrintSheet and the list's RecordListPrintSheet)
+  // intentionally ignore this and always include every field, since those
+  // are whole-record actions, not "what's currently on screen".
   const visibleFields = useMemo(
     () => orderedFields.filter((f) => !hiddenFields.has(f.name)),
     [orderedFields, hiddenFields],
@@ -2990,7 +2991,7 @@ export function EntityPanel({
       />
       <RecordListPrintSheet
         entity={entity}
-        fields={visibleFields}
+        fields={orderedFields}
         records={selectedOrAllRecords(records, effectivelyVisibleRecords, selectedIds)}
         show={showPrintList}
         lang={lang}
