@@ -2170,6 +2170,77 @@ test("the exported EntityView's real generated buildCalendarIcs folds a long PRO
   }
 });
 
+// Regression test for round 601's finding: the exported app's own
+// buildCalendarIcs (ported from calendarIcs.ts) pushed entity.name raw
+// into the UID line with no icsEscapeText call, unlike PRODID/SUMMARY/
+// DESCRIPTION in the same function -- an entity name containing a
+// semicolon, comma, or backslash reached the UID content line unescaped,
+// breaking RFC 5545's content-line structure in the one output (a
+// downloaded, standalone exported app's .ics file) real end users
+// actually import into real calendar apps. Mirrors calendarIcs.test.ts's
+// own UID-escaping test for the un-exported version; reuses the same
+// real-generated-code extraction harness as the PRODID-folding test
+// immediately above (the project's own entity name stays normal so
+// generation doesn't choke on it -- only the entity object buildCalendarIcs
+// is actually invoked with carries the unsafe name).
+test("the exported EntityView's real generated buildCalendarIcs escapes an entity name containing RFC-5545-significant characters in UID, same as PRODID/SUMMARY/DESCRIPTION", () => {
+  const withDate: Project = {
+    ...project,
+    spec: {
+      ...project.spec,
+      entities: [
+        ...project.spec.entities,
+        {
+          name: "Appointment",
+          label: "לקוח",
+          fields: [
+            { name: "customerName", label: "שם לקוח", type: "text", required: true },
+            { name: "date", label: "תאריך", type: "date", required: true },
+          ],
+        },
+      ],
+    },
+  };
+  const entityViewJsx = generateExportFiles(withDate).find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+
+  const pickDisplaySrc = entityViewJsx.match(/export function pickDisplayField\(entity\) \{[\s\S]*?\n\}\n/)?.[0]?.replace(/^export /, "");
+  const labelFieldSrc = entityViewJsx.match(/function calendarLabelField\(entity, dateField\) \{[\s\S]*?\n\}\n/)?.[0];
+  const pad2Src = entityViewJsx.match(/function icsPad2\(n\) \{[\s\S]*?\n\}\n/)?.[0];
+  const dateSrc = entityViewJsx.match(/function formatIcsDate\(date\) \{[\s\S]*?\n\}\n/)?.[0];
+  const tsSrc = entityViewJsx.match(/function formatIcsTimestamp\(date\) \{[\s\S]*?\n\}\n/)?.[0];
+  const escSrc = entityViewJsx.match(/function icsEscapeText\(value\) \{[\s\S]*?\n\}\n/)?.[0];
+  const utf8LenSrc = entityViewJsx.match(/function utf8ByteLength\(s\) \{[\s\S]*?\n\}\n/)?.[0];
+  const foldSrc = entityViewJsx.match(/function foldIcsLine\(line\) \{[\s\S]*?\n\}\n/)?.[0];
+  const buildSrc = entityViewJsx.match(
+    /function buildCalendarIcs\(entity, dateField, labelField, records, relatedRecords, now, endField\) \{[\s\S]*?\n\}\n/,
+  )?.[0];
+  assert.ok(
+    pickDisplaySrc && labelFieldSrc && pad2Src && dateSrc && tsSrc && escSrc && utf8LenSrc && foldSrc && buildSrc,
+    "expected to find every ICS helper function in the real generated output",
+  );
+
+  const relationStub = "function relationDisplayLabel() { return ''; }\n";
+  const buildCalendarIcs = new Function(
+    `${pickDisplaySrc}\n${labelFieldSrc}\n${pad2Src}\n${dateSrc}\n${tsSrc}\n${escSrc}\n${utf8LenSrc}\n${foldSrc}\n${relationStub}\n${buildSrc}\nreturn buildCalendarIcs;`,
+  )() as (entity: unknown, dateField: unknown, labelField: unknown, records: unknown[], relatedRecords: unknown, now: Date) => string;
+
+  const entity = {
+    name: "Weird;Name,With\\Chars",
+    label: "לקוח",
+    fields: [
+      { name: "customerName", label: "שם לקוח", type: "text" },
+      { name: "date", label: "תאריך", type: "date" },
+    ],
+  };
+  const dateField = entity.fields[1];
+  const labelField = entity.fields[0];
+  const records = [{ id: 3, customerName: "Dana Levi", date: "2026-03-15" }];
+
+  const ics = buildCalendarIcs(entity, dateField, labelField, records, {}, new Date("2026-01-01T00:00:00Z"));
+  assert.match(ics, /UID:Weird\\;Name\\,With\\\\Chars-3@forge-ai/);
+  assert.doesNotMatch(ics, /UID:Weird;Name,With\\Chars-3@forge-ai/, "the raw unescaped name must never reach the UID line");
+});
+
 // Regression test for the enum-field gap fixed this round: the exported
 // app's own buildCalendarIcs (ported from calendarIcs.ts) previously
 // showed an enum field's raw stored value in DESCRIPTION instead of its

@@ -2200,7 +2200,7 @@ function buildCalendarIcs(entity, dateField, labelField, records, relatedRecords
       })
       .filter((line) => line !== null);
     lines.push("BEGIN:VEVENT");
-    lines.push(foldIcsLine(\`UID:\${entity.name}-\${record.id}@forge-ai\`));
+    lines.push(foldIcsLine(\`UID:\${icsEscapeText(entity.name)}-\${record.id}@forge-ai\`));
     lines.push(\`DTSTAMP:\${dtstamp}\`);
     lines.push(\`DTSTART;VALUE=DATE:\${formatIcsDate(start)}\`);
     lines.push(\`DTEND;VALUE=DATE:\${formatIcsDate(end)}\`);
