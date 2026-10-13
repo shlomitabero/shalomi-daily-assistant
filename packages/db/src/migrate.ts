@@ -220,6 +220,14 @@ export function diffAndMigrate(
   const previousEntities = new Map(previousSpec.entities.map((e) => [e.name, e]));
   const entityNames = new Set(nextSpec.entities.map((e) => e.name));
   const changes: MigrationChange[] = [];
+  // A field kept by name but retyped away from text/longtext invalidates
+  // any automation rule using it as a toMode:"field" WhatsApp destination
+  // (routes/projects.ts's validateAutomationToField only runs at rule
+  // create/update time, never again) -- tracked here, alongside the
+  // type_changed entry itself, so the automation-rule safety sweep below
+  // can disable it the same way it already does for a field removed
+  // outright.
+  const toFieldUnsafeAfterTypeChange = new Map<string, Set<string>>();
 
   nextSpec.entities.forEach((entity, index) => {
     const table = tableNameFor(projectId, entity.name);
@@ -307,6 +315,12 @@ export function diffAndMigrate(
             fromType: prevField.type,
             toType: field.type,
           });
+          if (field.type !== "text" && field.type !== "longtext") {
+            if (!toFieldUnsafeAfterTypeChange.has(entity.name)) {
+              toFieldUnsafeAfterTypeChange.set(entity.name, new Set());
+            }
+            toFieldUnsafeAfterTypeChange.get(entity.name)!.add(field.name);
+          }
         } else if (field.type === "relation" && prevField.type === "relation") {
           // Same gap as "type_changed" above, but for a relation field's
           // *target* rather than its own type: the column's REFERENCES
@@ -491,6 +505,9 @@ export function diffAndMigrate(
       if (!nextFieldNames.has(prevField.name)) {
         disableAutomationRulesForField(db, projectId, prevEntity.name, prevField.name);
       }
+    }
+    for (const fieldName of toFieldUnsafeAfterTypeChange.get(prevEntity.name) ?? []) {
+      disableAutomationRulesForField(db, projectId, prevEntity.name, fieldName);
     }
   }
 

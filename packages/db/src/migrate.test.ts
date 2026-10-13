@@ -1115,6 +1115,75 @@ test("diffAndMigrate disables an automation rule referencing a field removed fro
 });
 
 /**
+ * Round 606: a field kept by NAME but retyped away from text/longtext used
+ * to leave a toMode:"field" automation rule fully enabled, since the field
+ * never disappeared -- only validateAutomationToField (routes/projects.ts,
+ * round 597) rejects a non-text/longtext destination, and that only runs at
+ * rule create/update time, never again. A refine that redefines "name" (a
+ * real field on this fixture's Customer entity) as a date field leaves a
+ * rule whose toField is "name" still pointed at it; fireRule's own runtime
+ * guard (typeof to !== "string") can't catch this, since a date field is
+ * still stored as a plain string. Proven here against diffAndMigrate's real
+ * type_changed computation, the same mechanism the "removed field" tests
+ * above already exercise.
+ */
+test("diffAndMigrate disables a toMode:\"field\" automation rule whose destination field was kept by name but retyped away from text/longtext", () => {
+  const db = openDatabase(":memory:");
+  ensureAutomationRulesTable(db);
+  applyMigrations(db, "proj1", spec);
+  const destinationRule = insertAutomationRule(db, {
+    projectId: "proj1",
+    entityName: "Customer",
+    trigger: "record_created",
+    actionType: "send_whatsapp",
+    toMode: "field",
+    toField: "name",
+    messageTemplate: "New customer!",
+  });
+
+  const nextSpec: ProductSpec = {
+    ...spec,
+    entities: [
+      { ...spec.entities[0], fields: spec.entities[0].fields.map((f) => (f.name === "name" ? { ...f, type: "date" } : f)) },
+      spec.entities[1],
+    ],
+  };
+  const changes = diffAndMigrate(db, "proj1", spec, nextSpec);
+
+  assert.ok(
+    changes.some((c) => c.type === "type_changed" && c.column === "name" && c.toType === "date"),
+    "expected a type_changed entry for the retyped field",
+  );
+  assert.equal(getAutomationRule(db, "proj1", destinationRule.id)!.enabled, false);
+});
+
+test("diffAndMigrate leaves a toMode:\"field\" automation rule enabled when its destination field is retyped between text and longtext, since both remain valid WhatsApp destinations", () => {
+  const db = openDatabase(":memory:");
+  ensureAutomationRulesTable(db);
+  applyMigrations(db, "proj1", spec);
+  const destinationRule = insertAutomationRule(db, {
+    projectId: "proj1",
+    entityName: "Customer",
+    trigger: "record_created",
+    actionType: "send_whatsapp",
+    toMode: "field",
+    toField: "name",
+    messageTemplate: "New customer!",
+  });
+
+  const nextSpec: ProductSpec = {
+    ...spec,
+    entities: [
+      { ...spec.entities[0], fields: spec.entities[0].fields.map((f) => (f.name === "name" ? { ...f, type: "longtext" } : f)) },
+      spec.entities[1],
+    ],
+  };
+  diffAndMigrate(db, "proj1", spec, nextSpec);
+
+  assert.equal(getAutomationRule(db, "proj1", destinationRule.id)!.enabled, true);
+});
+
+/**
  * Round 596's own finding: diffAndMigrate also runs in the *reverse*
  * direction on checkpoint restore (apps/api/src/routes/projects.ts calls
  * diffAndMigrate(db, project.id, project.spec, checkpoint.spec) -- the
