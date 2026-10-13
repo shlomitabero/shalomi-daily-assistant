@@ -71,6 +71,12 @@ financialRouter.post('/financial/watchlist/:id/refresh', requireOwner, asyncHand
   res.json({ entry: updated });
 }));
 
+financialRouter.delete('/financial/watchlist/:id', requireOwner, (req, res) => {
+  const existed = db.financial_watchlist.delete(req.params.id);
+  if (!existed) return res.status(404).json({ error: 'not found' });
+  res.status(204).end();
+});
+
 const VALID_SIDES = ['long', 'short'];
 
 // Simulation only — never touches the real ledger. Real trading requires a

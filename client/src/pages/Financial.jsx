@@ -43,6 +43,16 @@ export default function Financial() {
     }
   }
 
+  async function onRemoveSymbol(id) {
+    setError('');
+    try {
+      await api.removeFromWatchlist(id);
+      refresh();
+    } catch (err) {
+      setError(err.data?.error || err.message);
+    }
+  }
+
   async function onPaperTrade(e) {
     e.preventDefault();
     setError('');
@@ -82,6 +92,7 @@ export default function Financial() {
             >
               {refreshingId === w.id ? 'מרענן…' : 'רענן מחיר'}
             </button>
+            <button className="btn btn-ghost" onClick={() => onRemoveSymbol(w.id)}>הסר</button>
           </div>
         ))}
       </div>
