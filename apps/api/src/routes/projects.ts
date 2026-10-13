@@ -397,6 +397,31 @@ function validateAutomationFieldValue(field: Field, fieldValue: string): void {
   }
 }
 
+// A toMode:"field" rule's destination is `record[toField]`, sent as-is to
+// WhatsAppWebManager.sendMessage (automations.ts's fireRule). The create/
+// update routes only ever called findField(entity, toField) -- confirming
+// the field exists, never that it could plausibly hold a phone number.
+// fireRule's own `typeof to !== "string"` guard already catches number/
+// boolean fields (both become a non-string JS value via rowToRecord), but
+// date and enum fields are stored as plain strings (repository.ts's
+// coerceValue) and sail straight through: a date value like "2024-01-15"
+// strips to "20240115" (round 506/507's missing_country_code heuristic
+// only catches exactly one leading zero, and this has none), reaching
+// WhatsAppWebManager.sendMessage's real sock.sendMessage call with a
+// nonsensical JID instead of being rejected at rule save time -- the
+// same "reject at creation, don't rely on a runtime guard to notice"
+// discipline round 595 already established for the trigger's own
+// fieldValue.
+function validateAutomationToField(field: Field): void {
+  if (field.type !== "text" && field.type !== "longtext") {
+    throw new HttpError(
+      400,
+      `Field "${field.name}" can't be used as a WhatsApp destination -- only a text field can hold a phone number`,
+      "VALIDATION_ERROR",
+    );
+  }
+}
+
 /**
  * `Number("abc")` is NaN, which SQLite's driver happily binds as a
  * parameter without throwing (verified empirically) -- so without this
@@ -2024,7 +2049,7 @@ export function createProjectsRouter(
         if (data.fieldValue) validateAutomationFieldValue(field, data.fieldValue);
       }
       if (data.toMode === "field" && data.toField) {
-        findField(entity, data.toField);
+        validateAutomationToField(findField(entity, data.toField));
       }
       const rule = insertAutomationRule(db, {
         projectId: project.id,
@@ -2070,7 +2095,7 @@ export function createProjectsRouter(
         if (next.fieldValue) validateAutomationFieldValue(field, next.fieldValue);
       }
       if (next.toMode === "field" && next.toField) {
-        findField(entity, next.toField);
+        validateAutomationToField(findField(entity, next.toField));
       }
       try {
         const rule = updateAutomationRule(db, project.id, req.params.ruleId, parsed.data);

@@ -1405,6 +1405,84 @@ test("creating or updating a field_equals automation rule with a fieldValue that
 });
 
 /**
+ * Round 597's Explore survey found that a toMode:"field" automation rule's
+ * destination (toField) had no type restriction at all -- the create/update
+ * routes only ever confirmed the field exists (findField), never that it
+ * could plausibly hold a phone number. fireRule's own `typeof to !==
+ * "string"` guard (automations.ts) catches number/boolean fields (both
+ * become a real non-string JS value via rowToRecord), but date and enum
+ * fields are stored as plain strings and sail straight through: a date
+ * value like "2024-01-15" strips to "20240115" (round 506/507's own
+ * missing_country_code heuristic only catches exactly one leading zero,
+ * and this has none) and reaches WhatsAppWebManager.sendMessage's real
+ * sock.sendMessage call with a nonsensical JID, instead of being rejected
+ * at rule save time the same way round 595 already rejects a mistyped
+ * trigger fieldValue.
+ */
+test("creating or updating a toMode:\"field\" automation rule whose destination field can never hold a phone number is rejected with 400, instead of letting a date/enum value flow into a real WhatsApp send attempt", async () => {
+  await withServer(async (baseUrl) => {
+    const token = await signup(baseUrl, "automation-tofield-type@example.com");
+    const createRes = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({
+        description:
+          "Build an appointment-management application for a beauty clinic. I need customers, appointments, employees, services, an admin dashboard and automatic appointment status tracking.",
+      }),
+    });
+    const { project } = (await createRes.json()) as { project: { id: string } };
+    const buildRes = await fetch(`${baseUrl}/api/projects/${project.id}/build`, { method: "POST", headers: authHeaders(token) });
+    await collectSSE(buildRes);
+
+    const baseRule = {
+      trigger: "record_created",
+      actionType: "send_whatsapp",
+      toMode: "field",
+      messageTemplate: "hi",
+    };
+
+    // Appointment's "date" field is type:"date" -- stored as a plain
+    // string, so it can never hold a real phone number.
+    const badDateRes = await fetch(`${baseUrl}/api/projects/${project.id}/entities/Appointment/automations`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ ...baseRule, toField: "date" }),
+    });
+    assert.equal(badDateRes.status, 400);
+    assert.equal(((await badDateRes.json()) as { code?: string }).code, "VALIDATION_ERROR");
+
+    // Customer's "status" field is an enum -- same gap, different type.
+    const badEnumRes = await fetch(`${baseUrl}/api/projects/${project.id}/entities/Customer/automations`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ ...baseRule, toField: "status" }),
+    });
+    assert.equal(badEnumRes.status, 400);
+    assert.equal(((await badEnumRes.json()) as { code?: string }).code, "VALIDATION_ERROR");
+
+    // Customer's "phone" field is a genuine text field -- must be accepted,
+    // this isn't a blanket rejection of toMode:"field".
+    const goodRes = await fetch(`${baseUrl}/api/projects/${project.id}/entities/Customer/automations`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ ...baseRule, toField: "phone" }),
+    });
+    assert.equal(goodRes.status, 201);
+    const { rule: createdRule } = (await goodRes.json()) as { rule: { id: string } };
+
+    // A PATCH that would re-point an existing rule's destination at a
+    // non-text field must be rejected the same way as creation.
+    const patchRes = await fetch(`${baseUrl}/api/projects/${project.id}/automations/${createdRule.id}`, {
+      method: "PATCH",
+      headers: authHeaders(token),
+      body: JSON.stringify({ toField: "status" }),
+    });
+    assert.equal(patchRes.status, 400);
+    assert.equal(((await patchRes.json()) as { code?: string }).code, "VALIDATION_ERROR");
+  });
+});
+
+/**
  * Round 474 closes the design doc's other identified residual gap:
  * POST /projects/:id/answers. Unlike /build and /refine, this route
  * returns a plain JSON response (not an SSE stream) -- confirmed by
