@@ -1483,6 +1483,70 @@ test("creating or updating a toMode:\"field\" automation rule whose destination 
 });
 
 /**
+ * Round 600's Explore survey found that docs/wakeRetry-idempotency-design.md's
+ * own inventory of mutating routes never mentioned
+ * POST /projects/:id/entities/:entityName/automations at all -- Automation
+ * Rules was added out-of-band well after that inventory was written, and
+ * unlike every other real-effect insert route in this file (rounds 471-528,
+ * 594), this one called insertAutomationRule() with no withIdempotency()
+ * guard. A response lost in transit after the rule was already inserted
+ * would make fetchWithWakeRetry (apps/web/src/wakeRetry.ts) resend the
+ * identical POST, and createAutomationRule (apps/web/src/api.ts) sent no
+ * X-Idempotency-Key header at all -- unlike all 8 of its sibling creation
+ * functions -- so even a server-side guard alone wouldn't have helped the
+ * real client. Fixed both: the client now sends a real header, and the
+ * route wraps insertAutomationRule() in withIdempotency(), same as the
+ * sibling /entities/:entityName (record creation) route round 594 fixed.
+ */
+test("POST /projects/:id/entities/:entityName/automations retried with the same idempotency key after the first attempt already finished replays the original response instead of inserting a second rule", async () => {
+  await withServer(async (baseUrl) => {
+    const token = await signup(baseUrl, "automation-create-idem1@example.com");
+    const createRes = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({
+        description:
+          "Build an appointment-management application for a beauty clinic. I need customers, appointments, employees, services, an admin dashboard and automatic appointment status tracking.",
+      }),
+    });
+    const { project } = (await createRes.json()) as { project: { id: string } };
+    const buildRes = await fetch(`${baseUrl}/api/projects/${project.id}/build`, { method: "POST", headers: authHeaders(token) });
+    await collectSSE(buildRes);
+
+    const headers = { ...authHeaders(token), "x-idempotency-key": "automation-create-repro-key" };
+    const ruleBody = {
+      trigger: "record_created",
+      actionType: "send_whatsapp",
+      toMode: "field",
+      toField: "phone",
+      messageTemplate: "hi",
+    };
+
+    const firstRes = await fetch(`${baseUrl}/api/projects/${project.id}/entities/Customer/automations`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify(ruleBody),
+    });
+    assert.equal(firstRes.status, 201);
+    const first = (await firstRes.json()) as { rule: { id: string } };
+
+    const retryRes = await fetch(`${baseUrl}/api/projects/${project.id}/entities/Customer/automations`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify(ruleBody),
+    });
+    assert.equal(retryRes.status, 201);
+    const retry = (await retryRes.json()) as { rule: { id: string } };
+    assert.equal(retry.rule.id, first.rule.id, "the retry must return the exact same rule, not a newly inserted one");
+    assert.deepEqual(retry, first, "the replayed response must be identical to what the first attempt actually returned");
+
+    const listRes = await fetch(`${baseUrl}/api/projects/${project.id}/automations`, { headers: authHeaders(token) });
+    const { rules } = (await listRes.json()) as { rules: { id: string }[] };
+    assert.equal(rules.length, 1, "exactly one automation rule must exist -- the retry must not have inserted a second row");
+  });
+});
+
+/**
  * Round 474 closes the design doc's other identified residual gap:
  * POST /projects/:id/answers. Unlike /build and /refine, this route
  * returns a plain JSON response (not an SSE stream) -- confirmed by

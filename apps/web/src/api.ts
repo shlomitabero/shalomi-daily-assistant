@@ -862,6 +862,7 @@ export function createAutomationRule(
 ): Promise<{ rule: AutomationRuleView }> {
   return request(`/projects/${projectId}/entities/${entityName}/automations`, {
     method: "POST",
+    headers: { "x-idempotency-key": crypto.randomUUID() },
     body: JSON.stringify(data),
   });
 }

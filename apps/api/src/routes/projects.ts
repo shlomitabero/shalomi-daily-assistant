@@ -2051,19 +2051,43 @@ export function createProjectsRouter(
       if (data.toMode === "field" && data.toField) {
         validateAutomationToField(findField(entity, data.toField));
       }
-      const rule = insertAutomationRule(db, {
-        projectId: project.id,
-        entityName: entity.name,
-        trigger: data.trigger,
-        fieldName: data.fieldName ?? null,
-        fieldValue: data.fieldValue ?? null,
-        actionType: data.actionType,
-        toMode: data.toMode,
-        toNumber: data.toNumber ?? null,
-        toField: data.toField ?? null,
-        messageTemplate: data.messageTemplate,
-      });
-      res.status(201).json({ rule });
+      /**
+       * Round 600: the one insert route in this feature docs/wakeRetry-
+       * idempotency-design.md never listed, since Automation Rules was
+       * added out-of-band well after that inventory was written -- every
+       * other real-effect POST in this file got withIdempotency protection
+       * in rounds 471-528/594, but creating an automation rule was missed.
+       * Without this, a response lost in transit after insertAutomationRule
+       * already committed (the same fetchWithWakeRetry retry-on-any-thrown-
+       * fetch-error case round 594 fixed for record creation) produced a
+       * second, fully duplicate rule -- which then double-sends the same
+       * WhatsApp message on every subsequent real trigger, since
+       * runAutomationsForRecordChange fires each enabled rule independently
+       * with no dedup across rules of identical content.
+       */
+      const idempotencyKey = req.header("X-Idempotency-Key") || undefined;
+      const { status, body } = await withIdempotency(
+        db,
+        idempotencyKey,
+        req.userId!,
+        `POST /projects/${project.id}/entities/${entity.name}/automations`,
+        async () => {
+          const rule = insertAutomationRule(db, {
+            projectId: project.id,
+            entityName: entity.name,
+            trigger: data.trigger,
+            fieldName: data.fieldName ?? null,
+            fieldValue: data.fieldValue ?? null,
+            actionType: data.actionType,
+            toMode: data.toMode,
+            toNumber: data.toNumber ?? null,
+            toField: data.toField ?? null,
+            messageTemplate: data.messageTemplate,
+          });
+          return { status: 201, body: { rule } };
+        },
+      );
+      res.status(status).json(body);
     }),
   );
 
