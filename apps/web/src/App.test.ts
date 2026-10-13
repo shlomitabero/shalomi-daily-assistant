@@ -2745,3 +2745,65 @@ test("App's WhatsApp unread-badge poll suppresses a stale nonzero count while th
   await fnClosed();
   assert.equal(stateClosed.count, 1, "badge must still show the real unread count while the panel is closed");
 });
+
+test("App's checkUnread reads tRef.current fresh on every tick instead of closing over a stale `t` from whenever the poll effect last (re)started", async () => {
+  // Round 592 regression test: useTranslation()'s `t` is a brand-new closure
+  // on every language change, but the poll effect that owns checkUnread only
+  // re-runs on project?.id/project?.status -- a language switch mid-session
+  // left checkUnread calling maybeNotifyNewWhatsAppMessages with whichever
+  // `t` was captured back when the effect last started, so a desktop
+  // notification fired after a later language change rendered its title in
+  // the OLD language. Fixed the same way showWhatsAppRef (round 560) already
+  // solves the identical "read a live value without restarting the poll"
+  // problem just above this effect in App.tsx: a ref, kept in sync by its
+  // own tiny effect, read as tRef.current inside the interval tick.
+  const appSrc = readFileSync(new URL("./App.tsx", import.meta.url), "utf8");
+  const handlerMatch = appSrc.match(/ {4}async function checkUnread\(\) \{[\s\S]*?\n {4}\}\n/);
+  assert.ok(handlerMatch, "expected to find checkUnread in App.tsx");
+  const { code } = transformSync(handlerMatch![0], { loader: "ts" });
+
+  const capturedT: ((key: string) => string)[] = [];
+  const tRef = { current: (key: string) => `EN:${key}` };
+  const fn = new Function(
+    "projectId",
+    "cancelled",
+    "getWhatsAppStatus",
+    "listWhatsAppMessages",
+    "countUnreadWhatsAppMessages",
+    "getWhatsAppLastSeenId",
+    "setWhatsappUnreadCount",
+    "maybeNotifyNewWhatsAppMessages",
+    "lastNotifiedWhatsAppIdRef",
+    "document",
+    "tRef",
+    "showWhatsAppRef",
+    `${code}\nreturn checkUnread;`,
+  )(
+    "project-1",
+    false,
+    async () => ({ status: "connected" }),
+    async () => ({ messages: [{ id: "msg-1" }], hasMore: false }),
+    () => 0,
+    () => null,
+    () => {},
+    (_messages: unknown, _ref: unknown, _hidden: boolean, tArg: (key: string) => string) => capturedT.push(tArg),
+    { current: null },
+    { hidden: true },
+    tRef,
+    { current: false },
+  ) as () => Promise<void>;
+
+  await fn();
+  assert.equal(capturedT[0]?.("x"), "EN:x", "the first tick must pass the current tRef.current ('EN')");
+
+  // The language toggle re-renders LanguageProvider with a brand-new `t`,
+  // which the tRef-syncing effect writes into tRef.current -- simulated
+  // here directly, exactly as that effect would do it.
+  tRef.current = (key: string) => `HE:${key}`;
+  await fn();
+  assert.equal(
+    capturedT[1]?.("x"),
+    "HE:x",
+    "a later tick, after a language switch, must pass the NEW tRef.current ('HE'), not the one captured when the poll effect last started",
+  );
+});

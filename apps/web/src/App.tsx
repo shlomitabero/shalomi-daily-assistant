@@ -470,6 +470,17 @@ function AppContent() {
   useEffect(() => {
     showWhatsAppRef.current = showWhatsApp;
   }, [showWhatsApp]);
+  // Same idiom as showWhatsAppRef just above, for the same reason: useTranslation()
+  // returns a brand-new `t` closure (bound to the then-current `lang`) on every
+  // language change, but checkUnread's closure below is only re-created when the
+  // poll effect itself re-runs (project?.id/project?.status) -- so without this ref,
+  // a desktop notification fired after a mid-session language switch (same project,
+  // tab backgrounded, a new WhatsApp message arrives) rendered its title in whatever
+  // language was active when the poll last (re)started, not the current one.
+  const tRef = useRef(t);
+  useEffect(() => {
+    tRef.current = t;
+  }, [t]);
   // Set alongside openPanel("whatsapp") by EntityPanel's "Send WhatsApp" row
   // action, so the panel opens with that record's number already in the
   // test-send box instead of the user having to copy/paste it themselves.
@@ -682,7 +693,7 @@ function AppContent() {
         setWhatsappUnreadCount(
           showWhatsAppRef.current ? 0 : countUnreadWhatsAppMessages(messages, getWhatsAppLastSeenId(projectId)),
         );
-        maybeNotifyNewWhatsAppMessages(messages, lastNotifiedWhatsAppIdRef, document.hidden, t);
+        maybeNotifyNewWhatsAppMessages(messages, lastNotifiedWhatsAppIdRef, document.hidden, tRef.current);
       } catch {
         // A single failed background check isn't worth surfacing to the
         // user -- just skip this tick and try again on the next one.
