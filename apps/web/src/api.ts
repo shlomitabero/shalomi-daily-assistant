@@ -770,6 +770,7 @@ export async function sendWhatsAppMessage(projectId: string, to: string, message
     method: "POST",
     headers: {
       "content-type": "application/json",
+      "x-idempotency-key": crypto.randomUUID(),
       ...(token ? { authorization: `Bearer ${token}` } : {}),
     },
     body: JSON.stringify({ to, message }),

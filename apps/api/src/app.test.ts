@@ -5669,6 +5669,74 @@ test("WhatsApp: a failed send stays logged as failed, and retrying with the same
   );
 });
 
+/**
+ * Round 602's finding: unlike every sibling mutating route in this file,
+ * POST .../integrations/whatsapp/send was never wrapped in withIdempotency,
+ * and api.ts's sendWhatsAppMessage() never sent an X-Idempotency-Key header
+ * either -- so a response lost after the real send already succeeded (the
+ * exact fetchWithWakeRetry retry window the design doc exists for) would
+ * resend the identical POST and send the same WhatsApp message twice. Fixed
+ * both: the client now sends a real header, and the route wraps the send +
+ * insertWhatsAppMessage effect in withIdempotency(), same as every other
+ * converted route. A counting fake sendMessage proves the real send only
+ * runs once for the retry, not just that the HTTP response looks the same.
+ */
+test("POST .../integrations/whatsapp/send retried with the same idempotency key after the first attempt already finished replays the original response instead of sending the message twice", async () => {
+  let createdSockets: ReturnType<typeof createFakeWhatsAppSocket>[] = [];
+  await withServer(
+    async (baseUrl) => {
+      const token = await signup(baseUrl, "whatsapp-send-idem1@example.com");
+      const createRes = await fetch(`${baseUrl}/api/projects`, {
+        method: "POST",
+        headers: authHeaders(token),
+        body: JSON.stringify({ description: "A CRM with customers and deals." }),
+      });
+      const { project } = (await createRes.json()) as { project: { id: string } };
+
+      await fetch(`${baseUrl}/api/projects/${project.id}/integrations/whatsapp/connect`, { method: "POST", headers: authHeaders(token) });
+      createdSockets[0].sock.user = { id: "15550004444:1@s.whatsapp.net" };
+      createdSockets[0].emitConnectionUpdate({ connection: "open" });
+
+      const headers = { ...authHeaders(token), "x-idempotency-key": "whatsapp-send-repro-key" };
+      const sendBody = { to: "972501234567", message: "אפשר תור מחר?" };
+
+      const firstRes = await fetch(`${baseUrl}/api/projects/${project.id}/integrations/whatsapp/send`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify(sendBody),
+      });
+      assert.equal(firstRes.status, 200);
+      const first = (await firstRes.json()) as { ok: boolean };
+
+      const retryRes = await fetch(`${baseUrl}/api/projects/${project.id}/integrations/whatsapp/send`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify(sendBody),
+      });
+      assert.equal(retryRes.status, 200);
+      const retry = (await retryRes.json()) as { ok: boolean };
+      assert.deepEqual(retry, first, "the replayed response must be identical to what the first attempt actually returned");
+
+      assert.equal(
+        createdSockets[0].sendCalls.length,
+        1,
+        "the real WhatsApp send must only run once -- the retry must replay the cached response, not send the message again",
+      );
+
+      const listRes = await fetch(`${baseUrl}/api/projects/${project.id}/integrations/whatsapp/messages`, { headers: authHeaders(token) });
+      const { messages } = (await listRes.json()) as { messages: unknown[] };
+      assert.equal(messages.length, 1, "exactly one message must be logged -- the retry must not have inserted a second row");
+    },
+    {
+      whatsapp: (db) => {
+        const created = createTestWhatsAppManager(db);
+        createdSockets = created.createdSockets;
+        return created.manager;
+      },
+    },
+  );
+});
+
 test("WhatsApp: clearing the message history wipes this project's log but never touches another project's", async () => {
   let createdSockets: ReturnType<typeof createFakeWhatsAppSocket>[] = [];
   await withServer(

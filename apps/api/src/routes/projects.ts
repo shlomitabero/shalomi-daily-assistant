@@ -1261,53 +1261,71 @@ export function createProjectsRouter(
         throw new HttpError(400, formatValidationError(parsed.error), "VALIDATION_ERROR");
       }
       const { to, message } = parsed.data;
-      const status = whatsapp.getStatus(project.id);
-      if (status.status !== "connected") {
+      const connStatus = whatsapp.getStatus(project.id);
+      if (connStatus.status !== "connected") {
         throw new HttpError(409, "Connect WhatsApp before sending a message", "WHATSAPP_NOT_CONNECTED");
       }
-      const result = await whatsapp.sendMessage(project.id, to, message);
-      // whatsapp.sendMessage() above is a genuine await (a real network
-      // round-trip to the WhatsApp Web socket) -- the same reverse-direction
-      // hazard DELETE /projects/:id's own comment documents for every other
-      // quick mutation route in this file. A concurrent DELETE /projects/:id
-      // can run to completion (including deleteWhatsAppData, which purges
-      // this project's existing whatsapp_messages rows) while this send is
-      // still suspended above. Without this re-check, the insertWhatsAppMessage
-      // call below would then create a BRAND NEW row for a project id that no
-      // longer exists -- whatsapp_messages.projectId carries no foreign key,
-      // so the insert would succeed silently, and since every reader route
-      // (GET .../messages, the backup ZIP, etc.) 404s via requireProjectAccess
-      // the instant the project is gone, that row would be permanently
-      // orphaned and unreachable through any route, forever, while this
-      // request still reports 200 { ok: true } as if nothing went wrong.
-      if (!getProject(db, project.id)) {
-        throw new HttpError(404, `Project "${project.id}" not found`, "PROJECT_NOT_FOUND");
-      }
-      // Mirrors the matching an incoming message gets (see
-      // WhatsAppWebManager.handleIncomingMessages): without this, the panel's
-      // own log rendering (which falls back to the matched label only when
-      // one is present, for either direction) always shows the raw phone
-      // number for a sent test message, even when `to` is a known customer's
-      // number. Only attempted once the project is actually built -- before
-      // that there is no real table behind any entity yet, and
-      // findMatchingRecord's listRecords call would throw "no such table".
-      const match = project.status === "built" ? findMatchingRecord(db, project, to) : null;
-      insertWhatsAppMessage(db, {
-        projectId: project.id,
-        direction: "out",
-        fromNumber: status.phoneNumber ?? "",
-        toNumber: to,
-        body: message,
-        matchedEntityName: match?.entityName ?? null,
-        matchedRecordId: match?.recordId ?? null,
-        matchedLabel: match?.label ?? null,
-        status: result.ok ? "sent" : "failed",
-      });
-      if (!result.ok) {
-        res.status(502).json({ ok: false, error: result.error });
-        return;
-      }
-      res.json({ ok: true });
+      // Unlike every sibling mutating route in this file (/roles,
+      // /assumptions, /entities, /entities/:entityName/automations, the
+      // record-creation route, …), this one was never wrapped in
+      // withIdempotency -- and api.ts's sendWhatsAppMessage() never sent an
+      // X-Idempotency-Key header either, unlike all of those siblings'
+      // client-side counterparts. A response lost after whatsapp.sendMessage()
+      // already succeeded (the exact fetchWithWakeRetry retry window the
+      // design doc exists for) would resend the identical POST and send the
+      // same real WhatsApp message to the customer a second time.
+      const idempotencyKey = req.header("X-Idempotency-Key") || undefined;
+      const { status, body } = await withIdempotency(
+        db,
+        idempotencyKey,
+        req.userId!,
+        `POST /projects/${project.id}/integrations/whatsapp/send`,
+        async () => {
+          const result = await whatsapp.sendMessage(project.id, to, message);
+          // whatsapp.sendMessage() above is a genuine await (a real network
+          // round-trip to the WhatsApp Web socket) -- the same reverse-direction
+          // hazard DELETE /projects/:id's own comment documents for every other
+          // quick mutation route in this file. A concurrent DELETE /projects/:id
+          // can run to completion (including deleteWhatsAppData, which purges
+          // this project's existing whatsapp_messages rows) while this send is
+          // still suspended above. Without this re-check, the insertWhatsAppMessage
+          // call below would then create a BRAND NEW row for a project id that no
+          // longer exists -- whatsapp_messages.projectId carries no foreign key,
+          // so the insert would succeed silently, and since every reader route
+          // (GET .../messages, the backup ZIP, etc.) 404s via requireProjectAccess
+          // the instant the project is gone, that row would be permanently
+          // orphaned and unreachable through any route, forever, while this
+          // request still reports 200 { ok: true } as if nothing went wrong.
+          if (!getProject(db, project.id)) {
+            throw new HttpError(404, `Project "${project.id}" not found`, "PROJECT_NOT_FOUND");
+          }
+          // Mirrors the matching an incoming message gets (see
+          // WhatsAppWebManager.handleIncomingMessages): without this, the panel's
+          // own log rendering (which falls back to the matched label only when
+          // one is present, for either direction) always shows the raw phone
+          // number for a sent test message, even when `to` is a known customer's
+          // number. Only attempted once the project is actually built -- before
+          // that there is no real table behind any entity yet, and
+          // findMatchingRecord's listRecords call would throw "no such table".
+          const match = project.status === "built" ? findMatchingRecord(db, project, to) : null;
+          insertWhatsAppMessage(db, {
+            projectId: project.id,
+            direction: "out",
+            fromNumber: connStatus.phoneNumber ?? "",
+            toNumber: to,
+            body: message,
+            matchedEntityName: match?.entityName ?? null,
+            matchedRecordId: match?.recordId ?? null,
+            matchedLabel: match?.label ?? null,
+            status: result.ok ? "sent" : "failed",
+          });
+          if (!result.ok) {
+            return { status: 502, body: { ok: false, error: result.error } };
+          }
+          return { status: 200, body: { ok: true } };
+        },
+      );
+      res.status(status).json(body);
     }),
   );
 
