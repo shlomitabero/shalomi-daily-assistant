@@ -46,6 +46,17 @@ function coerceValue(field: Field, raw: unknown): string | number | null {
   switch (field.type) {
     case "number":
     case "relation": {
+      // JS's own array-to-number coercion is as much a quirk as the
+      // whitespace-string and "Infinity"-string ones above: Number([]) is
+      // 0 and Number([42]) is 42, not NaN, so an array raw value passed
+      // Number.isFinite below and silently became a real stored id/amount
+      // instead of the ValidationError every other not-really-a-number
+      // input already gets -- for a *required* field this also meant the
+      // required-check above never fired, since isEmpty doesn't recognize
+      // an array as "no real value" either.
+      if (Array.isArray(raw)) {
+        throw new ValidationError(`Field "${field.name}" must be a number`);
+      }
       const num = Number(raw);
       // Number.isFinite, not just !Number.isNaN: Number("Infinity") is
       // Infinity, not NaN. A client would never actually get this far

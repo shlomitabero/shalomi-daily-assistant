@@ -354,6 +354,41 @@ test("insertRecord rejects \"Infinity\"/\"-Infinity\" for a number field, instea
 });
 
 /**
+ * Regression test for round 604: JS's own array-to-number coercion is the
+ * same quirk the whitespace-string (408) and "Infinity"-string (523) fixes
+ * above already guard against -- Number([]) is 0 and Number([42]) is 42,
+ * not NaN, so an array raw value passed Number.isFinite and was silently
+ * stored as a real number/foreign-key id instead of being rejected. For a
+ * *required* field this also bypassed the required-check entirely, since
+ * isEmpty doesn't recognize an array as "no real value" either.
+ */
+test("insertRecord rejects an array value for a required number field, instead of silently coercing it via Number([])", () => {
+  const invoice: Entity = {
+    name: "Invoice",
+    fields: [
+      { name: "label", type: "text", required: true },
+      { name: "amount", type: "number", required: true },
+    ],
+  };
+  const db = openDatabase(":memory:");
+  applyMigrations(db, "proj1", { ...spec, entities: [invoice] });
+
+  assert.throws(
+    () => insertRecord(db, "proj1", invoice, { label: "Rent", amount: [] }),
+    ValidationError,
+    "expected [] to be rejected, not coerced to 0",
+  );
+  assert.throws(
+    () => insertRecord(db, "proj1", invoice, { label: "Rent", amount: [42] }),
+    ValidationError,
+    "expected [42] to be rejected, not coerced to 42",
+  );
+
+  const created = insertRecord(db, "proj1", invoice, { label: "Rent", amount: 500 });
+  assert.equal(created.amount, 500);
+});
+
+/**
  * Same bug, but for a required "relation" field: before the fix, a
  * whitespace-only value coerced to foreign key `0` and hit the real
  * `REFERENCES ... (id)` constraint (migrate.ts), throwing a bare SQLite
