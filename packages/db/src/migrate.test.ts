@@ -1024,8 +1024,14 @@ test("describeMigrationHazards reports nothing for new_table/new_column entries,
  * deriveEntityName/deriveFieldName only dedupe against names that currently
  * exist, so a LATER refine that reintroduces the same name resurrects the
  * stale rule against an entity/field it was never actually written for.
+ *
+ * Round 596: this used to hard-delete the row (assert.equal(..., undefined)
+ * below used to be the test's own assertion) -- changed to disable-only,
+ * since diffAndMigrate also runs in reverse on checkpoint restore and a
+ * hard-deleted row can never come back once the entity does. See the
+ * restore-safety test further below.
  */
-test("diffAndMigrate deletes automation rules for an entity removed from the spec", () => {
+test("diffAndMigrate disables (not deletes) automation rules for an entity removed from the spec", () => {
   const db = openDatabase(":memory:");
   ensureAutomationRulesTable(db);
   applyMigrations(db, "proj1", spec);
@@ -1044,10 +1050,12 @@ test("diffAndMigrate deletes automation rules for an entity removed from the spe
   const nextSpec: ProductSpec = { ...spec, entities: [spec.entities[0]] };
   diffAndMigrate(db, "proj1", spec, nextSpec);
 
-  assert.equal(getAutomationRule(db, "proj1", rule.id), undefined);
+  const after = getAutomationRule(db, "proj1", rule.id);
+  assert.ok(after, "the rule row must survive -- only its enabled flag changes");
+  assert.equal(after!.enabled, false);
 });
 
-test("diffAndMigrate deletes an automation rule referencing a field removed from a surviving entity, as either its trigger field or its destination field, but leaves an unrelated rule alone", () => {
+test("diffAndMigrate disables an automation rule referencing a field removed from a surviving entity, as either its trigger field or its destination field, but leaves an unrelated rule alone", () => {
   const db = openDatabase(":memory:");
   ensureAutomationRulesTable(db);
   applyMigrations(db, "proj1", spec);
@@ -1097,7 +1105,55 @@ test("diffAndMigrate deletes an automation rule referencing a field removed from
   };
   diffAndMigrate(db, "proj1", spec, nextSpec);
 
-  assert.equal(getAutomationRule(db, "proj1", statusTriggerRule.id), undefined);
-  assert.equal(getAutomationRule(db, "proj1", statusDestinationRule.id), undefined);
-  assert.ok(getAutomationRule(db, "proj1", survivingRule.id), "the rule on the surviving 'name' field must not be deleted");
+  assert.equal(getAutomationRule(db, "proj1", statusTriggerRule.id)!.enabled, false);
+  assert.equal(getAutomationRule(db, "proj1", statusDestinationRule.id)!.enabled, false);
+  assert.equal(
+    getAutomationRule(db, "proj1", survivingRule.id)!.enabled,
+    true,
+    "the rule on the surviving 'name' field must not be touched",
+  );
+});
+
+/**
+ * Round 596's own finding: diffAndMigrate also runs in the *reverse*
+ * direction on checkpoint restore (apps/api/src/routes/projects.ts calls
+ * diffAndMigrate(db, project.id, project.spec, checkpoint.spec) -- the
+ * project's current spec as previousSpec, the checkpoint being restored as
+ * nextSpec). Before this round's fix, an entity removed by one refine and
+ * restored by a later Time Machine restore came back with its automation
+ * rule gone forever, even though diffAndMigrate's own doc comment promises
+ * Time Machine checkpoints are always safe to restore. Proven here as a
+ * real two-step sequence through diffAndMigrate itself, not just the
+ * disable in isolation.
+ */
+test("restoring a checkpoint that still has an entity removed by a later refine brings its automation rule back disabled, not permanently gone", () => {
+  const db = openDatabase(":memory:");
+  ensureAutomationRulesTable(db);
+  applyMigrations(db, "proj1", spec);
+  const rule = insertAutomationRule(db, {
+    projectId: "proj1",
+    entityName: "Order",
+    trigger: "field_equals",
+    fieldName: "total",
+    fieldValue: "100",
+    actionType: "send_whatsapp",
+    toMode: "static",
+    toNumber: "+15551234567",
+    messageTemplate: "Order total hit {{total}}",
+  });
+
+  // Refine away: Order is removed from the spec -- mirrors a real /refine.
+  const specWithoutOrder: ProductSpec = { ...spec, entities: [spec.entities[0]] };
+  diffAndMigrate(db, "proj1", spec, specWithoutOrder);
+  assert.equal(getAutomationRule(db, "proj1", rule.id)!.enabled, false);
+
+  // Restore an earlier checkpoint that still has Order -- mirrors the real
+  // checkpoint-restore route's own diffAndMigrate(db, id, project.spec,
+  // checkpoint.spec) call, current (Order-less) spec as previousSpec.
+  diffAndMigrate(db, "proj1", specWithoutOrder, spec);
+
+  const restored = getAutomationRule(db, "proj1", rule.id);
+  assert.ok(restored, "the rule must still exist after the entity it references comes back via restore");
+  assert.equal(restored!.entityName, "Order");
+  assert.equal(restored!.fieldName, "total");
 });

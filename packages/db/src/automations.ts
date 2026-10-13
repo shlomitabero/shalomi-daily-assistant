@@ -227,32 +227,52 @@ export function deleteAutomationRulesForProject(db: ForgeDatabase, projectId: st
 }
 
 /**
- * Called from the entity-removal route (routes/projects.ts), the same
- * place that already prunes project.spec.screens for the deleted entity
- * (round 553) -- without this, a rule created against the deleted entity
- * stayed enabled forever, and deriveEntityName only dedupes against the
- * entities that currently exist, so a *later, unrelated* entity reusing
- * the same auto-derived name would silently resurrect it.
+ * Called from diffAndMigrate (migrate.ts) when an entity present in
+ * previousSpec is absent from nextSpec -- without this, a rule created
+ * against the removed entity stayed enabled forever, and deriveEntityName
+ * only dedupes against the entities that currently exist, so a *later,
+ * unrelated* entity reusing the same auto-derived name would silently
+ * resurrect it.
+ *
+ * Disables rather than deletes (round 596): diffAndMigrate's own doc
+ * comment describes it as additive-only, "never drops or renames
+ * anything... consistent with... Time Machine checkpoints always being
+ * safe to restore" -- but this function used to hard-delete, the one
+ * genuine exception to that contract. diffAndMigrate also runs in the
+ * *reverse* direction on checkpoint restore (previousSpec = the project's
+ * current spec, nextSpec = the checkpoint being restored), and nothing
+ * recreates a deleted row when the entity comes back -- restoring an
+ * earlier checkpoint that still has the entity silently failed to bring
+ * its automation rule back too. Disabling instead keeps the row (and its
+ * own history -- lastTriggeredAt/lastStatus/lastError) around for exactly
+ * that case: once the entity reappears, the rule is interactable and
+ * re-enable-able again through the normal PATCH route, not gone forever.
  */
-export function deleteAutomationRulesForEntity(db: ForgeDatabase, projectId: string, entityName: string): void {
-  db.prepare("DELETE FROM automation_rules WHERE projectId = ? AND entityName = ?").run(projectId, entityName);
+export function disableAutomationRulesForEntity(db: ForgeDatabase, projectId: string, entityName: string): void {
+  db.prepare("UPDATE automation_rules SET enabled = 0, updatedAt = ? WHERE projectId = ? AND entityName = ?").run(
+    new Date().toISOString(),
+    projectId,
+    entityName,
+  );
 }
 
 /**
- * Called from the field-removal route. A rule can reference a field two
- * ways -- as the field_equals trigger's own fieldName, or as a toMode:
- * "field" destination's toField -- so both are checked. Scoped by
- * entityName too, the same way deleteAutomationRulesForEntity is, since
- * fieldName/toField are plain strings that could otherwise coincide with
- * an unrelated entity's own field of the same name.
+ * Called from diffAndMigrate for a field removed from a surviving entity.
+ * A rule can reference a field two ways -- as the field_equals trigger's
+ * own fieldName, or as a toMode: "field" destination's toField -- so both
+ * are checked. Scoped by entityName too, the same way
+ * disableAutomationRulesForEntity is, since fieldName/toField are plain
+ * strings that could otherwise coincide with an unrelated entity's own
+ * field of the same name. Disables rather than deletes for the same
+ * restore-safety reason as disableAutomationRulesForEntity above.
  */
-export function deleteAutomationRulesForField(
+export function disableAutomationRulesForField(
   db: ForgeDatabase,
   projectId: string,
   entityName: string,
   fieldName: string,
 ): void {
   db.prepare(
-    "DELETE FROM automation_rules WHERE projectId = ? AND entityName = ? AND (fieldName = ? OR toField = ?)",
-  ).run(projectId, entityName, fieldName, fieldName);
+    "UPDATE automation_rules SET enabled = 0, updatedAt = ? WHERE projectId = ? AND entityName = ? AND (fieldName = ? OR toField = ?)",
+  ).run(new Date().toISOString(), projectId, entityName, fieldName, fieldName);
 }

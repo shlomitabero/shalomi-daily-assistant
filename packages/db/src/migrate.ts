@@ -1,6 +1,6 @@
 import type { Entity, Field, ProductSpec } from "@forge/shared";
 import type { ForgeDatabase } from "./connection.js";
-import { deleteAutomationRulesForEntity, deleteAutomationRulesForField, ensureAutomationRulesTable } from "./automations.js";
+import { disableAutomationRulesForEntity, disableAutomationRulesForField, ensureAutomationRulesTable } from "./automations.js";
 import { listHistoricalEntityNames } from "./checkpoints.js";
 import { assertSafeIdentifier, quoteIdentifier, tableNameFor } from "./identifiers.js";
 import { ValidationError } from "./repository.js";
@@ -482,14 +482,14 @@ export function diffAndMigrate(
   ensureAutomationRulesTable(db);
   for (const prevEntity of previousSpec.entities) {
     if (!entityNames.has(prevEntity.name)) {
-      deleteAutomationRulesForEntity(db, projectId, prevEntity.name);
+      disableAutomationRulesForEntity(db, projectId, prevEntity.name);
       continue;
     }
     const nextEntity = nextSpec.entities.find((e) => e.name === prevEntity.name)!;
     const nextFieldNames = new Set(nextEntity.fields.map((f) => f.name));
     for (const prevField of prevEntity.fields) {
       if (!nextFieldNames.has(prevField.name)) {
-        deleteAutomationRulesForField(db, projectId, prevEntity.name, prevField.name);
+        disableAutomationRulesForField(db, projectId, prevEntity.name, prevField.name);
       }
     }
   }
