@@ -328,6 +328,26 @@ test("an entity with a checkInDate/checkoutDate pair (not literally named 'endDa
   assert.ok((record.checkoutDate as string) > (record.checkInDate as string), "checkoutDate should be after checkInDate");
 });
 
+test("an entity with two unrelated date fields (neither an end-of-range name) still gets distinct values", () => {
+  // Both fixes above only ever distinguish a *recognized* end-of-range
+  // field from its sibling -- seedValueFor's offset formula still ignored
+  // the field's own identity for any two date fields that are both
+  // unrecognized (not a start/end pair at all, e.g. an AI-generated
+  // Employee's hireDate and birthDate), so they collapsed to the exact
+  // same seeded date for every record, just like the Rental/Booking bugs
+  // above but without either field matching an end-of-range name at all.
+  const employee: Entity = {
+    name: "Employee",
+    fields: [
+      { name: "name", type: "text", required: true },
+      { name: "hireDate", type: "date", required: false },
+      { name: "birthDate", type: "date", required: false },
+    ],
+  };
+  const [record] = generateSeedRecords(employee, 1);
+  assert.notEqual(record.hireDate, record.birthDate, "hireDate and birthDate must not collapse to the same day");
+});
+
 test("the generic fallback entity (Item, used when no domain keyword matches) seeds its name field as an item, not a person", () => {
   // "Item" is DEFAULT_ENTITY's real name (packages/spec-engine/src/
   // domainEntities.ts) -- the fallback hit whenever a description doesn't

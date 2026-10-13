@@ -100,9 +100,21 @@ function seedValueFor(field: Field, entity: Entity, index: number): unknown {
       // wrong 0-day rental. baseOffset always leaves a 3-day margin for an
       // end-like field to land 3 days closer to today (chronologically
       // after) without ever colliding, even at index 0.
+      //
+      // isEndLike only distinguishes a *recognized* end-of-range field from
+      // everything else -- it says nothing about two date fields that are
+      // both unrecognized (e.g. an AI-generated Employee's hireDate and
+      // birthDate, neither an end-of-range pair at all). Without further
+      // help, every non-end-like date field got the exact same baseOffset,
+      // so any two such fields on one entity collapsed to the same seeded
+      // value too. dateFieldOrdinal -- this field's position among the
+      // entity's own date fields -- gives each one a distinct day, with no
+      // effect on the existing end-like pair behavior above (the ordinal of
+      // a pair's start field is always 0, adding nothing).
       const isEndLike = END_DATE_FIELD_NAME_HINTS.includes(field.name.toLowerCase());
+      const dateFieldOrdinal = entity.fields.filter((f) => f.type === "date").findIndex((f) => f.name === field.name);
       const baseOffset = (index + 1) * 3;
-      const dayOffset = isEndLike ? baseOffset - 3 : baseOffset;
+      const dayOffset = isEndLike ? baseOffset - 3 : baseOffset + dateFieldOrdinal;
       const d = new Date(Date.now() - dayOffset * 86_400_000);
       return d.toISOString().slice(0, 10);
     }
