@@ -128,6 +128,23 @@ function tryRowToCheckpoint(row: Record<string, unknown>): Checkpoint | undefine
   }
 }
 
+/**
+ * Writes every entity name in `spec` into the durable history ledger (see
+ * ensureCheckpointsTable's own doc-comment), independent of ever inserting a
+ * checkpoint. insertCheckpoint below calls this once its own row is written;
+ * the pipeline also calls it directly right after a migration succeeds, so a
+ * new entity's real table is tracked for deleteProject's cleanup even if a
+ * later step (QA) stops the build/refine before a checkpoint ever exists for
+ * it -- otherwise that table (and whatever got seeded into it) survives even
+ * full project deletion, with nothing left anywhere referencing it.
+ */
+export function recordEntityHistory(db: ForgeDatabase, projectId: string, spec: ProductSpec): void {
+  const insertHistoryEntry = db.prepare("INSERT OR IGNORE INTO checkpoint_entity_history (projectId, entityName) VALUES (?, ?)");
+  for (const entity of spec.entities) {
+    insertHistoryEntry.run(projectId, entity.name);
+  }
+}
+
 export function insertCheckpoint(
   db: ForgeDatabase,
   checkpoint: { id: string; projectId: string; label: string; kind: "build" | "refine"; spec: ProductSpec },
@@ -136,13 +153,7 @@ export function insertCheckpoint(
   db.prepare(
     "INSERT INTO checkpoints (id, projectId, label, kind, spec_json, createdAt) VALUES (?, ?, ?, ?, ?, ?)",
   ).run(checkpoint.id, checkpoint.projectId, checkpoint.label, checkpoint.kind, JSON.stringify(checkpoint.spec), createdAt);
-  // Durable ledger entry (see ensureCheckpointsTable's own doc-comment) --
-  // written here, at the one point this entity name is known to be real,
-  // so it survives this checkpoint being individually deleted later.
-  const insertHistoryEntry = db.prepare("INSERT OR IGNORE INTO checkpoint_entity_history (projectId, entityName) VALUES (?, ?)");
-  for (const entity of checkpoint.spec.entities) {
-    insertHistoryEntry.run(checkpoint.projectId, entity.name);
-  }
+  recordEntityHistory(db, checkpoint.projectId, checkpoint.spec);
   return { ...checkpoint, createdAt };
 }
 

@@ -67,6 +67,7 @@ export {
   listAllCheckpointedEntityNames,
   listHistoricalEntityNames,
   extractEntityNamesFromSpecJson,
+  recordEntityHistory,
 } from "./checkpoints.js";
 export { generateSeedRecords, orderForSeeding } from "./seed.js";
 export { tableNameFor, assertSafeIdentifier } from "./identifiers.js";

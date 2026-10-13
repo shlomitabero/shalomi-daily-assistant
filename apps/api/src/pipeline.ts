@@ -11,6 +11,7 @@ import {
   listRecords,
   markProjectBuilt,
   orderForSeeding,
+  recordEntityHistory,
   tableNameFor,
   updateProjectSpec,
   ValidationError,
@@ -369,6 +370,13 @@ export async function* runBuildPipeline(
       describeMigrationHazards(changes),
     detail: changes,
   };
+  // Record every entity this migration just created a real table for in the
+  // durable history ledger right now, not only if a checkpoint eventually
+  // gets inserted below -- a later step (QA) can still stop this build/refine
+  // before that ever happens, and without this, deleteProject has no way to
+  // ever learn the table exists, orphaning it (and whatever gets seeded into
+  // it next) permanently, even across a full project deletion.
+  recordEntityHistory(db, project.id, nextSpec);
 
   yield { agent: "Seed Data", status: "running", message: "Generating sample records for new tables…" };
   const newEntityNames = new Set(changes.filter((c) => c.type === "new_table").map((c) => c.table));

@@ -10,6 +10,7 @@ import {
   insertCheckpoint,
   listCheckpoints,
   listHistoricalEntityNames,
+  recordEntityHistory,
   renameCheckpoint,
 } from "./checkpoints.js";
 import { NotFoundError } from "./repository.js";
@@ -287,4 +288,15 @@ test("ensureCheckpointsTable backfills checkpoint_entity_history from both pre-e
     ["Invoice", "Order"],
     "the backfill must capture entity names from both the pre-existing checkpoint and the project's own current spec",
   );
+});
+
+test("recordEntityHistory writes every entity name of a spec into the ledger without ever inserting a checkpoint", () => {
+  const db = openDatabase(":memory:");
+  ensureCheckpointsTable(db);
+  const spec: ProductSpec = { ...validSpec, entities: [{ name: "Invoice", fields: [] }, { name: "LineItem", fields: [] }] };
+
+  recordEntityHistory(db, "proj1", spec);
+
+  assert.deepEqual(listHistoricalEntityNames(db, "proj1").sort(), ["Invoice", "LineItem"]);
+  assert.equal(listCheckpoints(db, "proj1").length, 0, "recordEntityHistory must not create a checkpoint row of its own");
 });

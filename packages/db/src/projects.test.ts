@@ -3,7 +3,7 @@ import { test } from "node:test";
 import type { ProductSpec } from "@forge/shared";
 import { openDatabase } from "./connection.js";
 import { ensureProjectCollaboratorsTable, addCollaborator, removeCollaborator, isCollaborator } from "./collaborators.js";
-import { ensureCheckpointsTable, insertCheckpoint, listCheckpoints, deleteCheckpoint } from "./checkpoints.js";
+import { ensureCheckpointsTable, insertCheckpoint, listCheckpoints, deleteCheckpoint, recordEntityHistory } from "./checkpoints.js";
 import { applyMigrations, diffAndMigrate } from "./migrate.js";
 import { insertRecord } from "./repository.js";
 import {
@@ -387,6 +387,69 @@ test("deleteProject drops the real data table of an entity that was added then l
     () => db.prepare(`SELECT * FROM "entity_proj_orphan_Order"`).all(),
     /no such table/,
     "Order's table must ALSO be dropped even though it was removed from the spec before deletion -- it's not an orphan left behind",
+  );
+});
+
+/**
+ * round 610: a real migration (diffAndMigrate) and real seed inserts commit
+ * immediately, with no transaction wrapping either -- but the pipeline only
+ * ever recorded a new entity's name into checkpoint_entity_history as a side
+ * effect of insertCheckpoint, which a later QA failure genuinely stops the
+ * pipeline from ever reaching (see pipeline.ts's own `return` right after a
+ * failed runQaChecks call, before updateProjectSpec/markProjectBuilt/
+ * insertCheckpoint). This reproduces that exact sequence via the same raw
+ * calls the pipeline makes, deliberately calling recordEntityHistory (what
+ * pipeline.ts now does right after a successful migration) but never
+ * insertCheckpoint for the refine that added Invoice -- standing in for a
+ * QA failure stopping the pipeline before a checkpoint is ever written.
+ */
+test("deleteProject drops a real data table whose entity was only ever migrated during a refine that never reached a checkpoint (e.g. a QA failure)", () => {
+  const db = openDatabase(":memory:");
+  ensureProjectsTable(db);
+  ensureCheckpointsTable(db);
+  ensureProjectCollaboratorsTable(db);
+  ensureWhatsAppConnectionsTable(db);
+  ensureWhatsAppMessagesTable(db);
+  ensureAutomationRulesTable(db);
+
+  const buildSpec: ProductSpec = validSpec;
+  const project = insertProject(db, {
+    id: "proj-qa-orphan",
+    ownerId: "owner1",
+    name: "Project with a QA-failed refine",
+    description: "test",
+    spec: buildSpec,
+  });
+  diffAndMigrate(db, project.id, undefined, buildSpec);
+  insertCheckpoint(db, { id: "cp-build", projectId: project.id, label: "build", kind: "build", spec: buildSpec });
+
+  // Refine attempt: adds a real "Invoice" entity. Its table gets created and
+  // a real row gets inserted, exactly like a real build/refine -- but QA
+  // then fails, so the pipeline returns without ever calling insertCheckpoint
+  // for this attempt. recordEntityHistory is the only thing that still runs.
+  const specWithInvoice: ProductSpec = {
+    ...buildSpec,
+    entities: [...buildSpec.entities, { name: "Invoice", fields: [{ name: "amount", type: "number", required: true }] }],
+  };
+  diffAndMigrate(db, project.id, buildSpec, specWithInvoice);
+  insertRecord(db, project.id, specWithInvoice.entities[1], { amount: 42 });
+  recordEntityHistory(db, project.id, specWithInvoice);
+
+  assert.doesNotThrow(
+    () => db.prepare(`SELECT COUNT(*) as c FROM "entity_proj_qa_orphan_Invoice"`).get(),
+    "sanity check: Invoice's real table (with its real row) must exist before delete",
+  );
+  // project.spec and the checkpoints table both still only know about
+  // Customer -- Invoice is reachable ONLY through the history ledger.
+  assert.equal(listCheckpoints(db, project.id).length, 1, "sanity check: no checkpoint was ever written for the Invoice attempt");
+
+  deleteProject(db, project.id);
+
+  assert.equal(getProject(db, project.id), undefined, "the project row itself should be gone");
+  assert.throws(
+    () => db.prepare(`SELECT * FROM "entity_proj_qa_orphan_Invoice"`).all(),
+    /no such table/,
+    "Invoice's table must be dropped even though no checkpoint ever recorded it -- it's not an orphan left behind",
   );
 });
 
