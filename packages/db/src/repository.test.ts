@@ -142,6 +142,15 @@ test("insertRecord rejects a date field value that isn't a real, well-formed cal
   }
 });
 
+test("insertRecord accepts a date in the year 0-99 range, instead of wrongly rejecting it as invalid", () => {
+  // new Date(Date.UTC(year, ...)) silently adds 1900 to a year 0-99 (legacy
+  // ECMA-262 behavior), so isValidDateString's own round-trip check used to
+  // fail a syntactically valid "0099-01-01" -- a real, well-formed date.
+  const db = setupAppointment();
+  const created = insertRecord(db, "proj1", appointment, { customerName: "Alice", date: "0099-01-01" });
+  assert.equal(created.date, "0099-01-01");
+});
+
 test("insertRecord leaves an optional, unset date field as null rather than requiring a value", () => {
   const db = setupAppointment();
   const created = insertRecord(db, "proj1", appointment, { customerName: "Alice", date: "2026-03-15" });
