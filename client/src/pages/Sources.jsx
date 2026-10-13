@@ -12,10 +12,13 @@ export default function Sources() {
   useEffect(refresh, []);
 
   async function onRescan() {
+    setError('');
     setBusy(true);
     try {
       await api.rescanSources();
       refresh();
+    } catch (err) {
+      setError(err.data?.error || err.message);
     } finally {
       setBusy(false);
     }
