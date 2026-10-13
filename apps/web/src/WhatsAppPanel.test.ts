@@ -2443,6 +2443,164 @@ test("WhatsAppPanel's per-message delete button sends no request at all when the
 });
 
 /**
+ * Round 593 regression test: App.tsx's own independent unread-poll tracks
+ * a desktop-notification baseline (lastNotifiedWhatsAppIdRef) purely in
+ * memory, with no resync path of its own -- unlike the sibling badge
+ * "last seen" marker (whatsappLastSeenId, below), which already self-heals
+ * on every messages change via this panel's own effect. Deleting the exact
+ * message that baseline points to makes it vanish from the next fetched
+ * page; findNewInboundMessages (whatsappNotify.ts) can't find it there and
+ * falls back -- by design, for the unrelated case of pagination overflow --
+ * to treating every inbound message still on the page as "new", firing a
+ * real OS notification re-announcing already-read messages. The fix gives
+ * App.tsx a way to find out a message was deleted, via a new optional
+ * onMessageDeleted callback, so it can forget a baseline that no longer
+ * points anywhere real.
+ */
+test("WhatsAppPanel's per-message delete button calls onMessageDeleted with the deleted message's own id", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    const originalConfirm = globalThis.window.confirm;
+    globalThis.window.confirm = (() => true) as typeof window.confirm;
+    const deletedIds: string[] = [];
+    const message: WhatsAppMessageLogEntry = {
+      id: "m1",
+      direction: "in",
+      fromNumber: "972521112233",
+      toNumber: "972501234567",
+      body: "delete me",
+      matchedLabel: null,
+      matchedEntityName: null,
+      matchedRecordId: null,
+      status: "received",
+      createdAt: new Date("2026-03-15T14:32:00Z").toISOString(),
+    };
+    globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/integrations/whatsapp/status") {
+        return new Response(
+          JSON.stringify({ status: "connected", phoneNumber: "972501234567", qrDataUrl: null, error: null }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      if (method === "GET" && input === "/api/projects/proj1/integrations/whatsapp/messages") {
+        return new Response(JSON.stringify({ messages: [message] }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      if (method === "DELETE" && input === "/api/projects/proj1/integrations/whatsapp/messages/m1") {
+        return new Response(null, { status: 204 });
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+    try {
+      render(
+        React.createElement(
+          ThemeProvider,
+          null,
+          React.createElement(
+            LanguageProvider,
+            null,
+            React.createElement(WhatsAppPanel, {
+              projectId: "proj1",
+              projectName: "Test Project",
+              onClose: () => {},
+              onJumpToEntity: () => {},
+              onJumpToRecord: () => {},
+              onMessageDeleted: (id: string) => deletedIds.push(id),
+            }),
+          ),
+        ),
+      );
+      await waitForCondition(() => document.querySelectorAll(".whatsapp-log-list li").length === 1);
+
+      const deleteButton = document.querySelector(".whatsapp-log-delete") as HTMLButtonElement;
+      fireEvent.click(deleteButton);
+      await waitForCondition(() => document.querySelectorAll(".whatsapp-log-list li").length === 0);
+
+      assert.deepEqual(deletedIds, ["m1"], "onMessageDeleted must fire exactly once with the deleted message's own id");
+    } finally {
+      globalThis.fetch = originalFetch;
+      globalThis.window.confirm = originalConfirm;
+    }
+  });
+});
+
+/**
+ * The "Clear history" sibling of the test above -- wiping the whole log
+ * guarantees any tracked notification baseline vanishes from the next
+ * fetched page too (there's no page left at all), so this needs the same
+ * unconditional "forget it" signal, via a separate onHistoryCleared callback.
+ */
+test("WhatsAppPanel's 'Clear history' button calls onHistoryCleared", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    const originalConfirm = globalThis.window.confirm;
+    globalThis.window.confirm = (() => true) as typeof window.confirm;
+    let historyClearedCalls = 0;
+    const message: WhatsAppMessageLogEntry = {
+      id: "m1",
+      direction: "in",
+      fromNumber: "972521112233",
+      toNumber: "972501234567",
+      body: "clear me",
+      matchedLabel: null,
+      matchedEntityName: null,
+      matchedRecordId: null,
+      status: "received",
+      createdAt: new Date("2026-03-15T14:32:00Z").toISOString(),
+    };
+    globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/integrations/whatsapp/status") {
+        return new Response(
+          JSON.stringify({ status: "connected", phoneNumber: "972501234567", qrDataUrl: null, error: null }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      if (method === "GET" && input === "/api/projects/proj1/integrations/whatsapp/messages") {
+        return new Response(JSON.stringify({ messages: [message] }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      if (method === "DELETE" && input === "/api/projects/proj1/integrations/whatsapp/messages") {
+        return new Response(null, { status: 204 });
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+    try {
+      render(
+        React.createElement(
+          ThemeProvider,
+          null,
+          React.createElement(
+            LanguageProvider,
+            null,
+            React.createElement(WhatsAppPanel, {
+              projectId: "proj1",
+              projectName: "Test Project",
+              onClose: () => {},
+              onJumpToEntity: () => {},
+              onJumpToRecord: () => {},
+              onHistoryCleared: () => {
+                historyClearedCalls += 1;
+              },
+            }),
+          ),
+        ),
+      );
+      await waitForCondition(() => document.querySelectorAll(".whatsapp-log-list li").length === 1);
+
+      const clearButton = Array.from(document.querySelectorAll("button")).find((b) => b.textContent === "Clear history");
+      assert.ok(clearButton, "expected a 'Clear history' button");
+      fireEvent.click(clearButton!);
+      await waitForCondition(() => document.querySelectorAll(".whatsapp-log-list li").length === 0);
+
+      assert.equal(historyClearedCalls, 1, "onHistoryCleared must fire exactly once after a successful clear");
+    } finally {
+      globalThis.fetch = originalFetch;
+      globalThis.window.confirm = originalConfirm;
+    }
+  });
+});
+
+/**
  * New in this round: the same "Copy report" companion action round 222
  * added to Business Twin's own Download button, mirrored here -- the log
  * is already formatted as plain, shareable text (formatWhatsAppLog), but

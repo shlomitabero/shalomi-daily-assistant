@@ -112,6 +112,8 @@ export function WhatsAppPanel({
   onJumpToEntity,
   onJumpToRecord,
   prefillTo,
+  onMessageDeleted,
+  onHistoryCleared,
 }: {
   projectId: string;
   projectName: string;
@@ -130,6 +132,26 @@ export function WhatsAppPanel({
   onJumpToRecord: (entityName: string, recordId: number) => void;
   /** A phone number to open the test-send form pre-filled with, e.g. from an EntityPanel row's "Send WhatsApp" action -- the reverse direction of onJumpToRecord above. App.tsx only ever mounts this panel fresh (conditional render, not a persistent one), so a plain lazy useState initializer is enough; no effect is needed to react to a later change while already mounted. */
   prefillTo?: string | null;
+  /**
+   * Round 593: App.tsx's own independent unread-poll tracks a desktop-
+   * notification baseline (lastNotifiedWhatsAppIdRef) purely in memory,
+   * set to whatever message was newest at its last check -- with no
+   * resync path of its own. The topbar badge's sibling baseline
+   * (whatsappLastSeenId, below) already self-heals on every messages
+   * change via its own effect, but that effect lives in THIS component,
+   * not App.tsx's, so it can't reach the poll's ref. Deleting the exact
+   * message a notification baseline points to makes it vanish from the
+   * next fetched page; findNewInboundMessages (whatsappNotify.ts) can't
+   * find it there and, by design, falls back to treating every inbound
+   * message still on the page as "new" -- a fallback meant for pagination
+   * overflow, not for "the user just deleted it" -- so the next
+   * background-tab check fires a real OS notification re-announcing
+   * already-read messages. These two callbacks let App.tsx forget its
+   * stale baseline the moment it's invalidated, the same way
+   * whatsappLastSeenId already forgets it below.
+   */
+  onMessageDeleted?: (id: string) => void;
+  onHistoryCleared?: () => void;
 }) {
   const { t, lang } = useTranslation();
   const [status, setStatus] = useState<WhatsAppStatusView | null>(null);
@@ -637,6 +659,7 @@ export function WhatsAppPanel({
       await deleteWhatsAppMessage(projectId, m.id);
       messagesVersionRef.current += 1;
       setMessages((prev) => prev.filter((msg) => msg.id !== m.id));
+      onMessageDeleted?.(m.id);
     } catch (err) {
       setDeleteError((err as Error).message);
     } finally {
@@ -653,6 +676,7 @@ export function WhatsAppPanel({
       setMessages([]);
       setHasMoreMessages(false);
       setRetryError(null);
+      onHistoryCleared?.();
     } catch (err) {
       setLoadError((err as Error).message);
     } finally {

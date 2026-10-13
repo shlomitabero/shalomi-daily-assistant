@@ -2086,6 +2086,12 @@ function AppContent() {
                 setWhatsappPrefillTo(null);
               }}
               prefillTo={whatsappPrefillTo}
+              onMessageDeleted={(id) => {
+                if (lastNotifiedWhatsAppIdRef.current === id) lastNotifiedWhatsAppIdRef.current = null;
+              }}
+              onHistoryCleared={() => {
+                lastNotifiedWhatsAppIdRef.current = null;
+              }}
             />
           )}
 
