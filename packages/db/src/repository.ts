@@ -17,7 +17,7 @@ const DATE_FORMAT = /^(\d{4})-(\d{2})-(\d{2})$/;
  * month/day over into a *different*, wrong date instead of rejecting it,
  * so the parsed year/month/day are checked back against what was typed).
  */
-function isValidDateString(value: string): boolean {
+export function isValidDateString(value: string): boolean {
   const match = DATE_FORMAT.exec(value);
   if (!match) return false;
   const [, yearStr, monthStr, dayStr] = match;

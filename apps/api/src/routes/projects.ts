@@ -39,6 +39,7 @@ import {
   insertAutomationRule,
   updateAutomationRule,
   deleteAutomationRule,
+  isValidDateString,
   NotFoundError,
   type ForgeDatabase,
   type AutomationTrigger,
@@ -385,15 +386,24 @@ function findField(entity: Entity, fieldName: string) {
 // "כן" are all natural things to type) can never match, leaving the rule
 // permanently, silently dead -- no error, no indication anywhere. Same for
 // an enum field whose typed value doesn't exactly match one of its
-// enumValues. Rejecting here, at creation/update time, mirrors
-// repository.ts's own coerceValue boolean/enum checks exactly (same error
-// style) instead of letting a rule save successfully and never fire.
+// enumValues. Round 607: same gap for a date field -- its only stored shape
+// is a real "YYYY-MM-DD" (repository.ts's own coerceValue/isValidDateString
+// already enforce this at insert time), but the live table only ever shows
+// a date field in locale-formatted form (EntityPanel.tsx's toLocaleDateString),
+// so that's the only value a real user has ever seen for it and the only
+// one they'd type into this free-text box -- never the raw ISO shape.
+// Rejecting here, at creation/update time, mirrors repository.ts's own
+// coerceValue boolean/enum/date checks exactly (same error style) instead
+// of letting a rule save successfully and never fire.
 function validateAutomationFieldValue(field: Field, fieldValue: string): void {
   if (field.type === "boolean" && fieldValue !== "true" && fieldValue !== "false") {
     throw new HttpError(400, `Field "${field.name}" must be "true" or "false"`, "VALIDATION_ERROR");
   }
   if (field.type === "enum" && field.enumValues && !field.enumValues.includes(fieldValue)) {
     throw new HttpError(400, `Field "${field.name}" must be one of: ${field.enumValues.join(", ")}`, "VALIDATION_ERROR");
+  }
+  if (field.type === "date" && !isValidDateString(fieldValue)) {
+    throw new HttpError(400, `Field "${field.name}" must be a date in YYYY-MM-DD format`, "VALIDATION_ERROR");
   }
 }
 

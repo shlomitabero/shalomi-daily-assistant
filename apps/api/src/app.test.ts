@@ -1405,6 +1405,61 @@ test("creating or updating a field_equals automation rule with a fieldValue that
 });
 
 /**
+ * Round 607's Explore survey found the same gap round 595 closed for
+ * boolean/enum fields still open for date fields: a date field's only
+ * stored shape is a real "YYYY-MM-DD" (repository.ts's own coerceValue
+ * enforces this at insert time), but the live table only ever shows a date
+ * field in locale-formatted form (toLocaleDateString) -- never the raw ISO
+ * shape -- so a locale-formatted value like "3/15/2026" is the only thing a
+ * real user has ever seen for that field and the only thing they'd type
+ * into this free-text box. matchesTrigger's byte-exact comparison can never
+ * match it, leaving the rule permanently, silently dead with no error.
+ */
+test("creating a field_equals automation rule on a date field with a locale-formatted value (what a user has actually seen on screen) is rejected with 400, instead of silently saving a rule that can never match the real stored ISO value", async () => {
+  await withServer(async (baseUrl) => {
+    const token = await signup(baseUrl, "automation-date-fieldvalue@example.com");
+    const createRes = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({
+        description:
+          "Build an appointment-management application for a beauty clinic. I need customers, appointments, employees, services, an admin dashboard and automatic appointment status tracking.",
+      }),
+    });
+    const { project } = (await createRes.json()) as { project: { id: string } };
+    const buildRes = await fetch(`${baseUrl}/api/projects/${project.id}/build`, { method: "POST", headers: authHeaders(token) });
+    await collectSSE(buildRes);
+
+    const baseRule = {
+      trigger: "field_equals",
+      fieldName: "date",
+      actionType: "send_whatsapp",
+      toMode: "static",
+      toNumber: "+972500000000",
+      messageTemplate: "hi",
+    };
+
+    // "3/15/2026" is exactly what new Date(2026, 2, 15).toLocaleDateString("en-US")
+    // renders -- the only form of this date a real user has ever seen.
+    const badRes = await fetch(`${baseUrl}/api/projects/${project.id}/entities/Appointment/automations`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ ...baseRule, fieldValue: "3/15/2026" }),
+    });
+    assert.equal(badRes.status, 400);
+    assert.equal(((await badRes.json()) as { code?: string }).code, "VALIDATION_ERROR");
+
+    // The real stored ISO shape must still be accepted.
+    const goodRes = await fetch(`${baseUrl}/api/projects/${project.id}/entities/Appointment/automations`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ ...baseRule, fieldValue: "2026-03-15" }),
+    });
+    assert.equal(goodRes.status, 201);
+  });
+});
+
+/**
  * Round 597's Explore survey found that a toMode:"field" automation rule's
  * destination (toField) had no type restriction at all -- the create/update
  * routes only ever confirmed the field exists (findField), never that it

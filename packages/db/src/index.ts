@@ -13,6 +13,7 @@ export {
   updateRecord,
   deleteRecord,
   countRecords,
+  isValidDateString,
   ValidationError,
   NotFoundError,
 } from "./repository.js";
