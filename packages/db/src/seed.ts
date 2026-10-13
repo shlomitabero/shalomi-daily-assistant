@@ -111,10 +111,21 @@ function seedValueFor(field: Field, entity: Entity, index: number): unknown {
       // entity's own date fields -- gives each one a distinct day, with no
       // effect on the existing end-like pair behavior above (the ordinal of
       // a pair's start field is always 0, adding nothing).
+      //
+      // The same collapse can happen between two RECOGNIZED end-of-range
+      // fields too (e.g. a rental entity with both checkoutDate and
+      // returnDate) -- isEndLike alone can't tell them apart, since every
+      // end-like field used baseOffset - 3 with no further distinction.
+      // endLikeOrdinal mirrors dateFieldOrdinal's own fix, scoped to only
+      // the end-like fields, so a pair of them lands on distinct days too
+      // (a single end-like field keeps ordinal 0, unchanged from before).
       const isEndLike = END_DATE_FIELD_NAME_HINTS.includes(field.name.toLowerCase());
       const dateFieldOrdinal = entity.fields.filter((f) => f.type === "date").findIndex((f) => f.name === field.name);
+      const endLikeOrdinal = entity.fields
+        .filter((f) => f.type === "date" && END_DATE_FIELD_NAME_HINTS.includes(f.name.toLowerCase()))
+        .findIndex((f) => f.name === field.name);
       const baseOffset = (index + 1) * 3;
-      const dayOffset = isEndLike ? baseOffset - 3 : baseOffset + dateFieldOrdinal;
+      const dayOffset = isEndLike ? baseOffset - 3 + endLikeOrdinal : baseOffset + dateFieldOrdinal;
       const d = new Date(Date.now() - dayOffset * 86_400_000);
       return d.toISOString().slice(0, 10);
     }

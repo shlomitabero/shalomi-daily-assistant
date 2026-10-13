@@ -348,6 +348,28 @@ test("an entity with two unrelated date fields (neither an end-of-range name) st
   assert.notEqual(record.hireDate, record.birthDate, "hireDate and birthDate must not collapse to the same day");
 });
 
+test("an entity with two RECOGNIZED end-of-range date fields (checkoutDate and returnDate) still gets distinct values", () => {
+  // The fixes above only ever distinguish a recognized end-of-range field
+  // from an unrecognized one, or two unrecognized fields from each other --
+  // isEndLike's own branch gave every matching field the exact same
+  // baseOffset - 3 with no further distinction, so two fields that BOTH
+  // match END_DATE_FIELD_NAME_HINTS (e.g. a rental-style entity with both
+  // checkoutDate and returnDate) still collapsed to the same seeded day,
+  // the one case none of the prior fixes covered.
+  const rental: Entity = {
+    name: "Booking",
+    fields: [
+      { name: "startDate", type: "date", required: false },
+      { name: "checkoutDate", type: "date", required: false },
+      { name: "returnDate", type: "date", required: false },
+    ],
+  };
+  const [record] = generateSeedRecords(rental, 1);
+  assert.notEqual(record.checkoutDate, record.returnDate, "checkoutDate and returnDate must not collapse to the same day");
+  assert.ok((record.checkoutDate as string) > (record.startDate as string), "checkoutDate should still be after startDate");
+  assert.ok((record.returnDate as string) > (record.startDate as string), "returnDate should still be after startDate");
+});
+
 test("the generic fallback entity (Item, used when no domain keyword matches) seeds its name field as an item, not a person", () => {
   // "Item" is DEFAULT_ENTITY's real name (packages/spec-engine/src/
   // domainEntities.ts) -- the fallback hit whenever a description doesn't
