@@ -159,7 +159,15 @@ export function buildCalendarIcs(
       })
       .filter((line): line is string => line !== null);
     lines.push("BEGIN:VEVENT");
-    lines.push(foldIcsLine(`UID:${entity.name}-${record.id}@forge-ai`));
+    // entity.name is exactly as unbounded and AI/user-controlled as
+    // entity.label already is in PRODID above (EntitySchema.name is a
+    // bare z.string().min(1), with no character restriction actually
+    // enforced -- see backup.ts's sanitizeZipEntryName comment for the
+    // same gap already defended against for ZIP paths) -- missed when
+    // this line was first written, even though PRODID's own round-551
+    // fix comment already described UID as one of the lines that
+    // *should* be escaped like SUMMARY/DESCRIPTION.
+    lines.push(foldIcsLine(`UID:${icsEscapeText(entity.name)}-${record.id}@forge-ai`));
     lines.push(`DTSTAMP:${dtstamp}`);
     lines.push(`DTSTART;VALUE=DATE:${formatIcsDate(start)}`);
     lines.push(`DTEND;VALUE=DATE:${formatIcsDate(end)}`);

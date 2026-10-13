@@ -128,6 +128,27 @@ test("buildCalendarIcs escapes commas, semicolons, backslashes, and newlines in 
 });
 
 /**
+ * Round 589: entity.name is exactly as unbounded and AI/spec-controlled as
+ * entity.label already is in PRODID (EntitySchema.name has no character
+ * restriction actually enforced), but unlike PRODID/SUMMARY/DESCRIPTION,
+ * the UID line interpolated it with no icsEscapeText call at all -- an
+ * entity name containing a semicolon, comma, backslash, or embedded
+ * newline reached the UID content line raw, breaking RFC 5545's content-
+ * line structure (a bare newline splits one UID line into two with no
+ * continuation marker) instead of being escaped like every other
+ * unbounded TEXT value this function emits.
+ */
+test("buildCalendarIcs escapes an entity name containing RFC-5545-significant characters in UID, same as PRODID/SUMMARY/DESCRIPTION", () => {
+  const unsafeEntity: Entity = { ...entity, name: "Weird;Name,With\\Chars" };
+  const records: EntityRecord[] = [
+    { id: 3, appointmentDate: "2026-03-15", customerName: "Dana Levi", notes: null, courierId: null },
+  ];
+  const ics = buildCalendarIcs(unsafeEntity, dateField, nameField, records, [], {});
+  assert.match(ics, /UID:Weird\\;Name\\,With\\\\Chars-3@forge-ai/);
+  assert.doesNotMatch(ics, /UID:Weird;Name,With\\Chars-3@forge-ai/, "the raw unescaped name must never reach the UID line");
+});
+
+/**
  * Regression test for the enum-field gap this round fixes: DESCRIPTION
  * previously showed an enum field's raw stored value (e.g. "shipped")
  * instead of the same Hebrew enumLabels translation every other view of
