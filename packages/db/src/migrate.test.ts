@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { ProductSpec } from "@forge/shared";
 import { ensureAutomationRulesTable, getAutomationRule, insertAutomationRule } from "./automations.js";
-import { ensureCheckpointsTable, insertCheckpoint } from "./checkpoints.js";
+import { ensureCheckpointsTable, insertCheckpoint, listHistoricalEntityNames } from "./checkpoints.js";
 import { openDatabase } from "./connection.js";
 import { applyMigrations, describeMigrationHazards, diffAndMigrate, generateCreateTableStatements } from "./migrate.js";
 import { insertRecord, listRecords, ValidationError } from "./repository.js";
@@ -929,6 +929,57 @@ test("diffAndMigrate refuses the collision even when the colliding entity's name
   const stillThere = listRecords(db, "proj1", baseSpec.entities[2]);
   assert.equal(stillThere.length, 1);
   assert.equal(stillThere[0].note, "secret old data");
+});
+
+/**
+ * round 611: diffAndMigrate processes nextSpec.entities one at a time, each
+ * with its own real, immediately-committed db.exec -- no transaction wraps
+ * the whole call. A genuinely new entity earlier in that array can get its
+ * real table created and committed, then a LATER entity in the SAME call
+ * (e.g. one that collides with history, like the test above) makes the
+ * whole call throw. Before this round, the durable history ledger only ever
+ * learned about an entity once the pipeline's entire migration call
+ * succeeded (round 610) -- too late here, since the call never returns.
+ * This test asserts the earlier entity's name is tracked anyway, the moment
+ * its own migration step commits, regardless of what a later entity in the
+ * same call does.
+ */
+test("diffAndMigrate records an earlier entity's name in the history ledger even when a later entity in the same call makes the whole call throw", () => {
+  const db = openDatabase(":memory:");
+  ensureCheckpointsTable(db);
+
+  const baseSpec: ProductSpec = {
+    ...spec,
+    entities: [...spec.entities, { name: "לקוח", fields: [{ name: "phone", type: "text", required: true }] }],
+  };
+  applyMigrations(db, "proj1", baseSpec);
+  insertCheckpoint(db, { id: "cp1", projectId: "proj1", label: "Initial build", kind: "build", spec: baseSpec });
+
+  const spec1: ProductSpec = { ...spec };
+  diffAndMigrate(db, "proj1", baseSpec, spec1);
+  insertCheckpoint(db, { id: "cp2", projectId: "proj1", label: "Refine: drop לקוח", kind: "refine", spec: spec1 });
+
+  // nextSpec adds "Invoice" (genuinely new, FIRST in the array -- its table
+  // commits) then "מוצר" (collides with the long-removed "לקוח", SECOND --
+  // throws before its own db.exec ever runs).
+  const nextSpec: ProductSpec = {
+    ...spec1,
+    entities: [
+      ...spec1.entities,
+      { name: "Invoice", fields: [{ name: "amount", type: "number", required: true }] },
+      { name: "מוצר", fields: [{ name: "price", type: "number", required: true }] },
+    ],
+  };
+  assert.throws(() => diffAndMigrate(db, "proj1", spec1, nextSpec), ValidationError);
+
+  assert.ok(
+    listHistoricalEntityNames(db, "proj1").includes("Invoice"),
+    "Invoice's own migration already committed before מוצר threw -- its name must be tracked even though the overall call failed",
+  );
+  assert.doesNotThrow(
+    () => db.prepare(`SELECT COUNT(*) as c FROM "entity_proj1_Invoice"`).get(),
+    "Invoice's real table must actually exist, matching the history ledger entry",
+  );
 });
 
 test("generateCreateTableStatements quotes identifiers so a field named after a SQL reserved keyword doesn't break the statement", () => {

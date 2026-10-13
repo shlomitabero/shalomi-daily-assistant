@@ -1,7 +1,7 @@
 import type { Entity, Field, ProductSpec } from "@forge/shared";
 import type { ForgeDatabase } from "./connection.js";
 import { disableAutomationRulesForEntity, disableAutomationRulesForField, ensureAutomationRulesTable } from "./automations.js";
-import { listHistoricalEntityNames } from "./checkpoints.js";
+import { listHistoricalEntityNames, recordEntityNameInHistory } from "./checkpoints.js";
 import { assertSafeIdentifier, quoteIdentifier, tableNameFor } from "./identifiers.js";
 import { ValidationError } from "./repository.js";
 
@@ -23,11 +23,23 @@ import { ValidationError } from "./repository.js";
  */
 function allKnownEntityNames(db: ForgeDatabase, projectId: string, previousSpec: ProductSpec): Set<string> {
   const names = new Set(previousSpec.entities.map((e) => e.name));
-  const hasHistoryTable = db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'checkpoint_entity_history'").get();
-  if (hasHistoryTable) {
+  if (hasCheckpointHistoryTable(db)) {
     for (const name of listHistoricalEntityNames(db, projectId)) names.add(name);
   }
   return names;
+}
+
+/**
+ * Same tolerance allKnownEntityNames above already needs: the checkpoint
+ * infrastructure is always set up for the real app (store.ts), but
+ * diffAndMigrate is also exercised directly (migrate.test.ts) against a bare
+ * openDatabase(":memory:") that never called ensureCheckpointsTable --
+ * recordEntityNameInHistory's own INSERT would throw "no such table" there,
+ * so every call site below checks this first rather than assuming the table
+ * exists.
+ */
+function hasCheckpointHistoryTable(db: ForgeDatabase): boolean {
+  return !!db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'checkpoint_entity_history'").get();
 }
 
 function sqlTypeFor(field: Field): string {
@@ -278,6 +290,7 @@ export function diffAndMigrate(
     if (!prevEntity && currentColumns.size === 0) {
       db.exec(statements[index]);
       changes.push({ type: "new_table", table });
+      if (hasCheckpointHistoryTable(db)) recordEntityNameInHistory(db, projectId, entity.name);
       return;
     }
 
@@ -473,6 +486,7 @@ export function diffAndMigrate(
       }
       changes.push({ type: "new_column", table, column: columnName });
     }
+    if (hasCheckpointHistoryTable(db)) recordEntityNameInHistory(db, projectId, entity.name);
   });
 
   // An entity or field this spec change (refine, the Debug Agent's retry,

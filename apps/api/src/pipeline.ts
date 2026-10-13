@@ -11,7 +11,6 @@ import {
   listRecords,
   markProjectBuilt,
   orderForSeeding,
-  recordEntityHistory,
   tableNameFor,
   updateProjectSpec,
   ValidationError,
@@ -370,13 +369,15 @@ export async function* runBuildPipeline(
       describeMigrationHazards(changes),
     detail: changes,
   };
-  // Record every entity this migration just created a real table for in the
-  // durable history ledger right now, not only if a checkpoint eventually
-  // gets inserted below -- a later step (QA) can still stop this build/refine
-  // before that ever happens, and without this, deleteProject has no way to
-  // ever learn the table exists, orphaning it (and whatever gets seeded into
-  // it next) permanently, even across a full project deletion.
-  recordEntityHistory(db, project.id, nextSpec);
+  // Round 610 recorded the whole nextSpec into the durable history ledger
+  // right here, so a later step (QA) stopping the build/refine before any
+  // checkpoint got inserted couldn't orphan a new entity's real table.
+  // Round 611: that was still too late for an entity whose OWN migration
+  // succeeded but a LATER entity in the same diffAndMigrate call then threw
+  // (e.g. a sanitized-name collision) -- this call never even runs in that
+  // case. diffAndMigrate itself now records each entity's name the moment
+  // its own migration step commits, which covers this call's job too, so it
+  // was removed rather than kept as a now-redundant duplicate.
 
   yield { agent: "Seed Data", status: "running", message: "Generating sample records for new tables…" };
   const newEntityNames = new Set(changes.filter((c) => c.type === "new_table").map((c) => c.table));

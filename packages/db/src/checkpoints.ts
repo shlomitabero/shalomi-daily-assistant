@@ -129,19 +129,33 @@ function tryRowToCheckpoint(row: Record<string, unknown>): Checkpoint | undefine
 }
 
 /**
- * Writes every entity name in `spec` into the durable history ledger (see
- * ensureCheckpointsTable's own doc-comment), independent of ever inserting a
- * checkpoint. insertCheckpoint below calls this once its own row is written;
- * the pipeline also calls it directly right after a migration succeeds, so a
- * new entity's real table is tracked for deleteProject's cleanup even if a
- * later step (QA) stops the build/refine before a checkpoint ever exists for
- * it -- otherwise that table (and whatever got seeded into it) survives even
- * full project deletion, with nothing left anywhere referencing it.
+ * The single-entity primitive recordEntityHistory below loops over. Exported
+ * separately (round 611) so diffAndMigrate (migrate.ts) can record an
+ * entity's name into the durable history ledger (see ensureCheckpointsTable's
+ * own doc-comment) the moment ITS OWN migration step actually commits --
+ * diffAndMigrate can itself throw partway through nextSpec.entities (e.g. a
+ * later entity's sanitized-name collision, round 496-498's own guard), after
+ * earlier entities in that same call already got their real tables created.
+ * Round 610 only ever recorded history once, after the pipeline's WHOLE
+ * migration call succeeded -- too late for an entity whose own table is
+ * already real but whose call never got to finish, orphaning it exactly the
+ * same way a QA failure did before round 610.
+ */
+export function recordEntityNameInHistory(db: ForgeDatabase, projectId: string, entityName: string): void {
+  db.prepare("INSERT OR IGNORE INTO checkpoint_entity_history (projectId, entityName) VALUES (?, ?)").run(projectId, entityName);
+}
+
+/**
+ * Writes every entity name in `spec` into the durable history ledger,
+ * independent of ever inserting a checkpoint. insertCheckpoint below calls
+ * this once its own row is written, so a checkpoint's own entities are
+ * tracked even though diffAndMigrate's own per-entity calls (above) already
+ * cover every entity whose migration actually ran during this project's
+ * history.
  */
 export function recordEntityHistory(db: ForgeDatabase, projectId: string, spec: ProductSpec): void {
-  const insertHistoryEntry = db.prepare("INSERT OR IGNORE INTO checkpoint_entity_history (projectId, entityName) VALUES (?, ?)");
   for (const entity of spec.entities) {
-    insertHistoryEntry.run(projectId, entity.name);
+    recordEntityNameInHistory(db, projectId, entity.name);
   }
 }
 

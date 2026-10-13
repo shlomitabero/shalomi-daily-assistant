@@ -5,7 +5,7 @@ import { openDatabase } from "./connection.js";
 import { ensureProjectCollaboratorsTable, addCollaborator, removeCollaborator, isCollaborator } from "./collaborators.js";
 import { ensureCheckpointsTable, insertCheckpoint, listCheckpoints, deleteCheckpoint, recordEntityHistory } from "./checkpoints.js";
 import { applyMigrations, diffAndMigrate } from "./migrate.js";
-import { insertRecord } from "./repository.js";
+import { insertRecord, ValidationError } from "./repository.js";
 import {
   ensureWhatsAppConnectionsTable,
   ensureWhatsAppMessagesTable,
@@ -450,6 +450,73 @@ test("deleteProject drops a real data table whose entity was only ever migrated 
     () => db.prepare(`SELECT * FROM "entity_proj_qa_orphan_Invoice"`).all(),
     /no such table/,
     "Invoice's table must be dropped even though no checkpoint ever recorded it -- it's not an orphan left behind",
+  );
+});
+
+/**
+ * round 611: a narrower trigger for the same orphan class round 610 fixed --
+ * not a QA failure, but diffAndMigrate ITSELF throwing partway through
+ * nextSpec.entities (here, a sanitized-name collision with a long-removed
+ * entity), after an EARLIER entity in that same call already got its real
+ * table committed. Round 610's fix alone didn't cover this: it only
+ * recorded history once the pipeline's WHOLE migration call succeeded, and
+ * this call never returns. diffAndMigrate now records each entity's own
+ * name the moment its own migration step commits (migrate.ts), independent
+ * of whether a later entity in the same call throws.
+ */
+test("deleteProject drops a real data table whose entity committed during a diffAndMigrate call that itself threw on a LATER entity", () => {
+  const db = openDatabase(":memory:");
+  ensureProjectsTable(db);
+  ensureCheckpointsTable(db);
+  ensureProjectCollaboratorsTable(db);
+  ensureWhatsAppConnectionsTable(db);
+  ensureWhatsAppMessagesTable(db);
+  ensureAutomationRulesTable(db);
+
+  const buildSpec: ProductSpec = {
+    ...validSpec,
+    entities: [...validSpec.entities, { name: "לקוח", fields: [{ name: "phone", type: "text", required: true }] }],
+  };
+  const project = insertProject(db, {
+    id: "proj-db-fail-orphan",
+    ownerId: "owner1",
+    name: "Project with a partially-failed refine",
+    description: "test",
+    spec: buildSpec,
+  });
+  applyMigrations(db, project.id, buildSpec);
+  insertCheckpoint(db, { id: "cp-build", projectId: project.id, label: "build", kind: "build", spec: buildSpec });
+
+  const spec1: ProductSpec = validSpec;
+  diffAndMigrate(db, project.id, buildSpec, spec1);
+  insertCheckpoint(db, { id: "cp-refine1", projectId: project.id, label: "refine: drop לקוח", kind: "refine", spec: spec1 });
+
+  // nextSpec adds "Invoice" (genuinely new, FIRST -- commits) then "מוצר"
+  // (collides with the long-removed "לקוח", SECOND -- throws). Standing in
+  // for the Debug Agent's own recovery also failing: no insertCheckpoint
+  // call follows, exactly like pipeline.ts never reaching one here either.
+  const nextSpec: ProductSpec = {
+    ...spec1,
+    entities: [
+      ...spec1.entities,
+      { name: "Invoice", fields: [{ name: "amount", type: "number", required: true }] },
+      { name: "מוצר", fields: [{ name: "price", type: "number", required: true }] },
+    ],
+  };
+  assert.throws(() => diffAndMigrate(db, project.id, spec1, nextSpec), ValidationError);
+
+  assert.doesNotThrow(
+    () => db.prepare(`SELECT COUNT(*) as c FROM "entity_proj_db_fail_orphan_Invoice"`).get(),
+    "sanity check: Invoice's real table must exist before delete, even though the refine attempt overall failed",
+  );
+
+  deleteProject(db, project.id);
+
+  assert.equal(getProject(db, project.id), undefined, "the project row itself should be gone");
+  assert.throws(
+    () => db.prepare(`SELECT * FROM "entity_proj_db_fail_orphan_Invoice"`).all(),
+    /no such table/,
+    "Invoice's table must be dropped even though its only migration call overall failed -- it's not an orphan left behind",
   );
 });
 
