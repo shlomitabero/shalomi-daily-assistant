@@ -439,6 +439,24 @@ test("sortRecords places null/undefined values first regardless of direction", (
 });
 
 /**
+ * Round 603's finding: sortRecords sorted ascending then called
+ * .reverse() on the whole array for "desc" -- correct for the unique
+ * values above, but tied records (same sort value) had their original
+ * relative order flipped too, unlike a real stable "desc" sort (and
+ * unlike sortRecordsMulti, its own sibling, which negates the comparator
+ * per-key instead of reversing the whole result).
+ */
+test("sortRecords keeps tied records in their original relative order when sorting desc, not reversed", () => {
+  const records = [{ id: 1, v: 5 }, { id: 2, v: 5 }, { id: 3, v: 2 }];
+  const desc = sortRecords(records, "v", "desc");
+  assert.deepEqual(
+    desc.map((r) => r.id),
+    [1, 2, 3],
+    "the two tied v:5 records (id 1 then id 2) must keep that same relative order, not be reversed to id 2 then id 1",
+  );
+});
+
+/**
  * New in this round: the table's own sort was always single-column --
  * clicking a second header threw away whatever the first one had already
  * sorted by. sortRecordsMulti is the pure function behind a real

@@ -459,13 +459,19 @@ export function sortRecords(
   relatedRecords?: RelatedRecordsByEntity,
 ): EntityRecord[] {
   if (!sortField) return records;
-  const sorted = [...records].sort((a, b) =>
-    compareValues(
+  // Negates the comparator's own result for "desc" rather than sorting
+  // ascending then reversing the whole array -- the same fix
+  // sortRecordsMulti's own doc comment below already describes: reversing
+  // the full array also flips the relative order of any tied pair, which
+  // breaks the sort's stability (two records with an equal sort value no
+  // longer keep their original relative order in "desc").
+  return [...records].sort((a, b) => {
+    const cmp = compareValues(
       resolveSortValue(sortField, a[sortField], fields, allEntities, relatedRecords),
       resolveSortValue(sortField, b[sortField], fields, allEntities, relatedRecords),
-    ),
-  );
-  return direction === "desc" ? sorted.reverse() : sorted;
+    );
+    return direction === "desc" ? -cmp : cmp;
+  });
 }
 
 export interface SortKey {
