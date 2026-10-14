@@ -3701,6 +3701,46 @@ test("EntityPanel's Export CSV, Copy, and per-record Print all honor the user's 
 });
 
 /**
+ * Round 621: round 615 made Export CSV, Copy, and per-record Print all
+ * honor the user's drag-reordered column order (orderedFields), but the
+ * "Columns" visibility menu's own checkbox list -- the one UI a person
+ * actually uses to find "the 3rd column from the left" and hide/show it --
+ * was never included in that audit and still mapped over the entity's raw
+ * declared field order. After a real reorder, the on-screen table shows
+ * Status before Name, but the Columns menu still lists Name before Status,
+ * making it genuinely hard to match a checkbox to its visible column.
+ */
+test("EntityPanel's Columns menu lists checkboxes in the user's drag-reordered column order, not the entity's original declared order", async () => {
+  await withJsdom(async () => {
+    localStorage.setItem("forge.columnOrder", JSON.stringify({ "proj1:Deal": ["status", "name"] }));
+    const store: EntityRecord[] = [{ id: 1, name: "Globex", status: "won" }];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = mockRecordsFetch(store) as typeof fetch;
+    try {
+      renderEntityPanel();
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 1);
+      assert.deepEqual(
+        [...document.querySelectorAll("thead th.resizable-col")].map((th) => th.querySelector(".sort-header")!.textContent),
+        ["Status", "Name"],
+        "the persisted reorder must already be in effect on the on-screen table",
+      );
+
+      const columnsBtn = document.querySelector(".columns-menu-btn") as HTMLButtonElement;
+      fireEvent.click(columnsBtn);
+      const labels = [...document.querySelectorAll(".columns-menu-item")].map((el) => el.textContent?.trim());
+      assert.deepEqual(
+        labels,
+        ["Status", "Name"],
+        "the Columns menu's own checkbox list must match the reordered table, not the entity's original declared order",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+      localStorage.removeItem("forge.columnOrder");
+    }
+  });
+});
+
+/**
  * New in this round: GlobalSearchPanel's per-row "jump to record" click
  * (see GlobalSearchPanel.test.ts) carries a specific record id down through
  * App.tsx into a new highlightRecordId prop, so the person lands on the

@@ -4093,7 +4093,7 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
               </button>
               {columnsMenuOpen && (
                 <div className="columns-menu-panel">
-                  {entity.fields.map((f) => (
+                  {orderedFields.map((f) => (
                     <label key={f.name} className="columns-menu-item">
                       <input type="checkbox" checked={!hiddenFields.has(f.name)} onChange={() => handleToggleColumn(f.name)} />
                       {f.label}

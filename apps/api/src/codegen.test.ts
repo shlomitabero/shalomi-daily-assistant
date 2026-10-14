@@ -10857,3 +10857,69 @@ test("the exported EntityView's Print list action includes a column hidden from 
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+/**
+ * Round 621: round 615 ported the orderedFields fix (honoring the user's
+ * drag-reordered column order) to Export CSV, Copy, and per-record Print
+ * in the exported app, but the Columns menu's own checkbox list -- the one
+ * UI a person uses to match a checkbox to its visible column -- was never
+ * included in that audit and still mapped over the entity's raw declared
+ * field order (entity.fields, not orderedFields), the live preview's exact
+ * same gap.
+ */
+test("the exported EntityView's Columns menu lists checkboxes in the user's drag-reordered column order, not the entity's original declared order", async () => {
+  const files = generateExportFiles(project);
+  const dir = writeGeneratedWebComponent(files);
+  const originalFetch = globalThis.fetch;
+  const store = [{ id: 1, name: "Globex", status: "Won" }];
+  globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
+    const method = init?.method ?? "GET";
+    if (method === "GET" && input === "/api/Customer") {
+      return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    throw new Error(`unexpected request ${method} ${input}`);
+  }) as typeof fetch;
+
+  try {
+    await withRealLocalStorage(async () => {
+      localStorage.setItem("forge_column_order", JSON.stringify({ Customer: ["status", "name"] }));
+      const { EntityView } = await import(path.join(dir, "web", "src", "components", "EntityView.jsx"));
+      const customerEntity = project.spec.entities.find((e) => e.name === "Customer")!;
+      const props = {
+        entity: customerEntity,
+        highlightRecordId: null,
+        onHighlightHandled: () => {},
+        onJumpToRecord: () => {},
+        onRecordCountChange: () => {},
+      };
+
+      const { container } = render(React.createElement(EntityView, props));
+      for (let i = 0; i < 40; i++) {
+        if (container.querySelectorAll("tbody tr").length === 1) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+      assert.deepEqual(
+        [...container.querySelectorAll("thead th.resizable-col")].map((th) => th.querySelector(".sort-header")?.textContent),
+        ["סטטוס", "שם"],
+        "the persisted reorder must already be in effect on the on-screen table",
+      );
+
+      const columnsBtn = container.querySelector(".columns-menu-btn") as HTMLButtonElement;
+      await act(async () => {
+        fireEvent.click(columnsBtn);
+      });
+      const labels = [...container.querySelectorAll(".columns-menu-item")].map((el) => el.textContent?.trim());
+      assert.deepEqual(
+        labels,
+        ["סטטוס", "שם"],
+        "the Columns menu's own checkbox list must match the reordered table, not the entity's original declared order",
+      );
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    cleanup();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});

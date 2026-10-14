@@ -2649,7 +2649,7 @@ export function EntityPanel({
               </button>
               {columnsMenuOpen && (
                 <div className="columns-menu-panel">
-                  {entity.fields.map((f) => (
+                  {orderedFields.map((f) => (
                     <label key={f.name} className="columns-menu-item">
                       <input
                         type="checkbox"
