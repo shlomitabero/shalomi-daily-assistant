@@ -251,6 +251,56 @@ test("computeBusinessTwin identifies the record most referenced across multiple 
   );
 });
 
+test("computeBusinessTwin's most-linked breakdown disambiguates two relation fields on the same entity pointing at the same target", () => {
+  // Deal has BOTH customerId and referredBy pointing at Customer -- a
+  // schema-legal shape (no uniqueness constraint across a field's own
+  // relationTo within one entity). Without disambiguation, the breakdown
+  // would render two bare '... in "Deals"' lines with no way to tell them
+  // apart, even though fieldLabel was computed for exactly this purpose.
+  const hubProject: Project = {
+    ...project,
+    description: "I need to track deals and who referred them",
+    spec: {
+      ...project.spec,
+      entities: [
+        { name: "Customer", label: "Customers", fields: [{ name: "name", type: "text", required: true }] },
+        {
+          name: "Deal",
+          label: "Deals",
+          fields: [
+            { name: "amount", type: "number", required: true },
+            { name: "customerId", label: "Customer", type: "relation", required: false, relationTo: "Customer" },
+            { name: "referredBy", label: "Referred By", type: "relation", required: false, relationTo: "Customer" },
+          ],
+        },
+      ],
+    },
+  };
+  const db = openDatabase(":memory:");
+  applyMigrations(db, hubProject.id, hubProject.spec);
+  const [customer, deal] = hubProject.spec.entities;
+  const { id: dana } = insertRecord(db, hubProject.id, customer, { name: "Dana Levi" });
+  insertRecord(db, hubProject.id, deal, { amount: 100, customerId: dana });
+  insertRecord(db, hubProject.id, deal, { amount: 200, customerId: dana });
+  insertRecord(db, hubProject.id, deal, { amount: 300, customerId: dana });
+  insertRecord(db, hubProject.id, deal, { amount: 50, referredBy: dana });
+  insertRecord(db, hubProject.id, deal, { amount: 60, referredBy: dana });
+
+  const twin = computeBusinessTwin(db, hubProject);
+  assert.ok(twin.mostLinkedRecord, `expected a most-linked-record insight, got: ${JSON.stringify(twin.mostLinkedRecord)}`);
+  const hubObservation = twin.mostLinkedRecord!.text;
+  assert.ok(hubObservation.includes("Dana Levi"), `expected Dana Levi to be the hub, got: "${hubObservation}"`);
+  assert.ok(hubObservation.includes("5 links total"));
+  assert.ok(
+    hubObservation.includes('3 in "Deals" (via Customer)'),
+    `expected the customerId breakdown to be disambiguated by field label, got: "${hubObservation}"`,
+  );
+  assert.ok(
+    hubObservation.includes('2 in "Deals" (via Referred By)'),
+    `expected the referredBy breakdown to be disambiguated by field label, got: "${hubObservation}"`,
+  );
+});
+
 test("computeBusinessTwin falls back to the next real candidate when the top-linked id no longer resolves to a real record, instead of dropping the insight entirely", () => {
   // deleteRecord itself can't produce this state today: migrate.ts declares
   // a real REFERENCES constraint on every relation column and openDatabase

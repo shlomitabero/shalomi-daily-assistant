@@ -172,9 +172,25 @@ function computeRelationHubObservation(
   if (!best || !targetEntity || !targetRecord) return null;
 
   const breakdown = breakdownByTarget.get(best.targetName)!.get(best.id)!;
+  // Two entries can share the same sourceLabel when one entity has two
+  // different relation fields both pointing at the same target entity
+  // (e.g. Deal.customerId and Deal.referredBy both -> Customer) -- without
+  // naming the field, those lines would read as identical-looking
+  // duplicates ('3 in "Deals", 2 in "Deals"') with no way to tell them
+  // apart, even though fieldLabel distinguishes them.
+  const sourceLabelOccurrences = new Map<string, number>();
+  for (const b of breakdown) {
+    sourceLabelOccurrences.set(b.sourceLabel, (sourceLabelOccurrences.get(b.sourceLabel) ?? 0) + 1);
+  }
   const breakdownText = breakdown
-    .map((b) => (hebrew ? `${b.count} ב"${b.sourceLabel}"` : `${b.count} in "${b.sourceLabel}"`))
-    .join(hebrew ? ", " : ", ");
+    .map((b) => {
+      const ambiguous = (sourceLabelOccurrences.get(b.sourceLabel) ?? 0) > 1;
+      if (hebrew) {
+        return ambiguous ? `${b.count} ב"${b.sourceLabel}" (${b.fieldLabel})` : `${b.count} ב"${b.sourceLabel}"`;
+      }
+      return ambiguous ? `${b.count} in "${b.sourceLabel}" (via ${b.fieldLabel})` : `${b.count} in "${b.sourceLabel}"`;
+    })
+    .join(", ");
   const label = recordDisplayLabel(targetEntity, targetRecord);
   const entityLabel = targetEntity.label ?? targetEntity.name;
 
