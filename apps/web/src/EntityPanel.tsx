@@ -1978,6 +1978,7 @@ export function EntityPanel({
     if (bulkActionBusy) return;
     const ids = [...selectedIds];
     if (ids.length === 0 || !bulkEditField) return;
+    if (!window.confirm(t("entity.bulk.confirmUpdate", { count: ids.length }))) return;
     setBulkActionBusy(true);
     setError(null);
     try {

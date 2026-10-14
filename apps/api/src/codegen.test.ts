@@ -2689,41 +2689,99 @@ test("the exported EntityView's handleBulkDuplicate and handleBulkUpdate keep on
     let capturedSelectedIds: Set<number> | undefined;
     let refreshCalled = 0;
     const updatedIds: number[] = [];
-    const fn = new Function(
-      "bulkActionBusy",
-      "entity",
-      "bulkEditField",
-      "bulkEditValue",
-      "selectedIds",
-      "setBulkActionBusy",
-      "setSelectedIds",
-      "setError",
-      "updateRecord",
-      "refresh",
-      `${handleBulkUpdateSrc}\nreturn handleBulkUpdate;`,
-    )(
-      false,
-      { name: "Order" },
-      "status",
-      "Shipped",
-      new Set([1, 2, 3]),
-      () => {},
-      (next: Set<number>) => (capturedSelectedIds = next),
-      (msg: string) => (capturedError = msg),
-      async (_entityName: string, id: number, patch: Record<string, unknown>) => {
-        updatedIds.push(id);
-        assert.deepEqual(patch, { status: "Shipped" });
-        if (id === 3) throw new Error("record 3 update failed");
-      },
-      async () => {
-        refreshCalled += 1;
-      },
-    );
-    await fn();
-    assert.deepEqual(updatedIds.slice().sort(), [1, 2, 3], "must attempt every selected id's update, not stop at the first failure");
-    assert.deepEqual([...capturedSelectedIds!].sort(), [3], "only the id that actually failed to update should remain selected");
-    assert.equal(capturedError, "1 of 3 records could not be updated.");
-    assert.equal(refreshCalled, 1, "refresh() must still run to reflect the updates that succeeded");
+    const originalConfirm = globalThis.window?.confirm;
+    (globalThis.window as unknown as { confirm: () => boolean }).confirm = () => true;
+    try {
+      const fn = new Function(
+        "bulkActionBusy",
+        "entity",
+        "bulkEditField",
+        "bulkEditValue",
+        "selectedIds",
+        "setBulkActionBusy",
+        "setSelectedIds",
+        "setError",
+        "updateRecord",
+        "refresh",
+        `${handleBulkUpdateSrc}\nreturn handleBulkUpdate;`,
+      )(
+        false,
+        { name: "Order" },
+        "status",
+        "Shipped",
+        new Set([1, 2, 3]),
+        () => {},
+        (next: Set<number>) => (capturedSelectedIds = next),
+        (msg: string) => (capturedError = msg),
+        async (_entityName: string, id: number, patch: Record<string, unknown>) => {
+          updatedIds.push(id);
+          assert.deepEqual(patch, { status: "Shipped" });
+          if (id === 3) throw new Error("record 3 update failed");
+        },
+        async () => {
+          refreshCalled += 1;
+        },
+      );
+      await fn();
+      assert.deepEqual(updatedIds.slice().sort(), [1, 2, 3], "must attempt every selected id's update, not stop at the first failure");
+      assert.deepEqual([...capturedSelectedIds!].sort(), [3], "only the id that actually failed to update should remain selected");
+      assert.equal(capturedError, "1 of 3 records could not be updated.");
+      assert.equal(refreshCalled, 1, "refresh() must still run to reflect the updates that succeeded");
+    } finally {
+      if (originalConfirm) (globalThis.window as unknown as { confirm: () => boolean }).confirm = originalConfirm;
+    }
+  }
+
+  // Regression test (round 625): handleBulkUpdate in the exported app had
+  // the same gap as the live preview -- no confirmation at all before
+  // overwriting a real field's value across every selected record, unlike
+  // its sibling handleBulkDelete (which has both a confirm dialog and an
+  // undo window). Mirrors handleBulkDelete's own confirm guard.
+  {
+    const originalConfirm = globalThis.window?.confirm;
+    let confirmMessage: string | undefined;
+    let updateCalled = false;
+    let refreshCalled = false;
+    (globalThis.window as unknown as { confirm: (msg: string) => boolean }).confirm = (msg: string) => {
+      confirmMessage = msg;
+      return false;
+    };
+    try {
+      const fn = new Function(
+        "bulkActionBusy",
+        "entity",
+        "bulkEditField",
+        "bulkEditValue",
+        "selectedIds",
+        "setBulkActionBusy",
+        "setSelectedIds",
+        "setError",
+        "updateRecord",
+        "refresh",
+        `${handleBulkUpdateSrc}\nreturn handleBulkUpdate;`,
+      )(
+        false,
+        { name: "Order" },
+        "status",
+        "Shipped",
+        new Set([1, 2, 3]),
+        () => {},
+        () => {},
+        () => {},
+        async () => {
+          updateCalled = true;
+        },
+        async () => {
+          refreshCalled = true;
+        },
+      );
+      await fn();
+      assert.match(confirmMessage!, /Set this field on 3 records/, "must ask for confirmation naming the record count before touching any record");
+      assert.equal(updateCalled, false, "must not call updateRecord at all when the user cancels the confirmation");
+      assert.equal(refreshCalled, false, "must not refresh when nothing was updated");
+    } finally {
+      if (originalConfirm) (globalThis.window as unknown as { confirm: () => boolean }).confirm = originalConfirm;
+    }
   }
 
   // A bulk update with no field chosen must be a real no-op -- no calls at

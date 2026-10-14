@@ -3513,6 +3513,7 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
     if (bulkActionBusy) return;
     const ids = [...selectedIds];
     if (ids.length === 0 || !bulkEditField) return;
+    if (!window.confirm(\`Set this field on \${ids.length} records? This cannot be undone.\`)) return;
     setBulkActionBusy(true);
     setError(null);
     try {

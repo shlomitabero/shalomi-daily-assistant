@@ -609,67 +609,149 @@ test("EntityPanel's handleBulkUpdate refreshes and keeps only the ids that actua
   let refreshCalled = 0;
   const attemptedUpdates: { id: number; patch: Record<string, unknown> }[] = [];
 
-  const fn = new Function(
-    "bulkActionBusy",
-    "setBulkActionBusy",
-    "t",
-    "projectId",
-    "entity",
-    "selectedIds",
-    "bulkEditField",
-    "bulkEditValue",
-    "setError",
-    "updateRecord",
-    "setSelectedIds",
-    "refresh",
-    `${code}\nreturn handleBulkUpdate;`,
-  )(
-    false,
-    () => {},
-    (key: string, params?: Record<string, unknown>) => (params ? `${key}:${JSON.stringify(params)}` : key),
-    "proj1",
-    { name: "Order" },
-    new Set([1, 2, 3]),
-    "status",
-    "Shipped",
-    (msg: string | null) => {
-      capturedError = msg ?? undefined;
-    },
-    async (_projectId: string, _entityName: string, id: number, patch: Record<string, unknown>) => {
-      attemptedUpdates.push({ id, patch });
-      if (id === 2) throw new Error("record 2 network error");
-    },
-    (next: Set<number>) => {
-      capturedSelectedIds = next;
-    },
-    async () => {
-      refreshCalled += 1;
-    },
-  ) as () => Promise<void>;
+  const originalConfirm = globalThis.window.confirm;
+  globalThis.window.confirm = (() => true) as typeof window.confirm;
+  try {
+    const fn = new Function(
+      "bulkActionBusy",
+      "setBulkActionBusy",
+      "t",
+      "projectId",
+      "entity",
+      "selectedIds",
+      "bulkEditField",
+      "bulkEditValue",
+      "setError",
+      "updateRecord",
+      "setSelectedIds",
+      "refresh",
+      `${code}\nreturn handleBulkUpdate;`,
+    )(
+      false,
+      () => {},
+      (key: string, params?: Record<string, unknown>) => (params ? `${key}:${JSON.stringify(params)}` : key),
+      "proj1",
+      { name: "Order" },
+      new Set([1, 2, 3]),
+      "status",
+      "Shipped",
+      (msg: string | null) => {
+        capturedError = msg ?? undefined;
+      },
+      async (_projectId: string, _entityName: string, id: number, patch: Record<string, unknown>) => {
+        attemptedUpdates.push({ id, patch });
+        if (id === 2) throw new Error("record 2 network error");
+      },
+      (next: Set<number>) => {
+        capturedSelectedIds = next;
+      },
+      async () => {
+        refreshCalled += 1;
+      },
+    ) as () => Promise<void>;
 
-  await fn();
+    await fn();
 
-  assert.deepEqual(
-    attemptedUpdates.map((u) => u.id).sort(),
-    [1, 2, 3],
-    "must attempt every selected id, not stop at the first failure",
-  );
-  assert.deepEqual(
-    attemptedUpdates.map((u) => u.patch),
-    [{ status: "Shipped" }, { status: "Shipped" }, { status: "Shipped" }],
-    "every update must send the same chosen field/value patch",
-  );
-  assert.deepEqual(
-    [...capturedSelectedIds!].sort(),
-    [2],
-    "only the id that actually failed to update should remain selected -- the two that succeeded must be cleared",
-  );
-  assert.match(
-    capturedError!,
-    /entity\.bulk\.updatePartialFailure/,
-    "a partial failure must surface the translated update-partial-failure message, not the raw single-record rejection",
-  );
-  assert.equal(refreshCalled, 1, "refresh() must still run so the table shows the records that WERE successfully updated");
+    assert.deepEqual(
+      attemptedUpdates.map((u) => u.id).sort(),
+      [1, 2, 3],
+      "must attempt every selected id, not stop at the first failure",
+    );
+    assert.deepEqual(
+      attemptedUpdates.map((u) => u.patch),
+      [{ status: "Shipped" }, { status: "Shipped" }, { status: "Shipped" }],
+      "every update must send the same chosen field/value patch",
+    );
+    assert.deepEqual(
+      [...capturedSelectedIds!].sort(),
+      [2],
+      "only the id that actually failed to update should remain selected -- the two that succeeded must be cleared",
+    );
+    assert.match(
+      capturedError!,
+      /entity\.bulk\.updatePartialFailure/,
+      "a partial failure must surface the translated update-partial-failure message, not the raw single-record rejection",
+    );
+    assert.equal(refreshCalled, 1, "refresh() must still run so the table shows the records that WERE successfully updated");
+  } finally {
+    globalThis.window.confirm = originalConfirm;
+  }
+});
+
+/**
+ * Regression test (round 625): handleBulkUpdate had NEITHER a confirmation
+ * dialog NOR any undo window, unlike its sibling handleBulkDelete (which has
+ * both -- window.confirm, then the same pendingDelete undo-toast mechanism
+ * single-record delete uses -- precisely because "zero recovery once
+ * confirmed" meant real, permanent data loss). A bulk field update is just
+ * as destructive and just as irreversible: it overwrites a real field's
+ * value across every selected record in one stroke, with nothing to revert
+ * to. Worse, handleBulkEditFieldChange resets bulkEditValue to "" the
+ * instant a field is picked, and the "Apply" button was enabled the instant
+ * bulkEditField was non-empty -- so an accidental/premature click applied a
+ * blank value to every selected record's field, which coerceValue silently
+ * accepts (stores null) for any non-required field. Mirrors handleBulkDelete's
+ * own window.confirm guard, which already protects the sibling action.
+ */
+test("EntityPanel's handleBulkUpdate asks for confirmation before applying, and does nothing at all if the user cancels", async () => {
+  const handlerMatch = entityPanelSrc.match(/ {2}async function handleBulkUpdate\(\) \{[\s\S]*?\n {2}\}\n/);
+  assert.ok(handlerMatch, "expected to find handleBulkUpdate in EntityPanel.tsx");
+  const { code } = transformSync(handlerMatch![0], { loader: "ts" });
+
+  const originalConfirm = globalThis.window.confirm;
+  let confirmMessage: string | undefined;
+  let updateCalled = false;
+  let refreshCalled = false;
+  globalThis.window.confirm = ((msg: string) => {
+    confirmMessage = msg;
+    return false;
+  }) as typeof window.confirm;
+  try {
+    const fn = new Function(
+      "bulkActionBusy",
+      "setBulkActionBusy",
+      "t",
+      "projectId",
+      "entity",
+      "selectedIds",
+      "bulkEditField",
+      "bulkEditValue",
+      "setError",
+      "updateRecord",
+      "setSelectedIds",
+      "refresh",
+      `${code}\nreturn handleBulkUpdate;`,
+    )(
+      false,
+      () => {},
+      (key: string, params?: Record<string, unknown>) => (params ? `${key}:${JSON.stringify(params)}` : key),
+      "proj1",
+      { name: "Order" },
+      new Set([1, 2, 3]),
+      "status",
+      "",
+      () => {},
+      async () => {
+        updateCalled = true;
+      },
+      () => {},
+      async () => {
+        refreshCalled = true;
+      },
+    ) as () => Promise<void>;
+
+    await fn();
+
+    assert.match(
+      confirmMessage!,
+      /entity\.bulk\.confirmUpdate/,
+      "must ask for confirmation naming the translated confirm-update key before touching any record",
+    );
+    assert.equal(updateCalled, false, "must not call updateRecord at all when the user cancels the confirmation");
+    assert.equal(refreshCalled, false, "must not refresh when nothing was updated");
+  } finally {
+    globalThis.window.confirm = originalConfirm;
+  }
 });
 
 test("EntityPanel's handleBulkUpdate does nothing when no field has been chosen yet", async () => {
