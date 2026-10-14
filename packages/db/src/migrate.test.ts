@@ -1256,6 +1256,69 @@ test("diffAndMigrate disables an automation rule referencing a field removed fro
 });
 
 /**
+ * Round 620: this same automation-disable sweep's own nextFieldNames
+ * lookup is exact-string, the identical mistake rounds 617/618 already
+ * fixed for the main per-field diff loop earlier in diffAndMigrate
+ * (prevFieldByLowerName / the "reused column" branch's physicalColumnName
+ * fallback) -- but this sweep is a separate code path those fixes never
+ * touched. A refine that renames a field only by letter case (e.g.
+ * "status" -> "Status") is correctly a no-op for the migration itself
+ * (confirmed: zero changes, no ALTER, same physical column), yet this
+ * sweep still saw the old-cased "status" as absent from
+ * nextFieldNames and disabled any rule still referencing it -- even
+ * though the field, its data, and its column never actually left.
+ */
+test("diffAndMigrate leaves an automation rule enabled when its referenced field only changed letter-case across a refine, instead of wrongly disabling it", () => {
+  const db = openDatabase(":memory:");
+  ensureAutomationRulesTable(db);
+  applyMigrations(db, "proj1", spec);
+  const statusTriggerRule = insertAutomationRule(db, {
+    projectId: "proj1",
+    entityName: "Customer",
+    trigger: "field_equals",
+    fieldName: "status",
+    fieldValue: "Won",
+    actionType: "send_whatsapp",
+    toMode: "static",
+    toNumber: "+15551234567",
+    messageTemplate: "Deal won!",
+  });
+  const statusDestinationRule = insertAutomationRule(db, {
+    projectId: "proj1",
+    entityName: "Customer",
+    trigger: "record_created",
+    actionType: "send_whatsapp",
+    toMode: "field",
+    toField: "status",
+    messageTemplate: "New customer!",
+  });
+
+  const nextSpec: ProductSpec = {
+    ...spec,
+    entities: [
+      {
+        ...spec.entities[0],
+        fields: spec.entities[0].fields.map((f) => (f.name === "status" ? { ...f, name: "Status" } : f)),
+      },
+      spec.entities[1],
+    ],
+  };
+  const changes = diffAndMigrate(db, "proj1", spec, nextSpec);
+  assert.deepEqual(changes, [], "a pure case rename must still be a genuine no-op migration");
+
+  assert.equal(
+    getAutomationRule(db, "proj1", statusTriggerRule.id)!.enabled,
+    true,
+    "the field_equals rule must stay enabled -- its trigger field never actually left, only its letter-case changed",
+  );
+  assert.equal(
+    getAutomationRule(db, "proj1", statusDestinationRule.id)!.enabled,
+    true,
+    "the toField destination rule must stay enabled for the same reason",
+  );
+});
+
+/**
  * Round 606: a field kept by NAME but retyped away from text/longtext used
  * to leave a toMode:"field" automation rule fully enabled, since the field
  * never disappeared -- only validateAutomationToField (routes/projects.ts,

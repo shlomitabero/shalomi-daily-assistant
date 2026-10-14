@@ -571,8 +571,19 @@ export function diffAndMigrate(
     }
     const nextEntity = nextSpec.entities.find((e) => e.name === prevEntity.name)!;
     const nextFieldNames = new Set(nextEntity.fields.map((f) => f.name));
+    // A field renamed only by letter case (e.g. "status" -> "Status") is a
+    // genuine no-op for the main per-field diff loop above (rounds 617/618's
+    // prevFieldByLowerName fallback) -- the field survives with the same
+    // data and the same physical column. But this separate sweep's own
+    // nextFieldNames.has() is still exact-string, so it sees the
+    // old-cased prevField.name as "removed" and disables any automation
+    // rule still referencing it (as a field_equals trigger or a toField
+    // destination), even though the field never actually left. A
+    // lowercased fallback set, mirroring the same pattern already used one
+    // function up, resolves this the same way.
+    const nextFieldNamesLower = new Set(nextEntity.fields.map((f) => f.name.toLowerCase()));
     for (const prevField of prevEntity.fields) {
-      if (!nextFieldNames.has(prevField.name)) {
+      if (!nextFieldNames.has(prevField.name) && !nextFieldNamesLower.has(prevField.name.toLowerCase())) {
         disableAutomationRulesForField(db, projectId, prevEntity.name, prevField.name);
       }
     }
