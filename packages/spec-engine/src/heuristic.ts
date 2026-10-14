@@ -66,8 +66,14 @@ const PAYMENT_KEYWORDS: (string | RegExp)[] = [
  * to customers") matched only Rental and got recommended "No payments",
  * even though renting items out for a fee is definitionally a paid
  * transaction. Added "Rental" below.
+ *
+ * Round 622: the exact same drift, for Property -- a real-estate
+ * description ("track properties for sale and apartment listings") matches
+ * only Property (whose own description/fields never hit PAYMENT_KEYWORDS)
+ * and got recommended "No payments", even though selling or renting out
+ * real estate is definitionally a paid transaction. Added "Property" below.
  */
-const BILLING_ENTITY_NAMES = new Set(["Invoice", "Order", "Donation", "Subscription", "Rental"]);
+const BILLING_ENTITY_NAMES = new Set(["Invoice", "Order", "Donation", "Subscription", "Rental", "Property"]);
 
 interface HebrewLabels {
   labelHe: string;
