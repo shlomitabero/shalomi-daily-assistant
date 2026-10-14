@@ -232,14 +232,17 @@ export function diffAndMigrate(
   const previousEntities = new Map(previousSpec.entities.map((e) => [e.name, e]));
   const entityNames = new Set(nextSpec.entities.map((e) => e.name));
   const changes: MigrationChange[] = [];
-  // A field kept by name but retyped away from text/longtext invalidates
-  // any automation rule using it as a toMode:"field" WhatsApp destination
-  // (routes/projects.ts's validateAutomationToField only runs at rule
-  // create/update time, never again) -- tracked here, alongside the
-  // type_changed entry itself, so the automation-rule safety sweep below
-  // can disable it the same way it already does for a field removed
-  // outright.
-  const toFieldUnsafeAfterTypeChange = new Map<string, Set<string>>();
+  // A field kept by name can still invalidate an automation rule that
+  // references it without being removed outright: retyped away from
+  // text/longtext breaks any rule using it as a toMode:"field" WhatsApp
+  // destination (routes/projects.ts's validateAutomationToField only runs
+  // at rule create/update time, never again), and an enum field losing one
+  // of its enumValues breaks any field_equals rule whose stored fieldValue
+  // was exactly that now-removed option (validateAutomationFieldValue has
+  // the same create/update-time-only limitation). Both are tracked here so
+  // the automation-rule safety sweep below can disable them the same way
+  // it already does for a field removed outright.
+  const fieldsNeedingAutomationDisable = new Map<string, Set<string>>();
 
   nextSpec.entities.forEach((entity, index) => {
     const table = tableNameFor(projectId, entity.name);
@@ -329,10 +332,24 @@ export function diffAndMigrate(
             toType: field.type,
           });
           if (field.type !== "text" && field.type !== "longtext") {
-            if (!toFieldUnsafeAfterTypeChange.has(entity.name)) {
-              toFieldUnsafeAfterTypeChange.set(entity.name, new Set());
+            if (!fieldsNeedingAutomationDisable.has(entity.name)) {
+              fieldsNeedingAutomationDisable.set(entity.name, new Set());
             }
-            toFieldUnsafeAfterTypeChange.get(entity.name)!.add(field.name);
+            fieldsNeedingAutomationDisable.get(entity.name)!.add(field.name);
+          }
+        } else if (field.type === "enum" && prevField.type === "enum") {
+          // Same mechanism as the type_changed branch above, but the type
+          // itself didn't change -- only the set of allowed values did.
+          // Mirrors computeImpact's own "tightened" check (pipeline.ts) for
+          // the identical narrowing condition, used there to warn the user
+          // about existing records rather than to disable automations.
+          const nextValues = new Set(field.enumValues ?? []);
+          const lostValue = (prevField.enumValues ?? []).some((v) => !nextValues.has(v));
+          if (lostValue) {
+            if (!fieldsNeedingAutomationDisable.has(entity.name)) {
+              fieldsNeedingAutomationDisable.set(entity.name, new Set());
+            }
+            fieldsNeedingAutomationDisable.get(entity.name)!.add(field.name);
           }
         } else if (field.type === "relation" && prevField.type === "relation") {
           // Same gap as "type_changed" above, but for a relation field's
@@ -520,7 +537,7 @@ export function diffAndMigrate(
         disableAutomationRulesForField(db, projectId, prevEntity.name, prevField.name);
       }
     }
-    for (const fieldName of toFieldUnsafeAfterTypeChange.get(prevEntity.name) ?? []) {
+    for (const fieldName of fieldsNeedingAutomationDisable.get(prevEntity.name) ?? []) {
       disableAutomationRulesForField(db, projectId, prevEntity.name, fieldName);
     }
   }

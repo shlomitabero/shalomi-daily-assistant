@@ -1235,6 +1235,84 @@ test("diffAndMigrate leaves a toMode:\"field\" automation rule enabled when its 
 });
 
 /**
+ * Round 614: an enum field kept by NAME and by TYPE can still invalidate a
+ * field_equals automation rule, if the refine narrows its enumValues to drop
+ * the exact option the rule's fieldValue was keyed to. Unlike the
+ * type_changed cases above, this never produces a type_changed entry at all
+ * (prevField.type === field.type === "enum"), so it was previously invisible
+ * to the whole automation-rule safety sweep -- the rule stayed enabled
+ * forever, pointed at a value coerceValue (repository.ts) can never store
+ * again. computeImpact (pipeline.ts) already detects this exact narrowing
+ * for a different purpose (warning the user about existing records); this
+ * mirrors that same condition to feed the automation-disable sweep instead.
+ */
+test("diffAndMigrate disables a field_equals automation rule whose stored fieldValue names an enum option a refine just removed, even though the field keeps its name and its \"enum\" type", () => {
+  const db = openDatabase(":memory:");
+  ensureAutomationRulesTable(db);
+  applyMigrations(db, "proj1", spec);
+  const deadRule = insertAutomationRule(db, {
+    projectId: "proj1",
+    entityName: "Customer",
+    trigger: "field_equals",
+    fieldName: "status",
+    fieldValue: "New",
+    actionType: "send_whatsapp",
+    toMode: "static",
+    toNumber: "+15550001111",
+    messageTemplate: "Status changed!",
+  });
+
+  const nextSpec: ProductSpec = {
+    ...spec,
+    entities: [
+      {
+        ...spec.entities[0],
+        fields: spec.entities[0].fields.map((f) => (f.name === "status" ? { ...f, enumValues: ["Won"] } : f)),
+      },
+      spec.entities[1],
+    ],
+  };
+  const changes = diffAndMigrate(db, "proj1", spec, nextSpec);
+
+  assert.ok(
+    !changes.some((c) => c.type === "type_changed"),
+    "narrowing enumValues without changing the field's type must not itself be reported as a type_changed entry",
+  );
+  assert.equal(getAutomationRule(db, "proj1", deadRule.id)!.enabled, false);
+});
+
+test("diffAndMigrate leaves a field_equals automation rule enabled when an enum field's enumValues change without dropping the rule's own value", () => {
+  const db = openDatabase(":memory:");
+  ensureAutomationRulesTable(db);
+  applyMigrations(db, "proj1", spec);
+  const survivingRule = insertAutomationRule(db, {
+    projectId: "proj1",
+    entityName: "Customer",
+    trigger: "field_equals",
+    fieldName: "status",
+    fieldValue: "New",
+    actionType: "send_whatsapp",
+    toMode: "static",
+    toNumber: "+15550001111",
+    messageTemplate: "Status changed!",
+  });
+
+  const nextSpec: ProductSpec = {
+    ...spec,
+    entities: [
+      {
+        ...spec.entities[0],
+        fields: spec.entities[0].fields.map((f) => (f.name === "status" ? { ...f, enumValues: ["New", "Won", "Lost"] } : f)),
+      },
+      spec.entities[1],
+    ],
+  };
+  diffAndMigrate(db, "proj1", spec, nextSpec);
+
+  assert.equal(getAutomationRule(db, "proj1", survivingRule.id)!.enabled, true);
+});
+
+/**
  * Round 596's own finding: diffAndMigrate also runs in the *reverse*
  * direction on checkpoint restore (apps/api/src/routes/projects.ts calls
  * diffAndMigrate(db, project.id, project.spec, checkpoint.spec) -- the
