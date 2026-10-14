@@ -395,6 +395,14 @@ function findField(entity: Entity, fieldName: string) {
 // Rejecting here, at creation/update time, mirrors repository.ts's own
 // coerceValue boolean/enum/date checks exactly (same error style) instead
 // of letting a rule save successfully and never fire.
+// Round 613: the identical gap for a number field -- matchesTrigger's
+// String(actual) is whatever JS's own Number.prototype.toString() produces
+// ("1000"), but the only form of that value a real user has ever seen is
+// EntityPanel.tsx's locale-formatted one (entityFormatting.ts's
+// formatNumberValue: (1000).toLocaleString() === "1,000"), the natural
+// thing to type into this free-text box. Number(fieldValue)'s own string
+// form is the one canonical shape that can ever match; anything else
+// (grouping separators, trailing zeros, scientific notation) never will.
 function validateAutomationFieldValue(field: Field, fieldValue: string): void {
   if (field.type === "boolean" && fieldValue !== "true" && fieldValue !== "false") {
     throw new HttpError(400, `Field "${field.name}" must be "true" or "false"`, "VALIDATION_ERROR");
@@ -404,6 +412,9 @@ function validateAutomationFieldValue(field: Field, fieldValue: string): void {
   }
   if (field.type === "date" && !isValidDateString(fieldValue)) {
     throw new HttpError(400, `Field "${field.name}" must be a date in YYYY-MM-DD format`, "VALIDATION_ERROR");
+  }
+  if (field.type === "number" && (!Number.isFinite(Number(fieldValue)) || String(Number(fieldValue)) !== fieldValue)) {
+    throw new HttpError(400, `Field "${field.name}" must be a plain number matching how it's stored (e.g. "1000", not "1,000")`, "VALIDATION_ERROR");
   }
 }
 

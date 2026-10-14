@@ -1460,6 +1460,61 @@ test("creating a field_equals automation rule on a date field with a locale-form
 });
 
 /**
+ * Round 613: the identical gap round 607 closed for date fields was still
+ * open for number fields. matchesTrigger (automations.ts) compares
+ * String(actual), and rowToRecord (repository.ts) returns a real JS number
+ * for a number field, so String(1000) is "1000". But the only form of that
+ * value a real user has ever seen on screen is EntityPanel.tsx's
+ * locale-formatted one (entityFormatting.ts's formatNumberValue:
+ * (1000).toLocaleString() === "1,000") -- the natural thing to type into
+ * this free-text box, which can never byte-match "1000" and leaves the
+ * rule permanently, silently dead.
+ */
+test("creating a field_equals automation rule on a number field with a locale-formatted value (what a user has actually seen on screen) is rejected with 400, instead of silently saving a rule that can never match the real stored number", async () => {
+  await withServer(async (baseUrl) => {
+    const token = await signup(baseUrl, "automation-number-fieldvalue@example.com");
+    const createRes = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({
+        description:
+          "Build an appointment-management application for a beauty clinic. I need customers, appointments, employees, services, an admin dashboard and automatic appointment status tracking.",
+      }),
+    });
+    const { project } = (await createRes.json()) as { project: { id: string } };
+    const buildRes = await fetch(`${baseUrl}/api/projects/${project.id}/build`, { method: "POST", headers: authHeaders(token) });
+    await collectSSE(buildRes);
+
+    const baseRule = {
+      trigger: "field_equals",
+      fieldName: "price",
+      actionType: "send_whatsapp",
+      toMode: "static",
+      toNumber: "+972500000000",
+      messageTemplate: "hi",
+    };
+
+    // "1,000" is exactly what (1000).toLocaleString("en-US") renders -- the
+    // only form of this number a real user has ever seen for it.
+    const badRes = await fetch(`${baseUrl}/api/projects/${project.id}/entities/Service/automations`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ ...baseRule, fieldValue: "1,000" }),
+    });
+    assert.equal(badRes.status, 400);
+    assert.equal(((await badRes.json()) as { code?: string }).code, "VALIDATION_ERROR");
+
+    // The real stored plain-number shape must still be accepted.
+    const goodRes = await fetch(`${baseUrl}/api/projects/${project.id}/entities/Service/automations`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ ...baseRule, fieldValue: "1000" }),
+    });
+    assert.equal(goodRes.status, 201);
+  });
+});
+
+/**
  * Round 597's Explore survey found that a toMode:"field" automation rule's
  * destination (toField) had no type restriction at all -- the create/update
  * routes only ever confirmed the field exists (findField), never that it
