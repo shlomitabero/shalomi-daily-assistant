@@ -237,6 +237,46 @@ test("diffAndMigrate reports a type_changed entry (without altering the column) 
 });
 
 /**
+ * Round 617: a refine that merely changes a surviving field's letter-case
+ * (e.g. "name" -> "Name") used to be invisible to prevFieldsByName's
+ * exact-string lookup -- EntitySchema's own case-insensitive-duplicate check
+ * only rejects a collision WITHIN one spec, so nextSpec's single "Name"
+ * field passes validation cleanly even though previousSpec had "name". The
+ * field then fell through to the "reused column" branch, whose own
+ * exact-string currentColumns.has() check also missed the already-existing
+ * physical column, so diffAndMigrate tried `ALTER TABLE ... ADD COLUMN
+ * "Name" ...` against a table that (from SQLite's own case-insensitive
+ * perspective) already had that exact column -- a raw, unhandled
+ * "duplicate column name" SQLite error, not a reported change.
+ */
+test("diffAndMigrate treats a field that only changed letter-case as the same surviving field, instead of throwing a duplicate-column SQLite error", () => {
+  const db = openDatabase(":memory:");
+  applyMigrations(db, "proj1", spec);
+  insertRecord(db, "proj1", spec.entities[0], { name: "Alice", status: "New" });
+
+  const nextSpec: ProductSpec = {
+    ...spec,
+    entities: [
+      {
+        ...spec.entities[0],
+        fields: [{ ...spec.entities[0].fields[0], name: "Name" }, spec.entities[0].fields[1]],
+      },
+      spec.entities[1],
+    ],
+  };
+  const changes = diffAndMigrate(db, "proj1", spec, nextSpec);
+  assert.deepEqual(changes, [], "a pure case rename with no real type change must report zero changes, same as any other no-op refine");
+
+  // The original column (still physically named "name") must survive with
+  // its data intact -- no ALTER, no new column, no data loss.
+  const columnInfo = db.prepare('PRAGMA table_info("entity_proj1_Customer")').all() as { name: string }[];
+  assert.deepEqual(columnInfo.map((c) => c.name).sort(), ["createdAt", "id", "name", "status"], "must still have exactly one name-ish column, not two");
+  const customers = listRecords(db, "proj1", spec.entities[0]);
+  assert.equal(customers.length, 1);
+  assert.equal(customers[0].name, "Alice");
+});
+
+/**
  * Regression test: diffAndMigrate's prevField branch compared only
  * `prevField.type !== field.type`, so a relation field that keeps the same
  * name and type ("relation") but has its `relationTo` repointed to a

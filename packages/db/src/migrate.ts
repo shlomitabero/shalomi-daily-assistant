@@ -319,9 +319,31 @@ export function diffAndMigrate(
     // would be if the field itself (not the whole entity) had been the
     // thing reused.
     const prevFieldsByName = new Map((prevEntity?.fields ?? []).map((f) => [f.name, f]));
+    // A refine that merely changes a surviving field's letter-case (e.g.
+    // "email" -> "Email") is invisible to the exact-string lookup above --
+    // EntitySchema's own findCaseInsensitiveDuplicateFieldNames (shared/src/
+    // index.ts) only rejects a case-collision WITHIN one spec, so nextSpec's
+    // single "Email" field passes validation cleanly, and prevFieldsByName
+    // (keyed by previousSpec's exact "email") simply has no entry for
+    // "Email". Without this, the field below falls through to the "reused
+    // column" branch, whose own exact-string currentColumns.has() check also
+    // misses the already-existing physical column -- the generated ALTER
+    // TABLE ... ADD COLUMN then throws SQLite's own "duplicate column name"
+    // error (SQLite compares identifiers case-insensitively, the same fact
+    // the entity-level collision guard above already relies on), an
+    // unhandled raw Error at both call sites that reach here (pipeline.ts's
+    // try/catch burns a Debug Agent retry that can never actually fix it;
+    // the checkpoint-restore route has no try/catch at all, surfacing a raw
+    // 500). Resolving via a second, lowercased map finds the same prevField
+    // a case-only rename really is, so it takes the normal type_changed/
+    // enum/relation comparison path below (comparing TYPES, which is
+    // unaffected by the name's case) and never reaches the ALTER at all --
+    // correct, since SQLite already resolves either case to the one
+    // physical column.
+    const prevFieldByLowerName = new Map((prevEntity?.fields ?? []).map((f) => [f.name.toLowerCase(), f]));
     const physicalShapeByColumn = physicalColumnShape(db, table);
     for (const field of entity.fields) {
-      const prevField = prevFieldsByName.get(field.name);
+      const prevField = prevFieldsByName.get(field.name) ?? prevFieldByLowerName.get(field.name.toLowerCase());
       if (prevField) {
         if (prevField.type !== field.type) {
           changes.push({
