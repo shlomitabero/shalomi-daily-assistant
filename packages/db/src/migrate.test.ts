@@ -277,6 +277,56 @@ test("diffAndMigrate treats a field that only changed letter-case as the same su
 });
 
 /**
+ * Round 618: round 617 fixed the exact-string prevFieldsByName lookup for a
+ * field that survives letter-case renamed across the IMMEDIATELY preceding
+ * spec. But a field removed on one refine and re-added two+ refines later
+ * under different letter-case has NO entry in either prevFieldsByName or
+ * prevFieldByLowerName -- the field genuinely wasn't in the immediately
+ * preceding spec at all, so it falls into the sibling "reused column"
+ * branch below, whose own currentColumns.has()/physicalShapeByColumn.get()
+ * lookups are keyed by the column's REAL physical name (PRAGMA table_info)
+ * and were still exact-string. The ALTER TABLE ADD COLUMN then throws the
+ * same "duplicate column name" SQLite error round 617 fixed for the other
+ * branch, just reached via a different path (remove-then-re-add instead of
+ * a same-hop rename).
+ */
+test("diffAndMigrate treats a field removed on one refine and re-added under different letter-case two refines later as the same reused column, instead of throwing a duplicate-column SQLite error", () => {
+  const db = openDatabase(":memory:");
+  applyMigrations(db, "proj1", spec);
+  insertRecord(db, "proj1", spec.entities[0], { name: "Alice", status: "New" });
+
+  const withoutName: ProductSpec = {
+    ...spec,
+    entities: [{ ...spec.entities[0], fields: [spec.entities[0].fields[1]] }, spec.entities[1]],
+  };
+  const afterRemoval = diffAndMigrate(db, "proj1", spec, withoutName);
+  assert.deepEqual(afterRemoval, [], "removing a field from the spec must not touch the physical column (additive-only design)");
+
+  const withNameDifferentCase: ProductSpec = {
+    ...spec,
+    entities: [
+      {
+        ...spec.entities[0],
+        fields: [{ ...spec.entities[0].fields[0], name: "Name" }, spec.entities[0].fields[1]],
+      },
+      spec.entities[1],
+    ],
+  };
+  const afterReAdd = diffAndMigrate(db, "proj1", withoutName, withNameDifferentCase);
+  assert.deepEqual(
+    afterReAdd,
+    [{ type: "new_column", table: "entity_proj1_Customer", column: "Name" }],
+    "must not throw, and must report the reused column as new_column (same as any other field absent from previousSpec), not as a duplicate-column crash",
+  );
+
+  const columnInfo = db.prepare('PRAGMA table_info("entity_proj1_Customer")').all() as { name: string }[];
+  assert.deepEqual(columnInfo.map((c) => c.name).sort(), ["createdAt", "id", "name", "status"], "must still have exactly one name-ish column, not two");
+  const customers = listRecords(db, "proj1", spec.entities[0]);
+  assert.equal(customers.length, 1);
+  assert.equal(customers[0].name, "Alice", "the original data in the reused column must survive untouched");
+});
+
+/**
  * Regression test: diffAndMigrate's prevField branch compared only
  * `prevField.type !== field.type`, so a relation field that keeps the same
  * name and type ("relation") but has its `relationTo` repointed to a

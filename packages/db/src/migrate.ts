@@ -447,8 +447,25 @@ export function diffAndMigrate(
       // Field definitions, and report the same two change shapes when they
       // genuinely disagree. A benign reuse (same name, same type) stays
       // silent, exactly like it would if the field had simply never left.
-      if (currentColumns.has(columnName)) {
-        const shape = physicalShapeByColumn.get(columnName);
+      //
+      // The reused column can physically exist under different letter-case
+      // than field.name declares -- e.g. "email" removed on one refine, then
+      // re-added two+ refines later as "Email". currentColumns/
+      // physicalShapeByColumn are keyed by the column's REAL stored name
+      // (PRAGMA table_info), so an exact-case lookup misses it even though
+      // SQLite resolves both names to the identical column (the same fact
+      // prevFieldByLowerName above already relies on, for the sibling case
+      // where the field survived the IMMEDIATELY preceding spec rather than
+      // being removed and re-added). Without resolving through a lowercased
+      // fallback first, this falls through to the "new_column" ALTER TABLE
+      // ADD COLUMN below, which throws SQLite's own "duplicate column name"
+      // error.
+      const physicalColumnName =
+        currentColumns.has(columnName)
+          ? columnName
+          : Array.from(currentColumns).find((c) => c.toLowerCase() === columnName.toLowerCase());
+      if (physicalColumnName) {
+        const shape = physicalShapeByColumn.get(physicalColumnName);
         const expectedSqlType = sqlTypeFor(field);
         if (shape && shape.sqlType !== expectedSqlType) {
           changes.push({
@@ -500,7 +517,7 @@ export function diffAndMigrate(
       // partial attempt throw. Reporting it either way keeps the returned
       // change list an accurate diff against previousSpec regardless of
       // what a prior, partially-failed call already applied.
-      if (!currentColumns.has(columnName)) {
+      if (!physicalColumnName) {
         const sqlType = sqlTypeFor(field);
         // NOT NULL deliberately omitted: SQLite can't retroactively satisfy
         // it against a table's existing rows (they'd all violate it with
