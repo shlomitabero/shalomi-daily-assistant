@@ -106,10 +106,29 @@ function coerceValue(field: Field, raw: unknown): string | number | null {
   }
 }
 
+/**
+ * A field renamed only by letter case across a refine (e.g. "email" ->
+ * "Email") is a genuine no-op in diffAndMigrate (migrate.ts, rounds
+ * 617/618) -- the physical column stays under its ORIGINAL casing, since
+ * SQLite resolves column names case-insensitively for DDL/DML and no
+ * ALTER is needed. But `row` here comes straight from `SELECT * FROM
+ * ...`, keyed by node:sqlite with the column's real physical name, not by
+ * the entity's current spec casing -- a plain `row[fieldName]` misses
+ * entirely, silently returning undefined for a field whose data is still
+ * sitting right there on disk. Falls back to a case-insensitive scan of
+ * the row's own keys before giving up.
+ */
+function getRowValue(row: Record<string, unknown>, fieldName: string): unknown {
+  if (Object.prototype.hasOwnProperty.call(row, fieldName)) return row[fieldName];
+  const lowerFieldName = fieldName.toLowerCase();
+  const matchingKey = Object.keys(row).find((key) => key.toLowerCase() === lowerFieldName);
+  return matchingKey === undefined ? undefined : row[matchingKey];
+}
+
 function rowToRecord(entity: Entity, row: Record<string, unknown>): EntityRecord {
   const record: EntityRecord = { id: row.id as number, createdAt: row.createdAt as string };
   for (const field of entity.fields) {
-    const value = row[field.name];
+    const value = getRowValue(row, field.name);
     record[field.name] = field.type === "boolean" ? Boolean(value) : (value as string | number | null);
   }
   return record;
@@ -190,7 +209,7 @@ export function updateRecord(
   // satisfies the new definition, even an update (inline cell edit, bulk
   // field update, a Kanban drag) that never touches that field at all.
   const values = entity.fields.map((field) =>
-    Object.prototype.hasOwnProperty.call(data, field.name) ? coerceValue(field, data[field.name]) : existingRow[field.name],
+    Object.prototype.hasOwnProperty.call(data, field.name) ? coerceValue(field, data[field.name]) : getRowValue(existingRow, field.name),
   );
 
   const setClause = columns.map((c) => `${quoteIdentifier(c)} = ?`).join(", ");

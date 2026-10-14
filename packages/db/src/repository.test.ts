@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { Entity, ProductSpec } from "@forge/shared";
 import { openDatabase } from "./connection.js";
-import { applyMigrations } from "./migrate.js";
+import { applyMigrations, diffAndMigrate } from "./migrate.js";
 import {
   insertRecord,
   listRecords,
@@ -445,4 +445,36 @@ test("insertRecord treats a whitespace-only value as null for an optional number
   const created = insertRecord(db, "proj1", note, { title: "Reminder", priority: "   ", body: "\t" });
   assert.equal(created.priority, null, "a whitespace-only optional number must become null, not a fabricated 0");
   assert.equal(created.body, null, "a whitespace-only optional text value must become null too, not the literal whitespace string");
+});
+
+/**
+ * Round 619: diffAndMigrate (migrate.ts, rounds 617/618) correctly treats a
+ * field renamed only by letter case as a no-op -- the physical column
+ * keeps its ORIGINAL casing, since SQLite resolves it case-insensitively
+ * and no ALTER is needed. But `row[field.name]` here was still an
+ * exact-string lookup against the row node:sqlite returns, which is keyed
+ * by that same original physical casing, not by the entity's current spec
+ * casing -- so a record's data for that field silently vanished on every
+ * read, and writing any OTHER field on the same row crashed trying to bind
+ * `undefined` for the renamed field's untouched value.
+ */
+test("a field renamed only by letter case across a refine stays readable, writable, and updatable, instead of silently vanishing or crashing", () => {
+  const db = openDatabase(":memory:");
+  applyMigrations(db, "proj1", spec);
+  insertRecord(db, "proj1", customer, { name: "Alice", status: "New" });
+
+  const renamed: Entity = { ...customer, fields: [{ ...customer.fields[0], name: "Name" }, customer.fields[1], customer.fields[2]] };
+  const changes = diffAndMigrate(db, "proj1", spec, { ...spec, entities: [renamed] });
+  assert.deepEqual(changes, [], "a pure case rename is a no-op migration (rounds 617/618)");
+
+  const records = listRecords(db, "proj1", renamed);
+  assert.equal(records.length, 1);
+  assert.equal(records[0].Name, "Alice", "the pre-existing record's data must still read back under the renamed field, not silently vanish");
+
+  const updated = updateRecord(db, "proj1", renamed, records[0].id, { status: "Won" });
+  assert.equal(updated.Name, "Alice", "updating an unrelated field must not throw, and must preserve the renamed field's untouched value");
+  assert.equal(updated.status, "Won");
+
+  const created = insertRecord(db, "proj1", renamed, { Name: "Bob", status: "New" });
+  assert.equal(created.Name, "Bob", "a brand-new record inserted under the post-rename entity must read back correctly too");
 });
