@@ -175,6 +175,85 @@ test("EntityPanel's handleBulkDuplicate still surfaces the raw error message whe
 });
 
 /**
+ * Regression test (round 624): handleBulkDuplicate's "if (record)" guard
+ * only wrapped the field-copying loop, not the createRecord(...) call
+ * itself -- so a selected id whose record had already vanished from local
+ * state (deleted by a collaborator, or in another tab, between selecting it
+ * and clicking "Duplicate selected") still called createRecord with an
+ * empty {} payload. For an entity with a required field this threw a
+ * misleading validation error attributed to the wrong cause; for an entity
+ * with no required fields at all (a valid spec shape) it would silently
+ * insert a genuine blank garbage record. Mirrors handleDuplicate's own
+ * `if (!record) return` guard, which already skips createRecord entirely
+ * for a gone id.
+ */
+test("EntityPanel's handleBulkDuplicate never calls createRecord for a selected id whose record is no longer in local state", async () => {
+  const handlerMatch = entityPanelSrc.match(/ {2}async function handleBulkDuplicate\(\) \{[\s\S]*?\n {2}\}\n/);
+  assert.ok(handlerMatch, "expected to find handleBulkDuplicate in EntityPanel.tsx");
+  const { code } = transformSync(handlerMatch![0], { loader: "ts" });
+
+  let capturedSelectedIds: Set<number> | undefined;
+  let capturedError: string | undefined;
+  const attemptedCopies: Record<string, unknown>[] = [];
+
+  const entity: Entity = { name: "Customer", fields: [{ name: "name", type: "text", required: true }] };
+  // id 2 is selected but no longer present in records -- simulates a
+  // collaborator (or another tab) deleting it after it was selected but
+  // before this batch ran.
+  const records: EntityRecord[] = [
+    { id: 1, createdAt: "x", name: "Alice" },
+    { id: 3, createdAt: "x", name: "Carol" },
+  ];
+
+  const fn = new Function(
+    "bulkActionBusy",
+    "setBulkActionBusy",
+    "t",
+    "projectId",
+    "entity",
+    "records",
+    "selectedIds",
+    "setError",
+    "createRecord",
+    "setSelectedIds",
+    "refresh",
+    `${code}\nreturn handleBulkDuplicate;`,
+  )(
+    false,
+    () => {},
+    (key: string, params?: Record<string, unknown>) => (params ? `${key}:${JSON.stringify(params)}` : key),
+    "proj1",
+    entity,
+    records,
+    new Set([1, 2, 3]),
+    (msg: string | null) => {
+      capturedError = msg ?? undefined;
+    },
+    async (_projectId: string, _entityName: string, copy: Record<string, unknown>) => {
+      attemptedCopies.push(copy);
+    },
+    (next: Set<number>) => {
+      capturedSelectedIds = next;
+    },
+    async () => {},
+  ) as () => Promise<void>;
+
+  await fn();
+
+  assert.deepEqual(
+    attemptedCopies.map((c) => c.name).sort(),
+    ["Alice", "Carol"],
+    "createRecord must never be called for id 2 -- its record is gone, so there is nothing real to duplicate",
+  );
+  assert.deepEqual(
+    [...capturedSelectedIds!].sort(),
+    [2],
+    "the vanished id must be reported as a failure, not silently dropped or duplicated as a blank record",
+  );
+  assert.match(capturedError!, /entity\.bulk\.duplicatePartialFailure/);
+});
+
+/**
  * Regression test (round 544): handleBulkDuplicate used to touch
  * selectedIds only AFTER its own Promise.allSettled resolved, with no busy
  * flag and no disabled attribute on its own button -- a second click while

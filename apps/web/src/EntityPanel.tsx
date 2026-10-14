@@ -1892,8 +1892,9 @@ export function EntityPanel({
       const results = await Promise.allSettled(
         ids.map((id) => {
           const record = records.find((r) => (r.id as number) === id);
+          if (!record) return Promise.reject(new Error(t("entity.bulk.recordGone")));
           const copy: Record<string, unknown> = {};
-          if (record) for (const field of entity.fields) copy[field.name] = record[field.name];
+          for (const field of entity.fields) copy[field.name] = record[field.name];
           return createRecord(projectId, entity.name, copy);
         }),
       );

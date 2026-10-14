@@ -2766,6 +2766,62 @@ test("the exported EntityView's handleBulkDuplicate and handleBulkUpdate keep on
 });
 
 /**
+ * Regression test (round 624): the exported EntityView's generated
+ * handleBulkDuplicate had the same gap as the live preview's own EntityPanel.tsx
+ * (fixed in the same round) -- its "if (record)" guard only wrapped the
+ * field-copying loop, not the createRecord(...) call itself, so a selected
+ * id whose record had already vanished from local state still called
+ * createRecord with an empty {} payload instead of being skipped.
+ */
+test("the exported EntityView's generated handleBulkDuplicate never calls createRecord for a selected id whose record is no longer in local state", async () => {
+  const entityViewJsx = generateExportFiles(project).find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+  const handleBulkDuplicateSrc = entityViewJsx.match(/async function handleBulkDuplicate\(\) \{[\s\S]*?\n  \}\n/)?.[0];
+  assert.ok(handleBulkDuplicateSrc, "expected to find handleBulkDuplicate in generated output");
+
+  let capturedSelectedIds: Set<number> | undefined;
+  const createdCopies: Record<string, unknown>[] = [];
+  const fn = new Function(
+    "bulkActionBusy",
+    "entity",
+    "records",
+    "selectedIds",
+    "setBulkActionBusy",
+    "setSelectedIds",
+    "setError",
+    "createRecord",
+    "refresh",
+    `${handleBulkDuplicateSrc}\nreturn handleBulkDuplicate;`,
+  )(
+    false,
+    { fields: [{ name: "name" }] },
+    // id 2 is selected but no longer present in records -- simulates a
+    // collaborator (or another tab) deleting it after it was selected but
+    // before this batch ran.
+    [{ id: 1, name: "A" }, { id: 3, name: "C" }],
+    new Set([1, 2, 3]),
+    () => {},
+    (next: Set<number>) => (capturedSelectedIds = next),
+    () => {},
+    async (_entityName: string, copy: Record<string, unknown>) => {
+      createdCopies.push(copy);
+    },
+    async () => {},
+  );
+  await fn();
+
+  assert.deepEqual(
+    createdCopies.map((c) => c.name).sort(),
+    ["A", "C"],
+    "createRecord must never be called for id 2 -- its record is gone, so there is nothing real to duplicate",
+  );
+  assert.deepEqual(
+    [...capturedSelectedIds!].sort(),
+    [2],
+    "the vanished id must be reported as a failure, not silently dropped or duplicated as a blank record",
+  );
+});
+
+/**
  * Regression test (round 544): the exported EntityView's generated
  * handleBulkDuplicate used to touch selectedIds only AFTER its own
  * Promise.allSettled resolved, with no busy flag and no disabled attribute

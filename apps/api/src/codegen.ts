@@ -3481,8 +3481,9 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
       const results = await Promise.allSettled(
         ids.map((id) => {
           const record = records.find((r) => r.id === id);
+          if (!record) return Promise.reject(new Error("This record no longer exists."));
           const copy = {};
-          if (record) for (const f of entity.fields) copy[f.name] = record[f.name];
+          for (const f of entity.fields) copy[f.name] = record[f.name];
           return createRecord(entity.name, copy);
         }),
       );
