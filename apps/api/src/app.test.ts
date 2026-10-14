@@ -1515,6 +1515,71 @@ test("creating a field_equals automation rule on a number field with a locale-fo
 });
 
 /**
+ * Round 616: the same display-vs-stored gap rounds 595/607/613 closed for
+ * boolean/enum/date/number was still open for relation fields. rowToRecord
+ * (repository.ts) stores a relation field's value as the related record's
+ * raw internal id, and matchesTrigger (automations.ts) compares
+ * String(actual) byte-exact -- but no UI surface ever shows that raw id
+ * (EntityPanel.tsx/codegen.ts always render the related record's own
+ * display label via relationDisplayLabel), so the natural thing a real user
+ * types into this free-text box is that label, which can never byte-match
+ * the id and leaves the rule permanently, silently dead.
+ */
+test("creating a field_equals automation rule on a relation field with its related record's display label (what a user has actually seen on screen) is rejected with 400, instead of silently saving a rule that can never match the real stored id", async () => {
+  await withServer(async (baseUrl) => {
+    const token = await signup(baseUrl, "automation-relation-fieldvalue@example.com");
+    const createRes = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ description: "A small courier delivery business." }),
+    });
+    const { project } = (await createRes.json()) as { project: { id: string; spec: { entities: { name: string }[] } } };
+    assert.deepEqual(
+      project.spec.entities.map((e) => e.name).sort(),
+      ["Courier", "Order"],
+      "this description should match exactly Order (with a courierId relation) and Courier",
+    );
+    const buildRes = await fetch(`${baseUrl}/api/projects/${project.id}/build`, { method: "POST", headers: authHeaders(token) });
+    await collectSSE(buildRes);
+
+    const courierRes = await fetch(`${baseUrl}/api/projects/${project.id}/entities/Courier`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ name: "Dave", status: "Available" }),
+    });
+    const { record: courier } = (await courierRes.json()) as { record: { id: number } };
+
+    const baseRule = {
+      trigger: "field_equals",
+      fieldName: "courierId",
+      actionType: "send_whatsapp",
+      toMode: "static",
+      toNumber: "+972500000000",
+      messageTemplate: "hi",
+    };
+
+    // "Dave" -- the courier's own display label -- is exactly what a user
+    // has actually seen for this field everywhere in the UI; the raw
+    // courierId the value is really stored as is never shown anywhere.
+    const badRes = await fetch(`${baseUrl}/api/projects/${project.id}/entities/Order/automations`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ ...baseRule, fieldValue: "Dave" }),
+    });
+    assert.equal(badRes.status, 400);
+    assert.equal(((await badRes.json()) as { code?: string }).code, "VALIDATION_ERROR");
+
+    // The real stored raw-id shape must still be accepted.
+    const goodRes = await fetch(`${baseUrl}/api/projects/${project.id}/entities/Order/automations`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ ...baseRule, fieldValue: String(courier.id) }),
+    });
+    assert.equal(goodRes.status, 201);
+  });
+});
+
+/**
  * Round 597's Explore survey found that a toMode:"field" automation rule's
  * destination (toField) had no type restriction at all -- the create/update
  * routes only ever confirmed the field exists (findField), never that it

@@ -416,6 +416,19 @@ function validateAutomationFieldValue(field: Field, fieldValue: string): void {
   if (field.type === "number" && (!Number.isFinite(Number(fieldValue)) || String(Number(fieldValue)) !== fieldValue)) {
     throw new HttpError(400, `Field "${field.name}" must be a plain number matching how it's stored (e.g. "1000", not "1,000")`, "VALIDATION_ERROR");
   }
+  // A relation field's rowToRecord value (repository.ts) is the raw related
+  // record's id, same as a number field -- but no UI surface ever shows that
+  // id (EntityPanel.tsx/codegen.ts always render relationDisplayLabel, the
+  // related record's own label, in its place), so there is no "what the user
+  // has seen" value to accidentally mistype here the way round 613's number
+  // fix addresses -- any free-text fieldValue a real person types (most
+  // plausibly the related record's own display label) can only ever match if
+  // it happens to already be the bare id string. Same rejection shape as the
+  // number branch above, since that is the one string form the stored id can
+  // ever take.
+  if (field.type === "relation" && (!Number.isInteger(Number(fieldValue)) || String(Number(fieldValue)) !== fieldValue || Number(fieldValue) < 0)) {
+    throw new HttpError(400, `Field "${field.name}" must be the related record's id (a plain non-negative integer), not its display label`, "VALIDATION_ERROR");
+  }
 }
 
 // A toMode:"field" rule's destination is `record[toField]`, sent as-is to
