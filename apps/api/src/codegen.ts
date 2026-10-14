@@ -2387,13 +2387,13 @@ function CalendarView({ entity, dateField, endDateField, records, month, onPrevM
 // "hand someone a paper copy" artifact (an order, a work order, an
 // insurance claim) the live Forge AI preview's own EntityPanel.tsx ported
 // this same feature for in the first place.
-function RecordPrintSheet({ entity, record, relatedRecords }) {
+function RecordPrintSheet({ entity, fields, record, relatedRecords }) {
   if (!record) return <div className="print-record-sheet" />;
   return (
     <div className="print-record-sheet">
       <h1>{entity.label}</h1>
       <dl>
-        {entity.fields.map((f) => (
+        {fields.map((f) => (
           <div key={f.name} className="print-field">
             <dt>{f.label || f.name}</dt>
             <dd>
@@ -3697,7 +3697,7 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
   }
 
   function handleExportCsv() {
-    const csv = recordsToCsv(entity.fields, selectedOrAllRecords(records, effectivelyVisibleRecords, selectedIds), relatedRecords);
+    const csv = recordsToCsv(orderedFields, selectedOrAllRecords(records, effectivelyVisibleRecords, selectedIds), relatedRecords);
     const blob = new Blob(["\\uFEFF" + csv], { type: "text/csv;charset=utf-8;" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
@@ -3711,7 +3711,7 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
 
   async function handleCopy() {
     try {
-      const csv = recordsToCsv(entity.fields, selectedOrAllRecords(records, effectivelyVisibleRecords, selectedIds), relatedRecords);
+      const csv = recordsToCsv(orderedFields, selectedOrAllRecords(records, effectivelyVisibleRecords, selectedIds), relatedRecords);
       await navigator.clipboard.writeText(csv);
       setCopyStatus("copied");
     } catch {
@@ -4397,7 +4397,7 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
           )}
         </>
       )}
-      <RecordPrintSheet entity={entity} record={recordToPrint} relatedRecords={relatedRecords} />
+      <RecordPrintSheet entity={entity} fields={orderedFields} record={recordToPrint} relatedRecords={relatedRecords} />
       <RecordListPrintSheet
         entity={entity}
         fields={orderedFields}

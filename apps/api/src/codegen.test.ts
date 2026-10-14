@@ -4909,7 +4909,7 @@ test("the exported EntityView's Export CSV routes through selectedOrAllRecords, 
   assert.ok(handleExportCsvSrc, "expected to find handleExportCsv in generated output");
   assert.match(
     handleExportCsvSrc!,
-    /recordsToCsv\(entity\.fields, selectedOrAllRecords\(records, effectivelyVisibleRecords, selectedIds\), relatedRecords\)/,
+    /recordsToCsv\(orderedFields, selectedOrAllRecords\(records, effectivelyVisibleRecords, selectedIds\), relatedRecords\)/,
     "handleExportCsv must route through selectedOrAllRecords instead of always exporting visibleRecords directly",
   );
 
@@ -4951,7 +4951,7 @@ test("the exported EntityView renders a real Copy button that writes the selecti
   assert.ok(handleCopySrc, "expected to find handleCopy in generated output");
   assert.match(
     handleCopySrc!,
-    /recordsToCsv\(entity\.fields, selectedOrAllRecords\(records, effectivelyVisibleRecords, selectedIds\), relatedRecords\)/,
+    /recordsToCsv\(orderedFields, selectedOrAllRecords\(records, effectivelyVisibleRecords, selectedIds\), relatedRecords\)/,
     "handleCopy must reuse the exact same selection logic as handleExportCsv",
   );
   assert.match(handleCopySrc!, /navigator\.clipboard\.writeText\(csv\)/, "handleCopy must actually write to the clipboard");

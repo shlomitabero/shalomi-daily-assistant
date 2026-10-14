@@ -3614,6 +3614,93 @@ test("EntityPanel's Print list action includes a column the user has hidden from
 });
 
 /**
+ * Round 615: round 597 fixed RecordListPrintSheet ("Print list") to use
+ * orderedFields instead of visibleFields, so it both includes hidden columns
+ * AND respects the user's drag-reordered column sequence. The other three
+ * whole-record actions -- Export CSV, Copy, and the per-record Print
+ * (RecordPrintSheet) -- already got the "include hidden columns" half of
+ * that (they always used entity.fields), but never the "respect the drag
+ * order" half, since entity.fields is the entity's own natural order, not
+ * orderedFields. Persists a real reordered columnOrder via localStorage
+ * (the same round-trip the drag-and-drop reorder test above exercises) and
+ * confirms all three siblings now emit Status before Name, matching the
+ * on-screen table and Print list.
+ */
+test("EntityPanel's Export CSV, Copy, and per-record Print all honor the user's drag-reordered column order, not just the on-screen table and Print list", async () => {
+  await withJsdom(async () => {
+    localStorage.setItem("forge.columnOrder", JSON.stringify({ "proj1:Deal": ["status", "name"] }));
+    const store: EntityRecord[] = [{ id: 1, name: "Globex", status: "won" }];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = mockRecordsFetch(store) as typeof fetch;
+    const originalPrint = window.print;
+    let printCalls = 0;
+    window.print = () => {
+      printCalls += 1;
+    };
+    const originalCreateObjectURL = (URL as unknown as { createObjectURL?: (b: Blob) => string }).createObjectURL;
+    const originalRevokeObjectURL = (URL as unknown as { revokeObjectURL?: (u: string) => void }).revokeObjectURL;
+    let capturedBlob: Blob | null = null;
+    (URL as unknown as { createObjectURL: (b: Blob) => string }).createObjectURL = (b: Blob) => {
+      capturedBlob = b;
+      return "blob:mock-url";
+    };
+    (URL as unknown as { revokeObjectURL: (u: string) => void }).revokeObjectURL = () => {};
+    let writtenText: string | undefined;
+    Object.defineProperty(navigator, "clipboard", {
+      value: { writeText: async (text: string) => void (writtenText = text) },
+      configurable: true,
+    });
+    try {
+      renderEntityPanel();
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 1);
+      assert.deepEqual(
+        [...document.querySelectorAll("thead th.resizable-col")].map((th) => th.querySelector(".sort-header")!.textContent),
+        ["Status", "Name"],
+        "the persisted reorder must already be in effect on the on-screen table",
+      );
+
+      const exportBtn = document.querySelector(".csv-export-btn") as HTMLButtonElement;
+      fireEvent.click(exportBtn);
+      await waitForCondition(() => capturedBlob !== null);
+      const csvText = await (capturedBlob as unknown as Blob).text();
+      assert.ok(
+        csvText.indexOf("Status") < csvText.indexOf("Name"),
+        "Export CSV's header row must list Status before Name, matching the reordered table",
+      );
+
+      await act(async () => {
+        fireEvent.click(document.querySelector(".copy-records-btn") as HTMLButtonElement);
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+      assert.equal(typeof writtenText, "string", "Copy must have written real CSV text to the clipboard");
+      assert.ok(
+        writtenText!.indexOf("Status") < writtenText!.indexOf("Name"),
+        "Copy's CSV text must also list Status before Name, matching Export CSV and the reordered table",
+      );
+
+      const printBtn = Array.from(document.querySelectorAll("table tbody tr")[0].querySelectorAll("button")).find((b) =>
+        b.textContent?.includes("Print"),
+      )!;
+      fireEvent.click(printBtn);
+      await waitForCondition(() => printCalls === 1);
+      const dtLabels = [...document.querySelectorAll(".print-record-sheet dt")].map((dt) => dt.textContent);
+      assert.deepEqual(
+        dtLabels,
+        ["Status", "Name"],
+        "the per-record Print sheet must list Status before Name too, not the entity's original declared order",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+      window.print = originalPrint;
+      if (originalCreateObjectURL) (URL as unknown as { createObjectURL: (b: Blob) => string }).createObjectURL = originalCreateObjectURL;
+      if (originalRevokeObjectURL) (URL as unknown as { revokeObjectURL: (u: string) => void }).revokeObjectURL = originalRevokeObjectURL;
+      localStorage.removeItem("forge.columnOrder");
+    }
+  });
+});
+
+/**
  * New in this round: GlobalSearchPanel's per-row "jump to record" click
  * (see GlobalSearchPanel.test.ts) carries a specific record id down through
  * App.tsx into a new highlightRecordId prop, so the person lands on the

@@ -251,6 +251,7 @@ function Cell({
  */
 function RecordPrintSheet({
   entity,
+  fields,
   record,
   lang,
   t,
@@ -258,6 +259,7 @@ function RecordPrintSheet({
   relatedRecords,
 }: {
   entity: Entity;
+  fields: Field[];
   record: EntityRecord | null;
   lang: Lang;
   t: (key: string, params?: Record<string, string | number>) => string;
@@ -269,7 +271,7 @@ function RecordPrintSheet({
     <div className="print-record-sheet">
       <h1>{entity.label ?? entity.name}</h1>
       <dl>
-        {entity.fields.map((f) => (
+        {fields.map((f) => (
           <div key={f.name} className="print-field">
             <dt>{f.label ?? f.name}</dt>
             <dd>
@@ -2007,7 +2009,7 @@ export function EntityPanel({
   }
 
   function handleExportCsv() {
-    const csv = recordsToCsv(entity.fields, selectedOrAllRecords(records, effectivelyVisibleRecords, selectedIds), lang, allEntities, relatedRecords);
+    const csv = recordsToCsv(orderedFields, selectedOrAllRecords(records, effectivelyVisibleRecords, selectedIds), lang, allEntities, relatedRecords);
     const blob = new Blob(["﻿" + csv], { type: "text/csv;charset=utf-8;" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
@@ -2031,7 +2033,7 @@ export function EntityPanel({
    */
   async function handleCopy() {
     try {
-      const csv = recordsToCsv(entity.fields, selectedOrAllRecords(records, effectivelyVisibleRecords, selectedIds), lang, allEntities, relatedRecords);
+      const csv = recordsToCsv(orderedFields, selectedOrAllRecords(records, effectivelyVisibleRecords, selectedIds), lang, allEntities, relatedRecords);
       await navigator.clipboard.writeText(csv);
       setCopyStatus("copied");
     } catch {
@@ -3008,6 +3010,7 @@ export function EntityPanel({
       )}
       <RecordPrintSheet
         entity={entity}
+        fields={orderedFields}
         record={recordToPrint}
         lang={lang}
         t={t}
