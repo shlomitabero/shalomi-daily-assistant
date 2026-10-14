@@ -1979,6 +1979,100 @@ test("App's CollaboratorsPanel onLeft callback purges the left project's own cli
 });
 
 /**
+ * Round 612: a 5th convergent "this browser can never reach this project
+ * again" path round 403/404's own purgeProjectPreferences sweep missed --
+ * the project's OWNER removing a DIFFERENT user as a collaborator
+ * (CollaboratorsPanel's handleRemove, a DELETE the owner's own browser
+ * sends) happens entirely in the owner's session. The removed
+ * collaborator's own browser has no websocket/push to learn about it
+ * synchronously; the only place it ever finds out is this home-screen
+ * effect's own next listProjects() call simply omitting that project id.
+ * Before this round, the effect only ever overwrote myProjects with
+ * whatever came back, never noticing an id that used to be there is now
+ * gone, so that id's ~18 localStorage preference entries (pinned,
+ * column widths/order, filters, sort keys, recent searches, ...) sat there
+ * forever -- the exact same unbounded-growth leak the other four call
+ * sites already exist to prevent. Extracts the real effect callback
+ * straight out of App.tsx rather than reimplementing it.
+ */
+test("App's listProjects home-screen effect purges preferences for a project that silently vanished from the list (e.g. this browser's own collaborator access was revoked)", async () => {
+  const appSrc = readFileSync(new URL("./App.tsx", import.meta.url), "utf8");
+  const handlerMatch = appSrc.match(
+    / {2}useEffect\(\(\) => \{\n {4}if \(!user \|\| view !== "home"\) return;\n {4}listProjects\(\)[\s\S]*?\n {2}\}, \[user, view\]\);\n/,
+  );
+  assert.ok(handlerMatch, "expected to find the listProjects home-screen effect in App.tsx");
+  const bodyMatch = handlerMatch![0].match(/useEffect\((\(\) => \{[\s\S]*?\})\, \[user, view\]\);\n$/);
+  assert.ok(bodyMatch, "expected to extract the effect's own callback body");
+  const { code } = transformSync(bodyMatch![1], { loader: "ts" });
+
+  function run(
+    user: object | null,
+    view: string,
+    projects: Project[],
+    previouslySeenIds: string[],
+  ): Promise<{ purgeCalls: string[]; myProjects: Project[] | "not-yet-called" }> {
+    const state: { purgeCalls: string[]; myProjects: Project[] | "not-yet-called" } = {
+      purgeCalls: [],
+      myProjects: "not-yet-called",
+    };
+    const myProjectIdsRef = { current: new Set(previouslySeenIds) };
+    // The effect's own callback is NOT async -- it fires listProjects().then(...)
+    // as an unawaited promise chain and returns undefined, matching a real
+    // useEffect's own signature. Capturing the exact promise listProjects()
+    // itself returns (not a fresh one) and awaiting THAT -- rather than
+    // awaiting fn()'s own return value, which is undefined -- guarantees the
+    // effect's own .then(cb) (attached synchronously inside fn(), before this
+    // function's own .then() below is attached) finishes first: promise
+    // reactions always run in attachment order.
+    let listProjectsPromise: Promise<{ projects: Project[] }> | undefined;
+    const fn = new Function(
+      "user",
+      "view",
+      "listProjects",
+      "setMyProjects",
+      "myProjectIdsRef",
+      "purgeProjectPreferences",
+      `return ${code}`,
+    )(
+      user,
+      view,
+      () => (listProjectsPromise = Promise.resolve({ projects })),
+      (updater: Project[] | ((prev: Project[]) => Project[])) =>
+        (state.myProjects = typeof updater === "function" ? (updater as (prev: Project[]) => Project[])([]) : updater),
+      myProjectIdsRef,
+      (id: string) => state.purgeCalls.push(id),
+    ) as () => void;
+    fn();
+    return listProjectsPromise!.then(() => state);
+  }
+
+  const kept = makeProject([makeEntity("Customer")]);
+  kept.id = "kept-project";
+  const revoked = makeProject([makeEntity("Customer")]);
+  revoked.id = "revoked-project";
+
+  // First-ever fetch (nothing seen before): must never purge anything,
+  // since there's no "previous" list to diff against yet.
+  const first = await run({}, "home", [kept, revoked], []);
+  assert.deepEqual(first.purgeCalls, [], "the very first fetch must never purge -- there is no prior list to compare against");
+  assert.deepEqual(first.myProjects, [kept, revoked]);
+
+  // Second fetch: "revoked-project" is simply gone from the response (this
+  // browser's own collaborator access was removed by the owner elsewhere).
+  const second = await run({}, "home", [kept], ["kept-project", "revoked-project"]);
+  assert.deepEqual(
+    second.purgeCalls,
+    ["revoked-project"],
+    "a project id present in the previous fetch but missing from this one must be purged",
+  );
+  assert.deepEqual(second.myProjects, [kept]);
+
+  // A project present in both fetches must never be purged.
+  const unchanged = await run({}, "home", [kept], ["kept-project"]);
+  assert.deepEqual(unchanged.purgeCalls, [], "a project still present in the fresh list must never be purged");
+});
+
+/**
  * Regression test (round 469): round 468 added `buildWarning` (a real,
  * non-terminal agent-step-failure notice -- see BuildProgress.tsx) but only
  * ever threaded it into the functions that START a fresh build/refine/

@@ -492,6 +492,19 @@ function AppContent() {
   // actually opened and can stay stale for a long time. See the unread-poll
   // effect below for why this needs its own tracking.
   const lastNotifiedWhatsAppIdRef = useRef<string | null>(null);
+  // Every existing purgeProjectPreferences call site (handleDeleteProject,
+  // handleBulkDeleteProjects, handleAccountDeleted, CollaboratorsPanel's
+  // onLeft) is an action THIS browser just performed, so it can purge
+  // synchronously right after. A project vanishing because a DIFFERENT
+  // user (the owner) removed THIS browser's own account as a collaborator
+  // has no such moment -- there's no websocket/push, so the only place
+  // this browser ever learns about it is the next time this effect below
+  // re-fetches the list and the id is simply gone from the response.
+  // Tracking the ids this effect has already seen lets it notice exactly
+  // that disappearance and purge for it too, the same way the other four
+  // call sites already do for every other way a project becomes
+  // permanently unreachable from this browser.
+  const myProjectIdsRef = useRef<Set<string>>(new Set());
   const [showCollaborators, setShowCollaborators] = useState(false);
   const [showChangePassword, setShowChangePassword] = useState(false);
   const [showDeleteAccount, setShowDeleteAccount] = useState(false);
@@ -844,7 +857,14 @@ function AppContent() {
   useEffect(() => {
     if (!user || view !== "home") return;
     listProjects()
-      .then(({ projects }) => setMyProjects(projects))
+      .then(({ projects }) => {
+        const freshIds = new Set(projects.map((p) => p.id));
+        for (const id of myProjectIdsRef.current) {
+          if (!freshIds.has(id)) purgeProjectPreferences(id);
+        }
+        myProjectIdsRef.current = freshIds;
+        setMyProjects(projects);
+      })
       .catch(() => setMyProjects([]));
   }, [user, view]);
 
