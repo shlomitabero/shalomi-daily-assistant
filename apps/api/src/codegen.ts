@@ -5049,6 +5049,15 @@ function reorderEntityTabs(order, sourceName, targetName) {
   return result;
 }
 
+// Mirrors the live preview's own isEditableEventTarget (App.tsx) verbatim:
+// guards a single-character keyboard shortcut so it doesn't hijack that
+// character when it's typed into an ordinary text field instead.
+function isEditableEventTarget(target) {
+  if (!target) return false;
+  if (target.isContentEditable) return true;
+  return target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.tagName === "SELECT";
+}
+
 function readStoredTheme() {
   try {
     return localStorage.getItem(THEME_STORAGE_KEY);
@@ -5106,9 +5115,19 @@ export default function App() {
   // marks its input while there's text in it, and this listener checks for
   // that marker before closing, so clearing the search box doesn't cost the
   // whole overlay on the very same keypress).
+  //
+  // "/" is a second, equally familiar way to open the same search (round
+  // 199 in the live preview, App.tsx), guarded by isEditableEventTarget so
+  // it doesn't hijack every literal "/" a person types into this entity's
+  // own search box or a record's text field instead of opening the overlay.
   useEffect(() => {
     function handleKeyDown(e) {
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        setShowSearch(true);
+        return;
+      }
+      if (e.key === "/" && !isEditableEventTarget(e.target)) {
         e.preventDefault();
         setShowSearch(true);
         return;

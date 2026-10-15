@@ -4505,6 +4505,80 @@ test("the exported app's Global Search clears its query on the first Escape, and
 });
 
 /**
+ * Round 629's finding: the live preview (App.tsx, round 199) opens Global
+ * Search with "/" as well as Ctrl/Cmd+K -- a second, equally familiar
+ * convention (GitHub, Slack, etc. all use it), guarded by
+ * isEditableEventTarget so the character isn't hijacked out of an ordinary
+ * text field. The exported app's App.jsx only ever got the Ctrl/Cmd+K path
+ * (its own comment calls out that it mirrors "the same command-palette
+ * convention"); "/" was never ported at all, so a keyboard-only exported-
+ * app user had only one way in, and -- before the guard was added here --
+ * would have had every literal "/" typed into this entity's own search box
+ * swallowed into opening the overlay instead. Renders the real generated
+ * App.jsx end to end, since the bug (and the guard) live in the
+ * interaction between a real DOM focus target and App's window-level
+ * listener, not in source text alone.
+ */
+test("the exported app's \"/\" shortcut opens Global Search from the background, but is guarded against hijacking a literal \"/\" typed into a text field", async () => {
+  const files = generateExportFiles(project);
+  const dir = writeGeneratedWebComponent(files);
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async (input: string) => {
+    if (input === "/api/entity-counts") {
+      return new Response(JSON.stringify({ counts: {} }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    if (input === "/api/Customer") {
+      return new Response(JSON.stringify({ records: [{ id: 1, name: "Acme Corp", status: "New" }] }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }
+    return new Response(JSON.stringify({ records: [] }), { status: 200, headers: { "content-type": "application/json" } });
+  }) as typeof fetch;
+
+  try {
+    await withRealLocalStorage(async () => {
+      const { default: App } = await import(path.join(dir, "web", "src", "App.jsx"));
+      const { container } = render(React.createElement(App));
+
+      assert.equal(container.querySelector(".global-search-input"), null, "sanity check: the overlay must start closed");
+
+      for (let i = 0; i < 40; i++) {
+        if (container.querySelector(".entity-search")) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+      const entitySearchInput = container.querySelector(".entity-search") as HTMLInputElement;
+      assert.ok(entitySearchInput, "sanity check: the entity's own search box must actually be on screen");
+
+      await act(async () => {
+        fireEvent.change(entitySearchInput, { target: { value: "ac/" } });
+        fireEvent.keyDown(entitySearchInput, { key: "/" });
+      });
+      assert.equal(
+        container.querySelector(".global-search-input"),
+        null,
+        "a \"/\" typed while focused in the entity's own search box must NOT open the Global Search overlay",
+      );
+      assert.equal(entitySearchInput.value, "ac/", "the literal \"/\" must still land in the text field, unhijacked");
+
+      await act(async () => {
+        fireEvent.keyDown(window, { key: "/" });
+      });
+      assert.ok(
+        container.querySelector(".global-search-input"),
+        "a \"/\" pressed outside any text field must open the Global Search overlay",
+      );
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    cleanup();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
  * New in this round: porting the live preview's own Escape shortcut
  * (clear the table's multi-row selection) to the exported app's
  * EntityView.jsx. "x" above lets a keyboard-only user build a
