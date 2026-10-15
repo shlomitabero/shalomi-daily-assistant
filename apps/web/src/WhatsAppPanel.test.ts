@@ -980,6 +980,114 @@ test("WhatsAppPanel sends the exact typed recipient/message and refreshes the me
 });
 
 /**
+ * Round 630's finding: retryingId is a single panel-wide `string | null`
+ * slot, so the Retry button's own disabled check (`retryingId === m.id`,
+ * pre-fix) only ever protected the ONE row remembered there. Clicking a
+ * second failed message's Retry button while the first retry was still
+ * in flight overwrote retryingId, silently re-enabling the first row's
+ * button mid-request -- a second click there fires handleRetry a second
+ * time concurrently, sending the same customer a real duplicate WhatsApp
+ * message (sendWhatsAppMessage generates a fresh idempotency key per
+ * call and has no other dedup, so the server never catches it). Matches
+ * the convention HistoryPanel's restore/delete and AutomationsPanel's
+ * toggle/delete buttons already use: disabled while ANY row's action is
+ * in flight, not just this row's own.
+ */
+test("WhatsAppPanel disables every message's Retry button while any one retry is in flight, not just the row being retried", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    let resolveSend: (() => void) | undefined;
+    const sendGate = new Promise<void>((resolve) => {
+      resolveSend = resolve;
+    });
+    let sendCount = 0;
+    const messages: WhatsAppMessageLogEntry[] = [
+      {
+        id: "m1",
+        direction: "out",
+        fromNumber: "972501234567",
+        toNumber: "972521112233",
+        body: "First failed message",
+        matchedLabel: null,
+        matchedEntityName: null,
+        matchedRecordId: null,
+        status: "failed",
+        createdAt: new Date().toISOString(),
+      },
+      {
+        id: "m2",
+        direction: "out",
+        fromNumber: "972501234567",
+        toNumber: "972523334455",
+        body: "Second failed message",
+        matchedLabel: null,
+        matchedEntityName: null,
+        matchedRecordId: null,
+        status: "failed",
+        createdAt: new Date().toISOString(),
+      },
+    ];
+    globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/integrations/whatsapp/status") {
+        return new Response(
+          JSON.stringify({ status: "connected", phoneNumber: "972501234567", qrDataUrl: null, error: null }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      if (method === "GET" && input === "/api/projects/proj1/integrations/whatsapp/messages") {
+        return new Response(JSON.stringify({ messages }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      if (method === "POST" && input === "/api/projects/proj1/integrations/whatsapp/send") {
+        sendCount += 1;
+        await sendGate;
+        return new Response(JSON.stringify({ ok: true }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+
+    try {
+      render(
+        React.createElement(
+          ThemeProvider,
+          null,
+          React.createElement(
+            LanguageProvider,
+            null,
+            React.createElement(WhatsAppPanel, { projectId: "proj1", projectName: "Test Project", onClose: () => {}, onJumpToEntity: () => {}, onJumpToRecord: () => {} }),
+          ),
+        ),
+      );
+      await waitForCondition(() => document.querySelectorAll(".whatsapp-log-list li").length === 2);
+
+      const rows = document.querySelectorAll(".whatsapp-log-list li");
+      const firstRetryBtn = rows[0].querySelector("button.secondary.small") as HTMLButtonElement;
+      const secondRetryBtn = rows[1].querySelector("button.secondary.small") as HTMLButtonElement;
+      assert.ok(firstRetryBtn && secondRetryBtn, "sanity check: both failed messages must show a real Retry button");
+      assert.equal(firstRetryBtn.disabled, false, "sanity check: nothing is in flight yet");
+      assert.equal(secondRetryBtn.disabled, false, "sanity check: nothing is in flight yet");
+
+      fireEvent.click(firstRetryBtn);
+      await waitForCondition(() => sendCount === 1);
+
+      assert.equal(firstRetryBtn.disabled, true, "the row actually being retried must be disabled");
+      assert.equal(
+        secondRetryBtn.disabled,
+        true,
+        "a DIFFERENT row's Retry button must also be disabled while the first retry is still in flight -- otherwise clicking it would silently re-enable the first row's button mid-request and let a second click fire a real duplicate send",
+      );
+
+      resolveSend!();
+      await waitForCondition(() => firstRetryBtn.disabled === false);
+      assert.equal(secondRetryBtn.disabled, false, "both buttons must re-enable once the one in-flight retry actually finishes");
+      assert.equal(sendCount, 1, "only the one deliberate retry must have actually sent a message");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * New in this round: a `prefillTo` prop lets a caller (EntityPanel's
  * "Send WhatsApp" row action, via App.tsx) open this panel with the
  * test-send "to" box already filled in, instead of forcing the user to

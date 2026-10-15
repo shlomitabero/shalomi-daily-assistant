@@ -962,11 +962,19 @@ export function WhatsAppPanel({
                     <>
                       <span className="badge badge-negative">{t("whatsapp.log.failed")}</span>
                       {s === "connected" && (
+                        // Disabled while ANY retry is in flight, not just this row's
+                        // own (same convention as HistoryPanel's restore/delete and
+                        // AutomationsPanel's toggle/delete buttons): retryingId is a
+                        // single panel-wide slot, so starting a second row's retry
+                        // while the first is still pending overwrites it and silently
+                        // re-enables the first row's button mid-request -- a second
+                        // click there fires a real, second sendWhatsAppMessage to the
+                        // same customer, not just a harmless duplicate state update.
                         <button
                           type="button"
                           className="secondary small"
                           onClick={() => handleRetry(m)}
-                          disabled={retryingId === m.id}
+                          disabled={retryingId !== null}
                         >
                           {retryingId === m.id ? t("whatsapp.log.retrying") : t("whatsapp.log.retry")}
                         </button>
@@ -983,7 +991,7 @@ export function WhatsAppPanel({
                     className="whatsapp-log-delete"
                     aria-label={t("whatsapp.log.deleteOne")}
                     onClick={() => handleDeleteMessage(m)}
-                    disabled={deletingId === m.id}
+                    disabled={deletingId !== null}
                   >
                     {deletingId === m.id ? "…" : "🗑️"}
                   </button>
