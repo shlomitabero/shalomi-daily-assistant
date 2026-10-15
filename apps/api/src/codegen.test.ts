@@ -10014,6 +10014,68 @@ test("the exported EntityView's recent-searches store caps at 5, dedupes case-in
 });
 
 /**
+ * Round 632's finding: this store's own two siblings in the same
+ * generated file -- the live preview's entityRecentSearches.ts this store
+ * is explicitly modeled on, and this file's own
+ * getGlobalSearchRecentSearches a few hundred lines below -- both filter
+ * out any non-string entry from a stored array before using it. This
+ * store's own readEntityRecentSearchesStore (pre-fix) didn't, so a
+ * corrupted/foreign localStorage value (a browser extension, a manual
+ * devtools edit, anything other than this app's own writes) containing a
+ * non-string entry would silently survive into getEntityRecentSearches's
+ * return value, then crash addEntityRecentSearch/removeEntityRecentSearch
+ * the next time either runs .toLowerCase() over it -- uncaught, from
+ * inside the search box's own onKeyDown handler, with no error boundary
+ * around EntityView to catch it. Same corrupted-localStorage-must-not-
+ * throw convention this project already fixed once by name (round 401,
+ * sharedProjectSeen.ts).
+ */
+test("the exported EntityView's recent-searches store filters out a non-string entry instead of crashing on the next add/remove", () => {
+  const files = generateExportFiles(project);
+  const entityViewJsx = files.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+
+  const storeSrc = entityViewJsx.match(
+    /const ENTITY_RECENT_SEARCHES_STORAGE_KEY[\s\S]*?\nfunction clearEntityRecentSearches\(entityName\) \{[\s\S]*?\n\}\n/,
+  )?.[0];
+  assert.ok(storeSrc, "expected to find the entity recent-searches store functions in generated output");
+
+  const fakeStorage: Record<string, string> = {
+    forge_entity_recent_searches: JSON.stringify({ Customer: ["acme", 42, null, "globex"] }),
+  };
+  const { getEntityRecentSearches, addEntityRecentSearch, removeEntityRecentSearch } = new Function(
+    "localStorage",
+    `${storeSrc}\nreturn { getEntityRecentSearches, addEntityRecentSearch, removeEntityRecentSearch };`,
+  )({
+    getItem: (k: string) => fakeStorage[k] ?? null,
+    setItem: (k: string, v: string) => {
+      fakeStorage[k] = v;
+    },
+  }) as {
+    getEntityRecentSearches: (entityName: string) => string[];
+    addEntityRecentSearch: (entityName: string, query: string) => string[];
+    removeEntityRecentSearch: (entityName: string, query: string) => string[];
+  };
+
+  assert.deepEqual(
+    getEntityRecentSearches("Customer"),
+    ["acme", "globex"],
+    "the non-string entries must already be filtered out of a plain read, not just survive until the next write",
+  );
+
+  assert.doesNotThrow(
+    () => addEntityRecentSearch("Customer", "initech"),
+    "adding a new query must not throw even though the stored array originally had non-string entries",
+  );
+  assert.deepEqual(getEntityRecentSearches("Customer"), ["initech", "acme", "globex"]);
+
+  fakeStorage.forge_entity_recent_searches = JSON.stringify({ Customer: ["acme", 42, "globex"] });
+  assert.doesNotThrow(
+    () => removeEntityRecentSearch("Customer", "acme"),
+    "removing a query must not throw even when the stored array still has a non-string entry sitting next to the real ones",
+  );
+});
+
+/**
  * Real-DOM companion: renders the actual generated EntityView, types a
  * query, presses Enter (the commit signal for a filter-as-you-type box
  * with no submit button -- same convention as handleProjectSearchKeyDown),

@@ -901,7 +901,18 @@ function readEntityRecentSearchesStore() {
     if (!raw) return {};
     const parsed = JSON.parse(raw);
     if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) return {};
-    return parsed;
+    // Mirrors the live preview's own entityRecentSearches.ts readStore(), and
+    // this file's own getGlobalSearchRecentSearches a few hundred lines
+    // below: a non-string entry (corrupted/foreign localStorage) must not
+    // survive into the returned store, since addEntityRecentSearch/
+    // removeEntityRecentSearch both call .toLowerCase() on every existing
+    // entry unconditionally -- an un-filtered non-string there throws
+    // uncaught from inside the search box's own onKeyDown handler.
+    const store = {};
+    for (const [key, value] of Object.entries(parsed)) {
+      if (Array.isArray(value)) store[key] = value.filter((v) => typeof v === "string");
+    }
+    return store;
   } catch {
     return {};
   }
