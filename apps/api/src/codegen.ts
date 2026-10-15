@@ -1110,13 +1110,32 @@ function setPersistedViewMode(entityName, mode) {
 }
 
 const SORT_KEYS_STORAGE_KEY = "forge_sort_keys";
+// Mirrors the live preview's own sortKeysPreference.ts isSortKey/
+// isSortKeyArray exactly: unlike this file's own sibling stores just above
+// (getPersistedGroupField's typeof check, getPersistedViewMode's enum
+// check), this one had no per-element shape validation at all -- a
+// malformed entry (foreign data sharing this origin-wide, unscoped key, or
+// any other corruption) flowed straight into sortRecordsMulti's own
+// destructuring loop over every sort key, which throws on a non-object
+// entry, uncaught, with no error boundary anywhere in this app.
+function isSortKey(value) {
+  if (value === null || typeof value !== "object") return false;
+  return typeof value.field === "string" && (value.direction === "asc" || value.direction === "desc");
+}
+function isSortKeyArray(value) {
+  return Array.isArray(value) && value.every(isSortKey);
+}
 function readSortKeysStore() {
   try {
     const raw = localStorage.getItem(SORT_KEYS_STORAGE_KEY);
     if (!raw) return {};
     const parsed = JSON.parse(raw);
     if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) return {};
-    return parsed;
+    const store = {};
+    for (const [key, value] of Object.entries(parsed)) {
+      if (isSortKeyArray(value)) store[key] = value;
+    }
+    return store;
   } catch {
     return {};
   }

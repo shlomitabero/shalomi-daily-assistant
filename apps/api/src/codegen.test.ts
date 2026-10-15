@@ -8365,6 +8365,69 @@ test("the exported EntityView's group-by/view-mode/sort-key choices are each per
 });
 
 /**
+ * Round 633's finding: unlike every sibling store in this exact same
+ * family (getPersistedGroupField's typeof check, getPersistedViewMode's
+ * enum check), getPersistedSortKeys had no per-element shape validation
+ * at all -- a malformed entry (foreign data sharing this deliberately
+ * unscoped, origin-wide "forge_sort_keys" key, or any other corruption)
+ * flowed straight into sortRecordsMulti's own
+ * `for (const { field, direction } of sortKeys)`, which throws
+ * destructuring a non-object entry, uncaught, with no error boundary
+ * anywhere in this app -- a blank screen on every load until someone
+ * manually clears that localStorage key. Mirrors the live preview's own
+ * sortKeysPreference.ts isSortKey/isSortKeyArray, including its own
+ * dedicated regression test for exactly this ("ignores an entry that
+ * isn't a real sort-key array").
+ */
+test("the exported EntityView's sort-keys store ignores a malformed entry instead of letting it crash the table's sort comparator", () => {
+  const files = generateExportFiles(project);
+  const entityViewJsx = files.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+
+  const storeSrc = entityViewJsx.match(
+    /const GROUP_FIELD_STORAGE_KEY[\s\S]*?\nfunction setPersistedFieldFilters\(entityName, filters\) \{[\s\S]*?\n\}\n/,
+  )?.[0];
+  assert.ok(storeSrc, "expected to find the group-field/view-mode/sort-keys/field-filters store functions in generated output");
+  const compareSrc = entityViewJsx.match(/function compareValues\(a, b\) \{[\s\S]*?\n\}\n/)?.[0];
+  const resolveSortValueSrc = entityViewJsx.match(/function resolveSortValue\([\s\S]*?\n\}\n/)?.[0];
+  const sortSrc = entityViewJsx.match(/export function sortRecordsMulti\(records, sortKeys, fields, relatedRecords\) \{[\s\S]*?\n\}\n/)?.[0]?.replace("export ", "");
+  assert.ok(compareSrc, "expected to find compareValues in generated output");
+  assert.ok(resolveSortValueSrc, "expected to find resolveSortValue in generated output");
+  assert.ok(sortSrc, "expected to find sortRecordsMulti in generated output");
+
+  const fakeStorage: Record<string, string> = {
+    forge_sort_keys: JSON.stringify({ Customer: [{ field: "status", direction: "sideways" }] }),
+  };
+  const { getPersistedSortKeys, sortRecordsMulti } = new Function(
+    "localStorage",
+    `${storeSrc}\n${compareSrc}\n${resolveSortValueSrc}\n${sortSrc}\nreturn { getPersistedSortKeys, sortRecordsMulti };`,
+  )({
+    getItem: (k: string) => fakeStorage[k] ?? null,
+    setItem: () => {},
+  }) as {
+    getPersistedSortKeys: (entityName: string) => { field: string; direction: string }[];
+    sortRecordsMulti: (records: Record<string, unknown>[], sortKeys: unknown[], fields: unknown[], relatedRecords: unknown) => unknown[];
+  };
+
+  assert.deepEqual(
+    getPersistedSortKeys("Customer"),
+    [],
+    "an entry with an invalid direction must be rejected entirely, not returned as-is",
+  );
+
+  fakeStorage.forge_sort_keys = JSON.stringify({ Customer: [null, { field: "name", direction: "asc" }] });
+  assert.deepEqual(
+    getPersistedSortKeys("Customer"),
+    [],
+    "a literal null entry must also reject the whole array, matching sortKeysPreference.ts's own whole-array rejection (not a per-element filter)",
+  );
+
+  assert.doesNotThrow(
+    () => sortRecordsMulti([{ id: 1, name: "Acme" }], getPersistedSortKeys("Customer"), [], {}),
+    "feeding the store's own return value into the real sort comparator must never throw, even though the raw stored value had a null entry",
+  );
+});
+
+/**
  * Real-DOM companion to the pure-function test above: proves the actual
  * generated EntityView component -- not just its store helpers in
  * isolation -- genuinely survives a reload. Renders EntityView, switches
