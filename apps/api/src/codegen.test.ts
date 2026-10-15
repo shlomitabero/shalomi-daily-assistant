@@ -1967,7 +1967,7 @@ test("the exported record table's date cell shows the correct calendar day even 
   const entityViewJsx = generateExportFiles(project).find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
 
   const dateHelperSrc = entityViewJsx.match(/const CALENDAR_DATE_FORMAT[\s\S]*?\nfunction parseFieldDate\(raw\) \{[\s\S]*?\n\}\n/)?.[0];
-  const cellSrc = entityViewJsx.match(/function Cell\(\{ field, value, relationLabel, onJumpToRecord \}\) \{[\s\S]*?\n\}\n/)?.[0];
+  const cellSrc = entityViewJsx.match(/function Cell\(\{ field, value, relationLabel, highlightQuery, onJumpToRecord \}\) \{[\s\S]*?\n\}\n/)?.[0];
   // Cell also calls isDeadlineFieldName/getDateUrgency (round 340) --
   // needed here too, since this test evals Cell in isolation rather than
   // importing the whole generated module.
@@ -4813,7 +4813,7 @@ test("the exported EntityView's relation cells jump to the related record via th
   const files = generateExportFiles(withRelation);
   const entityViewJsx = files.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
 
-  const cellSrc = entityViewJsx.match(/function Cell\(\{ field, value, relationLabel, onJumpToRecord \}\) \{[\s\S]*?\n\}\n/)?.[0];
+  const cellSrc = entityViewJsx.match(/function Cell\(\{ field, value, relationLabel, highlightQuery, onJumpToRecord \}\) \{[\s\S]*?\n\}\n/)?.[0];
   assert.ok(cellSrc, "expected to find the real generated Cell component");
   assert.match(cellSrc!, /if \(onJumpToRecord && field\.relationTo\) \{/);
   assert.match(cellSrc!, /<button type="button" className="link-button" onClick=\{\(\) => onJumpToRecord\(field\.relationTo, Number\(value\)\)\}>/);
@@ -4825,8 +4825,8 @@ test("the exported EntityView's relation cells jump to the related record via th
   // Threaded through every layer that can render a relation cell: the
   // table, the Kanban board (via BoardCard), the per-entity View wrapper,
   // and App's own activeEntity.View call -- not just the leaf component.
-  assert.match(entityViewJsx, /function BoardCard\(\{ entity, boardField, record, relatedRecords, hasMoveError, onMove, onEdit, onDuplicate, onDelete, onJumpToRecord \}\)/);
-  assert.match(entityViewJsx, /<Cell\s+field=\{f\}\s+value=\{record\[f\.name\]\}\s+relationLabel=\{[^}]+\}\s+onJumpToRecord=\{onJumpToRecord\}/);
+  assert.match(entityViewJsx, /function BoardCard\(\{ entity, boardField, record, relatedRecords, highlightQuery, hasMoveError, onMove, onEdit, onDuplicate, onDelete, onJumpToRecord \}\)/);
+  assert.match(entityViewJsx, /<Cell\s+field=\{f\}\s+value=\{record\[f\.name\]\}\s+relationLabel=\{[^}]+\}\s+highlightQuery=\{highlightQuery\}\s+onJumpToRecord=\{onJumpToRecord\}/);
   assert.match(entityViewJsx, /export function EntityView\(\{ entity, highlightRecordId, onHighlightHandled, onJumpToRecord, onRecordCountChange \}\)/);
 
   const orderJsx = files.find((f) => f.path === "web/src/entities/Order.jsx")!.content;
@@ -4867,7 +4867,7 @@ test("the exported EntityView's Cell renders a longtext field with a native hove
   const files = generateExportFiles(withLongtext);
   const entityViewJsx = files.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
 
-  const cellSrc = entityViewJsx.match(/function Cell\(\{ field, value, relationLabel, onJumpToRecord \}\) \{[\s\S]*?\n\}\n/)?.[0];
+  const cellSrc = entityViewJsx.match(/function Cell\(\{ field, value, relationLabel, highlightQuery, onJumpToRecord \}\) \{[\s\S]*?\n\}\n/)?.[0];
   assert.ok(cellSrc, "expected to find the real generated Cell component");
   assert.match(cellSrc!, /if \(field\.type === "longtext"\) \{/);
   assert.match(cellSrc!, /<span className="longtext-cell" title=\{String\(value\)\}>/);
@@ -4918,10 +4918,10 @@ test("the exported EntityView's splitLinkSegments finds a URL and an email addre
 
 test("the exported EntityView's Cell renders a real clickable <a> for a URL/email embedded in a text or longtext field", () => {
   const entityViewJsx = generateExportFiles(project).find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
-  const cellSrc = entityViewJsx.match(/function Cell\(\{ field, value, relationLabel, onJumpToRecord \}\) \{[\s\S]*?\n\}\n/)?.[0];
+  const cellSrc = entityViewJsx.match(/function Cell\(\{ field, value, relationLabel, highlightQuery, onJumpToRecord \}\) \{[\s\S]*?\n\}\n/)?.[0];
   assert.ok(cellSrc, "expected to find the real generated Cell component");
-  assert.match(cellSrc!, /<LinkifiedText text=\{String\(value\)\} \/>/, "both the longtext and plain-text branches must route through LinkifiedText");
-  assert.match(entityViewJsx, /function LinkifiedText\(\{ text \}\) \{/, "expected the real generated LinkifiedText component");
+  assert.match(cellSrc!, /<LinkifiedText text=\{String\(value\)\} query=\{highlightQuery\} \/>/, "both the longtext and plain-text branches must route through LinkifiedText");
+  assert.match(entityViewJsx, /function LinkifiedText\(\{ text, query \}\) \{/, "expected the real generated LinkifiedText component");
   assert.match(entityViewJsx, /className="cell-link"/);
   assert.match(entityViewJsx, /target="_blank"/);
 });
@@ -9461,6 +9461,93 @@ test("the exported EntityView shows a record count next to the search box, and i
         "1 of 2 records",
         "once filtered, it must show how many of the total are still showing",
       );
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    cleanup();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
+ * New in this round: the live preview's search box (EntityPanel.tsx)
+ * wraps the real matched substring in a `<mark className="search-match">`
+ * inside each visible cell -- for both a plain text field and an enum
+ * field's own translated label (via Highlighted, composed with Linkified
+ * so highlighting and link-detection don't disable each other) -- and the
+ * exact same board-view cells get it too via BoardCard. The exported app's
+ * own search box narrowed the table down to matching rows (that part was
+ * already ported faithfully), but its Cell/LinkifiedText never received a
+ * highlightQuery at all, so nothing in any matching cell was ever visually
+ * marked. Mirrors apps/web/src/EntityPanel.test.ts's own real-DOM
+ * search-highlight test exactly, against the real generated EntityView
+ * component (not a regex proxy).
+ */
+test("the exported EntityView's search box highlights the matched text within each visible cell, for both text and enum fields", async () => {
+  const files = generateExportFiles(project);
+  const dir = writeGeneratedWebComponent(files);
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async () => ({
+    ok: true,
+    status: 200,
+    json: async () => ({
+      records: [
+        { id: 1, name: "Dana Levi", status: "New" },
+        { id: 2, name: "Globex", status: "Won" },
+      ],
+    }),
+  })) as typeof fetch;
+
+  try {
+    await withRealLocalStorage(async () => {
+      const { EntityView } = await import(path.join(dir, "web", "src", "components", "EntityView.jsx"));
+      const customerEntity = project.spec.entities.find((e) => e.name === "Customer")!;
+      const props = {
+        entity: customerEntity,
+        highlightRecordId: null,
+        onHighlightHandled: () => {},
+        onJumpToRecord: () => {},
+        onRecordCountChange: () => {},
+      };
+
+      const { container } = render(React.createElement(EntityView, props));
+      for (let i = 0; i < 40; i++) {
+        if (container.querySelectorAll("tbody tr").length === 2) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+
+      const searchBox = container.querySelector(".entity-search") as HTMLInputElement;
+      await act(async () => {
+        fireEvent.change(searchBox, { target: { value: "dana" } });
+      });
+      assert.equal(container.querySelectorAll("tbody tr").length, 1, "the search must still narrow the rendered rows");
+
+      const row = container.querySelector("tbody tr")!;
+      const mark = row.querySelector("mark.search-match");
+      assert.ok(mark, "the matched substring must be wrapped in a real <mark class=\"search-match\">");
+      assert.equal(mark!.textContent, "Dana", "the highlighted text must preserve the record's own original casing");
+      assert.equal(row.textContent?.includes("Dana Levi"), true, "the rest of the cell's own text must still render around the highlight");
+
+      await act(async () => {
+        fireEvent.change(searchBox, { target: { value: "" } });
+      });
+      assert.equal(container.querySelectorAll("tbody tr").length, 2);
+      assert.equal(container.querySelector("mark.search-match"), null, "clearing the search must remove the highlight");
+
+      // An enum field's own translated label gets highlighted too, not just
+      // plain text fields -- the Customer entity's status field maps "Won"
+      // to the Hebrew label "הצליח" (matchesSearch matches against that
+      // displayed label, not the raw stored value, so the query here must
+      // match what's actually shown).
+      await act(async () => {
+        fireEvent.change(searchBox, { target: { value: "הצליח" } });
+      });
+      assert.equal(container.querySelectorAll("tbody tr").length, 1);
+      const enumMark = container.querySelector(".badge mark.search-match");
+      assert.ok(enumMark, "an enum field's own translated label must be highlighted too");
+      assert.equal(enumMark!.textContent, "הצליח");
     });
   } finally {
     globalThis.fetch = originalFetch;

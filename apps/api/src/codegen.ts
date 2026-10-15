@@ -1492,14 +1492,38 @@ function splitLinkSegments(text) {
   return segments.length > 0 ? segments : [{ text, href: null }];
 }
 
-function LinkifiedText({ text }) {
+// Mirrors the live preview's own splitHighlightSegments (entityFormatting.ts)
+// verbatim: splits text around every case-insensitive occurrence of query,
+// so a table cell can show *where* a search matched, not just that the row
+// did. A blank query (or no match) returns the whole text as one unmatched
+// segment, so callers never need a separate no-match branch.
+function splitHighlightSegments(text, query) {
+  const trimmed = query.trim();
+  if (!trimmed) return [{ text, matched: false }];
+  const escaped = trimmed.replace(/[.*+?^\${}()|[\\]\\\\]/g, "\\\\$&");
+  const re = new RegExp(escaped, "gi");
+  const segments = [];
+  let lastIndex = 0;
+  let match;
+  while ((match = re.exec(text)) !== null) {
+    if (match.index > lastIndex) segments.push({ text: text.slice(lastIndex, match.index), matched: false });
+    segments.push({ text: match[0], matched: true });
+    lastIndex = match.index + match[0].length;
+    if (match[0].length === 0) re.lastIndex++;
+  }
+  if (lastIndex < text.length) segments.push({ text: text.slice(lastIndex), matched: false });
+  return segments.length > 0 ? segments : [{ text, matched: false }];
+}
+
+function Highlighted({ text, query }) {
+  if (!query || !query.trim()) return <>{text}</>;
   return (
     <>
-      {splitLinkSegments(text).map((seg, i) =>
-        seg.href ? (
-          <a key={i} href={seg.href} target="_blank" rel="noopener noreferrer" className="cell-link">
+      {splitHighlightSegments(text, query).map((seg, i) =>
+        seg.matched ? (
+          <mark key={i} className="search-match">
             {seg.text}
-          </a>
+          </mark>
         ) : (
           <span key={i}>{seg.text}</span>
         ),
@@ -1508,7 +1532,23 @@ function LinkifiedText({ text }) {
   );
 }
 
-function Cell({ field, value, relationLabel, onJumpToRecord }) {
+function LinkifiedText({ text, query }) {
+  return (
+    <>
+      {splitLinkSegments(text).map((seg, i) =>
+        seg.href ? (
+          <a key={i} href={seg.href} target="_blank" rel="noopener noreferrer" className="cell-link">
+            {seg.text}
+          </a>
+        ) : (
+          <Highlighted key={i} text={seg.text} query={query} />
+        ),
+      )}
+    </>
+  );
+}
+
+function Cell({ field, value, relationLabel, highlightQuery, onJumpToRecord }) {
   if (value === null || value === undefined || value === "") return <span className="muted">—</span>;
   if (field.type === "relation") {
     const label = relationLabel || \`#\${value}\`;
@@ -1523,8 +1563,12 @@ function Cell({ field, value, relationLabel, onJumpToRecord }) {
   }
   if (field.type === "boolean") return value ? <span className="bool-yes">✓</span> : <span className="muted">–</span>;
   if (field.type === "enum") {
-    const label = (field.enumLabels && field.enumLabels[value]) || value;
-    return <span className={\`badge badge-\${badgeTone(value)}\`}>{label}</span>;
+    const label = String((field.enumLabels && field.enumLabels[value]) || value);
+    return (
+      <span className={\`badge badge-\${badgeTone(value)}\`}>
+        <Highlighted text={label} query={highlightQuery} />
+      </span>
+    );
   }
   if (field.type === "date") {
     // parseFieldDate (defined further down, hoisted like any function
@@ -1548,11 +1592,11 @@ function Cell({ field, value, relationLabel, onJumpToRecord }) {
   if (field.type === "longtext") {
     return (
       <span className="longtext-cell" title={String(value)}>
-        <LinkifiedText text={String(value)} />
+        <LinkifiedText text={String(value)} query={highlightQuery} />
       </span>
     );
   }
-  return <LinkifiedText text={String(value)} />;
+  return <LinkifiedText text={String(value)} query={highlightQuery} />;
 }
 
 // A relation field is matched against its resolved display label (e.g.
@@ -2452,7 +2496,7 @@ function RecordListPrintSheet({ entity, fields, records, relatedRecords, show })
 // field itself, since that's implied by which column the card is in), a
 // select to move it directly to another column, and the same Edit/Delete
 // actions the table row has.
-function BoardCard({ entity, boardField, record, relatedRecords, hasMoveError, onMove, onEdit, onDuplicate, onDelete, onJumpToRecord }) {
+function BoardCard({ entity, boardField, record, relatedRecords, highlightQuery, hasMoveError, onMove, onEdit, onDuplicate, onDelete, onJumpToRecord }) {
   const otherFields = entity.fields.filter((f) => f.name !== boardField.name);
   // A record can land in the board's "(other)" column (see groupByField) when
   // its stored value is a legacy one no longer in boardField.enumValues --
@@ -2472,6 +2516,7 @@ function BoardCard({ entity, boardField, record, relatedRecords, hasMoveError, o
             field={f}
             value={record[f.name]}
             relationLabel={f.type === "relation" ? relationDisplayLabel(f, record[f.name], relatedRecords) : undefined}
+            highlightQuery={highlightQuery}
             onJumpToRecord={onJumpToRecord}
           />
         </div>
@@ -3833,6 +3878,7 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
                 field={f}
                 value={r[f.name]}
                 relationLabel={f.type === "relation" ? relationDisplayLabel(f, r[f.name], relatedRecords) : undefined}
+                highlightQuery={search}
                 onJumpToRecord={onJumpToRecord}
               />
             )}
@@ -4205,6 +4251,7 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
                       boardField={boardField}
                       record={r}
                       relatedRecords={relatedRecords}
+                      highlightQuery={search}
                       hasMoveError={r.id === moveErrorId}
                       onMove={(value) => handleMove(r.id, boardField.name, value)}
                       onEdit={() => startEdit(r)}
@@ -5253,6 +5300,7 @@ th, td { text-align: start; padding: 8px 10px; border-bottom: 1px solid var(--bo
 .entity-undo-toast { display: flex; align-items: center; gap: 10px; background: var(--accent-soft); border: 1px solid var(--accent); color: var(--text); padding: 8px 14px; border-radius: 8px; margin: 0 0 16px; }
 .link-button { background: none; border: none; color: var(--accent); padding: 0; text-decoration: underline; font: inherit; font-weight: 600; cursor: pointer; }
 .cell-link { color: var(--accent); text-decoration: underline; }
+.search-match { background: var(--accent-soft); color: var(--accent-deep); border-radius: 3px; padding: 0 1px; }
 .link-button:hover { opacity: 0.85; }
 .entity-search { max-width: 280px; margin-bottom: 14px; }
 .sort-header { background: none; border: none; padding: 0; margin: 0; color: inherit; font: inherit; cursor: pointer; }
