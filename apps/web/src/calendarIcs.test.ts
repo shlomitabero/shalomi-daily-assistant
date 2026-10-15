@@ -65,6 +65,33 @@ test("buildCalendarIcs's DESCRIPTION includes every other field as 'Label: value
   assert.doesNotMatch(events[0], /שם לקוח:/, "the label field itself must never appear in DESCRIPTION -- it's already SUMMARY");
 });
 
+/**
+ * Regression test for a real bug found by round 636's Explore survey: the
+ * same label-collision gap round 635 fixed in twin.ts's Business Twin
+ * observations, but never checked anywhere else. Only field.name is unique
+ * on an entity (FieldSchema/EntitySchema never enforce label uniqueness),
+ * so two fields can legally share a label via the field-label rename route
+ * -- here, two number fields on the same entity both renamed to "Amount".
+ * Before this fix, DESCRIPTION showed two identical-looking "Amount: ..."
+ * lines with no way to tell which was which once opened in a real
+ * calendar app.
+ */
+test("buildCalendarIcs disambiguates two description fields that share a label", () => {
+  const subtotalField: Field = { name: "subtotal", label: "Amount", type: "number", required: true };
+  const shippingField: Field = { name: "shipping", label: "Amount", type: "number", required: true };
+  const orderEntity: Entity = {
+    name: "Order",
+    label: "Orders",
+    fields: [dateField, nameField, subtotalField, shippingField],
+  };
+  const records: EntityRecord[] = [
+    { id: 1, appointmentDate: "2026-03-15", customerName: "Dana Levi", subtotal: 800, shipping: 30 },
+  ];
+  const ics = buildCalendarIcs(orderEntity, dateField, nameField, records, [], {});
+  assert.match(ics, /Amount \(subtotal\): 800/, "the subtotal field must be disambiguated by its own name");
+  assert.match(ics, /Amount \(shipping\): 30/, "the shipping field must be disambiguated by its own name");
+});
+
 test("buildCalendarIcs resolves a relation field to the related record's real display label in DESCRIPTION, not the raw stored id", () => {
   const courierEntity: Entity = { name: "Courier", fields: [{ name: "name", type: "text", required: true }] };
   const records: EntityRecord[] = [

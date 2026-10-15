@@ -2197,6 +2197,82 @@ test("the exported EntityView's real generated buildCalendarIcs produces a genui
   assert.match(ics, /SUMMARY:Dana\\, Levi/, "a comma in the summary must be backslash-escaped per RFC 5545 §3.3.11");
 });
 
+/**
+ * Regression test for a real bug found by round 636's Explore survey: the
+ * same label-collision gap round 635 fixed in twin.ts's Business Twin
+ * observations, but never checked anywhere else. Only field.name is unique
+ * on an entity (FieldSchema/EntitySchema never enforce label uniqueness),
+ * so two fields can legally share a label via the field-label rename route
+ * -- here, two number fields on the same entity both renamed to "Amount".
+ * Before this fix, the real generated buildCalendarIcs produced a
+ * DESCRIPTION with two identical-looking "Amount: ..." lines with no way
+ * to tell which was which once opened in a real calendar app. Uses the
+ * same real-generated-code extraction harness as the test above, not a
+ * reimplementation.
+ */
+test("the exported EntityView's real generated buildCalendarIcs disambiguates two description fields that share a label", () => {
+  const withDate: Project = {
+    ...project,
+    spec: {
+      ...project.spec,
+      entities: [
+        ...project.spec.entities,
+        {
+          name: "Order",
+          label: "הזמנות",
+          fields: [
+            { name: "customerName", label: "לקוח", type: "text", required: true },
+            { name: "date", label: "תאריך", type: "date", required: true },
+            { name: "subtotal", label: "Amount", type: "number", required: true },
+            { name: "shipping", label: "Amount", type: "number", required: true },
+          ],
+        },
+      ],
+    },
+  };
+  const entityViewJsx = generateExportFiles(withDate).find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+
+  const pickDisplaySrc = entityViewJsx.match(/export function pickDisplayField\(entity\) \{[\s\S]*?\n\}\n/)?.[0]?.replace(/^export /, "");
+  const labelFieldSrc = entityViewJsx.match(/function calendarLabelField\(entity, dateField\) \{[\s\S]*?\n\}\n/)?.[0];
+  const pad2Src = entityViewJsx.match(/function icsPad2\(n\) \{[\s\S]*?\n\}\n/)?.[0];
+  const dateSrc = entityViewJsx.match(/function formatIcsDate\(date\) \{[\s\S]*?\n\}\n/)?.[0];
+  const tsSrc = entityViewJsx.match(/function formatIcsTimestamp\(date\) \{[\s\S]*?\n\}\n/)?.[0];
+  const escSrc = entityViewJsx.match(/function icsEscapeText\(value\) \{[\s\S]*?\n\}\n/)?.[0];
+  const utf8LenSrc = entityViewJsx.match(/function utf8ByteLength\(s\) \{[\s\S]*?\n\}\n/)?.[0];
+  const foldSrc = entityViewJsx.match(/function foldIcsLine\(line\) \{[\s\S]*?\n\}\n/)?.[0];
+  const buildSrc = entityViewJsx.match(
+    /function buildCalendarIcs\(entity, dateField, labelField, records, relatedRecords, now, endField\) \{[\s\S]*?\n\}\n/,
+  )?.[0];
+  assert.ok(
+    pickDisplaySrc && labelFieldSrc && pad2Src && dateSrc && tsSrc && escSrc && utf8LenSrc && foldSrc && buildSrc,
+    "expected to find every ICS helper function in the real generated output",
+  );
+
+  const relationStub = "function relationDisplayLabel() { return ''; }\n";
+  const buildCalendarIcs = new Function(
+    `${pickDisplaySrc}\n${labelFieldSrc}\n${pad2Src}\n${dateSrc}\n${tsSrc}\n${escSrc}\n${utf8LenSrc}\n${foldSrc}\n${relationStub}\n${buildSrc}\nreturn buildCalendarIcs;`,
+  )() as (entity: unknown, dateField: unknown, labelField: unknown, records: unknown[], relatedRecords: unknown, now: Date) => string;
+
+  const entity = {
+    name: "Order",
+    label: "הזמנות",
+    fields: [
+      { name: "customerName", label: "לקוח", type: "text" },
+      { name: "date", label: "תאריך", type: "date" },
+      { name: "subtotal", label: "Amount", type: "number" },
+      { name: "shipping", label: "Amount", type: "number" },
+    ],
+  };
+  const dateField = entity.fields[1];
+  const labelField = entity.fields[0];
+  const records = [{ id: 1, customerName: "Dana", date: "2026-03-15", subtotal: 800, shipping: 30 }];
+
+  const ics = buildCalendarIcs(entity, dateField, labelField, records, {}, new Date("2026-01-01T00:00:00Z"));
+
+  assert.match(ics, /Amount \(subtotal\): 800/, "the subtotal field must be disambiguated by its own name");
+  assert.match(ics, /Amount \(shipping\): 30/, "the shipping field must be disambiguated by its own name");
+});
+
 // Regression test for round 551's finding: PRODID's own content
 // (entity.label) was pushed raw in the exported app's generated
 // buildCalendarIcs too, unlike UID/SUMMARY/DESCRIPTION which already go

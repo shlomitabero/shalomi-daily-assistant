@@ -2303,11 +2303,24 @@ function buildCalendarIcs(entity, dateField, labelField, records, relatedRecords
     }
     const labelRaw = labelField.type === "enum" ? ((labelField.enumLabels && labelField.enumLabels[record[labelField.name]]) || record[labelField.name]) : record[labelField.name];
     const summary = String(labelRaw ?? entity.label ?? entity.name);
+    // Same label-collision gap the exported app's Business Twin-equivalent
+    // text builders were fixed for -- only field.name is unique, never
+    // .label, so two description fields here can legally share a label.
+    // Disambiguated with each field's own name, so a real calendar app
+    // does not show two identical-looking lines with no way to tell them
+    // apart.
+    const descriptionLabelOccurrences = {};
+    for (const f of descriptionFields) {
+      const label = f.label || f.name;
+      descriptionLabelOccurrences[label] = (descriptionLabelOccurrences[label] || 0) + 1;
+    }
     const descriptionLines = descriptionFields
       .map((f) => {
         const value = f.type === "relation" ? relationDisplayLabel(f, record[f.name], relatedRecords) : f.type === "enum" ? ((f.enumLabels && f.enumLabels[record[f.name]]) || record[f.name]) : record[f.name];
         if (value === null || value === undefined || value === "") return null;
-        return \`\${f.label || f.name}: \${value}\`;
+        const fieldLabel = f.label || f.name;
+        const ambiguous = (descriptionLabelOccurrences[fieldLabel] || 0) > 1;
+        return fieldLabel + (ambiguous ? " (" + f.name + ")" : "") + ": " + value;
       })
       .filter((line) => line !== null);
     lines.push("BEGIN:VEVENT");

@@ -139,6 +139,18 @@ export function buildCalendarIcs(
     }
     const labelRaw = labelField.type === "enum" ? (labelField.enumLabels?.[String(record[labelField.name])] ?? record[labelField.name]) : record[labelField.name];
     const summary = String(labelRaw ?? entity.label ?? entity.name);
+    // Same label-collision gap twin.ts's Business Twin observations had
+    // (round 635 fixed it there): only field.name is unique, never .label,
+    // so two description fields here can legally share a label (e.g. two
+    // number fields both renamed to "Amount"). Disambiguated with each
+    // field's own (always-unique) name, the same fix round 635 already
+    // applied, so a real calendar app doesn't show two identical-looking
+    // "Amount: ..." lines with no way to tell them apart.
+    const descriptionLabelOccurrences = new Map<string, number>();
+    for (const f of descriptionFields) {
+      const label = f.label ?? f.name;
+      descriptionLabelOccurrences.set(label, (descriptionLabelOccurrences.get(label) ?? 0) + 1);
+    }
     const descriptionLines = descriptionFields
       .map((f) => {
         // Mirrors entityFormatting.ts's own relation/enum resolution (used
@@ -155,7 +167,9 @@ export function buildCalendarIcs(
               ? (f.enumLabels?.[String(record[f.name])] ?? record[f.name])
               : record[f.name];
         if (value === null || value === undefined || value === "") return null;
-        return `${f.label ?? f.name}: ${value}`;
+        const fieldLabel = f.label ?? f.name;
+        const ambiguous = (descriptionLabelOccurrences.get(fieldLabel) ?? 0) > 1;
+        return `${fieldLabel}${ambiguous ? ` (${f.name})` : ""}: ${value}`;
       })
       .filter((line): line is string => line !== null);
     lines.push("BEGIN:VEVENT");
