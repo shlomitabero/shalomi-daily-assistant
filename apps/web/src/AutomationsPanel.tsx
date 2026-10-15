@@ -135,6 +135,7 @@ export function AutomationsPanel({
       setRules((prev) => (prev ?? []).filter((r) => r.id !== rule.id));
     } catch (err) {
       setError((err as Error).message);
+    } finally {
       setBusyRuleId(null);
     }
   }

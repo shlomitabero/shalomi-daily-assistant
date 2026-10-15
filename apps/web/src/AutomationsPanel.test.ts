@@ -327,6 +327,54 @@ test("AutomationsPanel actually removes the rule once the delete confirmation is
   });
 });
 
+/**
+ * handleDelete only ever reset busyRuleId to null on the catch branch, not
+ * on success -- unlike handleToggle's own finally block just above. Since
+ * every row's Enable/Disable and Delete buttons are disabled project-wide
+ * by `busyRuleId !== null` (not scoped to the one row actually being
+ * acted on), a successful delete left busyRuleId permanently pointing at
+ * the now-gone rule's id, disabling every OTHER remaining rule's buttons
+ * for the rest of this panel's lifetime.
+ */
+test("AutomationsPanel's other rules stay interactive after a successful delete, instead of their buttons staying disabled forever", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    const originalConfirm = globalThis.window.confirm;
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/automations") {
+        return new Response(
+          JSON.stringify({ rules: [makeRule({ id: "rule1" }), makeRule({ id: "rule2" })] }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      if (method === "DELETE" && input === "/api/projects/proj1/automations/rule1") {
+        return new Response(null, { status: 204 });
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+    globalThis.window.confirm = (() => true) as typeof window.confirm;
+
+    try {
+      renderPanel();
+      await waitForCondition(() => document.querySelectorAll(".automations-rule-row").length === 2);
+
+      const firstRow = document.querySelectorAll(".automations-rule-row")[0] as HTMLElement;
+      fireEvent.click(firstRow.querySelector(".danger") as HTMLButtonElement);
+      await waitForCondition(() => document.querySelectorAll(".automations-rule-row").length === 1);
+
+      const remainingRow = document.querySelector(".automations-rule-row") as HTMLElement;
+      const buttons = remainingRow.querySelectorAll("button");
+      for (const button of buttons) {
+        assert.equal((button as HTMLButtonElement).disabled, false, "the surviving rule's own buttons must not stay disabled after a successful delete elsewhere");
+      }
+    } finally {
+      globalThis.fetch = originalFetch;
+      globalThis.window.confirm = originalConfirm;
+    }
+  });
+});
+
 test("AutomationsPanel's Close button calls onClose", async () => {
   await withJsdom(async () => {
     const originalFetch = globalThis.fetch;
