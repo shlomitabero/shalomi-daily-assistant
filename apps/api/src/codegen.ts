@@ -4976,7 +4976,7 @@ function renderAppJsx(project: Project): string {
     )
     .join("\n");
 
-  return `import { useEffect, useMemo, useState } from "react";
+  return `import { useEffect, useMemo, useRef, useState } from "react";
 import { listEntityCounts } from "./api.js";
 import { GlobalSearch } from "./components/GlobalSearch.jsx";
 import { THEME_STORAGE_KEY, detectInitialTheme } from "./theme.js";
@@ -5075,7 +5075,19 @@ export default function App() {
   const [active, setActive] = useState(ENTITIES[0]?.name ?? null);
   const [showSearch, setShowSearch] = useState(false);
   const [highlightRecordId, setHighlightRecordId] = useState(null);
-  const [theme, setTheme] = useState(() => detectInitialTheme(readStoredTheme(), prefersDarkFromSystem()));
+  const storedTheme = readStoredTheme();
+  const [theme, setTheme] = useState(() => detectInitialTheme(storedTheme, prefersDarkFromSystem()));
+  // theme.js's own contract is "an explicit stored choice always wins;
+  // otherwise falls back to the system preference" -- but persisting every
+  // theme, including one just derived from the system, on mount would
+  // silently turn "no choice yet" into "an explicit choice" on a person's
+  // very first visit, so neither a later system light/dark switch nor a
+  // fresh reload could ever follow the system again on that device
+  // (mirrors the live preview's own ThemeContext.tsx fix). This ref tracks
+  // whether a real explicit choice (found in storage at mount, or made via
+  // the theme-switch button below) exists, and only *that* gets persisted
+  // or blocks the system-change listener below.
+  const hasExplicitChoiceRef = useRef(storedTheme === "light" || storedTheme === "dark");
   const [entityCounts, setEntityCounts] = useState({});
   const [entityTabOrder, setEntityTabOrderState] = useState(() => getEntityTabOrder());
   const [draggedEntityTab, setDraggedEntityTab] = useState(null);
@@ -5142,16 +5154,28 @@ export default function App() {
   }, []);
 
   // Mirrors the live Forge AI preview's own ThemeProvider: the choice is
-  // applied via a data-theme attribute on <html> (so plain CSS variables
-  // can react to it) and persisted so a reload keeps the same theme.
+  // applied via a data-theme attribute on <html> so plain CSS variables
+  // can react to it. Persistence itself lives in the theme-switch button's
+  // own onClick below, not here -- see hasExplicitChoiceRef's comment.
   useEffect(() => {
     document.documentElement.setAttribute("data-theme", theme);
-    try {
-      localStorage.setItem(THEME_STORAGE_KEY, theme);
-    } catch {
-      // localStorage can be unavailable (private mode) -- the choice just won't survive a reload.
-    }
   }, [theme]);
+
+  // Follows the OS light/dark switch live, same as the live preview, but
+  // only until the user actually makes an explicit choice of their own via
+  // the theme-switch button -- checked on every system change (not just at
+  // listener-setup time), so an explicit choice made mid-session still
+  // blocks a later system switch from silently overriding it.
+  useEffect(() => {
+    if (typeof window === "undefined" || !window.matchMedia) return;
+    const mediaQuery = window.matchMedia("(prefers-color-scheme: dark)");
+    function handleSystemThemeChange(e) {
+      if (hasExplicitChoiceRef.current) return;
+      setTheme(e.matches ? "dark" : "light");
+    }
+    mediaQuery.addEventListener("change", handleSystemThemeChange);
+    return () => mediaQuery.removeEventListener("change", handleSystemThemeChange);
+  }, []);
 
   return (
     <div className="app">
@@ -5161,7 +5185,16 @@ export default function App() {
           <button
             type="button"
             className="theme-switch"
-            onClick={() => setTheme((current) => (current === "dark" ? "light" : "dark"))}
+            onClick={() => {
+              const next = theme === "dark" ? "light" : "dark";
+              hasExplicitChoiceRef.current = true;
+              try {
+                localStorage.setItem(THEME_STORAGE_KEY, next);
+              } catch {
+                // localStorage can be unavailable (private mode) -- the choice just won't survive a reload.
+              }
+              setTheme(next);
+            }}
             aria-label={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
             title={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
           >

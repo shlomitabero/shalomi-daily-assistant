@@ -6849,15 +6849,182 @@ test("the exported App.jsx renders a real theme toggle button wired to detectIni
 
   assert.match(appJsx, /import \{ THEME_STORAGE_KEY, detectInitialTheme \} from "\.\/theme\.js";/);
   assert.match(appJsx, /className="theme-switch"/);
-  assert.match(appJsx, /setTheme\(\(current\) => \(current === "dark" \? "light" : "dark"\)\)/);
+  assert.match(appJsx, /const next = theme === "dark" \? "light" : "dark";/);
   assert.match(appJsx, /document\.documentElement\.setAttribute\("data-theme", theme\)/);
-  assert.match(appJsx, /localStorage\.setItem\(THEME_STORAGE_KEY, theme\)/);
+  assert.match(appJsx, /localStorage\.setItem\(THEME_STORAGE_KEY, next\)/);
 
   // The exported CSS actually reacts to the attribute the toggle sets, via
   // real CSS variables -- not just a button that flips unused state.
   const stylesCss = files.find((f) => f.path === "web/src/styles.css")!.content;
   assert.match(stylesCss, /:root\[data-theme="dark"\]/);
   assert.match(stylesCss, /body \{ font-family: [^;]+; margin: 0; background: var\(--bg\); color: var\(--text\); \}/);
+});
+
+interface FakeMatchMedia {
+  matchMedia: (query: string) => MediaQueryList;
+  fireSystemChange: (matchesDark: boolean) => void;
+}
+
+/** Same minimal, event-dispatching matchMedia stand-in as the live preview's own ThemeContext.test.ts. */
+function createFakeMatchMedia(initialMatchesDark: boolean): FakeMatchMedia {
+  let matches = initialMatchesDark;
+  const listeners: Array<(e: { matches: boolean }) => void> = [];
+  const mql = {
+    get matches() {
+      return matches;
+    },
+    media: "(prefers-color-scheme: dark)",
+    addEventListener: (_type: string, cb: (e: { matches: boolean }) => void) => listeners.push(cb),
+    removeEventListener: (_type: string, cb: (e: { matches: boolean }) => void) => {
+      const i = listeners.indexOf(cb);
+      if (i >= 0) listeners.splice(i, 1);
+    },
+  } as unknown as MediaQueryList;
+  return {
+    matchMedia: () => mql,
+    fireSystemChange: (matchesDark: boolean) => {
+      matches = matchesDark;
+      for (const cb of listeners.slice()) cb({ matches: matchesDark });
+    },
+  };
+}
+
+/** Scopes a fake, event-dispatching window.matchMedia to the duration of fn, same shape as withRealLocalStorage above. */
+async function withFakeMatchMedia<T>(initialMatchesDark: boolean, fn: (fakeMatchMedia: FakeMatchMedia) => Promise<T> | T): Promise<T> {
+  const fakeMatchMedia = createFakeMatchMedia(initialMatchesDark);
+  const original = Object.getOwnPropertyDescriptor(window, "matchMedia");
+  Object.defineProperty(window, "matchMedia", {
+    value: fakeMatchMedia.matchMedia,
+    writable: true,
+    configurable: true,
+    enumerable: true,
+  });
+  try {
+    return await fn(fakeMatchMedia);
+  } finally {
+    if (original) Object.defineProperty(window, "matchMedia", original);
+    else delete (window as unknown as { matchMedia?: unknown }).matchMedia;
+  }
+}
+
+/**
+ * Round 631's finding: the exported app's App.jsx copied the live
+ * preview's OWN pre-round-290-fix ThemeProvider logic verbatim (commit
+ * 91d754e added dark mode to the exported app, before commit 54501b3
+ * fixed this exact bug in the live preview's ThemeContext.tsx) -- and the
+ * fix was never ported over, even though codegen.ts's own comment on this
+ * effect claims it "Mirrors the live Forge AI preview's own ThemeProvider."
+ * The old shape persisted theme to localStorage unconditionally on every
+ * change, including the very first mount where it was only ever derived
+ * from the OS (never chosen by anyone) -- silently turning "no choice yet"
+ * into a fake "explicit choice" on a person's first visit to their
+ * downloaded app, with no matchMedia listener at all, so neither a live OS
+ * switch nor a later reload could ever follow the system again on that
+ * device. Renders the real generated App.jsx end to end (not a regex
+ * check), since the bug lives in actual runtime behavior over time, not
+ * in static source shape.
+ */
+test("the exported app's theme follows a live OS light/dark switch when the user has never made an explicit choice", async () => {
+  const files = generateExportFiles(project);
+  const dir = writeGeneratedWebComponent(files);
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async () => new Response(JSON.stringify({ counts: {} }), { status: 200, headers: { "content-type": "application/json" } })) as typeof fetch;
+
+  try {
+    await withRealLocalStorage(async () => {
+      await withFakeMatchMedia(false, async (fakeMatchMedia) => {
+        const { default: App } = await import(path.join(dir, "web", "src", "App.jsx"));
+        render(React.createElement(App));
+
+        assert.equal(document.documentElement.getAttribute("data-theme"), "light", "starts light: no stored choice, system starts light");
+        assert.equal(localStorage.getItem("app.theme"), null, "must not silently persist a system-derived (non-explicit) theme on mount");
+
+        act(() => fakeMatchMedia.fireSystemChange(true));
+        assert.equal(document.documentElement.getAttribute("data-theme"), "dark", "must follow the system switching to dark");
+
+        act(() => fakeMatchMedia.fireSystemChange(false));
+        assert.equal(document.documentElement.getAttribute("data-theme"), "light", "must follow the system switching back to light");
+      });
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    cleanup();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
+ * Companion to the test above: once a person has an explicit stored
+ * choice (from a prior visit's toggle-button click), a later OS-level
+ * light/dark switch must never silently override it.
+ */
+test("the exported app's theme ignores a live OS switch once an explicit choice is already stored", async () => {
+  const files = generateExportFiles(project);
+  const dir = writeGeneratedWebComponent(files);
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async () => new Response(JSON.stringify({ counts: {} }), { status: 200, headers: { "content-type": "application/json" } })) as typeof fetch;
+
+  try {
+    await withRealLocalStorage(async () => {
+      localStorage.setItem("app.theme", "light");
+      await withFakeMatchMedia(false, async (fakeMatchMedia) => {
+        const { default: App } = await import(path.join(dir, "web", "src", "App.jsx"));
+        render(React.createElement(App));
+
+        assert.equal(document.documentElement.getAttribute("data-theme"), "light", "the stored explicit choice must win over the system's initial state");
+
+        act(() => fakeMatchMedia.fireSystemChange(true));
+        assert.equal(
+          document.documentElement.getAttribute("data-theme"),
+          "light",
+          "an explicit stored choice must never be overridden by a later system preference change",
+        );
+      });
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    cleanup();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
+ * Companion for the other way an explicit choice can arise mid-session
+ * (clicking the theme-switch button, not a value already in storage from
+ * a prior visit): the matchMedia listener is attached once at mount, so
+ * it must re-check whether an explicit choice exists at the time each
+ * system event fires, not only at listener-setup time.
+ */
+test("the exported app's theme ignores a live OS switch after the user explicitly toggles mid-session", async () => {
+  const files = generateExportFiles(project);
+  const dir = writeGeneratedWebComponent(files);
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async () => new Response(JSON.stringify({ counts: {} }), { status: 200, headers: { "content-type": "application/json" } })) as typeof fetch;
+
+  try {
+    await withRealLocalStorage(async () => {
+      await withFakeMatchMedia(false, async (fakeMatchMedia) => {
+        const { default: App } = await import(path.join(dir, "web", "src", "App.jsx"));
+        const { container } = render(React.createElement(App));
+        assert.equal(document.documentElement.getAttribute("data-theme"), "light");
+
+        fireEvent.click(container.querySelector(".theme-switch") as HTMLButtonElement);
+        assert.equal(document.documentElement.getAttribute("data-theme"), "dark", "toggling must switch the theme immediately");
+        assert.equal(localStorage.getItem("app.theme"), "dark", "toggling must persist the explicit choice");
+
+        act(() => fakeMatchMedia.fireSystemChange(false));
+        assert.equal(
+          document.documentElement.getAttribute("data-theme"),
+          "dark",
+          "a system change after an explicit mid-session toggle must not revert it",
+        );
+      });
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    cleanup();
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test("render.yaml's service name is a safe slug even for a project name with spaces, punctuation, and Hebrew", () => {
