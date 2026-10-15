@@ -1021,7 +1021,26 @@ export function recordsToCsv(
   allEntities: Entity[] = [],
   relatedRecords: RelatedRecordsByEntity = {},
 ): string {
-  const header = fields.map((f) => csvEscape(f.label ?? f.name)).join(",");
+  // A field's display label is never enforced unique (only its name is --
+  // see twin.ts's/calendarIcs.ts's own comment on this), so two fields on
+  // the same entity can legally share a label via the Field Label editor
+  // (e.g. a "subtotal" and a "shipping" field both labeled "Amount").
+  // Disambiguated with each field's own (always-unique) name, the same fix
+  // already applied to Business Twin's observations and the calendar
+  // export -- without it, the header row (and every re-import depending
+  // on it) would show two indistinguishable "Amount" columns.
+  const labelOccurrences = new Map<string, number>();
+  for (const f of fields) {
+    const label = f.label ?? f.name;
+    labelOccurrences.set(label, (labelOccurrences.get(label) ?? 0) + 1);
+  }
+  const header = fields
+    .map((f) => {
+      const label = f.label ?? f.name;
+      const ambiguous = (labelOccurrences.get(label) ?? 0) > 1;
+      return csvEscape(ambiguous ? `${label} (${f.name})` : label);
+    })
+    .join(",");
   const rows = records.map((record) =>
     fields.map((f) => csvEscape(fieldDisplayValue(f, record[f.name], lang, allEntities, relatedRecords))).join(","),
   );

@@ -5153,6 +5153,38 @@ test("the exported EntityView's own CSV-export formatting renders booleans as TR
 });
 
 /**
+ * Regression test for a real bug found by round 637's Explore survey: the
+ * same label-collision gap already fixed in twin.ts's Business Twin
+ * observations (635) and calendarIcs.ts's calendar export (636), but never
+ * ported to CSV export. Only field.name is unique on an entity -- two
+ * fields can legally share a label via the Field Label editor (e.g. two
+ * number fields both renamed to "Amount") -- and before this fix, the
+ * generated EntityView's own recordsToCsv produced a header row of
+ * "Amount,Amount" with no way to tell which column held which value.
+ */
+test("the exported EntityView's real generated recordsToCsv disambiguates two columns that share a label", () => {
+  const files = generateExportFiles(project);
+  const entityViewJsx = files.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+  const csvEscapeSrc = entityViewJsx.match(/function csvEscape\(value\) \{[\s\S]*?\n\}\n/)?.[0];
+  const fieldDisplayValueSrc = entityViewJsx.match(/function fieldDisplayValue\(field, value, relatedRecords\) \{[\s\S]*?\n\}\n/)?.[0];
+  const recordsToCsvSrc = entityViewJsx.match(/function recordsToCsv\(fields, records, relatedRecords\) \{[\s\S]*?\n\}\n/)?.[0];
+  assert.ok(csvEscapeSrc && fieldDisplayValueSrc && recordsToCsvSrc, "expected to find csvEscape/fieldDisplayValue/recordsToCsv in the generated EntityView.jsx");
+
+  const { recordsToCsv } = new Function(`${csvEscapeSrc}\n${fieldDisplayValueSrc}\n${recordsToCsvSrc}\nreturn { recordsToCsv };`)();
+
+  const fields = [
+    { name: "subtotal", label: "Amount", type: "number" },
+    { name: "shipping", label: "Amount", type: "number" },
+  ];
+  const records = [{ subtotal: 800, shipping: 30 }];
+
+  const csv = recordsToCsv(fields, records, {});
+  const lines = csv.split("\r\n");
+  assert.equal(lines[0], "Amount (subtotal),Amount (shipping)");
+  assert.equal(lines[1], "800,30");
+});
+
+/**
  * New in this round: the exported app's "Export CSV" button had the same
  * gap the live preview did -- it always exported `visibleRecords` (the
  * current filtered/sorted table), silently discarding a real bulk-select
@@ -6668,6 +6700,44 @@ test("the exported server.js's own backupFieldDisplayValue resolves a relation f
     "#999",
     "a relation id with no matching record must fall back to the raw id, not throw or return empty",
   );
+});
+
+/**
+ * Regression test for a real bug found by round 637's Explore survey: the
+ * same label-collision gap already fixed in the exported app's own
+ * EntityView.jsx recordsToCsv, but never ported to this separate backup
+ * CSV builder (entityToCsv). Two fields on the same entity can legally
+ * share a label, and before this fix, the real /api/backup ZIP's
+ * per-entity CSV would carry two indistinguishable header columns.
+ */
+test("the exported server.js's own entityToCsv disambiguates two columns that share a label", () => {
+  const serverJs = generateExportFiles(project).find((f) => f.path === "server.js")!.content;
+  const csvEscapeSrc = serverJs.match(/function csvEscape\(value\) \{[\s\S]*?\n\}\n/)?.[0];
+  const backupRecordDisplayLabelSrc = serverJs.match(/function backupRecordDisplayLabel\(entity, record\) \{[\s\S]*?\n\}\n/)?.[0];
+  const backupPickDisplayFieldSrc = serverJs.match(/const BACKUP_DISPLAY_FIELD_HINTS[\s\S]*?\nfunction backupPickDisplayField\(entity\) \{[\s\S]*?\n\}\n/)?.[0];
+  const backupFieldDisplayValueSrc = serverJs.match(/function backupFieldDisplayValue\(field, value, recordIndexByEntity\) \{[\s\S]*?\n\}\n/)?.[0];
+  const entityToCsvSrc = serverJs.match(/function entityToCsv\(entity, records, recordIndexByEntity\) \{[\s\S]*?\n\}\n/)?.[0];
+  assert.ok(
+    csvEscapeSrc && backupRecordDisplayLabelSrc && backupPickDisplayFieldSrc && backupFieldDisplayValueSrc && entityToCsvSrc,
+    "expected to find csvEscape/backupRecordDisplayLabel/backupPickDisplayField/backupFieldDisplayValue/entityToCsv in generated server.js",
+  );
+
+  const entityToCsv = new Function(
+    "ENTITIES",
+    `${csvEscapeSrc}\n${backupPickDisplayFieldSrc}\n${backupRecordDisplayLabelSrc}\n${backupFieldDisplayValueSrc}\n${entityToCsvSrc}\nreturn entityToCsv;`,
+  )([]);
+
+  const entity = {
+    name: "Order",
+    fields: [
+      { name: "subtotal", label: "Amount", type: "number" },
+      { name: "shipping", label: "Amount", type: "number" },
+    ],
+  };
+  const csv = entityToCsv(entity, [{ subtotal: 800, shipping: 30 }], {});
+  const lines = csv.split("\r\n");
+  assert.equal(lines[0], "Amount (subtotal),Amount (shipping)");
+  assert.equal(lines[1], "800,30");
 });
 
 // Regression test: the exported app's own embedded buildZip() (a

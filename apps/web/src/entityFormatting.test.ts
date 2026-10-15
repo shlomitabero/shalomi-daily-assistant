@@ -1072,6 +1072,26 @@ test("recordsToCsv resolves a relation field to the related record's display nam
   assert.equal(csvUnresolved, "Courier\r\n#1");
 });
 
+/**
+ * Regression test for a real bug found by round 637's Explore survey: the
+ * same label-collision gap round 635/636 already fixed in twin.ts and
+ * calendarIcs.ts. A field's label is never enforced unique (only its name
+ * is), so two fields on the same entity can legally share a label via the
+ * Field Label editor -- here, two number fields both renamed to "Amount".
+ * Before this fix, the CSV header row read "Amount,Amount" with no way to
+ * tell which column held which value.
+ */
+test("recordsToCsv disambiguates two columns that share a label", () => {
+  const fields: Field[] = [
+    { name: "subtotal", label: "Amount", type: "number", required: true },
+    { name: "shipping", label: "Amount", type: "number", required: true },
+  ];
+  const csv = recordsToCsv(fields, [{ subtotal: 800, shipping: 30 }], "en");
+  const lines = csv.split("\r\n");
+  assert.equal(lines[0], "Amount (subtotal),Amount (shipping)");
+  assert.equal(lines[1], "800,30");
+});
+
 test("pickDisplayField prefers a field literally named name/title over other fields", () => {
   const withName: Field[] = [
     { name: "id", type: "number", required: false },

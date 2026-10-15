@@ -643,7 +643,20 @@ function backupFieldDisplayValue(field, value, recordIndexByEntity) {
 // id->record Map (built once below, before any CSV is rendered) turns
 // that lookup into O(1).
 function entityToCsv(entity, records, recordIndexByEntity) {
-  const header = entity.fields.map((f) => csvEscape(f.label || f.name)).join(",");
+  // Same label-collision gap recordsToCsv above is guarded against --
+  // two fields on this entity can legally share a label.
+  const labelOccurrences = {};
+  for (const f of entity.fields) {
+    const label = f.label || f.name;
+    labelOccurrences[label] = (labelOccurrences[label] || 0) + 1;
+  }
+  const header = entity.fields
+    .map((f) => {
+      const label = f.label || f.name;
+      const ambiguous = (labelOccurrences[label] || 0) > 1;
+      return csvEscape(ambiguous ? label + " (" + f.name + ")" : label);
+    })
+    .join(",");
   const rows = records.map((record) =>
     entity.fields.map((f) => csvEscape(backupFieldDisplayValue(f, record[f.name], recordIndexByEntity))).join(","),
   );
@@ -1811,7 +1824,24 @@ function sumNumericFields(records, fields) {
 // where needed) from an entity's records -- so "download my data" means
 // an actual spreadsheet, not a JSON dump.
 function recordsToCsv(fields, records, relatedRecords) {
-  const header = fields.map((f) => csvEscape(f.label || f.name)).join(",");
+  // A field's display label is never enforced unique (only its name is),
+  // so two fields on the same entity can legally share a label via the
+  // Field Label editor. Disambiguated with each field's own name, the
+  // same fix already applied to Business Twin's observations and the
+  // calendar export -- without it, the header row would show two
+  // indistinguishable columns.
+  const labelOccurrences = {};
+  for (const f of fields) {
+    const label = f.label || f.name;
+    labelOccurrences[label] = (labelOccurrences[label] || 0) + 1;
+  }
+  const header = fields
+    .map((f) => {
+      const label = f.label || f.name;
+      const ambiguous = (labelOccurrences[label] || 0) > 1;
+      return csvEscape(ambiguous ? label + " (" + f.name + ")" : label);
+    })
+    .join(",");
   const rows = records.map((record) => fields.map((f) => csvEscape(fieldDisplayValue(f, record[f.name], relatedRecords))).join(","));
   return [header, ...rows].join("\\r\\n");
 }
