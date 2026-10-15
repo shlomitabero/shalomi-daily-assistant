@@ -191,6 +191,57 @@ test("computeBusinessTwin reports how many records are missing a relation field,
   assert.ok(!twinFullyLinked.jumpableObservations.some((o) => o.text.includes("have no")));
 });
 
+/**
+ * Regression test for a real bug found by round 635's Explore survey:
+ * FieldSchema/EntitySchema (packages/shared) only enforce uniqueness on a
+ * field's `name`, never its display `label`, and the field-label route
+ * (PATCH .../fields/:fieldName/label) lets a user rename two different
+ * relation fields on the same entity to the identical label. Before this
+ * fix, computeRelationCoverageObservations would then emit two
+ * identical-looking "... have no "Customer" set." lines with no way to
+ * tell which real field either one is about, even though field.name was
+ * sitting right there unused -- the same gap round 623 already closed for
+ * computeRelationHubObservation's own breakdown text.
+ */
+test("computeBusinessTwin's relation-coverage observations disambiguate two relation fields on the same entity that share a label", () => {
+  const relationProject: Project = {
+    ...project,
+    description: "I need a support ticket system linked to customers",
+    spec: {
+      ...project.spec,
+      entities: [
+        { name: "Customer", label: "Customers", fields: [{ name: "name", type: "text", required: true }] },
+        {
+          name: "Ticket",
+          label: "Tickets",
+          fields: [
+            { name: "subject", type: "text", required: true },
+            { name: "customerId", label: "Customer", type: "relation", required: false, relationTo: "Customer" },
+            { name: "escalatedTo", label: "Customer", type: "relation", required: false, relationTo: "Customer" },
+          ],
+        },
+      ],
+    },
+  };
+  const db = openDatabase(":memory:");
+  applyMigrations(db, relationProject.id, relationProject.spec);
+  const [customer, ticket] = relationProject.spec.entities;
+  insertRecord(db, relationProject.id, customer, { name: "Dana Levi" });
+  insertRecord(db, relationProject.id, ticket, { subject: "Can't log in", customerId: null, escalatedTo: null });
+
+  const twin = computeBusinessTwin(db, relationProject);
+  const coverageObservations = twin.jumpableObservations.filter((o) => o.text.includes("have no"));
+  assert.equal(coverageObservations.length, 2, `expected one observation per ambiguous relation field, got: ${JSON.stringify(coverageObservations)}`);
+  assert.ok(
+    coverageObservations.some((o) => o.text.includes('"Customer" (customerId)')),
+    `expected the customerId field to be disambiguated by its own name, got: ${JSON.stringify(coverageObservations)}`,
+  );
+  assert.ok(
+    coverageObservations.some((o) => o.text.includes('"Customer" (escalatedTo)')),
+    `expected the escalatedTo field to be disambiguated by its own name, got: ${JSON.stringify(coverageObservations)}`,
+  );
+});
+
 test("computeBusinessTwin identifies the record most referenced across multiple relation fields, with a per-entity breakdown", () => {
   const hubProject: Project = {
     ...project,
@@ -683,6 +734,51 @@ test("computeBusinessTwin phrases the numeric-aggregate observation in Hebrew fo
 });
 
 /**
+ * Regression test for a real bug found by round 635's Explore survey: the
+ * same label-collision gap round 623 closed for computeRelationHubObservation
+ * and round 635 closed for computeRelationCoverageObservations above, but
+ * for number fields. subtotal and shipping both renamed to "Amount" (a
+ * schema-legal, one-click-away state -- only field.name is unique, never
+ * label) used to produce two identical-looking "Total "Amount" in..." lines
+ * with no way to tell which real money field either total is actually for.
+ */
+test("computeBusinessTwin's numeric-aggregate observations disambiguate two number fields on the same entity that share a label", () => {
+  const orderProject: Project = {
+    ...project,
+    description: "An online store with orders",
+    spec: {
+      ...project.spec,
+      entities: [
+        {
+          name: "Order",
+          label: "Orders",
+          fields: [
+            { name: "customer", type: "text", required: true },
+            { name: "subtotal", label: "Amount", type: "number", required: true },
+            { name: "shipping", label: "Amount", type: "number", required: true },
+          ],
+        },
+      ],
+    },
+  };
+  const db = openDatabase(":memory:");
+  applyMigrations(db, orderProject.id, orderProject.spec);
+  const order = orderProject.spec.entities[0];
+  insertRecord(db, orderProject.id, order, { customer: "Dana", subtotal: 500, shipping: 10 });
+  insertRecord(db, orderProject.id, order, { customer: "Yossi", subtotal: 300, shipping: 20 });
+
+  const twin = computeBusinessTwin(db, orderProject);
+  const numericObservations = twin.jumpableObservations.filter((o) => o.text.includes("Amount"));
+  assert.equal(numericObservations.length, 2, `expected one observation per ambiguous number field, got: ${JSON.stringify(numericObservations)}`);
+  const subtotalObs = numericObservations.find((o) => o.text.includes('"Amount" (subtotal)'));
+  const shippingObs = numericObservations.find((o) => o.text.includes('"Amount" (shipping)'));
+  assert.ok(subtotalObs, `expected the subtotal field to be disambiguated by its own name, got: ${JSON.stringify(numericObservations)}`);
+  assert.ok(shippingObs, `expected the shipping field to be disambiguated by its own name, got: ${JSON.stringify(numericObservations)}`);
+  assert.match(subtotalObs!.text, /800/, "subtotal's own total (500+300) must not be confused with shipping's");
+  assert.match(shippingObs!.text, /30/, "shipping's own total (10+20) must not be confused with subtotal's");
+});
+
+/**
  * The `enum` counterpart to the numeric-aggregate gap above -- a status
  * field's actual value distribution (e.g. how many Orders are 'pending'
  * vs. 'shipped') was equally invisible.
@@ -724,6 +820,50 @@ test("computeBusinessTwin reports an enum field's value distribution when there'
   assert.equal(distribution!.entityName, "Order");
   // Sorted by count descending -- the larger bucket (2 "Pending") reads before the smaller one (1 "Shipped").
   assert.match(distribution!.text, /2 "Pending".*1 "Shipped"/);
+});
+
+/**
+ * Regression test for a real bug found by round 635's Explore survey: the
+ * same label-collision gap closed for computeRelationCoverageObservations
+ * and computeNumericAggregateObservations above, for enum fields. Two
+ * status-shaped fields (paymentStatus and shippingStatus) both renamed to
+ * "Status" used to produce two identical-looking "Status" breakdown lines
+ * with no way to tell which real field either distribution belongs to.
+ */
+test("computeBusinessTwin's enum-distribution observations disambiguate two enum fields on the same entity that share a label", () => {
+  const orderProject: Project = {
+    ...project,
+    description: "An online store with orders",
+    spec: {
+      ...project.spec,
+      entities: [
+        {
+          name: "Order",
+          label: "Orders",
+          fields: [
+            { name: "customer", type: "text", required: true },
+            { name: "paymentStatus", label: "Status", type: "enum", required: true, enumValues: ["Paid", "Unpaid"] },
+            { name: "shippingStatus", label: "Status", type: "enum", required: true, enumValues: ["Shipped", "Pending"] },
+          ],
+        },
+      ],
+    },
+  };
+  const db = openDatabase(":memory:");
+  applyMigrations(db, orderProject.id, orderProject.spec);
+  const order = orderProject.spec.entities[0];
+  insertRecord(db, orderProject.id, order, { customer: "Dana", paymentStatus: "Paid", shippingStatus: "Shipped" });
+  insertRecord(db, orderProject.id, order, { customer: "Yossi", paymentStatus: "Unpaid", shippingStatus: "Pending" });
+
+  const twin = computeBusinessTwin(db, orderProject);
+  const statusObservations = twin.jumpableObservations.filter((o) => o.text.includes("Status"));
+  assert.equal(statusObservations.length, 2, `expected one observation per ambiguous enum field, got: ${JSON.stringify(statusObservations)}`);
+  const paymentObs = statusObservations.find((o) => o.text.includes('"Status" (paymentStatus)'));
+  const shippingObs = statusObservations.find((o) => o.text.includes('"Status" (shippingStatus)'));
+  assert.ok(paymentObs, `expected the paymentStatus field to be disambiguated by its own name, got: ${JSON.stringify(statusObservations)}`);
+  assert.ok(shippingObs, `expected the shippingStatus field to be disambiguated by its own name, got: ${JSON.stringify(statusObservations)}`);
+  assert.match(paymentObs!.text, /"Paid".*"Unpaid"|"Unpaid".*"Paid"/, "payment status's own values must not be confused with shipping's");
+  assert.match(shippingObs!.text, /"Shipped".*"Pending"|"Pending".*"Shipped"/, "shipping status's own values must not be confused with payment's");
 });
 
 test("computeBusinessTwin stays silent about an enum field when every record shares the exact same single value", () => {

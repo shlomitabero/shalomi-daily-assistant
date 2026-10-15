@@ -77,15 +77,29 @@ function computeRelationCoverageObservations(
     const records = recordsByEntity.get(entity.name) ?? [];
     if (records.length === 0) continue;
 
+    // FieldLabelEditor/the field-label route enforce no uniqueness on a
+    // field's display label (only `name` is unique per entity -- see
+    // EntitySchema in packages/shared), so two relation fields here can
+    // legitimately share a label. Disambiguated with the field's own
+    // (always-unique) name, the same fix computeRelationHubObservation
+    // below already applies when a source label repeats within one
+    // breakdown.
+    const labelOccurrences = new Map<string, number>();
+    for (const field of relationFields) {
+      const label = field.label ?? field.name;
+      labelOccurrences.set(label, (labelOccurrences.get(label) ?? 0) + 1);
+    }
+
     for (const field of relationFields) {
       const unassigned = records.filter((r) => r[field.name] === null || r[field.name] === undefined).length;
       if (unassigned === 0) continue;
       const entityLabel = entity.label ?? entity.name;
       const fieldLabel = field.label ?? field.name;
+      const ambiguous = (labelOccurrences.get(fieldLabel) ?? 0) > 1;
       observations.push({
         text: hebrew
-          ? `ב"${entityLabel}", ל-${unassigned} מתוך ${records.length} רשומות אין "${fieldLabel}" מוגדר.`
-          : `In "${entityLabel}", ${unassigned} of ${records.length} records have no "${fieldLabel}" set.`,
+          ? `ב"${entityLabel}", ל-${unassigned} מתוך ${records.length} רשומות אין "${fieldLabel}"${ambiguous ? ` (${field.name})` : ""} מוגדר.`
+          : `In "${entityLabel}", ${unassigned} of ${records.length} records have no "${fieldLabel}"${ambiguous ? ` (${field.name})` : ""} set.`,
         entityName: entity.name,
       });
     }
@@ -357,6 +371,17 @@ function computeNumericAggregateObservations(
     if (records.length === 0) continue;
 
     const entityLabel = entity.label ?? entity.name;
+    // Same label-collision gap as computeRelationCoverageObservations above
+    // (field labels aren't unique, only names are) -- two number fields on
+    // the same entity (e.g. Order.subtotal and Order.shipping both renamed
+    // to "Amount") would otherwise produce two identical-looking lines with
+    // no way to tell which real field either one is about.
+    const labelOccurrences = new Map<string, number>();
+    for (const field of numberFields) {
+      const label = field.label ?? field.name;
+      labelOccurrences.set(label, (labelOccurrences.get(label) ?? 0) + 1);
+    }
+
     for (const field of numberFields) {
       const values: number[] = [];
       for (const record of records) {
@@ -370,10 +395,12 @@ function computeNumericAggregateObservations(
       const sum = values.reduce((total, v) => total + v, 0);
       const average = sum / values.length;
       const fieldLabel = field.label ?? field.name;
+      const ambiguous = (labelOccurrences.get(fieldLabel) ?? 0) > 1;
+      const fieldSuffix = ambiguous ? ` (${field.name})` : "";
       observations.push({
         text: hebrew
-          ? `סה"כ "${fieldLabel}" ב"${entityLabel}": ${sum.toLocaleString()} (ממוצע ${average.toLocaleString(undefined, { maximumFractionDigits: 1 })} על פני ${values.length} רשומות).`
-          : `Total "${fieldLabel}" in "${entityLabel}": ${sum.toLocaleString()} (average ${average.toLocaleString(undefined, { maximumFractionDigits: 1 })} across ${values.length} records).`,
+          ? `סה"כ "${fieldLabel}"${fieldSuffix} ב"${entityLabel}": ${sum.toLocaleString()} (ממוצע ${average.toLocaleString(undefined, { maximumFractionDigits: 1 })} על פני ${values.length} רשומות).`
+          : `Total "${fieldLabel}"${fieldSuffix} in "${entityLabel}": ${sum.toLocaleString()} (average ${average.toLocaleString(undefined, { maximumFractionDigits: 1 })} across ${values.length} records).`,
         entityName: entity.name,
       });
     }
@@ -406,6 +433,16 @@ function computeEnumDistributionObservations(
     if (records.length === 0) continue;
 
     const entityLabel = entity.label ?? entity.name;
+    // Same label-collision gap as computeRelationCoverageObservations/
+    // computeNumericAggregateObservations above -- two enum fields on the
+    // same entity sharing a label would otherwise produce two
+    // identical-looking breakdown lines with no way to tell them apart.
+    const labelOccurrences = new Map<string, number>();
+    for (const field of enumFields) {
+      const label = field.label ?? field.name;
+      labelOccurrences.set(label, (labelOccurrences.get(label) ?? 0) + 1);
+    }
+
     for (const field of enumFields) {
       const countByValue = new Map<string, number>();
       for (const record of records) {
@@ -421,10 +458,12 @@ function computeEnumDistributionObservations(
         .map(([value, count]) => `${count} "${(field.enumLabels && field.enumLabels[value]) || value}"`)
         .join(", ");
       const fieldLabel = field.label ?? field.name;
+      const ambiguous = (labelOccurrences.get(fieldLabel) ?? 0) > 1;
+      const fieldSuffix = ambiguous ? ` (${field.name})` : "";
       observations.push({
         text: hebrew
-          ? `פילוח "${fieldLabel}" ב"${entityLabel}": ${breakdown}.`
-          : `"${fieldLabel}" breakdown in "${entityLabel}": ${breakdown}.`,
+          ? `פילוח "${fieldLabel}"${fieldSuffix} ב"${entityLabel}": ${breakdown}.`
+          : `"${fieldLabel}"${fieldSuffix} breakdown in "${entityLabel}": ${breakdown}.`,
         entityName: entity.name,
       });
     }
