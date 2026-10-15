@@ -9,6 +9,7 @@ export default function OpportunityDetail() {
   const [settings, setSettings] = useState(null);
   const [form, setForm] = useState({ low: '', mid: '', high: '', aiUsage: '', paymentProcessing: '', riskLevel: 'medium', dataQuality: 'unknown', priceUSD: 9 });
   const [error, setError] = useState('');
+  const [loadError, setLoadError] = useState('');
   const [busy, setBusy] = useState(false);
   const [publishResult, setPublishResult] = useState(null);
 
@@ -25,8 +26,8 @@ export default function OpportunityDetail() {
         dataQuality: r.opportunity.dataQuality,
         priceUSD: r.opportunity.priceUSD,
       });
-    });
-    api.getSettings().then((r) => setSettings(r.settings));
+    }).catch((err) => setLoadError(err.data?.error || err.message));
+    api.getSettings().then((r) => setSettings(r.settings)).catch((err) => setLoadError(err.data?.error || err.message));
   }
 
   useEffect(refresh, [id]);
@@ -77,7 +78,13 @@ export default function OpportunityDetail() {
     }
   }
 
-  if (!opp) return <div className="page-loading">טוען…</div>;
+  if (!opp) {
+    return (
+      <div className="page-loading">
+        {loadError ? <p className="form-error">{loadError}</p> : 'טוען…'}
+      </div>
+    );
+  }
   const draft = opp.productDraft;
 
   return (
