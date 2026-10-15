@@ -4631,6 +4631,43 @@ function clearGlobalSearchRecentSearches() {
   writeGlobalSearchRecentSearches([]);
 }
 
+const GLOBAL_SEARCH_FOCUSABLE_SELECTOR =
+  'a[href], button:not([disabled]), textarea:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])';
+
+// Mirrors the live preview's own domInert.ts hideBackgroundFromAssistiveTech:
+// marks everything behind the search panel -- every sibling of every
+// ancestor, up to (not including) document.body -- as inert and
+// aria-hidden, so a screen reader's virtual cursor can't reach the entity
+// table sitting (only visually) behind the overlay. Returns a cleanup that
+// restores exactly what this call changed.
+function hideGlobalSearchBackgroundFromAssistiveTech(dialogElement) {
+  const restorers = [];
+  let node = dialogElement;
+  while (node && node !== document.body) {
+    const parent = node.parentElement;
+    if (!parent) break;
+    for (const sibling of Array.from(parent.children)) {
+      if (sibling === node || !(sibling instanceof HTMLElement)) continue;
+      if (sibling.hasAttribute("data-forge-dialog-inert")) continue;
+      const hadInert = sibling.hasAttribute("inert");
+      const priorAriaHidden = sibling.getAttribute("aria-hidden");
+      sibling.setAttribute("data-forge-dialog-inert", "");
+      sibling.setAttribute("inert", "");
+      sibling.setAttribute("aria-hidden", "true");
+      restorers.push(() => {
+        sibling.removeAttribute("data-forge-dialog-inert");
+        if (!hadInert) sibling.removeAttribute("inert");
+        if (priorAriaHidden === null) sibling.removeAttribute("aria-hidden");
+        else sibling.setAttribute("aria-hidden", priorAriaHidden);
+      });
+    }
+    node = parent;
+  }
+  return () => {
+    for (const restore of restorers) restore();
+  };
+}
+
 /**
  * Down/Up move a highlight across the result groups (not individual
  * records -- jumping always lands on an entity tab), clamped at the
@@ -4664,6 +4701,15 @@ export function GlobalSearch({ entities, onClose, onJumpToEntity, onJumpToRecord
   // handleShowAll's own relation-field matches resolve to the real display
   // label, not a raw foreign-key id, with zero extra network calls.
   const lastRecordsByEntityRef = useRef({});
+  const dialogRef = useRef(null);
+  // Captured during render, not inside the effect below: an effect runs
+  // after React has already committed this render's DOM, which includes
+  // applying the search input's own autoFocus. By the time an effect ran,
+  // document.activeElement would already be that input, not the real
+  // trigger (the toolbar/search-trigger button the user clicked to open
+  // this overlay) -- so focus could never actually return to the trigger
+  // on close. Mirrors the live preview's own useDialogFocusTrap.ts.
+  const previouslyFocusedRef = useRef(document.activeElement);
 
   // Flips isSearchDialogOpen() on while this overlay is mounted, so
   // EntityView's own table keyboard shortcuts stop firing underneath it.
@@ -4671,6 +4717,55 @@ export function GlobalSearch({ entities, onClose, onJumpToEntity, onJumpToRecord
     markSearchDialogOpen();
     return () => {
       markSearchDialogClosed();
+    };
+  }, []);
+
+  // Real dialog behavior, mirroring the live preview's own
+  // useDialogFocusTrap.ts: moves focus into the panel on open (unless the
+  // search input's own autoFocus already put it there), keeps Tab/Shift+Tab
+  // cycling within the panel instead of leaking into the entity table
+  // sitting (only visually) behind it, hides that background from
+  // assistive tech, and returns focus to whatever triggered this overlay
+  // once it closes.
+  useEffect(() => {
+    const container = dialogRef.current;
+    if (!container) return;
+    const previouslyFocused = previouslyFocusedRef.current;
+    const restoreBackground = hideGlobalSearchBackgroundFromAssistiveTech(container);
+
+    function getFocusable() {
+      return Array.from(container.querySelectorAll(GLOBAL_SEARCH_FOCUSABLE_SELECTOR));
+    }
+
+    if (!container.contains(document.activeElement)) {
+      const [first] = getFocusable();
+      if (!first) container.tabIndex = -1;
+      (first || container).focus();
+    }
+
+    function handleTabTrap(e) {
+      if (e.key !== "Tab") return;
+      const focusable = getFocusable();
+      if (focusable.length === 0) {
+        e.preventDefault();
+        return;
+      }
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (e.shiftKey && document.activeElement === first) {
+        e.preventDefault();
+        last.focus();
+      } else if (!e.shiftKey && document.activeElement === last) {
+        e.preventDefault();
+        first.focus();
+      }
+    }
+
+    container.addEventListener("keydown", handleTabTrap);
+    return () => {
+      container.removeEventListener("keydown", handleTabTrap);
+      restoreBackground();
+      if (previouslyFocused && previouslyFocused.focus) previouslyFocused.focus();
     };
   }, []);
 
@@ -4815,9 +4910,9 @@ export function GlobalSearch({ entities, onClose, onJumpToEntity, onJumpToRecord
 
   return (
     <div className="search-overlay">
-      <div className="search-panel">
+      <div className="search-panel" ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby="global-search-title">
         <div className="search-header">
-          <h2>🔍 Search everything</h2>
+          <h2 id="global-search-title">🔍 Search everything</h2>
           <div className="search-header-actions">
             {!loading && results.length > 0 && (
               <button type="button" className="small" onClick={handleCopy} aria-live="polite" aria-atomic="true">

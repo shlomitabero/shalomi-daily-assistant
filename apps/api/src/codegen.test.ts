@@ -8191,6 +8191,120 @@ test("the exported GlobalSearch component actually renders instead of crashing w
 });
 
 /**
+ * Round 634's finding: the live preview's GlobalSearchPanel.tsx gets real
+ * dialog accessibility (role="dialog"/aria-modal, a Tab-trap, and
+ * focus-restore-on-close) from a dedicated, documented commit and its own
+ * shared useDialogFocusTrap.ts hook -- but the exported app's GlobalSearch,
+ * explicitly "the exported app's only overlay dialog" per this file's own
+ * comment, never received any of it. A keyboard user tabbing past the last
+ * control inside the panel used to leak focus into the (visually hidden
+ * but still focusable) entity table sitting behind the overlay, and
+ * closing the panel never returned focus to whatever had opened it.
+ * Mirrors apps/web/src/useDialogFocusTrap.test.ts's own real-DOM coverage
+ * against the actual generated component (not a regex proxy).
+ */
+test("the exported GlobalSearch moves focus in, traps Tab/Shift+Tab inside the panel, and restores focus to the trigger on close", async () => {
+  const files = generateExportFiles(project);
+  const dir = writeGeneratedWebComponent(files);
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async () => ({ ok: true, status: 200, json: async () => ({ records: [] }) })) as typeof fetch;
+
+  const trigger = document.createElement("button");
+  trigger.id = "search-trigger-stand-in";
+  document.body.appendChild(trigger);
+  trigger.focus();
+  assert.equal(document.activeElement, trigger, "sanity check: the trigger must actually be focused before the dialog opens");
+
+  try {
+    const { GlobalSearch } = await import(path.join(dir, "web", "src", "components", "GlobalSearch.jsx"));
+    let renderResult: ReturnType<typeof render> | undefined;
+    await act(async () => {
+      renderResult = render(
+        React.createElement(GlobalSearch, {
+          entities: project.spec.entities,
+          onClose: () => {},
+          onJumpToEntity: () => {},
+          onJumpToRecord: () => {},
+        }),
+      );
+    });
+    const { container, unmount } = renderResult!;
+
+    const panel = container.querySelector('[role="dialog"]');
+    assert.ok(panel, "the search panel must carry role=\"dialog\"");
+    assert.equal(panel!.getAttribute("aria-modal"), "true", "the search panel must carry aria-modal=\"true\"");
+    const labelledBy = panel!.getAttribute("aria-labelledby");
+    assert.ok(labelledBy, "the search panel must reference a visible label via aria-labelledby");
+    assert.ok(document.getElementById(labelledBy!), "aria-labelledby must point at a real element that actually exists");
+
+    const searchInput = container.querySelector(".global-search-input") as HTMLInputElement;
+    assert.equal(document.activeElement, searchInput, "focus must land inside the dialog on mount (here, the search input's own autoFocus)");
+
+    const focusable = Array.from(panel!.querySelectorAll('a[href], button:not([disabled]), textarea:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])')) as HTMLElement[];
+    assert.ok(focusable.length >= 2, "sanity check: the panel must have more than one focusable control to meaningfully test Tab-trapping");
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+
+    last.focus();
+    fireEvent.keyDown(last, { key: "Tab" });
+    assert.equal(document.activeElement, first, "Tab on the last focusable control must wrap around to the first, not leak out of the dialog");
+
+    first.focus();
+    fireEvent.keyDown(first, { key: "Tab", shiftKey: true });
+    assert.equal(document.activeElement, last, "Shift+Tab on the first focusable control must wrap around to the last");
+
+    unmount();
+    assert.equal(document.activeElement, trigger, "closing the dialog must return focus to whatever triggered it");
+  } finally {
+    globalThis.fetch = originalFetch;
+    cleanup();
+    trigger.remove();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("the exported GlobalSearch hides the entity table behind it from assistive tech while open, and restores it on close", async () => {
+  const files = generateExportFiles(project);
+  const dir = writeGeneratedWebComponent(files);
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async () => ({ ok: true, status: 200, json: async () => ({ records: [] }) })) as typeof fetch;
+
+  // Stands in for the rest of the app (entity tabs, the table, the topbar)
+  // sitting behind the overlay once it's open.
+  const restOfApp = document.createElement("main");
+  restOfApp.id = "rest-of-app-stand-in";
+  document.body.appendChild(restOfApp);
+
+  try {
+    const { GlobalSearch } = await import(path.join(dir, "web", "src", "components", "GlobalSearch.jsx"));
+    let renderResult: ReturnType<typeof render> | undefined;
+    await act(async () => {
+      renderResult = render(
+        React.createElement(GlobalSearch, {
+          entities: project.spec.entities,
+          onClose: () => {},
+          onJumpToEntity: () => {},
+          onJumpToRecord: () => {},
+        }),
+      );
+    });
+
+    assert.equal(restOfApp.getAttribute("aria-hidden"), "true", "content behind the dialog must be aria-hidden while it's open");
+    assert.ok(restOfApp.hasAttribute("inert"), "content behind the dialog must be inert while it's open");
+
+    renderResult!.unmount();
+
+    assert.equal(restOfApp.hasAttribute("aria-hidden"), false, "aria-hidden must be lifted once the dialog closes");
+    assert.equal(restOfApp.hasAttribute("inert"), false, "inert must be lifted once the dialog closes");
+  } finally {
+    globalThis.fetch = originalFetch;
+    cleanup();
+    restOfApp.remove();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
  * New in this round: the exported app's own GlobalSearch had the identical
  * gap the live preview's own GlobalSearchPanel.tsx did before it gained
  * Copy/Download buttons -- a cross-entity result set only ever existed on
