@@ -1411,6 +1411,18 @@ const NEGATIVE_WORDS = [
   "lost", "cancelled", "canceled", "inactive", "overdue", "no-show", "failed", "rejected", "declined", "denied",
   "unpaid", "undelivered", "unconfirmed", "unapproved", "disapproved", "unqualified", "disqualified", "unshipped",
 ];
+// Mirrors the live preview's own entityFormatting.ts formatRecordCreatedAt
+// (round 168): every record carries a real, server-assigned createdAt
+// (see insertRecord below), but the exported app's own table never showed
+// it anywhere -- the only way to tell when a record was actually added
+// was to open it and guess, or check the CSV export's raw data.
+function formatRecordCreatedAt(createdAt) {
+  if (!createdAt) return "";
+  const date = new Date(createdAt);
+  if (Number.isNaN(date.getTime())) return "";
+  return date.toLocaleString();
+}
+
 function badgeTone(rawValue) {
   const lower = String(rawValue).toLowerCase();
   if (NEGATIVE_WORDS.some((w) => lower.includes(w))) return "negative";
@@ -3885,6 +3897,7 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
           </td>
         );
       })}
+      <td className="muted small created-at-cell">{formatRecordCreatedAt(r.createdAt)}</td>
       <td className="row-actions">
         <button onClick={() => startEdit(r)}>Edit</button>
         <button onClick={() => handleDuplicate(r.id)}>Duplicate</button>
@@ -4380,6 +4393,19 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
                         </th>
                       );
                     })}
+                    {(() => {
+                      const keyIndex = sortKeys.findIndex((k) => k.field === "createdAt");
+                      const key = keyIndex === -1 ? null : sortKeys[keyIndex];
+                      return (
+                        <th aria-sort={keyIndex === 0 ? (key.direction === "asc" ? "ascending" : "descending") : "none"}>
+                          <button type="button" className="sort-header" onClick={(e) => toggleSort("createdAt", e.shiftKey)}>
+                            Created
+                            {key ? (key.direction === "asc" ? " ▲" : " ▼") : ""}
+                            {key && sortKeys.length > 1 && <span className="sort-priority">{keyIndex + 1}</span>}
+                          </button>
+                        </th>
+                      );
+                    })()}
                     <th></th>
                   </tr>
                 </thead>

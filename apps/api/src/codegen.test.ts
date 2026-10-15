@@ -9557,6 +9557,85 @@ test("the exported EntityView's search box highlights the matched text within ea
 });
 
 /**
+ * New in this round: every record has always carried a real, server-
+ * assigned `createdAt` (round 168's own live-preview feature -- the
+ * table's own insertRecord always stamps one), but the exported app's
+ * table never showed it anywhere -- the only way to tell when a record
+ * was actually added was to open it and guess, or check the CSV export's
+ * raw data. Confirms the real generated EntityView renders a built-in
+ * "Created" column showing each record's own real timestamp (not blank,
+ * not the same value for every row), and that clicking its header
+ * genuinely re-sorts the table by that real data via the same
+ * sortRecordsMulti/toggleSort machinery the entity's own field columns
+ * already use.
+ */
+test("the exported EntityView shows each record's own real 'Created' timestamp, and its header sorts the table by it", async () => {
+  const files = generateExportFiles(project);
+  const dir = writeGeneratedWebComponent(files);
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async () => ({
+    ok: true,
+    status: 200,
+    json: async () => ({
+      records: [
+        { id: 1, name: "Acme Corp", status: "New", createdAt: "2026-01-01T09:00:00.000Z" },
+        { id: 2, name: "Globex", status: "Won", createdAt: "2026-03-01T09:00:00.000Z" },
+        { id: 3, name: "Initech", status: "Won", createdAt: "2026-02-01T09:00:00.000Z" },
+      ],
+    }),
+  })) as typeof fetch;
+
+  try {
+    await withRealLocalStorage(async () => {
+      const { EntityView } = await import(path.join(dir, "web", "src", "components", "EntityView.jsx"));
+      const customerEntity = project.spec.entities.find((e) => e.name === "Customer")!;
+      const props = {
+        entity: customerEntity,
+        highlightRecordId: null,
+        onHighlightHandled: () => {},
+        onJumpToRecord: () => {},
+        onRecordCountChange: () => {},
+      };
+
+      const { container } = render(React.createElement(EntityView, props));
+      for (let i = 0; i < 40; i++) {
+        if (container.querySelectorAll("tbody tr").length === 3) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+
+      const createdCells = Array.from(container.querySelectorAll("tbody tr")).map(
+        (row) => row.querySelector(".created-at-cell")!.textContent,
+      );
+      assert.ok(
+        createdCells.every((c) => c && c.length > 0),
+        "every row must show a real, non-blank Created value",
+      );
+      assert.equal(new Set(createdCells).size, 3, "each row's real distinct createdAt must render as a distinct value");
+
+      const createdHeader = Array.from(container.querySelectorAll("thead th button.sort-header")).find((el) =>
+        /Created/.test(el.textContent ?? ""),
+      ) as HTMLButtonElement;
+      assert.ok(createdHeader, "expected a sortable 'Created' column header");
+
+      await act(async () => {
+        fireEvent.click(createdHeader);
+      });
+      const namesAfterAscSort = Array.from(container.querySelectorAll("tbody tr")).map((r) => r.textContent ?? "");
+      assert.ok(
+        /Acme Corp/.test(namesAfterAscSort[0]) && /Initech/.test(namesAfterAscSort[1]) && /Globex/.test(namesAfterAscSort[2]),
+        "ascending Created sort must order Acme (Jan) before Initech (Feb) before Globex (Mar), by real createdAt, not declaration order",
+      );
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    cleanup();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
  * New in this round: mirrors the live preview's own "Clear sort" button
  * -- toggleSort's own non-additive branch only ever collapses a sort
  * down to a single key, never back to [], so once a multi-column sort
