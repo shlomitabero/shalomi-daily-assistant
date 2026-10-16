@@ -17,6 +17,7 @@ export default function Settings() {
   const [form, setForm] = useState({ budget: '', maxLoss: '', country: '', currency: 'ILS', mode: 'research' });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const [loadError, setLoadError] = useState('');
 
   function refresh() {
     api.getSettings().then((r) => {
@@ -28,7 +29,7 @@ export default function Settings() {
         currency: r.settings.currency ?? 'ILS',
         mode: r.settings.mode,
       });
-    });
+    }).catch((err) => setLoadError(err.data?.error || err.message));
   }
   useEffect(refresh, []);
 
@@ -70,7 +71,13 @@ export default function Settings() {
     navigate('/login');
   }
 
-  if (!settings) return <div className="page-loading">טוען…</div>;
+  if (!settings) {
+    return (
+      <div className="page-loading">
+        {loadError ? <p className="form-error">{loadError}</p> : 'טוען…'}
+      </div>
+    );
+  }
 
   return (
     <div className="page">
