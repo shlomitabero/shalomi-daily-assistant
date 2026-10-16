@@ -99,6 +99,37 @@ test("computeCheckpointDiff disambiguates an added/removed field name against a 
   ]);
 });
 
+/**
+ * Round 642: the entity-level twin of the field-label test above -- an
+ * entity's own display label is just as unenforced-unique as a field's.
+ * A checkpoint that still has a field on one of two same-labeled entities,
+ * missing from the current spec, used to report the bare shared label as
+ * "changed" -- indistinguishable from the other, untouched entity sharing
+ * that same label.
+ */
+test("computeCheckpointDiff disambiguates a changed entity's label against a sibling entity sharing the identical label", () => {
+  const current = makeSpec([
+    { name: "Product", label: "Items", fields: [{ name: "name", type: "text", required: true }] },
+    { name: "Service", label: "Items", fields: [{ name: "name", type: "text", required: true }] },
+  ]);
+  const checkpoint = makeSpec([
+    {
+      name: "Product",
+      label: "Items",
+      fields: [
+        { name: "name", type: "text", required: true },
+        { name: "price", label: "Price", type: "number", required: true },
+      ],
+    },
+    { name: "Service", label: "Items", fields: [{ name: "name", type: "text", required: true }] },
+  ]);
+
+  const diff = computeCheckpointDiff(current, checkpoint);
+  assert.deepEqual(diff.changedEntities, [
+    { name: "Product", label: "Items (Product)", removedFieldNames: [], addedFieldNames: ["Price"], changedFieldNames: [] },
+  ]);
+});
+
 test("computeCheckpointDiff reports checkpoint-only entities/fields as additions, not as absence of removals", () => {
   const current = makeSpec([{ name: "Customer", fields: [{ name: "name", type: "text", required: true }] }]);
   const checkpointWithExtra = makeSpec([

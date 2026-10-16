@@ -121,9 +121,46 @@ function fieldDisplayLabel(field: Field, occurrences: Map<string, number>): stri
   return (occurrences.get(label) ?? 0) > 1 ? `${label} (${field.name})` : label;
 }
 
+/**
+ * The entity-level twin of fieldLabelOccurrences/fieldDisplayLabel above --
+ * an entity's own display label is just as unenforced-unique as a field's
+ * (entities.ts's PATCH /entities/:entityName/label route accepts any
+ * non-empty string, with no collision check against sibling entities'
+ * labels), so two different entities can legally share a label via the
+ * Entity Label editor. Without this, computeImpact's own
+ * "<label> lost field(s)"/"<label> now enforces stricter rules on"
+ * warnings below -- and App.tsx's chat-history rendering of this same
+ * `detail`, which reads this exact `label` field -- would be unable to
+ * tell a reader which of two same-labeled entities actually changed,
+ * one level up from the field-label gap round 641 already fixed in this
+ * identical function.
+ */
+function entityLabelOccurrences(entities: Entity[]): Map<string, number> {
+  const occurrences = new Map<string, number>();
+  for (const e of entities) {
+    const label = e.label ?? e.name;
+    occurrences.set(label, (occurrences.get(label) ?? 0) + 1);
+  }
+  return occurrences;
+}
+
+function entityDisplayLabel(entity: Entity, occurrences: Map<string, number>): string {
+  const label = entity.label ?? entity.name;
+  return (occurrences.get(label) ?? 0) > 1 ? `${label} (${entity.name})` : label;
+}
+
 function computeImpact(previousSpec: ProductSpec | undefined, nextSpec: ProductSpec): ImpactSummary {
   const previousEntities = new Map((previousSpec?.entities ?? []).map((e) => [e.name, e]));
   const nextEntityNames = new Set(nextSpec.entities.map((e) => e.name));
+  // Counted over every entity that exists on EITHER side of this refine
+  // (deduped by name, mirroring the identical field-level domain choice
+  // above), so a removed entity's label is checked against a surviving
+  // same-labeled entity too, not just whichever of new/changed/removed
+  // list it lands in.
+  const allEntitiesByName = new Map<string, Entity>();
+  for (const e of previousSpec?.entities ?? []) allEntitiesByName.set(e.name, e);
+  for (const e of nextSpec.entities) allEntitiesByName.set(e.name, e);
+  const entityLabels = entityLabelOccurrences(Array.from(allEntitiesByName.values()));
   const newEntities: { name: string; label: string }[] = [];
   const changedEntities: {
     name: string;
@@ -136,7 +173,7 @@ function computeImpact(previousSpec: ProductSpec | undefined, nextSpec: ProductS
   for (const entity of nextSpec.entities) {
     const prev = previousEntities.get(entity.name);
     if (!prev) {
-      newEntities.push({ name: entity.name, label: entity.label ?? entity.name });
+      newEntities.push({ name: entity.name, label: entityDisplayLabel(entity, entityLabels) });
       continue;
     }
     const prevFieldsByName = new Map(prev.fields.map((f) => [f.name, f]));
@@ -176,7 +213,7 @@ function computeImpact(previousSpec: ProductSpec | undefined, nextSpec: ProductS
       const labelOccurrences = fieldLabelOccurrences(Array.from(allFieldsByName.values()));
       changedEntities.push({
         name: entity.name,
-        label: entity.label ?? entity.name,
+        label: entityDisplayLabel(entity, entityLabels),
         newFieldNames: newFields.map((f) => fieldDisplayLabel(f, labelOccurrences)),
         removedFieldNames: removedFields.map((f) => fieldDisplayLabel(f, labelOccurrences)),
         tightenedFieldNames: tightenedFields.map((f) => fieldDisplayLabel(f, labelOccurrences)),
@@ -186,7 +223,7 @@ function computeImpact(previousSpec: ProductSpec | undefined, nextSpec: ProductS
 
   const removedEntities = (previousSpec?.entities ?? [])
     .filter((e) => !nextEntityNames.has(e.name))
-    .map((e) => ({ name: e.name, label: e.label ?? e.name }));
+    .map((e) => ({ name: e.name, label: entityDisplayLabel(e, entityLabels) }));
 
   return {
     newEntityNames: newEntities.map((e) => e.name),

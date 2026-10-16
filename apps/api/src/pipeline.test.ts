@@ -689,6 +689,73 @@ test("removing one of two same-labeled fields names the real removed field, not 
 });
 
 /**
+ * Round 642: round 641's fix disambiguated same-labeled FIELDS, but an
+ * entity's own display label is just as unenforced-unique (the Entity
+ * Label editor's PATCH route accepts any non-empty string, with no
+ * collision check against sibling entities' labels). Dropping a field
+ * from one of two entities that share a label used to make the
+ * Architect's warning name the bare shared label -- indistinguishable
+ * from the OTHER, untouched entity sharing that same label.
+ */
+test("dropping a field from one of two same-labeled entities names the real changed entity, not the shared label that also belongs to an untouched sibling entity", async () => {
+  const db = openDatabase(":memory:");
+  ensureProjectsTable(db);
+  ensureCheckpointsTable(db);
+  const previousSpec: ProductSpec = {
+    summary: "test",
+    personas: [],
+    roles: ["Admin"],
+    screens: [],
+    assumptions: [],
+    openQuestions: [],
+    entities: [
+      {
+        name: "Product",
+        label: "Items",
+        fields: [{ name: "name", type: "text", required: true }, { name: "price", type: "number", required: true }],
+      },
+      {
+        name: "Service",
+        label: "Items",
+        fields: [{ name: "name", type: "text", required: true }],
+      },
+    ],
+  };
+  const nextSpec: ProductSpec = {
+    ...previousSpec,
+    entities: [
+      { ...previousSpec.entities[0], fields: [previousSpec.entities[0].fields[0]] },
+      previousSpec.entities[1],
+    ],
+  };
+  applyMigrations(db, "proj1", previousSpec);
+  const project = insertProject(db, {
+    id: "proj1",
+    ownerId: "user1",
+    name: "test",
+    description: "test",
+    spec: previousSpec,
+  });
+
+  const events = await collect(runBuildPipeline(db, project, { previousSpec, nextSpec, changeLabel: "Refine: drop price" }));
+  const architectSuccess = events.find((e) => e.agent === "Architect" && e.status === "success");
+  assert.ok(architectSuccess);
+
+  assert.match(architectSuccess!.message, /Warning: Items \(Product\) lost field\(s\): price/);
+  assert.doesNotMatch(
+    architectSuccess!.message,
+    /Warning: Items lost field\(s\)/,
+    "the warning must disambiguate which 'Items' entity lost the field, not name the bare shared label that also belongs to the untouched 'Service' entity",
+  );
+
+  type ImpactDetail = { changedEntities: { name: string; label: string; newFieldNames: string[]; removedFieldNames: string[]; tightenedFieldNames: string[] }[] };
+  const detail = architectSuccess!.detail as ImpactDetail;
+  assert.deepEqual(detail.changedEntities, [
+    { name: "Product", label: "Items (Product)", newFieldNames: [], removedFieldNames: ["price"], tightenedFieldNames: [] },
+  ]);
+});
+
+/**
  * Regression test for a real gap found by round 398's Explore survey: a
  * same-named field that keeps existing on both sides of a refine is
  * invisible to computeImpact's new/removed field checks, but can still

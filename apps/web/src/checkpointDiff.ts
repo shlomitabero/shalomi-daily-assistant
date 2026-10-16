@@ -1,4 +1,4 @@
-import type { Checkpoint, Field, ProductSpec } from "@forge/shared";
+import type { Checkpoint, Entity, Field, ProductSpec } from "@forge/shared";
 import { safeDownloadName } from "./api.js";
 import type { Lang } from "./i18n/language.js";
 
@@ -56,6 +56,33 @@ function fieldDisplayLabel(field: Field, occurrences: Map<string, number>): stri
 }
 
 /**
+ * The entity-level twin of fieldLabelOccurrences/fieldDisplayLabel above --
+ * an entity's own display label is just as unenforced-unique as a field's
+ * (routes/projects.ts's PATCH /entities/:entityName/label route accepts
+ * any non-empty string, no collision check against sibling entities'
+ * labels), so two different entities can legally share a label via the
+ * Entity Label editor. Without this, HistoryPanel's rendering of this
+ * diff's removed/added/changed entity lists (which reads `label` alone)
+ * could be confused with a different, still-live entity sharing the
+ * identical label -- mirrors (rather than imports, matching this
+ * codebase's established per-surface convention) pipeline.ts's identical
+ * entityLabelOccurrences/entityDisplayLabel pair.
+ */
+function entityLabelOccurrences(entities: Entity[]): Map<string, number> {
+  const occurrences = new Map<string, number>();
+  for (const e of entities) {
+    const label = e.label ?? e.name;
+    occurrences.set(label, (occurrences.get(label) ?? 0) + 1);
+  }
+  return occurrences;
+}
+
+function entityDisplayLabel(entity: Entity, occurrences: Map<string, number>): string {
+  const label = entity.label ?? entity.name;
+  return (occurrences.get(label) ?? 0) > 1 ? `${label} (${entity.name})` : label;
+}
+
+/**
  * Restoring never destroys data (migrations are additive-only, see
  * projects.ts's restore route), but it DOES move which entities/fields the
  * live app currently *shows* -- so before clicking Restore, a real question
@@ -74,6 +101,13 @@ function fieldDisplayLabel(field: Field, occurrences: Map<string, number>): stri
 export function computeCheckpointDiff(currentSpec: ProductSpec, checkpointSpec: ProductSpec): CheckpointDiff {
   const checkpointEntities = new Map(checkpointSpec.entities.map((e) => [e.name, e]));
   const currentEntities = new Map(currentSpec.entities.map((e) => [e.name, e]));
+  // Counted over every entity that exists on EITHER side (deduped by name),
+  // mirroring the identical field-level domain choice below -- see this
+  // function's own doc comment for why.
+  const allEntitiesByName = new Map<string, Entity>();
+  for (const e of checkpointSpec.entities) allEntitiesByName.set(e.name, e);
+  for (const e of currentSpec.entities) allEntitiesByName.set(e.name, e);
+  const entityLabels = entityLabelOccurrences(Array.from(allEntitiesByName.values()));
   const removedEntities: { name: string; label: string }[] = [];
   const addedEntities: { name: string; label: string }[] = [];
   const changedEntities: {
@@ -87,7 +121,7 @@ export function computeCheckpointDiff(currentSpec: ProductSpec, checkpointSpec: 
   for (const entity of currentSpec.entities) {
     const inCheckpoint = checkpointEntities.get(entity.name);
     if (!inCheckpoint) {
-      removedEntities.push({ name: entity.name, label: entity.label ?? entity.name });
+      removedEntities.push({ name: entity.name, label: entityDisplayLabel(entity, entityLabels) });
       continue;
     }
     const checkpointFieldsByName = new Map(inCheckpoint.fields.map((f) => [f.name, f]));
@@ -113,13 +147,13 @@ export function computeCheckpointDiff(currentSpec: ProductSpec, checkpointSpec: 
       })
       .map((f) => fieldDisplayLabel(f, labelOccurrences));
     if (removedFieldNames.length > 0 || addedFieldNames.length > 0 || changedFieldNames.length > 0) {
-      changedEntities.push({ name: entity.name, label: entity.label ?? entity.name, removedFieldNames, addedFieldNames, changedFieldNames });
+      changedEntities.push({ name: entity.name, label: entityDisplayLabel(entity, entityLabels), removedFieldNames, addedFieldNames, changedFieldNames });
     }
   }
 
   for (const entity of checkpointSpec.entities) {
     if (!currentEntities.has(entity.name)) {
-      addedEntities.push({ name: entity.name, label: entity.label ?? entity.name });
+      addedEntities.push({ name: entity.name, label: entityDisplayLabel(entity, entityLabels) });
     }
   }
 
