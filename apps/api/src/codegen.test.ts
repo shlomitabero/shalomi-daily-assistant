@@ -7841,7 +7841,10 @@ test("the exported EntityView supports double-click inline cell editing, ported 
   // The table cell itself must be a real double-click target when editable, rendering FieldInput (not just Cell) while editing.
   assert.match(entityViewJsx, /onDoubleClick=\{editable && !isEditingThisCell \? \(\) => startInlineEdit\(r, f\) : undefined\}/);
   assert.match(entityViewJsx, /isEditingThisCell \? \(\s*<FieldInput/);
-  assert.match(entityViewJsx, /onKeyDown=\{\(e\) => \{\s*if \(e\.key === "Enter"\) \{\s*e\.preventDefault\(\);\s*void commitInlineEdit\(\);\s*\} else if \(e\.key === "Escape"\) \{\s*e\.preventDefault\(\);\s*cancelInlineEdit\(\);/);
+  assert.match(
+    entityViewJsx,
+    /onKeyDown=\{\(e\) => \{\s*if \(e\.key === "Enter"\) \{[\s\S]*?if \(f\.type === "longtext" && !\(e\.ctrlKey \|\| e\.metaKey\)\) return;\s*e\.preventDefault\(\);\s*void commitInlineEdit\(\);\s*\} else if \(e\.key === "Escape"\) \{\s*e\.preventDefault\(\);\s*cancelInlineEdit\(\);/,
+  );
 
   const stylesCss = files.find((f) => f.path === "web/src/styles.css")!.content;
   assert.match(stylesCss, /\.cell-inline-editable/);
@@ -11651,6 +11654,105 @@ test("the exported EntityView's record form submits on Ctrl+Enter or Cmd+Enter f
       }
       assert.equal(postCount, 2, "Cmd+Enter (metaKey) must also create a real record through the real API");
       assert.equal(store[1]?.name, "Lee");
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    cleanup();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
+ * Round 646 regression, ported from the live Forge AI preview's own
+ * EntityPanel.tsx fix: the exported app's inline table-cell editor had
+ * the identical unconditional Enter-captures-commit handler, with no
+ * exception for longtext -- the same gap its own full add/edit form
+ * (tested just above) was already fixed for. Confirms the real generated
+ * inline editor now lets a bare Enter insert a newline in a longtext
+ * cell, committing only on Ctrl/Cmd+Enter.
+ */
+test("the exported EntityView's inline cell editor lets a bare Enter insert a newline in a longtext cell, committing only on Ctrl/Cmd+Enter", async () => {
+  const withLead: Project = {
+    ...project,
+    spec: {
+      ...project.spec,
+      entities: [
+        ...project.spec.entities,
+        {
+          name: "Lead",
+          label: "Lead",
+          fields: [
+            { name: "name", label: "Name", type: "text", required: true },
+            { name: "notes", label: "Notes", type: "longtext", required: false },
+          ],
+        },
+      ],
+    },
+  };
+  const files = generateExportFiles(withLead);
+  const dir = writeGeneratedWebComponent(files);
+  const originalFetch = globalThis.fetch;
+  const store: { id: number; name: string; notes: string }[] = [{ id: 1, name: "Acme Corp", notes: "Line one" }];
+  let patchCount = 0;
+  globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
+    const method = init?.method ?? "GET";
+    if (method === "GET" && input === "/api/Lead") {
+      return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    if (method === "PATCH" && input === "/api/Lead/1") {
+      patchCount += 1;
+      Object.assign(store[0], JSON.parse(init!.body as string));
+      return new Response(JSON.stringify({ record: store[0] }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    throw new Error(`unexpected request ${method} ${input}`);
+  }) as typeof fetch;
+
+  try {
+    await withRealLocalStorage(async () => {
+      const { EntityView } = await import(path.join(dir, "web", "src", "components", "EntityView.jsx"));
+      const leadEntity = withLead.spec.entities.find((e) => e.name === "Lead")!;
+      const props = {
+        entity: leadEntity,
+        highlightRecordId: null,
+        onHighlightHandled: () => {},
+        onJumpToRecord: () => {},
+        onRecordCountChange: () => {},
+      };
+
+      const { container } = render(React.createElement(EntityView, props));
+      for (let i = 0; i < 40; i++) {
+        if (container.querySelectorAll("tbody tr").length === 1) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+
+      const notesCell = container.querySelectorAll("tbody td")[2] as HTMLTableCellElement;
+      await act(async () => {
+        fireEvent.doubleClick(notesCell);
+      });
+      const textarea = notesCell.querySelector("textarea") as HTMLTextAreaElement;
+      assert.ok(textarea, "expected a real textarea inside the inline-edited longtext cell");
+
+      await act(async () => {
+        fireEvent.change(textarea, { target: { value: "Line one\nLine two" } });
+        fireEvent.keyDown(textarea, { key: "Enter" });
+      });
+      assert.equal(patchCount, 0, "a bare Enter in the inline longtext editor must never commit");
+      assert.ok(notesCell.querySelector("textarea"), "the cell must still be in edit mode after a bare Enter");
+
+      await act(async () => {
+        fireEvent.keyDown(textarea, { key: "Enter", ctrlKey: true });
+      });
+      for (let i = 0; i < 40; i++) {
+        if (patchCount === 1) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+      assert.equal(patchCount, 1, "Ctrl+Enter must commit the real multi-line value through the real API");
+      assert.equal(store[0].notes, "Line one\nLine two");
+      assert.equal(notesCell.querySelector("textarea"), null, "the cell must exit edit mode once Ctrl+Enter commits");
     });
   } finally {
     globalThis.fetch = originalFetch;

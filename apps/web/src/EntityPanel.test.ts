@@ -8386,3 +8386,66 @@ test("EntityPanel's record form submits on Ctrl+Enter or Cmd+Enter from a longte
     }
   });
 });
+
+/**
+ * Round 646 regression: the inline table-cell editor's own onKeyDown
+ * unconditionally captured every Enter press to commit-and-close, with no
+ * exception for longtext -- unlike the full add/edit form just above,
+ * which deliberately lets a bare Enter insert a newline in its own
+ * longtext textarea and only submits on Ctrl/Cmd+Enter. Double-clicking a
+ * Notes/Description cell to add a second line was therefore impossible
+ * through the fast inline-edit path: any Enter immediately committed
+ * whatever was typed so far and exited edit mode. Confirms both halves
+ * for the inline editor specifically: a bare Enter must never commit
+ * (and must leave the cell still in edit mode), while Ctrl+Enter commits
+ * exactly like it always did.
+ */
+test("EntityPanel's inline cell editor lets a bare Enter insert a newline in a longtext cell, committing only on Ctrl/Cmd+Enter", async () => {
+  await withJsdom(async () => {
+    const noteEntity: Entity = {
+      name: "Customer",
+      label: "Customer",
+      fields: [
+        { name: "name", label: "Name", type: "text", required: true },
+        { name: "notes", label: "Notes", type: "longtext", required: false },
+      ],
+    };
+    const store: EntityRecord[] = [{ id: 1, createdAt: "x", name: "Acme Corp", notes: "Line one" }];
+    const originalFetch = globalThis.fetch;
+    let patchCount = 0;
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/entities/Customer") {
+        return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      if (method === "PATCH" && input === "/api/projects/proj1/entities/Customer/1") {
+        patchCount += 1;
+        Object.assign(store[0], JSON.parse(init!.body as string));
+        return new Response(JSON.stringify({ record: store[0] }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+    try {
+      renderEntityPanel({ entity: noteEntity, allEntities: [noteEntity] });
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 1);
+
+      const notesCell = document.querySelectorAll("table tbody td")[2] as HTMLTableCellElement;
+      fireEvent.doubleClick(notesCell);
+      const textarea = notesCell.querySelector("textarea") as HTMLTextAreaElement;
+      assert.ok(textarea, "expected a real textarea inside the inline-edited longtext cell");
+
+      fireEvent.change(textarea, { target: { value: "Line one\nLine two" } });
+      fireEvent.keyDown(textarea, { key: "Enter" });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      assert.equal(patchCount, 0, "a bare Enter in the inline longtext editor must never commit");
+      assert.ok(notesCell.querySelector("textarea"), "the cell must still be in edit mode after a bare Enter");
+
+      fireEvent.keyDown(textarea, { key: "Enter", ctrlKey: true });
+      await waitForCondition(() => patchCount === 1);
+      assert.equal(store[0].notes, "Line one\nLine two", "Ctrl+Enter must commit the real multi-line value through the real API");
+      assert.equal(notesCell.querySelector("textarea"), null, "the cell must exit edit mode once Ctrl+Enter commits");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});

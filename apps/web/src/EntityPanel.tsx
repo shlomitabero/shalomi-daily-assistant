@@ -2397,6 +2397,12 @@ export function EntityPanel({
                   onBlur={handleCellBlur}
                   onKeyDown={(e) => {
                     if (e.key === "Enter") {
+                      // A longtext field's own <textarea> has no other way
+                      // to insert a newline -- mirrors the full add/edit
+                      // form's own identical carve-out just below, so a
+                      // bare Enter here types a line break instead of
+                      // silently committing and closing the cell.
+                      if (f.type === "longtext" && !(e.ctrlKey || e.metaKey)) return;
                       e.preventDefault();
                       void commitInlineEdit();
                     } else if (e.key === "Escape") {
