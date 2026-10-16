@@ -450,6 +450,17 @@ for (const entity of ENTITIES) {
       const row = db.prepare(\`SELECT * FROM \${q(entity.name)} WHERE id = ?\`).get(result.lastInsertRowid);
       res.status(201).json({ record: rowToRecord(entity, row) });
     } catch (err) {
+      // PRAGMA foreign_keys (above) throws this exact message when a
+      // relation field's value references a record that doesn't exist --
+      // a relation picker is built from relatedRecords fetched earlier, so
+      // submitting a create referencing a record deleted in the meantime
+      // hits this exact constraint. Translated into a real, actionable 400
+      // instead of the raw SQLite message, the same translation the live
+      // Forge AI backend's own create route uses (and this same generated
+      // server's own DELETE route already does for its own FK case below).
+      if (err.message === "FOREIGN KEY constraint failed") {
+        return res.status(400).json({ error: "This record references another record that no longer exists" });
+      }
       res.status(400).json({ error: err.message });
     }
   });
@@ -468,6 +479,12 @@ for (const entity of ENTITIES) {
       const row = db.prepare(\`SELECT * FROM \${q(entity.name)} WHERE id = ?\`).get(req.params.id);
       res.json({ record: rowToRecord(entity, row) });
     } catch (err) {
+      // Same FK-constraint translation as the POST route above, for the
+      // identical reason -- an edit's relation field can just as easily
+      // reference a record deleted in the meantime as a create can.
+      if (err.message === "FOREIGN KEY constraint failed") {
+        return res.status(400).json({ error: "This record references another record that no longer exists" });
+      }
       res.status(400).json({ error: err.message });
     }
   });

@@ -750,6 +750,119 @@ test("generated server.js actually enforces foreign keys: deleting a record anot
 });
 
 /**
+ * Round 648 regression: the exact same "FOREIGN KEY constraint failed"
+ * SQLite error the test above confirms is translated on DELETE was never
+ * translated on CREATE or UPDATE -- both just passed the raw SQLite
+ * message straight to the client as `err.message`, unlike the live Forge
+ * AI backend, which already guards exactly these two routes (and only
+ * these two, with DELETE's own distinct 409 wording) against this same
+ * constraint. A relation picker is built from records fetched earlier, so
+ * submitting a create or edit referencing a record someone else deleted
+ * in the meantime hits this. Reproduced against a real spawned server,
+ * the same standard as the DELETE test above.
+ */
+test("generated server.js's create and update routes translate a dangling relation-target id into a real 400, not the raw SQLite error", async () => {
+  const relationProject: Project = {
+    ...project,
+    spec: {
+      ...project.spec,
+      entities: [
+        { name: "Courier", fields: [{ name: "name", type: "text", required: true }] },
+        {
+          name: "Order",
+          fields: [
+            { name: "item", type: "text", required: true },
+            { name: "courierId", type: "relation", required: false, relationTo: "Courier" },
+          ],
+        },
+      ],
+    },
+  };
+  const files = generateExportFiles(relationProject);
+  const serverJs = files.find((f) => f.path === "server.js")!.content;
+
+  const dir = mkdtempSync(path.join(tmpdir(), "codegen-fk-create-update-test-"));
+  const repoRoot = path.resolve(import.meta.dirname, "../../..");
+  symlinkSync(path.join(repoRoot, "node_modules"), path.join(dir, "node_modules"));
+  writeFileSync(path.join(dir, "server.js"), serverJs);
+
+  const port = 54000 + Math.floor(Math.random() * 5000);
+  const child = spawn(process.execPath, ["--experimental-sqlite", "server.js"], {
+    cwd: dir,
+    env: { ...process.env, PORT: String(port) },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  let stderr = "";
+  child.stderr.on("data", (chunk) => {
+    stderr += chunk.toString();
+  });
+
+  try {
+    const deadline = Date.now() + 5000;
+    let lastErr: unknown;
+    while (Date.now() < deadline) {
+      if (child.exitCode !== null) throw new Error(`server.js exited early (code ${child.exitCode}):\n${stderr}`);
+      try {
+        await fetch(`http://localhost:${port}/api/entities`);
+        break;
+      } catch (err) {
+        lastErr = err;
+        await new Promise((r) => setTimeout(r, 100));
+      }
+    }
+    if (child.exitCode !== null) throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
+
+    // A courier nothing references yet, so deleting it succeeds -- leaving
+    // its own id dangling for a later create/update to reference.
+    const courierRes = await fetch(`http://localhost:${port}/api/Courier`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ name: "Bob" }),
+    });
+    const deletedCourier = (await courierRes.json()).record;
+    const deleteRes = await fetch(`http://localhost:${port}/api/Courier/${deletedCourier.id}`, { method: "DELETE" });
+    assert.equal(deleteRes.status, 204);
+
+    const createRes = await fetch(`http://localhost:${port}/api/Order`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ item: "Package", courierId: deletedCourier.id }),
+    });
+    assert.equal(createRes.status, 400, "creating a record referencing a deleted target must be rejected, not crash with a raw 500-shaped error");
+    const createBody = await createRes.json();
+    assert.equal(
+      createBody.error,
+      "This record references another record that no longer exists",
+      "the create route must translate the raw SQLite FK message into the same friendly wording the live backend uses",
+    );
+
+    // An order with no relation value yet, to PATCH afterward.
+    const orderRes = await fetch(`http://localhost:${port}/api/Order`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ item: "Package 2" }),
+    });
+    const order = (await orderRes.json()).record;
+
+    const patchRes = await fetch(`http://localhost:${port}/api/Order/${order.id}`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ courierId: deletedCourier.id }),
+    });
+    assert.equal(patchRes.status, 400, "updating a record to reference a deleted target must be rejected, not crash with a raw 500-shaped error");
+    const patchBody = await patchRes.json();
+    assert.equal(
+      patchBody.error,
+      "This record references another record that no longer exists",
+      "the update route must translate the raw SQLite FK message the same way the create route does",
+    );
+  } finally {
+    child.kill();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
  * New in this round: a relation field's `relationTo` can go dangling -- a
  * later refine regenerates the whole spec from plain prose with no access
  * to the previous structure (see pipeline.ts's own computeImpact/
