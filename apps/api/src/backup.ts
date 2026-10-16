@@ -102,13 +102,41 @@ function fieldDisplayValue(
   return String(value);
 }
 
+/**
+ * A field's display label is never enforced unique (only its name is --
+ * see entityFormatting.ts's/codegen.ts's own comment on this), so two
+ * fields on the same entity can legally share a label via the Field Label
+ * editor (e.g. a "subtotal" and a "shipping" field both labeled "Amount").
+ * Without this, entityToCsv's header below would write that shared label
+ * twice with nothing to tell the columns apart -- silently corrupting a
+ * backup a real user could re-import via this same app's own per-entity
+ * "Import CSV" feature, which matches columns by header text alone.
+ * Mirrors (rather than imports, per this file's own top comment)
+ * entityFormatting.ts's/codegen.ts's identical fieldLabelOccurrences/
+ * fieldDisplayLabel pair, already used there for the same reason.
+ */
+function fieldLabelOccurrences(fields: Field[]): Map<string, number> {
+  const occurrences = new Map<string, number>();
+  for (const f of fields) {
+    const label = f.label ?? f.name;
+    occurrences.set(label, (occurrences.get(label) ?? 0) + 1);
+  }
+  return occurrences;
+}
+
+function fieldDisplayLabel(field: Field, occurrences: Map<string, number>): string {
+  const label = field.label ?? field.name;
+  return (occurrences.get(label) ?? 0) > 1 ? `${label} (${field.name})` : label;
+}
+
 function entityToCsv(
   entity: Entity,
   records: EntityRecord[],
   allEntities: Entity[],
   recordIndexByEntity: Record<string, Map<number, EntityRecord>>,
 ): string {
-  const header = entity.fields.map((f) => csvEscape(f.label ?? f.name)).join(",");
+  const labelOccurrences = fieldLabelOccurrences(entity.fields);
+  const header = entity.fields.map((f) => csvEscape(fieldDisplayLabel(f, labelOccurrences))).join(",");
   const rows = records.map((record) =>
     entity.fields.map((f) => csvEscape(fieldDisplayValue(f, record[f.name], allEntities, recordIndexByEntity))).join(","),
   );

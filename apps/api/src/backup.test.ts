@@ -141,6 +141,38 @@ test("real inserted records appear in the CSV with translated enum labels, not r
   assert.equal(lines[1], "Dana Levi,הצליח");
 });
 
+/**
+ * Round 640: a field's display label is never enforced unique (only its
+ * name is), so two fields on the same entity can legally share a label
+ * via the Field Label editor. The same gap rounds 635-638 already fixed
+ * in Business Twin, the calendar export, CSV export, print sheets, and
+ * board cards -- but this file's own entityToCsv (the live preview
+ * server's "Backup all data" ZIP, a genuinely separate code path from
+ * codegen.ts's generated backup builder round 637 already fixed) had
+ * never been touched, and was left with the identical unguarded header.
+ */
+test("two fields sharing a label produce a disambiguated 'Backup all data' CSV header, not two indistinguishable columns", () => {
+  const orderProject: Project = {
+    ...project,
+    spec: {
+      ...project.spec,
+      entities: [
+        {
+          name: "Order",
+          fields: [
+            { name: "subtotal", label: "Amount", type: "number", required: true },
+            { name: "shipping", label: "Amount", type: "number", required: true },
+          ],
+        },
+      ],
+    },
+  };
+  const db = createTestDb(orderProject);
+  const entries = generateBackupZipEntries(db, orderProject);
+  const orderCsv = entries.find((e) => e.path === "Order.csv")!.content.replace(/^﻿/, "");
+  assert.equal(orderCsv, "Amount (subtotal),Amount (shipping)");
+});
+
 test("a relation field resolves to the related record's display label, not the raw foreign-key id", () => {
   const db = createTestDb(project);
   const customer = project.spec.entities[0];
