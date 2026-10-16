@@ -154,16 +154,16 @@ test("listWhatsAppMessages scopes to the given project and respects the limit", 
 });
 
 /**
- * New in this round: before, once a conversation passed the default limit
- * of 50, everything older became permanently unreachable -- there was no
- * offset param to ask for the next page, and nothing in the response even
- * hinted that more messages existed (see formatWhatsAppMessageCount's own
- * "N of N (all)" phrasing, which trusted the returned array's length as
- * the real total). hasMore -- computed from an extra row past `limit`,
- * never a second COUNT(*) query -- now tells the caller honestly whether
- * there's a next page, and offset lets it actually ask for one.
+ * Before the default limit of 50, once a conversation passed it everything
+ * older became permanently unreachable -- there was no way to ask for the
+ * next page, and nothing in the response even hinted that more messages
+ * existed (see formatWhatsAppMessageCount's own "N of N (all)" phrasing,
+ * which trusted the returned array's length as the real total). hasMore --
+ * computed from an extra row past `limit`, never a second COUNT(*) query --
+ * tells the caller honestly whether there's a next page, and the keyset
+ * cursor (nextCursor, from the previous page) lets it actually ask for one.
  */
-test("listWhatsAppMessages reports hasMore honestly and offset actually reaches older messages", () => {
+test("listWhatsAppMessages reports hasMore honestly and a cursor actually reaches older messages", () => {
   const db = openDatabase(":memory:");
   ensureWhatsAppMessagesTable(db);
   // Insert 5 messages with strictly increasing createdAt so "page order" is
@@ -179,17 +179,71 @@ test("listWhatsAppMessages reports hasMore honestly and offset actually reaches 
     });
   }
 
-  const firstPage = listWhatsAppMessages(db, "proj1", 2, 0);
+  const firstPage = listWhatsAppMessages(db, "proj1", 2);
   assert.deepEqual(firstPage.messages.map((m) => m.body), ["message 4", "message 3"]);
   assert.equal(firstPage.hasMore, true, "3 older messages still exist beyond this page of 2");
+  assert.ok(firstPage.nextCursor, "a cursor must be handed back to reach the next page");
 
-  const secondPage = listWhatsAppMessages(db, "proj1", 2, 2);
+  const secondPage = listWhatsAppMessages(db, "proj1", 2, firstPage.nextCursor);
   assert.deepEqual(secondPage.messages.map((m) => m.body), ["message 2", "message 1"]);
   assert.equal(secondPage.hasMore, true, "1 older message (message 0) still exists");
+  assert.ok(secondPage.nextCursor, "a cursor must be handed back to reach the last page");
 
-  const thirdPage = listWhatsAppMessages(db, "proj1", 2, 4);
+  const thirdPage = listWhatsAppMessages(db, "proj1", 2, secondPage.nextCursor);
   assert.deepEqual(thirdPage.messages.map((m) => m.body), ["message 0"]);
   assert.equal(thirdPage.hasMore, false, "message 0 is the oldest -- nothing left to load");
+  assert.equal(thirdPage.nextCursor, null, "there is no further page to point to");
+});
+
+/**
+ * The actual bug this round fixes: offset-based pagination recomputes
+ * position from the top of the DESC-ordered log on every call, so deleting
+ * a message above the pagination boundary between two "load more" calls --
+ * reachable in production by any collaborator, not just whoever is
+ * paginating -- used to shift every later row up by one and silently skip
+ * exactly one message, with no duplicate for a dedup filter to catch. A
+ * keyset cursor pins "everything strictly after this specific row," so it
+ * must survive a deletion that lands between reading a cursor and using it.
+ */
+test("listWhatsAppMessages's cursor still reaches every remaining message after a deletion above the boundary", () => {
+  const db = openDatabase(":memory:");
+  ensureWhatsAppMessagesTable(db);
+  const inserted = [];
+  for (let i = 0; i < 5; i++) {
+    inserted.push(
+      insertWhatsAppMessage(db, {
+        projectId: "proj1",
+        direction: "in",
+        fromNumber: "972500000000",
+        toNumber: "15550001111",
+        body: `message ${i}`,
+        status: "received",
+      }),
+    );
+  }
+
+  // Page 1: newest 2 messages ("message 4", "message 3"), cursor pointing
+  // just after "message 3".
+  const firstPage = listWhatsAppMessages(db, "proj1", 2);
+  assert.deepEqual(firstPage.messages.map((m) => m.body), ["message 4", "message 3"]);
+
+  // Another collaborator deletes "message 4" -- the newest message, above
+  // the page-1/page-2 boundary -- in the window between page 1 being
+  // fetched and page 2 being requested. Under the old offset scheme this
+  // would shift "message 1" out of page 2's window entirely.
+  deleteWhatsAppMessage(db, "proj1", inserted[4].id);
+
+  const secondPage = listWhatsAppMessages(db, "proj1", 2, firstPage.nextCursor);
+  assert.deepEqual(
+    secondPage.messages.map((m) => m.body),
+    ["message 2", "message 1"],
+    "the cursor must still land right after message 3, unaffected by a deletion above it",
+  );
+  assert.equal(secondPage.hasMore, true, "message 0 still exists beyond this page");
+
+  const thirdPage = listWhatsAppMessages(db, "proj1", 2, secondPage.nextCursor);
+  assert.deepEqual(thirdPage.messages.map((m) => m.body), ["message 0"]);
+  assert.equal(thirdPage.hasMore, false);
 });
 
 /**
@@ -214,9 +268,10 @@ test("listWhatsAppMessages reports hasMore: false when the total is an exact mul
     });
   }
 
-  const { messages, hasMore } = listWhatsAppMessages(db, "proj1", 4, 0);
+  const { messages, hasMore, nextCursor } = listWhatsAppMessages(db, "proj1", 4);
   assert.equal(messages.length, 4);
   assert.equal(hasMore, false, "exactly 4 messages exist and the limit is 4 -- there is nothing more");
+  assert.equal(nextCursor, null, "there is no further page to point to");
 });
 
 test("clearWhatsAppMessages wipes only the given project's message log, leaving other projects untouched", () => {

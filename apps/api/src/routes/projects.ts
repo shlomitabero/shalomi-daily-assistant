@@ -1368,14 +1368,15 @@ export function createProjectsRouter(
     asyncRoute(async (req, res) => {
       const project = requireProjectAccess(db, req.params.id, req.userId!);
       // A conversation only ever grows, and listWhatsAppMessages always
-      // capped at 50 with no way to ask for anything older -- offset lets
+      // capped at 50 with no way to ask for anything older -- cursor lets
       // the panel's own "load older messages" button actually reach them.
-      // Anything that isn't a genuine non-negative integer (missing, "abc",
-      // "-5") falls back to 0 rather than passing NaN/a negative value
-      // straight into the SQL LIMIT/OFFSET clause.
-      const parsedOffset = Number(req.query.offset);
-      const offset = Number.isInteger(parsedOffset) && parsedOffset >= 0 ? parsedOffset : 0;
-      res.json(listWhatsAppMessages(db, project.id, 50, offset));
+      // Anything that isn't a genuine string (missing, an array from a
+      // repeated query param) falls back to null, which listWhatsAppMessages
+      // itself already treats as "start from the newest message" --
+      // listWhatsAppMessages validates the cursor's own shape itself, same
+      // as it always tolerated a malformed offset.
+      const cursor = typeof req.query.cursor === "string" ? req.query.cursor : null;
+      res.json(listWhatsAppMessages(db, project.id, 50, cursor));
     }),
   );
 

@@ -173,29 +173,67 @@ export function insertWhatsAppMessage(
  * silently became permanently unreachable, with nothing in the response
  * even hinting that more existed (see formatWhatsAppMessageCount's own
  * "N of N (all)" phrasing in whatsappLog.ts, which took the returned
- * array's own length as the true total). `offset` lets the panel ask for
- * the next older page, and `hasMore` -- computed by asking for one extra
- * row past `limit` and checking whether it came back, never a second
- * COUNT(*) query -- tells it honestly whether there's anything left to
- * load, instead of it having to guess from `messages.length === limit`
- * (which is also true on the last page, whenever the log's real total is
- * an exact multiple of `limit`).
+ * array's own length as the true total). `hasMore` -- computed by asking
+ * for one extra row past `limit` and checking whether it came back, never
+ * a second COUNT(*) query -- tells the caller honestly whether there's
+ * anything left to load, instead of it having to guess from
+ * `messages.length === limit` (which is also true on the last page,
+ * whenever the log's real total is an exact multiple of `limit`).
+ *
+ * `cursor` is a keyset cursor (an opaque `"<createdAt>|<rowid>"` string
+ * taken from `nextCursor` on a previous page), not a row offset -- an
+ * earlier version used `OFFSET`, which counts position from the START of
+ * the DESC-ordered log on every call. Any message deleted anywhere above
+ * the pagination boundary between two "load more" calls (deleteWhatsAppMessage
+ * below is reachable by any collaborator, not just whoever is paginating)
+ * shifts every later row's position up by one, so the next OFFSET-based
+ * call silently skips exactly one message -- never duplicated, never
+ * re-fetched by the newest-page poll, permanently unreachable until the
+ * whole panel remounts. A keyset cursor pins "everything strictly after
+ * this specific row" instead of a row count, so it's unaffected by any
+ * number of inserts or deletes elsewhere in the log.
  */
 export function listWhatsAppMessages(
   db: ForgeDatabase,
   projectId: string,
   limit = 50,
-  offset = 0,
-): { messages: WhatsAppMessage[]; hasMore: boolean } {
+  cursor?: string | null,
+): { messages: WhatsAppMessage[]; hasMore: boolean; nextCursor: string | null } {
   // createdAt has only millisecond precision, so two messages inserted in
   // the same millisecond (a real possibility for a fast reply, or in a
   // test) would tie -- break the tie with rowid so "most recent first"
-  // always matches actual insertion order, not an arbitrary one.
-  const rows = db
-    .prepare("SELECT * FROM whatsapp_messages WHERE projectId = ? ORDER BY createdAt DESC, rowid DESC LIMIT ? OFFSET ?")
-    .all(projectId, limit + 1, offset) as Record<string, unknown>[];
+  // always matches actual insertion order, not an arbitrary one. rowid is
+  // SQLite's own hidden per-row integer, not a column on this table (its
+  // real primary key, `id`, is a TEXT UUID with no inherent order), so it
+  // has to be selected explicitly to build the next page's own cursor.
+  const parsedCursor = parseWhatsAppMessagesCursor(cursor);
+  const rows = (
+    parsedCursor
+      ? db
+          .prepare(
+            "SELECT *, rowid AS _rowid FROM whatsapp_messages WHERE projectId = ? AND (createdAt < ? OR (createdAt = ? AND rowid < ?)) ORDER BY createdAt DESC, rowid DESC LIMIT ?",
+          )
+          .all(projectId, parsedCursor.createdAt, parsedCursor.createdAt, parsedCursor.rowid, limit + 1)
+      : db
+          .prepare("SELECT *, rowid AS _rowid FROM whatsapp_messages WHERE projectId = ? ORDER BY createdAt DESC, rowid DESC LIMIT ?")
+          .all(projectId, limit + 1)
+  ) as Record<string, unknown>[];
   const hasMore = rows.length > limit;
-  return { messages: rows.slice(0, limit).map(rowToMessage), hasMore };
+  const page = rows.slice(0, limit);
+  const last = page[page.length - 1];
+  const nextCursor = hasMore && last ? `${last.createdAt as string}|${last._rowid as number}` : null;
+  return { messages: page.map(rowToMessage), hasMore, nextCursor };
+}
+
+/** Rejects anything that isn't a genuine `"<createdAt>|<rowid>"` cursor (missing, malformed, or hand-edited) by treating it as "start from the newest message" -- the same tolerant fallback listWhatsAppMessages' own former `offset` param already had for a non-numeric value. */
+function parseWhatsAppMessagesCursor(cursor?: string | null): { createdAt: string; rowid: number } | null {
+  if (!cursor) return null;
+  const separatorIndex = cursor.lastIndexOf("|");
+  if (separatorIndex === -1) return null;
+  const createdAt = cursor.slice(0, separatorIndex);
+  const rowid = Number(cursor.slice(separatorIndex + 1));
+  if (!createdAt || !Number.isInteger(rowid)) return null;
+  return { createdAt, rowid };
 }
 
 /** Wipes a project's whole WhatsApp message log (both directions) -- the user's own explicit "clear history" action, not something triggered automatically. */

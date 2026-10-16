@@ -813,9 +813,9 @@ export interface WhatsAppMessageLogEntry {
 
 export function listWhatsAppMessages(
   projectId: string,
-  offset = 0,
-): Promise<{ messages: WhatsAppMessageLogEntry[]; hasMore: boolean }> {
-  const suffix = offset > 0 ? `?offset=${offset}` : "";
+  cursor?: string | null,
+): Promise<{ messages: WhatsAppMessageLogEntry[]; hasMore: boolean; nextCursor: string | null }> {
+  const suffix = cursor ? `?cursor=${encodeURIComponent(cursor)}` : "";
   return request(`/projects/${projectId}/integrations/whatsapp/messages${suffix}`);
 }
 

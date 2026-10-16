@@ -242,6 +242,17 @@ export function WhatsAppPanel({
    */
   const messagesVersionRef = useRef(0);
 
+  // The keyset cursor from the most recently loaded page's own nextCursor
+  // (see listWhatsAppMessages, packages/db/src/whatsapp.ts) -- NOT
+  // messages.length, which round 652 found silently skips a message
+  // whenever another collaborator deletes one above the pagination
+  // boundary between two "load more" calls (a count-based OFFSET re-counts
+  // position from the top of the DESC-ordered log on every call, so a
+  // deletion there shifts everything below it up by one). A ref, not
+  // state, since setting it never needs to trigger a re-render on its own
+  // -- it only ever matters the next time handleLoadMore reads it.
+  const nextCursorRef = useRef<string | null>(null);
+
   function stopPolling() {
     if (pollRef.current) {
       clearInterval(pollRef.current);
@@ -344,10 +355,11 @@ export function WhatsAppPanel({
             // skip applying this fetch if something that actually mutated
             // messages (e.g. handleDisconnect) ran during the await.
             const versionBeforeFetch = messagesVersionRef.current;
-            const { messages, hasMore } = await listWhatsAppMessages(projectId);
+            const { messages, hasMore, nextCursor } = await listWhatsAppMessages(projectId);
             if (messagesVersionRef.current === versionBeforeFetch) {
               setMessages(messages);
               setHasMoreMessages(hasMore);
+              nextCursorRef.current = nextCursor;
               startConnectedPolling();
             }
           }
@@ -382,10 +394,11 @@ export function WhatsAppPanel({
           // (round 541).
           const versionBeforeFetch = messagesVersionRef.current;
           listWhatsAppMessages(projectId)
-            .then(({ messages, hasMore }) => {
+            .then(({ messages, hasMore, nextCursor }) => {
               if (messagesVersionRef.current !== versionBeforeFetch) return;
               setMessages(messages);
               setHasMoreMessages(hasMore);
+              nextCursorRef.current = nextCursor;
             })
             .catch(() => {});
           startConnectedPolling();
@@ -447,6 +460,7 @@ export function WhatsAppPanel({
       setStatus(next);
       setMessages([]);
       setHasMoreMessages(false);
+      nextCursorRef.current = null;
     } catch (err) {
       setLoadError((err as Error).message);
       // The disconnect request itself failed -- nothing changed
@@ -581,32 +595,34 @@ export function WhatsAppPanel({
   }
 
   /**
-   * Appends the next older page rather than replacing state, since
-   * listWhatsAppMessages' offset is server-side pagination over a
-   * DESC-ordered log -- messages.length as the offset means "everything
-   * already showing," so this always asks for the page right after what's
-   * currently loaded, regardless of how many load-more clicks came before.
-   * Dedupes the fetched page against `prev` before appending, the same way
-   * mergeFreshMessages already does for its own three call sites: a real
-   * WhatsApp message can arrive (and get inserted) between this function
-   * reading `messages.length` and the server actually running the OFFSET
-   * query, which shifts the DESC-ordered log's true position by however
-   * many messages landed in that window -- the "older" page the server
-   * returns then overlaps with the tail of what's already in `prev`, and
-   * the old unconditional `[...prev, ...older]` concat would render that
-   * overlap twice (duplicate ids, duplicate React keys).
+   * Appends the next older page rather than replacing state, using the
+   * keyset cursor from the last loaded page (nextCursorRef) rather than
+   * messages.length as an offset -- an offset recounts position from the
+   * top of the DESC-ordered log on every call, so a message inserted OR
+   * deleted anywhere above the pagination boundary between two "load more"
+   * clicks (by this session or any other collaborator -- see
+   * listWhatsAppMessages, packages/db/src/whatsapp.ts) shifts every later
+   * row's position. An insertion then duplicates a message across pages;
+   * a deletion silently and permanently skips one, with no duplicate for a
+   * dedup filter to catch. A keyset cursor pins "everything strictly after
+   * this specific row," so it's immune to either. The id-based dedup filter
+   * below stays as defense-in-depth against the one remaining race a cursor
+   * doesn't cover -- a message arriving between this function reading
+   * nextCursorRef and the server running the query, which can still repeat
+   * the newest row of the previous page under a small window.
    */
   async function handleLoadMore() {
     setLoadingMore(true);
     try {
       const versionBeforeFetch = messagesVersionRef.current;
-      const { messages: older, hasMore } = await listWhatsAppMessages(projectId, messages.length);
+      const { messages: older, hasMore, nextCursor } = await listWhatsAppMessages(projectId, nextCursorRef.current);
       if (messagesVersionRef.current === versionBeforeFetch) {
         setMessages((prev) => {
           const existingIds = new Set(prev.map((m) => m.id));
           return [...prev, ...older.filter((m) => !existingIds.has(m.id))];
         });
         setHasMoreMessages(hasMore);
+        nextCursorRef.current = nextCursor;
       }
     } catch (err) {
       setLoadError((err as Error).message);
@@ -675,6 +691,7 @@ export function WhatsAppPanel({
       messagesVersionRef.current += 1;
       setMessages([]);
       setHasMoreMessages(false);
+      nextCursorRef.current = null;
       setRetryError(null);
       onHistoryCleared?.();
     } catch (err) {

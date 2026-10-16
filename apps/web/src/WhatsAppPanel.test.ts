@@ -42,6 +42,7 @@ test("WhatsAppPanel's handleDisconnect resumes the background connected-poll aft
   let stopConnectedPollingCalls = 0;
   const rejection = new Error("network error");
   const messagesVersionRef = { current: 0 };
+  const nextCursorRef = { current: null as string | null };
 
   const fn = new Function(
     "status",
@@ -53,6 +54,7 @@ test("WhatsAppPanel's handleDisconnect resumes the background connected-poll aft
     "setStatus",
     "setMessages",
     "setHasMoreMessages",
+    "nextCursorRef",
     "setLoadError",
     "startConnectedPolling",
     "projectId",
@@ -73,6 +75,7 @@ test("WhatsAppPanel's handleDisconnect resumes the background connected-poll aft
     () => {},
     () => {},
     () => {},
+    nextCursorRef,
     (msg: string) => {
       capturedLoadError = msg;
     },
@@ -102,6 +105,7 @@ test("WhatsAppPanel's handleDisconnect does not resume connected-polling after a
   let startConnectedPollingCalls = 0;
   let capturedStatus: unknown;
   const messagesVersionRef = { current: 7 };
+  const nextCursorRef = { current: "stale-cursor" as string | null };
 
   const fn = new Function(
     "status",
@@ -113,6 +117,7 @@ test("WhatsAppPanel's handleDisconnect does not resume connected-polling after a
     "setStatus",
     "setMessages",
     "setHasMoreMessages",
+    "nextCursorRef",
     "setLoadError",
     "startConnectedPolling",
     "projectId",
@@ -129,6 +134,7 @@ test("WhatsAppPanel's handleDisconnect does not resume connected-polling after a
     },
     () => {},
     () => {},
+    nextCursorRef,
     () => {},
     () => {
       startConnectedPollingCalls += 1;
@@ -145,6 +151,7 @@ test("WhatsAppPanel's handleDisconnect does not resume connected-polling after a
     8,
     "a genuinely successful disconnect must bump the version, the signal startPolling's own tick uses to discard a stale in-flight message fetch (round 530)",
   );
+  assert.equal(nextCursorRef.current, null, "a disconnect must clear any stale pagination cursor from before the disconnect");
 });
 
 /**
@@ -265,6 +272,7 @@ test("WhatsAppPanel's startPolling applies the fetched message page and starts c
   const cancelInFlightPollRef = { current: null as (() => void) | null };
   const pollFailuresRef = { current: 0 };
   const messagesVersionRef = { current: 5 };
+  const nextCursorRef = { current: null as string | null };
   let startConnectedPollingCalls = 0;
   let capturedMessages: unknown;
   let capturedHasMore: unknown;
@@ -274,6 +282,7 @@ test("WhatsAppPanel's startPolling applies the fetched message page and starts c
     "cancelInFlightPollRef",
     "pollFailuresRef",
     "messagesVersionRef",
+    "nextCursorRef",
     "setInterval",
     "clearInterval",
     "getWhatsAppStatus",
@@ -292,11 +301,12 @@ test("WhatsAppPanel's startPolling applies the fetched message page and starts c
     cancelInFlightPollRef,
     pollFailuresRef,
     messagesVersionRef,
+    nextCursorRef,
     fakeSetInterval,
     fakeClearInterval,
     async () => ({ status: "connected" }),
     () => {},
-    async () => ({ messages: [{ id: "m1" }], hasMore: true }),
+    async () => ({ messages: [{ id: "m1" }], hasMore: true, nextCursor: "cursor-after-m1" }),
     (messages: unknown) => {
       capturedMessages = messages;
     },
@@ -319,6 +329,7 @@ test("WhatsAppPanel's startPolling applies the fetched message page and starts c
   assert.deepEqual(capturedMessages, [{ id: "m1" }]);
   assert.equal(capturedHasMore, true);
   assert.equal(startConnectedPollingCalls, 1, "becoming connected with no race must start connected-polling");
+  assert.equal(nextCursorRef.current, "cursor-after-m1", "the fetched page's own nextCursor must be stored for a later 'load more'");
 });
 
 /**
@@ -3027,23 +3038,24 @@ test("WhatsAppPanel's 'Load older messages' button appends the next page without
       }
       if (method === "GET" && input.startsWith("/api/projects/proj1/integrations/whatsapp/messages")) {
         messagesRequestCount += 1;
-        // The first load must ask for no offset at all (offset=0 is the
-        // implicit default -- see listWhatsAppMessages in api.ts), and the
-        // "load more" click must ask for exactly offset=2 (messages.length
-        // at the moment of the click), never replaying offset=0.
-        if (!input.includes("offset=")) {
-          return new Response(JSON.stringify({ messages: page1, hasMore: true }), {
+        // The first load must ask for no cursor at all (no cursor is the
+        // implicit "start from the newest message" -- see listWhatsAppMessages
+        // in api.ts), and the "load more" click must ask for exactly the
+        // cursor the first page's own response handed back, never replaying
+        // the first page's request.
+        if (!input.includes("cursor=")) {
+          return new Response(JSON.stringify({ messages: page1, hasMore: true, nextCursor: "cursor-after-page1" }), {
             status: 200,
             headers: { "content-type": "application/json" },
           });
         }
-        if (input.endsWith("offset=2")) {
-          return new Response(JSON.stringify({ messages: page2, hasMore: false }), {
+        if (input.endsWith(`cursor=${encodeURIComponent("cursor-after-page1")}`)) {
+          return new Response(JSON.stringify({ messages: page2, hasMore: false, nextCursor: null }), {
             status: 200,
             headers: { "content-type": "application/json" },
           });
         }
-        throw new Error(`unexpected offset in ${input}`);
+        throw new Error(`unexpected cursor in ${input}`);
       }
       throw new Error(`unexpected request ${method} ${input}`);
     }) as typeof fetch;
@@ -3169,21 +3181,21 @@ test("WhatsAppPanel's 'Load older messages' never resurrects history cleared whi
         );
       }
       if (method === "GET" && input.startsWith("/api/projects/proj1/integrations/whatsapp/messages")) {
-        if (!input.includes("offset=")) {
-          return new Response(JSON.stringify({ messages: page1, hasMore: true }), {
+        if (!input.includes("cursor=")) {
+          return new Response(JSON.stringify({ messages: page1, hasMore: true, nextCursor: "cursor-after-page1" }), {
             status: 200,
             headers: { "content-type": "application/json" },
           });
         }
-        if (input.endsWith("offset=2")) {
+        if (input.endsWith(`cursor=${encodeURIComponent("cursor-after-page1")}`)) {
           olderPageRequestEntered = true;
           await olderPageHeld;
-          return new Response(JSON.stringify({ messages: page2, hasMore: false }), {
+          return new Response(JSON.stringify({ messages: page2, hasMore: false, nextCursor: null }), {
             status: 200,
             headers: { "content-type": "application/json" },
           });
         }
-        throw new Error(`unexpected offset in ${input}`);
+        throw new Error(`unexpected cursor in ${input}`);
       }
       if (method === "DELETE" && input === "/api/projects/proj1/integrations/whatsapp/messages") {
         return new Response(null, { status: 204 });
@@ -3251,18 +3263,19 @@ test("WhatsAppPanel's 'Load older messages' never resurrects history cleared whi
 });
 
 /**
- * Regression test for round 476: handleLoadMore's offset (messages.length,
- * read at click time) is a server-side OFFSET over a DESC-ordered log that
- * a real incoming WhatsApp message can grow at the HEAD at any time --
- * nothing to do with the round 432 delete/clear race above, which only
- * guards messagesVersionRef (bumped solely by handleDeleteMessage/
- * handleClearHistory). If a message lands between reading that offset and
- * the server running the query, the "older" page the server returns shifts
- * and overlaps with the tail of what's already shown, which the old
- * unconditional `[...prev, ...older]` concat rendered twice (duplicate ids,
- * duplicate React keys). Confirms the fix: handleLoadMore now dedupes the
- * fetched page against `prev` the same way mergeFreshMessages's own three
- * call sites already did.
+ * Regression test for round 476 (still relevant after round 652's
+ * offset-to-cursor rewrite): a real incoming WhatsApp message can grow the
+ * log at the HEAD at any time -- nothing to do with the round 432
+ * delete/clear race above, which only guards messagesVersionRef (bumped
+ * solely by handleDeleteMessage/handleClearHistory). The round-652 keyset
+ * cursor makes handleLoadMore immune to any insert/delete ABOVE the cursor's
+ * own pinned row, but a message landing in the brief window between
+ * handleLoadMore reading nextCursorRef and the server actually running the
+ * query can still repeat that cursor's own row in the "older" page it
+ * returns, which the old unconditional `[...prev, ...older]` concat would
+ * have rendered twice (duplicate ids, duplicate React keys). Confirms the
+ * fix: handleLoadMore dedupes the fetched page against `prev` the same way
+ * mergeFreshMessages's own three call sites already did.
  */
 test("WhatsAppPanel's 'Load older messages' doesn't duplicate a message that's both already shown and in the newly-fetched older page", async () => {
   await withJsdom(async () => {
@@ -3294,11 +3307,10 @@ test("WhatsAppPanel's 'Load older messages' doesn't duplicate a message that's b
       },
     ];
     // Simulates a new WhatsApp message having been inserted server-side
-    // between handleLoadMore reading offset=2 and the server running its
-    // OFFSET query: the true DESC order shifted by one, so the "older" page
-    // the server hands back starts with m2 (already shown, now one
-    // position later than the client's stale offset assumed) followed by
-    // the genuinely-new-to-the-client m3.
+    // between handleLoadMore reading its cursor and the server actually
+    // running the query: the "older" page the server hands back still
+    // starts with m2 (the row the cursor points to, already shown) followed
+    // by the genuinely-new-to-the-client m3.
     const page2WithOverlap: WhatsAppMessageLogEntry[] = [
       page1[1],
       {
@@ -3323,19 +3335,19 @@ test("WhatsAppPanel's 'Load older messages' doesn't duplicate a message that's b
         );
       }
       if (method === "GET" && input.startsWith("/api/projects/proj1/integrations/whatsapp/messages")) {
-        if (!input.includes("offset=")) {
-          return new Response(JSON.stringify({ messages: page1, hasMore: true }), {
+        if (!input.includes("cursor=")) {
+          return new Response(JSON.stringify({ messages: page1, hasMore: true, nextCursor: "cursor-after-page1" }), {
             status: 200,
             headers: { "content-type": "application/json" },
           });
         }
-        if (input.endsWith("offset=2")) {
-          return new Response(JSON.stringify({ messages: page2WithOverlap, hasMore: false }), {
+        if (input.endsWith(`cursor=${encodeURIComponent("cursor-after-page1")}`)) {
+          return new Response(JSON.stringify({ messages: page2WithOverlap, hasMore: false, nextCursor: null }), {
             status: 200,
             headers: { "content-type": "application/json" },
           });
         }
-        throw new Error(`unexpected offset in ${input}`);
+        throw new Error(`unexpected cursor in ${input}`);
       }
       throw new Error(`unexpected request ${method} ${input}`);
     }) as typeof fetch;
@@ -3385,7 +3397,7 @@ test("WhatsAppPanel's 'Load older messages' doesn't duplicate a message that's b
 
 /**
  * Regression test: handleSendTest used to refresh the log with a plain
- * `setMessages(messages)` using the newest-page response (offset 0) --
+ * `setMessages(messages)` using the newest-page response (no cursor) --
  * a full replace, not a merge. Once a user had clicked "Load older
  * messages" at least once, sending a test message silently threw away
  * every older page that call had loaded (and made "Load older messages"
@@ -3428,23 +3440,23 @@ test("WhatsAppPanel's handleSendTest preserves older pages loaded via 'Load olde
         );
       }
       if (method === "GET" && input.startsWith("/api/projects/proj1/integrations/whatsapp/messages")) {
-        if (input.endsWith("offset=2")) {
-          return new Response(JSON.stringify({ messages: [m3], hasMore: false }), {
+        if (input.endsWith(`cursor=${encodeURIComponent("cursor-after-page1")}`)) {
+          return new Response(JSON.stringify({ messages: [m3], hasMore: false, nextCursor: null }), {
             status: 200,
             headers: { "content-type": "application/json" },
           });
         }
-        if (!input.includes("offset=")) {
+        if (!input.includes("cursor=")) {
           // The "newest page" response: once sent, the brand-new message
           // (m4) now occupies the newest slot alongside m1 -- a real fetch
-          // of offset 0 would return both, not just the delta.
+          // with no cursor would return both, not just the delta.
           const page = sent ? [m4, m1] : [m1, m2];
-          return new Response(JSON.stringify({ messages: page, hasMore: true }), {
+          return new Response(JSON.stringify({ messages: page, hasMore: true, nextCursor: "cursor-after-page1" }), {
             status: 200,
             headers: { "content-type": "application/json" },
           });
         }
-        throw new Error(`unexpected offset in ${input}`);
+        throw new Error(`unexpected cursor in ${input}`);
       }
       if (method === "POST" && input === "/api/projects/proj1/integrations/whatsapp/send") {
         sent = true;

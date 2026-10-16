@@ -155,12 +155,12 @@ function entityToCsv(
 function collectAllWhatsAppMessages(db: ForgeDatabase, projectId: string): WhatsAppMessage[] {
   const all: WhatsAppMessage[] = [];
   const pageSize = 200;
-  let offset = 0;
+  let cursor: string | null = null;
   for (;;) {
-    const { messages, hasMore } = listWhatsAppMessages(db, projectId, pageSize, offset);
+    const { messages, hasMore, nextCursor } = listWhatsAppMessages(db, projectId, pageSize, cursor);
     all.push(...messages);
     if (!hasMore) break;
-    offset += pageSize;
+    cursor = nextCursor;
   }
   return all;
 }
