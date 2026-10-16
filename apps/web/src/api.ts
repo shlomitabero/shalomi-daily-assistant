@@ -673,10 +673,14 @@ export function createRecord(
   projectId: string,
   entityName: string,
   data: Record<string, unknown>,
+  options?: { suppressAutomations?: boolean },
 ): Promise<{ record: EntityRecord }> {
   return request(`/projects/${projectId}/entities/${encodeURIComponent(entityName)}`, {
     method: "POST",
-    headers: { "x-idempotency-key": crypto.randomUUID() },
+    headers: {
+      "x-idempotency-key": crypto.randomUUID(),
+      ...(options?.suppressAutomations ? { "x-suppress-automations": "true" } : {}),
+    },
     body: JSON.stringify(data),
   });
 }

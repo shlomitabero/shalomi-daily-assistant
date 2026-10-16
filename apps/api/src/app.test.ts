@@ -1658,6 +1658,90 @@ test("creating or updating a toMode:\"field\" automation rule whose destination 
 });
 
 /**
+ * Round 643's Explore survey found that CSV import (EntityPanel.tsx's
+ * handleImportFile) POSTs every parsed row through this exact route,
+ * concurrently via Promise.allSettled -- before this round's fix, each one
+ * unconditionally fired every "record_created" automation rule, so
+ * importing a spreadsheet of pre-existing customers (the whole point of
+ * this feature) sent a real WhatsApp "welcome" message to every person in
+ * the file, all at once, even though none of them were actually just
+ * created through the app. The fix: an X-Suppress-Automations header, set
+ * only by the import path, skips the automation call entirely for that one
+ * request -- an ordinary record create (no header) must still fire it.
+ */
+test("POST .../entities/:entityName with X-Suppress-Automations skips the record_created automation, but an ordinary create (no header) still fires it", async () => {
+  let createdSockets: ReturnType<typeof createFakeWhatsAppSocket>[] = [];
+  await withServer(
+    async (baseUrl) => {
+      const token = await signup(baseUrl, "suppress-automations1@example.com");
+      const createRes = await fetch(`${baseUrl}/api/projects`, {
+        method: "POST",
+        headers: authHeaders(token),
+        body: JSON.stringify({
+          description:
+            "Build an appointment-management application for a beauty clinic. I need customers, appointments, employees, services, an admin dashboard and automatic appointment status tracking.",
+        }),
+      });
+      const { project } = (await createRes.json()) as { project: { id: string } };
+      const buildRes = await fetch(`${baseUrl}/api/projects/${project.id}/build`, { method: "POST", headers: authHeaders(token) });
+      await collectSSE(buildRes);
+
+      await fetch(`${baseUrl}/api/projects/${project.id}/integrations/whatsapp/connect`, { method: "POST", headers: authHeaders(token) });
+      createdSockets[0].sock.user = { id: "15550009999:1@s.whatsapp.net" };
+      createdSockets[0].emitConnectionUpdate({ connection: "open" });
+
+      const ruleRes = await fetch(`${baseUrl}/api/projects/${project.id}/entities/Customer/automations`, {
+        method: "POST",
+        headers: authHeaders(token),
+        body: JSON.stringify({
+          trigger: "record_created",
+          actionType: "send_whatsapp",
+          toMode: "field",
+          toField: "phone",
+          messageTemplate: "Welcome!",
+        }),
+      });
+      assert.equal(ruleRes.status, 201);
+
+      // A record imported via CSV import sets this header -- the automation
+      // must never fire for it.
+      const importedRes = await fetch(`${baseUrl}/api/projects/${project.id}/entities/Customer`, {
+        method: "POST",
+        headers: { ...authHeaders(token), "x-suppress-automations": "true" },
+        body: JSON.stringify({ name: "Imported Customer", email: "imported@example.com", status: "New", phone: "972500000001" }),
+      });
+      assert.equal(importedRes.status, 201);
+
+      // Give the (intentionally not-awaited) automation a chance to run if
+      // it incorrectly fired, before asserting that it didn't.
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      assert.equal(createdSockets[0].sendCalls.length, 0, "an imported record must never trigger a record_created automation");
+
+      // An ordinary "Add" form submission (no header) on the SAME entity and
+      // rule must still fire normally -- this isn't a blanket disable.
+      const ordinaryRes = await fetch(`${baseUrl}/api/projects/${project.id}/entities/Customer`, {
+        method: "POST",
+        headers: authHeaders(token),
+        body: JSON.stringify({ name: "New Customer", email: "new@example.com", status: "New", phone: "972500000002" }),
+      });
+      assert.equal(ordinaryRes.status, 201);
+
+      for (let i = 0; i < 40 && createdSockets[0].sendCalls.length === 0; i++) {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      }
+      assert.deepEqual(createdSockets[0].sendCalls, [{ jid: "972500000002@s.whatsapp.net", text: "Welcome!" }]);
+    },
+    {
+      whatsapp: (db) => {
+        const { manager, createdSockets: sockets } = createTestWhatsAppManager(db);
+        createdSockets = sockets;
+        return manager;
+      },
+    },
+  );
+});
+
+/**
  * Round 600's Explore survey found that docs/wakeRetry-idempotency-design.md's
  * own inventory of mutating routes never mentioned
  * POST /projects/:id/entities/:entityName/automations at all -- Automation

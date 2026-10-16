@@ -3111,6 +3111,79 @@ test("EntityPanel's CSV import creates a real record from an uploaded file and s
 });
 
 /**
+ * Round 643: CSV import POSTs every parsed row through the exact same
+ * createRecord call (and server route) a single "Add" form submission
+ * uses -- without a way to tell the two apart, every "record_created"
+ * WhatsApp automation rule fired for each imported row, sending a real
+ * message to everyone in the file even though none of them were actually
+ * just created through the app (they're pre-existing data a user is
+ * migrating off another system). The fix wires an X-Suppress-Automations
+ * header onto every createRecord call inside handleImportFile alone --
+ * confirmed here by capturing the real request headers the import path
+ * actually sends, not just the parsed body.
+ */
+test("EntityPanel's CSV import sends X-Suppress-Automations on the real POST request, so importing pre-existing data never fires a 'welcome new customer' automation", async () => {
+  await withJsdom(async () => {
+    const store: EntityRecord[] = [];
+    let nextId = 1;
+    const seenHeaders: Headers[] = [];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/entities/Customer") {
+        return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      if (method === "POST" && input === "/api/projects/proj1/entities/Customer") {
+        seenHeaders.push(new Headers(init!.headers));
+        const data = JSON.parse(init!.body as string);
+        const record = { id: nextId++, ...data };
+        store.push(record);
+        return new Response(JSON.stringify({ record }), { status: 201, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+    try {
+      render(
+        React.createElement(
+          ThemeProvider,
+          null,
+          React.createElement(
+            LanguageProvider,
+            null,
+            React.createElement(EntityPanel, {
+              projectId: "proj1",
+              entity: CUSTOMER_IMPORT_ENTITY,
+              allEntities: [CUSTOMER_IMPORT_ENTITY],
+              onEntityRenamed: () => {},
+            }),
+          ),
+        ),
+      );
+      await waitForCondition(() => document.querySelector(".csv-import-row") !== null);
+
+      const csvText = "name,email\nDana,dana@example.com\nAmit,amit@example.com\n";
+      const file = new File([csvText], "customers.csv", { type: "text/csv" });
+      const fileInput = document.querySelector('input[type="file"]') as HTMLInputElement;
+      Object.defineProperty(fileInput, "files", { value: [file], configurable: true });
+      fireEvent.change(fileInput);
+
+      await waitForCondition(() => store.length === 2);
+
+      assert.equal(seenHeaders.length, 2, "both imported rows must have reached the server");
+      for (const headers of seenHeaders) {
+        assert.equal(
+          headers.get("x-suppress-automations"),
+          "true",
+          "every record created by CSV import must suppress automations, not just some of them",
+        );
+      }
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * New in this round: a per-row "Print" action fills the always-mounted
  * (but on-screen-hidden, via styles.css) `.print-record-sheet` with that
  * ONE record's fields and calls `window.print()` -- the sheet's own

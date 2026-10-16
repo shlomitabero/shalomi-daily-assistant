@@ -2078,6 +2078,16 @@ export function EntityPanel({
    * cross-field rule this component doesn't know about) -- the summary
    * message reports real created/skipped counts either way, not an
    * optimistic guess.
+   *
+   * Every createRecord call below sets suppressAutomations -- without it,
+   * importing a spreadsheet of pre-existing customers (the whole point of
+   * this feature, e.g. migrating off another system) fires every
+   * "record_created" WhatsApp automation rule for each row, all at once
+   * (these POSTs run concurrently via Promise.allSettled), sending a real
+   * "welcome" message to everyone in the file even though none of them
+   * were actually just created. See routes/projects.ts's own comment on
+   * X-Suppress-Automations for why this is scoped to import alone and not
+   * the single "Add" form, duplicate, or bulk-duplicate.
    */
   async function handleImportFile(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
@@ -2103,7 +2113,7 @@ export function EntityPanel({
       }
 
       const results = await Promise.allSettled(
-        parsedRecords.map((record) => createRecord(projectId, entity.name, record)),
+        parsedRecords.map((record) => createRecord(projectId, entity.name, record, { suppressAutomations: true })),
       );
       const serverErrors = results
         .filter((r): r is PromiseRejectedResult => r.status === "rejected")

@@ -1505,15 +1505,32 @@ export function createProjectsRouter(
           // side effect. Firing it inside this callback (rather than after
           // withIdempotency resolves) keeps it from firing a second time on
           // a replayed/cached retry, same as insertRecord itself above.
-          void runAutomationsForRecordChange(
-            db,
-            whatsapp,
-            project,
-            entity,
-            "created",
-            record,
-            new Set(Object.keys(req.body ?? {})),
-          );
+          //
+          // X-Suppress-Automations, set only by EntityPanel.tsx's CSV-import
+          // path, skips this call entirely for an imported row. Without it,
+          // importing a spreadsheet of pre-existing customers to migrate off
+          // another system fires every "record_created" rule for each row
+          // -- concurrently, since the import POSTs every row at once via
+          // Promise.allSettled -- sending a real WhatsApp "welcome" message
+          // to hundreds of people who were never actually just created, in
+          // a concurrent burst that's exactly the automated-sending pattern
+          // whatsappWeb.ts's own module comment already warns can get a
+          // number flagged or blocked. A single "Add" form submission, a
+          // duplicate, and a bulk-duplicate are all still genuinely new
+          // records from the app's own point of view, so none of those
+          // paths set this header -- only CSV import, which is a backfill
+          // of data that already existed before the app did.
+          if (req.header("X-Suppress-Automations") !== "true") {
+            void runAutomationsForRecordChange(
+              db,
+              whatsapp,
+              project,
+              entity,
+              "created",
+              record,
+              new Set(Object.keys(req.body ?? {})),
+            );
+          }
           return { status: 201, body: { record } };
         },
       );
