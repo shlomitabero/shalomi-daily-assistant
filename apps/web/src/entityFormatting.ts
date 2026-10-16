@@ -1141,7 +1141,7 @@ export interface ImportResult {
   errors: string[];
 }
 
-function matchesHeader(header: string, field: Field): boolean {
+function matchesHeader(header: string, field: Field, labelOccurrences: Map<string, number>): boolean {
   const normalized = header.trim().toLowerCase();
   // A blank header can never legitimately refer to any field -- without
   // this, (field.label ?? "").toLowerCase() is itself "" for any field
@@ -1150,7 +1150,19 @@ function matchesHeader(header: string, field: Field): boolean {
   // unlabeled field and silently import unrelated data into it, instead
   // of being ignored the way a column with real, unmatched text already is.
   if (!normalized) return false;
-  return normalized === field.name.toLowerCase() || normalized === (field.label ?? "").toLowerCase();
+  // recordsToCsv's own header row uses fieldDisplayLabel, not the raw
+  // label, whenever two fields share a label -- "Amount (subtotal)", not
+  // "Amount". Without also matching that disambiguated form, re-importing
+  // a CSV this app itself just exported for an entity with any
+  // same-labeled fields silently fails to match either column (it's
+  // neither field's bare name nor its bare label), so both fields'
+  // columnIndex below resolves to -1 and their data comes back null with
+  // no error reported at all.
+  return (
+    normalized === field.name.toLowerCase() ||
+    normalized === (field.label ?? "").toLowerCase() ||
+    normalized === fieldDisplayLabel(field, labelOccurrences).toLowerCase()
+  );
 }
 
 /**
@@ -1221,8 +1233,9 @@ export function buildImportRecords(fields: Field[], rows: string[][]): ImportRes
   // cell, silently duplicating that field's data into the other and
   // dropping the other's real column entirely.
   const claimedFieldNames = new Set<string>();
+  const labelOccurrences = fieldLabelOccurrences(fields);
   const columnFields: (Field | null)[] = header.map((cell) => {
-    const match = fields.find((f) => !claimedFieldNames.has(f.name) && matchesHeader(cell, f));
+    const match = fields.find((f) => !claimedFieldNames.has(f.name) && matchesHeader(cell, f, labelOccurrences));
     if (match) claimedFieldNames.add(match.name);
     return match ?? null;
   });

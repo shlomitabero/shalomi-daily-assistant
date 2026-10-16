@@ -1939,14 +1939,24 @@ function parseCsv(text) {
   return rows;
 }
 
-function matchesImportHeader(header, field) {
+function matchesImportHeader(header, field, labelOccurrences) {
   const normalized = header.trim().toLowerCase();
   // A blank header can never legitimately refer to any field -- without
   // this, (field.label || "") is itself "" for any field with no label
   // set, so a blank/unnamed CSV column would match the FIRST unlabeled
   // field and silently import unrelated data into it.
   if (!normalized) return false;
-  return normalized === field.name.toLowerCase() || normalized === (field.label || "").toLowerCase();
+  // recordsToCsv's own header row uses fieldDisplayLabel, not the raw
+  // label, whenever two fields share a label -- "Amount (subtotal)", not
+  // "Amount". Without also matching that disambiguated form, re-importing
+  // a CSV this app itself just exported for an entity with any
+  // same-labeled fields silently fails to match either column, and both
+  // fields' data comes back null with no error reported at all.
+  return (
+    normalized === field.name.toLowerCase() ||
+    normalized === (field.label || "").toLowerCase() ||
+    normalized === fieldDisplayLabel(field, labelOccurrences).toLowerCase()
+  );
 }
 
 // Turns parsed CSV rows into record payloads matching entity.fields --
@@ -1984,8 +1994,9 @@ function buildImportRecords(fields, rows) {
   // claimed by at most one column, in header order, so two fields sharing
   // a label don't both resolve to the same first-matching field.
   const claimedFieldNames = new Set();
+  const labelOccurrences = fieldLabelOccurrences(fields);
   const columnFields = header.map((cell) => {
-    const match = fields.find((f) => !claimedFieldNames.has(f.name) && matchesImportHeader(cell, f));
+    const match = fields.find((f) => !claimedFieldNames.has(f.name) && matchesImportHeader(cell, f, labelOccurrences));
     if (match) claimedFieldNames.add(match.name);
     return match || null;
   });

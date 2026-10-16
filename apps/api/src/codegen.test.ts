@@ -6252,11 +6252,18 @@ test("the exported EntityView's CSV import rejects a date field value that isn't
   const entityViewJsx = generateExportFiles(dateProject).find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
 
   const isValidDateSrc = entityViewJsx.match(/const DATE_FORMAT[\s\S]*?\nfunction isValidDate\(value\) \{[\s\S]*?\n\}\n/)?.[0];
-  const headerSrc = entityViewJsx.match(/function matchesImportHeader\(header, field\) \{[\s\S]*?\n\}\n/)?.[0];
+  const fieldLabelOccurrencesSrc = entityViewJsx.match(/function fieldLabelOccurrences\(fields\) \{[\s\S]*?\n\}\n/)?.[0];
+  const fieldDisplayLabelSrc = entityViewJsx.match(/function fieldDisplayLabel\(field, occurrences\) \{[\s\S]*?\n\}\n/)?.[0];
+  const headerSrc = entityViewJsx.match(/function matchesImportHeader\(header, field, labelOccurrences\) \{[\s\S]*?\n\}\n/)?.[0];
   const importSrc = entityViewJsx.match(/function buildImportRecords\(fields, rows\) \{[\s\S]*?\n\}\n/)?.[0];
-  assert.ok(isValidDateSrc && headerSrc && importSrc, "expected to find isValidDate/matchesImportHeader/buildImportRecords in generated output");
+  assert.ok(
+    isValidDateSrc && fieldLabelOccurrencesSrc && fieldDisplayLabelSrc && headerSrc && importSrc,
+    "expected to find isValidDate/fieldLabelOccurrences/fieldDisplayLabel/matchesImportHeader/buildImportRecords in generated output",
+  );
 
-  const buildImportRecords = new Function(`${isValidDateSrc}\n${headerSrc}\n${importSrc}\nreturn buildImportRecords;`)();
+  const buildImportRecords = new Function(
+    `${isValidDateSrc}\n${fieldLabelOccurrencesSrc}\n${fieldDisplayLabelSrc}\n${headerSrc}\n${importSrc}\nreturn buildImportRecords;`,
+  )();
 
   const fields = dateProject.spec.entities[0].fields;
   const rows = [
@@ -6296,11 +6303,18 @@ test("the exported EntityView's CSV import accepts a date field value in the yea
   const entityViewJsx = generateExportFiles(dateProject).find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
 
   const isValidDateSrc = entityViewJsx.match(/const DATE_FORMAT[\s\S]*?\nfunction isValidDate\(value\) \{[\s\S]*?\n\}\n/)?.[0];
-  const headerSrc = entityViewJsx.match(/function matchesImportHeader\(header, field\) \{[\s\S]*?\n\}\n/)?.[0];
+  const fieldLabelOccurrencesSrc = entityViewJsx.match(/function fieldLabelOccurrences\(fields\) \{[\s\S]*?\n\}\n/)?.[0];
+  const fieldDisplayLabelSrc = entityViewJsx.match(/function fieldDisplayLabel\(field, occurrences\) \{[\s\S]*?\n\}\n/)?.[0];
+  const headerSrc = entityViewJsx.match(/function matchesImportHeader\(header, field, labelOccurrences\) \{[\s\S]*?\n\}\n/)?.[0];
   const importSrc = entityViewJsx.match(/function buildImportRecords\(fields, rows\) \{[\s\S]*?\n\}\n/)?.[0];
-  assert.ok(isValidDateSrc && headerSrc && importSrc, "expected to find isValidDate/matchesImportHeader/buildImportRecords in generated output");
+  assert.ok(
+    isValidDateSrc && fieldLabelOccurrencesSrc && fieldDisplayLabelSrc && headerSrc && importSrc,
+    "expected to find isValidDate/fieldLabelOccurrences/fieldDisplayLabel/matchesImportHeader/buildImportRecords in generated output",
+  );
 
-  const buildImportRecords = new Function(`${isValidDateSrc}\n${headerSrc}\n${importSrc}\nreturn buildImportRecords;`)();
+  const buildImportRecords = new Function(
+    `${isValidDateSrc}\n${fieldLabelOccurrencesSrc}\n${fieldDisplayLabelSrc}\n${headerSrc}\n${importSrc}\nreturn buildImportRecords;`,
+  )();
 
   const fields = dateProject.spec.entities[0].fields;
   const rows = [
@@ -6343,11 +6357,18 @@ test("the exported EntityView's CSV import rejects an unrecognized boolean value
   const entityViewJsx = generateExportFiles(boolProject).find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
 
   const isValidDateSrc = entityViewJsx.match(/const DATE_FORMAT[\s\S]*?\nfunction isValidDate\(value\) \{[\s\S]*?\n\}\n/)?.[0];
-  const headerSrc = entityViewJsx.match(/function matchesImportHeader\(header, field\) \{[\s\S]*?\n\}\n/)?.[0];
+  const fieldLabelOccurrencesSrc = entityViewJsx.match(/function fieldLabelOccurrences\(fields\) \{[\s\S]*?\n\}\n/)?.[0];
+  const fieldDisplayLabelSrc = entityViewJsx.match(/function fieldDisplayLabel\(field, occurrences\) \{[\s\S]*?\n\}\n/)?.[0];
+  const headerSrc = entityViewJsx.match(/function matchesImportHeader\(header, field, labelOccurrences\) \{[\s\S]*?\n\}\n/)?.[0];
   const importSrc = entityViewJsx.match(/function buildImportRecords\(fields, rows\) \{[\s\S]*?\n\}\n/)?.[0];
-  assert.ok(isValidDateSrc && headerSrc && importSrc, "expected to find isValidDate/matchesImportHeader/buildImportRecords in generated output");
+  assert.ok(
+    isValidDateSrc && fieldLabelOccurrencesSrc && fieldDisplayLabelSrc && headerSrc && importSrc,
+    "expected to find isValidDate/fieldLabelOccurrences/fieldDisplayLabel/matchesImportHeader/buildImportRecords in generated output",
+  );
 
-  const buildImportRecords = new Function(`${isValidDateSrc}\n${headerSrc}\n${importSrc}\nreturn buildImportRecords;`)();
+  const buildImportRecords = new Function(
+    `${isValidDateSrc}\n${fieldLabelOccurrencesSrc}\n${fieldDisplayLabelSrc}\n${headerSrc}\n${importSrc}\nreturn buildImportRecords;`,
+  )();
 
   const fields = boolProject.spec.entities[0].fields;
   const rows = [
@@ -6400,11 +6421,18 @@ test("the exported EntityView's CSV import rejects \"Infinity\"/\"-Infinity\" as
   const entityViewJsx = generateExportFiles(invoiceProject).find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
 
   const isValidDateSrc = entityViewJsx.match(/const DATE_FORMAT[\s\S]*?\nfunction isValidDate\(value\) \{[\s\S]*?\n\}\n/)?.[0];
-  const headerSrc = entityViewJsx.match(/function matchesImportHeader\(header, field\) \{[\s\S]*?\n\}\n/)?.[0];
+  const fieldLabelOccurrencesSrc = entityViewJsx.match(/function fieldLabelOccurrences\(fields\) \{[\s\S]*?\n\}\n/)?.[0];
+  const fieldDisplayLabelSrc = entityViewJsx.match(/function fieldDisplayLabel\(field, occurrences\) \{[\s\S]*?\n\}\n/)?.[0];
+  const headerSrc = entityViewJsx.match(/function matchesImportHeader\(header, field, labelOccurrences\) \{[\s\S]*?\n\}\n/)?.[0];
   const importSrc = entityViewJsx.match(/function buildImportRecords\(fields, rows\) \{[\s\S]*?\n\}\n/)?.[0];
-  assert.ok(isValidDateSrc && headerSrc && importSrc, "expected to find isValidDate/matchesImportHeader/buildImportRecords in generated output");
+  assert.ok(
+    isValidDateSrc && fieldLabelOccurrencesSrc && fieldDisplayLabelSrc && headerSrc && importSrc,
+    "expected to find isValidDate/fieldLabelOccurrences/fieldDisplayLabel/matchesImportHeader/buildImportRecords in generated output",
+  );
 
-  const buildImportRecords = new Function(`${isValidDateSrc}\n${headerSrc}\n${importSrc}\nreturn buildImportRecords;`)();
+  const buildImportRecords = new Function(
+    `${isValidDateSrc}\n${fieldLabelOccurrencesSrc}\n${fieldDisplayLabelSrc}\n${headerSrc}\n${importSrc}\nreturn buildImportRecords;`,
+  )();
 
   const fields = invoiceProject.spec.entities[0].fields;
   const rows = [
@@ -6451,11 +6479,18 @@ test("the exported EntityView's CSV import maps each column to a distinct field 
   const entityViewJsx = generateExportFiles(twoStatusProject).find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
 
   const isValidDateSrc = entityViewJsx.match(/const DATE_FORMAT[\s\S]*?\nfunction isValidDate\(value\) \{[\s\S]*?\n\}\n/)?.[0];
-  const headerSrc = entityViewJsx.match(/function matchesImportHeader\(header, field\) \{[\s\S]*?\n\}\n/)?.[0];
+  const fieldLabelOccurrencesSrc = entityViewJsx.match(/function fieldLabelOccurrences\(fields\) \{[\s\S]*?\n\}\n/)?.[0];
+  const fieldDisplayLabelSrc = entityViewJsx.match(/function fieldDisplayLabel\(field, occurrences\) \{[\s\S]*?\n\}\n/)?.[0];
+  const headerSrc = entityViewJsx.match(/function matchesImportHeader\(header, field, labelOccurrences\) \{[\s\S]*?\n\}\n/)?.[0];
   const importSrc = entityViewJsx.match(/function buildImportRecords\(fields, rows\) \{[\s\S]*?\n\}\n/)?.[0];
-  assert.ok(isValidDateSrc && headerSrc && importSrc, "expected to find isValidDate/matchesImportHeader/buildImportRecords in generated output");
+  assert.ok(
+    isValidDateSrc && fieldLabelOccurrencesSrc && fieldDisplayLabelSrc && headerSrc && importSrc,
+    "expected to find isValidDate/fieldLabelOccurrences/fieldDisplayLabel/matchesImportHeader/buildImportRecords in generated output",
+  );
 
-  const buildImportRecords = new Function(`${isValidDateSrc}\n${headerSrc}\n${importSrc}\nreturn buildImportRecords;`)();
+  const buildImportRecords = new Function(
+    `${isValidDateSrc}\n${fieldLabelOccurrencesSrc}\n${fieldDisplayLabelSrc}\n${headerSrc}\n${importSrc}\nreturn buildImportRecords;`,
+  )();
 
   const fields = twoStatusProject.spec.entities[0].fields;
   const rows = [
@@ -6466,6 +6501,71 @@ test("the exported EntityView's CSV import maps each column to a distinct field 
 
   assert.deepEqual(errors, []);
   assert.deepEqual(records, [{ stage: "In Progress", shippingStatus: "Shipped" }]);
+});
+
+/**
+ * Regression test for a real bug found by round 657's Explore survey: the
+ * test right above predates round 637's recordsToCsv disambiguation fix and
+ * only ever used literal identical headers ("Status","Status"), so it never
+ * actually exercised the header format recordsToCsv has emitted for
+ * same-labeled fields since round 637 -- "Amount (subtotal)", not "Amount".
+ * matchesImportHeader only ever compared a header against a field's bare
+ * name or bare label, never against that disambiguated fieldDisplayLabel
+ * form, so re-importing a CSV the exported app's own "Export CSV" button
+ * had just produced for an entity with any same-labeled fields matched
+ * neither column to either field: both came back null with zero errors
+ * reported. Runs the real round-trip end to end (the generated
+ * recordsToCsv -> parseCsv -> buildImportRecords, not reimplemented here)
+ * to confirm the fields actually survive it now.
+ */
+test("the exported EntityView's CSV export and import round-trip two same-labeled fields without losing either column's data", () => {
+  const amountProject: Project = {
+    ...project,
+    spec: {
+      ...project.spec,
+      entities: [
+        {
+          name: "Invoice",
+          label: "Invoice",
+          fields: [
+            { name: "subtotal", label: "Amount", type: "number", required: true },
+            { name: "shipping", label: "Amount", type: "number", required: true },
+          ],
+        },
+      ],
+    },
+  };
+  const entityViewJsx = generateExportFiles(amountProject).find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+
+  const csvEscapeSrc = entityViewJsx.match(/function csvEscape\(value\) \{[\s\S]*?\n\}\n/)?.[0];
+  const fieldDisplayValueSrc = entityViewJsx.match(/function fieldDisplayValue\(field, value, relatedRecords\) \{[\s\S]*?\n\}\n/)?.[0];
+  const recordsToCsvSrc = entityViewJsx.match(/function recordsToCsv\(fields, records, relatedRecords\) \{[\s\S]*?\n\}\n/)?.[0];
+  const fieldLabelOccurrencesSrc = entityViewJsx.match(/function fieldLabelOccurrences\(fields\) \{[\s\S]*?\n\}\n/)?.[0];
+  const fieldDisplayLabelSrc = entityViewJsx.match(/function fieldDisplayLabel\(field, occurrences\) \{[\s\S]*?\n\}\n/)?.[0];
+  const parseCsvSrc = entityViewJsx.match(/function parseCsv\(text\) \{[\s\S]*?\n\}\n/)?.[0];
+  const headerSrc = entityViewJsx.match(/function matchesImportHeader\(header, field, labelOccurrences\) \{[\s\S]*?\n\}\n/)?.[0];
+  const isValidDateSrc = entityViewJsx.match(/const DATE_FORMAT[\s\S]*?\nfunction isValidDate\(value\) \{[\s\S]*?\n\}\n/)?.[0];
+  const importSrc = entityViewJsx.match(/function buildImportRecords\(fields, rows\) \{[\s\S]*?\n\}\n/)?.[0];
+  assert.ok(
+    csvEscapeSrc && fieldDisplayValueSrc && recordsToCsvSrc && fieldLabelOccurrencesSrc && fieldDisplayLabelSrc && parseCsvSrc && headerSrc && isValidDateSrc && importSrc,
+    "expected to find csvEscape/fieldDisplayValue/recordsToCsv/fieldLabelOccurrences/fieldDisplayLabel/parseCsv/matchesImportHeader/isValidDate/buildImportRecords in generated output",
+  );
+
+  const { recordsToCsv, parseCsv, buildImportRecords } = new Function(
+    `${csvEscapeSrc}\n${fieldDisplayValueSrc}\n${fieldLabelOccurrencesSrc}\n${fieldDisplayLabelSrc}\n${recordsToCsvSrc}\n${parseCsvSrc}\n${isValidDateSrc}\n${headerSrc}\n${importSrc}\nreturn { recordsToCsv, parseCsv, buildImportRecords };`,
+  )();
+
+  const fields = amountProject.spec.entities[0].fields;
+  const csv = recordsToCsv(fields, [{ subtotal: 800, shipping: 30 }], {});
+  const rows = parseCsv(csv);
+  const { records, errors } = buildImportRecords(fields, rows);
+
+  assert.deepEqual(errors, []);
+  assert.deepEqual(
+    records,
+    [{ subtotal: 800, shipping: 30 }],
+    "both same-labeled columns must round-trip back to their own field's real value, not null",
+  );
 });
 
 /**
@@ -6499,11 +6599,18 @@ test("the exported EntityView's CSV import ignores a blank/unnamed column instea
   const entityViewJsx = generateExportFiles(noLabelProject).find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
 
   const isValidDateSrc = entityViewJsx.match(/const DATE_FORMAT[\s\S]*?\nfunction isValidDate\(value\) \{[\s\S]*?\n\}\n/)?.[0];
-  const headerSrc = entityViewJsx.match(/function matchesImportHeader\(header, field\) \{[\s\S]*?\n\}\n/)?.[0];
+  const fieldLabelOccurrencesSrc = entityViewJsx.match(/function fieldLabelOccurrences\(fields\) \{[\s\S]*?\n\}\n/)?.[0];
+  const fieldDisplayLabelSrc = entityViewJsx.match(/function fieldDisplayLabel\(field, occurrences\) \{[\s\S]*?\n\}\n/)?.[0];
+  const headerSrc = entityViewJsx.match(/function matchesImportHeader\(header, field, labelOccurrences\) \{[\s\S]*?\n\}\n/)?.[0];
   const importSrc = entityViewJsx.match(/function buildImportRecords\(fields, rows\) \{[\s\S]*?\n\}\n/)?.[0];
-  assert.ok(isValidDateSrc && headerSrc && importSrc, "expected to find isValidDate/matchesImportHeader/buildImportRecords in generated output");
+  assert.ok(
+    isValidDateSrc && fieldLabelOccurrencesSrc && fieldDisplayLabelSrc && headerSrc && importSrc,
+    "expected to find isValidDate/fieldLabelOccurrences/fieldDisplayLabel/matchesImportHeader/buildImportRecords in generated output",
+  );
 
-  const buildImportRecords = new Function(`${isValidDateSrc}\n${headerSrc}\n${importSrc}\nreturn buildImportRecords;`)();
+  const buildImportRecords = new Function(
+    `${isValidDateSrc}\n${fieldLabelOccurrencesSrc}\n${fieldDisplayLabelSrc}\n${headerSrc}\n${importSrc}\nreturn buildImportRecords;`,
+  )();
 
   const fields = noLabelProject.spec.entities[0].fields;
   const rows = [
@@ -6543,7 +6650,7 @@ test("the exported EntityView's CSV export and import round-trip a value csvEsca
   const fieldLabelOccurrencesSrc = entityViewJsx.match(/function fieldLabelOccurrences\(fields\) \{[\s\S]*?\n\}\n/)?.[0];
   const fieldDisplayLabelSrc = entityViewJsx.match(/function fieldDisplayLabel\(field, occurrences\) \{[\s\S]*?\n\}\n/)?.[0];
   const parseCsvSrc = entityViewJsx.match(/function parseCsv\(text\) \{[\s\S]*?\n\}\n/)?.[0];
-  const headerSrc = entityViewJsx.match(/function matchesImportHeader\(header, field\) \{[\s\S]*?\n\}\n/)?.[0];
+  const headerSrc = entityViewJsx.match(/function matchesImportHeader\(header, field, labelOccurrences\) \{[\s\S]*?\n\}\n/)?.[0];
   const isValidDateSrc = entityViewJsx.match(/const DATE_FORMAT[\s\S]*?\nfunction isValidDate\(value\) \{[\s\S]*?\n\}\n/)?.[0];
   const importSrc = entityViewJsx.match(/function buildImportRecords\(fields, rows\) \{[\s\S]*?\n\}\n/)?.[0];
   assert.ok(
@@ -6596,7 +6703,7 @@ test("the exported EntityView's CSV export and import round-trip a value that ge
   const fieldLabelOccurrencesSrc = entityViewJsx.match(/function fieldLabelOccurrences\(fields\) \{[\s\S]*?\n\}\n/)?.[0];
   const fieldDisplayLabelSrc = entityViewJsx.match(/function fieldDisplayLabel\(field, occurrences\) \{[\s\S]*?\n\}\n/)?.[0];
   const parseCsvSrc = entityViewJsx.match(/function parseCsv\(text\) \{[\s\S]*?\n\}\n/)?.[0];
-  const headerSrc = entityViewJsx.match(/function matchesImportHeader\(header, field\) \{[\s\S]*?\n\}\n/)?.[0];
+  const headerSrc = entityViewJsx.match(/function matchesImportHeader\(header, field, labelOccurrences\) \{[\s\S]*?\n\}\n/)?.[0];
   const isValidDateSrc = entityViewJsx.match(/const DATE_FORMAT[\s\S]*?\nfunction isValidDate\(value\) \{[\s\S]*?\n\}\n/)?.[0];
   const importSrc = entityViewJsx.match(/function buildImportRecords\(fields, rows\) \{[\s\S]*?\n\}\n/)?.[0];
   assert.ok(

@@ -1605,6 +1605,37 @@ test("buildImportRecords maps each column to a distinct field even when two fiel
   assert.deepEqual(result.records, [{ stage: "In Progress", shippingStatus: "Shipped" }]);
 });
 
+/**
+ * Regression test for a real bug found by round 657's Explore survey: the
+ * test right above predates round 637's recordsToCsv disambiguation fix and
+ * only ever used literal identical headers ("Status","Status"), so it never
+ * actually exercised the header format recordsToCsv has emitted for
+ * same-labeled fields since round 637 -- "Amount (subtotal)", not "Amount".
+ * matchesHeader only ever compared a header against a field's bare name or
+ * bare label, never against that disambiguated fieldDisplayLabel form, so
+ * re-importing a CSV this app itself had just exported for an entity with
+ * any same-labeled fields matched neither column to either field: both
+ * came back null with zero errors reported, silently destroying the data
+ * the round-637 fix was meant to protect in the first place. Runs the real
+ * round-trip end to end (recordsToCsv -> parseCsv -> buildImportRecords) to
+ * confirm the fields actually survive it now.
+ */
+test("two same-labeled fields' CSV export round-trips back through buildImportRecords without losing either column's data", () => {
+  const fields: Field[] = [
+    { name: "subtotal", label: "Amount", type: "number", required: true },
+    { name: "shipping", label: "Amount", type: "number", required: true },
+  ];
+  const csv = recordsToCsv(fields, [{ subtotal: 800, shipping: 30 }], "en");
+  const rows = parseCsv(csv);
+  const result = buildImportRecords(fields, rows);
+  assert.deepEqual(result.errors, []);
+  assert.deepEqual(
+    result.records,
+    [{ subtotal: 800, shipping: 30 }],
+    "both same-labeled columns must round-trip back to their own field's real value, not null",
+  );
+});
+
 test("uniqueEnumValues de-dupes while preserving first-occurrence order, and tolerates a missing array", () => {
   assert.deepEqual(uniqueEnumValues(["New", "New", "Won", "Lost", "Won"]), ["New", "Won", "Lost"]);
   assert.deepEqual(uniqueEnumValues([]), []);
