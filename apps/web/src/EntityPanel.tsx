@@ -867,6 +867,11 @@ export function EntityPanel({
   const [pendingDelete, setPendingDelete] = useState<PendingDelete | null>(null);
   const pendingDeleteRef = useRef<PendingDelete | null>(null);
   const [form, setForm] = useState<Record<string, unknown>>(() => emptyForm(entity));
+  // The record startEdit snapshotted `form` from, kept separately from
+  // `form` itself (which the user's own keystrokes mutate field-by-field)
+  // so handleSubmit can tell which fields the user actually touched. See
+  // handleSubmit's own comment for why this matters.
+  const editingOriginalRef = useRef<EntityRecord | null>(null);
   const [editingId, setEditingId] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -1684,12 +1689,37 @@ export function EntityPanel({
     }
     try {
       if (editingId != null) {
-        await updateRecord(projectId, entity.name, editingId, form);
+        // Round 644: `form` holds a value for EVERY field, including every
+        // one the user never touched -- startEdit below just snapshots the
+        // whole record into it. Sending `form` as-is (as this used to do)
+        // PATCHes every field back verbatim, reviving whatever stale value
+        // was on screen when the dialog opened. If another tab, a Kanban
+        // drag, or an automation legitimately changed an untouched field on
+        // this same record while the dialog was open, saving this form
+        // silently overwrites that real change with the stale one -- and
+        // since the stored value genuinely transitions (e.g. back from
+        // "Shipped" to "Pending"), computeChangedFields (routes/projects.ts)
+        // correctly sees it as "changed" and can re-fire a field_equals
+        // automation for a value nobody here actually set. Every sibling
+        // mutation path in this file (commitInlineEdit, handleBulkUpdate,
+        // the Kanban/calendar drag handlers below) already sends only the
+        // field(s) it actually means to change -- diffing against the
+        // snapshot startEdit took, rather than sending `form` whole, brings
+        // this form in line with that same convention.
+        const original = editingOriginalRef.current;
+        const changedOnly: Record<string, unknown> = {};
+        for (const f of entity.fields) {
+          if (!original || form[f.name] !== original[f.name]) {
+            changedOnly[f.name] = form[f.name];
+          }
+        }
+        await updateRecord(projectId, entity.name, editingId, changedOnly);
       } else {
         await createRecord(projectId, entity.name, form);
       }
       setForm(emptyForm(entity));
       setEditingId(null);
+      editingOriginalRef.current = null;
       await refresh();
     } catch (err) {
       setError((err as Error).message);
@@ -1699,6 +1729,7 @@ export function EntityPanel({
   function startEdit(record: EntityRecord) {
     setEditingId(record.id as number);
     setForm({ ...record });
+    editingOriginalRef.current = record;
   }
 
   /**

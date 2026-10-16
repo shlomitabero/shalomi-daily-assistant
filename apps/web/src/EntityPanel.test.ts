@@ -5641,6 +5641,82 @@ test("EntityPanel's 'n' shortcut jumps to a blank add-record form and focuses it
 });
 
 /**
+ * Round 644: startEdit snapshots EVERY field of the record into `form`,
+ * and the old handleSubmit sent that whole snapshot back on save -- not
+ * just the field(s) the user actually edited. If another tab (or a
+ * Kanban drag, or an automation) legitimately changed a DIFFERENT field
+ * on this same record while the edit dialog was still open, saving used
+ * to silently revert that real change back to its stale, pre-dialog
+ * value, since the untouched field rode along in the PATCH body
+ * unchanged. Every sibling mutation path in this file (inline-cell-edit,
+ * bulk-update, drag handlers) already sends only the field(s) it means
+ * to change; this proves the main Edit form now does too, by actually
+ * mutating the record store out from under an open dialog (standing in
+ * for the other tab/automation) before saving an edit to a different
+ * field, and confirming the concurrent change survives.
+ */
+test("EntityPanel's main Edit form saves only the field the user actually touched, instead of reviving every other field's stale pre-dialog value", async () => {
+  await withJsdom(async () => {
+    const store: EntityRecord[] = [{ id: 1, name: "Acme Corp", status: "new" }];
+    const originalFetch = globalThis.fetch;
+    const patchBodies: Record<string, unknown>[] = [];
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/entities/Deal") {
+        return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      const patchMatch = /^\/api\/projects\/proj1\/entities\/Deal\/(\d+)$/.exec(input);
+      if (method === "PATCH" && patchMatch) {
+        const data = JSON.parse(init!.body as string);
+        patchBodies.push(data);
+        const record = store.find((r) => r.id === Number(patchMatch[1]));
+        Object.assign(record!, data);
+        return new Response(JSON.stringify({ record }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+    try {
+      renderEntityPanel();
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 1);
+
+      const editButtons = Array.from(document.querySelectorAll("table tbody button")) as HTMLButtonElement[];
+      const editButton = editButtons.find((b) => /edit/i.test(b.textContent ?? ""));
+      assert.ok(editButton, "expected an Edit button on Acme Corp's row");
+      fireEvent.click(editButton!);
+      const nameInput = document.querySelector(".record-form input[type=text]") as HTMLInputElement;
+      await waitForCondition(() => nameInput.value === "Acme Corp");
+
+      // Stands in for another tab, a Kanban drag, or an automation legitimately
+      // changing "status" on this exact record while the dialog is still open
+      // -- bypassing this component entirely, the same way a real concurrent
+      // actor would.
+      Object.assign(store[0], { status: "won" });
+
+      // The user only ever touches "name" -- never re-opens or re-reads
+      // "status" through this dialog.
+      fireEvent.change(nameInput, { target: { value: "Acme Corporation" } });
+      const submitButton = document.querySelector(".record-form button[type=submit]") as HTMLButtonElement;
+      fireEvent.click(submitButton);
+
+      await waitForCondition(() => patchBodies.length === 1);
+
+      assert.deepEqual(
+        patchBodies[0],
+        { name: "Acme Corporation" },
+        "the PATCH must carry only the field the user actually edited, not every field the form happened to hold",
+      );
+      assert.equal(
+        store[0].status,
+        "won",
+        "the concurrent change to 'status' must survive this save -- the stale pre-dialog value must never be sent back",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * Round 365 regression: EntityPanel never unmounts while an overlay dialog
  * (History, WhatsApp, Shortcuts, ...) is open on top of it (see App.tsx --
  * they render as siblings), so its own window-level "n"/j/k/x/Delete/d

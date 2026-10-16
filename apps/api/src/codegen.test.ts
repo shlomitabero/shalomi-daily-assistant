@@ -975,6 +975,89 @@ test("the exported EntityView's commitPendingDelete restores the row and surface
   assert.equal(capturedError, "Cannot delete this record -- another record still references it through a relation field");
 });
 
+/**
+ * Round 644 regression, ported from the live Forge AI preview's own
+ * EntityPanel.tsx fix: startEdit used to snapshot the whole record into
+ * `form`, and handleSubmit sent that whole snapshot back on save -- not
+ * just the field(s) the user actually edited. If a field untouched in
+ * this dialog had legitimately changed elsewhere (another tab, a drag)
+ * while the dialog was open, saving used to silently revert it to its
+ * stale pre-dialog value. Extracted and run as real generated source via
+ * `new Function`, the same technique the commitPendingDelete test above
+ * uses, rather than a full jsdom render -- startEdit and handleSubmit
+ * close over several more state variables each, so this keeps the test
+ * fast while still exercising the exact generated code.
+ */
+test("the exported EntityView's handleSubmit saves only the field the user actually touched, instead of reviving every other field's stale pre-dialog value", async () => {
+  const entityViewJsx = generateExportFiles(project).find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+  const handleSubmitSrc = entityViewJsx.match(/async function handleSubmit\(e\) \{[\s\S]*?\n  \}\n/)?.[0];
+  const startEditSrc = entityViewJsx.match(/function startEdit\(record\) \{[\s\S]*?\n  \}\n/)?.[0];
+  assert.ok(handleSubmitSrc, "expected to find an async handleSubmit in generated output");
+  assert.ok(startEditSrc, "expected to find a startEdit in generated output");
+
+  const customerEntity = project.spec.entities.find((e) => e.name === "Customer")!;
+  const updateCalls: Array<{ entityName: unknown; id: unknown; data: unknown }> = [];
+
+  const fn = new Function(
+    "entity",
+    "setError",
+    "updateRecord",
+    "createRecord",
+    "refresh",
+    "emptyForm",
+    `
+    let form = {};
+    let editingId = null;
+    const editingOriginalRef = { current: null };
+    function setForm(next) { form = typeof next === "function" ? next(form) : next; }
+    function setEditingId(id) { editingId = id; }
+    ${startEditSrc}
+    ${handleSubmitSrc}
+    return { startEdit, handleSubmit, getForm: () => form };
+    `,
+  )(
+    customerEntity,
+    () => {},
+    async (entityName: unknown, id: unknown, data: unknown) => {
+      updateCalls.push({ entityName, id, data });
+      return { record: data };
+    },
+    async () => {
+      throw new Error("createRecord should not be called while editing an existing record");
+    },
+    async () => {},
+    (entity: Entity) => {
+      const f: Record<string, unknown> = {};
+      for (const field of entity.fields) f[field.name] = field.type === "boolean" ? false : "";
+      return f;
+    },
+  );
+
+  const record = { id: 7, name: "Alice", status: "New" };
+  fn.startEdit(record);
+  assert.deepEqual(fn.getForm(), { name: "Alice", status: "New" }, "startEdit must snapshot the real record into form");
+
+  // The user here only ever edits "name" -- "status" stays exactly as
+  // startEdit snapshotted it, standing in for a field the user never
+  // touched in this dialog (which, per the real app's immutable state
+  // updates, is the only way a field legitimately changed elsewhere
+  // while the dialog was open would ever reach this form: as a value
+  // identical to the untouched snapshot, never as a live mutation of the
+  // same object editingOriginalRef holds).
+  fn.getForm().name = "Alice Cohen";
+
+  await fn.handleSubmit({ preventDefault() {} });
+
+  assert.equal(updateCalls.length, 1);
+  assert.equal(updateCalls[0].entityName, "Customer");
+  assert.equal(updateCalls[0].id, 7);
+  assert.deepEqual(
+    updateCalls[0].data,
+    { name: "Alice Cohen" },
+    "the update must carry only the field actually edited, not every field the form happened to hold",
+  );
+});
+
 test("every generated .jsx/.js file is syntactically valid, checked with a real parser (esbuild)", async () => {
   const esbuild = await import("esbuild");
   const files = generateExportFiles(project);

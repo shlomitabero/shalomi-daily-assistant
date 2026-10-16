@@ -2820,6 +2820,12 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
   // "No records yet" even though the real problem was a failed fetch.
   const [loadError, setLoadError] = useState(null);
   const [form, setForm] = useState(() => emptyForm(entity));
+  // The record startEdit snapshotted \`form\` from, kept separately from
+  // \`form\` itself (which the user's own keystrokes mutate field-by-field)
+  // so handleSubmit can tell which fields the user actually touched. See
+  // handleSubmit's own comment for why this matters. Mirrors the live
+  // Forge AI preview's own EntityPanel.tsx.
+  const editingOriginalRef = useRef(null);
   const [editingId, setEditingId] = useState(null);
   const [search, setSearch] = useState("");
   const [recentSearches, setRecentSearches] = useState(() => getEntityRecentSearches(entity.name));
@@ -3422,12 +3428,33 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
     }
     try {
       if (editingId != null) {
-        await updateRecord(entity.name, editingId, form);
+        // \`form\` holds a value for EVERY field, including every one the
+        // user never touched -- startEdit below just snapshots the whole
+        // record into it. Sending \`form\` as-is PATCHes every field back
+        // verbatim, reviving whatever stale value was on screen when the
+        // dialog opened. If another tab, a drag, or an automation
+        // legitimately changed an untouched field on this same record
+        // while the dialog was open, saving this form would silently
+        // overwrite that real change with the stale one. Every sibling
+        // mutation path (commitInlineEdit, handleBulkUpdate, the drag
+        // handlers) already sends only the field(s) it actually means to
+        // change -- diffing against the snapshot startEdit took, rather
+        // than sending \`form\` whole, brings this form in line with that
+        // same convention. Mirrors the live Forge AI preview's own fix.
+        const original = editingOriginalRef.current;
+        const changedOnly = {};
+        for (const f of entity.fields) {
+          if (!original || form[f.name] !== original[f.name]) {
+            changedOnly[f.name] = form[f.name];
+          }
+        }
+        await updateRecord(entity.name, editingId, changedOnly);
       } else {
         await createRecord(entity.name, form);
       }
       setForm(emptyForm(entity));
       setEditingId(null);
+      editingOriginalRef.current = null;
       await refresh();
     } catch (err) {
       setError(err.message);
@@ -3439,6 +3466,7 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
     for (const f of entity.fields) next[f.name] = record[f.name] ?? (f.type === "boolean" ? false : "");
     setForm(next);
     setEditingId(record.id);
+    editingOriginalRef.current = record;
   }
 
   function startCreateForColumn(value, field) {
