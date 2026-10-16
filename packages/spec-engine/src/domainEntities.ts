@@ -419,10 +419,15 @@ export const DOMAIN_ENTITY_RULES: DomainEntityRule[] = [
     // sellers") that has nothing to do with restaurants, so it spuriously
     // matched this entity. `\b`-bounded here, same pitfall-1 shape as the
     // other seven fixes in this file (order/stock/driver/patient/deals/
-    // worker/courses).
+    // worker/courses). "מנות" (round 660) dodges the "מנהל" collision noted
+    // above, but is itself a substring of this very file's own Order
+    // rule's "הזמנות" keyword a few entries up -- a description naming
+    // only orders ("ניהול הזמנות") spuriously matched this entity too,
+    // fabricating a restaurant menu for e.g. a clothing store's order
+    // tracker. The negative lookbehind excludes only that specific root.
     keywords: [
       "menu", /\bdish(es)?\b/, "food item", "restaurant", "cafe", "מסעדה", "מסעדות",
-      "תפריט", "מנות", "בית קפה",
+      "תפריט", /(?<!ז)מנות/, "בית קפה",
       // "בית קפה" (café) had no plural entry (round 582). Unlike this
       // file's other missing-plural fixes (576-581, all a ה→ות swap or a
       // sofit-letter swap), "בית" (house) forms its plural with the

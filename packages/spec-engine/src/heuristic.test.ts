@@ -1297,6 +1297,35 @@ test("MenuItem's 'מנה' keyword doesn't spuriously match 'מנהלים' (manag
 });
 
 /**
+ * Regression test for round 660's finding: MenuItem's plural "מנות"
+ * keyword -- chosen specifically (see the comment above the rule) to
+ * dodge the "מנה"/"מנהל" (manager) collision -- is itself a bare
+ * substring of this very file's own Order rule's "הזמנות" ("orders")
+ * keyword a few entries up. A description naming only orders, with no
+ * restaurant/menu concept at all, spuriously matched MenuItem too,
+ * fabricating a restaurant-menu entity (price/category/available fields,
+ * List/Form screens) for e.g. a clothing store's order tracker. Fixed
+ * with a negative lookbehind excluding exactly that root, the same
+ * disambiguation idiom this file already uses for its other collisions.
+ */
+test("MenuItem's 'מנות' keyword doesn't spuriously match inside Order's own 'הזמנות' keyword", async () => {
+  const provider = new HeuristicSpecProvider();
+
+  const ordersOnly = await provider.generate("אפליקציה לניהול הזמנות של חנות בגדים אונליין");
+  assert.ok(
+    !ordersOnly.entities.some((e) => e.name === "MenuItem"),
+    "a pure order-management description must not spuriously match MenuItem via a bare 'מנות' substring inside 'הזמנות'",
+  );
+  assert.ok(ordersOnly.entities.some((e) => e.name === "Order"), "the real 'הזמנות' keyword must still match Order");
+
+  // The real word still works on its own (this description avoids this
+  // rule's other keywords -- "menu", "תפריט", "מסעדה", etc. -- so a match
+  // here can only come from a standalone "מנות" not preceded by "ז").
+  const realMenu = await provider.generate("אפליקציה לניהול מנות של בית אוכל קטן");
+  assert.ok(realMenu.entities.some((e) => e.name === "MenuItem"), "a standalone 'מנות' must still match MenuItem");
+});
+
+/**
  * Regression test for round 518's finding: Product's bare "מלאי"
  * ("inventory/stock") keyword is a substring of two unrelated, ordinary
  * Hebrew words -- WorkOrder's own "חשמלאי"/"חשמלאים" ("electrician(s)")
