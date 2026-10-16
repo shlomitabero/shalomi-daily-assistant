@@ -5131,9 +5131,16 @@ test("the exported EntityView's own CSV-export formatting renders booleans as TR
   const csvEscapeSrc = entityViewJsx.match(/function csvEscape\(value\) \{[\s\S]*?\n\}\n/)?.[0];
   const fieldDisplayValueSrc = entityViewJsx.match(/function fieldDisplayValue\(field, value, relatedRecords\) \{[\s\S]*?\n\}\n/)?.[0];
   const recordsToCsvSrc = entityViewJsx.match(/function recordsToCsv\(fields, records, relatedRecords\) \{[\s\S]*?\n\}\n/)?.[0];
-  assert.ok(csvEscapeSrc && fieldDisplayValueSrc && recordsToCsvSrc, "expected to find csvEscape/fieldDisplayValue/recordsToCsv in the generated EntityView.jsx");
+  const fieldLabelOccurrencesSrc = entityViewJsx.match(/function fieldLabelOccurrences\(fields\) \{[\s\S]*?\n\}\n/)?.[0];
+  const fieldDisplayLabelSrc = entityViewJsx.match(/function fieldDisplayLabel\(field, occurrences\) \{[\s\S]*?\n\}\n/)?.[0];
+  assert.ok(
+    csvEscapeSrc && fieldDisplayValueSrc && recordsToCsvSrc && fieldLabelOccurrencesSrc && fieldDisplayLabelSrc,
+    "expected to find csvEscape/fieldDisplayValue/recordsToCsv/fieldLabelOccurrences/fieldDisplayLabel in the generated EntityView.jsx",
+  );
 
-  const { recordsToCsv } = new Function(`${csvEscapeSrc}\n${fieldDisplayValueSrc}\n${recordsToCsvSrc}\nreturn { recordsToCsv };`)();
+  const { recordsToCsv } = new Function(
+    `${csvEscapeSrc}\n${fieldDisplayValueSrc}\n${fieldLabelOccurrencesSrc}\n${fieldDisplayLabelSrc}\n${recordsToCsvSrc}\nreturn { recordsToCsv };`,
+  )();
 
   const fields = [
     { name: "title", label: "Title", type: "text" },
@@ -5168,9 +5175,16 @@ test("the exported EntityView's real generated recordsToCsv disambiguates two co
   const csvEscapeSrc = entityViewJsx.match(/function csvEscape\(value\) \{[\s\S]*?\n\}\n/)?.[0];
   const fieldDisplayValueSrc = entityViewJsx.match(/function fieldDisplayValue\(field, value, relatedRecords\) \{[\s\S]*?\n\}\n/)?.[0];
   const recordsToCsvSrc = entityViewJsx.match(/function recordsToCsv\(fields, records, relatedRecords\) \{[\s\S]*?\n\}\n/)?.[0];
-  assert.ok(csvEscapeSrc && fieldDisplayValueSrc && recordsToCsvSrc, "expected to find csvEscape/fieldDisplayValue/recordsToCsv in the generated EntityView.jsx");
+  const fieldLabelOccurrencesSrc = entityViewJsx.match(/function fieldLabelOccurrences\(fields\) \{[\s\S]*?\n\}\n/)?.[0];
+  const fieldDisplayLabelSrc = entityViewJsx.match(/function fieldDisplayLabel\(field, occurrences\) \{[\s\S]*?\n\}\n/)?.[0];
+  assert.ok(
+    csvEscapeSrc && fieldDisplayValueSrc && recordsToCsvSrc && fieldLabelOccurrencesSrc && fieldDisplayLabelSrc,
+    "expected to find csvEscape/fieldDisplayValue/recordsToCsv/fieldLabelOccurrences/fieldDisplayLabel in the generated EntityView.jsx",
+  );
 
-  const { recordsToCsv } = new Function(`${csvEscapeSrc}\n${fieldDisplayValueSrc}\n${recordsToCsvSrc}\nreturn { recordsToCsv };`)();
+  const { recordsToCsv } = new Function(
+    `${csvEscapeSrc}\n${fieldDisplayValueSrc}\n${fieldLabelOccurrencesSrc}\n${fieldDisplayLabelSrc}\n${recordsToCsvSrc}\nreturn { recordsToCsv };`,
+  )();
 
   const fields = [
     { name: "subtotal", label: "Amount", type: "number" },
@@ -6134,17 +6148,19 @@ test("the exported EntityView's CSV export and import round-trip a value csvEsca
   const csvEscapeSrc = entityViewJsx.match(/function csvEscape\(value\) \{[\s\S]*?\n\}\n/)?.[0];
   const fieldDisplayValueSrc = entityViewJsx.match(/function fieldDisplayValue\(field, value, relatedRecords\) \{[\s\S]*?\n\}\n/)?.[0];
   const recordsToCsvSrc = entityViewJsx.match(/function recordsToCsv\(fields, records, relatedRecords\) \{[\s\S]*?\n\}\n/)?.[0];
+  const fieldLabelOccurrencesSrc = entityViewJsx.match(/function fieldLabelOccurrences\(fields\) \{[\s\S]*?\n\}\n/)?.[0];
+  const fieldDisplayLabelSrc = entityViewJsx.match(/function fieldDisplayLabel\(field, occurrences\) \{[\s\S]*?\n\}\n/)?.[0];
   const parseCsvSrc = entityViewJsx.match(/function parseCsv\(text\) \{[\s\S]*?\n\}\n/)?.[0];
   const headerSrc = entityViewJsx.match(/function matchesImportHeader\(header, field\) \{[\s\S]*?\n\}\n/)?.[0];
   const isValidDateSrc = entityViewJsx.match(/const DATE_FORMAT[\s\S]*?\nfunction isValidDate\(value\) \{[\s\S]*?\n\}\n/)?.[0];
   const importSrc = entityViewJsx.match(/function buildImportRecords\(fields, rows\) \{[\s\S]*?\n\}\n/)?.[0];
   assert.ok(
-    csvEscapeSrc && fieldDisplayValueSrc && recordsToCsvSrc && parseCsvSrc && headerSrc && isValidDateSrc && importSrc,
-    "expected to find csvEscape/fieldDisplayValue/recordsToCsv/parseCsv/matchesImportHeader/isValidDate/buildImportRecords in generated output",
+    csvEscapeSrc && fieldDisplayValueSrc && recordsToCsvSrc && fieldLabelOccurrencesSrc && fieldDisplayLabelSrc && parseCsvSrc && headerSrc && isValidDateSrc && importSrc,
+    "expected to find csvEscape/fieldDisplayValue/recordsToCsv/fieldLabelOccurrences/fieldDisplayLabel/parseCsv/matchesImportHeader/isValidDate/buildImportRecords in generated output",
   );
 
   const { recordsToCsv, parseCsv, buildImportRecords } = new Function(
-    `${csvEscapeSrc}\n${fieldDisplayValueSrc}\n${recordsToCsvSrc}\n${parseCsvSrc}\n${isValidDateSrc}\n${headerSrc}\n${importSrc}\nreturn { recordsToCsv, parseCsv, buildImportRecords };`,
+    `${csvEscapeSrc}\n${fieldDisplayValueSrc}\n${fieldLabelOccurrencesSrc}\n${fieldDisplayLabelSrc}\n${recordsToCsvSrc}\n${parseCsvSrc}\n${isValidDateSrc}\n${headerSrc}\n${importSrc}\nreturn { recordsToCsv, parseCsv, buildImportRecords };`,
   )();
 
   const fields = [
@@ -6185,17 +6201,19 @@ test("the exported EntityView's CSV export and import round-trip a value that ge
   const csvEscapeSrc = entityViewJsx.match(/function csvEscape\(value\) \{[\s\S]*?\n\}\n/)?.[0];
   const fieldDisplayValueSrc = entityViewJsx.match(/function fieldDisplayValue\(field, value, relatedRecords\) \{[\s\S]*?\n\}\n/)?.[0];
   const recordsToCsvSrc = entityViewJsx.match(/function recordsToCsv\(fields, records, relatedRecords\) \{[\s\S]*?\n\}\n/)?.[0];
+  const fieldLabelOccurrencesSrc = entityViewJsx.match(/function fieldLabelOccurrences\(fields\) \{[\s\S]*?\n\}\n/)?.[0];
+  const fieldDisplayLabelSrc = entityViewJsx.match(/function fieldDisplayLabel\(field, occurrences\) \{[\s\S]*?\n\}\n/)?.[0];
   const parseCsvSrc = entityViewJsx.match(/function parseCsv\(text\) \{[\s\S]*?\n\}\n/)?.[0];
   const headerSrc = entityViewJsx.match(/function matchesImportHeader\(header, field\) \{[\s\S]*?\n\}\n/)?.[0];
   const isValidDateSrc = entityViewJsx.match(/const DATE_FORMAT[\s\S]*?\nfunction isValidDate\(value\) \{[\s\S]*?\n\}\n/)?.[0];
   const importSrc = entityViewJsx.match(/function buildImportRecords\(fields, rows\) \{[\s\S]*?\n\}\n/)?.[0];
   assert.ok(
-    csvEscapeSrc && fieldDisplayValueSrc && recordsToCsvSrc && parseCsvSrc && headerSrc && isValidDateSrc && importSrc,
-    "expected to find csvEscape/fieldDisplayValue/recordsToCsv/parseCsv/matchesImportHeader/isValidDate/buildImportRecords in generated output",
+    csvEscapeSrc && fieldDisplayValueSrc && recordsToCsvSrc && fieldLabelOccurrencesSrc && fieldDisplayLabelSrc && parseCsvSrc && headerSrc && isValidDateSrc && importSrc,
+    "expected to find csvEscape/fieldDisplayValue/recordsToCsv/fieldLabelOccurrences/fieldDisplayLabel/parseCsv/matchesImportHeader/isValidDate/buildImportRecords in generated output",
   );
 
   const { recordsToCsv, parseCsv, buildImportRecords } = new Function(
-    `${csvEscapeSrc}\n${fieldDisplayValueSrc}\n${recordsToCsvSrc}\n${parseCsvSrc}\n${isValidDateSrc}\n${headerSrc}\n${importSrc}\nreturn { recordsToCsv, parseCsv, buildImportRecords };`,
+    `${csvEscapeSrc}\n${fieldDisplayValueSrc}\n${fieldLabelOccurrencesSrc}\n${fieldDisplayLabelSrc}\n${recordsToCsvSrc}\n${parseCsvSrc}\n${isValidDateSrc}\n${headerSrc}\n${importSrc}\nreturn { recordsToCsv, parseCsv, buildImportRecords };`,
   )();
 
   const fields = [
@@ -11565,6 +11583,142 @@ test("the exported EntityView's per-row Print button fills .print-record-sheet w
       assert.match(sheetText, /Globex/, "the print sheet must show the clicked row's own name");
       assert.match(sheetText, /הצליח/, "the print sheet must show the clicked row's own status (rendered through its enumLabels, same as the table cell)");
       assert.doesNotMatch(sheetText, /Acme Corp/, "the print sheet must not include the OTHER record's data");
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    window.print = originalPrint;
+    cleanup();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
+ * Regression test for a real bug found by round 638's Explore survey: the
+ * same label-collision gap already fixed in Business Twin (635), the
+ * calendar export (636), and CSV export (637), confirmed to reach three
+ * more render paths in the exported app too -- RecordPrintSheet's per-row
+ * Print sheet, RecordListPrintSheet's Print-list sheet, and BoardCard's
+ * board-view cards -- which all rendered a bare field label with no
+ * disambiguation (BoardCard's own `{f.label}` didn't even fall back to
+ * f.name). Only field.name is unique on an entity, so two fields can
+ * legally share a label via the Field Label editor -- here, two number
+ * fields both renamed to "Amount". Renders the real generated EntityView
+ * via writeGeneratedWebComponent + dynamic import (not a reimplementation)
+ * against an entity with that exact collision, and exercises all three
+ * surfaces through real DOM interaction.
+ */
+test("the exported EntityView's print-row sheet, print-list sheet, and board cards all disambiguate two fields that share a label", async () => {
+  const orderProject: Project = {
+    ...project,
+    spec: {
+      ...project.spec,
+      entities: [
+        {
+          name: "Order",
+          label: "Order",
+          fields: [
+            { name: "name", label: "Name", type: "text", required: true },
+            {
+              name: "status",
+              label: "Status",
+              type: "enum",
+              required: true,
+              enumValues: ["new", "won"],
+              enumLabels: { new: "New", won: "Won" },
+            },
+            { name: "subtotal", label: "Amount", type: "number", required: true },
+            { name: "shipping", label: "Amount", type: "number", required: true },
+          ],
+        },
+      ],
+    },
+  };
+  const files = generateExportFiles(orderProject);
+  const dir = writeGeneratedWebComponent(files);
+  const originalFetch = globalThis.fetch;
+  const store = [{ id: 1, name: "Acme Corp", status: "new", subtotal: 800, shipping: 30 }];
+  globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
+    const method = init?.method ?? "GET";
+    if (method === "GET" && input === "/api/Order") {
+      return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    throw new Error(`unexpected request ${method} ${input}`);
+  }) as typeof fetch;
+  const originalPrint = window.print;
+  let printCalls = 0;
+  window.print = () => {
+    printCalls += 1;
+  };
+
+  try {
+    await withRealLocalStorage(async () => {
+      const { EntityView } = await import(path.join(dir, "web", "src", "components", "EntityView.jsx"));
+      const orderEntity = orderProject.spec.entities[0];
+      const props = {
+        entity: orderEntity,
+        highlightRecordId: null,
+        onHighlightHandled: () => {},
+        onJumpToRecord: () => {},
+        onRecordCountChange: () => {},
+      };
+
+      const { container } = render(React.createElement(EntityView, props));
+      for (let i = 0; i < 40; i++) {
+        if (container.querySelectorAll("tbody tr").length === 1) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+
+      const printButton = Array.from(container.querySelectorAll("tbody button")).find((b) => b.textContent === "Print")!;
+      await act(async () => {
+        fireEvent.click(printButton);
+      });
+      for (let i = 0; i < 40; i++) {
+        if (printCalls === 1) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+      assert.equal(printCalls, 1, "window.print must be called once for the per-row Print button");
+      const dts = Array.from(container.querySelectorAll(".print-record-sheet dt")).map((d) => d.textContent);
+      assert.ok(dts.includes("Amount (subtotal)"), `expected the subtotal field disambiguated in the print sheet, got: ${JSON.stringify(dts)}`);
+      assert.ok(dts.includes("Amount (shipping)"), `expected the shipping field disambiguated in the print sheet, got: ${JSON.stringify(dts)}`);
+
+      const printListButton = Array.from(container.querySelectorAll("button")).find((b) => b.textContent?.includes("Print list"))!;
+      await act(async () => {
+        fireEvent.click(printListButton);
+      });
+      for (let i = 0; i < 40; i++) {
+        if (printCalls === 2) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+      assert.equal(printCalls, 2, "window.print must be called a second time for the Print list button");
+      const ths = Array.from(container.querySelectorAll(".print-list-sheet th")).map((th) => th.textContent);
+      assert.ok(ths.includes("Amount (subtotal)"), `expected the subtotal field disambiguated in the print-list header, got: ${JSON.stringify(ths)}`);
+      assert.ok(ths.includes("Amount (shipping)"), `expected the shipping field disambiguated in the print-list header, got: ${JSON.stringify(ths)}`);
+
+      const boardToggle = container.querySelectorAll(".view-toggle-btn")[1] as HTMLButtonElement;
+      await act(async () => {
+        fireEvent.click(boardToggle);
+      });
+      for (let i = 0; i < 40; i++) {
+        if (container.querySelectorAll(".board-card").length === 1) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+      const boardLabels = Array.from(container.querySelectorAll(".board-card-field .muted.small")).map((s) => s.textContent);
+      assert.ok(
+        boardLabels.includes("Amount (subtotal)"),
+        `expected the subtotal field disambiguated on the board card, got: ${JSON.stringify(boardLabels)}`,
+      );
+      assert.ok(
+        boardLabels.includes("Amount (shipping)"),
+        `expected the shipping field disambiguated on the board card, got: ${JSON.stringify(boardLabels)}`,
+      );
     });
   } finally {
     globalThis.fetch = originalFetch;

@@ -30,6 +30,8 @@ import {
   findDateField,
   findEndDateField,
   findFilterableFields,
+  fieldDisplayLabel,
+  fieldLabelOccurrences,
   findPhoneField,
   formatDateForInput,
   formatDateValue,
@@ -267,13 +269,14 @@ function RecordPrintSheet({
   relatedRecords: RelatedRecordsByEntity;
 }) {
   if (!record) return <div className="print-record-sheet" />;
+  const labelOccurrences = fieldLabelOccurrences(fields);
   return (
     <div className="print-record-sheet">
       <h1>{entity.label ?? entity.name}</h1>
       <dl>
         {fields.map((f) => (
           <div key={f.name} className="print-field">
-            <dt>{f.label ?? f.name}</dt>
+            <dt>{fieldDisplayLabel(f, labelOccurrences)}</dt>
             <dd>
               <Cell
                 field={f}
@@ -322,6 +325,7 @@ function RecordListPrintSheet({
   relatedRecords: RelatedRecordsByEntity;
 }) {
   if (!show) return <div className="print-list-sheet" />;
+  const labelOccurrences = fieldLabelOccurrences(fields);
   return (
     <div className="print-list-sheet">
       <h1>{entity.label ?? entity.name}</h1>
@@ -329,7 +333,7 @@ function RecordListPrintSheet({
         <thead>
           <tr>
             {fields.map((f) => (
-              <th key={f.name}>{f.label ?? f.name}</th>
+              <th key={f.name}>{fieldDisplayLabel(f, labelOccurrences)}</th>
             ))}
           </tr>
         </thead>
@@ -401,6 +405,7 @@ function BoardCard({
   const currentBoardValue = String(record[boardField.name] ?? "");
   const knownBoardValues = uniqueEnumValues(boardField.enumValues);
   const boardOptionValues = currentBoardValue && !knownBoardValues.includes(currentBoardValue) ? [currentBoardValue, ...knownBoardValues] : knownBoardValues;
+  const labelOccurrences = fieldLabelOccurrences(otherFields);
   return (
     <div
       className={hasMoveError ? "board-card board-card-move-error" : "board-card"}
@@ -410,7 +415,7 @@ function BoardCard({
     >
       {otherFields.map((f) => (
         <div key={f.name} className="board-card-field">
-          <span className="muted small">{f.label ?? f.name}</span>
+          <span className="muted small">{fieldDisplayLabel(f, labelOccurrences)}</span>
           <Cell
             field={f}
             value={record[f.name]}

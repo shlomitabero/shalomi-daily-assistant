@@ -3215,6 +3215,92 @@ test("EntityPanel's Print list action fills the print sheet with only the curren
 });
 
 /**
+ * Regression test for a real bug found by round 638's Explore survey: the
+ * same label-collision gap already fixed in Business Twin (635), the
+ * calendar export (636), and CSV export (637), confirmed to reach three
+ * more render paths -- RecordPrintSheet's per-row Print sheet,
+ * RecordListPrintSheet's Print-list sheet, and BoardCard's board-view
+ * cards -- which all rendered a bare `field.label ?? field.name` with no
+ * disambiguation. Only field.name is unique on an entity (FieldSchema/
+ * EntitySchema never enforce label uniqueness), so two fields on the same
+ * entity can legally share a label via the Field Label editor -- here, two
+ * number fields both renamed to "Amount". Before this fix, a printed
+ * sheet or a board card would show two identical-looking "Amount" labels
+ * with no way to tell which field either one actually was.
+ */
+test("EntityPanel's print-row sheet, print-list sheet, and board cards all disambiguate two fields that share a label", async () => {
+  const orderEntity: Entity = {
+    name: "Order",
+    label: "Order",
+    fields: [
+      { name: "name", label: "Name", type: "text", required: true },
+      {
+        name: "status",
+        label: "Status",
+        type: "enum",
+        required: true,
+        enumValues: ["new", "won"],
+        enumLabels: { new: "New", won: "Won" },
+      },
+      { name: "subtotal", label: "Amount", type: "number", required: true },
+      { name: "shipping", label: "Amount", type: "number", required: true },
+    ],
+  };
+  await withJsdom(async () => {
+    const store: EntityRecord[] = [{ id: 1, name: "Acme Corp", status: "new", subtotal: 800, shipping: 30 }];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string) => {
+      if (input === "/api/projects/proj1/entities/Order") {
+        return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${input}`);
+    }) as typeof fetch;
+    const originalPrint = window.print;
+    let printCalls = 0;
+    window.print = () => {
+      printCalls += 1;
+    };
+    try {
+      renderEntityPanel({ entity: orderEntity, allEntities: [orderEntity] });
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 1);
+
+      // Per-row Print sheet (RecordPrintSheet).
+      const printBtn = Array.from(document.querySelectorAll("table tbody button")).find((b) => b.textContent?.includes("Print"))!;
+      fireEvent.click(printBtn);
+      await waitForCondition(() => printCalls === 1);
+      const dts = Array.from(document.querySelectorAll(".print-record-sheet dt")).map((d) => d.textContent);
+      assert.ok(dts.includes("Amount (subtotal)"), `expected the subtotal field disambiguated in the print sheet, got: ${JSON.stringify(dts)}`);
+      assert.ok(dts.includes("Amount (shipping)"), `expected the shipping field disambiguated in the print sheet, got: ${JSON.stringify(dts)}`);
+
+      // Print-list sheet (RecordListPrintSheet).
+      const printListBtn = Array.from(document.querySelectorAll("button")).find((b) => b.textContent?.includes("Print list"))!;
+      fireEvent.click(printListBtn);
+      await waitForCondition(() => printCalls === 2);
+      const ths = Array.from(document.querySelectorAll(".print-list-sheet th")).map((th) => th.textContent);
+      assert.ok(ths.includes("Amount (subtotal)"), `expected the subtotal field disambiguated in the print-list header, got: ${JSON.stringify(ths)}`);
+      assert.ok(ths.includes("Amount (shipping)"), `expected the shipping field disambiguated in the print-list header, got: ${JSON.stringify(ths)}`);
+
+      // Board view (BoardCard).
+      const boardToggle = document.querySelectorAll(".view-toggle-btn")[1] as HTMLButtonElement;
+      fireEvent.click(boardToggle);
+      await waitForCondition(() => document.querySelectorAll(".board-card").length === 1);
+      const boardLabels = Array.from(document.querySelectorAll(".board-card-field .muted.small")).map((s) => s.textContent);
+      assert.ok(
+        boardLabels.includes("Amount (subtotal)"),
+        `expected the subtotal field disambiguated on the board card, got: ${JSON.stringify(boardLabels)}`,
+      );
+      assert.ok(
+        boardLabels.includes("Amount (shipping)"),
+        `expected the shipping field disambiguated on the board card, got: ${JSON.stringify(boardLabels)}`,
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+      window.print = originalPrint;
+    }
+  });
+});
+
+/**
  * New in this round: "Print list" and "Export CSV" used to always operate
  * on whatever the table's current search/filter was showing, silently
  * discarding a real bulk-select checkbox selection the user had already

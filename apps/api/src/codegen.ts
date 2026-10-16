@@ -1820,28 +1820,33 @@ function sumNumericFields(records, fields) {
   return totals;
 }
 
+// A field's display label is never enforced unique (only its name is), so
+// two fields on the same entity can legally share a label via the Field
+// Label editor. Every place that renders a field's label as human-facing
+// text (CSV headers, print sheets, board cards) needs the same
+// disambiguation, so it is centralized here: count how many fields share
+// each label, then fieldDisplayLabel appends a field's own (always-
+// unique) name whenever its label is not unique.
+function fieldLabelOccurrences(fields) {
+  const occurrences = {};
+  for (const f of fields) {
+    const label = f.label || f.name;
+    occurrences[label] = (occurrences[label] || 0) + 1;
+  }
+  return occurrences;
+}
+
+function fieldDisplayLabel(field, occurrences) {
+  const label = field.label || field.name;
+  return (occurrences[label] || 0) > 1 ? label + " (" + field.name + ")" : label;
+}
+
 // Builds a real, Excel-friendly CSV (CRLF line endings, quoted fields
 // where needed) from an entity's records -- so "download my data" means
 // an actual spreadsheet, not a JSON dump.
 function recordsToCsv(fields, records, relatedRecords) {
-  // A field's display label is never enforced unique (only its name is),
-  // so two fields on the same entity can legally share a label via the
-  // Field Label editor. Disambiguated with each field's own name, the
-  // same fix already applied to Business Twin's observations and the
-  // calendar export -- without it, the header row would show two
-  // indistinguishable columns.
-  const labelOccurrences = {};
-  for (const f of fields) {
-    const label = f.label || f.name;
-    labelOccurrences[label] = (labelOccurrences[label] || 0) + 1;
-  }
-  const header = fields
-    .map((f) => {
-      const label = f.label || f.name;
-      const ambiguous = (labelOccurrences[label] || 0) > 1;
-      return csvEscape(ambiguous ? label + " (" + f.name + ")" : label);
-    })
-    .join(",");
+  const labelOccurrences = fieldLabelOccurrences(fields);
+  const header = fields.map((f) => csvEscape(fieldDisplayLabel(f, labelOccurrences))).join(",");
   const rows = records.map((record) => fields.map((f) => csvEscape(fieldDisplayValue(f, record[f.name], relatedRecords))).join(","));
   return [header, ...rows].join("\\r\\n");
 }
@@ -2518,13 +2523,14 @@ function CalendarView({ entity, dateField, endDateField, records, month, onPrevM
 // this same feature for in the first place.
 function RecordPrintSheet({ entity, fields, record, relatedRecords }) {
   if (!record) return <div className="print-record-sheet" />;
+  const labelOccurrences = fieldLabelOccurrences(fields);
   return (
     <div className="print-record-sheet">
       <h1>{entity.label}</h1>
       <dl>
         {fields.map((f) => (
           <div key={f.name} className="print-field">
-            <dt>{f.label || f.name}</dt>
+            <dt>{fieldDisplayLabel(f, labelOccurrences)}</dt>
             <dd>
               <Cell
                 field={f}
@@ -2545,6 +2551,7 @@ function RecordPrintSheet({ entity, fields, record, relatedRecords }) {
 // the existing Export CSV button's own selectedOrAllRecords convention.
 function RecordListPrintSheet({ entity, fields, records, relatedRecords, show }) {
   if (!show) return <div className="print-list-sheet" />;
+  const labelOccurrences = fieldLabelOccurrences(fields);
   return (
     <div className="print-list-sheet">
       <h1>{entity.label}</h1>
@@ -2552,7 +2559,7 @@ function RecordListPrintSheet({ entity, fields, records, relatedRecords, show })
         <thead>
           <tr>
             {fields.map((f) => (
-              <th key={f.name}>{f.label || f.name}</th>
+              <th key={f.name}>{fieldDisplayLabel(f, labelOccurrences)}</th>
             ))}
           </tr>
         </thead>
@@ -2592,11 +2599,12 @@ function BoardCard({ entity, boardField, record, relatedRecords, highlightQuery,
   const currentBoardValue = String(record[boardField.name] ?? "");
   const knownBoardValues = uniqueEnumValues(boardField.enumValues);
   const boardOptionValues = currentBoardValue && !knownBoardValues.includes(currentBoardValue) ? [currentBoardValue, ...knownBoardValues] : knownBoardValues;
+  const labelOccurrences = fieldLabelOccurrences(otherFields);
   return (
     <div className={hasMoveError ? "board-card board-card-move-error" : "board-card"} draggable onDragStart={(e) => e.dataTransfer.setData("text/plain", String(record.id))}>
       {otherFields.map((f) => (
         <div key={f.name} className="board-card-field">
-          <span className="muted small">{f.label}</span>
+          <span className="muted small">{fieldDisplayLabel(f, labelOccurrences)}</span>
           <Cell
             field={f}
             value={record[f.name]}
