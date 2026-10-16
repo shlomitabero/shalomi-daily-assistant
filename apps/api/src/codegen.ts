@@ -2798,32 +2798,69 @@ export function isTypingTarget(target) {
   return tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT";
 }
 
-// The exported app's only overlay dialog is GlobalSearch -- unlike the live
-// Forge AI preview (which shares a single isAnyDialogOpen() guard across
-// eight dialogs via useDialogFocusTrap.ts), one module-scoped flag is
-// enough here. EntityView's own window-level j/k/x/d/n keydown handlers
-// need to read "is the search dialog open right now" synchronously inside a
-// native event handler, not re-render in response to it: without this,
-// pressing "d"/"x"/"Enter"/"n" while focus sits on a non-input control
-// inside the open search overlay (its Close button, a recent-search chip,
-// "Show all") silently duplicated/selected/edited/discarded a background
-// table row the user wasn't even looking at, since isTypingTarget alone
-// only catches focus on a real text input.
-let searchDialogOpenCount = 0;
+// The exported app's overlay dialogs (GlobalSearch, ShortcutsPanel) share a
+// single module-scoped counter -- the same isAnyDialogOpen() guard the live
+// Forge AI preview shares across its own eight dialogs via
+// useDialogFocusTrap.ts, just without a reusable hook of its own. EntityView's
+// own window-level j/k/x/d/n keydown handlers need to read "is any dialog
+// open right now" synchronously inside a native event handler, not re-render
+// in response to it: without this, pressing "d"/"x"/"Enter"/"n" while focus
+// sits on a non-input control inside an open overlay (a Close button, a
+// recent-search chip, "Show all") silently duplicated/selected/edited/
+// discarded a background table row the user wasn't even looking at, since
+// isTypingTarget alone only catches focus on a real text input.
+let openDialogCount = 0;
 
-export function isSearchDialogOpen() {
-  return searchDialogOpenCount > 0;
+export function isAnyDialogOpen() {
+  return openDialogCount > 0;
 }
 
-// GlobalSearch.jsx is a separate module from this one, so it can't mutate
-// searchDialogOpenCount directly -- these two exports are its only way to
-// flip the flag on/off as it mounts/unmounts.
-export function markSearchDialogOpen() {
-  searchDialogOpenCount += 1;
+// GlobalSearch.jsx/ShortcutsPanel.jsx are separate modules from this one, so
+// neither can mutate openDialogCount directly -- these two exports are their
+// only way to flip the flag on/off as they mount/unmount.
+export function markDialogOpen() {
+  openDialogCount += 1;
 }
 
-export function markSearchDialogClosed() {
-  searchDialogOpenCount -= 1;
+export function markDialogClosed() {
+  openDialogCount -= 1;
+}
+
+export const DIALOG_FOCUSABLE_SELECTOR =
+  'a[href], button:not([disabled]), textarea:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])';
+
+// Mirrors the live preview's own domInert.ts hideBackgroundFromAssistiveTech:
+// marks everything behind an open dialog -- every sibling of every ancestor,
+// up to (not including) document.body -- as inert and aria-hidden, so a
+// screen reader's virtual cursor can't reach the entity table sitting (only
+// visually) behind the overlay. Returns a cleanup that restores exactly what
+// this call changed. Shared by GlobalSearch.jsx and ShortcutsPanel.jsx.
+export function hideDialogBackgroundFromAssistiveTech(dialogElement) {
+  const restorers = [];
+  let node = dialogElement;
+  while (node && node !== document.body) {
+    const parent = node.parentElement;
+    if (!parent) break;
+    for (const sibling of Array.from(parent.children)) {
+      if (sibling === node || !(sibling instanceof HTMLElement)) continue;
+      if (sibling.hasAttribute("data-forge-dialog-inert")) continue;
+      const hadInert = sibling.hasAttribute("inert");
+      const priorAriaHidden = sibling.getAttribute("aria-hidden");
+      sibling.setAttribute("data-forge-dialog-inert", "");
+      sibling.setAttribute("inert", "");
+      sibling.setAttribute("aria-hidden", "true");
+      restorers.push(() => {
+        sibling.removeAttribute("data-forge-dialog-inert");
+        if (!hadInert) sibling.removeAttribute("inert");
+        if (priorAriaHidden === null) sibling.removeAttribute("aria-hidden");
+        else sibling.setAttribute("aria-hidden", priorAriaHidden);
+      });
+    }
+    node = parent;
+  }
+  return () => {
+    for (const restore of restorers) restore();
+  };
 }
 
 /** Shared list + form UI used by every entity's own component file. */
@@ -3402,7 +3439,7 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
   useEffect(() => {
     if (viewMode !== "table") return;
     function handleKeyDown(e) {
-      if (isTypingTarget(e.target) || isSearchDialogOpen()) return;
+      if (isTypingTarget(e.target) || isAnyDialogOpen()) return;
       // Grouping/collapse-aware, unlike a flat visibleRecords.map(): a
       // collapsed group's records are skipped from the <tbody> entirely
       // (see the table body render below), so navigating or acting on them
@@ -3453,7 +3490,7 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
   useEffect(() => {
     function handleKeyDown(e) {
       if (e.key !== "n") return;
-      if (isTypingTarget(e.target) || isSearchDialogOpen()) return;
+      if (isTypingTarget(e.target) || isAnyDialogOpen()) return;
       e.preventDefault();
       startCreateNew();
     }
@@ -4669,7 +4706,14 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
 function renderGlobalSearchJsx(): string {
   return `import { useEffect, useRef, useState } from "react";
 import { listRecords } from "../api.js";
-import { matchesSearch, recordDisplayLabel, markSearchDialogOpen, markSearchDialogClosed } from "./EntityView.jsx";
+import {
+  matchesSearch,
+  recordDisplayLabel,
+  markDialogOpen,
+  markDialogClosed,
+  DIALOG_FOCUSABLE_SELECTOR,
+  hideDialogBackgroundFromAssistiveTech,
+} from "./EntityView.jsx";
 
 // Fetches every entity's own records once, then searches all of them using
 // that same result set as matchesSearch's relatedRecords -- so a relation
@@ -4772,43 +4816,6 @@ function clearGlobalSearchRecentSearches() {
   writeGlobalSearchRecentSearches([]);
 }
 
-const GLOBAL_SEARCH_FOCUSABLE_SELECTOR =
-  'a[href], button:not([disabled]), textarea:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])';
-
-// Mirrors the live preview's own domInert.ts hideBackgroundFromAssistiveTech:
-// marks everything behind the search panel -- every sibling of every
-// ancestor, up to (not including) document.body -- as inert and
-// aria-hidden, so a screen reader's virtual cursor can't reach the entity
-// table sitting (only visually) behind the overlay. Returns a cleanup that
-// restores exactly what this call changed.
-function hideGlobalSearchBackgroundFromAssistiveTech(dialogElement) {
-  const restorers = [];
-  let node = dialogElement;
-  while (node && node !== document.body) {
-    const parent = node.parentElement;
-    if (!parent) break;
-    for (const sibling of Array.from(parent.children)) {
-      if (sibling === node || !(sibling instanceof HTMLElement)) continue;
-      if (sibling.hasAttribute("data-forge-dialog-inert")) continue;
-      const hadInert = sibling.hasAttribute("inert");
-      const priorAriaHidden = sibling.getAttribute("aria-hidden");
-      sibling.setAttribute("data-forge-dialog-inert", "");
-      sibling.setAttribute("inert", "");
-      sibling.setAttribute("aria-hidden", "true");
-      restorers.push(() => {
-        sibling.removeAttribute("data-forge-dialog-inert");
-        if (!hadInert) sibling.removeAttribute("inert");
-        if (priorAriaHidden === null) sibling.removeAttribute("aria-hidden");
-        else sibling.setAttribute("aria-hidden", priorAriaHidden);
-      });
-    }
-    node = parent;
-  }
-  return () => {
-    for (const restore of restorers) restore();
-  };
-}
-
 /**
  * Down/Up move a highlight across the result groups (not individual
  * records -- jumping always lands on an entity tab), clamped at the
@@ -4852,12 +4859,12 @@ export function GlobalSearch({ entities, onClose, onJumpToEntity, onJumpToRecord
   // on close. Mirrors the live preview's own useDialogFocusTrap.ts.
   const previouslyFocusedRef = useRef(document.activeElement);
 
-  // Flips isSearchDialogOpen() on while this overlay is mounted, so
+  // Flips isAnyDialogOpen() on while this overlay is mounted, so
   // EntityView's own table keyboard shortcuts stop firing underneath it.
   useEffect(() => {
-    markSearchDialogOpen();
+    markDialogOpen();
     return () => {
-      markSearchDialogClosed();
+      markDialogClosed();
     };
   }, []);
 
@@ -4872,10 +4879,10 @@ export function GlobalSearch({ entities, onClose, onJumpToEntity, onJumpToRecord
     const container = dialogRef.current;
     if (!container) return;
     const previouslyFocused = previouslyFocusedRef.current;
-    const restoreBackground = hideGlobalSearchBackgroundFromAssistiveTech(container);
+    const restoreBackground = hideDialogBackgroundFromAssistiveTech(container);
 
     function getFocusable() {
-      return Array.from(container.querySelectorAll(GLOBAL_SEARCH_FOCUSABLE_SELECTOR));
+      return Array.from(container.querySelectorAll(DIALOG_FOCUSABLE_SELECTOR));
     }
 
     if (!container.contains(document.activeElement)) {
@@ -5174,6 +5181,142 @@ export function GlobalSearch({ entities, onClose, onJumpToEntity, onJumpToRecord
 `;
 }
 
+/**
+ * Mirrors the live Forge AI preview's own ShortcutsPanel.tsx: the exported
+ * app ported every keyboard-shortcut *mechanic* (j/k row nav, Enter→edit,
+ * x→toggle select, n→new record, Delete/Backspace→delete, d→duplicate,
+ * Ctrl/Cmd+Enter→submit, Ctrl/Cmd+K and "/"→search) but never gave its own
+ * users any way to discover them -- pressing "?" (the convention "/" itself
+ * already borrows from Slack/GitHub) did nothing, and the one static
+ * "Ctrl+K" hint next to the search button never mentioned the other seven.
+ * This static list dialog, and the "?" wiring in App.jsx below, close that
+ * gap so a real end user of the exported app -- who has no way back to the
+ * Forge AI platform or its docs -- can actually find this feature set.
+ */
+function renderShortcutsPanelJsx(): string {
+  return `import { useEffect, useRef } from "react";
+import {
+  markDialogOpen,
+  markDialogClosed,
+  DIALOG_FOCUSABLE_SELECTOR,
+  hideDialogBackgroundFromAssistiveTech,
+} from "./EntityView.jsx";
+
+const SHORTCUTS = [
+  { keys: ["Ctrl", "K"], description: "Open search across the whole app" },
+  { keys: ["/"], description: "Open search across the whole app" },
+  { keys: ["?"], description: "Show this shortcuts list" },
+  { keys: ["Esc"], description: "Close the open panel" },
+  { keys: ["j", "↓"], description: "Move to the next table row" },
+  { keys: ["k", "↑"], description: "Move to the previous table row" },
+  { keys: ["Enter"], description: "Edit the focused table row" },
+  { keys: ["x"], description: "Select/deselect the focused row" },
+  { keys: ["n"], description: "Jump to the add-record form" },
+  { keys: ["Delete"], description: "Delete the focused table row" },
+  { keys: ["d"], description: "Duplicate the focused table row" },
+  { keys: ["Ctrl", "Enter"], description: "Submit the form (even from a multi-line text field)" },
+  { keys: ["Esc"], description: "Clear the table's multi-row selection" },
+];
+
+export function ShortcutsPanel({ onClose }) {
+  const dialogRef = useRef(null);
+  // Captured during render, not inside the effect below: an effect runs
+  // after React has already committed this render's DOM. By the time an
+  // effect ran, document.activeElement would already be whatever this
+  // panel's own focus-move-in logic focused, not the real trigger (the
+  // topbar button the user clicked to open it) -- so focus could never
+  // actually return to the trigger on close. Mirrors GlobalSearch.jsx and
+  // the live preview's own useDialogFocusTrap.ts.
+  const previouslyFocusedRef = useRef(document.activeElement);
+
+  // Flips isAnyDialogOpen() on while this overlay is mounted, so
+  // EntityView's own table keyboard shortcuts stop firing underneath it --
+  // without this, pressing "n"/"Delete"/"d" while just reading this very
+  // cheat-sheet (focus starts on its own Close button, since the panel has
+  // no text input to autoFocus instead) would silently discard an
+  // in-progress edit, pop a delete confirmation, or duplicate a record the
+  // user wasn't even looking at.
+  useEffect(() => {
+    markDialogOpen();
+    return () => {
+      markDialogClosed();
+    };
+  }, []);
+
+  // Real dialog behavior, mirroring GlobalSearch.jsx's own trap and the
+  // live preview's useDialogFocusTrap.ts: moves focus into the panel on
+  // open, keeps Tab/Shift+Tab cycling within it instead of leaking into the
+  // entity table sitting (only visually) behind it, hides that background
+  // from assistive tech, and returns focus to whatever triggered this
+  // panel once it closes.
+  useEffect(() => {
+    const container = dialogRef.current;
+    if (!container) return;
+    const previouslyFocused = previouslyFocusedRef.current;
+    const restoreBackground = hideDialogBackgroundFromAssistiveTech(container);
+
+    function getFocusable() {
+      return Array.from(container.querySelectorAll(DIALOG_FOCUSABLE_SELECTOR));
+    }
+
+    if (!container.contains(document.activeElement)) {
+      const [first] = getFocusable();
+      if (!first) container.tabIndex = -1;
+      (first || container).focus();
+    }
+
+    function handleTabTrap(e) {
+      if (e.key !== "Tab") return;
+      const focusable = getFocusable();
+      if (focusable.length === 0) {
+        e.preventDefault();
+        return;
+      }
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (e.shiftKey && document.activeElement === first) {
+        e.preventDefault();
+        last.focus();
+      } else if (!e.shiftKey && document.activeElement === last) {
+        e.preventDefault();
+        first.focus();
+      }
+    }
+
+    container.addEventListener("keydown", handleTabTrap);
+    return () => {
+      container.removeEventListener("keydown", handleTabTrap);
+      restoreBackground();
+      if (previouslyFocused && previouslyFocused.focus) previouslyFocused.focus();
+    };
+  }, []);
+
+  return (
+    <div className="search-overlay">
+      <div className="search-panel" ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby="shortcuts-title">
+        <div className="search-header">
+          <h2 id="shortcuts-title">⌨️ Keyboard shortcuts</h2>
+          <button type="button" onClick={onClose}>Close</button>
+        </div>
+        <ul className="shortcuts-list">
+          {SHORTCUTS.map((row, i) => (
+            <li key={i} className="shortcuts-row">
+              <span className="shortcuts-keys">
+                {row.keys.map((key, j) => (
+                  <kbd key={j}>{key}</kbd>
+                ))}
+              </span>
+              <span>{row.description}</span>
+            </li>
+          ))}
+        </ul>
+      </div>
+    </div>
+  );
+}
+`;
+}
+
 function renderEntityJsx(entity: Entity): string {
   const fieldsJson = JSON.stringify(
     entity.fields.map((f) => ({
@@ -5245,6 +5388,7 @@ function renderAppJsx(project: Project): string {
   return `import { useEffect, useMemo, useRef, useState } from "react";
 import { listEntityCounts } from "./api.js";
 import { GlobalSearch } from "./components/GlobalSearch.jsx";
+import { ShortcutsPanel } from "./components/ShortcutsPanel.jsx";
 import { THEME_STORAGE_KEY, detectInitialTheme } from "./theme.js";
 ${imports}
 
@@ -5340,6 +5484,7 @@ function prefersDarkFromSystem() {
 export default function App() {
   const [active, setActive] = useState(ENTITIES[0]?.name ?? null);
   const [showSearch, setShowSearch] = useState(false);
+  const [showShortcuts, setShowShortcuts] = useState(false);
   const [highlightRecordId, setHighlightRecordId] = useState(null);
   const storedTheme = readStoredTheme();
   const [theme, setTheme] = useState(() => detectInitialTheme(storedTheme, prefersDarkFromSystem()));
@@ -5410,9 +5555,15 @@ export default function App() {
         setShowSearch(true);
         return;
       }
+      if (e.key === "?" && !isEditableEventTarget(e.target)) {
+        e.preventDefault();
+        setShowShortcuts(true);
+        return;
+      }
       if (e.key === "Escape") {
         if (e.target && e.target.closest && e.target.closest("[data-escape-handled-locally]")) return;
         setShowSearch(false);
+        setShowShortcuts(false);
       }
     }
     window.addEventListener("keydown", handleKeyDown);
@@ -5468,6 +5619,9 @@ export default function App() {
           </button>
           <button type="button" className="search-trigger" onClick={() => setShowSearch(true)}>
             🔍 Search <span className="shortcut-hint">Ctrl+K</span>
+          </button>
+          <button type="button" className="search-trigger" onClick={() => setShowShortcuts(true)}>
+            ⌨️ Keyboard shortcuts <span className="shortcut-hint">?</span>
           </button>
           <a className="backup-all-btn" href="/api/backup" download="backup.zip">
             ⬇️ Backup All Data
@@ -5525,6 +5679,7 @@ export default function App() {
           }}
         />
       )}
+      {showShortcuts && <ShortcutsPanel onClose={() => setShowShortcuts(false)} />}
     </div>
   );
 }
@@ -5757,6 +5912,11 @@ nav button.active .tab-count { background: rgba(255, 255, 255, 0.25); color: inh
 .backup-all-btn { padding: 8px 16px; border-radius: 8px; border: 1px solid var(--border); background: var(--surface); color: var(--text); text-decoration: none; font-size: 14px; display: inline-block; }
 .backup-all-btn:hover { background: var(--bg); }
 .shortcut-hint { margin-inline-start: 6px; padding: 1px 6px; border: 1px solid var(--border); border-radius: 4px; font-size: 0.7rem; font-family: monospace; color: var(--muted); }
+.shortcuts-list { list-style: none; margin: 0; padding: 0; }
+.shortcuts-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 8px 0; border-bottom: 1px solid var(--border); }
+.shortcuts-row:last-child { border-bottom: none; }
+.shortcuts-keys { display: flex; gap: 4px; flex-shrink: 0; }
+.shortcuts-keys kbd { padding: 2px 7px; border: 1px solid var(--border); border-radius: 4px; font-size: 0.75rem; font-family: monospace; background: var(--bg); color: var(--text); }
 .search-overlay { position: fixed; inset: 0; background: var(--overlay); display: flex; align-items: flex-start; justify-content: center; padding: 60px 16px; z-index: 20; }
 .search-panel { background: var(--surface); border-radius: 14px; padding: 20px; width: 100%; max-width: 560px; max-height: 80vh; overflow-y: auto; box-shadow: var(--shadow-xl); }
 .search-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 8px; }
@@ -5831,6 +5991,7 @@ export function generateExportFiles(project: Project, exportedAt: Date = new Dat
     { path: "web/src/styles.css", content: renderStylesCss() },
     { path: "web/src/components/EntityView.jsx", content: renderEntityViewJsx(project) },
     { path: "web/src/components/GlobalSearch.jsx", content: renderGlobalSearchJsx() },
+    { path: "web/src/components/ShortcutsPanel.jsx", content: renderShortcutsPanelJsx() },
     ...entityFiles,
     { path: ".gitignore", content: "node_modules/\ndist/\ndata.sqlite\n" },
   ];

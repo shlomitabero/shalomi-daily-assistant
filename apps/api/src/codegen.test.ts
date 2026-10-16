@@ -69,6 +69,7 @@ test("generateExportFiles produces a real multi-file React (Vite) + Express proj
     "web/src/api.js",
     "web/src/components/EntityView.jsx",
     "web/src/components/GlobalSearch.jsx",
+    "web/src/components/ShortcutsPanel.jsx",
     "web/src/entities/Customer.jsx",
     "web/src/entities/Service.jsx",
     "web/src/main.jsx",
@@ -6440,8 +6441,14 @@ test("the exported app includes a real cross-entity global search, ported from t
   const files = generateExportFiles(project);
   const globalSearchJsx = files.find((f) => f.path === "web/src/components/GlobalSearch.jsx")!.content;
   // Reuses EntityView's own matchesSearch/recordDisplayLabel rather than
-  // re-implementing the matching rule a second time.
-  assert.match(globalSearchJsx, /import \{ matchesSearch, recordDisplayLabel, markSearchDialogOpen, markSearchDialogClosed \} from ".\/EntityView\.jsx"/);
+  // re-implementing the matching rule a second time. markDialogOpen/
+  // markDialogClosed/DIALOG_FOCUSABLE_SELECTOR/hideDialogBackgroundFromAssistiveTech
+  // were generalized in round 650 (no longer search-specific names) once
+  // ShortcutsPanel.jsx became a second dialog sharing the same guard.
+  assert.match(
+    globalSearchJsx,
+    /import \{\s*matchesSearch,\s*recordDisplayLabel,\s*markDialogOpen,\s*markDialogClosed,\s*DIALOG_FOCUSABLE_SELECTOR,\s*hideDialogBackgroundFromAssistiveTech,\s*\} from ".\/EntityView\.jsx";/,
+  );
   assert.match(globalSearchJsx, /export function GlobalSearch/);
   assert.match(globalSearchJsx, /global-search-group-selected/);
   assert.match(globalSearchJsx, /ArrowDown/);
@@ -8666,6 +8673,248 @@ test("the exported GlobalSearch hides the entity table behind it from assistive 
     globalThis.fetch = originalFetch;
     cleanup();
     restOfApp.remove();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
+ * Round 650's finding: the exported app ported every keyboard-shortcut
+ * *mechanic* the live preview has (j/k row nav, Enter→edit, x→toggle
+ * select, n→new record, Delete→delete, d→duplicate, Ctrl/Cmd+Enter→
+ * submit, Ctrl/Cmd+K and "/"→search) but never ported the live preview's
+ * own ShortcutsPanel.tsx -- the "?"-triggered cheat-sheet that's the only
+ * place any of this is actually documented to a real end user of the
+ * exported app, who has no way back to the Forge AI platform or its docs.
+ * Confirms the real generated ShortcutsPanel.jsx renders its title and
+ * every one of the 13 shortcut rows the live preview's own SHORTCUTS array
+ * declares, not just that the file exists.
+ */
+test("the exported ShortcutsPanel renders every one of the live preview's own 13 keyboard-shortcut rows", async () => {
+  const files = generateExportFiles(project);
+  const dir = writeGeneratedWebComponent(files);
+
+  try {
+    const { ShortcutsPanel } = await import(path.join(dir, "web", "src", "components", "ShortcutsPanel.jsx"));
+    const { container } = render(React.createElement(ShortcutsPanel, { onClose: () => {} }));
+
+    assert.match(container.textContent ?? "", /Keyboard shortcuts/, "expected the panel's own heading to render");
+    const rows = Array.from(container.querySelectorAll(".shortcuts-row"));
+    assert.equal(rows.length, 13, `expected all 13 shortcut rows, got ${rows.length}`);
+    const descriptions = rows.map((r) => r.textContent ?? "");
+    for (const expected of [
+      "Open search across the whole app",
+      "Show this shortcuts list",
+      "Close the open panel",
+      "Move to the next table row",
+      "Move to the previous table row",
+      "Edit the focused table row",
+      "Select/deselect the focused row",
+      "Jump to the add-record form",
+      "Delete the focused table row",
+      "Duplicate the focused table row",
+      "Submit the form (even from a multi-line text field)",
+      "Clear the table's multi-row selection",
+    ]) {
+      assert.ok(descriptions.some((d) => d.includes(expected)), `expected a shortcut row for "${expected}", got rows: ${JSON.stringify(descriptions)}`);
+    }
+    assert.ok(
+      Array.from(container.querySelectorAll(".shortcuts-keys kbd")).some((k) => k.textContent === "j"),
+      "expected the j/k row-navigation keys to actually render as <kbd> elements",
+    );
+  } finally {
+    cleanup();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
+ * Same real dialog-accessibility contract GlobalSearch's own test above
+ * confirms (round 634), now against ShortcutsPanel.jsx: this panel has no
+ * autoFocus input of its own, so without a working focus-trap, focus would
+ * land on nothing at all rather than its Close button, and the Tab-trap
+ * logic is shared code (DIALOG_FOCUSABLE_SELECTOR, generalized in this
+ * same round from GlobalSearch's one-off GLOBAL_SEARCH_FOCUSABLE_SELECTOR)
+ * that needs proving against a second real consumer, not just GlobalSearch.
+ */
+test("the exported ShortcutsPanel moves focus in, traps Tab/Shift+Tab inside the panel, and restores focus to the trigger on close", async () => {
+  const files = generateExportFiles(project);
+  const dir = writeGeneratedWebComponent(files);
+
+  const trigger = document.createElement("button");
+  trigger.id = "shortcuts-trigger-stand-in";
+  document.body.appendChild(trigger);
+  trigger.focus();
+  assert.equal(document.activeElement, trigger, "sanity check: the trigger must actually be focused before the dialog opens");
+
+  try {
+    const { ShortcutsPanel } = await import(path.join(dir, "web", "src", "components", "ShortcutsPanel.jsx"));
+    const { container, unmount } = render(React.createElement(ShortcutsPanel, { onClose: () => {} }));
+
+    const panel = container.querySelector('[role="dialog"]');
+    assert.ok(panel, 'the shortcuts panel must carry role="dialog"');
+    assert.equal(panel!.getAttribute("aria-modal"), "true", 'the shortcuts panel must carry aria-modal="true"');
+    const labelledBy = panel!.getAttribute("aria-labelledby");
+    assert.ok(labelledBy, "the shortcuts panel must reference a visible label via aria-labelledby");
+    assert.ok(document.getElementById(labelledBy!), "aria-labelledby must point at a real element that actually exists");
+
+    const closeButton = container.querySelector("button") as HTMLButtonElement;
+    assert.equal(document.activeElement, closeButton, "focus must land on the panel's own Close button on mount, since it has no text input to autoFocus instead");
+
+    fireEvent.keyDown(closeButton, { key: "Tab" });
+    assert.equal(document.activeElement, closeButton, "Tab from the only focusable control must wrap back to itself, not leak out of the dialog");
+
+    fireEvent.keyDown(closeButton, { key: "Tab", shiftKey: true });
+    assert.equal(document.activeElement, closeButton, "Shift+Tab from the only focusable control must wrap back to itself too");
+
+    unmount();
+    assert.equal(document.activeElement, trigger, "closing the dialog must return focus to whatever triggered it");
+  } finally {
+    cleanup();
+    trigger.remove();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
+ * Mirrors the "'d' shortcut does not fire while GlobalSearch is open"
+ * regression test above, against the second dialog that now shares the
+ * exact same isAnyDialogOpen() guard (generalized from isSearchDialogOpen
+ * in this same round): proves markDialogOpen/markDialogClosed/
+ * isAnyDialogOpen genuinely work across BOTH dialogs sharing one counter,
+ * not just the one the guard was originally written for. Without this,
+ * pressing "d" while just reading the shortcuts cheat-sheet (focus starts
+ * on its own Close button, exactly the non-input control isTypingTarget
+ * alone can't catch) would silently duplicate a background row the user
+ * wasn't even looking at.
+ */
+test("the exported EntityView's 'd' shortcut does not fire while ShortcutsPanel is open on top of the table", async () => {
+  const files = generateExportFiles(project);
+  const dir = writeGeneratedWebComponent(files);
+  const store = [
+    { id: 1, name: "Acme Corp", status: "New" },
+    { id: 2, name: "Globex", status: "Won" },
+  ];
+  const originalFetch = globalThis.fetch;
+  let postCount = 0;
+  globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
+    const method = init?.method ?? "GET";
+    if (method === "GET" && input === "/api/Customer") {
+      return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    if (method === "GET") {
+      return new Response(JSON.stringify({ records: [] }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    if (method === "POST" && input === "/api/Customer") {
+      postCount += 1;
+      const body = JSON.parse(init!.body as string);
+      const record = { id: 3, ...body };
+      store.push(record);
+      return new Response(JSON.stringify({ record }), { status: 201, headers: { "content-type": "application/json" } });
+    }
+    throw new Error(`unexpected request ${method} ${input}`);
+  }) as typeof fetch;
+
+  try {
+    await withRealLocalStorage(async () => {
+      const { EntityView } = await import(path.join(dir, "web", "src", "components", "EntityView.jsx"));
+      const { ShortcutsPanel } = await import(path.join(dir, "web", "src", "components", "ShortcutsPanel.jsx"));
+      const customerEntity = project.spec.entities.find((e) => e.name === "Customer")!;
+      const props = {
+        entity: customerEntity,
+        highlightRecordId: null,
+        onHighlightHandled: () => {},
+        onJumpToRecord: () => {},
+        onRecordCountChange: () => {},
+      };
+
+      const { container } = render(React.createElement(EntityView, props));
+      for (let i = 0; i < 40; i++) {
+        if (container.querySelectorAll("tbody tr").length === 2) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+      assert.equal(container.querySelectorAll("tbody tr").length, 2, "expected both records to have loaded");
+
+      await act(async () => {
+        fireEvent.keyDown(window, { key: "j" });
+      });
+      const focused = container.querySelector(".record-row-focused") as HTMLElement;
+      assert.equal(focused.getAttribute("data-record-id"), "1", "sanity check: 'j' must have focused the first row");
+
+      const shortcutsRender = render(React.createElement(ShortcutsPanel, { onClose: () => {} }));
+      assert.match(shortcutsRender.container.textContent ?? "", /Keyboard shortcuts/, "sanity check: ShortcutsPanel must actually be mounted");
+
+      await act(async () => {
+        fireEvent.keyDown(window, { key: "d" });
+      });
+      assert.equal(postCount, 0, "'d' must not duplicate the background row while ShortcutsPanel is open on top of it");
+      assert.equal(container.querySelectorAll("tbody tr").length, 2, "no new row may appear while the shortcuts overlay is open");
+
+      shortcutsRender.unmount();
+
+      await act(async () => {
+        fireEvent.keyDown(window, { key: "d" });
+      });
+      for (let i = 0; i < 40; i++) {
+        if (container.querySelectorAll("tbody tr").length === 3) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+      assert.equal(postCount, 1, "'d' must work normally again once ShortcutsPanel has closed");
+      assert.equal(container.querySelectorAll("tbody tr").length, 3, "the duplicate must actually appear now that the overlay is gone");
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    cleanup();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
+ * End-to-end App.jsx wiring: pressing "?" (guarded by isEditableEventTarget,
+ * the same convention "/" already uses) opens ShortcutsPanel, the topbar
+ * button next to Search does the same thing via a real click, and Escape
+ * closes it -- the three ways the live preview's own App.tsx (round 629's
+ * own still-open candidate until this round) makes the panel reachable.
+ */
+test("the exported App opens ShortcutsPanel on '?', via its own topbar button, and closes it on Escape", async () => {
+  const files = generateExportFiles(project);
+  const dir = writeGeneratedWebComponent(files);
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async (input: string) => {
+    if (input === "/api/entity-counts") {
+      return new Response(JSON.stringify({ counts: {} }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    return new Response(JSON.stringify({ records: [] }), { status: 200, headers: { "content-type": "application/json" } });
+  }) as typeof fetch;
+
+  try {
+    await withRealLocalStorage(async () => {
+      const { default: App } = await import(path.join(dir, "web", "src", "App.jsx"));
+      const { container } = render(React.createElement(App));
+
+      await act(async () => {
+        fireEvent.keyDown(window, { key: "?" });
+      });
+      assert.ok(container.querySelector(".shortcuts-list"), "'?' must open the shortcuts panel");
+
+      await act(async () => {
+        fireEvent.keyDown(window, { key: "Escape" });
+      });
+      assert.equal(container.querySelector(".shortcuts-list"), null, "Escape must close the shortcuts panel");
+
+      const shortcutsButton = Array.from(container.querySelectorAll(".search-trigger")).find((b) => b.textContent?.includes("Keyboard shortcuts")) as HTMLButtonElement;
+      assert.ok(shortcutsButton, "expected a topbar button for the shortcuts panel, with the same .search-trigger styling as the Search button");
+      await act(async () => {
+        fireEvent.click(shortcutsButton);
+      });
+      assert.ok(container.querySelector(".shortcuts-list"), "clicking the topbar button must open the shortcuts panel too");
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    cleanup();
     rmSync(dir, { recursive: true, force: true });
   }
 });
