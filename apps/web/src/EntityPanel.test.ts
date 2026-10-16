@@ -5754,6 +5754,83 @@ test("EntityPanel's table-row shortcuts ignore Ctrl/Cmd/Alt-held keys, so a brow
 });
 
 /**
+ * Regression test for round 654: j/k's own setFocusedRowId only ever moves
+ * a VISUAL "focused row" highlight -- it never calls .focus() on anything,
+ * so the real DOM focus (and therefore e.target on this window-level
+ * listener) can be sitting on a completely unrelated button while an
+ * earlier j/k press still has some row visually focused. Before this
+ * round, pressing Enter while the record form's own Save button had real
+ * focus got hijacked into opening the visually-focused row for editing
+ * instead of submitting the form -- silently discarding an in-progress
+ * edit with no confirmation. Confirms: focus row 1 with "j", start
+ * editing row 2 and change its name, move real focus to the Save button,
+ * press Enter there -- the edit of row 2 must survive untouched (not
+ * reset to row 1's values), and no PATCH must fire for row 1.
+ */
+test("EntityPanel's Enter shortcut does not hijack Enter from a focused Save/Edit/Delete button elsewhere on the page", async () => {
+  await withJsdom(async () => {
+    const store: EntityRecord[] = [
+      { id: 1, name: "Acme Corp", status: "new" },
+      { id: 2, name: "Globex", status: "won" },
+    ];
+    const originalFetch = globalThis.fetch;
+    const patchedIds: number[] = [];
+    globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/entities/Deal") {
+        return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      const patchMatch = /^\/api\/projects\/proj1\/entities\/Deal\/(\d+)$/.exec(input);
+      if (method === "PATCH" && patchMatch) {
+        patchedIds.push(Number(patchMatch[1]));
+        return new Response(JSON.stringify({ record: store[0] }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+    try {
+      renderEntityPanel();
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 2);
+
+      for (let attempt = 0; document.querySelectorAll(".record-row-focused").length === 0 && attempt < 40; attempt++) {
+        fireEvent.keyDown(window, { key: "j" });
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      }
+      assert.equal(
+        (document.querySelector(".record-row-focused") as HTMLElement)?.getAttribute("data-record-id"),
+        "1",
+        "sanity check: 'j' must have focused row 1 first",
+      );
+
+      const editButtons = Array.from(document.querySelectorAll("table tbody button")) as HTMLButtonElement[];
+      const globexEdit = editButtons.find((b) => b.closest("tr")?.getAttribute("data-record-id") === "2" && /edit/i.test(b.textContent ?? ""));
+      assert.ok(globexEdit, "expected an Edit button on the Globex (row 2) row");
+      fireEvent.click(globexEdit!);
+      const nameInput = document.querySelector(".record-form input[type=text]") as HTMLInputElement;
+      await waitForCondition(() => nameInput.value === "Globex");
+
+      fireEvent.change(nameInput, { target: { value: "Globex Renamed" } });
+      assert.equal(nameInput.value, "Globex Renamed", "sanity check: the in-progress edit draft was actually typed");
+
+      const submitButton = document.querySelector(".record-form button[type=submit]") as HTMLButtonElement;
+      submitButton.focus();
+      assert.equal(document.activeElement, submitButton, "sanity check: real DOM focus is now on the Save button, not row 1");
+
+      fireEvent.keyDown(submitButton, { key: "Enter" });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      assert.equal(
+        nameInput.value,
+        "Globex Renamed",
+        "Enter on the focused Save button must never be hijacked into opening row 1 for editing, discarding this in-progress edit",
+      );
+      assert.equal(patchedIds.length, 0, "no PATCH must fire -- this Enter is not a real form submission in jsdom, only a sanity check that nothing else fired instead");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * New in this round: "x" above lets a keyboard-only user build a
  * multi-row selection, but the only way to back OUT of it was reaching
  * for the mouse -- either the round-354 "Clear selection" button, or

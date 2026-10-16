@@ -48,6 +48,7 @@ import {
   getDateUrgency,
   groupByField,
   groupRecordsByField,
+  enterTargetsInteractiveElement,
   isDeadlineFieldName,
   isGroupableField,
   isInlineEditableField,
@@ -1656,6 +1657,28 @@ export function EntityPanel({
    * skip one -- and Ctrl/Cmd+K, Ctrl+J, Cmd+Backspace, and Ctrl/Cmd+Enter
    * each hijacked a different browser/OS shortcut the same way. App.tsx's
    * own Ctrl+K handler already checks this; this effect never had.
+   *
+   * enterTargetsInteractiveElement guards a fourth gap (round 654), unique
+   * to Enter: j/k's own setFocusedRowId never calls .focus() on anything,
+   * so the row it highlights is only ever a visual state, never the real
+   * DOM focus -- e.target on this window-level listener can be sitting on
+   * a completely unrelated button (the form's own Save button, another
+   * row's Delete/Duplicate button, a toolbar button) the user tabbed to,
+   * while an earlier j/k press still has some row visually focused.
+   * Without this check, Enter on the Save button there got hijacked into
+   * opening the visually-focused row for editing instead of submitting
+   * the form -- silently discarding whatever unsaved edit or new-record
+   * draft was about to be submitted, with no confirmation, since the
+   * handler never looked past e.key before. The e.defaultPrevented check
+   * covers the one case the closest() walk inside it can't: a React
+   * onKeyDown on a non-native role="button" element (EntityLabelEditor's
+   * own rename trigger) that already handled this exact Enter itself.
+   * Mirrors the identical hazard round 350 fixed for the calendar day
+   * cell's own onKeyDown (`e.target !== e.currentTarget`) -- that fix
+   * could compare targets directly since it's a per-element React
+   * handler; this one is a single window-level listener, so it has to ask
+   * "is the target itself (or an ancestor) a native activation target"
+   * instead of "is it this exact element".
    */
   useEffect(() => {
     if (viewMode !== "table") return;
@@ -1677,7 +1700,7 @@ export function EntityPanel({
       } else if (e.key === "k" || e.key === "ArrowUp") {
         e.preventDefault();
         setFocusedRowId((current) => computeNextFocusedRowId(visibleIds, current, "prev"));
-      } else if (e.key === "Enter" && isFocusedRowVisible) {
+      } else if (e.key === "Enter" && isFocusedRowVisible && !e.defaultPrevented && !enterTargetsInteractiveElement(e.target)) {
         const record = visibleRecords.find((r) => (r.id as number) === focusedRowId);
         if (record) {
           e.preventDefault();

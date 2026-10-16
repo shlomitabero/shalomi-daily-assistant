@@ -8,6 +8,7 @@ import {
   buildImportRecords,
   calendarChipLabelField,
   computeNextFocusedRowId,
+  enterTargetsInteractiveElement,
   findBoardField,
   findDateField,
   findEndDateField,
@@ -1852,6 +1853,26 @@ test("isTypingTarget returns false for ordinary elements and no target at all", 
   assert.equal(isTypingTarget({ tagName: "BUTTON" }), false);
   assert.equal(isTypingTarget(null), false);
   assert.equal(isTypingTarget(undefined), false);
+});
+
+/**
+ * New in this round: a target whose own (or an ancestor's) closest() match
+ * for 'button, a[href], [role="button"], summary' succeeds must report
+ * true -- isTypingTarget deliberately returns false for a bare BUTTON
+ * (round 350's own test above), since j/k/x/Delete/d have no native
+ * action there, but Enter does, and this helper exists specifically to
+ * catch that case for the table view's own Enter shortcut.
+ */
+test("enterTargetsInteractiveElement is true for a target whose closest() finds a button/link/role=button/summary ancestor", () => {
+  const interactive = { closest: (selector: string) => (selector.includes("button") ? {} : null) };
+  assert.equal(enterTargetsInteractiveElement(interactive as unknown as EventTarget), true);
+});
+
+test("enterTargetsInteractiveElement is false for an ordinary element, no target, or a target with no closest() at all", () => {
+  const ordinary = { closest: () => null };
+  assert.equal(enterTargetsInteractiveElement(ordinary as unknown as EventTarget), false);
+  assert.equal(enterTargetsInteractiveElement(null), false);
+  assert.equal(enterTargetsInteractiveElement({} as unknown as EventTarget), false);
 });
 
 test("isInlineEditableField allows every field type except relation", () => {

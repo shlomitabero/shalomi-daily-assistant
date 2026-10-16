@@ -2798,6 +2798,20 @@ export function isTypingTarget(target) {
   return tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT";
 }
 
+/**
+ * True when Enter's real DOM target is a button, link, or other element
+ * that already has its own native (or React-handled) meaning for Enter --
+ * j/k navigation only ever moves a *visual* "focused row" highlight, never
+ * calling .focus() on anything, so the real DOM target can be sitting on a
+ * completely unrelated button (the form's own Save button, another row's
+ * Delete/Duplicate button) while a row is still visually focused from an
+ * earlier j/k press. Mirrors the live Forge AI preview's own
+ * entityFormatting.ts exactly.
+ */
+export function enterTargetsInteractiveElement(target) {
+  return Boolean(target?.closest?.('button, a[href], [role="button"], summary'));
+}
+
 // The exported app's overlay dialogs (GlobalSearch, ShortcutsPanel) share a
 // single module-scoped counter -- the same isAnyDialogOpen() guard the live
 // Forge AI preview shares across its own eight dialogs via
@@ -3441,6 +3455,14 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
    * modifier is held, so without it Ctrl/Cmd+D (the browser's own
    * bookmark-this-page shortcut) silently duplicated the focused row
    * instead, with no confirm dialog. Mirrors the live preview's own fix.
+   *
+   * enterTargetsInteractiveElement guards a round-654 gap unique to
+   * Enter: j/k's own setFocusedRowId never calls .focus() on anything, so
+   * e.target here can be sitting on a completely unrelated button (the
+   * form's own Save button) while an earlier j/k press still has some row
+   * visually focused -- without this check, Enter on that Save button got
+   * hijacked into opening the visually-focused row for editing instead of
+   * submitting the form. Mirrors the live preview's own fix.
    */
   useEffect(() => {
     if (viewMode !== "table") return;
@@ -3462,7 +3484,7 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
       } else if (e.key === "k" || e.key === "ArrowUp") {
         e.preventDefault();
         setFocusedRowId((current) => computeNextFocusedRowId(visibleIds, current, "prev"));
-      } else if (e.key === "Enter" && isFocusedRowVisible) {
+      } else if (e.key === "Enter" && isFocusedRowVisible && !e.defaultPrevented && !enterTargetsInteractiveElement(e.target)) {
         const record = visibleRecords.find((r) => r.id === focusedRowId);
         if (record) {
           e.preventDefault();

@@ -1387,6 +1387,36 @@ export function isTypingTarget(target: { tagName?: string; isContentEditable?: b
 }
 
 /**
+ * True when Enter's real DOM target is a button, link, or other element
+ * that already has its own native (or React-handled) meaning for Enter --
+ * unlike j/k/x/Delete/d, whose keys have no native action on a button, so
+ * isTypingTarget alone isn't enough to guard the table view's own Enter
+ * shortcut. j/k navigation only ever moves a *visual* "focused row"
+ * highlight (setFocusedRowId); it never calls .focus() on anything, so the
+ * real DOM focus -- and e.target on this window-level keydown listener --
+ * can be sitting on a completely unrelated button the user tabbed to (the
+ * form's own Save button, another row's Delete/Duplicate button, a toolbar
+ * button) while a row is still visually focused from an earlier j/k press.
+ * Without this check, Enter there got hijacked into opening the visually-
+ * focused row for editing instead of activating the button the user was
+ * actually on -- for a focused Save button specifically, silently
+ * discarding whatever unsaved edit or new-record draft was about to be
+ * submitted, with no confirmation. e.defaultPrevented covers the one case
+ * this closest() walk can't: a React onKeyDown on a non-native
+ * role="button" element (EntityLabelEditor's own rename trigger) that
+ * already handled this exact Enter and called its own preventDefault.
+ * Mirrors the identical hazard round 350 fixed for the calendar day cell's
+ * own onKeyDown (`e.target !== e.currentTarget`) -- that fix could compare
+ * targets directly because it's a per-element React handler; this one is a
+ * single window-level listener, so it has to ask "is the target itself (or
+ * an ancestor) a native activation target" instead.
+ */
+export function enterTargetsInteractiveElement(target: EventTarget | null): boolean {
+  const el = target as (Partial<Pick<HTMLElement, "closest">> & { tagName?: string }) | null;
+  return Boolean(el?.closest?.('button, a[href], [role="button"], summary'));
+}
+
+/**
  * Whether a table cell for this field can be edited directly in place with
  * a double-click, instead of always having to open the full add/edit form
  * below the table just to change one value. Relation fields are excluded --

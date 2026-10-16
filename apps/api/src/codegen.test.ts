@@ -4694,6 +4694,103 @@ test("the exported EntityView's 'd' shortcut ignores Ctrl/Cmd-held keys, so a br
 });
 
 /**
+ * Regression test for round 654: the exported app's own "j" shortcut only
+ * ever moves a VISUAL "focused row" highlight (setFocusedRowId) -- it
+ * never calls .focus() on anything, so the real DOM focus can be sitting
+ * on a completely unrelated button while an earlier "j" press still has
+ * some row visually focused. Before this round, pressing Enter while the
+ * record form's own Save button had real focus got hijacked into opening
+ * the visually-focused row for editing instead, discarding whatever was
+ * typed into the form. Mirrors the live preview's own round-654 fix.
+ */
+test("the exported EntityView's Enter shortcut does not hijack Enter from a focused Save button elsewhere on the page", async () => {
+  const files = generateExportFiles(project);
+  const dir = writeGeneratedWebComponent(files);
+  const store = [
+    { id: 1, name: "Acme Corp", status: "New" },
+    { id: 2, name: "Globex", status: "Won" },
+  ];
+  const originalFetch = globalThis.fetch;
+  let patchCount = 0;
+  globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
+    const method = init?.method ?? "GET";
+    if (method === "GET" && input === "/api/Customer") {
+      return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    if (method === "PATCH" && /^\/api\/Customer\/\d+$/.test(input)) {
+      patchCount += 1;
+      return new Response(JSON.stringify({ record: store[0] }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    throw new Error(`unexpected request ${method} ${input}`);
+  }) as typeof fetch;
+
+  try {
+    await withRealLocalStorage(async () => {
+      const { EntityView } = await import(path.join(dir, "web", "src", "components", "EntityView.jsx"));
+      const customerEntity = project.spec.entities.find((e) => e.name === "Customer")!;
+      const props = {
+        entity: customerEntity,
+        highlightRecordId: null,
+        onHighlightHandled: () => {},
+        onJumpToRecord: () => {},
+        onRecordCountChange: () => {},
+      };
+
+      const { container } = render(React.createElement(EntityView, props));
+      for (let i = 0; i < 40; i++) {
+        if (container.querySelectorAll("tbody tr").length === 2) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+      assert.equal(container.querySelectorAll("tbody tr").length, 2, "expected both records to have loaded");
+
+      await act(async () => {
+        fireEvent.keyDown(window, { key: "j" });
+      });
+      const focused = container.querySelector(".record-row-focused") as HTMLElement;
+      assert.equal(focused.getAttribute("data-record-id"), "1", "sanity check: 'j' must have focused row 1 first");
+
+      const editButtons = Array.from(container.querySelectorAll("table tbody button")) as HTMLButtonElement[];
+      const globexEdit = editButtons.find((b) => b.closest("tr")?.getAttribute("data-record-id") === "2" && /edit/i.test(b.textContent ?? ""));
+      assert.ok(globexEdit, "expected an Edit button on the Globex (row 2) row");
+      await act(async () => {
+        fireEvent.click(globexEdit!);
+      });
+      const nameInput = container.querySelector(".record-form input[type=text]") as HTMLInputElement;
+      assert.equal(nameInput.value, "Globex");
+
+      await act(async () => {
+        fireEvent.change(nameInput, { target: { value: "Globex Renamed" } });
+      });
+      assert.equal(nameInput.value, "Globex Renamed", "sanity check: the in-progress edit draft was actually typed");
+
+      const submitButton = container.querySelector(".record-form button[type=submit]") as HTMLButtonElement;
+      submitButton.focus();
+      assert.equal(document.activeElement, submitButton, "sanity check: real DOM focus is now on the Save button, not row 1");
+
+      await act(async () => {
+        fireEvent.keyDown(submitButton, { key: "Enter" });
+      });
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      });
+
+      assert.equal(
+        nameInput.value,
+        "Globex Renamed",
+        "Enter on the focused Save button must never be hijacked into opening row 1 for editing, discarding this in-progress edit",
+      );
+      assert.equal(patchCount, 0, "no PATCH must fire -- this Enter is not a real form submission in jsdom, only a sanity check that nothing else fired instead");
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    cleanup();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
  * Round 489's finding: EntityView's own j/k/x/d/Delete/Enter and "n"
  * keyboard shortcuts (all above) only ever guarded against isTypingTarget,
  * never against the exported app's one overlay dialog, GlobalSearch, being
