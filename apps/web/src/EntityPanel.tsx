@@ -3,7 +3,14 @@ import type { Entity, EntityRecord, Field, Project } from "@forge/shared";
 import { createRecord, deleteRecord, listRecords, updateRecord } from "./api.js";
 import { buildCalendarIcs, downloadCalendarIcs } from "./calendarIcs.js";
 import { getHiddenFields, toggleFieldVisibility } from "./columnVisibility.js";
-import { clearColumnWidths, computeResizedWidth, getColumnWidths, setColumnWidth } from "./columnWidths.js";
+import {
+  clearColumnWidths,
+  computeResizedWidth,
+  getColumnWidths,
+  MAX_COLUMN_WIDTH,
+  MIN_COLUMN_WIDTH,
+  setColumnWidth,
+} from "./columnWidths.js";
 import { applyColumnOrder, getColumnOrder, reorderColumns, setColumnOrder } from "./columnOrder.js";
 import {
   addEntityRecentSearch,
@@ -77,6 +84,9 @@ type ViewMode = "table" | "board" | "calendar";
  * didn't happen.
  */
 const UNDO_WINDOW_MS = 5000;
+
+/** How many pixels an ArrowLeft/ArrowRight press widens or narrows a column via the resize handle's keyboard fallback. */
+const RESIZE_KEYBOARD_STEP = 20;
 
 interface PendingDeleteEntry {
   id: number;
@@ -1260,6 +1270,31 @@ export function EntityPanel({
     const th = e.currentTarget.parentElement as HTMLTableCellElement | null;
     const startWidth = columnWidths[fieldName] ?? th?.getBoundingClientRect().width ?? 150;
     setResizingField({ field: fieldName, startX: e.clientX, startWidth });
+  }
+
+  /**
+   * Keyboard fallback for the resize handle above -- mirrors the
+   * column-move buttons' own keyboard-first design (round 185) rather than
+   * leaving resize mouse-drag-only. ArrowRight/ArrowLeft nudge the width by
+   * a fixed step instead of a pointer delta, through the same
+   * computeResizedWidth/setColumnWidth the drag path already uses, so the
+   * same clamping and RTL-aware direction flip apply either way.
+   */
+  function handleResizeKeyDown(e: React.KeyboardEvent<HTMLSpanElement>, fieldName: string) {
+    if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
+    e.preventDefault();
+    const th = e.currentTarget.parentElement as HTMLTableCellElement | null;
+    const delta = e.key === "ArrowRight" ? RESIZE_KEYBOARD_STEP : -RESIZE_KEYBOARD_STEP;
+    // Derives startWidth from the updater's own `prev`, not the outer
+    // `columnWidths` closure -- two ArrowLeft/ArrowRight presses handled
+    // in the same React batch would otherwise both read the same
+    // pre-update width and the second press would be silently lost.
+    setColumnWidths((prev) => {
+      const startWidth = prev[fieldName] ?? th?.getBoundingClientRect().width ?? 150;
+      const width = computeResizedWidth(startWidth, delta, dirFor(lang));
+      setColumnWidth(projectId, entity.name, fieldName, width);
+      return { ...prev, [fieldName]: width };
+    });
   }
 
   useEffect(() => {
@@ -2966,10 +3001,17 @@ export function EntityPanel({
                           </span>
                           <span
                             className="column-resize-handle"
+                            role="slider"
+                            tabIndex={0}
+                            aria-orientation="horizontal"
+                            aria-valuemin={MIN_COLUMN_WIDTH}
+                            aria-valuemax={MAX_COLUMN_WIDTH}
+                            aria-valuenow={Math.round(columnWidths[f.name] ?? 150)}
+                            aria-label={t("entity.columns.resizeHandle", { field: f.label ?? f.name })}
                             onMouseDown={(e) => startResize(e, f.name)}
+                            onKeyDown={(e) => handleResizeKeyDown(e, f.name)}
                             draggable
                             onDragStart={(e) => e.preventDefault()}
-                            aria-hidden="true"
                           />
                         </th>
                       );

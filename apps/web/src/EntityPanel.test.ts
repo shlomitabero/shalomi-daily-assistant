@@ -4677,6 +4677,59 @@ test("EntityPanel's column resize handle drags a column to a new width, applies 
 });
 
 /**
+ * Round 645 regression: the resize handle was a bare `<span>` with only
+ * `onMouseDown` and `aria-hidden="true"` -- a keyboard-only user had no
+ * way to resize a column at all (the only other width control, "Reset
+ * column widths", undoes every resize at once rather than setting one),
+ * and a screen-reader user wasn't even told the control existed. The
+ * column-move buttons sitting right next to this same handle already had
+ * a real keyboard fallback; resize never did. Confirms the handle is now
+ * a real, labeled, keyboard-operable slider: ArrowRight/ArrowLeft resize
+ * it by a fixed step through the exact same computeResizedWidth/
+ * setColumnWidth path the mouse drag already used.
+ */
+test("EntityPanel's column resize handle is keyboard-operable via ArrowRight/ArrowLeft, not mouse-drag-only, and is exposed to assistive tech as a real slider", async () => {
+  await withJsdom(async () => {
+    const store: EntityRecord[] = [{ id: 1, name: "Acme Corp", status: "new" }];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = mockRecordsFetch(store) as typeof fetch;
+    setColumnWidth("proj1", "Deal", "name", 200);
+    try {
+      renderEntityPanel();
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 1);
+
+      const nameHeader = document.querySelectorAll("th.resizable-col")[0] as HTMLTableCellElement;
+      const handle = nameHeader.querySelector(".column-resize-handle") as HTMLSpanElement;
+      assert.ok(handle, "expected a resize handle inside the Name column's header");
+
+      assert.equal(handle.getAttribute("role"), "slider", "the handle must announce itself as a real slider control");
+      assert.equal(handle.getAttribute("tabindex"), "0", "the handle must be reachable by Tab, not skipped");
+      assert.equal(handle.getAttribute("aria-hidden"), null, "the handle must no longer be hidden from assistive tech");
+      assert.match(
+        handle.getAttribute("aria-label") ?? "",
+        /Name/,
+        "the handle's label must name the actual column, not a generic placeholder",
+      );
+
+      fireEvent.keyDown(handle, { key: "ArrowRight" });
+      assert.equal(nameHeader.style.width, "220px", "ArrowRight must widen the column by the fixed keyboard step (200 + 20)");
+
+      fireEvent.keyDown(handle, { key: "ArrowLeft" });
+      fireEvent.keyDown(handle, { key: "ArrowLeft" });
+      assert.equal(nameHeader.style.width, "180px", "ArrowLeft must narrow the column by the same step, below the original width");
+
+      assert.deepEqual(
+        getColumnWidths("proj1", "Deal"),
+        { name: 180 },
+        "a keyboard resize must persist exactly like a mouse-drag resize does, not just update in-memory state",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * New in this round: once a column was manually resized, the only way
  * back to the table's normal automatic sizing was dragging each resized
  * column back by hand -- no one-click way to reset, unlike fieldFilters'

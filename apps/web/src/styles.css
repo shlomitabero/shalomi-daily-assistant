@@ -1243,6 +1243,11 @@ th {
   z-index: 1;
 }
 
+.column-resize-handle:focus-visible {
+  outline: 2px solid var(--accent-deep);
+  outline-offset: -1px;
+}
+
 /* Once any column has been dragged to a real width, the table switches to a
    fixed layout so every column actually respects its own set width (or an
    even share of what's left, for the ones nobody has resized yet) instead of

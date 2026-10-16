@@ -9873,6 +9873,77 @@ test("the exported EntityView's 'Reset column widths' button only appears once a
 });
 
 /**
+ * Round 645 regression, ported from the live Forge AI preview's own
+ * EntityPanel.tsx fix: the exported app's resize handle was a bare
+ * `<span>` with only `onMouseDown` and `aria-hidden="true"` -- mouse-drag
+ * only, invisible to assistive tech, with no keyboard path at all (unlike
+ * the column-move buttons right next to it, which already had one).
+ * Confirms the real generated handle is now a labeled, keyboard-operable
+ * slider.
+ */
+test("the exported EntityView's column resize handle is keyboard-operable via ArrowRight/ArrowLeft, not mouse-drag-only, and is exposed to assistive tech as a real slider", async () => {
+  const files = generateExportFiles(project);
+  const dir = writeGeneratedWebComponent(files);
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async () => ({
+    ok: true,
+    status: 200,
+    json: async () => ({ records: [{ id: 1, name: "Alice", status: "New" }] }),
+  })) as typeof fetch;
+
+  try {
+    await withRealLocalStorage(async () => {
+      localStorage.setItem("forge_column_widths", JSON.stringify({ Customer: { name: 200 } }));
+      const { EntityView } = await import(path.join(dir, "web", "src", "components", "EntityView.jsx"));
+      const customerEntity = project.spec.entities.find((e) => e.name === "Customer")!;
+      const props = {
+        entity: customerEntity,
+        highlightRecordId: null,
+        onHighlightHandled: () => {},
+        onJumpToRecord: () => {},
+        onRecordCountChange: () => {},
+      };
+
+      const { container } = render(React.createElement(EntityView, props));
+      for (let i = 0; i < 40; i++) {
+        if (container.querySelector(".resizable-col")) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+
+      const nameHeader = container.querySelector(".resizable-col") as HTMLTableCellElement;
+      assert.equal(nameHeader.style.width, "200px", "the pre-seeded width must already apply on first render");
+      const handle = nameHeader.querySelector(".column-resize-handle") as HTMLSpanElement;
+      assert.ok(handle, "expected a real resize handle inside the Name column's header");
+
+      assert.equal(handle.getAttribute("role"), "slider", "the handle must announce itself as a real slider control");
+      assert.equal(handle.getAttribute("tabindex"), "0", "the handle must be reachable by Tab, not skipped");
+      assert.equal(handle.getAttribute("aria-hidden"), null, "the handle must no longer be hidden from assistive tech");
+      assert.match(handle.getAttribute("aria-label") ?? "", /שם/, "the handle's label must name the actual column (its real label, 'שם')");
+
+      await act(async () => {
+        fireEvent.keyDown(handle, { key: "ArrowRight" });
+      });
+      assert.equal(nameHeader.style.width, "220px", "ArrowRight must widen the column by the fixed keyboard step (200 + 20)");
+
+      await act(async () => {
+        fireEvent.keyDown(handle, { key: "ArrowLeft" });
+        fireEvent.keyDown(handle, { key: "ArrowLeft" });
+      });
+      assert.equal(nameHeader.style.width, "180px", "ArrowLeft must narrow the column by the same step, below the original width");
+
+      const stored = JSON.parse(localStorage.getItem("forge_column_widths") ?? "{}");
+      assert.deepEqual(stored.Customer, { name: 180 }, "a keyboard resize must persist exactly like a mouse-drag resize does");
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    cleanup();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
  * Regression test for round 478: ports the live preview's own keyboard-
  * operable "move earlier"/"move later" fallback to column reorder (the
  * exported app's own drag-and-drop reorder, round 211, had the identical

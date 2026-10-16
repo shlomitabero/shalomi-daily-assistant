@@ -971,6 +971,8 @@ function clearEntityRecentSearches(entityName) {
 // a reload. Mirrors the live preview's own columnWidths.ts.
 const MIN_COLUMN_WIDTH = 60;
 const MAX_COLUMN_WIDTH = 480;
+// How many pixels an ArrowLeft/ArrowRight press widens or narrows a column via the resize handle's keyboard fallback.
+const RESIZE_KEYBOARD_STEP = 20;
 const COLUMN_WIDTHS_STORAGE_KEY = "forge_column_widths";
 function readColumnWidthsStore() {
   try {
@@ -3248,6 +3250,26 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
     setResizingField({ field: fieldName, startX: e.clientX, startWidth });
   }
 
+  // Keyboard fallback for the resize handle below -- mirrors the
+  // column-move buttons' own keyboard-first design rather than leaving
+  // resize mouse-drag-only. Mirrors the live preview's own EntityPanel.tsx.
+  function handleResizeKeyDown(e, fieldName) {
+    if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
+    e.preventDefault();
+    const th = e.currentTarget.parentElement;
+    const delta = e.key === "ArrowRight" ? RESIZE_KEYBOARD_STEP : -RESIZE_KEYBOARD_STEP;
+    // Derives startWidth from the updater's own \`prev\`, not the outer
+    // columnWidths closure -- two ArrowLeft/ArrowRight presses handled in
+    // the same React batch would otherwise both read the same pre-update
+    // width and the second press would be silently lost.
+    setColumnWidths((prev) => {
+      const startWidth = prev[fieldName] ?? th?.getBoundingClientRect().width ?? 150;
+      const width = computeResizedWidth(startWidth, delta);
+      setColumnWidth(entity.name, fieldName, width);
+      return { ...prev, [fieldName]: width };
+    });
+  }
+
   const visibleRecords = useMemo(() => {
     const matched = records.filter((r) => matchesSearch(r, entity.fields, search, relatedRecords));
     const filtered = matched.filter((r) =>
@@ -4498,7 +4520,18 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
                               ›
                             </button>
                           </span>
-                          <span className="column-resize-handle" onMouseDown={(e) => startResize(e, f.name)} aria-hidden="true" />
+                          <span
+                            className="column-resize-handle"
+                            role="slider"
+                            tabIndex={0}
+                            aria-orientation="horizontal"
+                            aria-valuemin={MIN_COLUMN_WIDTH}
+                            aria-valuemax={MAX_COLUMN_WIDTH}
+                            aria-valuenow={Math.round(columnWidths[f.name] ?? 150)}
+                            aria-label={\`Resize \${f.label} column (use left/right arrow keys)\`}
+                            onMouseDown={(e) => startResize(e, f.name)}
+                            onKeyDown={(e) => handleResizeKeyDown(e, f.name)}
+                          />
                         </th>
                       );
                     })}
@@ -5595,6 +5628,7 @@ th, td { text-align: start; padding: 8px 10px; border-bottom: 1px solid var(--bo
 .column-move-btn:hover:not(:disabled), .column-move-btn:focus-visible { color: var(--text); }
 .column-move-btn:disabled { color: var(--muted); opacity: 0.35; cursor: default; }
 .column-resize-handle { position: absolute; top: 0; bottom: 0; inset-inline-end: 0; width: 6px; cursor: col-resize; user-select: none; touch-action: none; z-index: 1; }
+.column-resize-handle:focus-visible { outline: 2px solid var(--accent-deep); outline-offset: -1px; }
 .entity-table-resized { table-layout: fixed; }
 .entity-table-resized th, .entity-table-resized td { overflow: hidden; text-overflow: ellipsis; }
 .cell-inline-editable { cursor: text; }
