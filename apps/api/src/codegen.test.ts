@@ -9112,6 +9112,86 @@ test("the exported App opens ShortcutsPanel on '?', via its own topbar button, a
 });
 
 /**
+ * Regression test for round 655: showSearch and showShortcuts were two
+ * independent booleans -- unlike the live preview's own openPanel(), which
+ * is mutually exclusive among its own panels -- so pressing "?" then "/"
+ * (or the reverse) stacked GlobalSearch and ShortcutsPanel on top of each
+ * other instead of swapping between them. Each overlay's own
+ * hideDialogBackgroundFromAssistiveTech then marked the OTHER overlay (not
+ * just the real page background) inert and aria-hidden, trapping whichever
+ * one was actually visible on top behind an unreachable one underneath.
+ * Confirms both directions: opening Shortcuts and then pressing "/" or
+ * Ctrl+K leaves Shortcuts open and never mounts GlobalSearch, and opening
+ * GlobalSearch and then pressing "?" leaves GlobalSearch open and never
+ * mounts Shortcuts -- in both cases exactly one `[role="dialog"]` exists at
+ * a time, and Escape still closes whichever one is actually open.
+ */
+test("the exported App never stacks GlobalSearch and ShortcutsPanel on top of each other", async () => {
+  const files = generateExportFiles(project);
+  const dir = writeGeneratedWebComponent(files);
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async (input: string) => {
+    if (input === "/api/entity-counts") {
+      return new Response(JSON.stringify({ counts: {} }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    return new Response(JSON.stringify({ records: [] }), { status: 200, headers: { "content-type": "application/json" } });
+  }) as typeof fetch;
+
+  try {
+    await withRealLocalStorage(async () => {
+      const { default: App } = await import(path.join(dir, "web", "src", "App.jsx"));
+      const { container } = render(React.createElement(App));
+
+      // Open Shortcuts, then try both ways of opening Search on top of it.
+      await act(async () => {
+        fireEvent.keyDown(window, { key: "?" });
+      });
+      assert.ok(container.querySelector(".shortcuts-list"), "sanity check: '?' must open the shortcuts panel");
+
+      await act(async () => {
+        fireEvent.keyDown(window, { key: "/" });
+      });
+      assert.equal(container.querySelectorAll('[role="dialog"]').length, 1, "'/' must never stack a second dialog on top of the open shortcuts panel");
+      assert.ok(container.querySelector(".shortcuts-list"), "the shortcuts panel must still be the one open");
+      assert.equal(container.querySelector(".global-search-input"), null, "GlobalSearch must never have mounted underneath it");
+
+      await act(async () => {
+        fireEvent.keyDown(window, { key: "k", ctrlKey: true });
+      });
+      assert.equal(container.querySelectorAll('[role="dialog"]').length, 1, "Ctrl+K must never stack a second dialog on top of the open shortcuts panel either");
+      assert.ok(container.querySelector(".shortcuts-list"), "the shortcuts panel must still be the one open after Ctrl+K too");
+
+      await act(async () => {
+        fireEvent.keyDown(window, { key: "Escape" });
+      });
+      assert.equal(container.querySelectorAll('[role="dialog"]').length, 0, "Escape must close the shortcuts panel once nothing is stacked on top of it");
+
+      // Reverse order: open Search, then try to open Shortcuts on top of it.
+      await act(async () => {
+        fireEvent.keyDown(window, { key: "/" });
+      });
+      assert.ok(container.querySelector(".global-search-input"), "sanity check: '/' must open global search");
+
+      await act(async () => {
+        fireEvent.keyDown(window, { key: "?" });
+      });
+      assert.equal(container.querySelectorAll('[role="dialog"]').length, 1, "'?' must never stack the shortcuts panel on top of the open search dialog");
+      assert.ok(container.querySelector(".global-search-input"), "the search dialog must still be the one open");
+      assert.equal(container.querySelector(".shortcuts-list"), null, "ShortcutsPanel must never have mounted underneath it");
+
+      await act(async () => {
+        fireEvent.keyDown(window, { key: "Escape" });
+      });
+      assert.equal(container.querySelectorAll('[role="dialog"]').length, 0, "Escape must close the search dialog too");
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    cleanup();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
  * New in this round: the exported app's own GlobalSearch had the identical
  * gap the live preview's own GlobalSearchPanel.tsx did before it gained
  * Copy/Download buttons -- a cross-entity result set only ever existed on

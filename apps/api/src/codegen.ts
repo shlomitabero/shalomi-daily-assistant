@@ -5418,6 +5418,7 @@ function renderAppJsx(project: Project): string {
 import { listEntityCounts } from "./api.js";
 import { GlobalSearch } from "./components/GlobalSearch.jsx";
 import { ShortcutsPanel } from "./components/ShortcutsPanel.jsx";
+import { isAnyDialogOpen } from "./components/EntityView.jsx";
 import { THEME_STORAGE_KEY, detectInitialTheme } from "./theme.js";
 ${imports}
 
@@ -5572,19 +5573,36 @@ export default function App() {
   // 199 in the live preview, App.tsx), guarded by isEditableEventTarget so
   // it doesn't hijack every literal "/" a person types into this entity's
   // own search box or a record's text field instead of opening the overlay.
+  //
+  // isAnyDialogOpen() guards all three open branches (round 655): showSearch
+  // and showShortcuts are two independent booleans, not mutually exclusive
+  // like the live preview's own openPanel() -- without this, pressing "?"
+  // then "/" (or the reverse) stacked GlobalSearch and ShortcutsPanel on top
+  // of each other, and each one's own hideDialogBackgroundFromAssistiveTech
+  // marked the OTHER overlay (not just the real background) inert and
+  // aria-hidden, trapping focus in whichever panel mounted first while the
+  // one actually visible on top became unreachable by keyboard or screen
+  // reader. Only the three open branches check it, not Escape below --
+  // unlike the live preview, where Escape is handled separately by
+  // useDialogFocusTrap.ts, this same handler's own Escape branch is what
+  // closes an already-open dialog, so gating it the same way would make
+  // Escape unable to close anything.
   useEffect(() => {
     function handleKeyDown(e) {
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") {
+        if (isAnyDialogOpen()) return;
         e.preventDefault();
         setShowSearch(true);
         return;
       }
       if (e.key === "/" && !isEditableEventTarget(e.target)) {
+        if (isAnyDialogOpen()) return;
         e.preventDefault();
         setShowSearch(true);
         return;
       }
       if (e.key === "?" && !isEditableEventTarget(e.target)) {
+        if (isAnyDialogOpen()) return;
         e.preventDefault();
         setShowShortcuts(true);
         return;
