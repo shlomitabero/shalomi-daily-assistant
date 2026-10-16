@@ -4599,6 +4599,101 @@ test("the exported EntityView's 'd' shortcut duplicates the focused row via the 
 });
 
 /**
+ * Regression test for round 653: e.key is the same bare letter whether or
+ * not a modifier is held, so the exported app's own j/k/x/Delete/d/Enter
+ * keyboard shortcuts never checked e.ctrlKey/metaKey/altKey before this
+ * round -- Ctrl/Cmd+D (the browser's own bookmark-this-page shortcut)
+ * silently fired the exact same real duplicate POST as a bare "d", with
+ * no confirm dialog. Mirrors the live preview's own round-653 fix and its
+ * test. Confirms Ctrl+D/Cmd+D never duplicate, while a bare "d" still does.
+ */
+test("the exported EntityView's 'd' shortcut ignores Ctrl/Cmd-held keys, so a browser shortcut like Ctrl/Cmd+D never fires the real duplicate request", async () => {
+  const files = generateExportFiles(project);
+  const dir = writeGeneratedWebComponent(files);
+  const store = [
+    { id: 1, name: "Acme Corp", status: "New" },
+    { id: 2, name: "Globex", status: "Won" },
+  ];
+  const originalFetch = globalThis.fetch;
+  let postCount = 0;
+  globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
+    const method = init?.method ?? "GET";
+    if (method === "GET" && input === "/api/Customer") {
+      return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    if (method === "POST" && input === "/api/Customer") {
+      postCount += 1;
+      const body = JSON.parse(init!.body as string);
+      const record = { id: 3, ...body };
+      store.push(record);
+      return new Response(JSON.stringify({ record }), { status: 201, headers: { "content-type": "application/json" } });
+    }
+    throw new Error(`unexpected request ${method} ${input}`);
+  }) as typeof fetch;
+
+  try {
+    await withRealLocalStorage(async () => {
+      const { EntityView } = await import(path.join(dir, "web", "src", "components", "EntityView.jsx"));
+      const customerEntity = project.spec.entities.find((e) => e.name === "Customer")!;
+      const props = {
+        entity: customerEntity,
+        highlightRecordId: null,
+        onHighlightHandled: () => {},
+        onJumpToRecord: () => {},
+        onRecordCountChange: () => {},
+      };
+
+      const { container } = render(React.createElement(EntityView, props));
+      for (let i = 0; i < 40; i++) {
+        if (container.querySelectorAll("tbody tr").length === 2) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+      assert.equal(container.querySelectorAll("tbody tr").length, 2, "expected both records to have loaded");
+
+      await act(async () => {
+        fireEvent.keyDown(window, { key: "j" });
+      });
+      const focused = container.querySelector(".record-row-focused") as HTMLElement;
+      assert.equal(focused.getAttribute("data-record-id"), "1", "sanity check: 'j' must have focused the first row");
+
+      await act(async () => {
+        fireEvent.keyDown(window, { key: "d", ctrlKey: true });
+      });
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      });
+      assert.equal(postCount, 0, "Ctrl+D must never trigger a duplicate -- it's the browser's own bookmark shortcut");
+      assert.equal(container.querySelectorAll("tbody tr").length, 2, "no row must be duplicated by Ctrl+D");
+
+      await act(async () => {
+        fireEvent.keyDown(window, { key: "d", metaKey: true });
+      });
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      });
+      assert.equal(postCount, 0, "Cmd+D must never trigger a duplicate either");
+
+      await act(async () => {
+        fireEvent.keyDown(window, { key: "d" });
+      });
+      for (let i = 0; i < 40; i++) {
+        if (container.querySelectorAll("tbody tr").length === 3) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+      assert.equal(postCount, 1, "a bare 'd' with no modifier must still duplicate the focused row");
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    cleanup();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
  * Round 489's finding: EntityView's own j/k/x/d/Delete/Enter and "n"
  * keyboard shortcuts (all above) only ever guarded against isTypingTarget,
  * never against the exported app's one overlay dialog, GlobalSearch, being

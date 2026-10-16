@@ -5673,6 +5673,87 @@ test("EntityPanel's 'd' shortcut duplicates the focused row via the real API, wi
 });
 
 /**
+ * Regression test for round 653: e.key is the same bare letter whether or
+ * not a modifier is held, so j/k/x/Delete/d/Enter never checked
+ * e.ctrlKey/metaKey/altKey before this round -- a focused row meant that
+ * Ctrl/Cmd+D (the browser's own "bookmark this page" shortcut) silently
+ * fired the exact same real duplicate POST as a bare "d", with no confirm
+ * dialog (duplicating is designed to skip one), and Ctrl/Cmd+K, Ctrl+J,
+ * Ctrl/Cmd+Enter, and Cmd+Backspace each hijacked a different browser/OS
+ * shortcut the same way. Confirms Ctrl+D, Cmd+D, Ctrl+K, and Ctrl+Enter
+ * (representative of the whole family, since they all go through the same
+ * early-return guard) are now left alone -- no POST, no row-focus change,
+ * no row opened for editing -- while a bare "d"/"k"/"Enter" still works.
+ */
+test("EntityPanel's table-row shortcuts ignore Ctrl/Cmd/Alt-held keys, so a browser shortcut like Ctrl/Cmd+D never fires the real duplicate request", async () => {
+  await withJsdom(async () => {
+    const store: EntityRecord[] = [
+      { id: 1, name: "Acme Corp", status: "new" },
+      { id: 2, name: "Globex", status: "won" },
+    ];
+    const originalFetch = globalThis.fetch;
+    let postCount = 0;
+    globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/entities/Deal") {
+        return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      if (method === "POST" && input === "/api/projects/proj1/entities/Deal") {
+        postCount += 1;
+        const body = JSON.parse(init!.body as string);
+        const record = { id: 3, ...body };
+        store.push(record);
+        return new Response(JSON.stringify({ record }), { status: 201, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+    try {
+      renderEntityPanel();
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 2);
+
+      for (let attempt = 0; document.querySelectorAll(".record-row-focused").length === 0 && attempt < 40; attempt++) {
+        fireEvent.keyDown(window, { key: "j" });
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      }
+      const focused = document.querySelector(".record-row-focused") as HTMLElement;
+      assert.equal(focused.getAttribute("data-record-id"), "1", "sanity check: 'j' must have focused the first row");
+
+      fireEvent.keyDown(window, { key: "d", ctrlKey: true });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      assert.equal(postCount, 0, "Ctrl+D must never trigger a duplicate -- it's the browser's own bookmark shortcut");
+      assert.equal(document.querySelectorAll("table tbody tr").length, 2, "no row must be duplicated by Ctrl+D");
+
+      fireEvent.keyDown(window, { key: "d", metaKey: true });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      assert.equal(postCount, 0, "Cmd+D must never trigger a duplicate either");
+      assert.equal(document.querySelectorAll("table tbody tr").length, 2, "no row must be duplicated by Cmd+D");
+
+      fireEvent.keyDown(window, { key: "k", ctrlKey: true });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      assert.equal(
+        (document.querySelector(".record-row-focused") as HTMLElement)?.getAttribute("data-record-id"),
+        "1",
+        "Ctrl+K must never move the focused row -- it's the app's own search shortcut",
+      );
+
+      const submitButton = document.querySelector(".record-form button[type=submit]") as HTMLButtonElement;
+      const addLabel = submitButton.textContent;
+      fireEvent.keyDown(window, { key: "Enter", ctrlKey: true });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      assert.equal(submitButton.textContent, addLabel, "Ctrl+Enter must never open the focused row for editing");
+
+      // A bare "d" (no modifier) must still work -- the guard must not
+      // have swallowed the ordinary shortcut along with the browser ones.
+      fireEvent.keyDown(window, { key: "d" });
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 3);
+      assert.equal(postCount, 1, "a bare 'd' with no modifier must still duplicate the focused row");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * New in this round: "x" above lets a keyboard-only user build a
  * multi-row selection, but the only way to back OUT of it was reaching
  * for the mouse -- either the round-354 "Clear selection" button, or
@@ -5780,6 +5861,19 @@ test("EntityPanel's 'n' shortcut jumps to a blank add-record form and focuses it
       assert.equal(nameInput.value, "", "'n' must reset the form back to blank, discarding the in-progress edit");
       assert.equal(submitButton.textContent, addLabel, "'n' must flip the submit button back to its add-record label");
       assert.equal(document.activeElement, nameInput, "'n' must focus the form's first field");
+
+      // Regression test for round 653: e.key is "n" whether or not a
+      // modifier is held, so Ctrl+N/Alt+N (browser/OS shortcuts in some
+      // environments) must never be hijacked into resetting the form --
+      // re-open the Globex edit and confirm a modified "n" leaves it alone.
+      fireEvent.click(globexEdit!);
+      await waitForCondition(() => nameInput.value === "Globex");
+      fireEvent.keyDown(window, { key: "n", ctrlKey: true });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      assert.equal(nameInput.value, "Globex", "Ctrl+N must never reset the in-progress edit");
+      fireEvent.keyDown(window, { key: "n", altKey: true });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      assert.equal(nameInput.value, "Globex", "Alt+N must never reset the in-progress edit either");
 
       // Pressing "n" while the search box itself has focus must type a
       // literal "n" there instead of being hijacked by the shortcut.

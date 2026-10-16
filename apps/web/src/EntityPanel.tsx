@@ -1647,10 +1647,20 @@ export function EntityPanel({
    * no text input to autoFocus into. Without this, pressing j/k/x/d while
    * reading the shortcuts cheat-sheet silently mutated or deleted a
    * background row the person wasn't even looking at.
+   *
+   * The e.ctrlKey/metaKey/altKey check guards a third gap neither of those
+   * catches (round 653): e.key is the same bare letter whether or not a
+   * modifier is held, so without it Ctrl/Cmd+D (the browser's own
+   * bookmark-this-page shortcut) silently duplicated the focused row
+   * instead -- with no confirm dialog, since duplicating is designed to
+   * skip one -- and Ctrl/Cmd+K, Ctrl+J, Cmd+Backspace, and Ctrl/Cmd+Enter
+   * each hijacked a different browser/OS shortcut the same way. App.tsx's
+   * own Ctrl+K handler already checks this; this effect never had.
    */
   useEffect(() => {
     if (viewMode !== "table") return;
     function handleKeyDown(e: KeyboardEvent) {
+      if (e.ctrlKey || e.metaKey || e.altKey) return;
       if (isTypingTarget(e.target as HTMLElement | null) || isAnyDialogOpen()) return;
       // Grouping/collapse-aware, unlike a flat visibleRecords.map(): a
       // collapsed group's records are skipped from the <tbody> entirely
@@ -1703,10 +1713,12 @@ export function EntityPanel({
    * discarding an in-progress edit) while, say, ShortcutsPanel is open
    * and focus sits on its own Close button rather than a text input
    * (round 365 -- see the j/k/x/d effect just above for the full story).
+   * The modifier check guards Ctrl/Alt+N in whatever browser/OS delivers
+   * it to the page, the same round-653 gap as that effect's own.
    */
   useEffect(() => {
     function handleKeyDown(e: KeyboardEvent) {
-      if (e.key !== "n") return;
+      if (e.key !== "n" || e.ctrlKey || e.metaKey || e.altKey) return;
       if (isTypingTarget(e.target as HTMLElement | null) || isAnyDialogOpen()) return;
       e.preventDefault();
       startCreateNew();

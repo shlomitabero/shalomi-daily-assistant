@@ -3435,10 +3435,17 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
    * against hijacking keystrokes meant for the search box, a filter
    * dropdown, or the add/edit form. Mirrors the live Forge AI preview's
    * own EntityPanel.tsx.
+   *
+   * The e.ctrlKey/metaKey/altKey check guards a gap neither of those
+   * catches (round 653): e.key is the same bare letter whether or not a
+   * modifier is held, so without it Ctrl/Cmd+D (the browser's own
+   * bookmark-this-page shortcut) silently duplicated the focused row
+   * instead, with no confirm dialog. Mirrors the live preview's own fix.
    */
   useEffect(() => {
     if (viewMode !== "table") return;
     function handleKeyDown(e) {
+      if (e.ctrlKey || e.metaKey || e.altKey) return;
       if (isTypingTarget(e.target) || isAnyDialogOpen()) return;
       // Grouping/collapse-aware, unlike a flat visibleRecords.map(): a
       // collapsed group's records are skipped from the <tbody> entirely
@@ -3485,11 +3492,11 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
    * table view: the form itself renders above the table/board/calendar
    * switch and stays reachable from any of them, so the shortcut has to
    * stay active in all three too. Mirrors the live Forge AI preview's own
-   * EntityPanel.tsx.
+   * EntityPanel.tsx, including its round-653 modifier-key guard.
    */
   useEffect(() => {
     function handleKeyDown(e) {
-      if (e.key !== "n") return;
+      if (e.key !== "n" || e.ctrlKey || e.metaKey || e.altKey) return;
       if (isTypingTarget(e.target) || isAnyDialogOpen()) return;
       e.preventDefault();
       startCreateNew();
