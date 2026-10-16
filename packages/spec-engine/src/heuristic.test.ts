@@ -1405,6 +1405,40 @@ test("Manager's 'management' keyword doesn't spuriously match 'mismanagement'", 
 });
 
 /**
+ * Regression test for round 659's finding: the same substring-collision
+ * shape as round 559's "management"/"mismanagement" fix just above, but
+ * on ROLE_RULES's own Hebrew side -- Manager's bare "מנהל" keyword is
+ * itself a plain substring of Admin's own "מנהל מערכת" ("system admin")
+ * phrase two lines above it in the same table. A description naming only
+ * a system admin, with no manager concept at all, spuriously matched
+ * Manager too. Since matchRoles only adds the generic Member fallback
+ * when exactly one non-Admin role was detected, this silently suppressed
+ * Member and fabricated a Manager role/persona/screens the description
+ * never asked for -- a strictly worse outcome than simply matching
+ * nothing extra. Fixed with the same negative-lookahead idiom this file
+ * already uses for e.g. "חיוב"/"חיובים" and "מוצר"/"מוצרט".
+ */
+test("Manager's bare 'מנהל' keyword doesn't spuriously match inside Admin's own 'מנהל מערכת' phrase", async () => {
+  const provider = new HeuristicSpecProvider();
+
+  const adminOnly = await provider.generate("האפליקציה מיועדת למנהל מערכת אחד בלבד, בלי תפקידים אחרים.");
+  assert.ok(
+    !adminOnly.roles.includes("מנהל/ת"),
+    "a description naming only a system admin must not spuriously add a Manager role via a bare 'מנהל' substring",
+  );
+  assert.ok(
+    adminOnly.roles.includes("חבר/ת צוות"),
+    "with no second real role detected, the generic Member fallback must still be added, not silently suppressed",
+  );
+
+  // The real word still works on its own (via "מנהלת"/"ניהול", which this
+  // description also avoids, so a match here can only come from a
+  // standalone "מנהל" not followed by "מערכת").
+  const realManager = await provider.generate("אפליקציה למנהל חנות שעוקב אחרי המלאי והעובדים.");
+  assert.ok(realManager.roles.includes("מנהל/ת"), "a standalone 'מנהל' (store manager) must still add the Manager role");
+});
+
+/**
  * Regression test for round 561's finding: Student's bare "pupil" keyword
  * is a whole-word genuine polysemy collision (not a substring issue) with
  * the ophthalmology/optometry term "pupil" (the part of the eye) -- the

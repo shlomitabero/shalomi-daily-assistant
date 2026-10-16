@@ -1379,8 +1379,14 @@ export const ROLE_RULES: Record<string, RoleRule> = {
   // Employee's "worker" below -- it's a substring of the unrelated,
   // ordinary word "mismanagement", so a compliance/nonprofit description
   // mentioning financial mismanagement spuriously fabricated a Manager
-  // role. \b-bounded here too.
-  Manager: { keywords: ["manager", /\bmanagement\b/, "מנהל", "מנהלת", "ניהול"], labelHe: "מנהל/ת" },
+  // role. \b-bounded here too. Bare "מנהל" (round 659) is itself a
+  // substring of Admin's own "מנהל מערכת" phrase just above -- a
+  // description naming only a system admin ("מנהל מערכת") spuriously
+  // matched Manager too, which (since matchRoles only adds the Member
+  // fallback when exactly one role matched) silently suppressed Member
+  // and fabricated a Manager role/persona/screens the description never
+  // asked for. The negative lookahead excludes only that specific phrase.
+  Manager: { keywords: ["manager", /\bmanagement\b/, /מנהל(?!\s*מערכת)/, "מנהלת", "ניהול"], labelHe: "מנהל/ת" },
   // Same bare-substring collision as the Employee entity rule above
   // ("coworker" contains "worker") -- \b-bounded here too. Also same
   // pu'al "מעובד" collision (round 565) as the Employee entity rule's own
