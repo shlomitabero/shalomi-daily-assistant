@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import type { AgentStepEvent, Entity, ProductSpec, Project } from "@forge/shared";
+import type { AgentStepEvent, Entity, Field, ProductSpec, Project } from "@forge/shared";
 import {
   countRecords,
   describeMigrationHazards,
@@ -92,6 +92,35 @@ interface ImpactSummary {
  * checkpoints with checkpointDiff.ts's own (separate, client-side)
  * removedEntities logic -- after the fact, not in the moment it happened.
  */
+/**
+ * A field's display label is never enforced unique (only its name is --
+ * see entityFormatting.ts's/codegen.ts's/backup.ts's own identical
+ * comment on this), so two fields on the same entity can legally share a
+ * label via the Field Label editor (e.g. a "subtotal" and a "shipping"
+ * field both labeled "Amount"). Below, computeImpact reports a REMOVED
+ * field by its label alone -- without this, removing only one of two
+ * same-labeled fields would claim that shared label is "no longer
+ * reachable through the app" even though a different, still-live field
+ * with the identical label is sitting right there in the UI: actively
+ * wrong, not just ambiguous, in the one message meant to build trust that
+ * nothing was silently lost. Mirrors (rather than imports, matching this
+ * codebase's established per-surface convention) entityFormatting.ts's
+ * identical fieldLabelOccurrences/fieldDisplayLabel pair.
+ */
+function fieldLabelOccurrences(fields: Field[]): Map<string, number> {
+  const occurrences = new Map<string, number>();
+  for (const f of fields) {
+    const label = f.label ?? f.name;
+    occurrences.set(label, (occurrences.get(label) ?? 0) + 1);
+  }
+  return occurrences;
+}
+
+function fieldDisplayLabel(field: Field, occurrences: Map<string, number>): string {
+  const label = field.label ?? field.name;
+  return (occurrences.get(label) ?? 0) > 1 ? `${label} (${field.name})` : label;
+}
+
 function computeImpact(previousSpec: ProductSpec | undefined, nextSpec: ProductSpec): ImpactSummary {
   const previousEntities = new Map((previousSpec?.entities ?? []).map((e) => [e.name, e]));
   const nextEntityNames = new Set(nextSpec.entities.map((e) => e.name));
@@ -134,12 +163,23 @@ function computeImpact(previousSpec: ProductSpec | undefined, nextSpec: ProductS
       return false;
     });
     if (newFields.length > 0 || removedFields.length > 0 || tightenedFields.length > 0) {
+      // Occurrences are counted over every field that exists on EITHER side
+      // of this refine (deduped by name, next's definition winning for a
+      // field present on both), not just whichever of new/removed/tightened
+      // list a given field lands in -- otherwise a removed field's label
+      // could still collide with a field that didn't change at all this
+      // refine (the exact "Amount" subtotal/shipping scenario above) without
+      // ever being counted as ambiguous.
+      const allFieldsByName = new Map<string, Field>();
+      for (const f of prev.fields) allFieldsByName.set(f.name, f);
+      for (const f of entity.fields) allFieldsByName.set(f.name, f);
+      const labelOccurrences = fieldLabelOccurrences(Array.from(allFieldsByName.values()));
       changedEntities.push({
         name: entity.name,
         label: entity.label ?? entity.name,
-        newFieldNames: newFields.map((f) => f.label ?? f.name),
-        removedFieldNames: removedFields.map((f) => f.label ?? f.name),
-        tightenedFieldNames: tightenedFields.map((f) => f.label ?? f.name),
+        newFieldNames: newFields.map((f) => fieldDisplayLabel(f, labelOccurrences)),
+        removedFieldNames: removedFields.map((f) => fieldDisplayLabel(f, labelOccurrences)),
+        tightenedFieldNames: tightenedFields.map((f) => fieldDisplayLabel(f, labelOccurrences)),
       });
     }
   }

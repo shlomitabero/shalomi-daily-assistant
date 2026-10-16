@@ -66,6 +66,39 @@ test("computeCheckpointDiff falls back to the raw name when a field or entity ha
   assert.deepEqual(diff.changedEntities, [{ name: "Customer", label: "Customer", removedFieldNames: ["notes"], addedFieldNames: [], changedFieldNames: [] }]);
 });
 
+/**
+ * Round 641: a field's display label is never enforced unique (only its
+ * name is), so two fields on an entity can legally share a label via the
+ * Field Label editor. A checkpoint that still has BOTH same-labeled
+ * fields, restored over a current spec missing only one of them, used to
+ * report the bare shared label as "added" -- indistinguishable from the
+ * other, already-present field sharing that same label.
+ */
+test("computeCheckpointDiff disambiguates an added/removed field name against a sibling field sharing the identical label", () => {
+  const current = makeSpec([
+    {
+      name: "Order",
+      label: "Order",
+      fields: [{ name: "subtotal", label: "Amount", type: "number", required: true }],
+    },
+  ]);
+  const checkpoint = makeSpec([
+    {
+      name: "Order",
+      label: "Order",
+      fields: [
+        { name: "subtotal", label: "Amount", type: "number", required: true },
+        { name: "shipping", label: "Amount", type: "number", required: true },
+      ],
+    },
+  ]);
+
+  const diff = computeCheckpointDiff(current, checkpoint);
+  assert.deepEqual(diff.changedEntities, [
+    { name: "Order", label: "Order", removedFieldNames: [], addedFieldNames: ["Amount (shipping)"], changedFieldNames: [] },
+  ]);
+});
+
 test("computeCheckpointDiff reports checkpoint-only entities/fields as additions, not as absence of removals", () => {
   const current = makeSpec([{ name: "Customer", fields: [{ name: "name", type: "text", required: true }] }]);
   const checkpointWithExtra = makeSpec([

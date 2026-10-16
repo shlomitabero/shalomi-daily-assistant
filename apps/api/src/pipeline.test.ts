@@ -624,6 +624,71 @@ test("a refine that drops a field from an entity that still exists is reported a
 });
 
 /**
+ * Round 641: a field's display label is never enforced unique (only its
+ * name is), so two fields on an entity can legally share a label via the
+ * Field Label editor. Removing only ONE of two same-labeled fields used
+ * to make the Architect's message claim that shared label is "no longer
+ * reachable through the app" -- false, since a different field with the
+ * identical label is still live on the entity. The genuinely-removed
+ * field couldn't even be identified from the message at all.
+ */
+test("removing one of two same-labeled fields names the real removed field, not the shared label that's still live on a sibling field", async () => {
+  const db = openDatabase(":memory:");
+  ensureProjectsTable(db);
+  ensureCheckpointsTable(db);
+  const previousSpec: ProductSpec = {
+    summary: "test",
+    personas: [],
+    roles: ["Admin"],
+    screens: [],
+    assumptions: [],
+    openQuestions: [],
+    entities: [
+      {
+        name: "Order",
+        label: "Order",
+        fields: [
+          { name: "name", type: "text", required: true },
+          { name: "subtotal", label: "Amount", type: "number", required: true },
+          { name: "shipping", label: "Amount", type: "number", required: true },
+        ],
+      },
+    ],
+  };
+  const nextSpec: ProductSpec = {
+    ...previousSpec,
+    entities: [
+      { ...previousSpec.entities[0], fields: previousSpec.entities[0].fields.filter((f) => f.name !== "shipping") },
+    ],
+  };
+  applyMigrations(db, "proj1", previousSpec);
+  const project = insertProject(db, {
+    id: "proj1",
+    ownerId: "user1",
+    name: "test",
+    description: "test",
+    spec: previousSpec,
+  });
+
+  const events = await collect(runBuildPipeline(db, project, { previousSpec, nextSpec, changeLabel: "Refine: drop shipping" }));
+  const architectSuccess = events.find((e) => e.agent === "Architect" && e.status === "success");
+  assert.ok(architectSuccess);
+
+  assert.match(architectSuccess!.message, /Warning: Order lost field\(s\): Amount \(shipping\)/);
+  assert.doesNotMatch(
+    architectSuccess!.message,
+    /lost field\(s\): Amount(?! \()/,
+    "the warning must disambiguate which 'Amount' field was lost, not name the bare shared label still live on 'subtotal'",
+  );
+
+  type ImpactDetail = { changedEntities: { name: string; label: string; newFieldNames: string[]; removedFieldNames: string[]; tightenedFieldNames: string[] }[] };
+  const detail = architectSuccess!.detail as ImpactDetail;
+  assert.deepEqual(detail.changedEntities, [
+    { name: "Order", label: "Order", newFieldNames: [], removedFieldNames: ["Amount (shipping)"], tightenedFieldNames: [] },
+  ]);
+});
+
+/**
  * Regression test for a real gap found by round 398's Explore survey: a
  * same-named field that keeps existing on both sides of a refine is
  * invisible to computeImpact's new/removed field checks, but can still

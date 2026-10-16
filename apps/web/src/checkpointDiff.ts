@@ -28,6 +28,34 @@ function fieldSignature(f: Field): string {
 }
 
 /**
+ * A field's display label is never enforced unique (only its name is --
+ * see entityFormatting.ts's/pipeline.ts's own identical comment on this),
+ * so two fields on the same entity can legally share a label via the
+ * Field Label editor. Without this, a field reported here by label alone
+ * (removed/added/changed) could be confused with a different, still-live
+ * sibling field sharing the identical label -- e.g. restoring an older
+ * checkpoint that dropped only one of two fields both labeled "Amount"
+ * would read as "Amount" disappearing entirely, even though the other
+ * "Amount" field is untouched. Mirrors (rather than imports, matching
+ * this codebase's established per-surface convention)
+ * entityFormatting.ts's identical fieldLabelOccurrences/fieldDisplayLabel
+ * pair.
+ */
+function fieldLabelOccurrences(fields: Field[]): Map<string, number> {
+  const occurrences = new Map<string, number>();
+  for (const f of fields) {
+    const label = f.label ?? f.name;
+    occurrences.set(label, (occurrences.get(label) ?? 0) + 1);
+  }
+  return occurrences;
+}
+
+function fieldDisplayLabel(field: Field, occurrences: Map<string, number>): string {
+  const label = field.label ?? field.name;
+  return (occurrences.get(label) ?? 0) > 1 ? `${label} (${field.name})` : label;
+}
+
+/**
  * Restoring never destroys data (migrations are additive-only, see
  * projects.ts's restore route), but it DOES move which entities/fields the
  * live app currently *shows* -- so before clicking Restore, a real question
@@ -64,14 +92,26 @@ export function computeCheckpointDiff(currentSpec: ProductSpec, checkpointSpec: 
     }
     const checkpointFieldsByName = new Map(inCheckpoint.fields.map((f) => [f.name, f]));
     const currentFieldNames = new Set(entity.fields.map((f) => f.name));
-    const removedFieldNames = entity.fields.filter((f) => !checkpointFieldsByName.has(f.name)).map((f) => f.label ?? f.name);
-    const addedFieldNames = inCheckpoint.fields.filter((f) => !currentFieldNames.has(f.name)).map((f) => f.label ?? f.name);
+    // Counted over every field that exists on EITHER side (deduped by name,
+    // the current spec's definition winning for a field present on both),
+    // not just whichever of removed/added/changed list a field lands in --
+    // see this function's own doc comment above for why.
+    const allFieldsByName = new Map<string, Field>();
+    for (const f of inCheckpoint.fields) allFieldsByName.set(f.name, f);
+    for (const f of entity.fields) allFieldsByName.set(f.name, f);
+    const labelOccurrences = fieldLabelOccurrences(Array.from(allFieldsByName.values()));
+    const removedFieldNames = entity.fields
+      .filter((f) => !checkpointFieldsByName.has(f.name))
+      .map((f) => fieldDisplayLabel(f, labelOccurrences));
+    const addedFieldNames = inCheckpoint.fields
+      .filter((f) => !currentFieldNames.has(f.name))
+      .map((f) => fieldDisplayLabel(f, labelOccurrences));
     const changedFieldNames = entity.fields
       .filter((f) => {
         const inCheckpointField = checkpointFieldsByName.get(f.name);
         return inCheckpointField !== undefined && fieldSignature(f) !== fieldSignature(inCheckpointField);
       })
-      .map((f) => f.label ?? f.name);
+      .map((f) => fieldDisplayLabel(f, labelOccurrences));
     if (removedFieldNames.length > 0 || addedFieldNames.length > 0 || changedFieldNames.length > 0) {
       changedEntities.push({ name: entity.name, label: entity.label ?? entity.name, removedFieldNames, addedFieldNames, changedFieldNames });
     }
