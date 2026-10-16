@@ -4945,6 +4945,57 @@ test("EntityPanel's board view moves a card via a real drag-and-drop, and droppi
 });
 
 /**
+ * Regression test for round 656: a board column's own onDragOver accepts
+ * ANY drag, not just one of its own cards -- so an entity tab (App.tsx's
+ * own onDragStart never calls setData, leaving its text/plain payload "")
+ * or a file dragged in from the desktop both land in handleCardDrop too.
+ * Number("") is 0, not NaN, so the existing Number.isNaN guard alone lets
+ * it straight through to a `records.find` that returns undefined --
+ * before this round's fix, the old `record && ...` same-column check
+ * short-circuited false for a missing record and fell through to the real
+ * handleMove/PATCH call for a record id (0) that was never actually
+ * dragged, surfacing a real "Record 0 not found" error banner over a
+ * board where nothing was moved. The calendar view's own sibling drop
+ * handler already guards the identical case with `if (record) ...`.
+ * Confirms a drop with an empty text/plain payload is a true no-op: no
+ * PATCH fires and no error banner appears.
+ */
+test("EntityPanel's board column drop with no real record id (an entity tab or a dragged-in file) is a silent no-op, not a PATCH to a nonexistent record", async () => {
+  await withJsdom(async () => {
+    const store: EntityRecord[] = [{ id: 1, name: "Acme Corp", status: "new" }];
+    let patchCount = 0;
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      if ((init?.method ?? "GET") === "PATCH") patchCount += 1;
+      return mockRecordsFetch(store)(input, init);
+    }) as typeof fetch;
+    try {
+      renderEntityPanel();
+      await waitForCondition(() => document.querySelector(".entity-toolbar") !== null);
+
+      const boardToggle = document.querySelectorAll(".view-toggle-btn")[1] as HTMLButtonElement;
+      fireEvent.click(boardToggle);
+      await waitForCondition(() => document.querySelectorAll(".board-card").length === 1);
+
+      const columns = document.querySelectorAll(".board-column");
+      // An entity tab's own onDragStart never calls setData -- simulate the
+      // exact same empty payload a real such drag (or a file from the
+      // desktop) would leave behind.
+      const emptyDataTransfer = { getData: () => "" };
+
+      fireEvent.drop(columns[1], { dataTransfer: emptyDataTransfer });
+      await new Promise((resolve) => setImmediate(resolve));
+
+      assert.equal(patchCount, 0, "a drop with no real record id must never call the real PATCH endpoint");
+      assert.equal(document.querySelector(".error"), null, "no error banner must appear for a drop that was never a real card");
+      assert.equal(store[0].status, "new", "the only real record's status must be completely untouched");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * New in this round: a huge "Done"/"Won" column with dozens of cards always
  * rendered every single one, with no way to collapse it out of the way.
  * Each column header now has its own toggle button. Confirms: (1) toggling

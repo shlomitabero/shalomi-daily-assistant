@@ -2274,9 +2274,19 @@ export function EntityPanel({
     const id = Number(e.dataTransfer.getData("text/plain"));
     if (Number.isNaN(id)) return;
     const record = records.find((r) => (r.id as number) === id);
+    // A column accepts any drag, not just this board's own cards -- an
+    // entity tab (App.tsx's own onDragStart never calls setData, so its
+    // text/plain payload is "") or a file dragged in from the desktop both
+    // land here too. Number("") is 0, not NaN, so the check above alone
+    // lets id 0 through; without this guard, a record this project never
+    // had would still reach handleMove below, PATCHing a nonexistent id
+    // and surfacing a real "Record 0 not found" error banner over a board
+    // where nothing was actually dragged. The calendar view's own sibling
+    // drop handler just below already guards the identical case.
+    if (!record) return;
     // Dropping a card back onto the column it's already in is a real no-op
     // -- nothing actually changed, so there's nothing worth a PATCH request for.
-    if (record && String(record[fieldName] ?? "") === value) return;
+    if (String(record[fieldName] ?? "") === value) return;
     void handleMove(id, fieldName, value);
   }
 

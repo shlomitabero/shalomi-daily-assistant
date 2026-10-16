@@ -7809,7 +7809,12 @@ test("the exported EntityView's Kanban board cards are drag-and-drop-able onto a
   const dropSrc = entityViewJsx.match(/function handleCardDrop\(e, fieldName, value\) \{[\s\S]*?\n {2}\}\n/)?.[0];
   assert.ok(dropSrc, "expected to find handleCardDrop in generated output");
   assert.match(dropSrc!, /const record = records\.find\(\(r\) => r\.id === id\);/);
-  assert.match(dropSrc!, /if \(record && String\(record\[fieldName\] \?\? ""\) === value\) return;/);
+  // Round 656: a column accepts any drag, not just a real card -- without
+  // this guard, a drag with no real record id (an entity tab, which never
+  // calls setData, or a file from the desktop) fell through to a real
+  // PATCH for a nonexistent record.
+  assert.match(dropSrc!, /if \(!record\) return;/);
+  assert.match(dropSrc!, /if \(String\(record\[fieldName\] \?\? ""\) === value\) return;/);
   assert.match(dropSrc!, /void handleMove\(id, fieldName, value\);/);
   // The column itself must be a real drop target, highlighted only while actually dragged over -- except
   // the synthetic "(other)" column (see the "(other)" bucket test below), which must guard out of both.
@@ -7830,6 +7835,93 @@ test("the exported EntityView's Kanban board cards are drag-and-drop-able onto a
   const stylesCss = files.find((f) => f.path === "web/src/styles.css")!.content;
   assert.match(stylesCss, /\.board-column-drag-over/);
   assert.match(stylesCss, /\.board-column-other/);
+});
+
+/**
+ * Regression test for round 656: a board column's own onDragOver accepts
+ * ANY drag, not just one of its own cards -- so an entity tab (its own
+ * onDragStart never calls setData, leaving its text/plain payload "") or a
+ * file dragged in from the desktop both land in handleCardDrop too.
+ * Number("") is 0, not NaN, so the old Number.isNaN guard alone let it
+ * straight through to a `records.find` that returns undefined, and the
+ * old same-column check (`record && ...`) short-circuited false and fell
+ * through to a real PATCH for a record id that was never actually
+ * dragged. Confirms a drop with an empty text/plain payload is a true
+ * no-op in the exported app too: no PATCH fires and the real record's
+ * status is untouched.
+ */
+test("the exported EntityView's board column drop with no real record id is a silent no-op, not a PATCH to a nonexistent record", async () => {
+  const files = generateExportFiles(project);
+  const dir = writeGeneratedWebComponent(files);
+  const store = [{ id: 1, name: "Acme Corp", status: "New" }];
+  const originalFetch = globalThis.fetch;
+  let patchCount = 0;
+  globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
+    const method = init?.method ?? "GET";
+    if (method === "GET" && input === "/api/Customer") {
+      return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    if (method === "PATCH") {
+      patchCount += 1;
+      return new Response(JSON.stringify({ record: store[0] }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    throw new Error(`unexpected request ${method} ${input}`);
+  }) as typeof fetch;
+
+  try {
+    await withRealLocalStorage(async () => {
+      const { EntityView } = await import(path.join(dir, "web", "src", "components", "EntityView.jsx"));
+      const customerEntity = project.spec.entities.find((e) => e.name === "Customer")!;
+      const props = {
+        entity: customerEntity,
+        highlightRecordId: null,
+        onHighlightHandled: () => {},
+        onJumpToRecord: () => {},
+        onRecordCountChange: () => {},
+      };
+
+      const { container } = render(React.createElement(EntityView, props));
+      let boardToggle: HTMLButtonElement | undefined;
+      for (let i = 0; i < 40; i++) {
+        boardToggle = Array.from(container.querySelectorAll("button")).find((b) => b.textContent?.includes("Board")) as HTMLButtonElement;
+        if (boardToggle) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+      assert.ok(boardToggle, "expected a Board view-toggle button");
+      await act(async () => {
+        fireEvent.click(boardToggle!);
+      });
+      for (let i = 0; i < 40; i++) {
+        if (container.querySelectorAll(".board-column").length > 0) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+
+      const columns = container.querySelectorAll(".board-column");
+      assert.ok(columns.length >= 2, "expected at least 2 board columns (New, Won)");
+      // An entity tab's own onDragStart never calls setData -- simulate the
+      // exact same empty payload a real such drag (or a file from the
+      // desktop) would leave behind.
+      const emptyDataTransfer = { getData: () => "" };
+
+      await act(async () => {
+        fireEvent.drop(columns[1], { dataTransfer: emptyDataTransfer });
+      });
+      await act(async () => {
+        await new Promise((resolve) => setImmediate(resolve));
+      });
+
+      assert.equal(patchCount, 0, "a drop with no real record id must never call the real PATCH endpoint");
+      assert.equal(store[0].status, "New", "the only real record's status must be completely untouched");
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    cleanup();
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 // Executes the real generated isInlineEditableField (extracted from real
