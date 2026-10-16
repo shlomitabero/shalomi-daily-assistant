@@ -421,6 +421,18 @@ export function diffAndMigrate(
               fromRelationTo: entityNameForTable(projectId, [...previousEntities.keys(), ...entityNames], shape.fkTable),
               toRelationTo: field.relationTo,
             });
+            // Same reasoning as the type_changed/enum-narrowing branches
+            // above: a field_equals rule's stored fieldValue is a raw id,
+            // meaningful only against whatever table the FK actually
+            // watches. Once that's a different table, the exact same id can
+            // legitimately belong to a totally different record there, so a
+            // rule left enabled would fire on a coincidental id match against
+            // the wrong entity instead of the one it was actually written
+            // for -- not merely stale, but silently wrong.
+            if (!fieldsNeedingAutomationDisable.has(entity.name)) {
+              fieldsNeedingAutomationDisable.set(entity.name, new Set());
+            }
+            fieldsNeedingAutomationDisable.get(entity.name)!.add(field.name);
           } else if (shape && !shape.fkTable && expectedFkTable) {
             // Mirrors the identical relation_missing_fk case in the "reused
             // column" branch below -- a relation field whose relationTo
@@ -435,6 +447,14 @@ export function diffAndMigrate(
               column: columnName,
               toRelationTo: field.relationTo,
             });
+            // Same field_equals rationale as relation_target_changed above:
+            // the column now has zero referential-integrity protection, so a
+            // rule's stored id can't be trusted to still name a record of the
+            // field's own current relationTo at all.
+            if (!fieldsNeedingAutomationDisable.has(entity.name)) {
+              fieldsNeedingAutomationDisable.set(entity.name, new Set());
+            }
+            fieldsNeedingAutomationDisable.get(entity.name)!.add(field.name);
           }
         }
         continue;
@@ -485,6 +505,13 @@ export function diffAndMigrate(
               fromRelationTo: entityNameForTable(projectId, [...previousEntities.keys(), ...entityNames], shape.fkTable),
               toRelationTo: field.relationTo,
             });
+            // Same field_equals rationale as the prevField relation branch
+            // above: a reused column's stale FK target makes any rule's
+            // stored id meaningless against the field's current relationTo.
+            if (!fieldsNeedingAutomationDisable.has(entity.name)) {
+              fieldsNeedingAutomationDisable.set(entity.name, new Set());
+            }
+            fieldsNeedingAutomationDisable.get(entity.name)!.add(field.name);
           } else if (!shape.fkTable && expectedFkTable) {
             // The reused column shares relation's own INTEGER bucket (so the
             // type_changed check above stays silent) but never had a FK at
@@ -505,6 +532,13 @@ export function diffAndMigrate(
               column: columnName,
               toRelationTo: field.relationTo,
             });
+            // Same field_equals rationale as relation_target_changed above:
+            // zero FK protection means a rule's stored id can't be trusted
+            // to still name a record of this field's current relationTo.
+            if (!fieldsNeedingAutomationDisable.has(entity.name)) {
+              fieldsNeedingAutomationDisable.set(entity.name, new Set());
+            }
+            fieldsNeedingAutomationDisable.get(entity.name)!.add(field.name);
           }
         }
       }

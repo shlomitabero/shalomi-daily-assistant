@@ -1466,6 +1466,143 @@ test("diffAndMigrate leaves a field_equals automation rule enabled when an enum 
 });
 
 /**
+ * Round 639: a field_equals rule's stored fieldValue, on a relation field, is
+ * a raw row id -- meaningful only against whatever table the column's FK
+ * actually watches. relation_target_changed (above) already proves that
+ * repointing relationTo to a different existing entity leaves the physical
+ * FK, and therefore every id stored in the column, still watching the OLD
+ * table. A field_equals rule left enabled after that retarget doesn't just
+ * become stale the way a removed field's rule does -- it keeps comparing
+ * against ids that now coincidentally belong to a DIFFERENT entity than the
+ * one the rule was written for, so it can fire for the wrong reason entirely.
+ * Unlike type_changed/enum-narrowing (already covered above), this relation
+ * branch never fed fieldsNeedingAutomationDisable at all before this round's
+ * fix, so the rule below used to survive this refine fully enabled.
+ */
+test("diffAndMigrate disables a field_equals automation rule on a relation field whose relationTo is retargeted to a different existing entity, but leaves a rule on an unrelated field alone", () => {
+  const db = openDatabase(":memory:");
+  ensureAutomationRulesTable(db);
+  applyMigrations(db, "proj1", spec);
+  const retargetedRule = insertAutomationRule(db, {
+    projectId: "proj1",
+    entityName: "Order",
+    trigger: "field_equals",
+    fieldName: "customerId",
+    fieldValue: "1",
+    actionType: "send_whatsapp",
+    toMode: "static",
+    toNumber: "+15550001111",
+    messageTemplate: "Order for this customer!",
+  });
+  const unrelatedRule = insertAutomationRule(db, {
+    projectId: "proj1",
+    entityName: "Order",
+    trigger: "field_equals",
+    fieldName: "total",
+    fieldValue: "100",
+    actionType: "send_whatsapp",
+    toMode: "static",
+    toNumber: "+15550001111",
+    messageTemplate: "Big order!",
+  });
+
+  const nextSpec: ProductSpec = {
+    ...spec,
+    entities: [
+      spec.entities[0],
+      { name: "Vendor", fields: [{ name: "name", type: "text", required: true }] },
+      {
+        ...spec.entities[1],
+        fields: [spec.entities[1].fields[0], { name: "customerId", type: "relation", required: false, relationTo: "Vendor" }],
+      },
+    ],
+  };
+  const changes = diffAndMigrate(db, "proj1", spec, nextSpec);
+
+  assert.ok(
+    changes.some((c) => c.type === "relation_target_changed" && c.column === "customerId"),
+    "expected a relation_target_changed entry for the retargeted field",
+  );
+  assert.equal(getAutomationRule(db, "proj1", retargetedRule.id)!.enabled, false);
+  assert.equal(
+    getAutomationRule(db, "proj1", unrelatedRule.id)!.enabled,
+    true,
+    "the rule on the untouched 'total' field must not be touched",
+  );
+});
+
+/**
+ * Round 639's second gap, the "reused column" twin of the test above: a
+ * relation column reused after an earlier removal, that never had a FK at
+ * all (relation_missing_fk, proven in isolation further above), leaves a
+ * field_equals rule's stored id with even less meaning than a retargeted FK
+ * -- the column now has zero referential-integrity protection, so nothing
+ * guarantees the id still names any record at all, let alone one of the
+ * field's current relationTo. This branch had the identical
+ * fieldsNeedingAutomationDisable gap as the prevField relation branch above,
+ * fixed in the same round.
+ */
+test("diffAndMigrate disables a field_equals automation rule on a relation field that reuses a column which never had a FK (relation_missing_fk)", () => {
+  const db = openDatabase(":memory:");
+  ensureAutomationRulesTable(db);
+  const baseSpec: ProductSpec = {
+    ...spec,
+    entities: [
+      spec.entities[0],
+      { ...spec.entities[1], fields: [spec.entities[1].fields[0], { name: "isUrgent", type: "boolean", required: false }] },
+    ],
+  };
+  applyMigrations(db, "proj1", baseSpec);
+
+  // Refine 1: drop "isUrgent" entirely. The physical INTEGER column (no FK)
+  // survives untouched -- additive-only.
+  const midSpec: ProductSpec = {
+    ...baseSpec,
+    entities: [baseSpec.entities[0], { ...baseSpec.entities[1], fields: [baseSpec.entities[1].fields[0]] }],
+  };
+  diffAndMigrate(db, "proj1", baseSpec, midSpec);
+
+  // The rule is created only now, while "isUrgent" doesn't exist in the spec
+  // at all -- deliberately so the removal sweep above (which already,
+  // correctly, disables a rule that existed *before* its field was dropped)
+  // can't be what's credited for disabling it. The only mechanism that can
+  // still catch this rule is refine 2's own relation_missing_fk branch,
+  // which is exactly what this test is proving.
+  const deadRule = insertAutomationRule(db, {
+    projectId: "proj1",
+    entityName: "Order",
+    trigger: "field_equals",
+    fieldName: "isUrgent",
+    fieldValue: "1",
+    actionType: "send_whatsapp",
+    toMode: "static",
+    toNumber: "+15550001111",
+    messageTemplate: "Urgent order!",
+  });
+
+  // Refine 2: re-add a field also named "isUrgent", but now a relation to
+  // Customer -- same INTEGER bucket as boolean, so no type_changed, and the
+  // column still has no FK at all.
+  const nextSpec: ProductSpec = {
+    ...midSpec,
+    entities: [
+      midSpec.entities[0],
+      {
+        ...midSpec.entities[1],
+        fields: [midSpec.entities[1].fields[0], { name: "isUrgent", type: "relation", required: false, relationTo: "Customer" }],
+      },
+    ],
+  };
+  const changes = diffAndMigrate(db, "proj1", midSpec, nextSpec);
+
+  assert.ok(
+    changes.some((c) => c.type === "relation_missing_fk" && c.column === "isUrgent"),
+    "expected a relation_missing_fk entry for the reused column",
+  );
+  assert.equal(getAutomationRule(db, "proj1", deadRule.id)!.enabled, false);
+});
+
+/**
  * Round 596's own finding: diffAndMigrate also runs in the *reverse*
  * direction on checkpoint restore (apps/api/src/routes/projects.ts calls
  * diffAndMigrate(db, project.id, project.spec, checkpoint.spec) -- the
