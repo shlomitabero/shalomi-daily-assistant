@@ -8,9 +8,29 @@ import {
   type AutomationRule,
   type ForgeDatabase,
 } from "@forge/db";
+import { isHebrewText } from "@forge/spec-engine";
 import { recordDisplayLabel } from "./displayField.js";
 import { findMatchingRecord } from "./whatsapp.js";
 import type { WhatsAppWebManager } from "./whatsappWeb.js";
+
+type Lang = "he" | "en";
+const LOCALE: Record<Lang, string> = { he: "he-IL", en: "en-US" };
+const DATE_FORMAT = /^(\d{4})-(\d{2})-(\d{2})$/;
+
+/**
+ * Mirrors entityFormatting.ts's own parseFieldDate: a stored "YYYY-MM-DD"
+ * date field parsed at local midnight (not `new Date(value)` directly,
+ * which parses as UTC midnight and can print the wrong calendar day for a
+ * viewer/recipient behind UTC).
+ */
+function parseFieldDate(raw: string): Date {
+  const match = DATE_FORMAT.exec(raw);
+  if (match) {
+    const [, yearStr, monthStr, dayStr] = match;
+    return new Date(Number(yearStr), Number(monthStr) - 1, Number(dayStr));
+  }
+  return new Date(raw);
+}
 
 /**
  * Interpolates {{fieldName}} placeholders in a message template from a
@@ -22,18 +42,32 @@ import type { WhatsAppWebManager } from "./whatsappWeb.js";
  *
  * `record` must already have every relation field's value resolved to its
  * display-label string (see resolveRelationFieldsForTemplate below) --
- * this function itself never touches the database, so it formats enum
- * (translated label) and boolean (TRUE/FALSE) the same way
+ * this function itself never touches the database. Enum (translated
+ * label) and boolean (TRUE/FALSE) format the same way
  * entityFormatting.ts's/backup.ts's own fieldDisplayValue does for CSV
- * export, and otherwise just stringifies the value as-is.
+ * export, but date/number deliberately do NOT follow fieldDisplayValue's
+ * lead of leaving those two raw -- that function's own doc comment
+ * explains its raw values exist only so a CSV export/import round-trips
+ * exactly (a locale-formatted "1,500"/"1/2/2024" would fail buildImportRecords'
+ * re-parse). A WhatsApp message is never re-imported; it's pure one-way
+ * human reading, the same situation the on-screen table cell (via
+ * formatDateValue/formatNumberValue) is already in, so date/number here
+ * follow THAT convention instead -- locale-formatted, using `lang` (no
+ * stored per-project language preference exists, so this is picked the
+ * same way twin.ts already does via isHebrewText(project.description)).
  */
-export function interpolateTemplate(template: string, entity: Entity, record: EntityRecord): string {
+export function interpolateTemplate(template: string, entity: Entity, record: EntityRecord, lang: Lang): string {
   return template.replace(/\{\{\s*([a-zA-Z0-9_]+)\s*\}\}/g, (match, fieldName: string) => {
     const value = record[fieldName];
     if (value === null || value === undefined) return match;
     const field = entity.fields.find((f) => f.name === fieldName);
     if (field?.type === "boolean") return value ? "TRUE" : "FALSE";
     if (field?.type === "enum") return field.enumLabels?.[String(value)] ?? String(value);
+    if (field?.type === "date") {
+      const date = parseFieldDate(String(value));
+      return Number.isNaN(date.getTime()) ? String(value) : date.toLocaleDateString(LOCALE[lang]);
+    }
+    if (field?.type === "number") return Number(value).toLocaleString(LOCALE[lang]);
     return String(value);
   });
 }
@@ -154,7 +188,8 @@ async function fireRule(
     return;
   }
   const templateRecord = resolveRelationFieldsForTemplate(db, project.id, entity, project.spec.entities, record);
-  const message = interpolateTemplate(rule.messageTemplate, entity, templateRecord);
+  const lang: Lang = isHebrewText(project.description) ? "he" : "en";
+  const message = interpolateTemplate(rule.messageTemplate, entity, templateRecord, lang);
   const result = await whatsapp.sendMessage(project.id, to, message);
   // Same re-check-after-await hazard the manual send route already
   // documents (routes/projects.ts's POST .../whatsapp/send) -- sendMessage

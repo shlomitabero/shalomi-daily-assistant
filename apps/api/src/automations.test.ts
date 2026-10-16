@@ -84,20 +84,25 @@ function setupProject() {
 }
 
 test("interpolateTemplate replaces known {{field}} placeholders with the record's own values", () => {
-  const result = interpolateTemplate("Hi {{customerName}}, your order is {{status}}.", orderEntity, {
-    customerName: "Dana",
-    status: "Delivered",
-  });
+  const result = interpolateTemplate(
+    "Hi {{customerName}}, your order is {{status}}.",
+    orderEntity,
+    {
+      customerName: "Dana",
+      status: "Delivered",
+    },
+    "en",
+  );
   assert.equal(result, "Hi Dana, your order is Delivered.");
 });
 
 test("interpolateTemplate leaves an unmatched placeholder verbatim instead of collapsing it to an empty string", () => {
-  const result = interpolateTemplate("Hi {{nonexistentField}}!", orderEntity, { customerName: "Dana" });
+  const result = interpolateTemplate("Hi {{nonexistentField}}!", orderEntity, { customerName: "Dana" }, "en");
   assert.equal(result, "Hi {{nonexistentField}}!");
 });
 
 test("interpolateTemplate treats a null field value the same as an unmatched placeholder", () => {
-  const result = interpolateTemplate("Phone: {{customerPhone}}", orderEntity, { customerPhone: null });
+  const result = interpolateTemplate("Phone: {{customerPhone}}", orderEntity, { customerPhone: null }, "en");
   assert.equal(result, "Phone: {{customerPhone}}");
 });
 
@@ -119,11 +124,57 @@ test("interpolateTemplate renders a boolean field as TRUE/FALSE and an enum fiel
       { name: "priority", type: "enum", required: true, enumValues: ["P1", "P2"], enumLabels: { P1: "Urgent", P2: "Normal" } },
     ],
   };
-  const result = interpolateTemplate("Urgent: {{isUrgent}}, priority: {{priority}}", dealEntity, {
-    isUrgent: true,
-    priority: "P1",
-  });
+  const result = interpolateTemplate(
+    "Urgent: {{isUrgent}}, priority: {{priority}}",
+    dealEntity,
+    {
+      isUrgent: true,
+      priority: "P1",
+    },
+    "en",
+  );
   assert.equal(result, "Urgent: TRUE, priority: Urgent");
+});
+
+/**
+ * Round 651's finding: interpolateTemplate left date/number fields
+ * completely raw -- "2026-03-15" and "1500" instead of the same
+ * locale-formatted values a business owner already sees on screen (via
+ * EntityPanel.tsx's formatDateValue/formatNumberValue). Round 647 modeled
+ * this function on fieldDisplayValue (CSV export), whose own doc comment
+ * explains it deliberately leaves date/number raw so an export/import
+ * round-trips exactly -- a rationale that doesn't apply to an outbound
+ * WhatsApp message, which is never re-imported. Confirms both field
+ * types now render the same way the on-screen table does, in both
+ * supported languages (locale affects both the date's field order and
+ * the number's thousands-separator character).
+ */
+test("interpolateTemplate renders a date field in locale-formatted form and a number field with locale thousands separators, not the raw stored value", () => {
+  const invoiceEntity: Entity = {
+    name: "Invoice",
+    label: "Invoice",
+    fields: [
+      { name: "dueDate", type: "date", required: true },
+      { name: "total", type: "number", required: true },
+    ],
+  };
+  const record = { dueDate: "2026-03-15", total: 1500 };
+
+  const en = interpolateTemplate("Due {{dueDate}}, total {{total}}", invoiceEntity, record, "en");
+  assert.equal(en, "Due 3/15/2026, total 1,500");
+
+  const he = interpolateTemplate("Due {{dueDate}}, total {{total}}", invoiceEntity, record, "he");
+  assert.equal(he, "Due 15.3.2026, total 1,500");
+});
+
+test("interpolateTemplate falls back to the raw stored value for a date field that isn't actually a valid date", () => {
+  const invoiceEntity: Entity = {
+    name: "Invoice",
+    label: "Invoice",
+    fields: [{ name: "dueDate", type: "date", required: true }],
+  };
+  const result = interpolateTemplate("Due {{dueDate}}", invoiceEntity, { dueDate: "not-a-date" }, "en");
+  assert.equal(result, "Due not-a-date");
 });
 
 test("matchesTrigger: record_created only matches the 'created' event, never 'updated'", () => {
