@@ -12,8 +12,8 @@ export default function Financial() {
   const [refreshingId, setRefreshingId] = useState(null);
 
   function refresh() {
-    api.getFinancialWatchlist().then((r) => { setWatchlist(r.watchlist); setConnected(r.connected); });
-    api.getPaperTrades().then((r) => setTrades(r.trades));
+    api.getFinancialWatchlist().then((r) => { setWatchlist(r.watchlist); setConnected(r.connected); }).catch((err) => setError(err.data?.error || err.message));
+    api.getPaperTrades().then((r) => setTrades(r.trades)).catch((err) => setError(err.data?.error || err.message));
   }
   useEffect(refresh, []);
 
