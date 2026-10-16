@@ -73,7 +73,7 @@ const project: Project = {
   },
 };
 
-function renderEditor(onRenamed: (p: Project) => void) {
+function renderEditor(onRenamed: (p: Project) => void, labelOccurrences: Map<string, number> = new Map([["Original Field Label", 1]])) {
   render(
     React.createElement(
       ThemeProvider,
@@ -81,7 +81,7 @@ function renderEditor(onRenamed: (p: Project) => void) {
       React.createElement(
         LanguageProvider,
         null,
-        React.createElement(FieldLabelEditor, { entityName: "Customer", field, projectId: "proj1", onRenamed }),
+        React.createElement(FieldLabelEditor, { entityName: "Customer", field, projectId: "proj1", onRenamed, labelOccurrences }),
       ),
     ),
   );
@@ -190,7 +190,13 @@ test("the edit button click does not bubble into the surrounding <label>'s defau
             React.createElement(
               "label",
               { onClick: () => (labelClickBubbled = true) },
-              React.createElement(FieldLabelEditor, { entityName: "Customer", field, projectId: "proj1", onRenamed: () => {} }),
+              React.createElement(FieldLabelEditor, {
+                entityName: "Customer",
+                field,
+                projectId: "proj1",
+                onRenamed: () => {},
+                labelOccurrences: new Map([["Original Field Label", 1]]),
+              }),
             ),
           ),
         ),
@@ -200,6 +206,43 @@ test("the edit button click does not bubble into the surrounding <label>'s defau
       assert.equal(labelClickBubbled, false, "the rename button's click must not bubble up to the wrapping <label>");
     } finally {
       cleanup();
+    }
+  });
+});
+
+/**
+ * Regression test for a real bug found by round 649's Explore survey: the
+ * add/edit form's own field-label editor -- the one UI that renders every
+ * field's label simultaneously, the same situation print sheets and board
+ * cards were already fixed for in round 638 -- never disambiguated two
+ * fields sharing a label either. Confirms the read-only span now shows the
+ * disambiguated form, while the rename input's initial draft (and the
+ * no-op comparison in save()) still uses the field's real, raw label --
+ * saving the disambiguated text verbatim would literally rename the field
+ * to "Amount (subtotal)" instead of leaving its actual label alone.
+ */
+test("the read-only label shows a disambiguated form when another field shares its label, but the rename draft starts from the real, undisambiguated label", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async () => {
+      throw new Error("renameFieldLabel must not be called just from opening the rename input");
+    }) as typeof fetch;
+
+    try {
+      renderEditor(
+        () => {},
+        new Map([["Original Field Label", 2]]),
+      );
+
+      const labelSpan = document.querySelector(".field-label") as HTMLElement;
+      assert.match(labelSpan.textContent ?? "", /Original Field Label \(phone\)/, "expected the read-only label disambiguated with the field's own name");
+
+      fireEvent.click(document.querySelector(".field-label-edit-btn") as HTMLElement);
+      await waitForCondition(() => document.querySelector(".field-label-edit input") !== null);
+      const input = document.querySelector(".field-label-edit input") as HTMLInputElement;
+      assert.equal(input.value, "Original Field Label", "the rename draft must start from the real label, not the disambiguated display text");
+    } finally {
+      globalThis.fetch = originalFetch;
     }
   });
 });

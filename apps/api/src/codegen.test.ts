@@ -2860,9 +2860,12 @@ test("the exported EntityView's bulk-actions bar also supports duplicating and b
 
   // The bulk-actions bar itself must render the field picker, the live
   // FieldInput for the chosen field, and both new action buttons --
-  // filtered through isInlineEditableField so a relation field (whose
-  // "value" is another record's id) can never be picked for a bulk update.
-  assert.match(entityViewJsx, /entity\.fields\.filter\(isInlineEditableField\)\.map\(\(f\) => \(/);
+  // filtered through isInlineEditableField (now precomputed as
+  // bulkEditableFields -- round 649 -- so its label-occurrence count for
+  // disambiguation isn't recomputed on every keystroke) so a relation
+  // field (whose "value" is another record's id) can never be picked for
+  // a bulk update.
+  assert.match(entityViewJsx, /bulkEditableFields\.map\(\(f\) => \(/);
   assert.match(
     entityViewJsx,
     /<FieldInput entity=\{entity\} field=\{entity\.fields\.find\(\(f\) => f\.name === bulkEditField\)\} value=\{bulkEditValue\} onChange=\{setBulkEditValue\} \/>/,
@@ -12092,6 +12095,152 @@ test("the exported EntityView's print-row sheet, print-list sheet, and board car
   } finally {
     globalThis.fetch = originalFetch;
     window.print = originalPrint;
+    cleanup();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
+ * Regression test for a real bug found by round 649's Explore survey: the
+ * same label-collision gap the test above fixed for print sheets/board
+ * cards never reached the exported app's own default table view either --
+ * its main column headers (and their move-earlier/move-later/resize aria
+ * labels), the bulk-edit "set field" picker, the columns show/hide
+ * checklist, the per-field filter dropdowns, the group-by dropdown, or the
+ * add/edit form's field labels (the exported app has no FieldLabelEditor,
+ * just a bare label per field, the same "render every field together"
+ * situation a print sheet is in). Renders the real generated EntityView
+ * via writeGeneratedWebComponent + dynamic import against an entity with
+ * two number fields and two boolean fields each pair sharing a label.
+ */
+test("the exported EntityView's main table header, bulk-edit field picker, columns menu, filter dropdowns, group-by dropdown, and add/edit form all disambiguate fields that share a label", async () => {
+  const orderProject: Project = {
+    ...project,
+    spec: {
+      ...project.spec,
+      entities: [
+        {
+          name: "Order",
+          label: "Order",
+          fields: [
+            { name: "name", label: "Name", type: "text", required: true },
+            { name: "subtotal", label: "Amount", type: "number", required: true },
+            { name: "shipping", label: "Amount", type: "number", required: true },
+            { name: "isPriority", label: "Flag", type: "boolean", required: false },
+            { name: "isFlagged", label: "Flag", type: "boolean", required: false },
+          ],
+        },
+      ],
+    },
+  };
+  const files = generateExportFiles(orderProject);
+  const dir = writeGeneratedWebComponent(files);
+  const originalFetch = globalThis.fetch;
+  const store = [{ id: 1, name: "Acme Corp", subtotal: 800, shipping: 30, isPriority: true, isFlagged: false }];
+  globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
+    const method = init?.method ?? "GET";
+    if (method === "GET" && input === "/api/Order") {
+      return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    throw new Error(`unexpected request ${method} ${input}`);
+  }) as typeof fetch;
+
+  try {
+    await withRealLocalStorage(async () => {
+      const { EntityView } = await import(path.join(dir, "web", "src", "components", "EntityView.jsx"));
+      const orderEntity = orderProject.spec.entities[0];
+      const props = {
+        entity: orderEntity,
+        highlightRecordId: null,
+        onHighlightHandled: () => {},
+        onJumpToRecord: () => {},
+        onRecordCountChange: () => {},
+      };
+
+      const { container } = render(React.createElement(EntityView, props));
+      for (let i = 0; i < 40; i++) {
+        if (container.querySelectorAll("tbody tr").length === 1) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+
+      // Main table column headers and their resize-handle aria-labels.
+      const headerTexts = Array.from(container.querySelectorAll("thead .sort-header")).map((b) => b.textContent);
+      assert.ok(headerTexts.includes("Amount (subtotal)"), `expected a disambiguated subtotal column header, got: ${JSON.stringify(headerTexts)}`);
+      assert.ok(headerTexts.includes("Amount (shipping)"), `expected a disambiguated shipping column header, got: ${JSON.stringify(headerTexts)}`);
+      const resizeLabels = Array.from(container.querySelectorAll(".column-resize-handle")).map((s) => s.getAttribute("aria-label"));
+      assert.ok(
+        resizeLabels.some((l) => l?.includes("Amount (subtotal)")),
+        `expected the subtotal column's resize handle aria-label disambiguated, got: ${JSON.stringify(resizeLabels)}`,
+      );
+      assert.ok(
+        resizeLabels.some((l) => l?.includes("Amount (shipping)")),
+        `expected the shipping column's resize handle aria-label disambiguated, got: ${JSON.stringify(resizeLabels)}`,
+      );
+
+      // Per-field filter dropdowns and the group-by dropdown.
+      const filterLabels = Array.from(container.querySelectorAll(".entity-status-filter")).map((s) => s.getAttribute("aria-label"));
+      assert.ok(
+        filterLabels.some((l) => l?.includes("Flag (isPriority)")),
+        `expected the isPriority filter dropdown disambiguated, got: ${JSON.stringify(filterLabels)}`,
+      );
+      assert.ok(
+        filterLabels.some((l) => l?.includes("Flag (isFlagged)")),
+        `expected the isFlagged filter dropdown disambiguated, got: ${JSON.stringify(filterLabels)}`,
+      );
+      const groupByOptions = Array.from(container.querySelectorAll(".entity-group-by option")).map((o) => o.textContent);
+      assert.ok(groupByOptions.includes("Flag (isPriority)"), `expected the isPriority group-by option disambiguated, got: ${JSON.stringify(groupByOptions)}`);
+      assert.ok(groupByOptions.includes("Flag (isFlagged)"), `expected the isFlagged group-by option disambiguated, got: ${JSON.stringify(groupByOptions)}`);
+
+      // Columns show/hide checklist.
+      await act(async () => {
+        fireEvent.click(container.querySelector(".columns-menu-btn") as HTMLElement);
+      });
+      const columnsMenuLabels = Array.from(container.querySelectorAll(".columns-menu-item")).map((l) => l.textContent);
+      assert.ok(
+        columnsMenuLabels.some((l) => l?.includes("Amount (subtotal)")),
+        `expected the subtotal column entry disambiguated in the columns menu, got: ${JSON.stringify(columnsMenuLabels)}`,
+      );
+      assert.ok(
+        columnsMenuLabels.some((l) => l?.includes("Amount (shipping)")),
+        `expected the shipping column entry disambiguated in the columns menu, got: ${JSON.stringify(columnsMenuLabels)}`,
+      );
+
+      // Bulk-edit "set field" picker, after selecting the one row.
+      const rowCheckbox = container.querySelector('td.select-col input[type="checkbox"]') as HTMLInputElement;
+      await act(async () => {
+        fireEvent.click(rowCheckbox);
+      });
+      for (let i = 0; i < 40; i++) {
+        if (container.querySelector(".bulk-edit-field-label select") !== null) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+      const bulkEditOptions = Array.from(container.querySelectorAll(".bulk-edit-field-label option")).map((o) => o.textContent);
+      assert.ok(
+        bulkEditOptions.includes("Amount (subtotal)"),
+        `expected the subtotal option disambiguated in the bulk-edit field picker, got: ${JSON.stringify(bulkEditOptions)}`,
+      );
+      assert.ok(
+        bulkEditOptions.includes("Amount (shipping)"),
+        `expected the shipping option disambiguated in the bulk-edit field picker, got: ${JSON.stringify(bulkEditOptions)}`,
+      );
+
+      // Add/edit form field labels.
+      const formLabels = Array.from(container.querySelectorAll("label.field > span")).map((s) => s.textContent);
+      assert.ok(
+        formLabels.some((l) => l?.includes("Amount (subtotal)")),
+        `expected the subtotal field disambiguated in the add/edit form, got: ${JSON.stringify(formLabels)}`,
+      );
+      assert.ok(
+        formLabels.some((l) => l?.includes("Amount (shipping)")),
+        `expected the shipping field disambiguated in the add/edit form, got: ${JSON.stringify(formLabels)}`,
+      );
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
     cleanup();
     rmSync(dir, { recursive: true, force: true });
   }

@@ -3374,6 +3374,108 @@ test("EntityPanel's print-row sheet, print-list sheet, and board cards all disam
 });
 
 /**
+ * Regression test for a real bug found by round 649's Explore survey: the
+ * same label-collision gap round 638 fixed for print sheets and board
+ * cards (and rounds 635-637 fixed for Business Twin, calendar export, and
+ * CSV export) never reached the app's own default, every-day table
+ * view -- its main column headers, the bulk-edit "set field" picker, the
+ * columns show/hide checklist, the per-field filter dropdowns, or the
+ * group-by dropdown. Two fields on the same entity can legally share a
+ * label (only field.name is unique), so before this fix, renaming two
+ * number fields to "Amount" made both table columns read "Amount" with no
+ * way to tell them apart, and a person mass-editing 50 selected records
+ * via the bulk-edit field picker had a 50/50 chance of silently writing
+ * to the wrong underlying field.
+ */
+test("EntityPanel's main table header, bulk-edit field picker, columns menu, filter dropdowns, and group-by dropdown all disambiguate fields that share a label", async () => {
+  const orderEntity: Entity = {
+    name: "Order",
+    label: "Order",
+    fields: [
+      { name: "name", label: "Name", type: "text", required: true },
+      { name: "subtotal", label: "Amount", type: "number", required: true },
+      { name: "shipping", label: "Amount", type: "number", required: true },
+      { name: "isPriority", label: "Flag", type: "boolean", required: false },
+      { name: "isFlagged", label: "Flag", type: "boolean", required: false },
+    ],
+  };
+  await withJsdom(async () => {
+    const store: EntityRecord[] = [
+      { id: 1, name: "Acme Corp", subtotal: 800, shipping: 30, isPriority: true, isFlagged: false },
+    ];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string) => {
+      if (input === "/api/projects/proj1/entities/Order") {
+        return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${input}`);
+    }) as typeof fetch;
+    try {
+      renderEntityPanel({ entity: orderEntity, allEntities: [orderEntity] });
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 1);
+
+      // Main table column headers (sort-header button) and their
+      // move-earlier/move-later/resize-handle aria-labels.
+      const headerTexts = Array.from(document.querySelectorAll("thead .sort-header")).map((b) => b.textContent);
+      assert.ok(headerTexts.includes("Amount (subtotal)"), `expected a disambiguated subtotal column header, got: ${JSON.stringify(headerTexts)}`);
+      assert.ok(headerTexts.includes("Amount (shipping)"), `expected a disambiguated shipping column header, got: ${JSON.stringify(headerTexts)}`);
+      const resizeLabels = Array.from(document.querySelectorAll(".column-resize-handle")).map((s) => s.getAttribute("aria-label"));
+      assert.ok(
+        resizeLabels.some((l) => l?.includes("Amount (subtotal)")),
+        `expected the subtotal column's resize handle aria-label disambiguated, got: ${JSON.stringify(resizeLabels)}`,
+      );
+      assert.ok(
+        resizeLabels.some((l) => l?.includes("Amount (shipping)")),
+        `expected the shipping column's resize handle aria-label disambiguated, got: ${JSON.stringify(resizeLabels)}`,
+      );
+
+      // Per-field filter dropdowns and the group-by dropdown (both only
+      // offer enum/boolean fields, hence isPriority/isFlagged here).
+      const filterLabels = Array.from(document.querySelectorAll(".entity-status-filter")).map((s) => s.getAttribute("aria-label"));
+      assert.ok(
+        filterLabels.some((l) => l?.includes("Flag (isPriority)")),
+        `expected the isPriority filter dropdown disambiguated, got: ${JSON.stringify(filterLabels)}`,
+      );
+      assert.ok(
+        filterLabels.some((l) => l?.includes("Flag (isFlagged)")),
+        `expected the isFlagged filter dropdown disambiguated, got: ${JSON.stringify(filterLabels)}`,
+      );
+      const groupByOptions = Array.from(document.querySelectorAll(".entity-group-by option")).map((o) => o.textContent);
+      assert.ok(groupByOptions.includes("Flag (isPriority)"), `expected the isPriority group-by option disambiguated, got: ${JSON.stringify(groupByOptions)}`);
+      assert.ok(groupByOptions.includes("Flag (isFlagged)"), `expected the isFlagged group-by option disambiguated, got: ${JSON.stringify(groupByOptions)}`);
+
+      // Columns show/hide checklist.
+      fireEvent.click(document.querySelector(".columns-menu-btn") as HTMLElement);
+      const columnsMenuLabels = Array.from(document.querySelectorAll(".columns-menu-item")).map((l) => l.textContent);
+      assert.ok(
+        columnsMenuLabels.some((l) => l?.includes("Amount (subtotal)")),
+        `expected the subtotal column entry disambiguated in the columns menu, got: ${JSON.stringify(columnsMenuLabels)}`,
+      );
+      assert.ok(
+        columnsMenuLabels.some((l) => l?.includes("Amount (shipping)")),
+        `expected the shipping column entry disambiguated in the columns menu, got: ${JSON.stringify(columnsMenuLabels)}`,
+      );
+
+      // Bulk-edit "set field" picker, after selecting the one row.
+      const rowCheckbox = document.querySelector('td.select-col input[type="checkbox"]') as HTMLInputElement;
+      fireEvent.click(rowCheckbox);
+      await waitForCondition(() => document.querySelector(".bulk-edit-field-label select") !== null);
+      const bulkEditOptions = Array.from(document.querySelectorAll(".bulk-edit-field-label option")).map((o) => o.textContent);
+      assert.ok(
+        bulkEditOptions.includes("Amount (subtotal)"),
+        `expected the subtotal option disambiguated in the bulk-edit field picker, got: ${JSON.stringify(bulkEditOptions)}`,
+      );
+      assert.ok(
+        bulkEditOptions.includes("Amount (shipping)"),
+        `expected the shipping option disambiguated in the bulk-edit field picker, got: ${JSON.stringify(bulkEditOptions)}`,
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * New in this round: "Print list" and "Export CSV" used to always operate
  * on whatever the table's current search/filter was showing, silently
  * discarding a real bulk-select checkbox selection the user had already

@@ -1,6 +1,7 @@
 import { useRef, useState } from "react";
 import type { Field, Project } from "@forge/shared";
 import { renameFieldLabel } from "./api.js";
+import { fieldDisplayLabel } from "./entityFormatting.js";
 import { useTranslation } from "./i18n/LanguageContext.js";
 
 /**
@@ -27,11 +28,13 @@ export function FieldLabelEditor({
   field,
   projectId,
   onRenamed,
+  labelOccurrences,
 }: {
   entityName: string;
   field: Field;
   projectId: string;
   onRenamed: (project: Project) => void;
+  labelOccurrences: Map<string, number>;
 }) {
   const { t } = useTranslation();
   const [editing, setEditing] = useState(false);
@@ -40,7 +43,12 @@ export function FieldLabelEditor({
   const [error, setError] = useState<string | null>(null);
   const cancelling = useRef(false);
 
+  // The raw stored label -- used for the editing draft's initial value and
+  // the no-op comparison in save(), since saving the disambiguated display
+  // form below (e.g. "Amount (subtotal)") would literally rename the field
+  // to that suffixed text instead of leaving its real label untouched.
   const currentLabel = field.label ?? field.name;
+  const displayLabel = fieldDisplayLabel(field, labelOccurrences);
 
   function startEditing(e: React.MouseEvent) {
     e.preventDefault();
@@ -81,7 +89,7 @@ export function FieldLabelEditor({
   if (!editing) {
     return (
       <span className="field-label">
-        {currentLabel}
+        {displayLabel}
         {field.required ? " *" : ""}
         <button
           type="button"

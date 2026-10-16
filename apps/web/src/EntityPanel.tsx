@@ -949,6 +949,9 @@ export function EntityPanel({
   const tableScrollRef = useRef<HTMLDivElement>(null);
   const boardField = useMemo(() => findBoardField(entity.fields), [entity.fields]);
   const filterableFields = useMemo(() => findFilterableFields(entity.fields), [entity.fields]);
+  const filterableFieldLabelOccurrences = useMemo(() => fieldLabelOccurrences(filterableFields), [filterableFields]);
+  const bulkEditableFields = useMemo(() => entity.fields.filter(isInlineEditableField), [entity.fields]);
+  const bulkEditableFieldLabelOccurrences = useMemo(() => fieldLabelOccurrences(bulkEditableFields), [bulkEditableFields]);
   const dateField = useMemo(() => findDateField(entity.fields), [entity.fields]);
   const endDateField = useMemo(() => (dateField ? findEndDateField(entity.fields, dateField) : null), [entity.fields, dateField]);
   const phoneField = useMemo(() => findPhoneField(entity.fields), [entity.fields]);
@@ -1450,6 +1453,8 @@ export function EntityPanel({
   // user has actually dragged into place (falling back to the entity's
   // natural order for a field the persisted order doesn't mention).
   const orderedFields = useMemo(() => applyColumnOrder(entity.fields, columnOrder), [entity.fields, columnOrder]);
+  const orderedFieldLabelOccurrences = useMemo(() => fieldLabelOccurrences(orderedFields), [orderedFields]);
+  const entityFieldLabelOccurrences = useMemo(() => fieldLabelOccurrences(entity.fields), [entity.fields]);
 
   // Which columns actually render in the table -- CSV export and both print
   // sheets (per-record RecordPrintSheet and the list's RecordListPrintSheet)
@@ -1459,6 +1464,7 @@ export function EntityPanel({
     () => orderedFields.filter((f) => !hiddenFields.has(f.name)),
     [orderedFields, hiddenFields],
   );
+  const visibleFieldLabelOccurrences = useMemo(() => fieldLabelOccurrences(visibleFields), [visibleFields]);
 
   function handleToggleColumn(fieldName: string) {
     // hiddenFields.size alone over-counts once it holds a name from a field
@@ -1546,6 +1552,7 @@ export function EntityPanel({
   // person cluster the ordinary table by ANY such field while staying in
   // table view, with search/sort/columns all still applying underneath.
   const groupableFields = useMemo(() => entity.fields.filter(isGroupableField), [entity.fields]);
+  const groupableFieldLabelOccurrences = useMemo(() => fieldLabelOccurrences(groupableFields), [groupableFields]);
   const groupField = groupableFields.find((f) => f.name === groupFieldName) ?? null;
   const recordGroups = useMemo(
     () => (groupField ? groupRecordsByField(visibleRecords, groupField, t) : null),
@@ -2486,7 +2493,13 @@ export function EntityPanel({
       >
         {entity.fields.map((field) => (
           <label key={field.name} className="field-row">
-            <FieldLabelEditor entityName={entity.name} field={field} projectId={projectId} onRenamed={onEntityRenamed} />
+            <FieldLabelEditor
+              entityName={entity.name}
+              field={field}
+              projectId={projectId}
+              onRenamed={onEntityRenamed}
+              labelOccurrences={entityFieldLabelOccurrences}
+            />
             <FieldInput
               field={field}
               value={form[field.name]}
@@ -2602,7 +2615,7 @@ export function EntityPanel({
               <select
                 key={f.name}
                 className="entity-status-filter"
-                aria-label={t("entity.filter.byField", { field: f.label ?? f.name })}
+                aria-label={t("entity.filter.byField", { field: fieldDisplayLabel(f, filterableFieldLabelOccurrences) })}
                 value={fieldFilters[f.name] ?? ""}
                 onChange={(e) =>
                   setFieldFilters((prev) => {
@@ -2612,7 +2625,7 @@ export function EntityPanel({
                   })
                 }
               >
-                <option value="">{t("entity.filter.allValues", { field: f.label ?? f.name })}</option>
+                <option value="">{t("entity.filter.allValues", { field: fieldDisplayLabel(f, filterableFieldLabelOccurrences) })}</option>
                 {f.type === "boolean" ? (
                   <>
                     <option value="true">{t("entity.groupBy.yes")}</option>
@@ -2651,7 +2664,7 @@ export function EntityPanel({
                 <option value="">{t("entity.groupBy.none")}</option>
                 {groupableFields.map((f) => (
                   <option key={f.name} value={f.name}>
-                    {f.label ?? f.name}
+                    {fieldDisplayLabel(f, groupableFieldLabelOccurrences)}
                   </option>
                 ))}
               </select>
@@ -2745,7 +2758,7 @@ export function EntityPanel({
                         checked={!hiddenFields.has(f.name)}
                         onChange={() => handleToggleColumn(f.name)}
                       />
-                      {f.label ?? f.name}
+                      {fieldDisplayLabel(f, orderedFieldLabelOccurrences)}
                     </label>
                   ))}
                 </div>
@@ -2907,9 +2920,9 @@ export function EntityPanel({
                     {t("entity.bulk.setField")}
                     <select value={bulkEditField} onChange={(e) => handleBulkEditFieldChange(e.target.value)}>
                       <option value="">{t("entity.bulk.chooseField")}</option>
-                      {entity.fields.filter(isInlineEditableField).map((f) => (
+                      {bulkEditableFields.map((f) => (
                         <option key={f.name} value={f.name}>
-                          {f.label ?? f.name}
+                          {fieldDisplayLabel(f, bulkEditableFieldLabelOccurrences)}
                         </option>
                       ))}
                     </select>
@@ -2981,7 +2994,7 @@ export function EntityPanel({
                           }}
                         >
                           <button type="button" className="sort-header" onClick={(e) => toggleSort(f.name, e.shiftKey)}>
-                            {f.label ?? f.name}
+                            {fieldDisplayLabel(f, visibleFieldLabelOccurrences)}
                             {key && (key.direction === "asc" ? " ▲" : " ▼")}
                             {key && sortKeys.length > 1 && <span className="sort-priority">{keyIndex + 1}</span>}
                           </button>
@@ -2991,7 +3004,7 @@ export function EntityPanel({
                               className="column-move-btn"
                               onClick={() => handleMoveColumn(f.name, "earlier")}
                               disabled={visibleIndex === 0}
-                              aria-label={t("entity.columns.moveEarlier", { field: f.label ?? f.name })}
+                              aria-label={t("entity.columns.moveEarlier", { field: fieldDisplayLabel(f, visibleFieldLabelOccurrences) })}
                             >
                               ‹
                             </button>
@@ -3000,7 +3013,7 @@ export function EntityPanel({
                               className="column-move-btn"
                               onClick={() => handleMoveColumn(f.name, "later")}
                               disabled={visibleIndex === visibleFields.length - 1}
-                              aria-label={t("entity.columns.moveLater", { field: f.label ?? f.name })}
+                              aria-label={t("entity.columns.moveLater", { field: fieldDisplayLabel(f, visibleFieldLabelOccurrences) })}
                             >
                               ›
                             </button>
@@ -3013,7 +3026,7 @@ export function EntityPanel({
                             aria-valuemin={MIN_COLUMN_WIDTH}
                             aria-valuemax={MAX_COLUMN_WIDTH}
                             aria-valuenow={Math.round(columnWidths[f.name] ?? 150)}
-                            aria-label={t("entity.columns.resizeHandle", { field: f.label ?? f.name })}
+                            aria-label={t("entity.columns.resizeHandle", { field: fieldDisplayLabel(f, visibleFieldLabelOccurrences) })}
                             onMouseDown={(e) => startResize(e, f.name)}
                             onKeyDown={(e) => handleResizeKeyDown(e, f.name)}
                             draggable

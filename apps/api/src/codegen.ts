@@ -2909,6 +2909,10 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
   const refreshRequestId = useRef(0);
   const boardField = useMemo(() => findBoardField(entity.fields), [entity.fields]);
   const filterableFields = useMemo(() => findFilterableFields(entity.fields), [entity.fields]);
+  const filterableFieldLabelOccurrences = useMemo(() => fieldLabelOccurrences(filterableFields), [filterableFields]);
+  const bulkEditableFields = useMemo(() => entity.fields.filter(isInlineEditableField), [entity.fields]);
+  const bulkEditableFieldLabelOccurrences = useMemo(() => fieldLabelOccurrences(bulkEditableFields), [bulkEditableFields]);
+  const entityFieldLabelOccurrences = useMemo(() => fieldLabelOccurrences(entity.fields), [entity.fields]);
   const dateField = useMemo(() => findDateField(entity.fields), [entity.fields]);
   const endDateField = useMemo(() => (dateField ? findEndDateField(entity.fields, dateField) : null), [entity.fields, dateField]);
   const relationTargets = useMemo(() => {
@@ -3183,6 +3187,7 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
   // natural order for a field the persisted order doesn't mention). Mirrors
   // the live preview's own EntityPanel.tsx (round 203).
   const orderedFields = useMemo(() => applyColumnOrder(entity.fields, columnOrder), [entity.fields, columnOrder]);
+  const orderedFieldLabelOccurrences = useMemo(() => fieldLabelOccurrences(orderedFields), [orderedFields]);
 
   // Which columns actually render in the table -- CSV export and both print
   // sheets (per-record RecordPrintSheet and the list's RecordListPrintSheet)
@@ -3190,6 +3195,7 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
   // "whole-record action" distinction the live-preview app's own EntityPanel
   // makes.
   const visibleFields = useMemo(() => orderedFields.filter((f) => !hiddenFields.has(f.name)), [orderedFields, hiddenFields]);
+  const visibleFieldLabelOccurrences = useMemo(() => fieldLabelOccurrences(visibleFields), [visibleFields]);
 
   function handleToggleColumn(fieldName) {
     // hiddenFields.size alone over-counts once it holds a name from a field
@@ -3304,6 +3310,7 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
   // search/sort/columns all still applying underneath. Mirrors the live
   // preview's own EntityPanel.tsx (round 219).
   const groupableFields = useMemo(() => entity.fields.filter(isGroupableField), [entity.fields]);
+  const groupableFieldLabelOccurrences = useMemo(() => fieldLabelOccurrences(groupableFields), [groupableFields]);
   const groupField = groupableFields.find((f) => f.name === groupFieldName) || null;
   const recordGroups = useMemo(
     () => (groupField ? groupRecordsByField(visibleRecords, groupField) : null),
@@ -4081,7 +4088,7 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
         {entity.fields.map((f) => (
           <label className="field" key={f.name}>
             <span>
-              {f.label}
+              {fieldDisplayLabel(f, entityFieldLabelOccurrences)}
               {f.required ? " *" : ""}
             </span>
             <FieldInput
@@ -4181,7 +4188,7 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
               <select
                 key={f.name}
                 className="entity-status-filter"
-                aria-label={"Filter by " + (f.label || f.name)}
+                aria-label={"Filter by " + fieldDisplayLabel(f, filterableFieldLabelOccurrences)}
                 value={fieldFilters[f.name] || ""}
                 onChange={(e) =>
                   setFieldFilters((prev) => {
@@ -4191,7 +4198,7 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
                   })
                 }
               >
-                <option value="">{"All " + (f.label || f.name)}</option>
+                <option value="">{"All " + fieldDisplayLabel(f, filterableFieldLabelOccurrences)}</option>
                 {f.type === "boolean" ? (
                   <>
                     <option value="true">Yes</option>
@@ -4230,7 +4237,7 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
                 <option value="">No grouping</option>
                 {groupableFields.map((f) => (
                   <option key={f.name} value={f.name}>
-                    {f.label || f.name}
+                    {fieldDisplayLabel(f, groupableFieldLabelOccurrences)}
                   </option>
                 ))}
               </select>
@@ -4310,7 +4317,7 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
                   {orderedFields.map((f) => (
                     <label key={f.name} className="columns-menu-item">
                       <input type="checkbox" checked={!hiddenFields.has(f.name)} onChange={() => handleToggleColumn(f.name)} />
-                      {f.label}
+                      {fieldDisplayLabel(f, orderedFieldLabelOccurrences)}
                     </label>
                   ))}
                 </div>
@@ -4454,9 +4461,9 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
                     Set field:
                     <select value={bulkEditField} onChange={(e) => handleBulkEditFieldChange(e.target.value)}>
                       <option value="">Choose field…</option>
-                      {entity.fields.filter(isInlineEditableField).map((f) => (
+                      {bulkEditableFields.map((f) => (
                         <option key={f.name} value={f.name}>
-                          {f.label ?? f.name}
+                          {fieldDisplayLabel(f, bulkEditableFieldLabelOccurrences)}
                         </option>
                       ))}
                     </select>
@@ -4518,7 +4525,7 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
                           }}
                         >
                           <button type="button" className="sort-header" onClick={(e) => toggleSort(f.name, e.shiftKey)}>
-                            {f.label}
+                            {fieldDisplayLabel(f, visibleFieldLabelOccurrences)}
                             {key ? (key.direction === "asc" ? " ▲" : " ▼") : ""}
                             {key && sortKeys.length > 1 && <span className="sort-priority">{keyIndex + 1}</span>}
                           </button>
@@ -4528,7 +4535,7 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
                               className="column-move-btn"
                               onClick={() => handleMoveColumn(f.name, "earlier")}
                               disabled={visibleIndex === 0}
-                              aria-label={\`Move \${f.label} column earlier\`}
+                              aria-label={\`Move \${fieldDisplayLabel(f, visibleFieldLabelOccurrences)} column earlier\`}
                             >
                               ‹
                             </button>
@@ -4537,7 +4544,7 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
                               className="column-move-btn"
                               onClick={() => handleMoveColumn(f.name, "later")}
                               disabled={visibleIndex === visibleFields.length - 1}
-                              aria-label={\`Move \${f.label} column later\`}
+                              aria-label={\`Move \${fieldDisplayLabel(f, visibleFieldLabelOccurrences)} column later\`}
                             >
                               ›
                             </button>
@@ -4550,7 +4557,7 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
                             aria-valuemin={MIN_COLUMN_WIDTH}
                             aria-valuemax={MAX_COLUMN_WIDTH}
                             aria-valuenow={Math.round(columnWidths[f.name] ?? 150)}
-                            aria-label={\`Resize \${f.label} column (use left/right arrow keys)\`}
+                            aria-label={\`Resize \${fieldDisplayLabel(f, visibleFieldLabelOccurrences)} column (use left/right arrow keys)\`}
                             onMouseDown={(e) => startResize(e, f.name)}
                             onKeyDown={(e) => handleResizeKeyDown(e, f.name)}
                           />
