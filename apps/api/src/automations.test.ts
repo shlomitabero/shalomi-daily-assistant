@@ -10,6 +10,7 @@ import {
   getAutomationRule,
   insertAutomationRule,
   insertProject,
+  insertRecord,
   listWhatsAppMessages,
   markProjectBuilt,
   openDatabase,
@@ -83,7 +84,7 @@ function setupProject() {
 }
 
 test("interpolateTemplate replaces known {{field}} placeholders with the record's own values", () => {
-  const result = interpolateTemplate("Hi {{customerName}}, your order is {{status}}.", {
+  const result = interpolateTemplate("Hi {{customerName}}, your order is {{status}}.", orderEntity, {
     customerName: "Dana",
     status: "Delivered",
   });
@@ -91,13 +92,38 @@ test("interpolateTemplate replaces known {{field}} placeholders with the record'
 });
 
 test("interpolateTemplate leaves an unmatched placeholder verbatim instead of collapsing it to an empty string", () => {
-  const result = interpolateTemplate("Hi {{nonexistentField}}!", { customerName: "Dana" });
+  const result = interpolateTemplate("Hi {{nonexistentField}}!", orderEntity, { customerName: "Dana" });
   assert.equal(result, "Hi {{nonexistentField}}!");
 });
 
 test("interpolateTemplate treats a null field value the same as an unmatched placeholder", () => {
-  const result = interpolateTemplate("Phone: {{customerPhone}}", { customerPhone: null });
+  const result = interpolateTemplate("Phone: {{customerPhone}}", orderEntity, { customerPhone: null });
   assert.equal(result, "Phone: {{customerPhone}}");
+});
+
+/**
+ * Round 647 regression: interpolateTemplate had zero field-type
+ * awareness -- a boolean field's raw JS value stringified to lowercase
+ * "true"/"false", and an enum field's raw stored code (e.g. "P1") showed
+ * verbatim instead of its translated label, both unlike this exact same
+ * field's own on-screen rendering and unlike entityFormatting.ts's/
+ * backup.ts's own fieldDisplayValue, which already special-case both for
+ * CSV export. Confirms interpolateTemplate now matches that convention.
+ */
+test("interpolateTemplate renders a boolean field as TRUE/FALSE and an enum field via its translated label, not the raw stored value", () => {
+  const dealEntity: Entity = {
+    name: "Deal",
+    label: "Deal",
+    fields: [
+      { name: "isUrgent", type: "boolean", required: false },
+      { name: "priority", type: "enum", required: true, enumValues: ["P1", "P2"], enumLabels: { P1: "Urgent", P2: "Normal" } },
+    ],
+  };
+  const result = interpolateTemplate("Urgent: {{isUrgent}}, priority: {{priority}}", dealEntity, {
+    isUrgent: true,
+    priority: "P1",
+  });
+  assert.equal(result, "Urgent: TRUE, priority: Urgent");
 });
 
 test("matchesTrigger: record_created only matches the 'created' event, never 'updated'", () => {
@@ -307,4 +333,70 @@ test("runAutomationsForRecordChange does nothing (no rules match) for a non-matc
   assert.equal(sendCalls.length, 0);
   const after = getAutomationRule(db, project.id, rule.id)!;
   assert.equal(after.lastTriggeredAt, null);
+});
+
+/**
+ * Round 647 regression: a relation field's own stored value is just the
+ * target record's raw numeric id (see repository.ts's rowToRecord) --
+ * nothing in the create-rule UI stops someone from referencing a relation
+ * field by name in {{...}}, since the hint text explicitly invites
+ * referencing any field. Before this round, the real sent message
+ * contained the bare id ("Hi 1, ..."), not anything a real recipient
+ * could read. Confirms the real sent message now carries the related
+ * Customer's own display label instead.
+ */
+test("runAutomationsForRecordChange interpolates a relation field's display label into the sent message, not its raw numeric id", async () => {
+  const customerEntity: Entity = {
+    name: "Customer",
+    label: "Customer",
+    fields: [{ name: "name", type: "text", required: true }],
+  };
+  const dealEntity: Entity = {
+    name: "Deal",
+    label: "Deal",
+    fields: [
+      { name: "customer", type: "relation", relationTo: "Customer", required: true },
+      { name: "status", type: "text", required: true },
+    ],
+  };
+  const db = openDatabase(":memory:");
+  ensureProjectsTable(db);
+  ensureAutomationRulesTable(db);
+  ensureWhatsAppConnectionsTable(db);
+  ensureWhatsAppMessagesTable(db);
+  const spec = {
+    summary: "A deals app",
+    entities: [customerEntity, dealEntity],
+    roles: ["Admin"],
+    screens: [],
+    openQuestions: [],
+  };
+  const inserted = insertProject(db, { id: "proj2", ownerId: "owner1", name: "Deals", description: "A deals app", spec });
+  applyMigrations(db, inserted.id, inserted.spec);
+  markProjectBuilt(db, inserted.id);
+  const project = { ...inserted, status: "built" as const };
+
+  const customer = insertRecord(db, project.id, customerEntity, { name: "Dana Levi" });
+  insertAutomationRule(db, {
+    projectId: project.id,
+    entityName: "Deal",
+    trigger: "field_equals",
+    fieldName: "status",
+    fieldValue: "Won",
+    actionType: "send_whatsapp",
+    toMode: "static",
+    toNumber: "972501234567",
+    messageTemplate: "Congrats {{customer}}, your deal is {{status}}!",
+  });
+  const { manager, sendCalls } = createFakeWhatsApp({ connected: true });
+  const record = { id: 1, customer: customer.id, status: "Won" };
+
+  await runAutomationsForRecordChange(db, manager, project, dealEntity, "updated", record, new Set(["status"]));
+
+  assert.equal(sendCalls.length, 1);
+  assert.equal(
+    sendCalls[0]!.body,
+    "Congrats Dana Levi, your deal is Won!",
+    "the message must carry the related customer's own name, not the bare numeric id it's actually stored as",
+  );
 });

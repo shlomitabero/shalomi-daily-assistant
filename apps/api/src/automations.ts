@@ -1,12 +1,14 @@
 import type { Entity, EntityRecord, Project } from "@forge/shared";
 import {
   getProject,
+  getRecord,
   insertWhatsAppMessage,
   listEnabledAutomationRulesForEntity,
   recordAutomationRun,
   type AutomationRule,
   type ForgeDatabase,
 } from "@forge/db";
+import { recordDisplayLabel } from "./displayField.js";
 import { findMatchingRecord } from "./whatsapp.js";
 import type { WhatsAppWebManager } from "./whatsappWeb.js";
 
@@ -17,12 +19,54 @@ import type { WhatsAppWebManager } from "./whatsappWeb.js";
  * refine) is left untouched verbatim rather than silently collapsing to
  * an empty string, so a broken template is visible in the sent message
  * instead of reading as grammatically fine but wrong.
+ *
+ * `record` must already have every relation field's value resolved to its
+ * display-label string (see resolveRelationFieldsForTemplate below) --
+ * this function itself never touches the database, so it formats enum
+ * (translated label) and boolean (TRUE/FALSE) the same way
+ * entityFormatting.ts's/backup.ts's own fieldDisplayValue does for CSV
+ * export, and otherwise just stringifies the value as-is.
  */
-export function interpolateTemplate(template: string, record: EntityRecord): string {
+export function interpolateTemplate(template: string, entity: Entity, record: EntityRecord): string {
   return template.replace(/\{\{\s*([a-zA-Z0-9_]+)\s*\}\}/g, (match, fieldName: string) => {
     const value = record[fieldName];
-    return value === null || value === undefined ? match : String(value);
+    if (value === null || value === undefined) return match;
+    const field = entity.fields.find((f) => f.name === fieldName);
+    if (field?.type === "boolean") return value ? "TRUE" : "FALSE";
+    if (field?.type === "enum") return field.enumLabels?.[String(value)] ?? String(value);
+    return String(value);
   });
+}
+
+/**
+ * A message template's {{fieldName}} placeholder has no way to tell a
+ * relation field apart from a text field (the create-rule UI's own hint
+ * explicitly invites referencing any field by name) -- but a relation
+ * field's own stored, raw value is just the target record's numeric id
+ * (see repository.ts's rowToRecord/coerceValue), not anything a real
+ * WhatsApp recipient could read. Resolves every relation field on `record`
+ * to the same human display label the UI itself would show (falling back
+ * to "#<id>" exactly like relationDisplayLabel does when the target entity
+ * or record can't be found), so interpolateTemplate above never has to
+ * touch the database and stays trivially unit-testable.
+ */
+function resolveRelationFieldsForTemplate(
+  db: ForgeDatabase,
+  projectId: string,
+  entity: Entity,
+  allEntities: Entity[],
+  record: EntityRecord,
+): EntityRecord {
+  const resolved: EntityRecord = { ...record };
+  for (const field of entity.fields) {
+    if (field.type !== "relation") continue;
+    const value = record[field.name];
+    if (value === null || value === undefined) continue;
+    const targetEntity = field.relationTo ? allEntities.find((e) => e.name === field.relationTo) : undefined;
+    const targetRecord = targetEntity ? getRecord(db, projectId, targetEntity, Number(value)) : undefined;
+    resolved[field.name] = targetRecord ? recordDisplayLabel(targetEntity!, targetRecord) : `#${value}`;
+  }
+  return resolved;
 }
 
 /**
@@ -75,7 +119,7 @@ export async function runAutomationsForRecordChange(
   for (const rule of rules) {
     if (!matchesTrigger(rule, event, record, changedFields)) continue;
     try {
-      await fireRule(db, whatsapp, project, rule, record);
+      await fireRule(db, whatsapp, project, entity, rule, record);
     } catch (err) {
       // Defensive only -- fireRule's own try/catch below already handles
       // every expected failure mode. This exists so a genuinely
@@ -92,6 +136,7 @@ async function fireRule(
   db: ForgeDatabase,
   whatsapp: WhatsAppWebManager,
   project: Project,
+  entity: Entity,
   rule: AutomationRule,
   record: EntityRecord,
 ): Promise<void> {
@@ -108,7 +153,8 @@ async function fireRule(
     recordAutomationRun(db, project.id, rule.id, { status: "failed", error: "WhatsApp is not connected" });
     return;
   }
-  const message = interpolateTemplate(rule.messageTemplate, record);
+  const templateRecord = resolveRelationFieldsForTemplate(db, project.id, entity, project.spec.entities, record);
+  const message = interpolateTemplate(rule.messageTemplate, entity, templateRecord);
   const result = await whatsapp.sendMessage(project.id, to, message);
   // Same re-check-after-await hazard the manual send route already
   // documents (routes/projects.ts's POST .../whatsapp/send) -- sendMessage
