@@ -3329,6 +3329,13 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
   }, [resizingField]);
 
   function startResize(e, fieldName) {
+    // This is the app's only mousedown-based drag (every other drag uses
+    // native HTML5 draggable/onDragStart, which the browser itself already
+    // gates to the left button) -- without this guard, a right-click-drag
+    // or middle-click-drag on the handle resizes the column exactly like a
+    // left-click-drag, since the width math below only reads e.clientX,
+    // never which button is held.
+    if (e.button !== 0) return;
     e.preventDefault();
     const th = e.currentTarget.parentElement;
     const startWidth = columnWidths[fieldName] ?? th?.getBoundingClientRect().width ?? 150;

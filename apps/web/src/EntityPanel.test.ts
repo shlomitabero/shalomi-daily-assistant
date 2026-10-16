@@ -4779,6 +4779,52 @@ test("EntityPanel's column resize handle drags a column to a new width, applies 
 });
 
 /**
+ * Round 658 regression: startResize is the app's only mousedown-based
+ * drag -- every other drag interaction uses native HTML5 draggable/
+ * onDragStart, which the browser itself already gates to the left mouse
+ * button -- but startResize never checked e.button, so a right-click-drag
+ * or middle-click-drag on the handle resized the column exactly like a
+ * left-click-drag, since the width math only reads e.clientX delta, never
+ * which button is held. Confirms a mousedown with a non-left button is a
+ * silent no-op: no resize starts, and a later mousemove (as if the user
+ * then dragged) has no effect either, since resizingField was never set.
+ */
+test("EntityPanel's column resize handle ignores a mousedown from a non-left mouse button, instead of resizing on a right- or middle-click-drag", async () => {
+  await withJsdom(async () => {
+    const store: EntityRecord[] = [{ id: 1, name: "Acme Corp", status: "new" }];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = mockRecordsFetch(store) as typeof fetch;
+    setColumnWidth("proj1", "Deal", "name", 200);
+    try {
+      renderEntityPanel();
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 1);
+
+      const nameHeader = document.querySelectorAll("th.resizable-col")[0] as HTMLTableCellElement;
+      const handle = nameHeader.querySelector(".column-resize-handle") as HTMLSpanElement;
+      assert.ok(handle, "expected a resize handle inside the Name column's header");
+
+      fireEvent.mouseDown(handle, { clientX: 100, button: 2 });
+      fireEvent.mouseMove(window, { clientX: 160 });
+      fireEvent.mouseUp(window, { clientX: 160 });
+      assert.equal(nameHeader.style.width, "200px", "a right-click-drag must leave the column's width completely untouched");
+
+      fireEvent.mouseDown(handle, { clientX: 100, button: 1 });
+      fireEvent.mouseMove(window, { clientX: 160 });
+      fireEvent.mouseUp(window, { clientX: 160 });
+      assert.equal(nameHeader.style.width, "200px", "a middle-click-drag must leave the column's width completely untouched");
+
+      assert.deepEqual(
+        getColumnWidths("proj1", "Deal"),
+        { name: 200 },
+        "neither non-left-click drag must have persisted any width change",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * Round 645 regression: the resize handle was a bare `<span>` with only
  * `onMouseDown` and `aria-hidden="true"` -- a keyboard-only user had no
  * way to resize a column at all (the only other width control, "Reset

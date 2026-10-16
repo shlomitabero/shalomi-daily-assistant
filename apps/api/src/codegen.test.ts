@@ -10712,6 +10712,80 @@ test("the exported EntityView's 'Reset column widths' button only appears once a
 });
 
 /**
+ * Round 658 regression, ported from the live Forge AI preview's own
+ * EntityPanel.tsx fix: startResize is the exported app's only
+ * mousedown-based drag (every other drag uses native HTML5 draggable/
+ * onDragStart, which the browser itself already gates to the left mouse
+ * button) but never checked e.button, so a right-click-drag or
+ * middle-click-drag on the handle resized the column exactly like a
+ * left-click-drag. Drives the real generated startResize/handleMove via a
+ * real mousedown/mousemove/mouseup sequence with a non-left button and
+ * confirms the column's width is completely untouched.
+ */
+test("the exported EntityView's column resize handle ignores a mousedown from a non-left mouse button, instead of resizing on a right- or middle-click-drag", async () => {
+  const files = generateExportFiles(project);
+  const dir = writeGeneratedWebComponent(files);
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async () => ({
+    ok: true,
+    status: 200,
+    json: async () => ({ records: [{ id: 1, name: "Alice", status: "New" }] }),
+  })) as typeof fetch;
+
+  try {
+    await withRealLocalStorage(async () => {
+      const { EntityView } = await import(path.join(dir, "web", "src", "components", "EntityView.jsx"));
+      const customerEntity = project.spec.entities.find((e) => e.name === "Customer")!;
+      const props = {
+        entity: customerEntity,
+        highlightRecordId: null,
+        onHighlightHandled: () => {},
+        onJumpToRecord: () => {},
+        onRecordCountChange: () => {},
+      };
+
+      const { container } = render(React.createElement(EntityView, props));
+      for (let i = 0; i < 40; i++) {
+        if (container.querySelector(".resizable-col")) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+
+      const nameHeader = container.querySelector(".resizable-col") as HTMLTableCellElement;
+      const handle = nameHeader.querySelector(".column-resize-handle") as HTMLSpanElement;
+      assert.ok(handle, "expected a real resize handle inside the Name column's header");
+      const widthBefore = nameHeader.style.width;
+
+      await act(async () => {
+        fireEvent.mouseDown(handle, { clientX: 100, button: 2 });
+      });
+      await act(async () => {
+        fireEvent.mouseMove(window, { clientX: 160 });
+        fireEvent.mouseUp(window, { clientX: 160 });
+      });
+      assert.equal(nameHeader.style.width, widthBefore, "a right-click-drag must leave the column's width completely untouched");
+
+      await act(async () => {
+        fireEvent.mouseDown(handle, { clientX: 100, button: 1 });
+      });
+      await act(async () => {
+        fireEvent.mouseMove(window, { clientX: 160 });
+        fireEvent.mouseUp(window, { clientX: 160 });
+      });
+      assert.equal(nameHeader.style.width, widthBefore, "a middle-click-drag must leave the column's width completely untouched");
+
+      const stored = JSON.parse(localStorage.getItem("forge_column_widths") ?? "{}");
+      assert.deepEqual(stored.Customer ?? {}, {}, "neither non-left-click drag must have persisted any width change");
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    cleanup();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
  * Round 645 regression, ported from the live Forge AI preview's own
  * EntityPanel.tsx fix: the exported app's resize handle was a bare
  * `<span>` with only `onMouseDown` and `aria-hidden="true"` -- mouse-drag
