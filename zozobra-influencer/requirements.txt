@@ -1,6 +1,7 @@
 anthropic>=1.15
 pydantic>=2.7
 requests>=2.32
+pillow>=10.0             # venue crops (9:16), anchor install
 python-dotenv>=1.0
 fastapi>=0.110
 uvicorn>=0.29
