@@ -317,7 +317,7 @@ export function HistoryPanel({
               return (
                 <li key={checkpoint.id}>
                   <div>
-                    <CheckpointLabelEditor checkpoint={checkpoint} projectId={projectId} onRenamed={handleCheckpointRenamed} />
+                    <CheckpointLabelEditor checkpoint={checkpoint} projectId={projectId} onRenamed={handleCheckpointRenamed} readOnly={readOnly} />
                     {isCurrent && <span className="chip checkpoint-current-chip">{t("history.current")}</span>}
                     <div className="muted small">
                       {new Date(checkpoint.createdAt).toLocaleString(LOCALE[lang])}

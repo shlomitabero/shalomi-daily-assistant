@@ -16,10 +16,13 @@ export function CheckpointLabelEditor({
   checkpoint,
   projectId,
   onRenamed,
+  readOnly = false,
 }: {
   checkpoint: Checkpoint;
   projectId: string;
   onRenamed: (checkpoint: Checkpoint) => void;
+  /** True for a "viewer" collaborator -- the server already rejects this rename with 403 VIEWER_READ_ONLY; this just renders the label as plain, non-editable text instead of a click target that can only ever fail. */
+  readOnly?: boolean;
 }) {
   const { t } = useTranslation();
   const [editing, setEditing] = useState(false);
@@ -60,6 +63,10 @@ export function CheckpointLabelEditor({
     } finally {
       setBusy(false);
     }
+  }
+
+  if (readOnly) {
+    return <strong className="checkpoint-label">{checkpoint.label}</strong>;
   }
 
   if (!editing) {

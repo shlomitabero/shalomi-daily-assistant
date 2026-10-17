@@ -62,12 +62,16 @@ const checkpoint: Checkpoint = {
   createdAt: new Date().toISOString(),
 };
 
-function renderEditor(onRenamed: (c: Checkpoint) => void) {
+function renderEditor(onRenamed: (c: Checkpoint) => void, readOnly = false) {
   render(
     React.createElement(
       ThemeProvider,
       null,
-      React.createElement(LanguageProvider, null, React.createElement(CheckpointLabelEditor, { checkpoint, projectId: "proj1", onRenamed })),
+      React.createElement(
+        LanguageProvider,
+        null,
+        React.createElement(CheckpointLabelEditor, { checkpoint, projectId: "proj1", onRenamed, readOnly }),
+      ),
     ),
   );
 }
@@ -195,6 +199,42 @@ test("blurring without changing the checkpoint label is a no-op -- no request se
       assert.equal(renameCalls, 0);
       assert.equal(renamed.length, 0);
       assert.equal(document.querySelector(".checkpoint-label-edit"), null, "should be back to the read-only view");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
+ * Real role enforcement (RBAC) round: a "viewer" collaborator passes
+ * readOnly=true into HistoryPanel, which was threaded into every other
+ * mutating control in that panel (restore/delete), but this editor --
+ * despite its own doc comment claiming to mirror EntityLabelEditor's
+ * click-to-edit pattern exactly -- never got the matching readOnly
+ * treatment, leaving a fully-interactive rename control (with its own
+ * edit-pencil icon) that could only ever fail with a 403 from the
+ * server. Confirms readOnly renders plain, non-interactive text instead.
+ */
+test("readOnly=true renders the checkpoint label as plain text, with no click target, role, or edit icon", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async () => {
+      throw new Error("renameCheckpoint must never be reachable at all when readOnly");
+    }) as typeof fetch;
+
+    try {
+      renderEditor(() => {}, true);
+
+      const label = document.querySelector(".checkpoint-label") as HTMLElement;
+      assert.ok(label, "expected the checkpoint label to still render its text");
+      assert.match(label.textContent ?? "", /Initial build/);
+      assert.equal(label.getAttribute("role"), null, "a read-only label must not look like a clickable control");
+      assert.equal(label.getAttribute("tabIndex"), null);
+      assert.equal(document.querySelector(".checkpoint-label-edit-icon"), null, "no edit-pencil icon for a viewer");
+
+      fireEvent.click(label);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      assert.equal(document.querySelector(".checkpoint-label-edit"), null, "clicking a read-only label must never open the rename input");
     } finally {
       globalThis.fetch = originalFetch;
     }
