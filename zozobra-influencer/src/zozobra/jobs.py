@@ -22,12 +22,15 @@ def submit(title: str, fn: Callable, *args, **kwargs) -> str:
                         "started": datetime.now(TZ).strftime("%d/%m %H:%M")}
 
     def run():
+        print(f"[job] {title}: started", flush=True)
         try:
             result = fn(*args, **kwargs)
             JOBS[job_id].update(status="done", result=str(result)[:2000] if result is not None else "")
+            print(f"[job] {title}: done {str(result)[:300]}", flush=True)
         except Exception as e:
             JOBS[job_id].update(status="failed", error=f"{type(e).__name__}: {e}",
                                 result=traceback.format_exc()[-1500:])
+            print(f"[job] {title}: FAILED\n{traceback.format_exc()}", flush=True)
 
     _pool.submit(run)
     return job_id

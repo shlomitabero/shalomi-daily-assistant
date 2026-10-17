@@ -123,16 +123,27 @@ def build_sheet(seed: int = 7) -> Path:
     out.mkdir(parents=True, exist_ok=True)
     shutil.copy(anchor, out / "R0.png")
     (out / "R0.txt").write_text(f"{persona.TRIGGER} woman, front-facing portrait, neutral expression, black tank top, grey studio background", encoding="utf-8")
+    failed = []
     for ref_id, (prompt, caption) in SHEET.items():
+        if (out / f"{ref_id}.png").exists():          # resume: keep what's already rendered
+            continue
         portrait = any(k in prompt for k in ("Close-up", "Studio portrait", "profile"))
-        res = fal_client.subscribe("fal-ai/flux-pulid", arguments={
-            "prompt": prompt, "reference_image_url": ref_url,
-            "image_size": {"width": 1024, "height": 1024} if portrait else {"width": 832, "height": 1216},
-            "num_inference_steps": 24, "guidance_scale": 4, "seed": seed,
-            "id_weight": 1.0, "start_step": 0, "true_cfg": 1,
-        })
-        _download(res["images"][0]["url"], out / f"{ref_id}.png")
-        (out / f"{ref_id}.txt").write_text(f"{persona.TRIGGER} woman, {caption}", encoding="utf-8")
+        try:
+            res = fal_client.subscribe("fal-ai/flux-pulid", arguments={
+                "prompt": prompt, "reference_image_url": ref_url,
+                "image_size": {"width": 1024, "height": 1024} if portrait else {"width": 832, "height": 1216},
+                "num_inference_steps": 24, "guidance_scale": 4, "seed": seed,
+                "id_weight": 1.0, "start_step": 0, "true_cfg": 1,
+            })
+            _download(res["images"][0]["url"], out / f"{ref_id}.png")
+            (out / f"{ref_id}.txt").write_text(f"{persona.TRIGGER} woman, {caption}", encoding="utf-8")
+            print(f"[sheet] {ref_id} ok", flush=True)
+        except Exception as e:  # one bad render must not stop the sheet
+            failed.append(ref_id)
+            print(f"[sheet] {ref_id} FAILED: {type(e).__name__}: {e}", flush=True)
+    done = len(list(out.glob("*.png")))
+    if failed:
+        print(f"[sheet] finished with {done} images; failed: {failed}", flush=True)
     return out
 
 
