@@ -6,6 +6,6 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 COPY . .
 ENV PYTHONPATH=/app/src DATA_DIR=/data PORT=8000
-VOLUME ["/data"]
+# Mount persistent storage at /data (Railway volume or `docker run -v lilo-data:/data`)
 EXPOSE 8000
 CMD ["python", "-m", "zozobra.web"]
