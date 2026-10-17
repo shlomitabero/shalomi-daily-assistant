@@ -128,9 +128,82 @@ test("AutomationsPanel lists existing rules once loaded, describing the trigger 
       renderPanel();
       await waitForCondition(() => document.querySelectorAll(".automations-rule-row").length === 1);
       const row = document.querySelector(".automations-rule-row")!;
-      assert.match(row.textContent ?? "", /status/);
+      // The fixture entity's fields each have their own label ("Status",
+      // "Customer Phone") distinct from their raw name -- round 667's fix
+      // made describeRule/describeDestination show that label, same as
+      // this panel's own create-form selects already did.
+      assert.match(row.textContent ?? "", /Status/);
       assert.match(row.textContent ?? "", /Delivered/);
-      assert.match(row.textContent ?? "", /customerPhone/);
+      assert.match(row.textContent ?? "", /Customer Phone/);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
+ * Round 667 regression test: describeRule/describeDestination used to
+ * interpolate a rule's raw entityName/fieldName/toField/fieldValue
+ * directly, instead of looking up the same entity.label/field.label/
+ * enumLabels this panel's own create-form selects already show -- a
+ * Hebrew-labeled entity/field came back from the server and rendered
+ * under its raw, English/camelCase internal name.
+ */
+const labeledProject: Project = {
+  id: "proj4",
+  ownerId: "owner1",
+  name: "Orders",
+  description: "An order-tracking app",
+  status: "built",
+  createdAt: new Date().toISOString(),
+  spec: {
+    summary: "An order-tracking app",
+    personas: [],
+    roles: ["Admin"],
+    entities: [
+      {
+        name: "Order",
+        label: "הזמנה",
+        fields: [
+          {
+            name: "status",
+            label: "סטטוס",
+            type: "enum",
+            required: true,
+            enumValues: ["Delivered", "Pending"],
+            enumLabels: { Delivered: "נמסר", Pending: "בהמתנה" },
+          },
+          { name: "customerPhone", label: "טלפון לקוח", type: "text", required: false },
+        ],
+      },
+    ],
+    screens: [],
+    assumptions: [],
+    openQuestions: [],
+  },
+};
+
+test("AutomationsPanel's rule list shows the entity/field/enum display labels, not their raw internal names", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string) => {
+      if (input === "/api/projects/proj4/automations") {
+        return new Response(JSON.stringify({ rules: [makeRule()] }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${input}`);
+    }) as typeof fetch;
+
+    try {
+      renderPanelWith(labeledProject);
+      await waitForCondition(() => document.querySelectorAll(".automations-rule-row").length === 1);
+      const row = document.querySelector(".automations-rule-row")!;
+      assert.match(row.textContent ?? "", /הזמנה/, "the entity's own label must appear");
+      assert.match(row.textContent ?? "", /סטטוס/, "the field's own label must appear");
+      assert.match(row.textContent ?? "", /נמסר/, "the enum value's own label must appear");
+      assert.match(row.textContent ?? "", /טלפון לקוח/, "the toField's own label must appear");
+      assert.doesNotMatch(row.textContent ?? "", /(?<!\p{L})status(?!\p{L})/u, "the raw field name must not appear");
+      assert.doesNotMatch(row.textContent ?? "", /Delivered/, "the raw enum value must not appear");
+      assert.doesNotMatch(row.textContent ?? "", /customerPhone/, "the raw toField name must not appear");
     } finally {
       globalThis.fetch = originalFetch;
     }

@@ -146,16 +146,54 @@ export function AutomationsPanel({
     }
   }
 
+  // Resolves a rule's stored entityName/fieldName/toField/fieldValue (the
+  // raw internal identifiers listRecords etc. also use) to the same
+  // human-facing label this panel's own create-form selects already show
+  // (entities.map's `e.label ?? e.name`, `selectedEntity.fields.map`'s
+  // `f.label ?? f.name`) -- a Hebrew-labeled entity/field must not come
+  // back from the server and then render in the rule list under its raw,
+  // often-English internal name. Falls back to the raw identifier when the
+  // entity/field can no longer be found (it was renamed or deleted after
+  // the rule was created), matching label's own "falls back to name when
+  // absent" convention in packages/shared.
+  function ruleEntity(rule: AutomationRuleView): Entity | undefined {
+    return entities.find((e) => e.name === rule.entityName);
+  }
+
+  function entityLabel(rule: AutomationRuleView): string {
+    return ruleEntity(rule)?.label ?? rule.entityName;
+  }
+
+  function fieldLabel(rule: AutomationRuleView, fieldName: string | null): string {
+    if (!fieldName) return "";
+    const field = ruleEntity(rule)?.fields.find((f) => f.name === fieldName);
+    return field?.label ?? fieldName;
+  }
+
+  // Mirrors apps/api/src/automations.ts's own interpolateTemplate, which
+  // resolves an enum field's raw stored value to its enumLabels display
+  // text the same way before sending the real WhatsApp message.
+  function fieldValueLabel(rule: AutomationRuleView): string {
+    if (!rule.fieldValue) return "";
+    const field = ruleEntity(rule)?.fields.find((f) => f.name === rule.fieldName);
+    if (field?.type === "enum") return field.enumLabels?.[rule.fieldValue] ?? rule.fieldValue;
+    return rule.fieldValue;
+  }
+
   function describeRule(rule: AutomationRuleView): string {
     return rule.trigger === "record_created"
-      ? t("automations.rule.when.created", { entity: rule.entityName })
-      : t("automations.rule.when.fieldEquals", { field: rule.fieldName ?? "", entity: rule.entityName, value: rule.fieldValue ?? "" });
+      ? t("automations.rule.when.created", { entity: entityLabel(rule) })
+      : t("automations.rule.when.fieldEquals", {
+          field: fieldLabel(rule, rule.fieldName),
+          entity: entityLabel(rule),
+          value: fieldValueLabel(rule),
+        });
   }
 
   function describeDestination(rule: AutomationRuleView): string {
     const destination =
       rule.toMode === "field"
-        ? t("automations.rule.sendsField", { field: rule.toField ?? "" })
+        ? t("automations.rule.sendsField", { field: fieldLabel(rule, rule.toField) })
         : t("automations.rule.sendsStatic", { number: rule.toNumber ?? "" });
     return t("automations.rule.sends", { destination });
   }
