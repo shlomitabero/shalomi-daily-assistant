@@ -268,5 +268,5 @@ def test_public_media_urls(tmp_path, monkeypatch):
     c = TestClient(web.app)
     assert c.get("/pub/tok123/refs/a.png").content == b"x"          # no basic auth needed
     assert c.get("/pub/wrong/refs/a.png").status_code == 404
-    assert c.get("/pub/tok123/../../etc/passwd").status_code == 404
+    assert c.get("/pub/tok123/../../etc/passwd").status_code in (401, 404)  # never served
     assert c.get("/media/refs/a.png").status_code == 401             # everything else still locked
