@@ -20,8 +20,15 @@ from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse, Resp
 from . import jobs, persona
 from .config import ROOT, runtime, save_runtime, settings
 
+def _seed_sample_week() -> None:
+    """Fresh install: show the sample week so the panel never opens empty."""
+    if not any(cal_dir().glob("week_*.json")):
+        setup_sample()
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    _seed_sample_week()
     scheduler = jobs.Scheduler(_scheduled_publish, _scheduled_metrics, _scheduled_plan)
     scheduler.start()
     yield

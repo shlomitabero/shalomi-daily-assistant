@@ -242,3 +242,11 @@ def test_shots_with_lilo_are_never_broll():
     assert not is_broll("medium, LILO walks out of frame past the flames")
     assert is_broll("macro flame burst in the wok")
     assert is_broll("venue establishing: slow tilt up to the lantern canopy")
+
+
+def test_fresh_install_seeds_sample_week(tmp_path, monkeypatch):
+    monkeypatch.setenv("DATA_DIR", str(tmp_path))
+    from zozobra import web
+
+    web._seed_sample_week()
+    assert (tmp_path / "calendars" / "week_2026-10-18.json").exists()
