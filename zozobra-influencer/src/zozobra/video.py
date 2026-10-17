@@ -12,6 +12,7 @@ Sync model name against current docs before production.
 """
 from __future__ import annotations
 
+import json
 import subprocess
 import time
 from pathlib import Path
@@ -125,6 +126,44 @@ def compose(a_roll: Path, broll: list[tuple[Path, float, float]], out: Path,
                     "-c:v", "libx264", "-preset", "slow", "-crf", "18", "-c:a", "aac", "-b:a", "192k",
                     "-shortest", "-movflags", "+faststart",
                     # IPTC "trainedAlgorithmicMedia" marker so platforms can read the AI provenance
+                    "-metadata", "comment=AI-generated (trainedAlgorithmicMedia) - LILO virtual creator x ZOZOBRA",
+                    str(out)], check=True, capture_output=True)
+    return out
+
+
+def probe(path: Path) -> tuple[float, bool]:
+    """(duration seconds, has an audio stream)."""
+    out = subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format=duration:stream=codec_type",
+                          "-of", "json", str(path)], check=True, capture_output=True, text=True).stdout
+    info = json.loads(out)
+    return float(info["format"]["duration"]), any(s.get("codec_type") == "audio" for s in info.get("streams", []))
+
+
+def concat(clips: list[Path], out: Path, subtitles: Path | None = None) -> Path:
+    """Talking clips (each carrying its own speech) back to back; silent clips get a silent track."""
+    out.parent.mkdir(parents=True, exist_ok=True)
+    norm = "scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,fps=30,format=yuv420p,setsar=1"
+    args, graph, pairs = ["ffmpeg", "-y"], [], ""
+    for i, clip in enumerate(clips):
+        dur, has_audio = probe(clip)
+        args += ["-i", str(clip)]
+        graph.append(f"[{i}:v]{norm}[v{i}]")
+        if has_audio:
+            graph.append(f"[{i}:a]aresample=48000,aformat=channel_layouts=stereo[a{i}]")
+        else:
+            graph.append(f"anullsrc=r=48000:cl=stereo,atrim=duration={dur:.3f}[a{i}]")
+        pairs += f"[v{i}][a{i}]"
+    graph.append(f"{pairs}concat=n={len(clips)}:v=1:a=1[vc][ac]")
+    if subtitles:
+        from .subtitles import ffmpeg_filter
+
+        graph.append(f"[vc]{ffmpeg_filter(subtitles)}[v]")
+    else:
+        graph.append("[vc]null[v]")
+    graph.append("[ac]loudnorm=I=-14:TP=-1.5:LRA=11[a]")
+    subprocess.run([*args, "-filter_complex", ";".join(graph), "-map", "[v]", "-map", "[a]",
+                    "-c:v", "libx264", "-preset", "slow", "-crf", "18", "-c:a", "aac", "-b:a", "192k",
+                    "-movflags", "+faststart",
                     "-metadata", "comment=AI-generated (trainedAlgorithmicMedia) - LILO virtual creator x ZOZOBRA",
                     str(out)], check=True, capture_output=True)
     return out

@@ -577,6 +577,15 @@ def setup(online: int = 0):
     lilo_sample = s.data_dir / "voice_previews" / "lilo_sample.mp3"
     from .voice import VOICE_PRESETS
 
+    from .fal_provider import TALK_LABELS_HE
+
+    current_engine = runtime().get("video_engine", "")
+    shoot = settings().data_dir / "shootout"
+    engines_html = "".join(
+        f'''<div class="card"><div class="row"><b>{e(label)}</b>{'<span class="pill">✓ נבחר</span>' if k == current_engine else ''}</div>
+<video controls playsinline preload="metadata" src="{media_url(shoot / f'{k}.mp4')}" style="width:100%;max-width:360px"></video>
+<form method="post" action="/setup/engine"><input type="hidden" name="engine" value="{k}"><button class="btn">בחר את המנוע הזה</button></form></div>'''
+        for k, label in TALK_LABELS_HE.items() if (shoot / f"{k}.mp4").exists())
     current_preset = runtime().get("voice_preset", "natural")
     preset_html = "".join(
         f'<form method="post" action="/setup/voice-preset" class="row" style="margin-top:8px">'
@@ -612,6 +621,12 @@ def setup(online: int = 0):
 <form method="post" action="/setup/voice-test"><button class="btn ghost" {'disabled' if not s.elevenlabs_voice_id else ''}>🎧 השמע 3 סגנונות הקראה</button></form>
 {preset_html}
 <p class="mute">{'✓ קול פעיל: ' + e(s.elevenlabs_voice_id) if s.elevenlabs_voice_id else ''}</p></div>
+
+<h2>שלב 5 — מנוע וידאו מדבר (2026)</h2>
+<div class="card"><p>במקום קול סינתטי שמודבק על תמונה מונפשת: מודלי הווידאו של 2026 מייצרים את לילו מדברת עברית בעצמה,
+בתמונה, בקול ובתנועת השפתיים, במכה אחת. לחיצה אחת מייצרת את אותו משפט בשלושת המנועים (כ-5 דקות, כ-10$), ואתה בוחר.</p>
+<form method="post" action="/setup/engines"><button class="btn" {'disabled' if not has_fal else ''}>🎬 השווה 3 מנועים</button></form>
+{engines_html}</div>
 
 <h2>דוגמה מוכנה</h2>
 <div class="card"><p>רוצה לראות איך שבוע נראה לפני שמחברים מפתחות? טען לוח תוכן לדוגמה (בנגקוק היט + וייב ערב).</p>
@@ -688,6 +703,47 @@ def setup_voice_preset(preset: str = Form(...)):
 
     if preset in VOICE_PRESETS:
         save_runtime(voice_preset=preset)
+    return back("/setup")
+
+
+def _engines_job() -> str:
+    from . import fal_provider as F
+    from .video import download
+
+    s = settings()
+    q = queue_dir() / "2026-10-18.json"
+    hero = None
+    if q.exists():
+        paths = json.loads(q.read_text(encoding="utf-8")).get("image_paths") or []
+        hero = Path(paths[0]) if paths and Path(paths[0]).exists() else None
+    hero = hero or (s.data_dir / "refs" / "R0_anchor.png")
+    prompt = F.talk_prompt(
+        "at the stainless-steel pass of ZOZOBRA's open kitchen, cooks and woks on the line behind her",
+        "she turns to camera with a confident half-smile, one hand on the counter",
+        "רגע, רגע. תקשיבו לזה. זה הבנגקוק היט, ישר מהווק. נתראה ליד האש!", no_fire=False)
+    url, done = F.upload(hero), []
+    for k in F.TALK_ENGINES:
+        try:
+            download(F.talk(k, url, prompt), s.data_dir / "shootout" / f"{k}.mp4")
+            done.append(k)
+            print(f"[talk] shootout {k} ready", flush=True)
+        except Exception as ex:
+            print(f"[talk] shootout {k} failed: {ex}", flush=True)
+    return f"מוכנים: {', '.join(done) or 'אף אחד'}"
+
+
+@app.post("/setup/engines")
+def setup_engines():
+    jobs.submit("השוואת מנועי וידאו מדבר", _engines_job)
+    return back("/setup")
+
+
+@app.post("/setup/engine")
+def setup_engine(engine: str = Form(...)):
+    from .fal_provider import TALK_ENGINES
+
+    if engine in TALK_ENGINES or engine == "":
+        save_runtime(video_engine=engine)
     return back("/setup")
 
 

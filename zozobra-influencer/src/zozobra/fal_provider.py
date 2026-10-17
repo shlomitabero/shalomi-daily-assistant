@@ -4,6 +4,8 @@
   training fal-ai/flux-lora-fast-training (train the LoRA from a zip of the curated dataset)
   video    fal-ai/kling-video/.../image-to-video (strong food + hand physics)
   lipsync  fal-ai/sync-lipsync/v2
+  talk     2026 video models that render picture + Hebrew speech + lip-sync in one pass
+           (Veo 3.1 / Sora 2 Pro / Seedance 2.0) - replaces TTS + lipsync when selected
   storage  fal CDN (public HTTPS URLs for intermediate files)
 
 Model ids are constants so they can be bumped when fal publishes newer versions.
@@ -108,6 +110,46 @@ def animate(image_url: str, prompt: str, duration: int = 10, no_fire: bool = Fal
         "negative_prompt": negative,
         "cfg_scale": 0.5,
     })
+    return result["video"]["url"]
+
+
+# engine -> (fal app, max seconds per clip, extra arguments)
+TALK_ENGINES = {
+    "veo": ("fal-ai/veo3.1/image-to-video", 8,
+            {"aspect_ratio": "9:16", "resolution": "1080p", "generate_audio": True, "duration": "8s"}),
+    "sora": ("fal-ai/sora-2/image-to-video/pro", 12, {"aspect_ratio": "9:16", "resolution": "1080p", "duration": 12}),
+    "seedance": ("bytedance/seedance-2.0/image-to-video", 10,
+                 {"aspect_ratio": "9:16", "resolution": "1080p", "generate_audio": True, "duration": "10"}),
+}
+TALK_LABELS_HE = {"veo": "Google Veo 3.1", "sora": "OpenAI Sora 2 Pro", "seedance": "ByteDance Seedance 2.0"}
+
+
+def talk_prompt(scene: str, action: str, spoken_he: str, no_fire: bool = True) -> str:
+    """One prompt that asks the model to act AND speak the Hebrew line itself."""
+    parts = [
+        f"Vertical 9:16 cinematic social video. The woman in the image keeps exactly the same face, hair and outfit. "
+        f"Setting: {scene}. {action}.",
+        f'She speaks directly to camera in natural, fluent native Israeli Hebrew with a casual Tel Aviv accent, '
+        f'warm and playful, conversational pace, perfect lip-sync. She says, in Hebrew: "{spoken_he}"',
+        "Audio: only her voice and soft real restaurant ambience. No music, no narrator, no other voices.",
+        "No subtitles, no captions, no on-screen text, no logos. Keep the room exactly as in the image: "
+        "no new lamps, lanterns or decorations.",
+    ]
+    if no_fire:
+        parts.append("No fire, flames or sparks anywhere.")
+    return " ".join(parts)
+
+
+def talk(engine: str, image_url: str, prompt: str) -> str:
+    """Speaking clip from a still. Falls back to the minimal schema if a model rejects an option."""
+    app, _, extra = TALK_ENGINES[engine]
+    base = {"image_url": image_url, "prompt": prompt[:4800]}
+    try:
+        result = _fal().subscribe(app, arguments={**base, **extra})
+    except Exception as ex:
+        print(f"[talk] {engine} rejected options ({ex}); retrying with defaults", flush=True)
+        keep = {k: v for k, v in extra.items() if k == "generate_audio"}
+        result = _fal().subscribe(app, arguments={**base, **keep})
     return result["video"]["url"]
 
 

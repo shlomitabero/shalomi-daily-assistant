@@ -20,7 +20,8 @@ from . import persona, venue
 from .account_health import TZ, PublishGuard
 from .brain import full_image_prompt, generate_week, load_menu, save, spoken_script
 from .compliance import finalize_caption
-from .config import can_render, settings
+from .config import can_render, runtime, settings
+from .fal_provider import TALK_ENGINES
 from .schemas import DayPlan, Format, WeekPlan
 
 
@@ -87,7 +88,13 @@ def produce_day(day: DayPlan, menu: dict, workdir: Path, dry_run: bool) -> dict:
             stills = [hero] + [p for p in stills if p != hero]
         item["image_paths"] = [str(p) for p in stills]
         still_urls = [P.upload(p, f"lilo/{day.day}/{p.name}") for p in stills]
-        if day.format is Format.reel:
+        engine = runtime().get("video_engine")
+        if day.format is Format.reel and engine in TALK_ENGINES and settings().provider == "fal":
+            final = _produce_talking(day, plate_id, night, still_urls[0], stills[0], engine, workdir, seed)
+            item["media_path"] = str(final)
+            item["media_url"] = P.upload(final, f"lilo/{day.day}/final.mp4")
+            item["engine"] = engine
+        elif day.format is Format.reel:
             no_fire = not venue.fire_allowed(plate_id)
             a_roll_raw = P.animate(still_urls[0], day.visual.motion_prompt, 10, no_fire=no_fire)
             audio = voice.synthesize(spoken_script(day), workdir / "voice.mp3")
@@ -113,6 +120,63 @@ def produce_day(day: DayPlan, menu: dict, workdir: Path, dry_run: bool) -> dict:
     _queue_dir().mkdir(parents=True, exist_ok=True)
     (_queue_dir() / f"{day.day}.json").write_text(json.dumps(item, ensure_ascii=False, indent=2), encoding="utf-8")
     return item
+
+
+def chunk_lines(lines: list, max_s: float) -> list[list]:
+    """Consecutive script lines grouped into clips no longer than the engine's max length.
+    Silent lines (no speech) form their own groups - they become ambient cutaways."""
+    groups: list[list] = []
+    for line in lines:
+        cur = groups[-1] if groups else None
+        same_kind = cur and bool(cur[0].spoken_he.strip()) == bool(line.spoken_he.strip())
+        if cur and same_kind and line.t_end - cur[0].t_start <= max_s:
+            cur.append(line)
+        else:
+            groups.append([line])
+    return groups
+
+
+def retime(groups: list[list], durations: list[float]) -> list:
+    """Subtitle timings from the real clip lengths: each clip's span is shared by text length."""
+    out, t = [], 0.0
+    for group, dur in zip(groups, durations):
+        weights = [max(len(l.spoken_he or l.on_screen_text_he), 1) for l in group]
+        for line, w in zip(group, weights):
+            span = dur * w / sum(weights)
+            out.append(line.model_copy(update={"t_start": round(t, 2), "t_end": round(t + span, 2)}))
+            t += span
+    return out
+
+
+def _produce_talking(day: DayPlan, plate_id, night: bool, hero_url: str, hero: Path, engine: str,
+                     workdir: Path, seed: int) -> Path:
+    """2026 path: the video model speaks the Hebrew itself (picture + voice + lip-sync in one pass)."""
+    from . import providers as P
+    from . import subtitles, video
+    from .fal_provider import talk, talk_prompt
+
+    no_fire = not venue.fire_allowed(plate_id)
+    groups = chunk_lines(day.script, TALK_ENGINES[engine][1])
+    clips = []
+    for i, group in enumerate(groups):
+        spoken = " ".join(l.spoken_he.strip() for l in group if l.spoken_he.strip())
+        if spoken:
+            prompt = talk_prompt(_clean(day.visual.scene), _clean(day.visual.action), spoken, no_fire)
+            url = talk(engine, hero_url, prompt)
+        else:   # silent cutaway: the real room or the dish, animated without speech
+            if plate_id and not venue.is_food_shot(group[0].shot):
+                img = venue.plate_9x16(plate_id, night=night)
+            else:
+                from .brain import load_menu
+                img = P.image(broll_prompt(day, group[0].shot, load_menu()), seed + 100 + i,
+                              workdir / "broll", use_lora=False)[0]
+            url = P.animate(P.upload(img, f"lilo/{day.day}/{img.name}"), " ".join(l.shot for l in group), 5,
+                            no_fire=no_fire and bool(plate_id))
+        clips.append(video.download(url, workdir / f"talk_{i}.mp4"))
+        print(f"[talk] {day.day} clip {i + 1}/{len(groups)} ready", flush=True)
+    lines = retime(groups, [video.probe(c)[0] for c in clips])
+    subs = subtitles.write_ass(lines, workdir / "subs.ass", hook=day.hook_he)
+    return video.concat(clips, workdir / "final.mp4", subtitles=subs)
 
 
 def approve(day: str) -> None:

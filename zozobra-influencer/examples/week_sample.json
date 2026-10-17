@@ -14,7 +14,7 @@
       "pillar": "fire_show",
       "dish_id": "bangkok_heat",
       "concept": "פותחים את השבוע עם להבה של מטר: לילו ליד הווק כשהבנגקוק היט נזרק לאוויר",
-      "hook_he": "שנייה, תשמעו את הווק הזה 🔥",
+      "hook_he": "רגע, רגע. תקשיבו לזה 🔥",
       "hook_alternatives_he": [
         "זה לא פילטר. זו להבה אמיתית.",
         "יש לי שאלה אחת: אתם עומדים בחום?"
@@ -30,7 +30,7 @@
         {
           "t_start": 0.0,
           "t_end": 2.5,
-          "spoken_he": "שנייה, תשמעו את הווק הזה.",
+          "spoken_he": "רגע, רגע. תקשיבו לזה.",
           "voice_direction": "[whispers]",
           "on_screen_text_he": "",
           "shot": "macro flame burst in the wok, sizzling sound"
@@ -38,7 +38,7 @@
         {
           "t_start": 2.5,
           "t_end": 7.0,
-          "spoken_he": "זה בנגקוק היט. גארליק-קרמל, צ'ילי, מנטה.",
+          "spoken_he": "זה הבנגקוק היט. קרמל שום, צ'ילי ונענע. ישר מהווק.",
           "voice_direction": "[excited]",
           "on_screen_text_he": "בנגקוק היט 🔥",
           "shot": "medium, LILO to camera at the kitchen pass"
@@ -46,7 +46,7 @@
         {
           "t_start": 7.0,
           "t_end": 11.0,
-          "spoken_he": "והחלק הכי טוב? הזריקה השנייה.",
+          "spoken_he": "רואים את הזריקה? ככה זה יוצא מעושן.",
           "voice_direction": "[playfully]",
           "on_screen_text_he": "הזריקה השנייה",
           "shot": "macro noodles tossed mid-air, slow motion"
@@ -54,7 +54,7 @@
         {
           "t_start": 11.0,
           "t_end": 15.5,
-          "spoken_he": "רמת חריפות: לילו. מי בא איתי?",
+          "spoken_he": "חריף? כן. שווה? אל תשאלו. תבואו.",
           "voice_direction": "[laughs]",
           "on_screen_text_he": "רמת חריפות: לילו 🌶️🌶️🌶️",
           "shot": "medium close-up, LILO laughing to camera"
@@ -107,7 +107,7 @@
         {
           "t_start": 0.0,
           "t_end": 3.0,
-          "spoken_he": "היה לי יום של שבע ישיבות.",
+          "spoken_he": "שבע ישיבות היום. שבע.",
           "voice_direction": "[sighs]",
           "on_screen_text_he": "POV: יום של 7 ישיבות",
           "shot": "medium, LILO slumps into the booth armchair"
@@ -115,7 +115,7 @@
         {
           "t_start": 3.0,
           "t_end": 7.0,
-          "spoken_he": "אני לא צריכה תרפיסטית. אני צריכה ציר.",
+          "spoken_he": "אני לא צריכה טיפול. אני צריכה מרק.",
           "voice_direction": "[playfully]",
           "on_screen_text_he": "",
           "shot": "medium close-up, LILO to camera"
@@ -123,7 +123,7 @@
         {
           "t_start": 7.0,
           "t_end": 11.0,
-          "spoken_he": "ראמן טריאקי. חם, מתקתק, עוטף.",
+          "spoken_he": "ראמן טריאקי. חם, מתוק, מחבק.",
           "voice_direction": "[softly]",
           "on_screen_text_he": "ראמן טריאקי 🍜",
           "shot": "macro slow noodle pull from steaming broth"
@@ -131,7 +131,7 @@
         {
           "t_start": 11.0,
           "t_end": 15.0,
-          "spoken_he": "שלוש כפות, וכל הישיבות נמחקו.",
+          "spoken_he": "שלוש כפות ושכחתי מה זה זום.",
           "voice_direction": "[laughs]",
           "on_screen_text_he": "",
           "shot": "close-up, LILO eyes closed savoring"
@@ -184,7 +184,7 @@
         {
           "t_start": 0.0,
           "t_end": 2.5,
-          "spoken_he": "עשר שניות בלי מים. מוכנים?",
+          "spoken_he": "עשר שניות בלי מים. סגור?",
           "voice_direction": "[excited]",
           "on_screen_text_he": "10 שניות בלי מים 💧❌",
           "shot": "medium close-up, LILO to camera pushing the water glass away"
@@ -192,7 +192,7 @@
         {
           "t_start": 2.5,
           "t_end": 6.0,
-          "spoken_he": "סופר בי. פילה בקר, גארליק-קרמל, הרבה צ'ילי.",
+          "spoken_he": "סופר בי. פילה בקר, קרמל שום, והרבה צ'ילי.",
           "voice_direction": "[confidently]",
           "on_screen_text_he": "סופר בי 🥩🌶️",
           "shot": "macro chopsticks lifting beef strips and noodles"
@@ -208,7 +208,7 @@
         {
           "t_start": 10.0,
           "t_end": 14.0,
-          "spoken_he": "וואלה הפסדתי. אבל איזה הפסד טעים.",
+          "spoken_he": "טוב, הפסדתי. אבל איזה הפסד.",
           "voice_direction": "[laughs]",
           "on_screen_text_he": "הפסדתי 😂",
           "shot": "medium, LILO grabbing the water glass laughing"
@@ -216,7 +216,7 @@
         {
           "t_start": 14.0,
           "t_end": 17.0,
-          "spoken_he": "תורכם. תייגו מישהו שחושב שהוא חזק.",
+          "spoken_he": "תייגו את החבר שחושב שהוא חזק.",
           "voice_direction": "[mischievously]",
           "on_screen_text_he": "תורכם 👇",
           "shot": "medium close-up, LILO points chopsticks at camera"
@@ -296,7 +296,7 @@
         {
           "t_start": 0.0,
           "t_end": 3.0,
-          "spoken_he": "תביאו את מי שאתם רוצים להרשים.",
+          "spoken_he": "יש לכם דייט בחמישי? אני יודעת לאן.",
           "voice_direction": "[softly]",
           "on_screen_text_he": "דייט נייט? 🖤",
           "shot": "medium, LILO walking between the slatted screens toward the bar"
@@ -304,7 +304,7 @@
         {
           "t_start": 3.0,
           "t_end": 7.0,
-          "spoken_he": "מגדל אור, סרטים אדומים, והאש במרכז.",
+          "spoken_he": "הבר הזה נדלק בערב, והבדים האדומים מעל הראש.",
           "voice_direction": "[warmly]",
           "on_screen_text_he": "",
           "shot": "venue establishing: slow tilt up from the glossy floor to the glowing paper-panel canopy, crimson ribbons drifting"
@@ -312,7 +312,7 @@
         {
           "t_start": 7.0,
           "t_end": 11.0,
-          "spoken_he": "שבו על הבר. תסתכלו על הווק. תודו לי אחר כך.",
+          "spoken_he": "תשבו על הבר, מול המטבח הפתוח. תודו לי אחר כך.",
           "voice_direction": "[playfully]",
           "on_screen_text_he": "שבו על הבר 🔥",
           "shot": "medium close-up, LILO glancing over her shoulder"
@@ -320,7 +320,7 @@
         {
           "t_start": 11.0,
           "t_end": 14.0,
-          "spoken_he": "חמישי. כאן. נתראה ליד האש.",
+          "spoken_he": "חמישי בערב. כאן. נתראה ליד האש.",
           "voice_direction": "[mischievously]",
           "on_screen_text_he": "נתראה ליד האש",
           "shot": "medium, LILO sitting at the bar facing the open kitchen"
@@ -389,7 +389,7 @@
         {
           "t_start": 10.0,
           "t_end": 14.0,
-          "spoken_he": "אוקיי. זה היה שווה את השתיקה.",
+          "spoken_he": "אוקיי. השתיקה הייתה שווה את זה.",
           "voice_direction": "[whispers]",
           "on_screen_text_he": "פאד תאי ✨",
           "shot": "medium close-up, LILO takes a bite and nods"
@@ -426,7 +426,7 @@
       "pillar": "community",
       "dish_id": "spring_rolls",
       "concept": "לילו עונה לתגובות של השבוע תוך כדי ספרינג רולס — ומבקשת מהעוקבים להחליט את המנה של השבוע הבא",
-      "hook_he": "שאלתם. אני עונה. עם הפה מלא.",
+      "hook_he": "שאלתם, אני עונה. עם פה מלא.",
       "hook_alternatives_he": [
         "קראתי את כל התגובות שלכם 👀",
         "אתם בוחרים מה אני אוכלת שבוע הבא"
@@ -442,7 +442,7 @@
         {
           "t_start": 0.0,
           "t_end": 3.0,
-          "spoken_he": "שאלתם. אני עונה. עם הפה מלא.",
+          "spoken_he": "שאלתם, אני עונה. עם פה מלא.",
           "voice_direction": "[laughs]",
           "on_screen_text_he": "עונה לתגובות 💬",
           "shot": "medium, LILO picking up the phone at the bar"
@@ -450,7 +450,7 @@
         {
           "t_start": 3.0,
           "t_end": 7.0,
-          "spoken_he": "\"לילו, את אמיתית?\" אני דמות AI. אבל הקראנץ' פה אמיתי לגמרי.",
+          "spoken_he": "\"לילו, את אמיתית?\" אני AI. הקראנץ' פה? אמיתי לגמרי.",
           "voice_direction": "[playfully]",
           "on_screen_text_he": "כן, אני AI 🤖",
           "shot": "medium close-up, LILO to camera"
@@ -466,7 +466,7 @@
         {
           "t_start": 10.0,
           "t_end": 15.0,
-          "spoken_he": "שבוע הבא אתם בוחרים: סופר בי או קארי מסמן? בתגובות.",
+          "spoken_he": "שבוע הבא אתם בוחרים: סופר בי או קארי מסמן? כתבו בתגובות.",
           "voice_direction": "[excited]",
           "on_screen_text_he": "סופר בי 🥩 או קארי 🍛?",
           "shot": "medium close-up, LILO points at camera"
