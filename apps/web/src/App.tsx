@@ -1812,6 +1812,7 @@ function AppContent() {
               <EntitySummaryItem
                 key={entity.name}
                 entity={entity}
+                allEntities={project.spec.entities}
                 fieldsSummary={formatEntityFieldSummary(entity.fields)}
                 projectId={project.id}
                 canRemove={project.spec.entities.length > 1}

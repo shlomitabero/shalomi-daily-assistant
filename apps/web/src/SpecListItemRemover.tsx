@@ -1,5 +1,6 @@
 import { useRef, useState } from "react";
 import type { Entity, Field, Project } from "@forge/shared";
+import { FIELD_TYPES } from "@forge/shared";
 import {
   addAssumption,
   addEntity,
@@ -13,6 +14,7 @@ import {
   renameEntityLabel,
   renameFieldLabel,
   renameRole,
+  setFieldRequired,
 } from "./api.js";
 import { useTranslation } from "./i18n/LanguageContext.js";
 
@@ -297,6 +299,7 @@ export function AssumptionItem({
  */
 export function EntitySummaryItem({
   entity,
+  allEntities,
   fieldsSummary,
   projectId,
   canRemove,
@@ -304,6 +307,8 @@ export function EntitySummaryItem({
   onRemoved,
 }: {
   entity: Entity;
+  /** The project's full entity list -- threaded through to AddFieldForm below so a newly-added "relation" field can offer a real dropdown of valid targets (including this same entity, for a legitimate self-relation like "reports to"), rather than a free-text name with no way to tell a deliberate reference from a typo. */
+  allEntities: Entity[];
   /** Formatted via App.tsx's own formatEntityFieldSummary, applied as an aria-label on the fields row below so a screen reader gets one flat sentence instead of navigating each chip individually. Computed there rather than here to avoid a circular import between App.tsx and this file (see AddEntityForm's own comment below). */
   fieldsSummary: string;
   projectId: string;
@@ -391,7 +396,7 @@ export function EntitySummaryItem({
           />
         ))}
       </div>
-      <AddFieldForm projectId={projectId} entityName={entity.name} onAdded={onRenamed} />
+      <AddFieldForm projectId={projectId} entityName={entity.name} allEntities={allEntities} onAdded={onRenamed} />
     </div>
   );
 }
@@ -431,6 +436,28 @@ export function FieldChip({
     (value) => renameFieldLabel(projectId, entityName, field.name, value),
     onChanged,
   );
+
+  // A field's `required` flag was otherwise set once at spec generation
+  // and rendered as plain, non-interactive " *" text -- the one property
+  // on this chip removal/rename already fixed with no correction path at
+  // all. A real toggle, the same busy/error shape as handleRemove above,
+  // just flipping a boolean through its own PATCH route instead of
+  // removing the field entirely.
+  const [requiredBusy, setRequiredBusy] = useState(false);
+  const [requiredError, setRequiredError] = useState<string | null>(null);
+
+  async function handleToggleRequired() {
+    setRequiredBusy(true);
+    setRequiredError(null);
+    try {
+      const { project } = await setFieldRequired(projectId, entityName, field.name, !field.required);
+      onChanged(project);
+    } catch (err) {
+      setRequiredError((err as Error).message);
+    } finally {
+      setRequiredBusy(false);
+    }
+  }
 
   if (rename.editing) {
     return (
@@ -476,6 +503,16 @@ export function FieldChip({
         {field.label ?? field.name}
         {field.required ? " *" : ""}
       </span>
+      <label className="chip-field-required" title={t("spec.fields.required")}>
+        <input
+          type="checkbox"
+          checked={field.required}
+          disabled={requiredBusy}
+          onChange={handleToggleRequired}
+          aria-label={t("spec.fields.required")}
+        />
+        {t("spec.fields.requiredShort")}
+      </label>
       <button
         type="button"
         className="chip-remove"
@@ -489,6 +526,11 @@ export function FieldChip({
       {error && (
         <span className="error small" role="alert">
           {error}
+        </span>
+      )}
+      {requiredError && (
+        <span className="error small" role="alert">
+          {requiredError}
         </span>
       )}
     </span>
@@ -587,39 +629,110 @@ export function AddEntityForm({ projectId, onAdded }: { projectId: string; onAdd
 }
 
 /**
- * The other half of FieldChip's own removal/rename correction workflow,
- * matching AddEntityForm's shape exactly (a single free-text label,
- * appended). The typed text becomes the new field's human-facing `label`
- * -- the server derives a valid camelCase ASCII `name` from it (see
- * deriveFieldName in apps/api/src/routes/projects.ts) and the field starts
- * as a plain optional text field, the same starting point a newly-added
- * entity's own first field gets.
+ * The other half of FieldChip's own removal/rename correction workflow.
+ * Originally matched AddEntityForm's shape exactly -- a single free-text
+ * label, always born as a plain optional text field -- which meant the
+ * one thing you could never actually fix here was a wrong field *type*
+ * (an enum the AI only described in prose, a relation it missed, a
+ * number/date/boolean it got wrong): the only path was delete-and-
+ * recreate as the same plain text field, i.e. no real fix at all. Now
+ * offers a real type `<select>` (FIELD_TYPES, the same set every other
+ * field in this app already uses) plus the two type-specific follow-ups
+ * FieldSchema itself already requires -- enum values (one comma-separated
+ * input, split server-side, the natural way to type "New, In Progress,
+ * Done" without needing to know this becomes an array) and a relation
+ * target. The relation target is a `<select>` of this entity's real
+ * sibling names (allEntities, including this entity itself for a
+ * legitimate self-relation), never a free-text field -- there is no
+ * "typo vs. deliberate forward reference" ambiguity to resolve (the
+ * already-rejected round-415 concern) when the only choices offered are
+ * entities that already exist in this exact project.
  */
 export function AddFieldForm({
   projectId,
   entityName,
+  allEntities,
   onAdded,
 }: {
   projectId: string;
   entityName: string;
+  allEntities: Entity[];
   onAdded: (project: Project) => void;
 }) {
   const { t } = useTranslation();
-  const { value, setValue, busy, error, handleSubmit } = useAddableSpecItem(
-    (label) => addField(projectId, entityName, label),
-    onAdded,
-  );
+  const [label, setLabel] = useState("");
+  const [type, setType] = useState<Field["type"]>("text");
+  const [enumValues, setEnumValues] = useState("");
+  const [relationTo, setRelationTo] = useState(allEntities[0]?.name ?? "");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    const trimmedLabel = label.trim();
+    if (!trimmedLabel) return;
+    if (type === "enum" && !enumValues.trim()) return;
+    if (type === "relation" && !relationTo) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const { project } = await addField(projectId, entityName, trimmedLabel, {
+        type,
+        enumValues: type === "enum" ? enumValues : undefined,
+        relationTo: type === "relation" ? relationTo : undefined,
+      });
+      onAdded(project);
+      setLabel("");
+      setType("text");
+      setEnumValues("");
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
   return (
     <form className="spec-add-item-form spec-add-field-form" onSubmit={handleSubmit}>
       <input
         type="text"
-        value={value}
-        onChange={(e) => setValue(e.target.value)}
+        value={label}
+        onChange={(e) => setLabel(e.target.value)}
         placeholder={t("spec.fields.addPlaceholder")}
         aria-label={t("spec.fields.addPlaceholder")}
         disabled={busy}
       />
-      <button type="submit" className="secondary" disabled={busy || !value.trim()}>
+      <select value={type} onChange={(e) => setType(e.target.value as Field["type"])} disabled={busy} aria-label={t("spec.fields.type")}>
+        {FIELD_TYPES.map((ft) => (
+          <option key={ft} value={ft}>
+            {t(`spec.fields.type.${ft}`)}
+          </option>
+        ))}
+      </select>
+      {type === "enum" && (
+        <input
+          type="text"
+          value={enumValues}
+          onChange={(e) => setEnumValues(e.target.value)}
+          placeholder={t("spec.fields.enumValues.placeholder")}
+          aria-label={t("spec.fields.enumValues.placeholder")}
+          disabled={busy}
+        />
+      )}
+      {type === "relation" && (
+        <select value={relationTo} onChange={(e) => setRelationTo(e.target.value)} disabled={busy} aria-label={t("spec.fields.relationTo")}>
+          {allEntities.map((e) => (
+            <option key={e.name} value={e.name}>
+              {e.label ?? e.name}
+            </option>
+          ))}
+        </select>
+      )}
+      <button
+        type="submit"
+        className="secondary"
+        disabled={busy || !label.trim() || (type === "enum" && !enumValues.trim()) || (type === "relation" && !relationTo)}
+      >
         {t("spec.fields.add")}
       </button>
       {error && (

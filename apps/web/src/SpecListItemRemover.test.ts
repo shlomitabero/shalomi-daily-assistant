@@ -4,7 +4,7 @@ import { test } from "node:test";
 import { JSDOM } from "jsdom";
 import React from "react";
 import { cleanup, fireEvent, render } from "@testing-library/react";
-import type { Field, Project } from "@forge/shared";
+import type { Entity, Field, Project } from "@forge/shared";
 import {
   AddAssumptionForm,
   AddEntityForm,
@@ -132,6 +132,7 @@ function renderEntitySummaryItem(
         null,
         React.createElement(EntitySummaryItem, {
           entity: baseProject.spec.entities[0],
+          allEntities: baseProject.spec.entities,
           fieldsSummary: "name *",
           projectId: "proj1",
           canRemove,
@@ -161,7 +162,7 @@ function renderFieldChip(
   );
 }
 
-function renderAddFieldForm(onAdded: (p: Project) => void) {
+function renderAddFieldForm(onAdded: (p: Project) => void, allEntities: Entity[] = baseProject.spec.entities) {
   render(
     React.createElement(
       ThemeProvider,
@@ -169,7 +170,7 @@ function renderAddFieldForm(onAdded: (p: Project) => void) {
       React.createElement(
         LanguageProvider,
         null,
-        React.createElement(AddFieldForm, { projectId: "proj1", entityName: "Customer", onAdded }),
+        React.createElement(AddFieldForm, { projectId: "proj1", entityName: "Customer", allEntities, onAdded }),
       ),
     ),
   );
@@ -973,6 +974,50 @@ test("a field chip surfaces a real removal error (e.g. the last-field guard) ins
   });
 });
 
+/**
+ * Real feature round: a field's `required` flag used to be plain, static
+ * " *" text on the chip -- the one property a field chip could never
+ * actually fix, unlike its label (click-to-rename). Confirms the new
+ * checkbox reflects the field's real current state, and toggling it
+ * calls the new PATCH .../required endpoint with the flipped value.
+ */
+test("a field chip's required checkbox reflects the field's current state, and toggling it calls the real PATCH .../required endpoint", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    let patchBody: { required: boolean } | undefined;
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      if (init?.method === "PATCH" && input === "/api/projects/proj1/entities/Customer/fields/email/required") {
+        patchBody = JSON.parse(init.body as string) as { required: boolean };
+        const updated = {
+          ...baseProject,
+          spec: {
+            ...baseProject.spec,
+            entities: [{ ...baseProject.spec.entities[0], fields: [{ name: "email", type: "text", required: patchBody.required }] }],
+          },
+        };
+        return new Response(JSON.stringify({ project: updated }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${init?.method ?? "GET"} ${input}`);
+    }) as typeof fetch;
+
+    try {
+      const changedProjects: Project[] = [];
+      renderFieldChip((p) => changedProjects.push(p), true, { name: "email", type: "text", required: true });
+
+      const checkbox = document.querySelector(".chip-field-required input") as HTMLInputElement;
+      assert.ok(checkbox, "expected a required checkbox on the field chip");
+      assert.equal(checkbox.checked, true, "the checkbox must reflect the field's real current required state");
+
+      fireEvent.click(checkbox);
+
+      await waitForCondition(() => changedProjects.length === 1);
+      assert.deepEqual(patchBody, { required: false }, "toggling must send the flipped value");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
 test("clicking a field chip's text opens an inline edit, and saving it calls the real PATCH label endpoint by entity+field name", async () => {
   await withJsdom(async () => {
     const originalFetch = globalThis.fetch;
@@ -1125,6 +1170,102 @@ test("the add-field form surfaces a real error instead of silently doing nothing
 
       await waitForCondition(() => document.querySelector(".spec-add-item-form .error") !== null);
       assert.equal(addedProjects.length, 0, "onAdded must not fire when the request failed");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
+ * Real feature round: the add-field form could previously only ever
+ * create a plain optional text field -- no way to ask for an enum, a
+ * relation, a number, etc. directly. Confirms choosing "enum" reveals a
+ * real enum-values input, and submitting sends type+enumValues (split
+ * server-side from the comma-separated text) alongside the label.
+ */
+test("choosing 'enum' as the add-field type reveals an enum-values input, and submitting sends type+enumValues", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    let postedBody: { label: string; type: string; enumValues?: string } | undefined;
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      if (init?.method === "POST" && input === "/api/projects/proj1/entities/Customer/fields") {
+        postedBody = JSON.parse(init.body as string) as typeof postedBody;
+        return new Response(JSON.stringify({ project: baseProject }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${init?.method ?? "GET"} ${input}`);
+    }) as typeof fetch;
+
+    try {
+      const addedProjects: Project[] = [];
+      renderAddFieldForm((p) => addedProjects.push(p));
+
+      assert.equal(
+        document.querySelectorAll(".spec-add-field-form input").length,
+        1,
+        "the enum-values input must not render until 'enum' is actually chosen",
+      );
+
+      fireEvent.change(document.querySelector(".spec-add-item-form input") as HTMLInputElement, { target: { value: "Status" } });
+      fireEvent.change(document.querySelector(".spec-add-field-form select") as HTMLSelectElement, { target: { value: "enum" } });
+
+      const enumValuesInput = document.querySelectorAll(".spec-add-field-form input")[1] as HTMLInputElement;
+      assert.ok(enumValuesInput, "expected a second input for enum values once 'enum' is chosen");
+      fireEvent.change(enumValuesInput, { target: { value: "New, In Progress, Done" } });
+
+      fireEvent.click(document.querySelector(".spec-add-field-form button") as HTMLButtonElement);
+      await waitForCondition(() => addedProjects.length === 1);
+
+      assert.deepEqual(postedBody, { label: "Status", type: "enum", enumValues: "New, In Progress, Done" });
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
+ * The relation half of the same feature: the target is always a
+ * `<select>` of this entity's real sibling names (never free text), so
+ * there's no "typo vs. deliberate placeholder" ambiguity -- confirms the
+ * dropdown is populated from the real entity list passed in, defaults to
+ * the first one, and submitting sends type+relationTo.
+ */
+test("choosing 'relation' as the add-field type reveals a dropdown of this project's real sibling entities, and submitting sends type+relationTo", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    let postedBody: { label: string; type: string; relationTo?: string } | undefined;
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      if (init?.method === "POST" && input === "/api/projects/proj1/entities/Customer/fields") {
+        postedBody = JSON.parse(init.body as string) as typeof postedBody;
+        return new Response(JSON.stringify({ project: baseProject }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${init?.method ?? "GET"} ${input}`);
+    }) as typeof fetch;
+
+    const entities: Entity[] = [
+      { name: "Customer", fields: [{ name: "name", type: "text", required: true }] },
+      { name: "Deal", fields: [{ name: "amount", type: "number", required: false }] },
+    ];
+
+    try {
+      const addedProjects: Project[] = [];
+      renderAddFieldForm((p) => addedProjects.push(p), entities);
+
+      fireEvent.change(document.querySelector(".spec-add-item-form input") as HTMLInputElement, { target: { value: "Account" } });
+      fireEvent.change(document.querySelector(".spec-add-field-form select") as HTMLSelectElement, { target: { value: "relation" } });
+
+      const relationSelect = document.querySelectorAll(".spec-add-field-form select")[1] as HTMLSelectElement;
+      assert.ok(relationSelect, "expected a second select for the relation target once 'relation' is chosen");
+      assert.deepEqual(
+        Array.from(relationSelect.options).map((o) => o.value),
+        ["Customer", "Deal"],
+        "the relation target dropdown must list every real entity in this project, including this entity itself",
+      );
+
+      fireEvent.change(relationSelect, { target: { value: "Deal" } });
+      fireEvent.click(document.querySelector(".spec-add-field-form button") as HTMLButtonElement);
+      await waitForCondition(() => addedProjects.length === 1);
+
+      assert.deepEqual(postedBody, { label: "Account", type: "relation", relationTo: "Deal" });
     } finally {
       globalThis.fetch = originalFetch;
     }

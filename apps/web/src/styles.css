@@ -1028,6 +1028,22 @@ button.danger:hover:not(:disabled) {
 
 .spec-add-field-form {
   margin-top: 0;
+  flex-wrap: wrap;
+}
+
+.spec-add-field-form select {
+  flex: 1;
+  min-width: 100px;
+}
+
+.chip-field-required {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 0.75em;
+  color: var(--muted);
+  cursor: pointer;
+  white-space: nowrap;
 }
 
 .entity-summary-label {

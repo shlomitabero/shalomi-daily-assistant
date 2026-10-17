@@ -4293,6 +4293,148 @@ test("adding a field to an entity appends it with a derived camelCase name, as a
   });
 });
 
+/**
+ * Real feature round: the spec-review screen's add-field form could
+ * previously only ever create a plain optional text field -- the one
+ * thing on that screen you could never actually fix without deleting and
+ * recreating the field, since re-adding it just produced the same plain
+ * text field again. type/required/enumValues now all round-trip exactly
+ * as a direct POST without going through AddFieldSchema.default would.
+ */
+test("adding a field can specify type, required, and (for enum) enumValues directly, instead of always landing as a plain optional text field", async () => {
+  await withServer(async (baseUrl) => {
+    const token = await signup(baseUrl, "field-add-type1@example.com");
+    const createRes = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ description: "A CRM with customers and deals." }),
+    });
+    const { project } = (await createRes.json()) as { project: { id: string; spec: { entities: { name: string }[] } } };
+    const entityName = project.spec.entities[0].name;
+
+    const res = await fetch(`${baseUrl}/api/projects/${project.id}/entities/${entityName}/fields`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ label: "Status", type: "enum", required: true, enumValues: "New, In Progress, Done" }),
+    });
+    assert.equal(res.status, 200);
+    const { project: updated } = (await res.json()) as {
+      project: { spec: { entities: { name: string; fields: { name: string; type: string; required: boolean; enumValues?: string[] }[] }[] } };
+    };
+    const newField = updated.spec.entities.find((e) => e.name === entityName)!.fields.at(-1)!;
+    assert.equal(newField.type, "enum");
+    assert.equal(newField.required, true);
+    assert.deepEqual(newField.enumValues, ["New", "In Progress", "Done"], "the comma-separated input must split into a trimmed array");
+  });
+});
+
+test("adding an enum field with no enumValues (or a relation field with no relationTo) is rejected with 400, not silently defaulted", async () => {
+  await withServer(async (baseUrl) => {
+    const token = await signup(baseUrl, "field-add-type2@example.com");
+    const createRes = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ description: "A CRM with customers and deals." }),
+    });
+    const { project } = (await createRes.json()) as { project: { id: string; spec: { entities: { name: string }[] } } };
+    const entityName = project.spec.entities[0].name;
+
+    const missingEnumValues = await fetch(`${baseUrl}/api/projects/${project.id}/entities/${entityName}/fields`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ label: "Status", type: "enum" }),
+    });
+    assert.equal(missingEnumValues.status, 400);
+    assert.equal(((await missingEnumValues.json()) as { code?: string }).code, "VALIDATION_ERROR");
+
+    const missingRelationTo = await fetch(`${baseUrl}/api/projects/${project.id}/entities/${entityName}/fields`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ label: "Owner", type: "relation" }),
+    });
+    assert.equal(missingRelationTo.status, 400);
+    assert.equal(((await missingRelationTo.json()) as { code?: string }).code, "VALIDATION_ERROR");
+  });
+});
+
+test("adding a relation field whose relationTo names a real sibling entity in this project round-trips correctly, but a relationTo naming a non-existent entity is rejected with 400", async () => {
+  await withServer(async (baseUrl) => {
+    const token = await signup(baseUrl, "field-add-relation1@example.com");
+    const createRes = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ description: "A CRM with customers and deals." }),
+    });
+    const { project } = (await createRes.json()) as { project: { id: string; spec: { entities: { name: string }[] } } };
+    assert.deepEqual(project.spec.entities.map((e) => e.name), ["Customer", "Deal"]);
+
+    const goodRes = await fetch(`${baseUrl}/api/projects/${project.id}/entities/Deal/fields`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ label: "Customer", type: "relation", relationTo: "Customer" }),
+    });
+    assert.equal(goodRes.status, 200);
+    const { project: updated } = (await goodRes.json()) as {
+      project: { spec: { entities: { name: string; fields: { name: string; type: string; relationTo?: string }[] }[] } };
+    };
+    const newField = updated.spec.entities.find((e) => e.name === "Deal")!.fields.at(-1)!;
+    assert.equal(newField.type, "relation");
+    assert.equal(newField.relationTo, "Customer");
+
+    const badRes = await fetch(`${baseUrl}/api/projects/${project.id}/entities/Deal/fields`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ label: "Ghost", type: "relation", relationTo: "NoSuchEntity" }),
+    });
+    assert.equal(badRes.status, 400);
+    assert.equal(((await badRes.json()) as { code?: string }).code, "RELATION_TARGET_NOT_FOUND");
+  });
+});
+
+/**
+ * The other real correction gap this round closes: a field's own
+ * `required` flag was previously static from spec generation onward,
+ * with no way to toggle it on the spec review screen at all (unlike its
+ * label, which could already be renamed).
+ */
+test("PATCH .../fields/:fieldName/required toggles an existing field's required flag, and is rejected once the project is built", async () => {
+  await withServer(async (baseUrl) => {
+    const token = await signup(baseUrl, "field-required1@example.com");
+    const createRes = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ description: "A CRM with customers and deals." }),
+    });
+    const { project } = (await createRes.json()) as {
+      project: { id: string; spec: { entities: { name: string; fields: { name: string; required: boolean }[] }[] } };
+    };
+    const entityName = project.spec.entities[0].name;
+    const fieldName = project.spec.entities[0].fields[0].name;
+    const originalRequired = project.spec.entities[0].fields[0].required;
+
+    const toggleRes = await fetch(
+      `${baseUrl}/api/projects/${project.id}/entities/${entityName}/fields/${fieldName}/required`,
+      { method: "PATCH", headers: authHeaders(token), body: JSON.stringify({ required: !originalRequired }) },
+    );
+    assert.equal(toggleRes.status, 200);
+    const { project: toggled } = (await toggleRes.json()) as {
+      project: { spec: { entities: { name: string; fields: { name: string; required: boolean }[] }[] } };
+    };
+    const toggledField = toggled.spec.entities.find((e) => e.name === entityName)!.fields.find((f) => f.name === fieldName)!;
+    assert.equal(toggledField.required, !originalRequired);
+
+    const buildRes = await fetch(`${baseUrl}/api/projects/${project.id}/build`, { method: "POST", headers: authHeaders(token) });
+    await collectSSE(buildRes);
+
+    const afterBuildRes = await fetch(
+      `${baseUrl}/api/projects/${project.id}/entities/${entityName}/fields/${fieldName}/required`,
+      { method: "PATCH", headers: authHeaders(token), body: JSON.stringify({ required: originalRequired }) },
+    );
+    assert.equal(afterBuildRes.status, 409);
+    assert.equal(((await afterBuildRes.json()) as { code?: string }).code, "FIELD_EDIT_AFTER_BUILD");
+  });
+});
+
 test("adding a blank/whitespace-only field label is rejected with 400 instead of appending an invalid field", async () => {
   await withServer(async (baseUrl) => {
     const token = await signup(baseUrl, "field-add-blank@example.com");

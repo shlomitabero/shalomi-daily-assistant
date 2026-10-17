@@ -1,4 +1,4 @@
-import type { AgentStepEvent, CollaboratorRole, Checkpoint, EntityRecord, Project, ProjectCollaborator, User } from "@forge/shared";
+import type { AgentStepEvent, CollaboratorRole, Checkpoint, EntityRecord, Field, Project, ProjectCollaborator, User } from "@forge/shared";
 
 export type { CollaboratorRole };
 import {
@@ -370,17 +370,44 @@ export function renameFieldLabel(
   });
 }
 
-/** See createProject's own doc comment for why this generates one idempotency key per call, here protecting against a duplicate field from the same click/retry. */
-export function addField(projectId: string, entityName: string, label: string): Promise<{ project: Project }> {
+/**
+ * See createProject's own doc comment for why this generates one
+ * idempotency key per call, here protecting against a duplicate field
+ * from the same click/retry. `opts` is optional and, left unset, sends
+ * exactly today's request shape (a plain, optional text field) -- every
+ * existing call site that only ever passed a label keeps working
+ * unchanged. `enumValues` is sent as the server's own comma-separated
+ * string shape (its own AddFieldSchema splits it), matching the single
+ * free-text input the "enum" type's UI offers rather than making the
+ * caller build an array just to immediately re-join it.
+ */
+export function addField(
+  projectId: string,
+  entityName: string,
+  label: string,
+  opts?: { type?: Field["type"]; required?: boolean; enumValues?: string; relationTo?: string },
+): Promise<{ project: Project }> {
   return request(`/projects/${projectId}/entities/${encodeURIComponent(entityName)}/fields`, {
     method: "POST",
     headers: { "x-idempotency-key": crypto.randomUUID() },
-    body: JSON.stringify({ label }),
+    body: JSON.stringify({ label, ...opts }),
   });
 }
 
 export function removeField(projectId: string, entityName: string, fieldName: string): Promise<{ project: Project }> {
   return request(`/projects/${projectId}/entities/${encodeURIComponent(entityName)}/fields/${encodeURIComponent(fieldName)}`, { method: "DELETE" });
+}
+
+export function setFieldRequired(
+  projectId: string,
+  entityName: string,
+  fieldName: string,
+  required: boolean,
+): Promise<{ project: Project }> {
+  return request(
+    `/projects/${projectId}/entities/${encodeURIComponent(entityName)}/fields/${encodeURIComponent(fieldName)}/required`,
+    { method: "PATCH", body: JSON.stringify({ required }) },
+  );
 }
 
 export function deleteProject(projectId: string): Promise<void> {

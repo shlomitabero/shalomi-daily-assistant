@@ -6,7 +6,7 @@ import { Router, type Request, type Response, type NextFunction } from "express"
 import multer, { MulterError } from "multer";
 import { z } from "zod";
 import type { Entity, EntityRecord, Field, Project, Screen } from "@forge/shared";
-import { CollaboratorRoleSchema } from "@forge/shared";
+import { CollaboratorRoleSchema, FIELD_TYPES } from "@forge/shared";
 import {
   getCheckpoint,
   getProject,
@@ -255,6 +255,10 @@ const RenameFieldLabelSchema = z.object({
   label: z.string().trim().min(1, "label is required"),
 });
 
+const SetFieldRequiredSchema = z.object({
+  required: z.boolean(),
+});
+
 const AddRoleSchema = z.object({
   role: z.string().trim().min(1, "role is required"),
 });
@@ -267,9 +271,45 @@ const AddEntitySchema = z.object({
   label: z.string().trim().min(1, "label is required"),
 });
 
-const AddFieldSchema = z.object({
-  label: z.string().trim().min(1, "label is required"),
-});
+/**
+ * Only `label` was ever accepted here -- every field added from the spec
+ * review screen was born as a plain optional text field, the single
+ * weakest link in an otherwise fully correctable pre-build screen (every
+ * other mistake -- a wrong entity/role/assumption/label -- has a real fix
+ * path; a wrong field *type* or a missing `required` flag didn't, short of
+ * delete-and-recreate-as-the-same-plain-text-field, i.e. no real fix at
+ * all). `type`/`required`/`enumValues` are optional and default to
+ * exactly today's behavior, so every existing caller that only ever sent
+ * `label` keeps working unchanged. `relationTo` is checked against this
+ * project's own real entity names in the route handler below (not here --
+ * this schema alone has no access to the project), never accepted as
+ * arbitrary free text the way the already-rejected ProductSpecSchema-level
+ * relationTo refine (round 415) would have required guessing at: the
+ * client UI only ever offers a dropdown of entities that already exist in
+ * this project, so there's no "deliberate forward-reference placeholder
+ * vs. typo" ambiguity to resolve here at all.
+ */
+const AddFieldSchema = z
+  .object({
+    label: z.string().trim().min(1, "label is required"),
+    type: z.enum(FIELD_TYPES).default("text"),
+    required: z.boolean().default(false),
+    // Comma-separated in the request body (what the UI's own single text
+    // input sends) rather than a JSON array, trimmed and with blanks
+    // dropped -- mirrors how a user would naturally type "New, In
+    // Progress, Done" without needing to know this becomes an array.
+    enumValues: z
+      .string()
+      .optional()
+      .transform((raw) => (raw ? raw.split(",").map((v) => v.trim()).filter((v) => v.length > 0) : undefined)),
+    relationTo: z.string().trim().optional(),
+  })
+  .refine((f) => f.type !== "enum" || (f.enumValues && f.enumValues.length > 0), {
+    message: "an enum field needs at least one value",
+  })
+  .refine((f) => f.type !== "relation" || !!f.relationTo, {
+    message: "a relation field needs a target entity",
+  });
 
 /** Exported for direct unit testing of the word-truncation and empty-input fallback below. */
 export function deriveName(description: string): string {
@@ -1844,6 +1884,46 @@ export function createProjectsRouter(
   );
 
   /**
+   * The other real correction gap this round closes: a field's own
+   * `required` flag -- unlike its label, which FieldChip could already
+   * rename -- was static from spec generation onward, rendered as plain
+   * " *" text with no control to toggle it. A newly-added field via the
+   * POST route above can already set `required` at creation time; this is
+   * the matching fix for every field the AI/heuristic engine already
+   * proposed. Same direct updateProjectSpec write, no migration (this
+   * never touches a real column -- pre-build only, same gate as every
+   * other field-shape route here).
+   */
+  router.patch(
+    "/projects/:id/entities/:entityName/fields/:fieldName/required",
+    asyncRoute(async (req, res) => {
+      const project = requireProjectWriteAccess(db, req.params.id, req.userId!);
+      if (project.status === "built") {
+        throw new HttpError(409, "Cannot change a field's required flag after the project has already been built", "FIELD_EDIT_AFTER_BUILD");
+      }
+      if (activePipelines.has(project.id)) {
+        throw new HttpError(409, "A build or refine is already running for this project", "PIPELINE_IN_PROGRESS");
+      }
+      const entity = findEntity(project, req.params.entityName);
+      const field = findField(entity, req.params.fieldName);
+      const parsed = SetFieldRequiredSchema.safeParse(req.body);
+      if (!parsed.success) {
+        throw new HttpError(400, formatValidationError(parsed.error), "VALIDATION_ERROR");
+      }
+      const nextSpec = {
+        ...project.spec,
+        entities: project.spec.entities.map((e) =>
+          e.name === entity.name
+            ? { ...e, fields: e.fields.map((f) => (f.name === field.name ? { ...f, required: parsed.data.required } : f)) }
+            : e,
+        ),
+      };
+      const updated = updateProjectSpec(db, project.id, nextSpec);
+      res.json({ project: updated });
+    }),
+  );
+
+  /**
    * The spec review screen's "roles" chips and "assumptions" list (both
    * plain string[] on the spec, set once by spec generation) were
    * otherwise entirely static -- no way to correct a role or assumption
@@ -2150,15 +2230,20 @@ export function createProjectsRouter(
    * screen, but a single *field* within an entity had none at all: the
    * only field-level mutation anywhere in the app was renameFieldLabel
    * (cosmetic label-only). An AI/heuristic-mis-scoped entity missing an
-   * obvious field (no "email" on a Customer, say) could only be fixed via
-   * a full natural-language Refine round-trip after committing to a build.
-   * Mirrors AddEntityForm's own shape (a single free-text label, appended)
-   * -- the new field is born as a plain optional text field (type: "text",
-   * required: false), the least assumption-laden starting point, using
-   * deriveFieldName the same way the entity-add route above uses
-   * deriveEntityName. Same pre-build-only gate as entity/field-label
-   * routes: once built, the real database column and generated code
-   * already exist and don't track further spec edits.
+   * obvious field (no "email" on a Customer, say), or one that needed a
+   * real type/required flag the engine didn't propose, could only be
+   * fixed via a full natural-language Refine round-trip after committing
+   * to a build. type/required/enumValues default to the original plain
+   * optional text field when omitted (AddFieldSchema's own comment), so
+   * nothing about an existing caller's behavior changes; a relationTo is
+   * validated against this project's own real entity names right here --
+   * the one place with access to them -- and rejected with a clear 400
+   * (not an uncaught schema throw) if it names an entity that doesn't
+   * exist in this project. Uses deriveFieldName the same way the
+   * entity-add route above uses deriveEntityName. Same pre-build-only
+   * gate as entity/field-label routes: once built, the real database
+   * column and generated code already exist and don't track further
+   * spec edits.
    */
   /** Same withIdempotency() extension as POST /projects/:id/roles above -- see its own doc comment. */
   router.post(
@@ -2178,6 +2263,9 @@ export function createProjectsRouter(
       if (!parsed.success) {
         throw new HttpError(400, formatValidationError(parsed.error), "VALIDATION_ERROR");
       }
+      if (parsed.data.type === "relation" && !project.spec.entities.some((e) => e.name === parsed.data.relationTo)) {
+        throw new HttpError(400, `"${parsed.data.relationTo}" is not an entity in this project`, "RELATION_TARGET_NOT_FOUND");
+      }
       const idempotencyKey = req.header("X-Idempotency-Key") || undefined;
       const { status, body } = await withIdempotency(
         db,
@@ -2186,7 +2274,14 @@ export function createProjectsRouter(
         `POST /projects/${project.id}/entities/${entity.name}/fields`,
         async () => {
           const name = deriveFieldName(parsed.data.label, entity.fields.map((f) => f.name));
-          const newField: Field = { name, label: parsed.data.label, type: "text", required: false };
+          const newField: Field = {
+            name,
+            label: parsed.data.label,
+            type: parsed.data.type,
+            required: parsed.data.required,
+            ...(parsed.data.type === "enum" ? { enumValues: parsed.data.enumValues } : {}),
+            ...(parsed.data.type === "relation" ? { relationTo: parsed.data.relationTo } : {}),
+          };
           const nextSpec = {
             ...project.spec,
             entities: project.spec.entities.map((e) => (e.name === entity.name ? { ...e, fields: [...e.fields, newField] } : e)),
