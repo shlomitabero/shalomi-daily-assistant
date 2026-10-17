@@ -14,7 +14,7 @@ matching exactly this shape:
   "summary": string,
   "personas": string[],
   "roles": string[],
-  "entities": [{ "name": string, "label"?: string, "description"?: string, "fields": [{ "name": string, "label"?: string, "type": "text"|"longtext"|"number"|"boolean"|"date"|"enum"|"relation", "required"?: boolean, "enumValues"?: string[], "relationTo"?: string }] }],
+  "entities": [{ "name": string, "label"?: string, "description"?: string, "fields": [{ "name": string, "label"?: string, "type": "text"|"longtext"|"number"|"boolean"|"date"|"enum"|"relation"|"file", "required"?: boolean, "enumValues"?: string[], "relationTo"?: string }] }],
   "screens": [{ "name": string, "type": "list"|"form"|"dashboard", "entity"?: string }],
   "assumptions": string[],
   "openQuestions": [{ "question": string, "options": string[], "recommendation"?: string }]
@@ -32,6 +32,8 @@ Rules:
   single-user app with no distinct user types, still include one role for that owner (e.g. "Admin" or
   "Owner") rather than returning no roles at all.
 - "enum" fields must include enumValues. "relation" fields must include relationTo naming another entity.
+- Use "file" for a field that is a genuine document/image/attachment (a resume, ID photo, invoice, contract
+  scan) the description implies someone uploads -- not for anything that's really just text (a URL, a name).
 - State genuine assumptions you made instead of asking unnecessary questions.
 - Only ask openQuestions for decisions with no reasonable default (e.g. which payment provider) — and when
   you do supply a "recommendation", default to the option that covers MORE of what the user is likely to

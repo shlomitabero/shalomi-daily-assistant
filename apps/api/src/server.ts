@@ -16,7 +16,8 @@ const db = createStore(dbPath);
 // something this path choice tries to hide.
 const whatsappSessionsDir = path.join(path.dirname(dbPath), "whatsapp-sessions");
 const whatsapp = new WhatsAppWebManager({ db, sessionsRootDir: whatsappSessionsDir });
-const app = createApp(db, undefined, webDistDir, whatsapp);
+const uploadsDir = path.join(path.dirname(dbPath), "uploads");
+const app = createApp(db, undefined, webDistDir, whatsapp, undefined, uploadsDir);
 
 app.listen(port, () => {
   // eslint-disable-next-line no-console

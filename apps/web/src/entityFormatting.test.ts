@@ -1938,7 +1938,7 @@ test("enterTargetsInteractiveElement is false for an ordinary element, no target
   assert.equal(enterTargetsInteractiveElement({} as unknown as EventTarget), false);
 });
 
-test("isInlineEditableField allows every field type except relation", () => {
+test("isInlineEditableField allows every field type except relation and file", () => {
   const types: Field["type"][] = ["text", "longtext", "number", "boolean", "enum", "date"];
   for (const type of types) {
     assert.equal(isInlineEditableField({ name: "f", type } as Field), true, `expected ${type} to be inline-editable`);
@@ -1947,6 +1947,11 @@ test("isInlineEditableField allows every field type except relation", () => {
     isInlineEditableField({ name: "courierId", type: "relation", relationTo: "Courier" } as Field),
     false,
     "a relation field's cell shows a label resolved from a different record, so it must stay excluded from inline editing",
+  );
+  assert.equal(
+    isInlineEditableField({ name: "resume", type: "file" } as Field),
+    false,
+    "a file field's real editing UI (choosing and uploading a file) needs more than a single inline cell, so it must stay excluded too",
   );
 });
 

@@ -145,6 +145,12 @@ function seedValueFor(field: Field, entity: Entity, index: number): unknown {
       return isHebrew
         ? `${fieldLabel} לדוגמה עבור ${entityName} מספר ${index + 1}.`
         : `Sample ${field.name} for ${entityName} #${index + 1}.`;
+    case "file":
+      // There's no real uploaded file to point a seeded record at, unlike
+      // every other type here which can synthesize a plausible-looking
+      // value -- left empty rather than a fake descriptor that would 404
+      // the moment someone clicked it.
+      return null;
     case "text":
     default:
       return textSeedValueFor(field.name, entity.name, isHebrew, index);

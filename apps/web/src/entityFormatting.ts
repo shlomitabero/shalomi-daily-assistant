@@ -13,6 +13,39 @@ const BOOLEAN_DISPLAY: Record<Lang, { true: string; false: string }> = {
   en: { true: "Yes", false: "No" },
 };
 
+export interface FileFieldValue {
+  url: string;
+  name: string;
+  size: number;
+  mimeType: string;
+}
+
+/**
+ * A `file` field's stored value is a JSON-encoded descriptor (set by the
+ * upload endpoint's response, see api.ts's uploadRecordFile) rather than a
+ * plain string like every other field type -- a record freshly created
+ * with no file chosen yet, or one from before this field existed, stores
+ * "" or null instead, so this returns null rather than throwing on
+ * anything that doesn't parse as the expected shape.
+ */
+export function parseFileFieldValue(value: unknown): FileFieldValue | null {
+  if (typeof value !== "string" || value === "") return null;
+  try {
+    const parsed = JSON.parse(value) as Partial<FileFieldValue>;
+    if (typeof parsed.url === "string" && typeof parsed.name === "string") {
+      return { url: parsed.url, name: parsed.name, size: Number(parsed.size) || 0, mimeType: String(parsed.mimeType ?? "") };
+    }
+  } catch {
+    // not a file descriptor -- treated as no file, same as an empty value
+  }
+  return null;
+}
+
+/** Whether a file's MIME type is one a browser can render inline as an <img>. */
+export function isImageMimeType(mimeType: string): boolean {
+  return mimeType.startsWith("image/");
+}
+
 const POSITIVE_WORDS = [
   "won",
   "completed",
@@ -1001,6 +1034,7 @@ function fieldDisplayValue(
   if (field.type === "enum") return field.enumLabels?.[String(value)] ?? String(value);
   if (field.type === "date") return String(value);
   if (field.type === "number") return String(value);
+  if (field.type === "file") return parseFileFieldValue(value)?.name ?? "";
   return String(value);
 }
 
@@ -1233,16 +1267,21 @@ const BOOLEAN_FALSE_VALUES = ["false", "0", "no", "לא"];
  * the whole import with one clear error instead of silently producing
  * records that will fail the server's own required-field check one at a
  * time. An *optional* relation column, if present, is ignored per row.
+ *
+ * File fields have the same "impossible from a CSV cell" problem for the
+ * opposite reason -- there's no uploaded file to attach, not a missing
+ * lookup -- so a required file field gets the same whole-import refusal,
+ * and an optional one is ignored per row exactly like relation.
  */
 export function buildImportRecords(fields: Field[], rows: string[][]): ImportResult {
   if (rows.length === 0) return { records: [], errors: [] };
 
-  const requiredRelation = fields.find((f) => f.type === "relation" && f.required);
-  if (requiredRelation) {
+  const requiredUnsupported = fields.find((f) => (f.type === "relation" || f.type === "file") && f.required);
+  if (requiredUnsupported) {
     return {
       records: [],
       errors: [
-        `CSV import isn't supported yet for entities with a required relation field ("${requiredRelation.label ?? requiredRelation.name}").`,
+        `CSV import isn't supported yet for entities with a required ${requiredUnsupported.type} field ("${requiredUnsupported.label ?? requiredUnsupported.name}").`,
       ],
     };
   }
@@ -1276,7 +1315,7 @@ export function buildImportRecords(fields: Field[], rows: string[][]): ImportRes
       const columnIndex = columnFields.findIndex((f) => f?.name === field.name);
       const raw = columnIndex === -1 ? "" : unescapeCsvGuard((row[columnIndex] ?? "").trim());
 
-      if (field.type === "relation") continue; // see doc comment: not supported per-row yet
+      if (field.type === "relation" || field.type === "file") continue; // see doc comment: not supported per-row yet
 
       if (raw === "") {
         if (field.required) {
@@ -1461,7 +1500,13 @@ export function enterTargetsInteractiveElement(target: EventTarget | null): bool
  * picker the full form already gives, with no real space savings.
  */
 export function isInlineEditableField(field: Field): boolean {
-  return field.type !== "relation";
+  // "file" is excluded for the same reason "relation" already is -- its
+  // real editing UI (choosing and uploading a file) needs more room and
+  // more state than a single inline table cell gives it, so it's only
+  // ever edited through the full add/edit form (see EntityPanel.tsx's
+  // FieldInput "file" branch, the only one that needs projectId/entityName
+  // to reach the upload endpoint at all).
+  return field.type !== "relation" && field.type !== "file";
 }
 
 /**

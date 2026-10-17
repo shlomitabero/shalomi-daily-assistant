@@ -1995,6 +1995,35 @@ button.sort-header:hover:not(:disabled) {
   color: var(--accent);
 }
 
+.file-cell-link {
+  display: inline-flex;
+  align-items: center;
+}
+
+.file-cell-name {
+  color: var(--accent-deep);
+  text-decoration: underline;
+}
+
+.file-cell-thumbnail {
+  max-width: 48px;
+  max-height: 48px;
+  border-radius: 4px;
+  object-fit: cover;
+}
+
+.file-field-input {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.file-field-current {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
 .preview-header {
   display: flex;
   align-items: center;

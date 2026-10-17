@@ -8,6 +8,7 @@ export const FIELD_TYPES = [
   "date",
   "enum",
   "relation",
+  "file",
 ] as const;
 
 /**

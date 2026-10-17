@@ -685,6 +685,42 @@ export function createRecord(
   });
 }
 
+/**
+ * Uploads a chosen file for a single `file`-type field and returns the
+ * descriptor the caller then JSON.stringify()s as that field's own value
+ * (see EntityPanel.tsx's FieldInput "file" branch) -- separate from
+ * `request()` above since a multipart body must never get
+ * `content-type: application/json` or a JSON.stringify()'d body; the
+ * browser sets its own multipart boundary header once given a real
+ * FormData.
+ */
+export async function uploadRecordFile(
+  projectId: string,
+  entityName: string,
+  fieldName: string,
+  file: File,
+): Promise<{ url: string; name: string; size: number; mimeType: string }> {
+  const token = getToken();
+  const formData = new FormData();
+  formData.append("file", file);
+  const res = await fetchApi(
+    `/api/projects/${projectId}/entities/${encodeURIComponent(entityName)}/fields/${encodeURIComponent(fieldName)}/upload`,
+    {
+      method: "POST",
+      headers: token ? { authorization: `Bearer ${token}` } : {},
+      body: formData,
+    },
+  );
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ error: `Request failed (${res.status})`, code: "REQUEST_FAILED" }));
+    const code = (body as { code?: string }).code;
+    if (code === "SESSION_EXPIRED" || code === "AUTH_REQUIRED") notifyAuthExpired();
+    throw new Error(resolveErrorMessage(body as { error?: string; code?: string }));
+  }
+  const body = (await res.json()) as { file: { url: string; name: string; size: number; mimeType: string } };
+  return body.file;
+}
+
 export function updateRecord(
   projectId: string,
   entityName: string,

@@ -38,6 +38,11 @@ export function createApp(
   staticDir?: string,
   whatsapp?: WhatsAppWebManager,
   emailSender?: EmailSender,
+  // Defaults to a per-process temp dir, same convention as whatsappManager's
+  // own default a few lines down -- tests that don't care about uploaded
+  // files at all (the overwhelming majority) never need to pass this or
+  // clean anything up themselves.
+  uploadsDir: string = path.join(os.tmpdir(), "forge-uploads"),
 ): Express {
   const app = express();
   // Render (and most single-service PaaS hosts) terminates TLS at a proxy
@@ -60,8 +65,24 @@ export function createApp(
   const activePipelines = new Set<string>();
 
   app.get("/api/health", (_req, res) => res.json({ status: "ok" }));
+  /**
+   * Registered BEFORE createAuthRouter/createProjectsRouter below, and
+   * deliberately with no auth check of its own -- a plain <img src> or
+   * download <a href> in the real UI can't attach an Authorization
+   * header, so if this ran through requireAuth (as it would if mounted
+   * after createProjectsRouter, whose own router.use(requireAuth(db))
+   * applies to every path under the shared /api prefix it's mounted at,
+   * matched or not) every uploaded file would be unreachable from the
+   * actual rendered page the moment it tried to show one. Access control
+   * here is the same "unguessable URL" model most simple file-hosting
+   * setups use instead: each stored filename is a fresh randomUUID() (see
+   * routes/projects.ts's upload route), never the original filename, so
+   * reaching a specific file means already holding the exact URL a
+   * legitimate upload or record read handed out.
+   */
+  app.use("/api/uploads", express.static(uploadsDir));
   app.use("/api", createAuthRouter(db, whatsappManager, resolvedEmailSender, activePipelines));
-  app.use("/api", createProjectsRouter(db, provider, whatsappManager, activePipelines));
+  app.use("/api", createProjectsRouter(db, provider, whatsappManager, activePipelines, uploadsDir));
 
   if (staticDir && existsSync(staticDir)) {
     app.use(express.static(staticDir));

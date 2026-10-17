@@ -1,5 +1,8 @@
 import { randomUUID } from "node:crypto";
+import { mkdirSync } from "node:fs";
+import path from "node:path";
 import { Router, type Request, type Response, type NextFunction } from "express";
+import multer, { MulterError } from "multer";
 import { z } from "zod";
 import type { Entity, EntityRecord, Field, Project, Screen } from "@forge/shared";
 import {
@@ -569,14 +572,49 @@ async function streamPipeline(
   res.end();
 }
 
+/** Keeps every uploaded file's extension bounded and free of path-traversal
+ * characters a crafted original filename could otherwise smuggle through
+ * (multer's own filename callback receives it completely unsanitized) --
+ * the stored name is always `${randomUUID()}${this}`, never the original
+ * filename itself, so this only has to be a safe suffix, not a safe name. */
+function safeFileExtension(originalName: string): string {
+  const ext = path.extname(originalName).toLowerCase();
+  return /^\.[a-z0-9]{1,10}$/.test(ext) ? ext : "";
+}
+
+function createUploadMiddleware(uploadsDir: string) {
+  const storage = multer.diskStorage({
+    destination: (req, _file, cb) => {
+      const dir = path.join(uploadsDir, req.params.id, req.params.entityName);
+      try {
+        mkdirSync(dir, { recursive: true });
+      } catch (err) {
+        cb(err as Error, dir);
+        return;
+      }
+      cb(null, dir);
+    },
+    filename: (_req, file, cb) => {
+      cb(null, `${randomUUID()}${safeFileExtension(file.originalname)}`);
+    },
+  });
+  // 10 MB covers the real-world cases this is for (a resume, an ID photo, an
+  // invoice scan) without letting one upload exhaust the ephemeral disk a
+  // free-tier host like the current Render deployment gives this process
+  // (see server.ts's own comment on dbPath/whatsappSessionsDir).
+  return multer({ storage, limits: { fileSize: 10 * 1024 * 1024, files: 1 } });
+}
+
 export function createProjectsRouter(
   db: ForgeDatabase,
   provider: SpecProvider | undefined,
   whatsapp: WhatsAppWebManager,
   activePipelines: Set<string>,
+  uploadsDir: string,
 ): Router {
   const router = Router();
   router.use(requireAuth(db));
+  const upload = createUploadMiddleware(uploadsDir);
 
   /**
    * /build, /refine, and /answers each read `project.spec` once at the
@@ -1536,6 +1574,69 @@ export function createProjectsRouter(
         },
       );
       res.status(status).json(body);
+    }),
+  );
+
+  /**
+   * Stores a single uploaded file on disk and hands back a small JSON
+   * descriptor ({ url, name, size, mimeType }) -- the caller then PATCHes
+   * (or includes in the POST create) that descriptor, JSON-stringified,
+   * as the field's own value, exactly like every other record write. This
+   * route itself never touches the record/database at all; it only turns
+   * a multipart upload into a value the normal record-write path already
+   * knows how to store (coerceValue's default string branch).
+   *
+   * Access/field-type validation runs in its own middleware, BEFORE
+   * multer's disk-storage middleware -- otherwise an authenticated user
+   * with no access to this specific project (or a project/field that
+   * doesn't exist, or a field that isn't type "file") would still have
+   * their file written to disk before the handler ever got a chance to
+   * reject the request.
+   */
+  router.post(
+    "/projects/:id/entities/:entityName/fields/:fieldName/upload",
+    (req, res, next) => {
+      try {
+        const project = requireProjectAccess(db, req.params.id, req.userId!);
+        if (project.status !== "built") {
+          throw new HttpError(409, "Project has not been built yet — call POST /build first", "BUILD_REQUIRED");
+        }
+        const entity = findEntity(project, req.params.entityName);
+        const field = findField(entity, req.params.fieldName);
+        if (field.type !== "file") {
+          throw new HttpError(400, `Field "${field.name}" is not a file field`, "NOT_A_FILE_FIELD");
+        }
+        next();
+      } catch (err) {
+        next(err);
+      }
+    },
+    (req, res, next) => {
+      upload.single("file")(req, res, (err: unknown) => {
+        if (err instanceof MulterError) {
+          if (err.code === "LIMIT_FILE_SIZE") {
+            next(new HttpError(400, "File is too large (max 10 MB)", "FILE_TOO_LARGE"));
+            return;
+          }
+          next(new HttpError(400, "File upload failed", "UPLOAD_ERROR"));
+          return;
+        }
+        next(err);
+      });
+    },
+    asyncRoute(async (req, res) => {
+      const file = req.file;
+      if (!file) {
+        throw new HttpError(400, "No file was uploaded", "NO_FILE_UPLOADED");
+      }
+      res.json({
+        file: {
+          url: `/api/uploads/${req.params.id}/${req.params.entityName}/${file.filename}`,
+          name: file.originalname,
+          size: file.size,
+          mimeType: file.mimetype,
+        },
+      });
     }),
   );
 

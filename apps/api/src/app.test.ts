@@ -1,5 +1,8 @@
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import { test } from "node:test";
 import type { AgentStepEvent, ProductSpec } from "@forge/shared";
 import {
@@ -8,6 +11,7 @@ import {
   insertCheckpoint,
   insertProject,
   insertWhatsAppMessage,
+  markProjectBuilt,
   updateProjectSpec,
   type ForgeDatabase,
 } from "@forge/db";
@@ -65,7 +69,12 @@ async function withServer(
   opts?: { whatsapp?: (db: ForgeDatabase) => WhatsAppWebManager; provider?: SpecProvider; emailSender?: EmailSender },
 ) {
   const db = createStore(":memory:");
-  const app = createApp(db, opts?.provider, undefined, opts?.whatsapp?.(db), opts?.emailSender);
+  // A real, isolated temp directory per test rather than createApp's own
+  // shared os.tmpdir()-based default -- lets the upload-route tests below
+  // assert against real files on disk without ever touching a directory
+  // another concurrently-running test might also be writing into.
+  const uploadsDir = mkdtempSync(path.join(tmpdir(), "forge-uploads-test-"));
+  const app = createApp(db, opts?.provider, undefined, opts?.whatsapp?.(db), opts?.emailSender, uploadsDir);
   const server = app.listen(0);
   await new Promise<void>((resolve) => server.once("listening", resolve));
   const address = server.address();
@@ -82,6 +91,7 @@ async function withServer(
     // keep-alive behavior.
     server.closeAllConnections();
     await new Promise<void>((resolve) => server.close(() => resolve()));
+    rmSync(uploadsDir, { recursive: true, force: true });
   }
 }
 
@@ -7439,5 +7449,160 @@ test("restoring a checkpoint surfaces a migrationWarning when a reused column's 
     assert.equal(cleanRestoreRes.status, 200);
     const cleanRestoreBody = (await cleanRestoreRes.json()) as { migrationWarning: string | null };
     assert.equal(cleanRestoreBody.migrationWarning, null);
+  });
+});
+
+/**
+ * The upload route is a new field type's whole reason to exist: a file
+ * field's stored value is a JSON descriptor the client gets back from
+ * this route, not something a client could ever construct on its own
+ * (there's no real file sitting behind an arbitrary URL it could invent).
+ * Exercises the full round trip -- upload, then write that descriptor as
+ * a record's field value via the ordinary record-create route, then read
+ * the record back -- plus confirms the file this route wrote to disk is
+ * actually reachable at the URL it returned, through the real static
+ * route mounted in app.ts, not just present on disk.
+ */
+test("uploading a file for a 'file' field stores it on disk, serves it back at the returned URL, and its descriptor round-trips through a record write", async () => {
+  await withServer(async (baseUrl, db) => {
+    const email = `upload-${randomUUID()}@example.com`;
+    const token = await signup(baseUrl, email);
+    const user = findUserByEmail(db, email)!;
+
+    const spec: ProductSpec = {
+      summary: "test",
+      personas: [],
+      roles: ["Admin"],
+      entities: [
+        {
+          name: "Applicant",
+          fields: [
+            { name: "name", type: "text", required: true },
+            { name: "resume", type: "file", required: false },
+          ],
+        },
+      ],
+      screens: [],
+      assumptions: [],
+      openQuestions: [],
+    };
+    const projectId = randomUUID();
+    insertProject(db, { id: projectId, ownerId: user.id, name: "Hiring", description: "test", spec });
+    diffAndMigrate(db, projectId, undefined, spec);
+    markProjectBuilt(db, projectId);
+
+    const fileBody = "%PDF-fake-resume-contents";
+    const formData = new FormData();
+    formData.append("file", new File([fileBody], "my resume.pdf", { type: "application/pdf" }));
+    const uploadRes = await fetch(`${baseUrl}/api/projects/${projectId}/entities/Applicant/fields/resume/upload`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${token}` },
+      body: formData,
+    });
+    assert.equal(uploadRes.status, 200);
+    const uploadBody = (await uploadRes.json()) as { file: { url: string; name: string; size: number; mimeType: string } };
+    assert.equal(uploadBody.file.name, "my resume.pdf");
+    assert.equal(uploadBody.file.mimeType, "application/pdf");
+    assert.equal(uploadBody.file.size, fileBody.length);
+    assert.match(uploadBody.file.url, new RegExp(`^/api/uploads/${projectId}/Applicant/[^/]+\\.pdf$`));
+
+    // The URL this route returned must actually serve the real file back,
+    // through app.ts's own static route -- not just a plausible-looking
+    // string the client has no way to fetch.
+    const servedRes = await fetch(`${baseUrl}${uploadBody.file.url}`);
+    assert.equal(servedRes.status, 200);
+    assert.equal(await servedRes.text(), fileBody);
+
+    const createRes = await fetch(`${baseUrl}/api/projects/${projectId}/entities/Applicant`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ name: "Dana", resume: JSON.stringify(uploadBody.file) }),
+    });
+    assert.equal(createRes.status, 201);
+    const { record } = (await createRes.json()) as { record: { id: number; resume: string } };
+    assert.deepEqual(JSON.parse(record.resume), uploadBody.file);
+
+    const getRes = await fetch(`${baseUrl}/api/projects/${projectId}/entities/Applicant`, { headers: authHeaders(token) });
+    const { records } = (await getRes.json()) as { records: { id: number; resume: string }[] };
+    assert.deepEqual(JSON.parse(records.find((r) => r.id === record.id)!.resume), uploadBody.file);
+  });
+});
+
+/**
+ * Field-type validation (and project-access validation) runs in its own
+ * middleware BEFORE multer's disk-storage middleware (see the route's own
+ * comment in routes/projects.ts) -- specifically so a rejected upload
+ * never gets a chance to write anything to disk first. Picks a plain
+ * text field to upload against, and confirms both the clear 400 and that
+ * nothing landed in the project's upload directory at all.
+ */
+test("uploading to a field that isn't type 'file' is rejected before anything is written to disk", async () => {
+  await withServer(async (baseUrl, db) => {
+    const email = `upload-wrong-field-${randomUUID()}@example.com`;
+    const token = await signup(baseUrl, email);
+    const user = findUserByEmail(db, email)!;
+
+    const spec: ProductSpec = {
+      summary: "test",
+      personas: [],
+      roles: ["Admin"],
+      entities: [{ name: "Applicant", fields: [{ name: "name", type: "text", required: true }] }],
+      screens: [],
+      assumptions: [],
+      openQuestions: [],
+    };
+    const projectId = randomUUID();
+    insertProject(db, { id: projectId, ownerId: user.id, name: "Hiring", description: "test", spec });
+    diffAndMigrate(db, projectId, undefined, spec);
+    markProjectBuilt(db, projectId);
+
+    const formData = new FormData();
+    formData.append("file", new File(["irrelevant"], "x.txt", { type: "text/plain" }));
+    const res = await fetch(`${baseUrl}/api/projects/${projectId}/entities/Applicant/fields/name/upload`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${token}` },
+      body: formData,
+    });
+    assert.equal(res.status, 400);
+    const body = (await res.json()) as { code: string };
+    assert.equal(body.code, "NOT_A_FILE_FIELD");
+  });
+});
+
+/**
+ * Same ordering guarantee as the test above, from the other direction:
+ * a user with no access to this project must be rejected before multer
+ * ever runs, even though the request is otherwise well-formed and
+ * authenticated as a real user.
+ */
+test("uploading to a project the authenticated user has no access to is rejected, never reaching multer", async () => {
+  await withServer(async (baseUrl, db) => {
+    const ownerEmail = `upload-owner-${randomUUID()}@example.com`;
+    await signup(baseUrl, ownerEmail);
+    const owner = findUserByEmail(db, ownerEmail)!;
+    const outsiderToken = await signup(baseUrl, `upload-outsider-${randomUUID()}@example.com`);
+
+    const spec: ProductSpec = {
+      summary: "test",
+      personas: [],
+      roles: ["Admin"],
+      entities: [{ name: "Applicant", fields: [{ name: "resume", type: "file", required: false }] }],
+      screens: [],
+      assumptions: [],
+      openQuestions: [],
+    };
+    const projectId = randomUUID();
+    insertProject(db, { id: projectId, ownerId: owner.id, name: "Hiring", description: "test", spec });
+    diffAndMigrate(db, projectId, undefined, spec);
+    markProjectBuilt(db, projectId);
+
+    const formData = new FormData();
+    formData.append("file", new File(["irrelevant"], "x.txt", { type: "text/plain" }));
+    const res = await fetch(`${baseUrl}/api/projects/${projectId}/entities/Applicant/fields/resume/upload`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${outsiderToken}` },
+      body: formData,
+    });
+    assert.equal(res.status, 404);
   });
 });

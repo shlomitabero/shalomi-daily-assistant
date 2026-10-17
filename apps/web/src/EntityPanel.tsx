@@ -1,6 +1,6 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import type { Entity, EntityRecord, Field, Project } from "@forge/shared";
-import { createRecord, deleteRecord, listRecords, updateRecord } from "./api.js";
+import { createRecord, deleteRecord, listRecords, updateRecord, uploadRecordFile } from "./api.js";
 import { buildCalendarIcs, downloadCalendarIcs } from "./calendarIcs.js";
 import { getHiddenFields, toggleFieldVisibility } from "./columnVisibility.js";
 import {
@@ -54,11 +54,13 @@ import {
   isInlineEditableField,
   isSameDay,
   isSameMonth,
+  isImageMimeType,
   isTypingTarget,
   LOCALE,
   matchesSearch,
   parseCsv,
   parseFieldDate,
+  parseFileFieldValue,
   recordDisplayLabel,
   relationDisplayLabel,
   recordsToCsv,
@@ -242,6 +244,19 @@ function Cell({
       <span className="longtext-cell" title={String(value)}>
         <Linkified text={String(value)} query={highlightQuery} />
       </span>
+    );
+  }
+  if (field.type === "file") {
+    const fileValue = parseFileFieldValue(value);
+    if (!fileValue) return <span className="muted">{t("entity.empty")}</span>;
+    return (
+      <a href={fileValue.url} target="_blank" rel="noopener noreferrer" className="file-cell-link" title={fileValue.name}>
+        {isImageMimeType(fileValue.mimeType) ? (
+          <img src={fileValue.url} alt={fileValue.name} className="file-cell-thumbnail" />
+        ) : (
+          <span className="file-cell-name">{fileValue.name}</span>
+        )}
+      </a>
     );
   }
   return <Linkified text={String(value)} query={highlightQuery} />;
@@ -688,6 +703,8 @@ function FieldInput({
   autoFocus,
   onBlur,
   onKeyDown,
+  projectId,
+  entityName,
 }: {
   field: Field;
   value: unknown;
@@ -700,8 +717,15 @@ function FieldInput({
   autoFocus?: boolean;
   onBlur?: () => void;
   onKeyDown?: (e: React.KeyboardEvent) => void;
+  /** Only needed by the "file" branch below, to reach the upload endpoint
+   * -- isInlineEditableField already excludes "file" from every other
+   * FieldInput call site (inline cell edit, bulk edit), so only the
+   * plain add/edit form ever actually needs to pass these. */
+  projectId?: string;
+  entityName?: string;
 }) {
   const { t } = useTranslation();
+  const [fileUploadError, setFileUploadError] = useState<string | null>(null);
   if (field.type === "relation" && relatedEntity) {
     // relatedEntityRecords is only populated once EntityPanel's own
     // loadRelated effect resolves its real network fetch -- a useEffect
@@ -836,6 +860,43 @@ function FieldInput({
         onBlur={onBlur}
         onKeyDown={onKeyDown}
       />
+    );
+  }
+  if (field.type === "file") {
+    const currentFile = parseFileFieldValue(value);
+    return (
+      <div className="file-field-input">
+        {currentFile && (
+          <span className="file-field-current">
+            <a href={currentFile.url} target="_blank" rel="noopener noreferrer">
+              {currentFile.name}
+            </a>
+            <button type="button" className="link-button" onClick={() => onChange("")}>
+              {t("entity.file.remove")}
+            </button>
+          </span>
+        )}
+        <input
+          type="file"
+          required={field.required && !currentFile}
+          aria-label={t("entity.file.choose")}
+          autoFocus={autoFocus}
+          onBlur={onBlur}
+          onChange={async (e) => {
+            const chosen = e.target.files?.[0];
+            e.target.value = "";
+            if (!chosen || !projectId || !entityName) return;
+            setFileUploadError(null);
+            try {
+              const uploaded = await uploadRecordFile(projectId, entityName, field.name, chosen);
+              onChange(JSON.stringify(uploaded));
+            } catch (err) {
+              setFileUploadError(err instanceof Error ? err.message : String(err));
+            }
+          }}
+        />
+        {fileUploadError && <p role="alert">{fileUploadError}</p>}
+      </div>
     );
   }
   return (
@@ -2562,6 +2623,8 @@ export function EntityPanel({
               onChange={(v) => setForm((prev) => ({ ...prev, [field.name]: v }))}
               relatedEntity={field.relationTo ? allEntities.find((e) => e.name === field.relationTo) : undefined}
               relatedEntityRecords={field.relationTo ? relatedRecords[field.relationTo] : undefined}
+              projectId={projectId}
+              entityName={entity.name}
             />
           </label>
         ))}

@@ -8875,3 +8875,116 @@ test("EntityPanel's inline cell editor lets a bare Enter insert a newline in a l
     }
   });
 });
+
+const APPLICANT_ENTITY: Entity = {
+  name: "Applicant",
+  label: "Applicant",
+  fields: [
+    { name: "name", label: "Name", type: "text", required: true },
+    { name: "resume", label: "Resume", type: "file", required: false },
+  ],
+};
+
+/**
+ * New field type: a "file" field's own add/edit-form control uploads the
+ * chosen file through the new upload endpoint (api.ts's uploadRecordFile)
+ * the moment it's chosen -- before the form itself is ever submitted --
+ * and stores the returned JSON descriptor as the field's value, which the
+ * ordinary record-create POST then carries exactly like any other field.
+ * Exercises the real wired-up component tree end to end: choosing a file,
+ * the upload firing, the "current file" link appearing, and the real
+ * create-record request finally carrying that same descriptor.
+ */
+test("EntityPanel's add form uploads a chosen file for a 'file' field and submits the real record with the returned descriptor", async () => {
+  await withJsdom(async () => {
+    const store: EntityRecord[] = [];
+    let createdBody: Record<string, unknown> | null = null;
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/entities/Applicant") {
+        return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      if (method === "POST" && input === "/api/projects/proj1/entities/Applicant/fields/resume/upload") {
+        return new Response(
+          JSON.stringify({ file: { url: "/api/uploads/proj1/Applicant/abc123.pdf", name: "resume.pdf", size: 9, mimeType: "application/pdf" } }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      if (method === "POST" && input === "/api/projects/proj1/entities/Applicant") {
+        createdBody = JSON.parse(init!.body as string) as Record<string, unknown>;
+        const record = { id: 1, ...createdBody };
+        store.push(record as unknown as EntityRecord);
+        return new Response(JSON.stringify({ record }), { status: 201, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+
+    try {
+      renderEntityPanel({ entity: APPLICANT_ENTITY, allEntities: [APPLICANT_ENTITY] });
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 0);
+
+      const form = document.querySelector("form") as HTMLFormElement;
+      const fileInput = form.querySelector('input[type="file"]') as HTMLInputElement;
+      assert.ok(fileInput, "expected a real file input for the 'file' field in the add form");
+
+      const chosenFile = new File(["résumé body"], "resume.pdf", { type: "application/pdf" });
+      await act(async () => {
+        Object.defineProperty(fileInput, "files", { value: [chosenFile], configurable: true });
+        fireEvent.change(fileInput);
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      });
+
+      await waitForCondition(() => form.querySelector(".file-field-current") !== null);
+      assert.equal(form.querySelector(".file-field-current a")!.textContent, "resume.pdf");
+
+      const nameInput = form.querySelector('input[type="text"]') as HTMLInputElement;
+      fireEvent.change(nameInput, { target: { value: "Dana" } });
+      fireEvent.submit(form);
+      await waitForCondition(() => createdBody !== null);
+
+      assert.equal(createdBody!.name, "Dana");
+      assert.deepEqual(
+        JSON.parse(createdBody!.resume as string),
+        { url: "/api/uploads/proj1/Applicant/abc123.pdf", name: "resume.pdf", size: 9, mimeType: "application/pdf" },
+        "the record create request must carry the exact descriptor the upload endpoint returned, as a JSON string",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
+ * The table-cell side of the same field type: an existing record's file
+ * value (the JSON descriptor the upload endpoint produces) renders as a
+ * real clickable link to that file's URL, showing the file's own name as
+ * its text -- not the raw JSON blob, which is what String(value) would
+ * otherwise show for any field type with no dedicated Cell branch.
+ */
+test("EntityPanel's table cell renders a 'file' field's stored descriptor as a real link to the file, not the raw JSON", async () => {
+  await withJsdom(async () => {
+    const store: EntityRecord[] = [
+      { id: 1, name: "Dana", resume: JSON.stringify({ url: "/api/uploads/proj1/Applicant/abc123.pdf", name: "resume.pdf", size: 9, mimeType: "application/pdf" }) },
+    ];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string) => {
+      if (input === "/api/projects/proj1/entities/Applicant") {
+        return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${input}`);
+    }) as typeof fetch;
+    try {
+      renderEntityPanel({ entity: APPLICANT_ENTITY, allEntities: [APPLICANT_ENTITY] });
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 1);
+
+      const link = document.querySelector("table tbody a.file-cell-link") as HTMLAnchorElement;
+      assert.ok(link, "expected a real link for the file field's cell");
+      assert.equal(link.getAttribute("href"), "/api/uploads/proj1/Applicant/abc123.pdf");
+      assert.equal(link.textContent, "resume.pdf");
+      assert.equal(link.getAttribute("target"), "_blank");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
