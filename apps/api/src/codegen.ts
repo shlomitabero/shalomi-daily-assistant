@@ -5719,7 +5719,7 @@ export default function App() {
             {theme === "dark" ? "☀️" : "🌙"}
           </button>
           <button type="button" className="search-trigger" onClick={() => setShowSearch(true)}>
-            🔍 Search <span className="shortcut-hint">Ctrl+K</span>
+            🔍 Search <span className="shortcut-hint">Ctrl+K · /</span>
           </button>
           <button type="button" className="search-trigger" onClick={() => setShowShortcuts(true)}>
             ⌨️ Keyboard shortcuts <span className="shortcut-hint">?</span>

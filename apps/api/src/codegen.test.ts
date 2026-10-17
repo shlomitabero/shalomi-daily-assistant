@@ -6766,7 +6766,15 @@ test("the exported app includes a real cross-entity global search, ported from t
   assert.match(appJsx, /entity as CustomerEntity/);
   assert.match(appJsx, /fields: CustomerEntity\.fields/);
   assert.match(appJsx, /ctrlKey \|\| e\.metaKey/);
-  assert.match(appJsx, /shortcut-hint/);
+  // Regression test for round 665: the badge text itself must list BOTH
+  // real shortcuts the handler above actually opens search with (Ctrl/Cmd+K
+  // and "/") -- a bare /shortcut-hint/ match (this test's own pre-fix
+  // assertion) passes regardless of the span's content, so it never caught
+  // the badge silently falling behind when "/" was ported into this same
+  // handler (round 629) without updating the text next to the button that
+  // advertises it, the same "static UI text vs. real behavior" gap round
+  // 664 found in ShortcutsPanel.jsx.
+  assert.match(appJsx, /<span className="shortcut-hint">Ctrl\+K · \/<\/span>/);
 });
 
 /**
