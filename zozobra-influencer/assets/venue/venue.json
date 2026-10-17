@@ -11,9 +11,23 @@
     "black textured boucle armchairs with round bolster backrests and rough-hewn dark wooden tables with candles",
     "potted bamboo, dry twisted branches in large stoneware vases",
     "an entrance corridor under a cascading golden fringe ceiling installation",
-    "an open kitchen with white tiles glowing behind the circular bar"
+    "an open kitchen with a stainless-steel cooking line, white back-lit wall and an angular faceted metal hood behind the circular bar - the only place where wok fire appears"
   ],
   "plates": [
+    {
+      "id": "open_kitchen",
+      "file": "open_kitchen.jpg",
+      "orientation": "landscape",
+      "focus_x": 0.2,
+      "zone_he": "המטבח הפתוח (האזור היחיד עם אש)",
+      "description": "the open kitchen behind the circular bar: long stainless-steel cooking line and pass counter, white back-lit wall, faceted dark-metal angular hood above, slim black pendant lights; to the right the circular bar with the glowing tiered lantern canopy, wooden stools and a stone communal table in the foreground",
+      "lilo_spots": "standing at the stainless kitchen pass facing camera with the cooking line behind her; leaning on the counter end next to the bar",
+      "motion": "slow push-in toward the pass; on the stainless cooking line behind her cooks toss woks and short orange flames flare up, steam rising under the angular hood",
+      "best_for": [
+        "fire_show",
+        "hero_dish"
+      ]
+    },
     {
       "id": "dining_hall_ribbons",
       "file": "dining_hall_ribbons.jpg",

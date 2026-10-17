@@ -20,11 +20,11 @@
         "יש לי שאלה אחת: אתם עומדים בחום?"
       ],
       "visual": {
-        "venue_plate": "bar_canopy_bamboo",
-        "scene": "at the circular wooden bar under the glowing tiered lantern canopy, the white-tiled open kitchen behind her with a wok flame bursting, bamboo leaves in the foreground",
+        "venue_plate": "open_kitchen",
+        "scene": "at the stainless-steel pass of the open kitchen, the cooking line behind her under the angular metal hood where a cook tosses a wok and a flame bursts, the glowing lantern canopy of the bar at the edge of frame",
         "action": "turning to camera with a confident half-smile, one hand on the pass counter, flame light on her face",
         "wardrobe": "",
-        "motion_prompt": "Static low angle on the wok line. A cook tosses glossy caramel-chili noodles and a one-meter flame bursts up, lighting her face orange from the side; she turns her head toward the camera and smirks; sparks drift upward; copper lights glow in the bokeh."
+        "motion_prompt": "Static low angle at the kitchen pass. On the stainless cooking line behind her a cook tosses glossy caramel-chili noodles and a flame bursts up from the wok, lighting her face orange from the side; she turns her head toward the camera and smirks; sparks drift upward; copper lights glow in the bokeh."
       },
       "script": [
         {
@@ -41,7 +41,7 @@
           "spoken_he": "זה בנגקוק היט. גארליק-קרמל, צ'ילי, מנטה.",
           "voice_direction": "[excited]",
           "on_screen_text_he": "בנגקוק היט 🔥",
-          "shot": "medium, LILO to camera at the wok line"
+          "shot": "medium, LILO to camera at the kitchen pass"
         },
         {
           "t_start": 7.0,
@@ -65,7 +65,7 @@
           "spoken_he": "נתראה ליד האש.",
           "voice_direction": "[mischievously]",
           "on_screen_text_he": "נתראה ליד האש 🔥",
-          "shot": "medium, LILO walks out of frame past the flames"
+          "shot": "medium, LILO walks out of frame past the kitchen pass"
         }
       ],
       "caption_he": "יש מנות שאוכלים. ויש מנות שמסתכלים עליהן נוצרות באש 🔥\nבנגקוק היט — גארליק, קרמל, צ'ילי ומנטה טרייה.\nחריף או חריף-חריף?",
