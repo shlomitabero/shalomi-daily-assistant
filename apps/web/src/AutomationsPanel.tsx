@@ -56,17 +56,23 @@ export function AutomationsPanel({
     [entities, entityName],
   );
 
+  // Only text/longtext fields can ever hold a phone number -- mirrors the
+  // server's own validateAutomationToField (apps/api/src/routes/projects.ts),
+  // which rejects every other field type at creation/update time.
+  const phoneFields = selectedEntity?.fields.filter((f) => f.type === "text" || f.type === "longtext") ?? [];
+
   // Keep the field/toField selects pointed at a real field whenever the
   // chosen entity changes (including on first render) -- an empty/stale
   // selection here would otherwise submit a field name that doesn't exist
-  // on the newly-chosen entity.
+  // on the newly-chosen entity. toField is further restricted to
+  // phoneFields, since the server rejects any other field type outright.
   useEffect(() => {
     if (!selectedEntity) return;
     if (!selectedEntity.fields.some((f) => f.name === fieldName)) {
       setFieldName(selectedEntity.fields[0]?.name ?? "");
     }
-    if (!selectedEntity.fields.some((f) => f.name === toField)) {
-      setToField(selectedEntity.fields[0]?.name ?? "");
+    if (!phoneFields.some((f) => f.name === toField)) {
+      setToField(phoneFields[0]?.name ?? "");
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [entityName]);
@@ -274,14 +280,16 @@ export function AutomationsPanel({
             </select>
           </label>
 
-          {toMode === "field" && selectedEntity ? (
+          {toMode === "field" && selectedEntity && phoneFields.length > 0 ? (
             <select value={toField} onChange={(e) => setToField(e.target.value)} aria-label={t("automations.toField.placeholder")}>
-              {selectedEntity.fields.map((f) => (
+              {phoneFields.map((f) => (
                 <option key={f.name} value={f.name}>
                   {f.label ?? f.name}
                 </option>
               ))}
             </select>
+          ) : toMode === "field" && selectedEntity ? (
+            <p role="alert">{t("automations.toField.none")}</p>
           ) : (
             <input
               type="text"

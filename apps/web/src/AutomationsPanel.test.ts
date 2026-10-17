@@ -396,3 +396,129 @@ test("AutomationsPanel's Close button calls onClose", async () => {
     }
   });
 });
+
+/**
+ * The server (apps/api/src/routes/projects.ts's validateAutomationToField)
+ * rejects any toField that isn't "text" or "longtext" -- a round 666
+ * regression test: the "send to a field" dropdown used to list every field
+ * on the entity regardless of type, contradicting its own "Choose a phone
+ * field" label and guaranteeing a predictable 400 for any non-text pick.
+ */
+const mixedFieldsProject: Project = {
+  id: "proj2",
+  ownerId: "owner1",
+  name: "Shipments",
+  description: "A shipment-tracking app",
+  status: "built",
+  createdAt: new Date().toISOString(),
+  spec: {
+    summary: "A shipment-tracking app",
+    personas: [],
+    roles: ["Admin"],
+    entities: [
+      {
+        name: "Shipment",
+        label: "Shipment",
+        fields: [
+          { name: "priority", label: "Priority", type: "number", required: true },
+          { name: "contactPhone", label: "Contact Phone", type: "text", required: false },
+          { name: "notes", label: "Notes", type: "longtext", required: false },
+          { name: "isUrgent", label: "Is Urgent", type: "boolean", required: false },
+        ],
+      },
+    ],
+    screens: [],
+    assumptions: [],
+    openQuestions: [],
+  },
+};
+
+function renderPanelWith(project: Project, onClose: () => void = () => {}) {
+  return render(
+    React.createElement(
+      ThemeProvider,
+      null,
+      React.createElement(
+        LanguageProvider,
+        null,
+        React.createElement(AutomationsPanel, { projectId: project.id, project, onClose }),
+      ),
+    ),
+  );
+}
+
+test("AutomationsPanel's 'send to a field' dropdown only offers text/longtext fields as a phone destination, and defaults to one instead of the entity's literal first field", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string) => {
+      if (input === "/api/projects/proj2/automations") {
+        return new Response(JSON.stringify({ rules: [] }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${input}`);
+    }) as typeof fetch;
+
+    try {
+      renderPanelWith(mixedFieldsProject);
+      await waitForCondition(() => document.body.textContent?.includes("No automations yet") ?? false);
+
+      const toFieldSelect = document.querySelector('select[aria-label="Choose a phone field"]') as HTMLSelectElement;
+      assert.ok(toFieldSelect, "the toField select must be rendered since the entity has eligible text fields");
+      const optionNames = Array.from(toFieldSelect.options).map((o) => o.value);
+      assert.deepEqual(
+        optionNames,
+        ["contactPhone", "notes"],
+        "only text/longtext fields may appear as a phone destination -- priority (number) and isUrgent (boolean) must be excluded",
+      );
+      assert.equal(toFieldSelect.value, "contactPhone", "the default must be the first ELIGIBLE field, not the entity's literal first field (priority)");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+test("AutomationsPanel shows a message instead of an invalid dropdown when the entity has no text field at all", async () => {
+  await withJsdom(async () => {
+    const noTextProject: Project = {
+      ...mixedFieldsProject,
+      id: "proj3",
+      spec: {
+        ...mixedFieldsProject.spec,
+        entities: [
+          {
+            name: "Metric",
+            label: "Metric",
+            fields: [
+              { name: "count", label: "Count", type: "number", required: true },
+              { name: "enabled", label: "Enabled", type: "boolean", required: false },
+            ],
+          },
+        ],
+      },
+    };
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string) => {
+      if (input === "/api/projects/proj3/automations") {
+        return new Response(JSON.stringify({ rules: [] }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${input}`);
+    }) as typeof fetch;
+
+    try {
+      renderPanelWith(noTextProject);
+      await waitForCondition(() => document.body.textContent?.includes("No automations yet") ?? false);
+
+      assert.equal(
+        document.querySelector('select[aria-label="Choose a phone field"]') === null,
+        true,
+        "no toField select must render when the entity has no eligible text field",
+      );
+      assert.match(
+        document.body.textContent ?? "",
+        /no text field that could hold a phone number/i,
+        "a real message must explain why, instead of silently rendering an empty or invalid dropdown",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
