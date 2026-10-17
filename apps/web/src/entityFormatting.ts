@@ -285,6 +285,19 @@ export function sumNumericFields(records: EntityRecord[], fields: Field[]): Reco
  * actual UI (the table cell itself renders a checkmark/dash, not even
  * that). Typing "Yes"/"No" (or "כן"/"לא") -- the exact words shown in the
  * adjacent filter dropdown for the same field -- found nothing.
+ *
+ * A `file` field has the mirror-image gap of the others above: it was
+ * missing the branch entirely, so it fell through to the generic
+ * `String(value)` fallback -- but a file field's raw stored value is the
+ * upload endpoint's own JSON descriptor (`{"url":...,"name":...,"size":
+ * ...,"mimeType":...}`), none of which is what the table cell actually
+ * shows (just the chosen filename, via parseFileFieldValue -- see
+ * fieldDisplayValue's identical `field.type === "file"` branch). This
+ * both over-matched (searching "uploads", a mimetype like "pdf", or the
+ * raw byte size matched every record with a file, none of which shows
+ * any of that on screen) and under-matched (a filename containing a `"`
+ * or `\` is JSON-escaped in the raw stored string, so typing back the
+ * exact unescaped name shown on screen could still miss).
  */
 export function matchesSearch(
   record: EntityRecord,
@@ -310,7 +323,9 @@ export function matchesSearch(
               ? `${value} ${formatDateValue(String(value), lang)}`
               : field.type === "boolean"
                 ? BOOLEAN_DISPLAY[lang][value ? "true" : "false"]
-                : String(value);
+                : field.type === "file"
+                  ? (parseFileFieldValue(value)?.name ?? "")
+                  : String(value);
     return display.toLowerCase().includes(trimmed);
   });
 }

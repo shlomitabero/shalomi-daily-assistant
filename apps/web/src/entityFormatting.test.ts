@@ -300,6 +300,29 @@ test("matchesSearch's boolean-field matching defaults to \"en\" (\"Yes\"/\"No\")
 });
 
 /**
+ * Round 673: matchesSearch had a branch for every field type except
+ * "file", added in a later round than the enum/relation/number/date/
+ * boolean fixes above and simply never ported to this one -- it fell
+ * through to the generic String(value) fallback, matching against the
+ * raw JSON upload descriptor (url/size/mimeType) instead of the filename
+ * the table cell actually shows (via parseFileFieldValue, the exact
+ * display fieldDisplayValue already uses for this same field type).
+ */
+test("matchesSearch matches a file field's displayed filename, not the raw JSON descriptor's url/size/mimeType", () => {
+  const fields: Field[] = [{ name: "resume", type: "file", required: false }];
+  const stored = JSON.stringify({ url: "/api/uploads/proj1/Applicant/abc123.pdf", name: "resume.pdf", size: 48213, mimeType: "application/pdf" });
+  assert.ok(matchesSearch({ resume: stored }, fields, "resume.pdf"), "the exact filename shown in the table cell must match");
+  assert.ok(!matchesSearch({ resume: stored }, fields, "uploads"), "the raw stored URL must not match -- it's never shown on screen");
+  assert.ok(!matchesSearch({ resume: stored }, fields, "application"), "the raw stored mimeType must not match");
+  assert.ok(!matchesSearch({ resume: stored }, fields, "48213"), "the raw stored byte size must not match");
+});
+
+test("matchesSearch never matches anything for a file field with no file chosen (empty string)", () => {
+  const fields: Field[] = [{ name: "resume", type: "file", required: false }];
+  assert.ok(!matchesSearch({ resume: "" }, fields, "resume"));
+});
+
+/**
  * New in this round: matchesSearch already tells the table a record
  * matched, but nothing showed *where* within a cell's own text -- a real
  * everyday annoyance the moment a search term is short/common and you
