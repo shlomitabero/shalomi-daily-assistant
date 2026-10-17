@@ -64,6 +64,14 @@ def plate_9x16(plate_id: str, out_dir: Path | None = None, night: bool = False) 
     return out
 
 
+KITCHEN_PLATES = {"open_kitchen"}
+
+
+def fire_allowed(plate_id: str | None) -> bool:
+    """Flames are real only in the open kitchen; everywhere else they must not appear."""
+    return plate_id in KITCHEN_PLATES
+
+
 def is_food_shot(shot: str) -> bool:
     s = shot.lower()
     return any(k in s for k in FOOD_WORDS)
@@ -72,7 +80,8 @@ def is_food_shot(shot: str) -> bool:
 def brain_brief() -> str:
     """Compact venue description for the Brain's system prompt (stable -> cache-friendly)."""
     c = catalog()
-    lines = [f"Stage: {c['stage']}", "Signature elements: " + "; ".join(c["signature_elements"]), "Plates:"]
+    lines = [f"Stage: {c['stage']}", "Signature elements: " + "; ".join(c["signature_elements"]),
+             "FIRE RULE: " + c.get("fire_rule", ""), "Plates:"]
     for p in c["plates"]:
         lines.append(f"- {p['id']} ({p['orientation']}, {p['zone_he']}): {p['description']}. "
                      f"LILO can be: {p['lilo_spots']}. Good for: {', '.join(p['best_for'])}.")

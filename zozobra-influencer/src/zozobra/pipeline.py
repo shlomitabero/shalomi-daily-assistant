@@ -77,7 +77,8 @@ def produce_day(day: DayPlan, menu: dict, workdir: Path, dry_run: bool) -> dict:
         item["image_paths"] = [str(p) for p in stills]
         still_urls = [P.upload(p, f"lilo/{day.day}/{p.name}") for p in stills]
         if day.format is Format.reel:
-            a_roll_raw = P.animate(still_urls[0], day.visual.motion_prompt, 10)
+            no_fire = not venue.fire_allowed(plate_id)
+            a_roll_raw = P.animate(still_urls[0], day.visual.motion_prompt, 10, no_fire=no_fire)
             audio = voice.synthesize(spoken_script(day), workdir / "voice.mp3")
             a_roll = video.download(P.lipsync(a_roll_raw, P.upload(audio, f"lilo/{day.day}/voice.mp3")),
                                     workdir / "a_roll.mp4")
@@ -87,7 +88,8 @@ def produce_day(day: DayPlan, menu: dict, workdir: Path, dry_run: bool) -> dict:
                     img = venue.plate_9x16(plate_id, night=night)
                 else:
                     img = P.image(spec["prompt"], seed + 100 + i, workdir / "broll", use_lora=False)[0]
-                clip = video.download(P.animate(P.upload(img, f"lilo/{day.day}/{img.name}"), line.shot, 5),
+                clip = video.download(P.animate(P.upload(img, f"lilo/{day.day}/{img.name}"), line.shot, 5,
+                                                no_fire=no_fire and spec["source"] == "venue_plate"),
                                       workdir / f"broll_{i}.mp4")
                 cutaways.append((clip, line.t_start, line.t_end))
             subs = subtitles.write_ass(day.script, workdir / "subs.ass", hook=day.hook_he)

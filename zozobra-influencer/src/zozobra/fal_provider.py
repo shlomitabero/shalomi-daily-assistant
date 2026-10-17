@@ -96,12 +96,15 @@ def place_in_plate(prompt: str, plate: Path, seed: int, out_dir: Path, *, streng
     return [_download(img["url"], out_dir / f"venue_{seed}_{i}.png") for i, img in enumerate(result["images"])]
 
 
-def animate(image_url: str, prompt: str, duration: int = 10) -> str:
+def animate(image_url: str, prompt: str, duration: int = 10, no_fire: bool = False) -> str:
+    negative = "face morphing, identity change, extra fingers, blur, distortion, low quality"
+    if no_fire:
+        negative += ", fire, flames, sparks, burning"
     result = _fal().subscribe(VIDEO_APP, arguments={
         "image_url": image_url,
         "prompt": prompt[:2500],
         "duration": "10" if duration > 5 else "5",
-        "negative_prompt": "face morphing, identity change, extra fingers, blur, distortion, low quality",
+        "negative_prompt": negative,
         "cfg_scale": 0.5,
     })
     return result["video"]["url"]

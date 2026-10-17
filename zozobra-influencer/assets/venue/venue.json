@@ -34,12 +34,11 @@
       "file": "bar_tower_vertical.jpg",
       "orientation": "portrait",
       "zone_he": "מגדל הבר (אנכי — מושלם לרילס)",
-      "description": "vertical 9:16 view framed by black slatted screens: the glowing tiered paper-lantern canopy over the circular bar, bottles on the ring shelf, hanging glasses, wooden bar stools, crimson ribbons across the top, open kitchen glowing behind, reflective polished concrete floor in the foreground",
+      "description": "vertical 9:16 view framed by black slatted screens: the glowing tiered paper-lantern canopy over the circular bar, bottles on the ring shelf, hanging glasses, wooden bar stools, crimson ribbons across the top, reflective polished concrete floor in the foreground",
       "lilo_spots": "walking toward the bar between the screens; sitting on a bar stool facing camera",
       "motion": "slow tilt up from the glossy floor to the lantern canopy, ribbons drift",
       "best_for": [
         "night_vibe",
-        "fire_show",
         "pov_story"
       ]
     },
@@ -53,7 +52,6 @@
       "lilo_spots": "leaning on the bar with the open kitchen behind her; at the booth on the left",
       "motion": "parallax slide right past the bamboo leaves revealing the bar",
       "best_for": [
-        "fire_show",
         "hero_dish",
         "night_vibe"
       ],
@@ -100,8 +98,7 @@
       "lilo_spots": "walking from the booths toward the bar opening between the screens",
       "motion": "tracking shot along the banquette toward the bar",
       "best_for": [
-        "night_vibe",
-        "fire_show"
+        "night_vibe"
       ],
       "focus_x": 0.5
     },
@@ -160,5 +157,6 @@
       ],
       "focus_x": 0.62
     }
-  ]
+  ],
+  "fire_rule": "Wok fire happens ONLY inside the open kitchen. Never show flames at the bar, the lantern tower, tables, booths or corridors."
 }

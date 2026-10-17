@@ -110,7 +110,7 @@ DAYS = [
         "visual": {"venue_plate": "bar_tower_vertical", "scene": "walking between the black slatted screens toward the circular bar under the towering glowing lantern canopy, crimson ribbons overhead, reflective concrete floor",
                    "action": "walking toward the open kitchen and glancing back over her shoulder at the camera with a half-smile",
                    "wardrobe": "black satin slip dress and black leather jacket",
-                   "motion_prompt": "Smooth gimbal follow from behind. She walks between the black slatted screens toward the glowing tiered lantern canopy over the circular bar, then glances back over her shoulder at the camera with a half-smile; steam and flame light ahead; diners softly blurred."},
+                   "motion_prompt": "Smooth gimbal follow from behind. She walks between the black slatted screens toward the glowing tiered lantern canopy over the circular bar, then glances back over her shoulder at the camera with a half-smile; warm lantern light ahead; diners softly blurred."},
         "script": [
             L(0, 3, "תביאו את מי שאתם רוצים להרשים.", "[softly]", "דייט נייט? 🖤", "medium, LILO walking between the slatted screens toward the bar"),
             L(3, 7, "מגדל אור, סרטים אדומים, והאש במרכז.", "[warmly]", "", "venue establishing: slow tilt up from the glossy floor to the glowing lantern canopy, crimson ribbons drifting"),
@@ -134,7 +134,7 @@ DAYS = [
                    "motion_prompt": "Macro sequence: rice noodles hit a smoking wok, tamarind sauce sizzles, a quick flame flares, peanuts rain down, a lime wedge is squeezed with juice droplets; then a medium shot of her taking the first bite and nodding slowly."},
         "script": [
             L(0, 3, "", "", "בלי מילים. רק תקשיבו 🎧", "macro noodles hitting a smoking wok, loud sizzle"),
-            L(3, 7, "", "", "", "macro tamarind sauce poured, flame flare"),
+            L(3, 7, "", "", "", "macro tamarind sauce poured into a smoking wok"),
             L(7, 10, "", "", "", "macro crushed peanuts raining down, lime squeezed"),
             L(10, 14, "אוקיי. זה היה שווה את השתיקה.", "[whispers]", "פאד תאי ✨", "medium close-up, LILO takes a bite and nods"),
             L(14, 16, "נתראה ליד האש.", "[softly]", "נתראה ליד האש 🔥", "medium, LILO smiling at camera"),

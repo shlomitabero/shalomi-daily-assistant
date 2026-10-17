@@ -290,7 +290,7 @@
         "scene": "walking between the black slatted screens toward the circular bar under the towering glowing lantern canopy, crimson ribbons overhead, reflective concrete floor",
         "action": "walking toward the open kitchen and glancing back over her shoulder at the camera with a half-smile",
         "wardrobe": "black satin slip dress and black leather jacket",
-        "motion_prompt": "Smooth gimbal follow from behind. She walks between the black slatted screens toward the glowing tiered lantern canopy over the circular bar, then glances back over her shoulder at the camera with a half-smile; steam and flame light ahead; diners softly blurred."
+        "motion_prompt": "Smooth gimbal follow from behind. She walks between the black slatted screens toward the glowing tiered lantern canopy over the circular bar, then glances back over her shoulder at the camera with a half-smile; warm lantern light ahead; diners softly blurred."
       },
       "script": [
         {
@@ -376,7 +376,7 @@
           "spoken_he": "",
           "voice_direction": "",
           "on_screen_text_he": "",
-          "shot": "macro tamarind sauce poured, flame flare"
+          "shot": "macro tamarind sauce poured into a smoking wok"
         },
         {
           "t_start": 7.0,

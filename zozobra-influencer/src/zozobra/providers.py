@@ -41,13 +41,15 @@ def upload(path: Path, key: str) -> str:
     return publish_file(path, key)
 
 
-def animate(image_url: str, prompt: str, duration: int) -> str:
+def animate(image_url: str, prompt: str, duration: int, no_fire: bool = False) -> str:
     from .video import MOTION_GUARDRAILS
 
+    if no_fire:
+        prompt = prompt.replace("flame", "warm light").replace("fire", "warm light")
     if _fal():
         from .fal_provider import animate as fal_animate
 
-        return fal_animate(image_url, f"{prompt} {MOTION_GUARDRAILS}", duration)
+        return fal_animate(image_url, f"{prompt} {MOTION_GUARDRAILS}", duration, no_fire=no_fire)
     from .video import animate_still
 
     return animate_still(image_url, prompt, duration)

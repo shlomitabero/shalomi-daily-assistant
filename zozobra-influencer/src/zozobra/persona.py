@@ -42,7 +42,7 @@ WORLD_TOKENS = (
     "panels over a circular bar with hanging wine glasses, sculptural crimson silk ribbons swirling across "
     "the dark ceiling, black-metal slatted screen partitions, charred-bark textured walls with warm grazing "
     "uplights, polished dark concrete floor with glowing LED strips, rust-copper cylinder pendants, "
-    "candlelit wooden tables, bamboo, open kitchen with wok flames behind the bar"
+    "candlelit wooden tables, bamboo, white-tiled open kitchen in the background"
 )
 CAMERA_TOKENS = (
     "shot on Sony A7S III, 35mm f/1.4, shallow depth of field, cinematic low-key lighting, "
