@@ -4435,6 +4435,117 @@ test("PATCH .../fields/:fieldName/required toggles an existing field's required 
   });
 });
 
+/**
+ * Round 676: type/required/enumValues could only ever be set when a field
+ * was first created (round 675) -- an existing field's type was otherwise
+ * permanent, the one correction gap this chip still had. This mirrors the
+ * add-field route's own type validation (enum needs enumValues, relation
+ * needs a real relationTo), reused here against an existing field instead.
+ */
+test("PATCH .../fields/:fieldName/type changes a plain field's type directly, and is rejected once the project is built", async () => {
+  await withServer(async (baseUrl) => {
+    const token = await signup(baseUrl, "field-type1@example.com");
+    const createRes = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ description: "A CRM with customers and deals." }),
+    });
+    const { project } = (await createRes.json()) as {
+      project: { id: string; spec: { entities: { name: string; fields: { name: string; type: string }[] }[] } };
+    };
+    const entityName = project.spec.entities[0].name;
+    const fieldName = project.spec.entities[0].fields[0].name;
+    assert.equal(project.spec.entities[0].fields[0].type, "text");
+
+    const res = await fetch(`${baseUrl}/api/projects/${project.id}/entities/${entityName}/fields/${fieldName}/type`, {
+      method: "PATCH",
+      headers: authHeaders(token),
+      body: JSON.stringify({ type: "number" }),
+    });
+    assert.equal(res.status, 200);
+    const { project: updated } = (await res.json()) as {
+      project: { spec: { entities: { name: string; fields: { name: string; type: string }[] }[] } };
+    };
+    const updatedField = updated.spec.entities.find((e) => e.name === entityName)!.fields.find((f) => f.name === fieldName)!;
+    assert.equal(updatedField.type, "number");
+
+    const buildRes = await fetch(`${baseUrl}/api/projects/${project.id}/build`, { method: "POST", headers: authHeaders(token) });
+    await collectSSE(buildRes);
+
+    const afterBuildRes = await fetch(`${baseUrl}/api/projects/${project.id}/entities/${entityName}/fields/${fieldName}/type`, {
+      method: "PATCH",
+      headers: authHeaders(token),
+      body: JSON.stringify({ type: "text" }),
+    });
+    assert.equal(afterBuildRes.status, 409);
+    assert.equal(((await afterBuildRes.json()) as { code?: string }).code, "FIELD_EDIT_AFTER_BUILD");
+  });
+});
+
+test("switching a field's type to enum or relation requires the matching extra data, and clears it when switching away", async () => {
+  await withServer(async (baseUrl) => {
+    const token = await signup(baseUrl, "field-type2@example.com");
+    const createRes = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ description: "A CRM with customers and deals." }),
+    });
+    const { project } = (await createRes.json()) as { project: { id: string; spec: { entities: { name: string }[] } } };
+    assert.deepEqual(project.spec.entities.map((e) => e.name), ["Customer", "Deal"]);
+    const entityName = project.spec.entities[0].name;
+    const fieldName = project.spec.entities[0].fields?.[0]?.name ?? "name";
+
+    const missingEnumValues = await fetch(
+      `${baseUrl}/api/projects/${project.id}/entities/${entityName}/fields/${fieldName}/type`,
+      { method: "PATCH", headers: authHeaders(token), body: JSON.stringify({ type: "enum" }) },
+    );
+    assert.equal(missingEnumValues.status, 400);
+    assert.equal(((await missingEnumValues.json()) as { code?: string }).code, "VALIDATION_ERROR");
+
+    const missingRelationTo = await fetch(
+      `${baseUrl}/api/projects/${project.id}/entities/${entityName}/fields/${fieldName}/type`,
+      { method: "PATCH", headers: authHeaders(token), body: JSON.stringify({ type: "relation" }) },
+    );
+    assert.equal(missingRelationTo.status, 400);
+    assert.equal(((await missingRelationTo.json()) as { code?: string }).code, "VALIDATION_ERROR");
+
+    const badRelationTo = await fetch(
+      `${baseUrl}/api/projects/${project.id}/entities/${entityName}/fields/${fieldName}/type`,
+      { method: "PATCH", headers: authHeaders(token), body: JSON.stringify({ type: "relation", relationTo: "NoSuchEntity" }) },
+    );
+    assert.equal(badRelationTo.status, 400);
+    assert.equal(((await badRelationTo.json()) as { code?: string }).code, "RELATION_TARGET_NOT_FOUND");
+
+    const toEnum = await fetch(`${baseUrl}/api/projects/${project.id}/entities/${entityName}/fields/${fieldName}/type`, {
+      method: "PATCH",
+      headers: authHeaders(token),
+      body: JSON.stringify({ type: "enum", enumValues: "Red, Green, Blue" }),
+    });
+    assert.equal(toEnum.status, 200);
+    const { project: enumProject } = (await toEnum.json()) as {
+      project: { spec: { entities: { name: string; fields: { name: string; type: string; enumValues?: string[] }[] }[] } };
+    };
+    const enumField = enumProject.spec.entities.find((e) => e.name === entityName)!.fields.find((f) => f.name === fieldName)!;
+    assert.equal(enumField.type, "enum");
+    assert.deepEqual(enumField.enumValues, ["Red", "Green", "Blue"]);
+
+    const toRelation = await fetch(
+      `${baseUrl}/api/projects/${project.id}/entities/${entityName}/fields/${fieldName}/type`,
+      { method: "PATCH", headers: authHeaders(token), body: JSON.stringify({ type: "relation", relationTo: "Deal" }) },
+    );
+    assert.equal(toRelation.status, 200);
+    const { project: relationProject } = (await toRelation.json()) as {
+      project: {
+        spec: { entities: { name: string; fields: { name: string; type: string; enumValues?: string[]; relationTo?: string }[] }[] };
+      };
+    };
+    const relationField = relationProject.spec.entities.find((e) => e.name === entityName)!.fields.find((f) => f.name === fieldName)!;
+    assert.equal(relationField.type, "relation");
+    assert.equal(relationField.relationTo, "Deal");
+    assert.equal(relationField.enumValues, undefined, "switching away from enum must clear its now-stale enumValues");
+  });
+});
+
 test("adding a blank/whitespace-only field label is rejected with 400 instead of appending an invalid field", async () => {
   await withServer(async (baseUrl) => {
     const token = await signup(baseUrl, "field-add-blank@example.com");

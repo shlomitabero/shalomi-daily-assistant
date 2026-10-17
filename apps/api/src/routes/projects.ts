@@ -311,6 +311,32 @@ const AddFieldSchema = z
     message: "a relation field needs a target entity",
   });
 
+/**
+ * The matching fix for an EXISTING field, the one correction AddFieldSchema
+ * above didn't cover: switching a field's type after it was already
+ * proposed (an AI/heuristic-mis-typed field could add a replacement of the
+ * right type, but the wrong one stuck around, un-removable until it was
+ * the entity's only field). Same shape and same two refines as
+ * AddFieldSchema (no `label`/`required` here -- those already have their
+ * own dedicated routes), and the same relationTo-against-real-entities
+ * check happens in the route handler below, not here.
+ */
+const SetFieldTypeSchema = z
+  .object({
+    type: z.enum(FIELD_TYPES),
+    enumValues: z
+      .string()
+      .optional()
+      .transform((raw) => (raw ? raw.split(",").map((v) => v.trim()).filter((v) => v.length > 0) : undefined)),
+    relationTo: z.string().trim().optional(),
+  })
+  .refine((f) => f.type !== "enum" || (f.enumValues && f.enumValues.length > 0), {
+    message: "an enum field needs at least one value",
+  })
+  .refine((f) => f.type !== "relation" || !!f.relationTo, {
+    message: "a relation field needs a target entity",
+  });
+
 /** Exported for direct unit testing of the word-truncation and empty-input fallback below. */
 export function deriveName(description: string): string {
   const words = description.trim().split(/\s+/).slice(0, 6).join(" ");
@@ -1915,6 +1941,65 @@ export function createProjectsRouter(
         entities: project.spec.entities.map((e) =>
           e.name === entity.name
             ? { ...e, fields: e.fields.map((f) => (f.name === field.name ? { ...f, required: parsed.data.required } : f)) }
+            : e,
+        ),
+      };
+      const updated = updateProjectSpec(db, project.id, nextSpec);
+      res.json({ project: updated });
+    }),
+  );
+
+  /**
+   * The last correction gap in this family: an existing field's `type`
+   * itself. Round 675 let the add-field form create a field with any real
+   * type, but a field the AI/heuristic engine had already proposed with
+   * the WRONG type still had no fix short of delete-and-recreate (losing
+   * its place in the list and its label history). Same relationTo check
+   * as the add-field route above (against this project's own real entity
+   * names, never free text -- not a reopening of the already-rejected
+   * ProductSpecSchema-level cross-field refine, since this only ever
+   * validates one route's own request against live data it already has).
+   * Deliberately clears whichever of enumValues/relationTo no longer
+   * applies (e.g. switching "enum" -> "text" drops enumValues) rather than
+   * leaving it stranded on a field whose type no longer calls for it.
+   */
+  router.patch(
+    "/projects/:id/entities/:entityName/fields/:fieldName/type",
+    asyncRoute(async (req, res) => {
+      const project = requireProjectWriteAccess(db, req.params.id, req.userId!);
+      if (project.status === "built") {
+        throw new HttpError(409, "Cannot change a field's type after the project has already been built", "FIELD_EDIT_AFTER_BUILD");
+      }
+      if (activePipelines.has(project.id)) {
+        throw new HttpError(409, "A build or refine is already running for this project", "PIPELINE_IN_PROGRESS");
+      }
+      const entity = findEntity(project, req.params.entityName);
+      const field = findField(entity, req.params.fieldName);
+      const parsed = SetFieldTypeSchema.safeParse(req.body);
+      if (!parsed.success) {
+        throw new HttpError(400, formatValidationError(parsed.error), "VALIDATION_ERROR");
+      }
+      if (parsed.data.type === "relation" && !project.spec.entities.some((e) => e.name === parsed.data.relationTo)) {
+        throw new HttpError(400, `"${parsed.data.relationTo}" is not an entity in this project`, "RELATION_TARGET_NOT_FOUND");
+      }
+      const nextSpec = {
+        ...project.spec,
+        entities: project.spec.entities.map((e) =>
+          e.name === entity.name
+            ? {
+                ...e,
+                fields: e.fields.map((f) =>
+                  f.name === field.name
+                    ? {
+                        ...f,
+                        type: parsed.data.type,
+                        enumValues: parsed.data.type === "enum" ? parsed.data.enumValues : undefined,
+                        enumLabels: parsed.data.type === "enum" ? f.enumLabels : undefined,
+                        relationTo: parsed.data.type === "relation" ? parsed.data.relationTo : undefined,
+                      }
+                    : f,
+                ),
+              }
             : e,
         ),
       };

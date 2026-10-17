@@ -919,7 +919,28 @@ button.danger:hover:not(:disabled) {
 .chip-removable {
   display: inline-flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 6px;
+}
+
+.chip-field-type {
+  font-size: 0.75em;
+  padding: 1px 4px;
+  border-radius: var(--radius-sm);
+  max-width: 90px;
+}
+
+.chip-field-type-confirm {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.chip-field-type-confirm input,
+.chip-field-type-confirm select {
+  font-size: 0.75em;
+  padding: 1px 4px;
+  max-width: 120px;
 }
 
 .chip-text {

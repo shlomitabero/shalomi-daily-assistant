@@ -410,6 +410,20 @@ export function setFieldRequired(
   );
 }
 
+/** See addField's own comment on the `enumValues` shape -- same comma-separated-string convention, split server-side. */
+export function setFieldType(
+  projectId: string,
+  entityName: string,
+  fieldName: string,
+  type: Field["type"],
+  opts?: { enumValues?: string; relationTo?: string },
+): Promise<{ project: Project }> {
+  return request(
+    `/projects/${projectId}/entities/${encodeURIComponent(entityName)}/fields/${encodeURIComponent(fieldName)}/type`,
+    { method: "PATCH", body: JSON.stringify({ type, ...opts }) },
+  );
+}
+
 export function deleteProject(projectId: string): Promise<void> {
   return request(`/projects/${projectId}`, { method: "DELETE" });
 }

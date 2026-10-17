@@ -148,6 +148,7 @@ function renderFieldChip(
   onChanged: (p: Project) => void,
   canRemove = true,
   field: Field = { name: "email", type: "text", required: true },
+  allEntities: Entity[] = baseProject.spec.entities,
 ) {
   render(
     React.createElement(
@@ -156,7 +157,14 @@ function renderFieldChip(
       React.createElement(
         LanguageProvider,
         null,
-        React.createElement(FieldChip, { field, projectId: "proj1", entityName: "Customer", canRemove, onChanged }),
+        React.createElement(FieldChip, {
+          field,
+          projectId: "proj1",
+          entityName: "Customer",
+          canRemove,
+          onChanged,
+          allEntities,
+        }),
       ),
     ),
   );
@@ -1012,6 +1020,95 @@ test("a field chip's required checkbox reflects the field's current state, and t
 
       await waitForCondition(() => changedProjects.length === 1);
       assert.deepEqual(patchBody, { required: false }, "toggling must send the flipped value");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+test("changing a field chip's type select to a plain type (no extra data needed) commits immediately via the real PATCH type endpoint", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    let patchBody: { type: string } | undefined;
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      if (init?.method === "PATCH" && input === "/api/projects/proj1/entities/Customer/fields/email/type") {
+        patchBody = JSON.parse(init.body as string) as { type: string };
+        const updated = {
+          ...baseProject,
+          spec: {
+            ...baseProject.spec,
+            entities: [{ ...baseProject.spec.entities[0], fields: [{ name: "email", type: patchBody.type, required: true }] }],
+          },
+        };
+        return new Response(JSON.stringify({ project: updated }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${init?.method ?? "GET"} ${input}`);
+    }) as typeof fetch;
+
+    try {
+      const changedProjects: Project[] = [];
+      renderFieldChip((p) => changedProjects.push(p), true, { name: "email", type: "text", required: true });
+
+      const select = document.querySelector(".chip-field-type") as HTMLSelectElement;
+      assert.ok(select, "expected a type select on the field chip");
+      assert.equal(select.value, "text");
+
+      fireEvent.change(select, { target: { value: "number" } });
+
+      await waitForCondition(() => changedProjects.length === 1);
+      assert.deepEqual(patchBody, { type: "number" }, "switching to a type needing no extra data must commit immediately");
+      assert.equal(document.querySelector(".chip-field-type-confirm"), null, "a plain type switch must never open the confirm step");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+test("changing a field chip's type select to enum opens a draft confirm step requiring values before it commits", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    let patchBody: { type: string; enumValues?: string } | undefined;
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      if (init?.method === "PATCH" && input === "/api/projects/proj1/entities/Customer/fields/email/type") {
+        patchBody = JSON.parse(init.body as string) as { type: string; enumValues?: string };
+        const updated = {
+          ...baseProject,
+          spec: {
+            ...baseProject.spec,
+            entities: [
+              {
+                ...baseProject.spec.entities[0],
+                fields: [{ name: "email", type: "enum", required: true, enumValues: ["New", "Done"] }],
+              },
+            ],
+          },
+        };
+        return new Response(JSON.stringify({ project: updated }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${init?.method ?? "GET"} ${input}`);
+    }) as typeof fetch;
+
+    try {
+      const changedProjects: Project[] = [];
+      renderFieldChip((p) => changedProjects.push(p), true, { name: "email", type: "text", required: true });
+
+      const select = document.querySelector(".chip-field-type") as HTMLSelectElement;
+      fireEvent.change(select, { target: { value: "enum" } });
+
+      const confirmForm = document.querySelector(".chip-field-type-confirm") as HTMLFormElement;
+      assert.ok(confirmForm, "switching to enum must open the draft confirm step instead of committing immediately");
+      assert.equal(patchBody, undefined, "selecting enum alone must never call the PATCH endpoint yet");
+
+      const confirmButton = confirmForm.querySelector("button[type=submit]") as HTMLButtonElement;
+      assert.equal(confirmButton.disabled, true, "the confirm button must stay disabled with no enum values entered yet");
+
+      const enumInput = confirmForm.querySelector("input") as HTMLInputElement;
+      fireEvent.change(enumInput, { target: { value: "New, Done" } });
+      fireEvent.submit(confirmForm);
+
+      await waitForCondition(() => changedProjects.length === 1);
+      assert.deepEqual(patchBody, { type: "enum", enumValues: "New, Done" });
+      assert.equal(document.querySelector(".chip-field-type-confirm"), null, "the confirm step must close after a successful commit");
     } finally {
       globalThis.fetch = originalFetch;
     }

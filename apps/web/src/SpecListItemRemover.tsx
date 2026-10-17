@@ -15,6 +15,7 @@ import {
   renameFieldLabel,
   renameRole,
   setFieldRequired,
+  setFieldType,
 } from "./api.js";
 import { useTranslation } from "./i18n/LanguageContext.js";
 
@@ -393,6 +394,7 @@ export function EntitySummaryItem({
             entityName={entity.name}
             canRemove={entity.fields.length > 1}
             onChanged={onRenamed}
+            allEntities={allEntities}
           />
         ))}
       </div>
@@ -416,12 +418,15 @@ export function FieldChip({
   field,
   projectId,
   entityName,
+  allEntities,
   canRemove,
   onChanged,
 }: {
   field: Field;
   projectId: string;
   entityName: string;
+  /** For the relation-target dropdown when switching this field's type to "relation" -- see AddFieldForm's own identical use. */
+  allEntities: Entity[];
   /** False once this is the only remaining field on the entity -- the API rejects removing it (EntitySchema requires fields.min(1)), so the button is disabled instead of letting the user hit that error. */
   canRemove: boolean;
   onChanged: (project: Project) => void;
@@ -457,6 +462,57 @@ export function FieldChip({
     } finally {
       setRequiredBusy(false);
     }
+  }
+
+  // The last correction gap in this family: an existing field's own
+  // *type*, which round 675 only ever let you set for a brand-new field.
+  // `draftType` is non-null only while actively changing to "enum" or
+  // "relation" -- those need a value/target picked first, so unlike every
+  // other type the select commits immediately on change (there's nothing
+  // more to ask for a plain text/number/date/boolean/file switch).
+  const [draftType, setDraftType] = useState<Field["type"] | null>(null);
+  const [draftEnumValues, setDraftEnumValues] = useState("");
+  const [draftRelationTo, setDraftRelationTo] = useState(allEntities[0]?.name ?? "");
+  const [typeBusy, setTypeBusy] = useState(false);
+  const [typeError, setTypeError] = useState<string | null>(null);
+
+  async function commitTypeChange(type: Field["type"], opts?: { enumValues?: string; relationTo?: string }) {
+    setTypeBusy(true);
+    setTypeError(null);
+    try {
+      const { project } = await setFieldType(projectId, entityName, field.name, type, opts);
+      onChanged(project);
+      setDraftType(null);
+    } catch (err) {
+      setTypeError((err as Error).message);
+    } finally {
+      setTypeBusy(false);
+    }
+  }
+
+  function handleTypeSelectChange(newType: Field["type"]) {
+    if (newType === field.type) {
+      setDraftType(null);
+      return;
+    }
+    if (newType === "enum" || newType === "relation") {
+      setDraftType(newType);
+      setDraftEnumValues(field.enumValues?.join(", ") ?? "");
+      setDraftRelationTo(field.relationTo ?? allEntities[0]?.name ?? "");
+      return;
+    }
+    void commitTypeChange(newType);
+  }
+
+  function handleConfirmTypeChange(e: React.FormEvent) {
+    e.preventDefault();
+    if (!draftType) return;
+    if (draftType === "enum" && !draftEnumValues.trim()) return;
+    if (draftType === "relation" && !draftRelationTo) return;
+    void commitTypeChange(draftType, {
+      enumValues: draftType === "enum" ? draftEnumValues : undefined,
+      relationTo: draftType === "relation" ? draftRelationTo : undefined,
+    });
   }
 
   if (rename.editing) {
@@ -503,6 +559,54 @@ export function FieldChip({
         {field.label ?? field.name}
         {field.required ? " *" : ""}
       </span>
+      <select
+        className="chip-field-type"
+        value={draftType ?? field.type}
+        disabled={typeBusy}
+        onChange={(e) => handleTypeSelectChange(e.target.value as Field["type"])}
+        aria-label={t("spec.fields.type")}
+      >
+        {FIELD_TYPES.map((ft) => (
+          <option key={ft} value={ft}>
+            {t(`spec.fields.type.${ft}`)}
+          </option>
+        ))}
+      </select>
+      {draftType === "enum" && (
+        <form className="chip-field-type-confirm" onSubmit={handleConfirmTypeChange}>
+          <input
+            type="text"
+            value={draftEnumValues}
+            onChange={(e) => setDraftEnumValues(e.target.value)}
+            placeholder={t("spec.fields.enumValues.placeholder")}
+            aria-label={t("spec.fields.enumValues.placeholder")}
+            disabled={typeBusy}
+            autoFocus
+          />
+          <button type="submit" className="secondary small" disabled={typeBusy || !draftEnumValues.trim()}>
+            {t("spec.fields.type.confirm")}
+          </button>
+        </form>
+      )}
+      {draftType === "relation" && (
+        <form className="chip-field-type-confirm" onSubmit={handleConfirmTypeChange}>
+          <select
+            value={draftRelationTo}
+            onChange={(e) => setDraftRelationTo(e.target.value)}
+            disabled={typeBusy}
+            aria-label={t("spec.fields.relationTo")}
+          >
+            {allEntities.map((e) => (
+              <option key={e.name} value={e.name}>
+                {e.label ?? e.name}
+              </option>
+            ))}
+          </select>
+          <button type="submit" className="secondary small" disabled={typeBusy || !draftRelationTo}>
+            {t("spec.fields.type.confirm")}
+          </button>
+        </form>
+      )}
       <label className="chip-field-required" title={t("spec.fields.required")}>
         <input
           type="checkbox"
@@ -531,6 +635,11 @@ export function FieldChip({
       {requiredError && (
         <span className="error small" role="alert">
           {requiredError}
+        </span>
+      )}
+      {typeError && (
+        <span className="error small" role="alert">
+          {typeError}
         </span>
       )}
     </span>
