@@ -5367,7 +5367,7 @@ test("the exported EntityView's relation cells jump to the related record via th
   // Threaded through every layer that can render a relation cell: the
   // table, the Kanban board (via BoardCard), the per-entity View wrapper,
   // and App's own activeEntity.View call -- not just the leaf component.
-  assert.match(entityViewJsx, /function BoardCard\(\{ entity, boardField, record, relatedRecords, highlightQuery, hasMoveError, onMove, onEdit, onDuplicate, onDelete, onJumpToRecord \}\)/);
+  assert.match(entityViewJsx, /function BoardCard\(\{ orderedFields, boardField, record, relatedRecords, highlightQuery, hasMoveError, onMove, onEdit, onDuplicate, onDelete, onJumpToRecord \}\)/);
   assert.match(entityViewJsx, /<Cell\s+field=\{f\}\s+value=\{record\[f\.name\]\}\s+relationLabel=\{[^}]+\}\s+highlightQuery=\{highlightQuery\}\s+onJumpToRecord=\{onJumpToRecord\}/);
   assert.match(entityViewJsx, /export function EntityView\(\{ entity, highlightRecordId, onHighlightHandled, onJumpToRecord, onRecordCountChange \}\)/);
 
@@ -13030,6 +13030,103 @@ test("the exported EntityView's print-row sheet, print-list sheet, and board car
   } finally {
     globalThis.fetch = originalFetch;
     window.print = originalPrint;
+    cleanup();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
+ * Round 670: round 615 ported the orderedFields fix (honoring the user's
+ * drag-reordered column order) to Export CSV, Copy, and per-record Print
+ * in the exported app, and round 621 ported it to the Columns menu -- but
+ * BoardCard's own board-view cards were never included in either audit
+ * and still mapped over the entity's raw declared field order
+ * (entity.fields, not orderedFields), the live preview's exact same gap
+ * (closed the same round in EntityPanel.tsx).
+ */
+test("the exported EntityView's board cards list their fields in the user's drag-reordered column order, not the entity's original declared order", async () => {
+  const orderProject: Project = {
+    ...project,
+    spec: {
+      ...project.spec,
+      entities: [
+        {
+          name: "Order",
+          label: "Order",
+          fields: [
+            { name: "name", label: "Name", type: "text", required: true },
+            {
+              name: "status",
+              label: "Status",
+              type: "enum",
+              required: true,
+              enumValues: ["new", "won"],
+              enumLabels: { new: "New", won: "Won" },
+            },
+            { name: "subtotal", label: "Subtotal", type: "number", required: true },
+            { name: "shipping", label: "Shipping", type: "number", required: true },
+          ],
+        },
+      ],
+    },
+  };
+  const files = generateExportFiles(orderProject);
+  const dir = writeGeneratedWebComponent(files);
+  const originalFetch = globalThis.fetch;
+  const store = [{ id: 1, name: "Acme Corp", status: "new", subtotal: 800, shipping: 30 }];
+  globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
+    const method = init?.method ?? "GET";
+    if (method === "GET" && input === "/api/Order") {
+      return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    throw new Error(`unexpected request ${method} ${input}`);
+  }) as typeof fetch;
+
+  try {
+    await withRealLocalStorage(async () => {
+      localStorage.setItem("forge_column_order", JSON.stringify({ Order: ["shipping", "subtotal", "name", "status"] }));
+      const { EntityView } = await import(path.join(dir, "web", "src", "components", "EntityView.jsx"));
+      const orderEntity = orderProject.spec.entities[0];
+      const props = {
+        entity: orderEntity,
+        highlightRecordId: null,
+        onHighlightHandled: () => {},
+        onJumpToRecord: () => {},
+        onRecordCountChange: () => {},
+      };
+
+      const { container } = render(React.createElement(EntityView, props));
+      for (let i = 0; i < 40; i++) {
+        if (container.querySelectorAll("tbody tr").length === 1) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+      assert.deepEqual(
+        Array.from(container.querySelectorAll("thead th.resizable-col")).map((th) => th.querySelector(".sort-header")!.textContent),
+        ["Shipping", "Subtotal", "Name", "Status"],
+        "the persisted reorder must already be in effect on the on-screen table",
+      );
+
+      const boardToggle = container.querySelectorAll(".view-toggle-btn")[1] as HTMLButtonElement;
+      await act(async () => {
+        fireEvent.click(boardToggle);
+      });
+      for (let i = 0; i < 40; i++) {
+        if (container.querySelectorAll(".board-card").length === 1) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+      const boardLabels = Array.from(container.querySelectorAll(".board-card-field .muted.small")).map((s) => s.textContent);
+      assert.deepEqual(
+        boardLabels,
+        ["Shipping", "Subtotal", "Name"],
+        `the board card must list fields in the reordered sequence, not the entity's original declared order, got: ${JSON.stringify(boardLabels)}`,
+      );
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
     cleanup();
     rmSync(dir, { recursive: true, force: true });
   }

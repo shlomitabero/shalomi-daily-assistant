@@ -376,7 +376,7 @@ function RecordListPrintSheet({
 }
 
 function BoardCard({
-  entity,
+  orderedFields,
   boardField,
   record,
   lang,
@@ -391,7 +391,7 @@ function BoardCard({
   onDelete,
   onJumpToRecord,
 }: {
-  entity: Entity;
+  orderedFields: Field[];
   boardField: Field;
   record: EntityRecord;
   lang: Lang;
@@ -406,7 +406,11 @@ function BoardCard({
   onDelete: () => void;
   onJumpToRecord?: (targetEntity: string, recordId: number) => void;
 }) {
-  const otherFields = entity.fields.filter((f) => f.name !== boardField.name);
+  // orderedFields (not the entity's raw declared order) -- mirrors round
+  // 615's fix for Export CSV/Copy/per-record Print/Print list, so a board
+  // card's field order follows the user's drag-reordered columns the same
+  // way the on-screen table and every other whole-record render path do.
+  const otherFields = orderedFields.filter((f) => f.name !== boardField.name);
   // A record can land in the board's "(other)" column (see groupByField) when
   // its stored value is a legacy one no longer in boardField.enumValues --
   // migrate.ts only ever adds columns on refine, it never rewrites existing
@@ -2925,7 +2929,7 @@ export function EntityPanel({
                   {!collapsed && column.records.map((record) => (
                     <BoardCard
                       key={record.id as number}
-                      entity={entity}
+                      orderedFields={orderedFields}
                       boardField={boardField}
                       record={record}
                       lang={lang}

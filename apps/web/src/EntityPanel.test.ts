@@ -4123,6 +4123,62 @@ test("EntityPanel's Export CSV, Copy, and per-record Print all honor the user's 
 });
 
 /**
+ * Round 670: round 615 ported the "respect the user's drag-reordered
+ * columns" fix to Export CSV, Copy, and per-record Print -- but Board
+ * view's own BoardCard, a fifth whole-record render path in this same
+ * file, was never included in that audit and still mapped over the
+ * entity's raw declared field order (entity.fields) instead of
+ * orderedFields. After a real column reorder, the on-screen table shows
+ * Phone before Name, but a board card still showed Name before Phone.
+ */
+test("EntityPanel's board cards list their fields in the user's drag-reordered column order, not the entity's original declared order", async () => {
+  await withJsdom(async () => {
+    const dealWithPhone: Entity = {
+      name: "Deal",
+      label: "Deal",
+      fields: [
+        { name: "name", label: "Name", type: "text", required: true },
+        { name: "phone", label: "Phone", type: "text", required: false },
+        {
+          name: "status",
+          label: "Status",
+          type: "enum",
+          required: true,
+          enumValues: ["new", "won", "lost"],
+          enumLabels: { new: "New", won: "Won", lost: "Lost" },
+        },
+      ],
+    };
+    localStorage.setItem("forge.columnOrder", JSON.stringify({ "proj1:Deal": ["phone", "name", "status"] }));
+    const store: EntityRecord[] = [{ id: 1, name: "Globex", phone: "555-1234", status: "new" }];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = mockRecordsFetch(store) as typeof fetch;
+    try {
+      renderEntityPanel({ entity: dealWithPhone, allEntities: [dealWithPhone] });
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 1);
+      assert.deepEqual(
+        [...document.querySelectorAll("thead th.resizable-col")].map((th) => th.querySelector(".sort-header")!.textContent),
+        ["Phone", "Name", "Status"],
+        "the persisted reorder must already be in effect on the on-screen table",
+      );
+
+      const boardToggle = document.querySelectorAll(".view-toggle-btn")[1] as HTMLButtonElement;
+      fireEvent.click(boardToggle);
+      await waitForCondition(() => document.querySelectorAll(".board-card").length === 1);
+      const boardLabels = Array.from(document.querySelectorAll(".board-card-field .muted.small")).map((s) => s.textContent);
+      assert.deepEqual(
+        boardLabels,
+        ["Phone", "Name"],
+        "the board card must list Phone before Name, matching the reordered table, not the entity's original declared order",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+      localStorage.removeItem("forge.columnOrder");
+    }
+  });
+});
+
+/**
  * Round 621: round 615 made Export CSV, Copy, and per-record Print all
  * honor the user's drag-reordered column order (orderedFields), but the
  * "Columns" visibility menu's own checkbox list -- the one UI a person
