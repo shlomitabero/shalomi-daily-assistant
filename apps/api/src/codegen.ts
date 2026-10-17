@@ -1694,6 +1694,15 @@ function Cell({ field, value, relationLabel, highlightQuery, onJumpToRecord }) {
 // formatted string ("2026-03-15" -> "3/15/2026") -- but this matched
 // against the raw stored "YYYY-MM-DD" string, so typing back the exact
 // date shown on screen found nothing.
+//
+// A boolean field has a related but distinct gap: groupRecordsByField
+// (above) already shows a real "Yes"/"No" label for this field type's two
+// values (the same "small, fixed value space" category boolean shares with
+// enum), but this matched the raw stored JS boolean's String(value) form
+// ("true"/"false"), text that appears nowhere in the actual UI (the table
+// cell itself renders a checkmark/dash, not even that). Typing "Yes"/"No"
+// -- the exact words shown in the group-by header for the same field --
+// found nothing.
 export function matchesSearch(record, fields, query, relatedRecords) {
   const trimmed = query.trim().toLowerCase();
   if (!trimmed) return true;
@@ -1712,7 +1721,9 @@ export function matchesSearch(record, fields, query, relatedRecords) {
           ? relationDisplayLabel(f, value, relatedRecords)
           : f.type === "number" && typeof value === "number"
             ? \`\${value} \${value.toLocaleString()}\`
-            : String(value);
+            : f.type === "boolean"
+              ? value ? "Yes" : "No"
+              : String(value);
     return String(display).toLowerCase().includes(trimmed);
   });
 }

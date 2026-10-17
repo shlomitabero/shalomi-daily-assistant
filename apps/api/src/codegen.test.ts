@@ -8231,6 +8231,36 @@ test("the exported EntityView's matchesSearch matches a date field's locale-form
 });
 
 /**
+ * Round 671: the exported app's own matchesSearch had a related but
+ * distinct gap for boolean fields -- groupRecordsByField (the exported
+ * app's own group-by/Kanban-column renderer) already shows a real "Yes"/
+ * "No" label for this field's two values, but matchesSearch fell through
+ * to the raw stored JS boolean's String(value) form ("true"/"false"),
+ * text that appears nowhere in the actual UI. Typing "Yes"/"No" -- the
+ * exact words shown in the group-by header for the same field -- found
+ * nothing in an exported/standalone app either. Runs the real generated
+ * matchesSearch alone -- the boolean branch needs none of the relation/
+ * date helpers the tests above depend on.
+ */
+test("the exported EntityView's matchesSearch matches a boolean field's \"Yes\"/\"No\" display, not its raw \"true\"/\"false\" stored value", () => {
+  const entityViewJsx = generateExportFiles(project).find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+  const matchesSearchSrc = entityViewJsx.match(/export function matchesSearch\([\s\S]*?\n\}\n/)?.[0]?.replace("export ", "");
+  assert.ok(matchesSearchSrc, "expected to find matchesSearch in generated output");
+
+  const matchesSearch = new Function(`${matchesSearchSrc}\nreturn matchesSearch;`)() as (
+    record: unknown,
+    fields: unknown[],
+    query: string,
+  ) => boolean;
+
+  const fields = [{ name: "paid", type: "boolean" }];
+  assert.equal(matchesSearch({ paid: true }, fields, "Yes"), true);
+  assert.equal(matchesSearch({ paid: false }, fields, "No"), true);
+  assert.equal(matchesSearch({ paid: true }, fields, "No"), false);
+  assert.equal(matchesSearch({ paid: true }, fields, "true"), false, "the raw stored value is never shown on screen, so it must not match");
+});
+
+/**
  * New in this round: the exported app's own sortRecordsMulti had the same
  * gap as matchesSearch above -- a relation column's cell shows the related
  * record's resolved label, but clicking that header sorted by the raw

@@ -3,6 +3,16 @@ import type { Lang } from "./i18n/language.js";
 
 export const LOCALE: Record<Lang, string> = { he: "he-IL", en: "en-US" };
 
+// Mirrors the literal "entity.groupBy.yes"/"entity.groupBy.no" translations
+// (i18n/language.ts) -- matchesSearch below has no access to the live t()
+// translator (it's a plain function, not a component), the same constraint
+// BOOLEAN_TRUE_VALUES/BOOLEAN_FALSE_VALUES further down this file already
+// work around with their own hardcoded he/en literals.
+const BOOLEAN_DISPLAY: Record<Lang, { true: string; false: string }> = {
+  he: { true: "כן", false: "לא" },
+  en: { true: "Yes", false: "No" },
+};
+
 const POSITIVE_WORDS = [
   "won",
   "completed",
@@ -232,6 +242,16 @@ export function sumNumericFields(records: EntityRecord[], fields: Field[]): Reco
  * locale-formatted string ("2026-03-15" -> "3/15/2026" in en, "15.3.2026"
  * in he) -- but this matched against the raw stored "YYYY-MM-DD" string,
  * so typing back the exact date shown on screen found nothing.
+ *
+ * A `boolean` field has a related but distinct gap: isGroupableField/
+ * findFilterableFields already treat boolean the same as enum for every
+ * other "small, fixed value space" UI (the group-by/Kanban column headers
+ * and the per-field filter dropdown both show the real localized "Yes"/"No"
+ * -- "כן"/"לא" in Hebrew), but this matched the raw stored JS boolean's
+ * `String(value)` form ("true"/"false"), text that appears nowhere in the
+ * actual UI (the table cell itself renders a checkmark/dash, not even
+ * that). Typing "Yes"/"No" (or "כן"/"לא") -- the exact words shown in the
+ * adjacent filter dropdown for the same field -- found nothing.
  */
 export function matchesSearch(
   record: EntityRecord,
@@ -255,7 +275,9 @@ export function matchesSearch(
             ? `${value} ${formatNumberValue(value, lang)}`
             : field.type === "date"
               ? `${value} ${formatDateValue(String(value), lang)}`
-              : String(value);
+              : field.type === "boolean"
+                ? BOOLEAN_DISPLAY[lang][value ? "true" : "false"]
+                : String(value);
     return display.toLowerCase().includes(trimmed);
   });
 }

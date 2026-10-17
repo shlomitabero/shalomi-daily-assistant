@@ -268,6 +268,38 @@ test("matchesSearch's date-field matching falls back to the raw stored value for
 });
 
 /**
+ * Round 671: a boolean field had a related but distinct gap to the number/
+ * date fields fixed above (round 271/475) -- isGroupableField/
+ * findFilterableFields already treat boolean the same as enum for every
+ * other "small, fixed value space" UI (the group-by header and per-field
+ * filter dropdown both show the real localized "Yes"/"No"), but this
+ * matched the raw stored JS boolean's String(value) form ("true"/"false"),
+ * text that appears nowhere in the actual UI -- the table cell itself
+ * renders a checkmark/dash, not even that. Typing "Yes"/"No" (or "כן"/"לא"
+ * in Hebrew) -- the exact words shown in the adjacent filter dropdown for
+ * the same field -- found nothing.
+ */
+test("matchesSearch matches a boolean field's localized \"Yes\"/\"No\" display, not its raw \"true\"/\"false\" stored value", () => {
+  const fields: Field[] = [{ name: "paid", type: "boolean", required: false }];
+  assert.ok(matchesSearch({ paid: true }, fields, "Yes", undefined, undefined, "en"));
+  assert.ok(matchesSearch({ paid: false }, fields, "No", undefined, undefined, "en"));
+  assert.ok(!matchesSearch({ paid: true }, fields, "No", undefined, undefined, "en"));
+  assert.ok(!matchesSearch({ paid: true }, fields, "true", undefined, undefined, "en"), "the raw stored value must not match -- it's never shown anywhere in the UI");
+});
+
+test("matchesSearch matches a boolean field's Hebrew \"כן\"/\"לא\" display when lang is \"he\"", () => {
+  const fields: Field[] = [{ name: "paid", type: "boolean", required: false }];
+  assert.ok(matchesSearch({ paid: true }, fields, "כן", undefined, undefined, "he"));
+  assert.ok(matchesSearch({ paid: false }, fields, "לא", undefined, undefined, "he"));
+  assert.ok(!matchesSearch({ paid: true }, fields, "לא", undefined, undefined, "he"));
+});
+
+test("matchesSearch's boolean-field matching defaults to \"en\" (\"Yes\"/\"No\") when no lang is given, instead of throwing", () => {
+  const fields: Field[] = [{ name: "paid", type: "boolean", required: false }];
+  assert.ok(matchesSearch({ paid: true }, fields, "Yes"));
+});
+
+/**
  * New in this round: matchesSearch already tells the table a record
  * matched, but nothing showed *where* within a cell's own text -- a real
  * everyday annoyance the moment a search term is short/common and you
