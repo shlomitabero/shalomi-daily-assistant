@@ -5277,7 +5277,7 @@ const SHORTCUTS = [
   { keys: ["Enter"], description: "Edit the focused table row" },
   { keys: ["x"], description: "Select/deselect the focused row" },
   { keys: ["n"], description: "Jump to the add-record form" },
-  { keys: ["Delete"], description: "Delete the focused table row" },
+  { keys: ["Delete", "Backspace"], description: "Delete the focused table row" },
   { keys: ["d"], description: "Duplicate the focused table row" },
   { keys: ["Ctrl", "Enter"], description: "Submit the form (even from a multi-line text field)" },
   { keys: ["Esc"], description: "Clear the table's multi-row selection" },

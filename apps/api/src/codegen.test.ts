@@ -9241,6 +9241,10 @@ test("the exported ShortcutsPanel renders every one of the live preview's own 13
       Array.from(container.querySelectorAll(".shortcuts-keys kbd")).some((k) => k.textContent === "j"),
       "expected the j/k row-navigation keys to actually render as <kbd> elements",
     );
+    assert.ok(
+      Array.from(container.querySelectorAll(".shortcuts-keys kbd")).some((k) => k.textContent === "Backspace"),
+      "expected Backspace to be listed alongside Delete -- the generated EntityView.jsx's own keydown handler treats them as equivalent for deleting the focused row, the same dual-key convention the j/k row already follows",
+    );
   } finally {
     cleanup();
     rmSync(dir, { recursive: true, force: true });

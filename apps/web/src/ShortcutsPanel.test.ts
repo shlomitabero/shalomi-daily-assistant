@@ -77,6 +77,10 @@ test("renders a real dialog listing every actual shortcut, not a placeholder", a
     assert.ok(kbds.includes("x"), "expected x (toggle select) to be listed");
     assert.ok(kbds.includes("n"), "expected n (new record) to be listed");
     assert.ok(kbds.includes("Delete"), "expected Delete (delete row) to be listed");
+    assert.ok(
+      kbds.includes("Backspace"),
+      "expected Backspace to be listed too -- EntityPanel.tsx's own keydown handler treats it as equivalent to Delete for deleting the focused row (round 349), the same dual-key convention this list's own j/k rows already follow",
+    );
     assert.ok(kbds.includes("d"), "expected d (duplicate row) to be listed");
     assert.equal(
       kbds.filter((k) => k === "Ctrl").length,
