@@ -1,6 +1,7 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { createApp } from "./app.js";
+import { startScheduledAutomationsLoop } from "./automations.js";
 import { createStore } from "./store.js";
 import { WhatsAppWebManager } from "./whatsappWeb.js";
 
@@ -18,6 +19,9 @@ const whatsappSessionsDir = path.join(path.dirname(dbPath), "whatsapp-sessions")
 const whatsapp = new WhatsAppWebManager({ db, sessionsRootDir: whatsappSessionsDir });
 const uploadsDir = path.join(path.dirname(dbPath), "uploads");
 const app = createApp(db, undefined, webDistDir, whatsapp, undefined, uploadsDir);
+// Deliberately started here, not inside createApp() -- see
+// startScheduledAutomationsLoop's own comment for why.
+startScheduledAutomationsLoop(db, whatsapp);
 
 app.listen(port, () => {
   // eslint-disable-next-line no-console

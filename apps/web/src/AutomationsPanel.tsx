@@ -51,6 +51,23 @@ export function AutomationsPanel({
   const [toNumber, setToNumber] = useState("");
   const [messageTemplate, setMessageTemplate] = useState("");
   const [createBusy, setCreateBusy] = useState(false);
+  const [scheduleTimeUtc, setScheduleTimeUtc] = useState("09:00");
+  // All seven days selected is "every day" -- sent as undefined (the
+  // server/storage convention for "no restriction", see automations.ts's
+  // own scheduleDaysOfWeek doc comment) rather than a literal "0,1,2,3,4,5,6"
+  // string, so the common case doesn't bloat every stored rule with a
+  // redundant value meaning the same thing as leaving it unset.
+  const [scheduleDays, setScheduleDays] = useState<number[]>([0, 1, 2, 3, 4, 5, 6]);
+
+  // A schedule rule has no triggering record at all, so there's nothing a
+  // toMode:"field" destination could ever read from (the server rejects
+  // this combination outright -- see CreateAutomationRuleSchema's own
+  // refine). Forced the moment "schedule" is chosen, not just validated at
+  // submit time, so the toMode selector doesn't dishonestly keep showing
+  // "field" as a live option underneath.
+  useEffect(() => {
+    if (trigger === "schedule") setToMode("static");
+  }, [trigger]);
 
   const selectedEntity: Entity | undefined = useMemo(
     () => entities.find((e) => e.name === entityName),
@@ -117,15 +134,19 @@ export function AutomationsPanel({
     e.preventDefault();
     if (!selectedEntity || !messageTemplate.trim()) return;
     if (trigger === "field_equals" && (!fieldName || !fieldValue.trim())) return;
+    if (trigger === "schedule" && (!scheduleTimeUtc || scheduleDays.length === 0)) return;
     if (toMode === "field" && !toField) return;
     if (toMode === "static" && !toNumber.trim()) return;
     setCreateBusy(true);
     setError(null);
     try {
+      const everyDay = scheduleDays.length === 7;
       const { rule } = await createAutomationRule(projectId, selectedEntity.name, {
         trigger,
         fieldName: trigger === "field_equals" ? fieldName : undefined,
         fieldValue: trigger === "field_equals" ? fieldValue.trim() : undefined,
+        scheduleTimeUtc: trigger === "schedule" ? scheduleTimeUtc : undefined,
+        scheduleDaysOfWeek: trigger === "schedule" && !everyDay ? [...scheduleDays].sort().join(",") : undefined,
         actionType: "send_whatsapp",
         toMode,
         toField: toMode === "field" ? toField : undefined,
@@ -204,14 +225,32 @@ export function AutomationsPanel({
     return rule.fieldValue;
   }
 
+  // The short, locale-aware day-of-week label for a schedule rule's own
+  // description -- mirrors Date.prototype.getUTCDay()'s 0=Sunday numbering,
+  // the same one scheduleDaysOfWeek itself is stored/compared in
+  // (apps/api/src/automations.ts's isScheduledRuleDue), via each day's own
+  // translated name formatted through the real Intl API rather than a
+  // hand-maintained array of seven more translation keys.
+  function scheduleDayLabel(day: number): string {
+    const reference = new Date(Date.UTC(2024, 0, 7 + day)); // a known Sunday-anchored week
+    return new Intl.DateTimeFormat(LOCALE[lang], { weekday: "short", timeZone: "UTC" }).format(reference);
+  }
+
+  function describeSchedule(rule: AutomationRuleView): string {
+    const days = rule.scheduleDaysOfWeek
+      ? rule.scheduleDaysOfWeek.split(",").map(Number).sort().map(scheduleDayLabel).join(", ")
+      : t("automations.schedule.everyDay");
+    return t("automations.rule.when.schedule", { time: rule.scheduleTimeUtc ?? "", days });
+  }
+
   function describeRule(rule: AutomationRuleView): string {
-    return rule.trigger === "record_created"
-      ? t("automations.rule.when.created", { entity: entityLabel(rule) })
-      : t("automations.rule.when.fieldEquals", {
-          field: fieldLabel(rule, rule.fieldName),
-          entity: entityLabel(rule),
-          value: fieldValueLabel(rule),
-        });
+    if (rule.trigger === "record_created") return t("automations.rule.when.created", { entity: entityLabel(rule) });
+    if (rule.trigger === "schedule") return describeSchedule(rule);
+    return t("automations.rule.when.fieldEquals", {
+      field: fieldLabel(rule, rule.fieldName),
+      entity: entityLabel(rule),
+      value: fieldValueLabel(rule),
+    });
   }
 
   function describeDestination(rule: AutomationRuleView): string {
@@ -309,8 +348,34 @@ export function AutomationsPanel({
             <select value={trigger} onChange={(e) => setTrigger(e.target.value as AutomationTrigger)}>
               <option value="record_created">{t("automations.trigger.recordCreated")}</option>
               <option value="field_equals">{t("automations.trigger.fieldEquals")}</option>
+              <option value="schedule">{t("automations.trigger.schedule")}</option>
             </select>
           </label>
+
+          {trigger === "schedule" && (
+            <>
+              <label>
+                {t("automations.schedule.time.label")}
+                <input type="time" value={scheduleTimeUtc} onChange={(e) => setScheduleTimeUtc(e.target.value)} required />
+              </label>
+              <p className="muted small">{t("automations.schedule.time.hint")}</p>
+              <fieldset className="automations-schedule-days">
+                <legend>{t("automations.schedule.days.label")}</legend>
+                {[0, 1, 2, 3, 4, 5, 6].map((day) => (
+                  <label key={day} className="automations-schedule-day">
+                    <input
+                      type="checkbox"
+                      checked={scheduleDays.includes(day)}
+                      onChange={() =>
+                        setScheduleDays((prev) => (prev.includes(day) ? prev.filter((d) => d !== day) : [...prev, day]))
+                      }
+                    />
+                    {scheduleDayLabel(day)}
+                  </label>
+                ))}
+              </fieldset>
+            </>
+          )}
 
           {trigger === "field_equals" && selectedEntity && (
             <>
@@ -349,13 +414,15 @@ export function AutomationsPanel({
             </>
           )}
 
-          <label>
-            {t("automations.toMode.label")}
-            <select value={toMode} onChange={(e) => setToMode(e.target.value as AutomationToMode)}>
-              <option value="field">{t("automations.toMode.field")}</option>
-              <option value="static">{t("automations.toMode.static")}</option>
-            </select>
-          </label>
+          {trigger !== "schedule" && (
+            <label>
+              {t("automations.toMode.label")}
+              <select value={toMode} onChange={(e) => setToMode(e.target.value as AutomationToMode)}>
+                <option value="field">{t("automations.toMode.field")}</option>
+                <option value="static">{t("automations.toMode.static")}</option>
+              </select>
+            </label>
+          )}
 
           {toMode === "field" && selectedEntity && phoneFields.length > 0 ? (
             <select value={toField} onChange={(e) => setToField(e.target.value)} aria-label={t("automations.toField.placeholder")}>

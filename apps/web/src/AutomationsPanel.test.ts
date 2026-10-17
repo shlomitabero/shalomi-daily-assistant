@@ -760,3 +760,76 @@ test("AutomationsPanel's field_equals Value control renders a <select> of the fi
     }
   });
 });
+
+/**
+ * New: the "schedule" trigger -- a recurring, time-of-day rule with no
+ * triggering record at all, unlike record_created/field_equals. Choosing
+ * it must reveal a time input and a day-of-week picker, force toMode to
+ * "static" (there's no record to read a toMode:"field" destination
+ * from), and submit scheduleTimeUtc/scheduleDaysOfWeek alongside the rest
+ * of the rule exactly as typed/toggled.
+ */
+test("AutomationsPanel's 'schedule' trigger shows a time + day-of-week picker, forces toMode to static, and submits the exact schedule chosen", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    let createBody: Record<string, unknown> | undefined;
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj5/automations") {
+        return new Response(JSON.stringify({ rules: [] }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      if (method === "POST" && input === "/api/projects/proj5/entities/Ticket/automations") {
+        createBody = JSON.parse(init!.body as string);
+        return new Response(JSON.stringify({ rule: { id: "rule10", ...createBody } }), {
+          status: 201,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+
+    try {
+      renderPanelWith(triggerFieldProject);
+      await waitForCondition(() => document.body.textContent?.includes("No automations yet") ?? false);
+
+      const triggerSelect = Array.from(document.querySelectorAll("select")).find((s) =>
+        Array.from(s.options).some((o) => o.value === "schedule"),
+      ) as HTMLSelectElement;
+      fireEvent.change(triggerSelect, { target: { value: "schedule" } });
+
+      const timeInput = document.querySelector('.automations-create-form input[type="time"]') as HTMLInputElement;
+      assert.ok(timeInput, "choosing the schedule trigger must reveal a time input");
+      fireEvent.change(timeInput, { target: { value: "17:45" } });
+
+      const dayCheckboxes = Array.from(document.querySelectorAll(".automations-schedule-day input")) as HTMLInputElement[];
+      assert.equal(dayCheckboxes.length, 7, "exactly seven day-of-week checkboxes");
+      assert.ok(dayCheckboxes.every((cb) => cb.checked), "every day must be checked by default");
+      fireEvent.click(dayCheckboxes[0]!); // uncheck Sunday (day 0)
+
+      // toMode is forced to "static" the moment "schedule" is chosen, so
+      // the toMode selector itself (the <select> offering "field"/"static")
+      // must no longer render at all -- only the static phone-number input.
+      const toModeSelectStillShown = Array.from(document.querySelectorAll("select")).some(
+        (s) => Array.from(s.options).map((o) => o.value).sort().join(",") === "field,static",
+      );
+      assert.equal(toModeSelectStillShown, false, "the toMode selector must be hidden once trigger is 'schedule'");
+      const toNumberInput = document.querySelector('input[placeholder="Phone number with country code (e.g. 972501234567)"]') as HTMLInputElement;
+      assert.ok(toNumberInput, "the static phone-number input must render since toMode is forced to static");
+      fireEvent.change(toNumberInput, { target: { value: "972501234567" } });
+
+      const messageField = document.querySelector(".automations-create-form textarea") as HTMLTextAreaElement;
+      fireEvent.change(messageField, { target: { value: "Weekly reminder" } });
+      fireEvent.submit(document.querySelector(".automations-create-form")!);
+
+      await waitForCondition(() => createBody !== undefined);
+      assert.equal(createBody?.trigger, "schedule");
+      assert.equal(createBody?.scheduleTimeUtc, "17:45");
+      assert.equal(createBody?.scheduleDaysOfWeek, "1,2,3,4,5,6", "Sunday (0) was unchecked, so it must be excluded from the submitted day list");
+      assert.equal(createBody?.toMode, "static");
+      assert.equal(createBody?.toNumber, "972501234567");
+      assert.equal(createBody?.fieldName, undefined, "a schedule rule has no triggering field at all");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});

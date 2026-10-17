@@ -113,6 +113,7 @@ export {
   getAutomationRule,
   listAutomationRules,
   listEnabledAutomationRulesForEntity,
+  listEnabledScheduledRules,
   updateAutomationRule,
   recordAutomationRun,
   deleteAutomationRule,

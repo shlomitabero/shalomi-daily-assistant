@@ -4,6 +4,7 @@ import {
   getRecord,
   insertWhatsAppMessage,
   listEnabledAutomationRulesForEntity,
+  listEnabledScheduledRules,
   recordAutomationRun,
   type AutomationRule,
   type ForgeDatabase,
@@ -214,4 +215,131 @@ async function fireRule(
     status: result.ok ? "sent" : "failed",
     error: result.ok ? null : (result.error ?? "Send failed"),
   });
+}
+
+/**
+ * Whether a "schedule" rule is due to fire at `now`. Checks "has its
+ * scheduled time of day already passed today" rather than "does the
+ * current time exactly equal the scheduled time" -- the periodic checker
+ * below only ticks once a minute (and could occasionally run a little
+ * late under load, or miss a tick entirely across a process restart), so
+ * an exact-match comparison could silently skip an entire day. Reusing
+ * `lastTriggeredAt` (already recorded by recordAutomationRun on every
+ * fire, success or failure) to track "already ran today" means this needs
+ * no extra column for that -- once it's fired today, it stays not-due
+ * until the UTC date rolls over, however many ticks happen in between.
+ */
+export function isScheduledRuleDue(rule: AutomationRule, now: Date): boolean {
+  if (rule.trigger !== "schedule" || !rule.scheduleTimeUtc) return false;
+  const todayUtc = now.toISOString().slice(0, 10);
+  if (rule.lastTriggeredAt && rule.lastTriggeredAt.slice(0, 10) === todayUtc) return false;
+  if (rule.scheduleDaysOfWeek) {
+    const days = rule.scheduleDaysOfWeek.split(",").map(Number);
+    if (!days.includes(now.getUTCDay())) return false;
+  }
+  const currentHHMM = now.toISOString().slice(11, 16);
+  return currentHHMM >= rule.scheduleTimeUtc;
+}
+
+/**
+ * The schedule-trigger sibling of fireRule above -- deliberately a
+ * separate, simpler function rather than fireRule with record/entity
+ * arguments forced to null: a schedule rule has no triggering record at
+ * all, so there's nothing to resolve a toMode:"field" destination from
+ * (schema validation requires toMode:"static" for a schedule rule, see
+ * routes/projects.ts's CreateAutomationRuleSchema) and no {{field}}
+ * placeholder could ever resolve to anything, so messageTemplate is sent
+ * verbatim rather than run through interpolateTemplate. Everything past
+ * that point -- the WhatsApp send, the message-log entry, and recording
+ * the outcome on the rule -- mirrors fireRule exactly.
+ */
+export async function fireScheduledRule(
+  db: ForgeDatabase,
+  whatsapp: WhatsAppWebManager,
+  project: Project,
+  rule: AutomationRule,
+): Promise<void> {
+  const to = rule.toNumber;
+  if (!to || !to.trim()) {
+    recordAutomationRun(db, project.id, rule.id, {
+      status: "failed",
+      error: "This rule has no destination phone number configured",
+    });
+    return;
+  }
+  const status = whatsapp.getStatus(project.id);
+  if (status.status !== "connected") {
+    recordAutomationRun(db, project.id, rule.id, { status: "failed", error: "WhatsApp is not connected" });
+    return;
+  }
+  const result = await whatsapp.sendMessage(project.id, to, rule.messageTemplate);
+  // Same re-check-after-await hazard fireRule's own identical line documents.
+  if (!getProject(db, project.id)) return;
+  const match = project.status === "built" ? findMatchingRecord(db, project, to) : null;
+  insertWhatsAppMessage(db, {
+    projectId: project.id,
+    direction: "out",
+    fromNumber: status.phoneNumber ?? "",
+    toNumber: to,
+    body: rule.messageTemplate,
+    matchedEntityName: match?.entityName ?? null,
+    matchedRecordId: match?.recordId ?? null,
+    matchedLabel: match?.label ?? null,
+    status: result.ok ? "sent" : "failed",
+  });
+  recordAutomationRun(db, project.id, rule.id, {
+    status: result.ok ? "sent" : "failed",
+    error: result.ok ? null : (result.error ?? "Send failed"),
+  });
+}
+
+/**
+ * One tick of the periodic scheduler: every enabled schedule rule across
+ * every project, fires whichever ones isScheduledRuleDue says are due
+ * right now. `now` defaults to the real current time but is injectable
+ * so tests can check "is this rule due" behavior deterministically
+ * instead of depending on when the test happens to run (see this file's
+ * own test for the exact lesson this avoids -- fake timers plus
+ * waitForCondition is a documented hazard elsewhere in this codebase).
+ * Each rule's own failure is caught and recorded, never thrown, the same
+ * contract runAutomationsForRecordChange already has -- this is called
+ * from a bare setInterval tick (startScheduledAutomationsLoop below)
+ * with nothing to catch a rejection.
+ */
+export async function runScheduledAutomationsCheck(
+  db: ForgeDatabase,
+  whatsapp: WhatsAppWebManager,
+  now: Date = new Date(),
+): Promise<void> {
+  const rules = listEnabledScheduledRules(db);
+  for (const rule of rules) {
+    if (!isScheduledRuleDue(rule, now)) continue;
+    const project = getProject(db, rule.projectId);
+    if (!project) continue;
+    try {
+      await fireScheduledRule(db, whatsapp, project, rule);
+    } catch (err) {
+      console.error(`Scheduled automation rule ${rule.id} on project ${project.id} failed unexpectedly`, err);
+    }
+  }
+}
+
+/**
+ * Starts the real periodic check -- called once from server.ts's own
+ * top-level startup script, deliberately NEVER from createApp() itself
+ * (app.ts), since app.test.ts's withServer helper calls createApp() fresh
+ * per test with no corresponding place to stop a background interval;
+ * starting it there would leak a live setInterval per test across
+ * hundreds of tests. Returns a stop() so a caller that DOES want to tear
+ * this down (a future server shutdown handler) can.
+ */
+export function startScheduledAutomationsLoop(
+  db: ForgeDatabase,
+  whatsapp: WhatsAppWebManager,
+  intervalMs = 60_000,
+): () => void {
+  const timer = setInterval(() => {
+    void runScheduledAutomationsCheck(db, whatsapp);
+  }, intervalMs);
+  return () => clearInterval(timer);
 }

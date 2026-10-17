@@ -7606,3 +7606,69 @@ test("uploading to a project the authenticated user has no access to is rejected
     assert.equal(res.status, 404);
   });
 });
+
+/**
+ * The real HTTP route's own validation for the new "schedule" automation
+ * trigger -- a schedule rule has no triggering record, so it needs a
+ * scheduleTimeUtc and can't use toMode:"field" (there's nothing to read a
+ * destination field from). Exercises the real CreateAutomationRuleSchema/
+ * findAutomationRuleInvariantViolation validation through the real route,
+ * not just the pure-function unit tests in automations.test.ts.
+ */
+test("creating a 'schedule' automation rule requires scheduleTimeUtc and toMode:static, and a valid one stores scheduleDaysOfWeek", async () => {
+  await withServer(async (baseUrl, db) => {
+    const email = `schedule-automation-${randomUUID()}@example.com`;
+    const token = await signup(baseUrl, email);
+    const owner = findUserByEmail(db, email)!;
+
+    const spec: ProductSpec = {
+      summary: "test",
+      personas: [],
+      roles: ["Admin"],
+      entities: [{ name: "Reminder", fields: [{ name: "title", type: "text", required: true }] }],
+      screens: [],
+      assumptions: [],
+      openQuestions: [],
+    };
+    const projectId = randomUUID();
+    insertProject(db, { id: projectId, ownerId: owner.id, name: "Reminders", description: "test", spec });
+    diffAndMigrate(db, projectId, undefined, spec);
+    markProjectBuilt(db, projectId);
+
+    const baseBody = { trigger: "schedule", actionType: "send_whatsapp", messageTemplate: "Good morning!" };
+
+    const missingTime = await fetch(`${baseUrl}/api/projects/${projectId}/entities/Reminder/automations`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ ...baseBody, toMode: "static", toNumber: "972500000000" }),
+    });
+    assert.equal(missingTime.status, 400);
+    assert.equal(((await missingTime.json()) as { code?: string }).code, "VALIDATION_ERROR");
+
+    const fieldDestination = await fetch(`${baseUrl}/api/projects/${projectId}/entities/Reminder/automations`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ ...baseBody, scheduleTimeUtc: "09:00", toMode: "field", toField: "title" }),
+    });
+    assert.equal(fieldDestination.status, 400, "a schedule rule has no record to read a toMode:field destination from");
+
+    const goodRes = await fetch(`${baseUrl}/api/projects/${projectId}/entities/Reminder/automations`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ ...baseBody, scheduleTimeUtc: "09:00", scheduleDaysOfWeek: "1,3,5", toMode: "static", toNumber: "972500000000" }),
+    });
+    assert.equal(goodRes.status, 201);
+    const { rule } = (await goodRes.json()) as { rule: { id: string; scheduleTimeUtc: string; scheduleDaysOfWeek: string } };
+    assert.equal(rule.scheduleTimeUtc, "09:00");
+    assert.equal(rule.scheduleDaysOfWeek, "1,3,5");
+
+    // A PATCH that would flip an existing schedule rule's toMode to "field"
+    // must be rejected the same way creation is.
+    const patchRes = await fetch(`${baseUrl}/api/projects/${projectId}/automations/${rule.id}`, {
+      method: "PATCH",
+      headers: authHeaders(token),
+      body: JSON.stringify({ toMode: "field", toField: "title" }),
+    });
+    assert.equal(patchRes.status, 400);
+  });
+});

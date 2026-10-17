@@ -317,6 +317,21 @@ h2 {
   gap: 6px;
 }
 
+.automations-schedule-days {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px 12px;
+}
+
+.automations-schedule-day {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
 .my-projects-select-all {
   display: inline-flex;
   align-items: center;

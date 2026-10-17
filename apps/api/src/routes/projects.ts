@@ -95,11 +95,19 @@ const WhatsAppSendSchema = z.object({
  * (rather than a bare string literal baked into the handler) so adding a
  * second action type later is an additive schema change, not a rewrite.
  */
+const SCHEDULE_TIME_UTC_PATTERN = /^([01]\d|2[0-3]):[0-5]\d$/;
+const SCHEDULE_DAYS_OF_WEEK_PATTERN = /^[0-6](,[0-6]){0,6}$/;
+
 const CreateAutomationRuleSchema = z
   .object({
-    trigger: z.enum(["record_created", "field_equals"]),
+    trigger: z.enum(["record_created", "field_equals", "schedule"]),
     fieldName: z.string().min(1).optional(),
     fieldValue: z.string().min(1).optional(),
+    scheduleTimeUtc: z.string().regex(SCHEDULE_TIME_UTC_PATTERN, "scheduleTimeUtc must be \"HH:MM\" in 24-hour UTC").optional(),
+    scheduleDaysOfWeek: z
+      .string()
+      .regex(SCHEDULE_DAYS_OF_WEEK_PATTERN, "scheduleDaysOfWeek must be comma-separated day numbers 0-6")
+      .optional(),
     actionType: z.literal("send_whatsapp"),
     toMode: z.enum(["static", "field"]),
     toNumber: z.string().min(1).optional(),
@@ -109,6 +117,14 @@ const CreateAutomationRuleSchema = z
   .refine((data) => data.trigger !== "field_equals" || (!!data.fieldName && !!data.fieldValue), {
     message: "fieldName and fieldValue are required when trigger is field_equals",
     path: ["fieldName"],
+  })
+  .refine((data) => data.trigger !== "schedule" || !!data.scheduleTimeUtc, {
+    message: "scheduleTimeUtc is required when trigger is schedule",
+    path: ["scheduleTimeUtc"],
+  })
+  .refine((data) => data.trigger !== "schedule" || data.toMode === "static", {
+    message: "a schedule rule has no triggering record to read a destination field from, so toMode must be static",
+    path: ["toMode"],
   })
   .refine((data) => data.toMode !== "static" || !!data.toNumber, {
     message: "toNumber is required when toMode is static",
@@ -120,9 +136,15 @@ const CreateAutomationRuleSchema = z
   });
 
 const UpdateAutomationRuleSchema = z.object({
-  trigger: z.enum(["record_created", "field_equals"]).optional(),
+  trigger: z.enum(["record_created", "field_equals", "schedule"]).optional(),
   fieldName: z.string().min(1).nullable().optional(),
   fieldValue: z.string().min(1).nullable().optional(),
+  scheduleTimeUtc: z.string().regex(SCHEDULE_TIME_UTC_PATTERN, "scheduleTimeUtc must be \"HH:MM\" in 24-hour UTC").nullable().optional(),
+  scheduleDaysOfWeek: z
+    .string()
+    .regex(SCHEDULE_DAYS_OF_WEEK_PATTERN, "scheduleDaysOfWeek must be comma-separated day numbers 0-6")
+    .nullable()
+    .optional(),
   toMode: z.enum(["static", "field"]).optional(),
   toNumber: z.string().min(1).nullable().optional(),
   toField: z.string().min(1).nullable().optional(),
@@ -148,12 +170,19 @@ export function findAutomationRuleInvariantViolation(rule: {
   trigger: AutomationTrigger;
   fieldName: string | null;
   fieldValue: string | null;
+  scheduleTimeUtc: string | null;
   toMode: AutomationToMode;
   toNumber: string | null;
   toField: string | null;
 }): string | null {
   if (rule.trigger === "field_equals" && !(rule.fieldName && rule.fieldValue)) {
     return "fieldName and fieldValue are required when trigger is field_equals";
+  }
+  if (rule.trigger === "schedule" && !rule.scheduleTimeUtc) {
+    return "scheduleTimeUtc is required when trigger is schedule";
+  }
+  if (rule.trigger === "schedule" && rule.toMode !== "static") {
+    return "a schedule rule has no triggering record to read a destination field from, so toMode must be static";
   }
   if (rule.toMode === "static" && !rule.toNumber) {
     return "toNumber is required when toMode is static";
@@ -2249,6 +2278,8 @@ export function createProjectsRouter(
             trigger: data.trigger,
             fieldName: data.fieldName ?? null,
             fieldValue: data.fieldValue ?? null,
+            scheduleTimeUtc: data.scheduleTimeUtc ?? null,
+            scheduleDaysOfWeek: data.scheduleDaysOfWeek ?? null,
             actionType: data.actionType,
             toMode: data.toMode,
             toNumber: data.toNumber ?? null,

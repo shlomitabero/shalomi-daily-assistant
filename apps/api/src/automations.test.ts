@@ -16,7 +16,7 @@ import {
   openDatabase,
   updateAutomationRule,
 } from "@forge/db";
-import { interpolateTemplate, matchesTrigger, runAutomationsForRecordChange } from "./automations.js";
+import { fireScheduledRule, interpolateTemplate, isScheduledRuleDue, matchesTrigger, runAutomationsForRecordChange, runScheduledAutomationsCheck } from "./automations.js";
 import type { WhatsAppConnectionState, WhatsAppSendResult, WhatsAppWebManager } from "./whatsappWeb.js";
 
 const orderEntity: Entity = {
@@ -450,4 +450,135 @@ test("runAutomationsForRecordChange interpolates a relation field's display labe
     "Congrats Dana Levi, your deal is Won!",
     "the message must carry the related customer's own name, not the bare numeric id it's actually stored as",
   );
+});
+
+function scheduleRuleBase(overrides: Partial<Parameters<typeof insertAutomationRule>[1]> = {}) {
+  return {
+    projectId: "proj1",
+    entityName: "Order",
+    trigger: "schedule" as const,
+    fieldName: null,
+    fieldValue: null,
+    scheduleTimeUtc: "09:00",
+    scheduleDaysOfWeek: null,
+    actionType: "send_whatsapp" as const,
+    toMode: "static" as const,
+    toNumber: "972501234567",
+    messageTemplate: "Good morning! Here's your daily reminder.",
+    ...overrides,
+  };
+}
+
+test("isScheduledRuleDue fires once the scheduled time has passed today and it hasn't already fired today", () => {
+  const rule = { ...scheduleRuleBase(), id: "r1", createdAt: "", updatedAt: "", lastTriggeredAt: null, lastStatus: null, lastError: null, enabled: true } as unknown as Parameters<typeof isScheduledRuleDue>[0];
+  assert.equal(isScheduledRuleDue(rule, new Date("2026-03-15T08:59:00.000Z")), false, "not due yet -- one minute before the scheduled time");
+  assert.equal(isScheduledRuleDue(rule, new Date("2026-03-15T09:00:00.000Z")), true, "due exactly at the scheduled time");
+  assert.equal(isScheduledRuleDue(rule, new Date("2026-03-15T14:30:00.000Z")), true, "still due later the same day if the checker missed the exact minute");
+});
+
+test("isScheduledRuleDue is not due again the same UTC day it already fired, but is due again the next day", () => {
+  const rule = {
+    ...scheduleRuleBase(),
+    id: "r1",
+    createdAt: "",
+    updatedAt: "",
+    lastTriggeredAt: "2026-03-15T09:00:05.000Z",
+    lastStatus: "sent",
+    lastError: null,
+    enabled: true,
+  } as unknown as Parameters<typeof isScheduledRuleDue>[0];
+  assert.equal(isScheduledRuleDue(rule, new Date("2026-03-15T20:00:00.000Z")), false, "already fired today -- must not fire twice in the same day");
+  assert.equal(isScheduledRuleDue(rule, new Date("2026-03-16T09:00:00.000Z")), true, "a new UTC day has started, so it's due again");
+});
+
+test("isScheduledRuleDue respects scheduleDaysOfWeek when set, and treats null as every day", () => {
+  const mondayOnly = {
+    ...scheduleRuleBase({ scheduleDaysOfWeek: "1" }),
+    id: "r1",
+    createdAt: "",
+    updatedAt: "",
+    lastTriggeredAt: null,
+    lastStatus: null,
+    lastError: null,
+    enabled: true,
+  } as unknown as Parameters<typeof isScheduledRuleDue>[0];
+  // 2026-03-15 is a Sunday (day 0); 2026-03-16 is a Monday (day 1).
+  assert.equal(isScheduledRuleDue(mondayOnly, new Date("2026-03-15T09:00:00.000Z")), false, "Sunday is not in the Monday-only day list");
+  assert.equal(isScheduledRuleDue(mondayOnly, new Date("2026-03-16T09:00:00.000Z")), true, "Monday is in the day list");
+
+  const everyDay = { ...mondayOnly, scheduleDaysOfWeek: null };
+  assert.equal(isScheduledRuleDue(everyDay, new Date("2026-03-15T09:00:00.000Z")), true, "null scheduleDaysOfWeek means every day, including Sunday");
+});
+
+test("isScheduledRuleDue is always false for a non-schedule trigger or a schedule rule with no scheduleTimeUtc", () => {
+  const notSchedule = { ...scheduleRuleBase(), trigger: "field_equals" as const, id: "r1", createdAt: "", updatedAt: "", lastTriggeredAt: null, lastStatus: null, lastError: null, enabled: true } as unknown as Parameters<typeof isScheduledRuleDue>[0];
+  assert.equal(isScheduledRuleDue(notSchedule, new Date("2026-03-15T09:00:00.000Z")), false);
+
+  const noTime = { ...scheduleRuleBase({ scheduleTimeUtc: null }), id: "r1", createdAt: "", updatedAt: "", lastTriggeredAt: null, lastStatus: null, lastError: null, enabled: true } as unknown as Parameters<typeof isScheduledRuleDue>[0];
+  assert.equal(isScheduledRuleDue(noTime, new Date("2026-03-15T09:00:00.000Z")), false);
+});
+
+test("fireScheduledRule sends the messageTemplate verbatim (no {{field}} interpolation -- there's no triggering record) and records a sent outcome", async () => {
+  const { db, project } = setupProject();
+  const rule = insertAutomationRule(db, scheduleRuleBase({ messageTemplate: "Reminder: check {{anything}} today." }));
+  const { manager, sendCalls } = createFakeWhatsApp({ connected: true });
+
+  await fireScheduledRule(db, manager, project, rule);
+
+  assert.equal(sendCalls.length, 1);
+  assert.equal(sendCalls[0]!.to, "972501234567");
+  assert.equal(sendCalls[0]!.body, "Reminder: check {{anything}} today.", "a schedule rule has no record, so a {{field}} placeholder must be left exactly as typed, not interpolated or stripped");
+  assert.equal(getAutomationRule(db, project.id, rule.id)!.lastStatus, "sent");
+});
+
+test("fireScheduledRule records a failed outcome with no destination configured when toNumber is empty", async () => {
+  const { db, project } = setupProject();
+  const rule = insertAutomationRule(db, scheduleRuleBase({ toNumber: null }));
+  const { manager, sendCalls } = createFakeWhatsApp({ connected: true });
+
+  await fireScheduledRule(db, manager, project, rule);
+
+  assert.equal(sendCalls.length, 0);
+  const after = getAutomationRule(db, project.id, rule.id)!;
+  assert.equal(after.lastStatus, "failed");
+  assert.match(after.lastError ?? "", /no destination phone number/);
+});
+
+test("fireScheduledRule records a failed outcome when WhatsApp isn't connected, without attempting to send", async () => {
+  const { db, project } = setupProject();
+  const rule = insertAutomationRule(db, scheduleRuleBase());
+  const { manager, sendCalls } = createFakeWhatsApp({ connected: false });
+
+  await fireScheduledRule(db, manager, project, rule);
+
+  assert.equal(sendCalls.length, 0);
+  assert.equal(getAutomationRule(db, project.id, rule.id)!.lastStatus, "failed");
+});
+
+test("runScheduledAutomationsCheck fires exactly the rules that are due right now, across different projects, and skips disabled/not-yet-due ones", async () => {
+  const db = openDatabase(":memory:");
+  ensureProjectsTable(db);
+  ensureAutomationRulesTable(db);
+  ensureWhatsAppConnectionsTable(db);
+  ensureWhatsAppMessagesTable(db);
+  const spec = { summary: "test", entities: [orderEntity], roles: ["Admin"], screens: [], openQuestions: [] };
+  for (const id of ["proj1", "proj2"]) {
+    const inserted = insertProject(db, { id, ownerId: "owner1", name: id, description: "test", spec });
+    applyMigrations(db, inserted.id, inserted.spec);
+    markProjectBuilt(db, inserted.id);
+  }
+
+  const due = insertAutomationRule(db, scheduleRuleBase({ projectId: "proj1", scheduleTimeUtc: "09:00", toNumber: "111" }));
+  const notYetDue = insertAutomationRule(db, scheduleRuleBase({ projectId: "proj2", scheduleTimeUtc: "23:00", toNumber: "222" }));
+  const disabledDue = insertAutomationRule(db, scheduleRuleBase({ projectId: "proj1", scheduleTimeUtc: "08:00", toNumber: "333" }));
+  updateAutomationRule(db, "proj1", disabledDue.id, { enabled: false });
+
+  const { manager, sendCalls } = createFakeWhatsApp({ connected: true });
+  await runScheduledAutomationsCheck(db, manager, new Date("2026-03-15T09:00:00.000Z"));
+
+  assert.equal(sendCalls.length, 1, "exactly the one due, enabled rule must fire");
+  assert.equal(sendCalls[0]!.to, "111");
+  assert.equal(getAutomationRule(db, "proj1", due.id)!.lastStatus, "sent");
+  assert.equal(getAutomationRule(db, "proj2", notYetDue.id)!.lastStatus, null, "not due yet -- must be untouched");
+  assert.equal(getAutomationRule(db, "proj1", disabledDue.id)!.lastStatus, null, "disabled -- must never be considered even though its time has passed");
 });

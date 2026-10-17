@@ -864,7 +864,7 @@ export function deleteWhatsAppMessage(projectId: string, messageId: string): Pro
   return request(`/projects/${projectId}/integrations/whatsapp/messages/${messageId}`, { method: "DELETE" });
 }
 
-export type AutomationTrigger = "record_created" | "field_equals";
+export type AutomationTrigger = "record_created" | "field_equals" | "schedule";
 export type AutomationToMode = "static" | "field";
 
 export interface AutomationRuleView {
@@ -873,6 +873,8 @@ export interface AutomationRuleView {
   trigger: AutomationTrigger;
   fieldName: string | null;
   fieldValue: string | null;
+  scheduleTimeUtc: string | null;
+  scheduleDaysOfWeek: string | null;
   toMode: AutomationToMode;
   toNumber: string | null;
   toField: string | null;
@@ -894,6 +896,8 @@ export function createAutomationRule(
     trigger: AutomationTrigger;
     fieldName?: string;
     fieldValue?: string;
+    scheduleTimeUtc?: string;
+    scheduleDaysOfWeek?: string;
     actionType: "send_whatsapp";
     toMode: AutomationToMode;
     toNumber?: string;
@@ -915,6 +919,8 @@ export function updateAutomationRule(
     trigger: AutomationTrigger;
     fieldName: string | null;
     fieldValue: string | null;
+    scheduleTimeUtc: string | null;
+    scheduleDaysOfWeek: string | null;
     toMode: AutomationToMode;
     toNumber: string | null;
     toField: string | null;
