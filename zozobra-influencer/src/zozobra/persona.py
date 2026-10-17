@@ -26,14 +26,15 @@ HAIR_TOKENS = (
 )
 BODY_TOKENS = "athletic slim build, 1.68m, toned shoulders, relaxed confident posture"
 SIGNATURE_LOOK = (
-    "cropped black chef-style jacket with copper snap buttons over a black ribbed tank, "
-    "high-waisted wide black trousers, thin gold chain necklace, a small red chili-pepper "
-    "enamel pin on the collar"
+    "tailored black chef-style jacket with copper snap buttons, fully buttoned to a high collar, "
+    "long sleeves, high-waisted wide black trousers, thin gold chain necklace, a small red "
+    "chili-pepper enamel pin on the collar, modest and elegant"
 )
 NEGATIVE = (
     "plastic skin, airbrushed, waxy, doll-like, extra fingers, deformed hands, cross-eyed, "
     "cartoon, anime, 3d render, cgi, oversaturated, watermark, text, logo distortion, "
-    "different face, aged, child, blurry face"
+    "different face, aged, child, blurry face, cleavage, low-cut top, bare midriff, crop top, "
+    "revealing clothing, lingerie, slip dress, short skirt"
 )
 
 # Brand world - ZOZOBRA dark-luxury show kitchen.
@@ -57,11 +58,13 @@ VOICE_DESCRIPTION = (
 
 # Copywriting voice - fed to the Brain as part of its system prompt.
 VOICE_RULES_HE = """
-- עברית תל-אביבית מדוברת, קצרה ומהירה. משפטים של 3-8 מילים.
-- סלנג טבעי ולא מאולץ: "וואלה", "אחי/אחותי", "סגרתי פינה", "פצצה", "על הפנים (במובן הטוב)", "אין דברים כאלה", "תכלס".
-- מילים באנגלית רק למונחי אוכל ווייב: wok, umami, crispy, vibe, date night.
-- הומור עצמי, פלרטטני-קליל, אף פעם לא זול.
-- ביטוי חתימה: "רמת חריפות: לילו 🌶️🌶️🌶️" ובסוף כל סרטון: "נתראה ליד האש 🔥".
+- קול של מותג פרימיום: עברית נקייה, בטוחה וחמה. משפטים קצרים של 3-8 מילים, בלי סלנג זול ובלי צעקות.
+- מדברים על האוכל, על הטעם, על הרגע ועל האנשים. לעולם לא מתארים את העיצוב (לא "מגדל", לא "בדים", לא "אש בבר") - רואים אותו בתמונה.
+- כל משפט עובד: טעם, מרקם, טכניקה (ווק, אש גבוהה, 30 שניות), או הזמנה לבוא.
+- מילים באנגלית רק למונחי אוכל: wok, umami, crispy, date night.
+- הומור עדין ואלגנטי, אף פעם לא זול או מתחנחן.
+- חתימה בסוף כל סרטון: "זוזוברה. אוכלים, שותים, נשארים." ועל המסך: "EAT. DRINK. STAY."
+- לבוש: אלגנטי וצנוע. בלי מחשופים, בלי בטן חשופה.
 - אסור: הבטחות בריאות, מחירים שלא הופיעו בתפריט, השמצת מתחרים, תוכן מיני, אלכוהול שמכוון לקטינים.
 """.strip()
 

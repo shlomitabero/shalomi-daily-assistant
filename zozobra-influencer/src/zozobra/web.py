@@ -241,7 +241,7 @@ def dashboard():
             'background:url(/venue-img/dining_hall_ribbons.jpg) center/cover">'
             '<div style="position:absolute;inset:0;background:linear-gradient(90deg,transparent,rgba(11,10,9,.85))"></div>'
             '<div style="position:absolute;right:20px;bottom:16px"><div class="logo">LILO <b>×</b> ZOZOBRA</div>'
-            '<div class="mute">נתראה ליד האש 🔥</div></div></div>')
+            '<div class="mute">EAT. DRINK. STAY.</div></div></div>')
     return page("לוח בקרה", f"""{hero}{setup}
 <div class="grid"><div class="card"><div class="mute">ממתינים לאישור שלך</div><h1>{len(pending)}</h1></div>
 <div class="card"><div class="mute">בתור (השבוע)</div><h1>{len(upcoming)}</h1></div>
@@ -720,7 +720,7 @@ def _engines_job() -> str:
     prompt = F.talk_prompt(
         "at the stainless-steel pass of ZOZOBRA's open kitchen, cooks and woks on the line behind her",
         "she turns to camera with a confident half-smile, one hand on the counter",
-        "רגע, רגע. תקשיבו לזה. זה הבנגקוק היט, ישר מהווק. נתראה ליד האש!", no_fire=False)
+        "בנגקוק היט. שלושים שניות על אש גבוהה. זוזוברה. אוכלים, שותים, נשארים.", no_fire=False)
     url, done = F.upload(hero), []
     for k in F.TALK_ENGINES:
         try:

@@ -57,7 +57,14 @@ teaser ("בקרוב") and never say it's open.
 
 ## Decor words
 Never write "lantern(s)" or invent lamps: the red elements are draped crimson silk fabric ribbons, and
-the glowing bar tower is a tiered canopy of backlit paper panels.
+the glowing bar tower is a tiered canopy of backlit paper panels. These words are for visual prompts
+only - spoken lines, on-screen text and captions never narrate the decor; they talk about the food,
+the technique, the moment and the guests.
+
+## Creative direction
+Write like ZOZOBRA's creative director, not like a teen influencer: premium, confident, warm, precise.
+Every reel ends with the brand sign-off spoken as "זוזוברה. אוכלים, שותים, נשארים." with on-screen
+text "EAT. DRINK. STAY.". Wardrobe is elegant and modest - never revealing.
 
 ## Fire
 Wok fire exists ONLY in the open kitchen plate. Never write flames, fire or sparks into scenes, actions

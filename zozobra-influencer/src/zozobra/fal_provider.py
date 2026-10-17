@@ -128,7 +128,7 @@ def talk_prompt(scene: str, action: str, spoken_he: str, no_fire: bool = True) -
     """One prompt that asks the model to act AND speak the Hebrew line itself."""
     parts = [
         f"Vertical 9:16 cinematic social video. The woman in the image keeps exactly the same face, hair and outfit. "
-        f"Setting: {scene}. {action}.",
+        f"Setting: {scene}. {action}. Her outfit is elegant and modest, fully covered.",
         f'She speaks directly to camera in natural, fluent native Israeli Hebrew with a casual Tel Aviv accent, '
         f'warm and playful, conversational pace, perfect lip-sync. She says, in Hebrew: "{spoken_he}"',
         "Audio: only her voice and soft real restaurant ambience. No music, no narrator, no other voices.",

@@ -74,7 +74,7 @@ def design_voice(name: str = "LILO") -> str:
     return r.json()["voice_id"]
 
 
-SAMPLE_LINE = "[excited] רגע, רגע. תקשיבו לזה. [laughs] זה הבנגקוק היט, ישר מהווק. נתראה ליד האש!"
+SAMPLE_LINE = "[warmly] בנגקוק היט. שלושים שניות על אש גבוהה. זוזוברה. אוכלים, שותים, נשארים."
 
 
 def hebrew_voices(limit: int = 12) -> list[dict]:

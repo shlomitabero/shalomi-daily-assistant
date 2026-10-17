@@ -14,7 +14,7 @@
 | From | Haifa (Hadar). Her grandmother ran a tiny home kitchen downstairs |
 | Job (in-story) | Former line cook, now a full-time late-night food creator |
 | Status | **Openly an AI virtual character.** It's in her bio, on every post, and she says so whenever someone asks |
-| Signature line | "רמת חריפות: לילו 🌶️🌶️🌶️" · sign-off: "נתראה ליד האש 🔥" |
+| Signature line | "רמת חריפות: לילו 🌶️🌶️🌶️" · sign-off: "זוזוברה. אוכלים, שותים, נשארים." / on screen "EAT. DRINK. STAY." |
 
 ### Bio (Instagram, 150 chars)
 ```
