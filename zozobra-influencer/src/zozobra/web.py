@@ -573,6 +573,7 @@ def setup(online: int = 0):
                         for c in cands)
     has_fal = bool(s.fal_key)
     has_eleven = bool(s.elevenlabs_api_key)
+    lilo_sample = s.data_dir / "voice_previews" / "lilo_sample.mp3"
     return page("הקמה", f"""<div class="card">{rows}
 <p class="row"><a class="btn ghost" href="/setup?online=1">🔌 בדוק חיבור אמיתי לכל השירותים</a></p>
 <p class="mute">מפתחות מוגדרים כמשתני סביבה (קובץ <code>.env</code> או בהגדרות השרת). אף מפתח לא מוצג או נשמר בדף.</p></div>
@@ -595,9 +596,9 @@ def setup(online: int = 0):
 <p class="mute">{'✓ מודל קיים: ' + e(s.lora_url[:70]) if s.lora_url else ''}</p></div>
 
 <h2>שלב 4 — הקול של לילו</h2>
-<div class="card"><p>ElevenLabs מעצב קול מהתיאור שלה (לא משבט אדם אמיתי). הקול נשמר אוטומטית.</p>
-<form method="post" action="/setup/voice"><button class="btn" {'disabled' if not has_eleven else ''}>🎙️ צור קול</button></form>
-{''.join(f'<audio controls src="{media_url(p)}" style="width:100%;margin-top:8px"></audio>' for p in sorted((s.data_dir / "voice_previews").glob("*.mp3")))}
+<div class="card"><p>בוחרים קול של דוברת עברית ישראלית מספריית הקולות של ElevenLabs, ושומעים את לילו אומרת משפט מהתסריט.</p>
+<p><a class="btn" href="/setup/voices" {'' if has_eleven else 'aria-disabled="true"'}>🎙️ בחר קול ישראלי</a></p>
+{f'<p><b>הקול הנבחר אומר:</b></p><audio controls src="{media_url(lilo_sample)}" style="width:100%"></audio>' if lilo_sample.exists() else ''}
 <p class="mute">{'✓ קול פעיל: ' + e(s.elevenlabs_voice_id) if s.elevenlabs_voice_id else ''}</p></div>
 
 <h2>דוגמה מוכנה</h2>
@@ -619,6 +620,40 @@ def _voice_job() -> str:
     vid = design_voice()
     save_runtime(voice_id=vid)
     return f"קול נוצר: {vid}"
+
+
+@app.get("/setup/voices", response_class=HTMLResponse)
+def setup_voices():
+    from .voice import hebrew_voices
+
+    try:
+        voices = hebrew_voices()
+    except Exception as ex:
+        return page("בחירת קול", f'<div class="card">שגיאה בטעינת הקולות: {e(ex)}</div>', "/setup")
+    cards = "".join(f"""<form class="card" method="post" action="/setup/voices/pick">
+<div class="row"><b>{e(v['name'])}</b><span class="pill">{e(v['accent'] or 'עברית')}</span><span class="pill">{e(v['age'])}</span></div>
+<p class="mute">{e(v['description'])}</p>
+{f'<audio controls preload="none" src="{e(v["preview_url"])}" style="width:100%"></audio>' if v['preview_url'] else ''}
+<input type="hidden" name="owner" value="{e(v['public_owner_id'])}"><input type="hidden" name="vid" value="{e(v['voice_id'])}">
+<p><button class="btn">זה הקול של לילו</button></p></form>""" for v in voices)
+    return page("בחירת קול ישראלי", f"""<div class="card"><p>אלה קולות נשיים של דוברות עברית מספריית ElevenLabs. תקשיב לכמה,
+ובחר את מי שנשמעת הכי "לילו": צעירה, חמה ותל-אביבית. אחרי הבחירה המערכת תייצר משפט של לילו בקול הזה, ותוכל לשמוע אותו בדף ההקמה.</p></div>
+<div class="grid">{cards or '<div class="card">לא נמצאו קולות בעברית.</div>'}</div>""", "/setup")
+
+
+def _pick_voice_job(owner: str, vid: str) -> str:
+    from .voice import SAMPLE_LINE, adopt_library_voice, synthesize
+
+    voice_id = adopt_library_voice(owner, vid)
+    save_runtime(voice_id=voice_id)
+    synthesize(SAMPLE_LINE, settings().data_dir / "voice_previews" / "lilo_sample.mp3", voice_id=voice_id)
+    return f"קול נבחר: {voice_id}"
+
+
+@app.post("/setup/voices/pick")
+def setup_voices_pick(owner: str = Form(...), vid: str = Form(...)):
+    jobs.submit("בחירת קול ישראלי", _pick_voice_job, owner, vid)
+    return back("/setup")
 
 
 @app.post("/setup/anchor")

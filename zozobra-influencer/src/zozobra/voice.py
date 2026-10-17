@@ -67,6 +67,38 @@ def design_voice(name: str = "LILO") -> str:
     return r.json()["voice_id"]
 
 
+SAMPLE_LINE = "[excited] שנייה, תשמעו את הווק הזה. [laughs] רמת חריפות: לילו. נתראה ליד האש!"
+
+
+def hebrew_voices(limit: int = 12) -> list[dict]:
+    """Native Hebrew female voices from the ElevenLabs Voice Library (real Israeli accents)."""
+    seen, out = set(), []
+    for params in ({"language": "he", "gender": "female", "age": "young"},
+                   {"language": "he", "gender": "female"},
+                   {"language": "he"}):
+        r = requests.get(f"{API}/shared-voices", headers=_headers(), timeout=30,
+                         params={**params, "page_size": 30, "sort": "usage_character_count_1y"})
+        r.raise_for_status()
+        for v in r.json().get("voices", []):
+            if v["voice_id"] in seen or (v.get("gender") and v["gender"] != "female"):
+                continue
+            seen.add(v["voice_id"])
+            out.append({"voice_id": v["voice_id"], "public_owner_id": v["public_owner_id"],
+                        "name": v.get("name", ""), "accent": v.get("accent", ""), "age": v.get("age", ""),
+                        "description": (v.get("description") or "")[:140], "preview_url": v.get("preview_url", "")})
+        if len(out) >= limit:
+            break
+    return out[:limit]
+
+
+def adopt_library_voice(public_owner_id: str, voice_id: str, name: str = "LILO") -> str:
+    """Add a Voice Library voice to the account and return the voice_id to use for TTS."""
+    r = requests.post(f"{API}/voices/add/{public_owner_id}/{voice_id}", headers=_headers(), timeout=30,
+                      json={"new_name": name})
+    r.raise_for_status()
+    return r.json()["voice_id"]
+
+
 def synthesize(text: str, out_path: Path, voice_id: str | None = None, seed: int = 4242) -> Path:
     voice_id = voice_id or settings().elevenlabs_voice_id
     if not voice_id:
