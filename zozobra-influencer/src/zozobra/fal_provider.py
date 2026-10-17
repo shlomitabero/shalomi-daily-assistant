@@ -75,7 +75,7 @@ def generate_image(prompt: str, seed: int, out_dir: Path, *, width: int = 1080, 
     return [_download(img["url"], out_dir / f"{seed}_{i}.png") for i, img in enumerate(result["images"])]
 
 
-def place_in_plate(prompt: str, plate: Path, seed: int, out_dir: Path, *, strength: float = 0.62,
+def place_in_plate(prompt: str, plate: Path, seed: int, out_dir: Path, *, strength: float = 0.55,
                    num_images: int = 1) -> list[Path]:
     """LILO (LoRA) painted into a real ZOZOBRA interior plate. strength ~0.55-0.7: low keeps the room
     exact, high gives her more room to appear naturally (re-roll if the room changes too much)."""
@@ -100,6 +100,7 @@ def animate(image_url: str, prompt: str, duration: int = 10, no_fire: bool = Fal
     negative = "face morphing, identity change, extra fingers, blur, distortion, low quality"
     if no_fire:
         negative += ", fire, flames, sparks, burning"
+    negative += ", red lanterns, paper lanterns, chinese lanterns, red lamps, extra lamps, new decorations"
     result = _fal().subscribe(VIDEO_APP, arguments={
         "image_url": image_url,
         "prompt": prompt[:2500],

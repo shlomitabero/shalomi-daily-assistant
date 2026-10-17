@@ -36,13 +36,24 @@ def broll_prompt(day: DayPlan, shot: str, menu: dict) -> str:
                                  "no people, no faces, food photography"] if x)
 
 
+_INVENTS_DECOR = (("lanterns", "paper-panel canopy"), ("lantern", "paper-panel canopy"))
+
+
+def _clean(text: str) -> str:
+    """Words that make image/video models invent decor ZOZOBRA doesn't have."""
+    for a, b in _INVENTS_DECOR:
+        text = text.replace(a, b).replace(a.capitalize(), b)
+    return text
+
+
 def produce_day(day: DayPlan, menu: dict, workdir: Path, dry_run: bool) -> dict:
     """Render all media for one calendar day and drop a pending item in the approval queue."""
     from .video import is_broll
 
     workdir.mkdir(parents=True, exist_ok=True)
     caption = finalize_caption(day)
-    hero_prompt = full_image_prompt(day)
+    hero_prompt = _clean(full_image_prompt(day))
+    day = day.model_copy(update={"visual": day.visual.model_copy(update={"motion_prompt": _clean(day.visual.motion_prompt)})})
     broll_lines = [l for l in day.script if is_broll(l.shot)]
     plate_id = day.visual.venue_plate if day.visual.venue_plate in venue.plate_ids() else None
     night = int(day.post_time_local[:2]) >= 19

@@ -38,8 +38,8 @@ NEGATIVE = (
 
 # Brand world - ZOZOBRA dark-luxury show kitchen.
 WORLD_TOKENS = (
-    "ZOZOBRA dark-luxury Asian restaurant interior, towering tiered lantern canopy of backlit warm-paper "
-    "panels over a circular bar with hanging wine glasses, sculptural crimson silk ribbons swirling across "
+    "ZOZOBRA dark-luxury Asian restaurant interior, towering tiered backlit paper-panel canopy of backlit warm-paper "
+    "panels over a circular bar with hanging wine glasses, sculptural crimson silk fabric ribbons swirling across "
     "the dark ceiling, black-metal slatted screen partitions, charred-bark textured walls with warm grazing "
     "uplights, polished dark concrete floor with glowing LED strips, rust-copper cylinder pendants, "
     "candlelit wooden tables, bamboo, white-tiled open kitchen in the background"

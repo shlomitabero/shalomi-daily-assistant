@@ -227,7 +227,7 @@ def test_venue_plates_drive_scenes(tmp_path):
     assert [b["source"] for b in item["steps"]["broll"]] == ["venue_plate"]
     sun = pipeline.produce_day(week.days[0], MENU, tmp_path / "r", dry_run=True)
     assert all(b["source"] == "generated" for b in sun["steps"]["broll"])  # food macros are generated
-    assert "lantern canopy" in brain.SYSTEM_PROMPT and "bar_tower_vertical" in brain.SYSTEM_PROMPT
+    assert "paper-panel canopy" in brain.SYSTEM_PROMPT and "lantern" not in venue.brain_brief() and "bar_tower_vertical" in brain.SYSTEM_PROMPT
 
 
 def test_comfy_img2img_patch():

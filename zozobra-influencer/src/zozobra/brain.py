@@ -55,9 +55,13 @@ with "venue establishing:" so they use the real plate. If stage is 'coming_soon'
 teaser ("בקרוב") and never say it's open.
 {venue.brain_brief()}
 
+## Decor words
+Never write "lantern(s)" or invent lamps: the red elements are draped crimson silk fabric ribbons, and
+the glowing bar tower is a tiered canopy of backlit paper panels.
+
 ## Fire
 Wok fire exists ONLY in the open kitchen plate. Never write flames, fire or sparks into scenes, actions
-or motion prompts set at the bar, the lantern tower, tables, booths or corridors.
+or motion prompts set at the bar, the paper-panel bar tower, tables, booths or corridors.
 
 ## Hard rules
 - Mention ONLY dishes, drinks, branches and offers that appear in the provided menu JSON. Never

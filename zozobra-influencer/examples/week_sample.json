@@ -21,7 +21,7 @@
       ],
       "visual": {
         "venue_plate": "open_kitchen",
-        "scene": "at the stainless-steel pass of the open kitchen, the cooking line behind her under the angular metal hood where a cook tosses a wok and a flame bursts, the glowing lantern canopy of the bar at the edge of frame",
+        "scene": "at the stainless-steel pass of the open kitchen, the cooking line behind her under the angular metal hood where a cook tosses a wok and a flame bursts, the glowing paper-panel canopy of the bar at the edge of frame",
         "action": "turning to camera with a confident half-smile, one hand on the pass counter, flame light on her face",
         "wardrobe": "",
         "motion_prompt": "Static low angle at the kitchen pass. On the stainless cooking line behind her a cook tosses glossy caramel-chili noodles and a flame bursts up from the wok, lighting her face orange from the side; she turns her head toward the camera and smirks; sparks drift upward; copper lights glow in the bokeh."
@@ -251,7 +251,7 @@
       ],
       "visual": {
         "venue_plate": "dining_hall_ribbons",
-        "scene": "head of the long communal table in the main dining hall, a bowl of golden chicken massaman curry with pumpkin and peanuts, crimson silk ribbons and rust-copper pendants overhead",
+        "scene": "head of the long communal table in the main dining hall, a bowl of golden chicken massaman curry with pumpkin and peanuts, crimson silk fabric ribbons and rust-copper pendants overhead",
         "action": "holding a spoon above the bowl, smiling at camera, steam rising between them",
         "wardrobe": "white linen shirt",
         "motion_prompt": "Static macro: golden curry is spooned over jasmine rice, pumpkin chunks glisten, steam rises slowly."
@@ -287,10 +287,10 @@
       ],
       "visual": {
         "venue_plate": "bar_tower_vertical",
-        "scene": "walking between the black slatted screens toward the circular bar under the towering glowing lantern canopy, crimson ribbons overhead, reflective concrete floor",
+        "scene": "walking between the black slatted screens toward the circular bar under the towering glowing paper-panel canopy, crimson ribbons overhead, reflective concrete floor",
         "action": "walking toward the open kitchen and glancing back over her shoulder at the camera with a half-smile",
         "wardrobe": "black satin slip dress and black leather jacket",
-        "motion_prompt": "Smooth gimbal follow from behind. She walks between the black slatted screens toward the glowing tiered lantern canopy over the circular bar, then glances back over her shoulder at the camera with a half-smile; warm lantern light ahead; diners softly blurred."
+        "motion_prompt": "Smooth gimbal follow from behind. She walks between the black slatted screens toward the glowing tiered backlit paper-panel canopy over the circular bar, then glances back over her shoulder at the camera with a half-smile; warm warm canopy light ahead; diners softly blurred."
       },
       "script": [
         {
@@ -307,7 +307,7 @@
           "spoken_he": "מגדל אור, סרטים אדומים, והאש במרכז.",
           "voice_direction": "[warmly]",
           "on_screen_text_he": "",
-          "shot": "venue establishing: slow tilt up from the glossy floor to the glowing lantern canopy, crimson ribbons drifting"
+          "shot": "venue establishing: slow tilt up from the glossy floor to the glowing paper-panel canopy, crimson ribbons drifting"
         },
         {
           "t_start": 7.0,

@@ -28,7 +28,7 @@ def image_in_venue(prompt: str, plate: Path, seed: int, out_dir: Path) -> list[P
         return place_in_plate(prompt, plate, seed, out_dir)
     from .image_gen import generate, upload_input
 
-    return generate(prompt, seed, out_dir, init_image=upload_input(plate), denoise=0.62)
+    return generate(prompt, seed, out_dir, init_image=upload_input(plate), denoise=0.55)
 
 
 def upload(path: Path, key: str) -> str:

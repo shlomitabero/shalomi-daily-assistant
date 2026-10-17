@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import re
 import sys
 from pathlib import Path
 
@@ -21,14 +22,20 @@ API = "https://api.elevenlabs.io/v1"
 TTS_MODEL = "eleven_v3"                       # Hebrew + inline audio tags ([laughs], [whispers]...)
 DESIGN_MODEL = "eleven_multilingual_ttv_v2"   # text-to-voice design
 
-# Tuned for an energetic-but-consistent creator read. v3 stability: lower = more expressive.
-VOICE_SETTINGS = {
-    "stability": 0.45,          # "natural" band; 0.0 creative / 1.0 robust
-    "similarity_boost": 0.8,
-    "style": 0.35,
-    "use_speaker_boost": True,
-    "speed": 1.08,              # Tel Aviv pacing, slightly faster than default
+# Read styles for LILO's voice (eleven_v3 accepts stability 0.0 / 0.5 / 1.0 only).
+# The owner picks one on the setup page; it is stored as runtime "voice_preset".
+VOICE_PRESETS = {
+    "natural": {"label": "טבעית", "stability": 0.5, "speed": 1.0, "tags": True},
+    "steady": {"label": "יציבה ונקייה", "stability": 1.0, "speed": 1.0, "tags": False},
+    "lively": {"label": "אנרגטית", "stability": 0.0, "speed": 1.05, "tags": True},
 }
+DEFAULT_PRESET = "natural"
+
+
+def _preset(name: str | None = None) -> dict:
+    from .config import runtime
+
+    return VOICE_PRESETS.get(name or runtime().get("voice_preset", DEFAULT_PRESET), VOICE_PRESETS[DEFAULT_PRESET])
 
 DESIGN_PREVIEW_TEXT = (
     "וואלה, תקשיבו רגע. אני עומדת פה ליד הווק, האש בגובה של מטר, "
@@ -99,20 +106,23 @@ def adopt_library_voice(public_owner_id: str, voice_id: str, name: str = "LILO")
     return r.json()["voice_id"]
 
 
-def synthesize(text: str, out_path: Path, voice_id: str | None = None, seed: int = 4242) -> Path:
+def synthesize(text: str, out_path: Path, voice_id: str | None = None, seed: int = 4242,
+               preset: str | None = None) -> Path:
     voice_id = voice_id or settings().elevenlabs_voice_id
     if not voice_id:
         sys.exit("ELEVENLABS_VOICE_ID is not set - run `python -m zozobra.voice design` first")
+    p = _preset(preset)
     r = requests.post(
         f"{API}/text-to-speech/{voice_id}",
         params={"output_format": "mp3_44100_128"},
         headers=_headers(),
         timeout=180,
         json={
-            "text": text,
+            "text": text if p["tags"] else re.sub(r"\[[^\]]*\]\s*", "", text),
             "model_id": TTS_MODEL,
             "language_code": "he",
-            "voice_settings": VOICE_SETTINGS,
+            "voice_settings": {"stability": p["stability"], "similarity_boost": 0.85, "speed": p["speed"],
+                               "use_speaker_boost": True},
             "seed": seed,               # same seed -> repeatable takes for re-renders
         },
     )

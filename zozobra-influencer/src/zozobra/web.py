@@ -575,6 +575,15 @@ def setup(online: int = 0):
     has_fal = bool(s.fal_key)
     has_eleven = bool(s.elevenlabs_api_key)
     lilo_sample = s.data_dir / "voice_previews" / "lilo_sample.mp3"
+    from .voice import VOICE_PRESETS
+
+    current_preset = runtime().get("voice_preset", "natural")
+    preset_html = "".join(
+        f'<form method="post" action="/setup/voice-preset" class="row" style="margin-top:8px">'
+        f'<input type="hidden" name="preset" value="{k}"><b style="min-width:110px">{e(v["label"])}</b>'
+        f'<audio controls src="{media_url(s.data_dir / "voice_previews" / f"preset_{k}.mp3")}" style="flex:1;min-width:200px"></audio>'
+        f'<button class="btn {"" if k == current_preset else "ghost"}">{"✓ נבחר" if k == current_preset else "בחר"}</button></form>'
+        for k, v in VOICE_PRESETS.items() if (s.data_dir / "voice_previews" / f"preset_{k}.mp3").exists())
     return page("הקמה", f"""<div class="card">{rows}
 <p class="row"><a class="btn ghost" href="/setup?online=1">🔌 בדוק חיבור אמיתי לכל השירותים</a></p>
 <p class="mute">מפתחות מוגדרים כמשתני סביבה (קובץ <code>.env</code> או בהגדרות השרת). אף מפתח לא מוצג או נשמר בדף.</p></div>
@@ -600,6 +609,8 @@ def setup(online: int = 0):
 <div class="card"><p>בוחרים קול של דוברת עברית ישראלית מספריית הקולות של ElevenLabs, ושומעים את לילו אומרת משפט מהתסריט.</p>
 <p><a class="btn" href="/setup/voices" {'' if has_eleven else 'aria-disabled="true"'}>🎙️ בחר קול ישראלי</a></p>
 {f'<p><b>הקול הנבחר אומר:</b></p><audio controls src="{media_url(lilo_sample)}" style="width:100%"></audio>' if lilo_sample.exists() else ''}
+<form method="post" action="/setup/voice-test"><button class="btn ghost" {'disabled' if not s.elevenlabs_voice_id else ''}>🎧 השמע 3 סגנונות הקראה</button></form>
+{preset_html}
 <p class="mute">{'✓ קול פעיל: ' + e(s.elevenlabs_voice_id) if s.elevenlabs_voice_id else ''}</p></div>
 
 <h2>דוגמה מוכנה</h2>
@@ -654,6 +665,29 @@ def _pick_voice_job(owner: str, vid: str) -> str:
 @app.post("/setup/voices/pick")
 def setup_voices_pick(owner: str = Form(...), vid: str = Form(...)):
     jobs.submit("בחירת קול ישראלי", _pick_voice_job, owner, vid)
+    return back("/setup")
+
+
+def _voice_test_job() -> str:
+    from .voice import SAMPLE_LINE, VOICE_PRESETS, synthesize
+
+    for k in VOICE_PRESETS:
+        synthesize(SAMPLE_LINE, settings().data_dir / "voice_previews" / f"preset_{k}.mp3", preset=k)
+    return "3 סגנונות מוכנים"
+
+
+@app.post("/setup/voice-test")
+def setup_voice_test():
+    jobs.submit("בדיקת סגנונות קול", _voice_test_job)
+    return back("/setup")
+
+
+@app.post("/setup/voice-preset")
+def setup_voice_preset(preset: str = Form(...)):
+    from .voice import VOICE_PRESETS
+
+    if preset in VOICE_PRESETS:
+        save_runtime(voice_preset=preset)
     return back("/setup")
 
 
