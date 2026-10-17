@@ -1,0 +1,19 @@
+{
+  "_readme": "ComfyUI API-format workflow. Flux.1-dev + LILO identity LoRA + PuLID-Flux face lock. Requires custom node pack: ComfyUI-PuLID-Flux (balazik) or its Enhanced fork. Nodes are patched by _meta.title from src/zozobra/image_gen.py.",
+  "1":  {"class_type": "UNETLoader", "inputs": {"unet_name": "flux1-dev.safetensors", "weight_dtype": "fp8_e4m3fn"}, "_meta": {"title": "FLUX_UNET"}},
+  "2":  {"class_type": "DualCLIPLoader", "inputs": {"clip_name1": "t5xxl_fp16.safetensors", "clip_name2": "clip_l.safetensors", "type": "flux"}, "_meta": {"title": "CLIP"}},
+  "3":  {"class_type": "VAELoader", "inputs": {"vae_name": "ae.safetensors"}, "_meta": {"title": "VAE"}},
+  "4":  {"class_type": "LoraLoader", "inputs": {"model": ["1", 0], "clip": ["2", 0], "lora_name": "lilo_flux_v1.safetensors", "strength_model": 0.9, "strength_clip": 0.9}, "_meta": {"title": "LILO_LORA"}},
+  "5":  {"class_type": "PulidFluxModelLoader", "inputs": {"pulid_file": "pulid_flux_v0.9.1.safetensors"}, "_meta": {"title": "PULID_MODEL"}},
+  "6":  {"class_type": "PulidFluxEvaClipLoader", "inputs": {}, "_meta": {"title": "EVA_CLIP"}},
+  "7":  {"class_type": "PulidFluxInsightFaceLoader", "inputs": {"provider": "CUDA"}, "_meta": {"title": "INSIGHTFACE"}},
+  "8":  {"class_type": "LoadImage", "inputs": {"image": "lilo_face_ref_front.png"}, "_meta": {"title": "FACE_REF"}},
+  "9":  {"class_type": "ApplyPulidFlux", "inputs": {"model": ["4", 0], "pulid_flux": ["5", 0], "eva_clip": ["6", 0], "face_analysis": ["7", 0], "image": ["8", 0], "weight": 0.8, "start_at": 0.1, "end_at": 1.0}, "_meta": {"title": "PULID_APPLY"}},
+  "10": {"class_type": "CLIPTextEncode", "inputs": {"clip": ["4", 1], "text": ""}, "_meta": {"title": "POSITIVE"}},
+  "11": {"class_type": "FluxGuidance", "inputs": {"conditioning": ["10", 0], "guidance": 3.2}, "_meta": {"title": "GUIDANCE"}},
+  "12": {"class_type": "CLIPTextEncode", "inputs": {"clip": ["4", 1], "text": ""}, "_meta": {"title": "NEGATIVE"}},
+  "13": {"class_type": "EmptySD3LatentImage", "inputs": {"width": 1080, "height": 1920, "batch_size": 1}, "_meta": {"title": "LATENT"}},
+  "14": {"class_type": "KSampler", "inputs": {"model": ["9", 0], "positive": ["11", 0], "negative": ["12", 0], "latent_image": ["13", 0], "seed": 0, "steps": 28, "cfg": 1.0, "sampler_name": "euler", "scheduler": "beta", "denoise": 1.0}, "_meta": {"title": "SEED"}},
+  "15": {"class_type": "VAEDecode", "inputs": {"samples": ["14", 0], "vae": ["3", 0]}, "_meta": {"title": "DECODE"}},
+  "16": {"class_type": "SaveImage", "inputs": {"images": ["15", 0], "filename_prefix": "lilo"}, "_meta": {"title": "SAVE"}}
+}

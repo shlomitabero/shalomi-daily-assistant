@@ -1,0 +1,60 @@
+# ostris/ai-toolkit config - Flux.1-dev identity LoRA for LILO.
+# Run: python run.py config/lilo_flux_lora.yaml   (24GB VRAM; ~45-70 min on a 4090 / L40S)
+job: extension
+config:
+  name: lilo_flux_v1
+  process:
+    - type: sd_trainer
+      training_folder: output
+      device: cuda:0
+      trigger_word: l1l0zzb
+      network:
+        type: lora
+        linear: 32          # rank 32 holds a face + body + signature outfit without overfitting
+        linear_alpha: 16
+      save:
+        dtype: float16
+        save_every: 250
+        max_step_saves_to_keep: 6     # compare checkpoints 1500-3000, usually ~2000 wins
+      datasets:
+        - folder_path: /data/lilo_dataset   # 25-35 curated images + .txt captions (see docs/03)
+          caption_ext: txt
+          caption_dropout_rate: 0.05
+          shuffle_tokens: false
+          cache_latents_to_disk: true
+          resolution: [512, 768, 1024]      # multi-res bucketing
+      train:
+        batch_size: 1
+        steps: 3000
+        gradient_accumulation_steps: 1
+        train_unet: true
+        train_text_encoder: false           # Flux: keep T5/CLIP frozen
+        gradient_checkpointing: true
+        noise_scheduler: flowmatch
+        optimizer: adamw8bit
+        lr: 1.0e-4
+        ema_config:
+          use_ema: true
+          ema_decay: 0.99
+        dtype: bf16
+      model:
+        name_or_path: black-forest-labs/FLUX.1-dev
+        is_flux: true
+        quantize: true
+      sample:
+        sampler: flowmatch
+        sample_every: 250
+        width: 832
+        height: 1216
+        guidance_scale: 3.5
+        sample_steps: 28
+        seed: 42
+        walk_seed: false
+        prompts:
+          - "photo of l1l0zzb woman, front-facing portrait, neutral expression, soft window light"
+          - "photo of l1l0zzb woman laughing while lifting ramen noodles with chopsticks, dark noodle bar, wok flames behind her"
+          - "photo of l1l0zzb woman, full body, cropped black chef jacket, standing at an open kitchen pass, copper lights"
+          - "photo of l1l0zzb woman holding a smoked cocktail, side profile, red neon reflections"
+meta:
+  name: lilo_flux_v1
+  version: "1.0"

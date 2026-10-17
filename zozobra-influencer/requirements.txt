@@ -1,0 +1,6 @@
+anthropic>=1.15
+pydantic>=2.7
+requests>=2.32
+python-dotenv>=1.0
+boto3>=1.34        # S3 / Cloudflare R2 public media hosting (IG + TikTok pull from URL)
+pytest>=8.0
