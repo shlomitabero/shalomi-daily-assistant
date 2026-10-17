@@ -56,7 +56,7 @@ PILLAR_HE = {"hero_dish": "מנת הדגל", "fire_show": "שואו אש", "nigh
 @app.middleware("http")
 async def basic_auth(request: Request, call_next):
     pw = settings().panel_password
-    if pw and request.url.path != "/healthz":
+    if pw and request.url.path != "/healthz" and not request.url.path.startswith("/pub/"):
         header = request.headers.get("authorization", "")
         ok = False
         if header.startswith("Basic "):
@@ -147,6 +147,19 @@ def venue_img(name: str):
 
     path = (VENUE_DIR / name).resolve()
     if path.parent != VENUE_DIR.resolve() or path.suffix.lower() not in {".jpg", ".png"} or not path.exists():
+        return Response(status_code=404)
+    return FileResponse(path)
+
+
+@app.get("/pub/{token}/{rel:path}")
+def public_media(token: str, rel: str):
+    """Token-protected public file URLs for the media APIs (fal fetches inputs from here)."""
+    s = settings()
+    if not s.media_token or not secrets.compare_digest(token, s.media_token):
+        return Response(status_code=404)
+    base = s.data_dir.resolve()
+    path = (base / rel).resolve()
+    if base not in path.parents or not path.is_file():
         return Response(status_code=404)
     return FileResponse(path)
 

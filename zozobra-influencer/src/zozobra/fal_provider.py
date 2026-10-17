@@ -34,6 +34,15 @@ def _fal():
 
 
 def upload(path: Path) -> str:
+    """Public URL for a local file. Prefer our own server (/pub/<token>/...) so no storage account
+    is needed; fall back to fal's CDN when the panel isn't publicly reachable."""
+    s = settings()
+    try:
+        rel = Path(path).resolve().relative_to(s.data_dir.resolve())
+    except ValueError:
+        rel = None
+    if s.public_base_url and s.media_token and rel is not None:
+        return f"{s.public_base_url}/pub/{s.media_token}/{rel.as_posix()}"
     return _fal().upload_file(path)
 
 

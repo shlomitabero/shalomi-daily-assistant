@@ -79,6 +79,10 @@ class Settings:
 
     account_created: str = field(default_factory=lambda: os.getenv("ACCOUNT_CREATED", "2026-10-01"))
     panel_password: str = field(default_factory=lambda: os.getenv("PANEL_PASSWORD", ""))
+    # Public, token-protected file URLs served by the panel itself (/pub/<token>/...), so the media
+    # APIs can fetch inputs without a third-party storage bucket.
+    public_base_url: str = field(default_factory=lambda: os.getenv("PUBLIC_BASE_URL", "").rstrip("/"))
+    media_token: str = field(default_factory=lambda: os.getenv("MEDIA_TOKEN", ""))
 
     data_dir: Path = field(default_factory=lambda: Path(os.getenv("DATA_DIR", str(DATA_DIR))))
 

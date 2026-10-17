@@ -251,3 +251,22 @@ def test_fresh_install_seeds_sample_week(tmp_path, monkeypatch):
     web._seed_sample_week()
     assert (tmp_path / "calendars" / "week_2026-10-18.json").exists()
     assert (tmp_path / "refs" / "R0_anchor.png").exists()
+
+
+def test_public_media_urls(tmp_path, monkeypatch):
+    from fastapi.testclient import TestClient
+
+    monkeypatch.setenv("DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("PANEL_PASSWORD", "pw")
+    monkeypatch.setenv("PUBLIC_BASE_URL", "https://panel.example")
+    monkeypatch.setenv("MEDIA_TOKEN", "tok123")
+    (tmp_path / "refs").mkdir()
+    (tmp_path / "refs" / "a.png").write_bytes(b"x")
+    from zozobra import fal_provider, web
+
+    assert fal_provider.upload(tmp_path / "refs" / "a.png") == "https://panel.example/pub/tok123/refs/a.png"
+    c = TestClient(web.app)
+    assert c.get("/pub/tok123/refs/a.png").content == b"x"          # no basic auth needed
+    assert c.get("/pub/wrong/refs/a.png").status_code == 404
+    assert c.get("/pub/tok123/../../etc/passwd").status_code == 404
+    assert c.get("/media/refs/a.png").status_code == 401             # everything else still locked
