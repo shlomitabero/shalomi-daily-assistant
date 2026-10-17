@@ -311,6 +311,12 @@ h2 {
   inset-inline-start: 12px;
 }
 
+.automations-field-value-checkbox {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
 .my-projects-select-all {
   display: inline-flex;
   align-items: center;

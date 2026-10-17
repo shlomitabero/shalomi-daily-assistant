@@ -9,6 +9,7 @@ import {
   type AutomationToMode,
   type AutomationTrigger,
 } from "./api.js";
+import { uniqueEnumValues } from "./entityFormatting.js";
 import { useTranslation } from "./i18n/LanguageContext.js";
 import { useDialogFocusTrap } from "./useDialogFocusTrap.js";
 
@@ -61,6 +62,8 @@ export function AutomationsPanel({
   // which rejects every other field type at creation/update time.
   const phoneFields = selectedEntity?.fields.filter((f) => f.type === "text" || f.type === "longtext") ?? [];
 
+  const selectedField = selectedEntity?.fields.find((f) => f.name === fieldName);
+
   // Keep the field/toField selects pointed at a real field whenever the
   // chosen entity changes (including on first render) -- an empty/stale
   // selection here would otherwise submit a field name that doesn't exist
@@ -76,6 +79,27 @@ export function AutomationsPanel({
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [entityName]);
+
+  // The "Value" control below renders a checkbox for a boolean field and a
+  // <select> of enumValues for an enum field -- the same type-aware
+  // controls FieldInput (EntityPanel.tsx) already uses, so the typed value
+  // can only ever be one of the field's real, matchable options (the
+  // server's own validateAutomationFieldValue, apps/api/src/routes/
+  // projects.ts, rejects anything else at creation/update time regardless).
+  // Whenever the selected field changes, point fieldValue at one of those
+  // real options instead of carrying over unrelated free text left over
+  // from a previously-selected field.
+  useEffect(() => {
+    if (selectedField?.type === "boolean" && fieldValue !== "true" && fieldValue !== "false") {
+      setFieldValue("true");
+    } else if (selectedField?.type === "enum") {
+      const enumValues = uniqueEnumValues(selectedField.enumValues);
+      if (!enumValues.includes(fieldValue)) {
+        setFieldValue(enumValues[0] ?? "");
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fieldName]);
 
   function loadRules() {
     setLoadError(null);
@@ -300,13 +324,28 @@ export function AutomationsPanel({
                   ))}
                 </select>
               </label>
-              <input
-                type="text"
-                placeholder={t("automations.fieldValue.placeholder")}
-                aria-label={t("automations.fieldValue.placeholder")}
-                value={fieldValue}
-                onChange={(e) => setFieldValue(e.target.value)}
-              />
+              {selectedField?.type === "boolean" ? (
+                <label className="automations-field-value-checkbox">
+                  <input type="checkbox" checked={fieldValue === "true"} onChange={(e) => setFieldValue(e.target.checked ? "true" : "false")} />
+                  {t("automations.fieldValue.booleanLabel")}
+                </label>
+              ) : selectedField?.type === "enum" ? (
+                <select value={fieldValue} onChange={(e) => setFieldValue(e.target.value)} aria-label={t("automations.fieldValue.placeholder")}>
+                  {uniqueEnumValues(selectedField.enumValues).map((v) => (
+                    <option key={v} value={v}>
+                      {selectedField!.enumLabels?.[v] ?? v}
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <input
+                  type="text"
+                  placeholder={t("automations.fieldValue.placeholder")}
+                  aria-label={t("automations.fieldValue.placeholder")}
+                  value={fieldValue}
+                  onChange={(e) => setFieldValue(e.target.value)}
+                />
+              )}
             </>
           )}
 

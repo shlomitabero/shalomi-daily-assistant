@@ -595,3 +595,168 @@ test("AutomationsPanel shows a message instead of an invalid dropdown when the e
     }
   });
 });
+
+/**
+ * Round 668 regression test: the field_equals trigger's "Value" input was
+ * a plain, type-blind <input type="text"> regardless of the selected
+ * field's type -- rounds 595/607/613 only ever closed this gap
+ * server-side (validateAutomationFieldValue rejects a non-matching value
+ * at creation/update time), never by making the client control itself
+ * type-aware the way FieldInput (EntityPanel.tsx) already is for a real
+ * record's own boolean/enum fields.
+ */
+const triggerFieldProject: Project = {
+  id: "proj5",
+  ownerId: "owner1",
+  name: "Tickets",
+  description: "A support-ticket app",
+  status: "built",
+  createdAt: new Date().toISOString(),
+  spec: {
+    summary: "A support-ticket app",
+    personas: [],
+    roles: ["Admin"],
+    entities: [
+      {
+        name: "Ticket",
+        label: "Ticket",
+        fields: [
+          { name: "title", label: "Title", type: "text", required: true },
+          { name: "resolved", label: "Resolved", type: "boolean", required: false },
+          {
+            name: "priority",
+            label: "Priority",
+            type: "enum",
+            required: true,
+            enumValues: ["Low", "High"],
+            enumLabels: { Low: "נמוכה", High: "גבוהה" },
+          },
+        ],
+      },
+    ],
+    screens: [],
+    assumptions: [],
+    openQuestions: [],
+  },
+};
+
+test("AutomationsPanel's field_equals Value control renders a checkbox for a boolean field, defaulting to \"true\", and submits that exact string", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    let createBody: Record<string, unknown> | undefined;
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj5/automations") {
+        return new Response(JSON.stringify({ rules: [] }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      if (method === "POST" && input === "/api/projects/proj5/entities/Ticket/automations") {
+        createBody = JSON.parse(init!.body as string);
+        return new Response(JSON.stringify({ rule: { id: "rule9", ...createBody } }), {
+          status: 201,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+
+    try {
+      renderPanelWith(triggerFieldProject);
+      await waitForCondition(() => document.body.textContent?.includes("No automations yet") ?? false);
+
+      const triggerSelect = Array.from(document.querySelectorAll("select")).find((s) =>
+        Array.from(s.options).some((o) => o.value === "field_equals"),
+      ) as HTMLSelectElement;
+      fireEvent.change(triggerSelect, { target: { value: "field_equals" } });
+
+      const fieldSelect = Array.from(document.querySelectorAll("select")).find((s) =>
+        Array.from(s.options).some((o) => o.value === "resolved"),
+      ) as HTMLSelectElement;
+      fireEvent.change(fieldSelect, { target: { value: "resolved" } });
+
+      await waitForCondition(() => document.querySelector(".automations-field-value-checkbox input") !== null);
+      const checkbox = document.querySelector(".automations-field-value-checkbox input") as HTMLInputElement;
+      assert.equal(checkbox.checked, true, "must default to true, not an empty/unset value");
+      assert.equal(
+        document.querySelector('input[placeholder="Value (e.g. Shipped)"]') === null,
+        true,
+        "the plain free-text input must not render for a boolean field",
+      );
+
+      fireEvent.click(checkbox);
+      assert.equal(checkbox.checked, false);
+
+      const messageField = document.querySelector(".automations-create-form textarea") as HTMLTextAreaElement;
+      fireEvent.change(messageField, { target: { value: "Ticket resolution changed" } });
+      fireEvent.submit(document.querySelector(".automations-create-form")!);
+
+      await waitForCondition(() => createBody !== undefined);
+      assert.equal(createBody?.fieldValue, "false", "unchecking the box must submit the literal string \"false\", not a JS boolean or \"no\"");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+test("AutomationsPanel's field_equals Value control renders a <select> of the field's own enumValues (showing enumLabels) for an enum field, and submits the raw enum value", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    let createBody: Record<string, unknown> | undefined;
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj5/automations") {
+        return new Response(JSON.stringify({ rules: [] }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      if (method === "POST" && input === "/api/projects/proj5/entities/Ticket/automations") {
+        createBody = JSON.parse(init!.body as string);
+        return new Response(JSON.stringify({ rule: { id: "rule9", ...createBody } }), {
+          status: 201,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+
+    try {
+      renderPanelWith(triggerFieldProject);
+      await waitForCondition(() => document.body.textContent?.includes("No automations yet") ?? false);
+
+      const triggerSelect = Array.from(document.querySelectorAll("select")).find((s) =>
+        Array.from(s.options).some((o) => o.value === "field_equals"),
+      ) as HTMLSelectElement;
+      fireEvent.change(triggerSelect, { target: { value: "field_equals" } });
+
+      const fieldSelect = Array.from(document.querySelectorAll("select")).find((s) =>
+        Array.from(s.options).some((o) => o.value === "priority"),
+      ) as HTMLSelectElement;
+      fireEvent.change(fieldSelect, { target: { value: "priority" } });
+
+      const valueSelect = await (async () => {
+        await waitForCondition(() =>
+          Array.from(document.querySelectorAll("select")).some((s) => Array.from(s.options).some((o) => o.value === "Low")),
+        );
+        return Array.from(document.querySelectorAll("select")).find((s) => Array.from(s.options).some((o) => o.value === "Low")) as HTMLSelectElement;
+      })();
+      const optionTexts = Array.from(valueSelect.options).map((o) => ({ value: o.value, text: o.textContent }));
+      assert.deepEqual(
+        optionTexts,
+        [
+          { value: "Low", text: "נמוכה" },
+          { value: "High", text: "גבוהה" },
+        ],
+        "options must be exactly the field's enumValues, showing their enumLabels as text",
+      );
+      assert.equal(valueSelect.value, "Low", "must default to the first enum value, not an empty/unset value");
+
+      fireEvent.change(valueSelect, { target: { value: "High" } });
+
+      const messageField = document.querySelector(".automations-create-form textarea") as HTMLTextAreaElement;
+      fireEvent.change(messageField, { target: { value: "Priority changed" } });
+      fireEvent.submit(document.querySelector(".automations-create-form")!);
+
+      await waitForCondition(() => createBody !== undefined);
+      assert.equal(createBody?.fieldValue, "High", "must submit the raw enum value, not its enumLabels display text");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
