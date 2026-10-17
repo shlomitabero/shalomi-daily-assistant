@@ -1093,6 +1093,43 @@ button.danger:hover:not(:disabled) {
   color: inherit;
 }
 
+.tab-wrapper {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.tab-move-buttons {
+  display: inline-flex;
+  gap: 1px;
+}
+
+.tab-move-btn {
+  background: none;
+  border: none;
+  padding: 0 2px;
+  margin: 0;
+  color: var(--muted);
+  font: inherit;
+  line-height: 1;
+  cursor: pointer;
+  box-shadow: none;
+}
+
+.tab-move-btn:hover:not(:disabled),
+.tab-move-btn:focus-visible {
+  color: var(--text);
+  background: none;
+  transform: none;
+  box-shadow: none;
+}
+
+.tab-move-btn:disabled {
+  color: var(--muted);
+  opacity: 0.35;
+  cursor: default;
+}
+
 .entity-panel {
   background: var(--surface-raised);
   border: 1px solid var(--border);

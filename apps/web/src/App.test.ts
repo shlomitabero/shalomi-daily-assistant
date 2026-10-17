@@ -2597,6 +2597,75 @@ test("App's handleReorderEntityTab reorders entity tabs on drop and persists via
 });
 
 /**
+ * Regression test for round 662: handleReorderEntityTab above is
+ * drag-and-drop ONLY -- the same keyboard-accessibility gap round 478
+ * already closed for table columns (EntityPanel.tsx's own
+ * handleMoveColumn) by adding "move earlier"/"move later" buttons. This
+ * is the entity-tab bar's own mirror of that fix. Same extraction
+ * convention as handleReorderEntityTab's own test above, passing in the
+ * REAL reorderColumns rather than a mock.
+ */
+test("App's handleMoveEntityTab moves an entity tab earlier/later and persists via entityTabOrder.ts, but is a no-op at the ends of the order or with no project open", () => {
+  const appSrc = readFileSync(new URL("./App.tsx", import.meta.url), "utf8");
+  const handlerMatch = appSrc.match(/ {2}function handleMoveEntityTab\([\s\S]*?\n {2}\}\n/);
+  assert.ok(handlerMatch, "expected to find handleMoveEntityTab in App.tsx");
+  const { code } = transformSync(handlerMatch![0], { loader: "ts" });
+
+  const orderedEntities = [{ name: "Deal" }, { name: "Contact" }, { name: "Task" }];
+
+  function run(project: { id: string } | null, entityName: string, direction: "earlier" | "later") {
+    let persistedProjectId: string | null = null;
+    let persistedOrder: string[] | null = null;
+    const fn = new Function(
+      "project",
+      "orderedEntities",
+      "setEntityTabOrderState",
+      "setEntityTabOrder",
+      "reorderColumns",
+      `${code}\nreturn handleMoveEntityTab;`,
+    ) as (
+      project: { id: string } | null,
+      orderedEntities: { name: string }[],
+      setEntityTabOrderState: (v: string[]) => void,
+      setEntityTabOrder: (projectId: string, order: string[]) => string[],
+      reorderColumns: (order: string[], source: string, target: string) => string[],
+    ) => (entityName: string, direction: "earlier" | "later") => void;
+
+    const handler = fn(
+      project,
+      orderedEntities,
+      (v: string[]) => (persistedOrder = v),
+      (projectId: string, order: string[]) => {
+        persistedProjectId = projectId;
+        return order;
+      },
+      reorderColumns,
+    );
+    handler(entityName, direction);
+    return { persistedProjectId, persistedOrder };
+  }
+
+  const movedLater = run({ id: "proj1" }, "Deal", "later");
+  assert.equal(movedLater.persistedProjectId, "proj1", "must persist under the currently-open project's own id");
+  assert.deepEqual(movedLater.persistedOrder, ["Contact", "Deal", "Task"], "'later' on Deal must swap it past Contact, the same result dragging it there would give");
+
+  const movedEarlier = run({ id: "proj1" }, "Task", "earlier");
+  assert.deepEqual(movedEarlier.persistedOrder, ["Deal", "Task", "Contact"], "'earlier' on Task must swap it before Contact, the same result dragging it there would give");
+
+  const firstEarlier = run({ id: "proj1" }, "Deal", "earlier");
+  assert.equal(firstEarlier.persistedOrder, null, "'earlier' on the first tab must be a no-op -- there's nothing before it");
+
+  const lastLater = run({ id: "proj1" }, "Task", "later");
+  assert.equal(lastLater.persistedOrder, null, "'later' on the last tab must be a no-op -- there's nothing after it");
+
+  const unknownEntity = run({ id: "proj1" }, "NoSuchEntity", "earlier");
+  assert.equal(unknownEntity.persistedOrder, null, "a tab name not in orderedEntities must be a no-op, not throw");
+
+  const noProject = run(null, "Deal", "later");
+  assert.equal(noProject.persistedOrder, null, "must be a no-op with no project open at all, not throw on project.id");
+});
+
+/**
  * New in this round: a 401 SESSION_EXPIRED/AUTH_REQUIRED (the session
  * expired, or was revoked from another tab/device via "sign out
  * everywhere" or a password change) previously only ever surfaced as

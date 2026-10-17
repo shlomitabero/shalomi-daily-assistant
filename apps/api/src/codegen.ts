@@ -5577,6 +5577,24 @@ export default function App() {
     setDraggedEntityTab(null);
   }
 
+  // handleReorderEntityTab above is drag-and-drop only -- the same
+  // keyboard-accessibility gap the live preview's own handleMoveColumn
+  // (EntityPanel.tsx, round 478) already closed for table columns. Mirrors
+  // the live preview's own handleMoveEntityTab (App.tsx, round 662).
+  function handleMoveEntityTab(entityName, direction) {
+    const index = orderedEntities.findIndex((e) => e.name === entityName);
+    if (index === -1) return;
+    const neighborIndex = direction === "earlier" ? index - 1 : index + 1;
+    if (neighborIndex < 0 || neighborIndex >= orderedEntities.length) return;
+    const neighborName = orderedEntities[neighborIndex].name;
+    const fullOrder = orderedEntities.map((e) => e.name);
+    const next =
+      direction === "earlier"
+        ? reorderEntityTabs(fullOrder, entityName, neighborName)
+        : reorderEntityTabs(fullOrder, neighborName, entityName);
+    setEntityTabOrderState(setEntityTabOrder(next));
+  }
+
   // One cheap COUNT(*) per entity, fetched once on load, so the nav's own
   // record-count badges match the live Forge AI preview's own entity-tabs
   // badges (round 305). A failed fetch here is swallowed -- the badge is a
@@ -5704,26 +5722,47 @@ export default function App() {
         </div>
       </div>
       <nav>
-        {orderedEntities.map((e) => (
-          <button
-            key={e.name}
-            className={e.name === active ? "active" : dragOverEntityTab === e.name ? "drag-over" : ""}
-            draggable
-            onDragStart={() => setDraggedEntityTab(e.name)}
-            onDragOver={(ev) => {
-              ev.preventDefault();
-              setDragOverEntityTab(e.name);
-            }}
-            onDragLeave={() => setDragOverEntityTab((prev) => (prev === e.name ? null : prev))}
-            onDrop={(ev) => {
-              ev.preventDefault();
-              handleReorderEntityTab(e.name);
-            }}
-            onClick={() => setActive(e.name)}
-          >
-            {e.label}
-            {entityCounts[e.name] != null && <span className="tab-count">{entityCounts[e.name]}</span>}
-          </button>
+        {orderedEntities.map((e, entityTabIndex) => (
+          <span key={e.name} className="tab-wrapper">
+            <button
+              className={e.name === active ? "active" : dragOverEntityTab === e.name ? "drag-over" : ""}
+              draggable
+              onDragStart={() => setDraggedEntityTab(e.name)}
+              onDragOver={(ev) => {
+                ev.preventDefault();
+                setDragOverEntityTab(e.name);
+              }}
+              onDragLeave={() => setDragOverEntityTab((prev) => (prev === e.name ? null : prev))}
+              onDrop={(ev) => {
+                ev.preventDefault();
+                handleReorderEntityTab(e.name);
+              }}
+              onClick={() => setActive(e.name)}
+            >
+              {e.label}
+              {entityCounts[e.name] != null && <span className="tab-count">{entityCounts[e.name]}</span>}
+            </button>
+            <span className="tab-move-buttons">
+              <button
+                type="button"
+                className="tab-move-btn"
+                onClick={() => handleMoveEntityTab(e.name, "earlier")}
+                disabled={entityTabIndex === 0}
+                aria-label={\`Move \${e.label} tab earlier\`}
+              >
+                ‹
+              </button>
+              <button
+                type="button"
+                className="tab-move-btn"
+                onClick={() => handleMoveEntityTab(e.name, "later")}
+                disabled={entityTabIndex === orderedEntities.length - 1}
+                aria-label={\`Move \${e.label} tab later\`}
+              >
+                ›
+              </button>
+            </span>
+          </span>
         ))}
       </nav>
       {activeEntity && (
@@ -5919,6 +5958,11 @@ th, td { text-align: start; padding: 8px 10px; border-bottom: 1px solid var(--bo
 .entity-group-toggle { background: none; border: none; cursor: pointer; padding: 0 4px; font-size: 12px; color: inherit; }
 .tab-count { display: inline-block; margin-inline-start: 6px; padding: 1px 7px; border-radius: 999px; font-size: 11.5px; font-weight: 700; line-height: 1.5; background: var(--steel-soft); color: var(--steel); }
 nav button.active .tab-count { background: rgba(255, 255, 255, 0.25); color: inherit; }
+.tab-wrapper { display: inline-flex; align-items: center; gap: 2px; }
+.tab-move-buttons { display: inline-flex; gap: 1px; }
+.tab-move-btn { background: none; border: none; padding: 0 2px; margin: 0; color: var(--muted); font: inherit; line-height: 1; cursor: pointer; }
+.tab-move-btn:hover:not(:disabled), .tab-move-btn:focus-visible { color: var(--text); }
+.tab-move-btn:disabled { color: var(--muted); opacity: 0.35; cursor: default; }
 .view-toggle { display: flex; gap: 4px; padding: 3px; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; flex-shrink: 0; }
 .view-toggle-btn { padding: 6px 12px; border-radius: 6px; border: none; background: transparent; color: var(--muted); font-size: 13px; font-weight: 600; cursor: pointer; }
 .view-toggle-btn-active { background: var(--accent); color: var(--accent-contrast); }

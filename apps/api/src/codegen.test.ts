@@ -8785,7 +8785,7 @@ test("the exported App's entity tabs are drag-and-drop reorderable, persisting v
     appJsx,
     /function handleReorderEntityTab\(targetName\) \{\s*setDragOverEntityTab\(null\);\s*if \(!draggedEntityTab \|\| draggedEntityTab === targetName\) return;\s*const fullOrder = orderedEntities\.map\(\(e\) => e\.name\);\s*setEntityTabOrderState\(setEntityTabOrder\(reorderEntityTabs\(fullOrder, draggedEntityTab, targetName\)\)\);\s*setDraggedEntityTab\(null\);\s*\}/,
   );
-  assert.match(appJsx, /\{orderedEntities\.map\(\(e\) => \(/, "the nav must render orderedEntities, not the fixed ENTITIES order");
+  assert.match(appJsx, /\{orderedEntities\.map\(\(e, entityTabIndex\) => \(/, "the nav must render orderedEntities, not the fixed ENTITIES order");
   assert.match(appJsx, /onDragStart=\{\(\) => setDraggedEntityTab\(e\.name\)\}/);
   assert.match(
     appJsx,
@@ -8843,6 +8843,77 @@ test("the exported App's entity tabs are drag-and-drop reorderable, persisting v
   const updated = setEntityTabOrder(["Service", "Customer"]);
   assert.deepEqual(updated, ["Service", "Customer"]);
   assert.deepEqual(getEntityTabOrder(), ["Service", "Customer"], "must round-trip through the real localStorage-backed store");
+});
+
+/**
+ * Regression test for round 662: the test above confirms the exported
+ * app's entity-tab reorder is drag-and-drop reorderable, but that was
+ * drag-only, the same keyboard-accessibility gap round 478 already closed
+ * for the exported app's own table columns (handleMoveColumn,
+ * column-move-btn). Ports the identical keyboard fallback -- "move
+ * earlier"/"move later" buttons next to each tab, reusing the same
+ * reorderEntityTabs primitive the drag handler uses.
+ */
+test("the exported App's entity tabs have keyboard-operable 'move earlier'/'move later' buttons as a real fallback to drag-and-drop reorder", () => {
+  const files = generateExportFiles(project);
+  const appJsx = files.find((f) => f.path === "web/src/App.jsx")!.content;
+
+  assert.match(
+    appJsx,
+    /function handleMoveEntityTab\(entityName, direction\) \{\s*const index = orderedEntities\.findIndex\(\(e\) => e\.name === entityName\);\s*if \(index === -1\) return;\s*const neighborIndex = direction === "earlier" \? index - 1 : index \+ 1;\s*if \(neighborIndex < 0 \|\| neighborIndex >= orderedEntities\.length\) return;\s*const neighborName = orderedEntities\[neighborIndex\]\.name;\s*const fullOrder = orderedEntities\.map\(\(e\) => e\.name\);\s*const next =\s*direction === "earlier"\s*\? reorderEntityTabs\(fullOrder, entityName, neighborName\)\s*: reorderEntityTabs\(fullOrder, neighborName, entityName\);\s*setEntityTabOrderState\(setEntityTabOrder\(next\)\);\s*\}/,
+  );
+  assert.match(appJsx, /<span key=\{e\.name\} className="tab-wrapper">/);
+  assert.match(appJsx, /<span className="tab-move-buttons">/);
+  assert.match(appJsx, /onClick=\{\(\) => handleMoveEntityTab\(e\.name, "earlier"\)\}/);
+  assert.match(appJsx, /onClick=\{\(\) => handleMoveEntityTab\(e\.name, "later"\)\}/);
+  assert.match(appJsx, /disabled=\{entityTabIndex === 0\}/);
+  assert.match(appJsx, /disabled=\{entityTabIndex === orderedEntities\.length - 1\}/);
+
+  const stylesCss = files.find((f) => f.path === "web/src/styles.css")!.content;
+  assert.match(stylesCss, /\.tab-move-btn \{/);
+
+  // Executes the real generated handleMoveEntityTab against plain data,
+  // the same "run the real generated code" standard the drag-and-drop
+  // test above uses for reorderEntityTabs.
+  const handlerMatch = appJsx.match(/ {2}function handleMoveEntityTab\(entityName, direction\) \{[\s\S]*?\n {2}\}\n/);
+  assert.ok(handlerMatch, "expected to find handleMoveEntityTab in generated App.jsx");
+  const fn = new Function(
+    "orderedEntities",
+    "setEntityTabOrderState",
+    "setEntityTabOrder",
+    "reorderEntityTabs",
+    `${handlerMatch![0]}\nreturn handleMoveEntityTab;`,
+  ) as (
+    orderedEntities: { name: string }[],
+    setEntityTabOrderState: (v: string[]) => void,
+    setEntityTabOrder: (order: string[]) => string[],
+    reorderEntityTabs: (order: string[], source: string, target: string) => string[],
+  ) => (entityName: string, direction: "earlier" | "later") => void;
+
+  function run(entities: { name: string }[], entityName: string, direction: "earlier" | "later") {
+    let persistedOrder: string[] | null = null;
+    const handler = fn(
+      entities,
+      (v: string[]) => (persistedOrder = v),
+      (order: string[]) => order,
+      (order: string[], source: string, target: string) => {
+        if (source === target) return order;
+        const withoutSource = order.filter((n) => n !== source);
+        const targetIndex = withoutSource.indexOf(target);
+        const result = [...withoutSource];
+        result.splice(targetIndex, 0, source);
+        return result;
+      },
+    );
+    handler(entityName, direction);
+    return persistedOrder;
+  }
+
+  const entities = [{ name: "Deal" }, { name: "Contact" }, { name: "Task" }];
+  assert.deepEqual(run(entities, "Deal", "later"), ["Contact", "Deal", "Task"], "'later' must swap with the next neighbor, the same result dragging it there would give");
+  assert.deepEqual(run(entities, "Task", "earlier"), ["Deal", "Task", "Contact"], "'earlier' must swap with the previous neighbor, the same result dragging it there would give");
+  assert.equal(run(entities, "Deal", "earlier"), null, "'earlier' on the first tab must be a no-op -- there's nothing before it");
+  assert.equal(run(entities, "Task", "later"), null, "'later' on the last tab must be a no-op -- there's nothing after it");
 });
 
 /**

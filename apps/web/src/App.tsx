@@ -580,6 +580,28 @@ function AppContent() {
     setDraggedEntityTab(null);
   }
 
+  /**
+   * handleReorderEntityTab above is drag-and-drop only -- the same
+   * keyboard-accessibility gap round 478 already closed for table columns
+   * (EntityPanel.tsx's own handleMoveColumn) by adding "move earlier"/"move
+   * later" buttons next to each column header. This mirrors that fix for
+   * the entity-tab bar, reusing the identical reorderColumns primitive, so
+   * a keyboard-only or screen-reader user gets the same tab-reordering
+   * access a mouse-drag user already has.
+   */
+  function handleMoveEntityTab(entityName: string, direction: "earlier" | "later") {
+    if (!project) return;
+    const index = orderedEntities.findIndex((e) => e.name === entityName);
+    if (index === -1) return;
+    const neighborIndex = direction === "earlier" ? index - 1 : index + 1;
+    if (neighborIndex < 0 || neighborIndex >= orderedEntities.length) return;
+    const neighborName = orderedEntities[neighborIndex].name;
+    const fullOrder = orderedEntities.map((e) => e.name);
+    const next =
+      direction === "earlier" ? reorderColumns(fullOrder, entityName, neighborName) : reorderColumns(fullOrder, neighborName, entityName);
+    setEntityTabOrderState(setEntityTabOrder(project.id, next));
+  }
+
   const visibleMyProjects = useMemo(
     () => filterAndSortProjects(filterProjectsByStatus(myProjects, projectStatusFilter), projectSearch, pinnedIds, projectSortMode),
     [myProjects, projectStatusFilter, projectSearch, pinnedIds, projectSortMode],
@@ -1995,36 +2017,57 @@ function AppContent() {
 
             <div className="preview-live-pane">
               <nav className="entity-tabs">
-                {orderedEntities.map((entity) => (
-                  <button
-                    key={entity.name}
-                    className={
-                      activeEntity === entity.name
-                        ? "tab tab-active"
-                        : dragOverEntityTab === entity.name
-                          ? "tab tab-drag-over"
-                          : "tab"
-                    }
-                    draggable
-                    onDragStart={() => setDraggedEntityTab(entity.name)}
-                    onDragOver={(e) => {
-                      e.preventDefault();
-                      setDragOverEntityTab(entity.name);
-                    }}
-                    onDragLeave={() => setDragOverEntityTab((prev) => (prev === entity.name ? null : prev))}
-                    onDrop={(e) => {
-                      e.preventDefault();
-                      handleReorderEntityTab(entity.name);
-                    }}
-                    onClick={() => setActiveEntity(entity.name)}
-                  >
-                    {entity.label ?? entity.name}
-                    {entityCounts[entity.name] != null && (
-                      <span className="tab-count" aria-label={t("entity.tab.recordCount", { count: String(entityCounts[entity.name]) })}>
-                        {entityCounts[entity.name]}
-                      </span>
-                    )}
-                  </button>
+                {orderedEntities.map((entity, entityTabIndex) => (
+                  <span key={entity.name} className="tab-wrapper">
+                    <button
+                      className={
+                        activeEntity === entity.name
+                          ? "tab tab-active"
+                          : dragOverEntityTab === entity.name
+                            ? "tab tab-drag-over"
+                            : "tab"
+                      }
+                      draggable
+                      onDragStart={() => setDraggedEntityTab(entity.name)}
+                      onDragOver={(e) => {
+                        e.preventDefault();
+                        setDragOverEntityTab(entity.name);
+                      }}
+                      onDragLeave={() => setDragOverEntityTab((prev) => (prev === entity.name ? null : prev))}
+                      onDrop={(e) => {
+                        e.preventDefault();
+                        handleReorderEntityTab(entity.name);
+                      }}
+                      onClick={() => setActiveEntity(entity.name)}
+                    >
+                      {entity.label ?? entity.name}
+                      {entityCounts[entity.name] != null && (
+                        <span className="tab-count" aria-label={t("entity.tab.recordCount", { count: String(entityCounts[entity.name]) })}>
+                          {entityCounts[entity.name]}
+                        </span>
+                      )}
+                    </button>
+                    <span className="tab-move-buttons">
+                      <button
+                        type="button"
+                        className="tab-move-btn"
+                        onClick={() => handleMoveEntityTab(entity.name, "earlier")}
+                        disabled={entityTabIndex === 0}
+                        aria-label={t("entity.tab.moveEarlier", { entity: entity.label ?? entity.name })}
+                      >
+                        ‹
+                      </button>
+                      <button
+                        type="button"
+                        className="tab-move-btn"
+                        onClick={() => handleMoveEntityTab(entity.name, "later")}
+                        disabled={entityTabIndex === orderedEntities.length - 1}
+                        aria-label={t("entity.tab.moveLater", { entity: entity.label ?? entity.name })}
+                      >
+                        ›
+                      </button>
+                    </span>
+                  </span>
                 ))}
               </nav>
               {project.spec.entities
