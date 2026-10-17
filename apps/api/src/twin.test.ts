@@ -823,6 +823,76 @@ test("computeBusinessTwin reports an enum field's value distribution when there'
 });
 
 /**
+ * Round 669 regression test: a boolean field's two values are the same
+ * "small, fixed value space" category entityFormatting.ts's own
+ * isGroupableField/findFilterableFields already treat identically to an
+ * enum's -- but computeEnumDistributionObservations' own field filter
+ * never widened to match, leaving a business-meaningful boolean like
+ * "Paid" with no distribution insight at all.
+ */
+test("computeBusinessTwin reports a boolean field's TRUE/FALSE value distribution, the same way it already does for enum fields", () => {
+  const orderProject: Project = {
+    ...project,
+    description: "An online store with orders",
+    spec: {
+      ...project.spec,
+      entities: [
+        {
+          name: "Order",
+          label: "Orders",
+          fields: [
+            { name: "customer", type: "text", required: true },
+            { name: "paid", label: "Paid", type: "boolean", required: false },
+          ],
+        },
+      ],
+    },
+  };
+  const db = openDatabase(":memory:");
+  applyMigrations(db, orderProject.id, orderProject.spec);
+  const order = orderProject.spec.entities[0];
+  insertRecord(db, orderProject.id, order, { customer: "Dana", paid: true });
+  insertRecord(db, orderProject.id, order, { customer: "Yossi", paid: true });
+  insertRecord(db, orderProject.id, order, { customer: "Noa", paid: false });
+
+  const twin = computeBusinessTwin(db, orderProject);
+  const distribution = twin.jumpableObservations.find((o) => o.text.includes("Paid"));
+  assert.ok(distribution, `expected a boolean-distribution observation, got: ${JSON.stringify(twin.jumpableObservations)}`);
+  assert.equal(distribution!.entityName, "Order");
+  // Sorted by count descending -- the larger bucket (2 TRUE) reads before the smaller one (1 FALSE).
+  assert.match(distribution!.text, /2 "TRUE".*1 "FALSE"/);
+});
+
+test("computeBusinessTwin's boolean distribution is skipped when every record shares the same value, same as the enum case", () => {
+  const orderProject: Project = {
+    ...project,
+    description: "An online store with orders",
+    spec: {
+      ...project.spec,
+      entities: [
+        {
+          name: "Order",
+          label: "Orders",
+          fields: [
+            { name: "customer", type: "text", required: true },
+            { name: "paid", label: "Paid", type: "boolean", required: false },
+          ],
+        },
+      ],
+    },
+  };
+  const db = openDatabase(":memory:");
+  applyMigrations(db, orderProject.id, orderProject.spec);
+  const order = orderProject.spec.entities[0];
+  insertRecord(db, orderProject.id, order, { customer: "Dana", paid: true });
+  insertRecord(db, orderProject.id, order, { customer: "Yossi", paid: true });
+
+  const twin = computeBusinessTwin(db, orderProject);
+  const distribution = twin.jumpableObservations.find((o) => o.text.includes("Paid"));
+  assert.equal(distribution, undefined, "a single-value boolean distribution isn't a distribution, same as the enum case");
+});
+
+/**
  * Regression test for a real bug found by round 635's Explore survey: the
  * same label-collision gap closed for computeRelationCoverageObservations
  * and computeNumericAggregateObservations above, for enum fields. Two

@@ -419,6 +419,21 @@ function computeNumericAggregateObservations(
  * isn't a distribution, the same "nothing to report yet" guard the
  * duplicate/relation-coverage observations above already apply to their
  * own single-candidate case.
+ *
+ * Boolean fields are included alongside enum fields -- entityFormatting.ts's
+ * own isGroupableField/findFilterableFields already establish, elsewhere in
+ * this codebase, that a boolean's two values (true/false) are exactly the
+ * same "small, fixed value space" category as an enum's for this kind of
+ * per-value-count summary; a business-meaningful boolean like "Paid" or
+ * "IsActive" (common in domainEntities.ts's own seeded specs) was getting
+ * no distribution insight at all before this, the one field type this
+ * function's own filter never widened to match that established
+ * convention. A boolean field has no `enumValues`/`enumLabels` of its own,
+ * so its two raw values (always real JS booleans via repository.ts's
+ * coerceValue, never "true"/"false" strings) are displayed as "TRUE"/
+ * "FALSE" -- the same literal, unlocalized convention this app's own
+ * interpolateTemplate (WhatsApp message formatting) and entityFormatting.ts
+ * (CSV export) already use for a boolean's textual form.
  */
 function computeEnumDistributionObservations(
   recordsByEntity: Map<string, EntityRecord[]>,
@@ -427,23 +442,25 @@ function computeEnumDistributionObservations(
 ): { text: string; entityName: string }[] {
   const observations: { text: string; entityName: string }[] = [];
   for (const entity of project.spec.entities) {
-    const enumFields = entity.fields.filter((f) => f.type === "enum" && f.enumValues && f.enumValues.length > 0);
-    if (enumFields.length === 0) continue;
+    const distributionFields = entity.fields.filter(
+      (f) => (f.type === "enum" && f.enumValues && f.enumValues.length > 0) || f.type === "boolean",
+    );
+    if (distributionFields.length === 0) continue;
     const records = recordsByEntity.get(entity.name) ?? [];
     if (records.length === 0) continue;
 
     const entityLabel = entity.label ?? entity.name;
     // Same label-collision gap as computeRelationCoverageObservations/
-    // computeNumericAggregateObservations above -- two enum fields on the
-    // same entity sharing a label would otherwise produce two
+    // computeNumericAggregateObservations above -- two enum/boolean fields
+    // on the same entity sharing a label would otherwise produce two
     // identical-looking breakdown lines with no way to tell them apart.
     const labelOccurrences = new Map<string, number>();
-    for (const field of enumFields) {
+    for (const field of distributionFields) {
       const label = field.label ?? field.name;
       labelOccurrences.set(label, (labelOccurrences.get(label) ?? 0) + 1);
     }
 
-    for (const field of enumFields) {
+    for (const field of distributionFields) {
       const countByValue = new Map<string, number>();
       for (const record of records) {
         const raw = record[field.name];
@@ -455,7 +472,10 @@ function computeEnumDistributionObservations(
 
       const breakdown = [...countByValue.entries()]
         .sort((a, b) => b[1] - a[1])
-        .map(([value, count]) => `${count} "${(field.enumLabels && field.enumLabels[value]) || value}"`)
+        .map(([value, count]) => {
+          const label = field.type === "boolean" ? (value === "true" ? "TRUE" : "FALSE") : (field.enumLabels && field.enumLabels[value]) || value;
+          return `${count} "${label}"`;
+        })
         .join(", ");
       const fieldLabel = field.label ?? field.name;
       const ambiguous = (labelOccurrences.get(fieldLabel) ?? 0) > 1;
