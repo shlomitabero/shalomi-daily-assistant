@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { JSDOM } from "jsdom";
 import React from "react";
-import { cleanup, fireEvent, render } from "@testing-library/react";
+import { act, cleanup, fireEvent, render } from "@testing-library/react";
 import type { Project } from "@forge/shared";
 import { AutomationsPanel } from "./AutomationsPanel.js";
 import { LanguageProvider } from "./i18n/LanguageContext.js";
@@ -1074,6 +1074,124 @@ test("clicking Cancel while editing discards the in-progress edit and never call
       assert.match(document.querySelector(".automations-rule-row")!.textContent ?? "", /Hi \{\{customerName\}\}, delivered!/, "the original rule must be untouched");
     } finally {
       globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
+ * Round 679: Automations was the one read-heavy diagnostic panel in this
+ * app with no Copy/Download companions at all (Business Twin, WhatsApp
+ * log, Time Machine, Global Search all already have both) -- a user
+ * debugging why an automation isn't firing had no way to hand over the
+ * rule list and its last-run outcomes without a screenshot. Confirms
+ * neither button renders before rules have loaded, both appear once real
+ * rules exist, and clicking Copy writes the real formatted report (not a
+ * placeholder) to the clipboard.
+ */
+test("AutomationsPanel shows Copy/Download buttons only once real rules exist, and Copy writes the real formatted report to the clipboard", async (t) => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string) => {
+      if (input === "/api/projects/proj1/automations") {
+        return new Response(JSON.stringify({ rules: [makeRule()] }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${input}`);
+    }) as typeof fetch;
+
+    let writtenText: string | undefined;
+    Object.defineProperty(navigator, "clipboard", {
+      value: { writeText: async (text: string) => void (writtenText = text) },
+      configurable: true,
+    });
+
+    try {
+      renderPanel();
+
+      assert.equal(
+        Array.from(document.querySelectorAll("button")).some((b) => b.textContent?.includes("Copy report")),
+        false,
+        "no Copy button should render while loading, before any rules have arrived",
+      );
+
+      await waitForCondition(() => document.querySelectorAll(".automations-rule-row").length === 1);
+
+      const copyButton = Array.from(document.querySelectorAll("button")).find((b) => b.textContent?.includes("Copy report"));
+      const downloadButton = Array.from(document.querySelectorAll("button")).find((b) => b.textContent?.includes("Download report"));
+      assert.ok(copyButton, "expected a Copy report button once real rules exist");
+      assert.ok(downloadButton, "expected a Download report button once real rules exist");
+      assert.equal(copyButton!.getAttribute("aria-live"), "polite");
+      assert.equal(copyButton!.getAttribute("aria-atomic"), "true");
+
+      t.mock.timers.enable({ apis: ["setTimeout"] });
+
+      await act(async () => {
+        fireEvent.click(copyButton!);
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+
+      assert.equal(typeof writtenText, "string", "clicking Copy must actually call navigator.clipboard.writeText");
+      assert.match(writtenText!, /Orders/, "the copied text must include the real project name");
+      assert.match(writtenText!, /Hi \{\{customerName\}\}, delivered!/, "the copied text must include the real rule's message template");
+      assert.equal(copyButton!.textContent, "✅ Copied!");
+
+      act(() => {
+        t.mock.timers.tick(2000);
+      });
+      assert.equal(copyButton!.textContent, "📋 Copy report", "must revert to the normal label once the delay elapses");
+    } finally {
+      t.mock.timers.reset();
+      globalThis.fetch = originalFetch;
+      delete (navigator as { clipboard?: unknown }).clipboard;
+    }
+  });
+});
+
+test("AutomationsPanel's Download button downloads the real report as a named file", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string) => {
+      if (input === "/api/projects/proj1/automations") {
+        return new Response(JSON.stringify({ rules: [makeRule()] }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${input}`);
+    }) as typeof fetch;
+
+    // jsdom doesn't implement the real Blob-URL machinery -- stub just
+    // enough of it to observe what the click handler actually does, the
+    // same technique GlobalSearchPanel.test.ts's own download test uses.
+    const originalCreateObjectURL = (URL as unknown as { createObjectURL?: (b: Blob) => string }).createObjectURL;
+    const originalRevokeObjectURL = (URL as unknown as { revokeObjectURL?: (u: string) => void }).revokeObjectURL;
+    const anchorProto = (globalThis as unknown as { window: { HTMLAnchorElement: { prototype: HTMLAnchorElement } } }).window
+      .HTMLAnchorElement.prototype;
+    const originalAnchorClick = anchorProto.click;
+    let capturedDownloadName: string | null = null;
+    let clickCount = 0;
+    (URL as unknown as { createObjectURL: (b: Blob) => string }).createObjectURL = () => "blob:mock-url";
+    (URL as unknown as { revokeObjectURL: (u: string) => void }).revokeObjectURL = () => {};
+    anchorProto.click = function (this: HTMLAnchorElement) {
+      capturedDownloadName = this.download;
+      clickCount += 1;
+    };
+
+    try {
+      renderPanel();
+      await waitForCondition(() => document.querySelectorAll(".automations-rule-row").length === 1);
+
+      const downloadButton = Array.from(document.querySelectorAll("button")).find((b) => b.textContent?.includes("Download report"));
+      assert.ok(downloadButton, "expected a Download report button once real rules exist");
+
+      fireEvent.click(downloadButton!);
+
+      assert.equal(clickCount, 1, "clicking the download button must trigger exactly one real anchor click");
+      const downloadName: string = capturedDownloadName ?? "";
+      assert.ok(downloadName.includes("Orders"), `expected the downloaded filename to be derived from the real project name "Orders", got "${downloadName}"`);
+      assert.ok(downloadName.endsWith("automations.txt"), `expected an automations.txt filename, got "${downloadName}"`);
+    } finally {
+      globalThis.fetch = originalFetch;
+      if (originalCreateObjectURL) (URL as unknown as { createObjectURL: (b: Blob) => string }).createObjectURL = originalCreateObjectURL;
+      if (originalRevokeObjectURL) (URL as unknown as { revokeObjectURL: (u: string) => void }).revokeObjectURL = originalRevokeObjectURL;
+      anchorProto.click = originalAnchorClick;
     }
   });
 });

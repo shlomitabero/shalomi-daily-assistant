@@ -10,6 +10,7 @@ import {
   type AutomationToMode,
   type AutomationTrigger,
 } from "./api.js";
+import { downloadAutomationsReport, formatAutomationsReport } from "./automationsReport.js";
 import { uniqueEnumValues } from "./entityFormatting.js";
 import { useTranslation } from "./i18n/LanguageContext.js";
 import { useDialogFocusTrap } from "./useDialogFocusTrap.js";
@@ -43,6 +44,7 @@ export function AutomationsPanel({
   const [loadError, setLoadError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busyRuleId, setBusyRuleId] = useState<string | null>(null);
+  const [copyStatus, setCopyStatus] = useState<"idle" | "copied" | "failed">("idle");
   const dialogRef = useDialogFocusTrap<HTMLDivElement>(onClose);
 
   const entities = project.spec.entities;
@@ -360,14 +362,56 @@ export function AutomationsPanel({
       : t("automations.lastRun.failed", { time, error: rule.lastError ?? "" });
   }
 
+  function handleDownload() {
+    downloadAutomationsReport(formatAutomationsReport(rules ?? [], entities, project.name, lang, t), project.name);
+  }
+
+  /**
+   * Same "Copy report" companion action every other read-heavy diagnostic
+   * panel in this app already has for its own Download button (Business
+   * Twin, WhatsApp log, Time Machine, Global Search) -- Automations was
+   * the one panel left with no way to take its rule list and last-run
+   * outcomes anywhere at all.
+   */
+  async function handleCopy() {
+    try {
+      await navigator.clipboard.writeText(formatAutomationsReport(rules ?? [], entities, project.name, lang, t));
+      setCopyStatus("copied");
+    } catch {
+      setCopyStatus("failed");
+    }
+  }
+
+  useEffect(() => {
+    if (copyStatus === "idle") return;
+    const timer = setTimeout(() => setCopyStatus("idle"), 2000);
+    return () => clearTimeout(timer);
+  }, [copyStatus]);
+
   return (
     <div className="history-overlay">
       <div className="history-panel" ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby="automations-panel-title">
         <div className="history-header">
           <h2 id="automations-panel-title">{t("automations.title")}</h2>
-          <button type="button" className="secondary" onClick={onClose}>
-            {t("history.close")}
-          </button>
+          <div className="history-header-actions">
+            {rules !== null && rules.length > 0 && (
+              <button type="button" className="secondary" onClick={handleCopy} aria-live="polite" aria-atomic="true">
+                {copyStatus === "copied"
+                  ? t("automations.copy.copied")
+                  : copyStatus === "failed"
+                    ? t("automations.copy.failed")
+                    : t("automations.copy")}
+              </button>
+            )}
+            {rules !== null && rules.length > 0 && (
+              <button type="button" className="secondary" onClick={handleDownload}>
+                {t("automations.download")}
+              </button>
+            )}
+            <button type="button" className="secondary" onClick={onClose}>
+              {t("history.close")}
+            </button>
+          </div>
         </div>
         <p className="muted small">{t("automations.description")}</p>
         <p className="muted small automations-whatsapp-hint">{t("automations.whatsappRequired")}</p>
