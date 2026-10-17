@@ -2833,6 +2833,12 @@ button.sort-header:hover:not(:disabled) {
   color: var(--muted);
 }
 
+.automations-form-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
 .twin-panel {
   max-width: 560px;
 }

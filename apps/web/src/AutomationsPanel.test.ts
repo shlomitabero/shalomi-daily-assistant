@@ -916,3 +916,164 @@ test("AutomationsPanel's rule list describes a webhook rule by its URL, not a Wh
     }
   });
 });
+
+/**
+ * Round 677: previously the only fix path for a wrong field/time/number/
+ * template on an existing rule was delete-and-recreate (losing its
+ * lastTriggeredAt/lastStatus history), even though the server's PATCH
+ * route (UpdateAutomationRuleSchema + findAutomationRuleInvariantViolation,
+ * apps/api/src/routes/projects.ts) already accepted a full edit of every
+ * rule field. These three tests cover the new Edit button: it must seed
+ * the create-form from the chosen rule and switch it into edit mode
+ * (entity locked, heading/submit label changed, a Cancel button appears);
+ * submitting must PATCH (not POST) and update the rule in place; and
+ * Cancel must discard the in-progress edit without calling the API at all.
+ */
+test("AutomationsPanel's Edit button seeds the create-form from the chosen rule and switches it into edit mode", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string) => {
+      if (input === "/api/projects/proj1/automations") {
+        return new Response(JSON.stringify({ rules: [makeRule()] }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${input}`);
+    }) as typeof fetch;
+
+    try {
+      renderPanel();
+      await waitForCondition(() => document.querySelectorAll(".automations-rule-row").length === 1);
+
+      assert.match(document.querySelector(".automations-new-heading")!.textContent ?? "", /New rule/);
+
+      const editButton = Array.from(document.querySelectorAll(".automations-rule-actions button")).find(
+        (b) => b.textContent === "Edit",
+      ) as HTMLButtonElement;
+      assert.ok(editButton, "expected an Edit button on the rule row");
+      fireEvent.click(editButton);
+
+      assert.match(document.querySelector(".automations-new-heading")!.textContent ?? "", /Edit rule/);
+
+      const entitySelect = document.querySelector(".automations-create-form select") as HTMLSelectElement;
+      assert.equal(entitySelect.value, "Order");
+      assert.equal(entitySelect.disabled, true, "the entity select must be locked while editing -- a PATCH can never change it");
+
+      const messageField = document.querySelector(".automations-create-form textarea") as HTMLTextAreaElement;
+      assert.equal(messageField.value, "Hi {{customerName}}, delivered!", "the message template must be seeded from the rule");
+
+      const submitButton = document.querySelector('.automations-create-form button[type="submit"]') as HTMLButtonElement;
+      assert.equal(submitButton.textContent, "Save changes");
+
+      assert.ok(
+        Array.from(document.querySelectorAll(".automations-create-form button")).some((b) => b.textContent === "Cancel"),
+        "a Cancel button must appear while editing",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+test("submitting an edited rule calls the real PATCH endpoint and updates the rule in place, then returns the form to create mode", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    let patchBody: Record<string, unknown> | undefined;
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/automations") {
+        return new Response(JSON.stringify({ rules: [makeRule()] }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      if (method === "PATCH" && input === "/api/projects/proj1/automations/rule1") {
+        patchBody = JSON.parse(init!.body as string) as Record<string, unknown>;
+        return new Response(JSON.stringify({ rule: makeRule({ messageTemplate: patchBody.messageTemplate }) }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+
+    try {
+      renderPanel();
+      await waitForCondition(() => document.querySelectorAll(".automations-rule-row").length === 1);
+
+      fireEvent.click(
+        Array.from(document.querySelectorAll(".automations-rule-actions button")).find((b) => b.textContent === "Edit") as HTMLButtonElement,
+      );
+
+      const messageField = document.querySelector(".automations-create-form textarea") as HTMLTextAreaElement;
+      fireEvent.change(messageField, { target: { value: "Hi {{customerName}}, your order shipped!" } });
+      fireEvent.submit(document.querySelector(".automations-create-form")!);
+
+      // patchBody is assigned synchronously the moment the mocked fetch
+      // starts running, well before the component's own await chain
+      // parses the response and commits the updated rule to state --
+      // waiting on the DOM itself (not just patchBody) avoids a race
+      // against that still-pending re-render.
+      await waitForCondition(() =>
+        /Hi \{\{customerName\}\}, your order shipped!/.test(document.querySelector(".automations-rule-row")?.textContent ?? ""),
+      );
+      assert.deepEqual(patchBody, {
+        trigger: "field_equals",
+        fieldName: "status",
+        fieldValue: "Delivered",
+        scheduleTimeUtc: null,
+        scheduleDaysOfWeek: null,
+        actionType: "send_whatsapp",
+        toMode: "field",
+        toField: "customerPhone",
+        toNumber: null,
+        webhookUrl: null,
+        messageTemplate: "Hi {{customerName}}, your order shipped!",
+      });
+
+      // Still exactly one row -- a successful edit must update the
+      // existing rule in place, never append a second one.
+      assert.equal(document.querySelectorAll(".automations-rule-row").length, 1);
+
+      assert.match(document.querySelector(".automations-new-heading")!.textContent ?? "", /New rule/, "must return to create mode after a successful save");
+      assert.equal(
+        Array.from(document.querySelectorAll(".automations-create-form button")).some((b) => b.textContent === "Cancel"),
+        false,
+        "the Cancel button must disappear once no longer editing",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+test("clicking Cancel while editing discards the in-progress edit and never calls the API", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/automations") {
+        return new Response(JSON.stringify({ rules: [makeRule()] }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${method} ${input} -- Cancel must never call the API`);
+    }) as typeof fetch;
+
+    try {
+      renderPanel();
+      await waitForCondition(() => document.querySelectorAll(".automations-rule-row").length === 1);
+
+      fireEvent.click(
+        Array.from(document.querySelectorAll(".automations-rule-actions button")).find((b) => b.textContent === "Edit") as HTMLButtonElement,
+      );
+      const messageField = document.querySelector(".automations-create-form textarea") as HTMLTextAreaElement;
+      fireEvent.change(messageField, { target: { value: "this edit should be discarded" } });
+
+      fireEvent.click(
+        Array.from(document.querySelectorAll(".automations-create-form button")).find((b) => b.textContent === "Cancel") as HTMLButtonElement,
+      );
+
+      assert.match(document.querySelector(".automations-new-heading")!.textContent ?? "", /New rule/);
+      const entitySelect = document.querySelector(".automations-create-form select") as HTMLSelectElement;
+      assert.equal(entitySelect.disabled, false, "the entity select must unlock again once editing is cancelled");
+      assert.equal(messageField.value, "", "the form must reset, not keep the discarded draft");
+      assert.match(document.querySelector(".automations-rule-row")!.textContent ?? "", /Hi \{\{customerName\}\}, delivered!/, "the original rule must be untouched");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});

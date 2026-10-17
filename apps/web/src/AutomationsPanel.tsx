@@ -55,6 +55,14 @@ export function AutomationsPanel({
   const [toNumber, setToNumber] = useState("");
   const [messageTemplate, setMessageTemplate] = useState("");
   const [createBusy, setCreateBusy] = useState(false);
+  // Non-null while the form below is editing an existing rule instead of
+  // creating a new one -- the same form/fields are reused for both (the
+  // server's own UpdateAutomationRuleSchema accepts every field
+  // CreateAutomationRuleSchema does, bar entityName, which a PATCH can
+  // never change). handleStartEdit seeds every field from the chosen
+  // rule; handleSubmit below branches on this to call updateAutomationRule
+  // instead of createAutomationRule.
+  const [editingRuleId, setEditingRuleId] = useState<string | null>(null);
   const [scheduleTimeUtc, setScheduleTimeUtc] = useState("09:00");
   // All seven days selected is "every day" -- sent as undefined (the
   // server/storage convention for "no restriction", see automations.ts's
@@ -136,7 +144,52 @@ export function AutomationsPanel({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectId]);
 
-  async function handleCreate(e: React.FormEvent) {
+  // Fully resets the form back to fresh-create defaults for the project's
+  // first entity, computed directly from `entities` rather than through
+  // selectedEntity/phoneFields -- those are memoized off the *current*
+  // entityName, which is still the stale value at the moment this runs, so
+  // reading them here would seed fieldName/toField from the wrong entity.
+  function resetToCreateMode() {
+    const firstEntity = entities[0];
+    const firstPhoneField = firstEntity?.fields.find((f) => f.type === "text" || f.type === "longtext");
+    setEditingRuleId(null);
+    setEntityName(firstEntity?.name ?? "");
+    setTrigger("record_created");
+    setFieldName(firstEntity?.fields[0]?.name ?? "");
+    setFieldValue("");
+    setToMode("field");
+    setToField(firstPhoneField?.name ?? "");
+    setToNumber("");
+    setMessageTemplate("");
+    setScheduleTimeUtc("09:00");
+    setScheduleDays([0, 1, 2, 3, 4, 5, 6]);
+    setActionType("send_whatsapp");
+    setWebhookUrl("");
+  }
+
+  // Seeds every form field from an existing rule and switches the form
+  // into edit mode -- entityName included, even though a PATCH can never
+  // change it, so the entity-specific field/toField selects below render
+  // the rule's own real entity instead of whatever the create-form
+  // happened to be pointed at before Edit was clicked.
+  function handleStartEdit(rule: AutomationRuleView) {
+    setError(null);
+    setEditingRuleId(rule.id);
+    setEntityName(rule.entityName);
+    setTrigger(rule.trigger);
+    setFieldName(rule.fieldName ?? "");
+    setFieldValue(rule.fieldValue ?? "");
+    setScheduleTimeUtc(rule.scheduleTimeUtc ?? "09:00");
+    setScheduleDays(rule.scheduleDaysOfWeek ? rule.scheduleDaysOfWeek.split(",").map(Number) : [0, 1, 2, 3, 4, 5, 6]);
+    setActionType(rule.actionType);
+    setToMode(rule.toMode);
+    setToField(rule.toField ?? "");
+    setToNumber(rule.toNumber ?? "");
+    setWebhookUrl(rule.webhookUrl ?? "");
+    setMessageTemplate(rule.messageTemplate);
+  }
+
+  async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!selectedEntity || !messageTemplate.trim()) return;
     if (trigger === "field_equals" && (!fieldName || !fieldValue.trim())) return;
@@ -146,26 +199,52 @@ export function AutomationsPanel({
     if (actionType === "send_whatsapp" && toMode === "static" && !toNumber.trim()) return;
     setCreateBusy(true);
     setError(null);
+    const everyDay = scheduleDays.length === 7;
     try {
-      const everyDay = scheduleDays.length === 7;
-      const { rule } = await createAutomationRule(projectId, selectedEntity.name, {
-        trigger,
-        fieldName: trigger === "field_equals" ? fieldName : undefined,
-        fieldValue: trigger === "field_equals" ? fieldValue.trim() : undefined,
-        scheduleTimeUtc: trigger === "schedule" ? scheduleTimeUtc : undefined,
-        scheduleDaysOfWeek: trigger === "schedule" && !everyDay ? [...scheduleDays].sort().join(",") : undefined,
-        actionType,
-        toMode,
-        toField: actionType === "send_whatsapp" && toMode === "field" ? toField : undefined,
-        toNumber: actionType === "send_whatsapp" && toMode === "static" ? toNumber.trim() : undefined,
-        webhookUrl: actionType === "webhook" ? webhookUrl.trim() : undefined,
-        messageTemplate: messageTemplate.trim(),
-      });
-      setRules((prev) => [...(prev ?? []), rule]);
-      setFieldValue("");
-      setToNumber("");
-      setWebhookUrl("");
-      setMessageTemplate("");
+      if (editingRuleId) {
+        // Every field the form currently represents is sent explicitly,
+        // nulling out whichever of fieldName/fieldValue/schedule*/toField/
+        // toNumber/webhookUrl no longer applies to the chosen trigger/
+        // actionType/toMode -- otherwise a value from before the edit
+        // (e.g. the old toNumber after switching toMode to "field") would
+        // survive the PATCH's `{ ...existing, ...patch }` merge as stale
+        // data, the same clear-what-no-longer-applies rule round 676's
+        // field-type PATCH route already follows for enumValues/relationTo.
+        const { rule } = await updateAutomationRule(projectId, editingRuleId, {
+          trigger,
+          fieldName: trigger === "field_equals" ? fieldName : null,
+          fieldValue: trigger === "field_equals" ? fieldValue.trim() : null,
+          scheduleTimeUtc: trigger === "schedule" ? scheduleTimeUtc : null,
+          scheduleDaysOfWeek: trigger === "schedule" && !everyDay ? [...scheduleDays].sort().join(",") : null,
+          actionType,
+          toMode,
+          toField: actionType === "send_whatsapp" && toMode === "field" ? toField : null,
+          toNumber: actionType === "send_whatsapp" && toMode === "static" ? toNumber.trim() : null,
+          webhookUrl: actionType === "webhook" ? webhookUrl.trim() : null,
+          messageTemplate: messageTemplate.trim(),
+        });
+        setRules((prev) => (prev ?? []).map((r) => (r.id === rule.id ? rule : r)));
+        resetToCreateMode();
+      } else {
+        const { rule } = await createAutomationRule(projectId, selectedEntity.name, {
+          trigger,
+          fieldName: trigger === "field_equals" ? fieldName : undefined,
+          fieldValue: trigger === "field_equals" ? fieldValue.trim() : undefined,
+          scheduleTimeUtc: trigger === "schedule" ? scheduleTimeUtc : undefined,
+          scheduleDaysOfWeek: trigger === "schedule" && !everyDay ? [...scheduleDays].sort().join(",") : undefined,
+          actionType,
+          toMode,
+          toField: actionType === "send_whatsapp" && toMode === "field" ? toField : undefined,
+          toNumber: actionType === "send_whatsapp" && toMode === "static" ? toNumber.trim() : undefined,
+          webhookUrl: actionType === "webhook" ? webhookUrl.trim() : undefined,
+          messageTemplate: messageTemplate.trim(),
+        });
+        setRules((prev) => [...(prev ?? []), rule]);
+        setFieldValue("");
+        setToNumber("");
+        setWebhookUrl("");
+        setMessageTemplate("");
+      }
     } catch (err) {
       setError((err as Error).message);
     } finally {
@@ -334,6 +413,9 @@ export function AutomationsPanel({
                         <button type="button" className="secondary small" onClick={() => handleToggle(rule)} disabled={busyRuleId !== null}>
                           {rule.enabled ? t("automations.disable") : t("automations.enable")}
                         </button>
+                        <button type="button" className="secondary small" onClick={() => handleStartEdit(rule)} disabled={busyRuleId !== null}>
+                          {t("automations.edit")}
+                        </button>
                         <button type="button" className="danger small" onClick={() => handleDelete(rule)} disabled={busyRuleId !== null}>
                           {t("automations.delete")}
                         </button>
@@ -348,11 +430,11 @@ export function AutomationsPanel({
 
         {!readOnly && (
         <>
-        <h3 className="automations-new-heading">{t("automations.new.heading")}</h3>
-        <form className="automations-create-form" onSubmit={handleCreate}>
+        <h3 className="automations-new-heading">{editingRuleId ? t("automations.editing.heading") : t("automations.new.heading")}</h3>
+        <form className="automations-create-form" onSubmit={handleSubmit}>
           <label>
             {t("automations.entity.label")}
-            <select value={entityName} onChange={(e) => setEntityName(e.target.value)}>
+            <select value={entityName} onChange={(e) => setEntityName(e.target.value)} disabled={editingRuleId !== null}>
               {entities.map((e) => (
                 <option key={e.name} value={e.name}>
                   {e.label ?? e.name}
@@ -360,6 +442,7 @@ export function AutomationsPanel({
               ))}
             </select>
           </label>
+          {editingRuleId !== null && <p className="muted small">{t("automations.entity.fixedWhileEditing")}</p>}
 
           <label>
             {t("automations.trigger.label")}
@@ -496,9 +579,22 @@ export function AutomationsPanel({
           </label>
           <p className="muted small">{t("automations.messageTemplate.hint")}</p>
 
-          <button type="submit" disabled={createBusy || !messageTemplate.trim()}>
-            {createBusy ? t("automations.create.busy") : t("automations.create")}
-          </button>
+          <div className="automations-form-actions">
+            <button type="submit" disabled={createBusy || !messageTemplate.trim()}>
+              {editingRuleId
+                ? createBusy
+                  ? t("automations.save.busy")
+                  : t("automations.save")
+                : createBusy
+                  ? t("automations.create.busy")
+                  : t("automations.create")}
+            </button>
+            {editingRuleId !== null && (
+              <button type="button" className="secondary" onClick={resetToCreateMode} disabled={createBusy}>
+                {t("automations.cancelEdit")}
+              </button>
+            )}
+          </div>
         </form>
         </>
         )}
