@@ -312,6 +312,69 @@ test("GlobalSearchPanel's handleShowAll ignores a stale, still-in-flight fetch o
   );
 });
 
+/**
+ * Regression test for round 663: handleShowAll had no catch clause at all,
+ * unlike runSearch's own identical listRecords call above it in this same
+ * file -- a rejected fetch (a timeout, a cold-starting backend, an entity
+ * a collaborator removed since the original search) was an unhandled
+ * promise rejection with zero visible feedback: showAllLoading still
+ * cleared via the existing finally, but setError was never called, so the
+ * button silently reverted from "Loading…" back to "Show N more" as if
+ * nothing had happened at all.
+ */
+test("GlobalSearchPanel's handleShowAll surfaces a failed fetch via setError, instead of silently swallowing it", async () => {
+  const handlerMatch = globalSearchPanelSrc.match(/ {2}async function handleShowAll\(entityName: string\) \{[\s\S]*?\n {2}\}\n/);
+  assert.ok(handlerMatch, "expected to find handleShowAll in GlobalSearchPanel.tsx");
+  const { code } = transformSync(handlerMatch![0], { loader: "ts" });
+
+  const entityA = { name: "Alpha", label: "Alpha", fields: [] };
+  const rejection = new Error("network error");
+  let capturedError: string | undefined;
+  const loadingUpdaterCalls: unknown[] = [];
+
+  const fn = new Function(
+    "entities",
+    "projectId",
+    "listRecords",
+    "searchEntityRecords",
+    "highlightQuery",
+    "lastRecordsByEntityRef",
+    "setShowAllLoading",
+    "setExpandedSamples",
+    "searchRequestId",
+    "lang",
+    "setError",
+    `${code}\nreturn handleShowAll;`,
+  )(
+    [entityA],
+    "proj1",
+    async () => {
+      throw rejection;
+    },
+    () => null,
+    "query",
+    { current: {} },
+    (updater: (prev: Set<string>) => Set<string>) => {
+      loadingUpdaterCalls.push(updater(new Set()));
+    },
+    () => {},
+    { current: 0 },
+    "en",
+    (msg: string) => {
+      capturedError = msg;
+    },
+  ) as (entityName: string) => Promise<void>;
+
+  await fn("Alpha");
+
+  assert.equal(capturedError, rejection.message, "a rejected listRecords call must surface its error via setError");
+  assert.equal(
+    loadingUpdaterCalls.length,
+    2,
+    "setShowAllLoading must still be called to add then clear the loading state, even on failure",
+  );
+});
+
 /** Same jsdom-swap technique as useDialogFocusTrap.test.ts/EntityPanel.test.ts. */
 async function withJsdom<T>(fn: () => Promise<T> | T): Promise<T> {
   const dom = new JSDOM("<!doctype html><html><body></body></html>", { url: "http://localhost/" });

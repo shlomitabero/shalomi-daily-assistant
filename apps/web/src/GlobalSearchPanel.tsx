@@ -206,6 +206,14 @@ export function GlobalSearchPanel({
    * screen, and one removed left the "Show N more" button offering more
    * results than actually exist, forever (clicking it just re-fetches the
    * same already-complete list with no new rows to reveal).
+   *
+   * Also surfaces a failed fetch via setError (round 663): without this,
+   * a rejected listRecords call (a timeout, a cold-starting backend, a
+   * 404 from an entity a collaborator removed) was an unhandled promise
+   * rejection -- the "Loading…" button silently reverted to "Show N more"
+   * with zero visible indication anything went wrong, unlike runSearch's
+   * own identical listRecords call just above, which already surfaces a
+   * failure through this same error banner.
    */
   async function handleShowAll(entityName: string) {
     const entity = entities.find((e) => e.name === entityName);
@@ -228,6 +236,8 @@ export function GlobalSearchPanel({
       setResults((prev) =>
         prev.map((r) => (r.entityName === entityName ? { ...r, totalMatches: full?.sample.length ?? 0 } : r)),
       );
+    } catch (err) {
+      setError((err as Error).message);
     } finally {
       setShowAllLoading((prev) => {
         const next = new Set(prev);

@@ -7057,6 +7057,64 @@ test("the exported GlobalSearch's handleShowAll ignores a stale, still-in-flight
   );
 });
 
+/**
+ * Regression test for round 663: the exported app's handleShowAll had no
+ * catch clause at all, unlike runSearch's own identical listRecords call
+ * right next to it in the same generated file -- a rejected fetch was an
+ * unhandled promise rejection with zero visible feedback: showAllLoading
+ * still cleared via the existing finally, but setError was never called,
+ * so the button silently reverted from "Loading…" back to "Show N more"
+ * as if nothing had happened at all. Runs the real generated handleShowAll.
+ */
+test("the exported GlobalSearch's handleShowAll surfaces a failed fetch via setError, instead of silently swallowing it", async () => {
+  const files = generateExportFiles(project);
+  const globalSearchJsx = files.find((f) => f.path === "web/src/components/GlobalSearch.jsx")!.content;
+
+  const handleShowAllSrc = globalSearchJsx.match(/ {2}async function handleShowAll\(entityName\) \{[\s\S]*?\n {2}\}\n/)?.[0];
+  assert.ok(handleShowAllSrc, "expected to find handleShowAll in generated output");
+
+  const entityA = { name: "Alpha", label: "Alpha", fields: [] };
+  const rejection = new Error("network error");
+  let capturedError: string | undefined;
+  const loadingUpdaterCalls: unknown[] = [];
+
+  const fn = new Function(
+    "entities",
+    "listRecords",
+    "searchRequestId",
+    "setShowAllLoading",
+    "query",
+    "lastRecordsByEntityRef",
+    "setExpandedSamples",
+    "setError",
+    `${handleShowAllSrc}\nreturn handleShowAll;`,
+  )(
+    [entityA],
+    async () => {
+      throw rejection;
+    },
+    { current: 0 },
+    (updater: (prev: Set<string>) => Set<string>) => {
+      loadingUpdaterCalls.push(updater(new Set()));
+    },
+    "query",
+    { current: {} },
+    () => {},
+    (msg: string) => {
+      capturedError = msg;
+    },
+  ) as (entityName: string) => Promise<void>;
+
+  await fn("Alpha");
+
+  assert.equal(capturedError, rejection.message, "a rejected listRecords call must surface its error via setError");
+  assert.equal(
+    loadingUpdaterCalls.length,
+    2,
+    "setShowAllLoading must still be called to add then clear the loading state, even on failure",
+  );
+});
+
 test("the exported App.jsx renders a real 'Backup All Data' link pointing at the generated server's own /api/backup endpoint", () => {
   const files = generateExportFiles(project);
   const appJsx = files.find((f) => f.path === "web/src/App.jsx")!.content;

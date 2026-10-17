@@ -5043,6 +5043,12 @@ export function GlobalSearch({ entities, onClose, onJumpToEntity, onJumpToRecord
   // original search left the header's "N results" text and the remaining
   // calculation reading the original search's now-stale count even though
   // the displayed rows already reflect this fetch's real, current data.
+  // Also surfaces a failed fetch via setError (round 663): without this,
+  // a rejected listRecords call was an unhandled promise rejection -- the
+  // "Loading…" button silently reverted to "Show N more" with zero visible
+  // indication anything went wrong, unlike runSearch's own identical
+  // listRecords call just above, which already surfaces a failure through
+  // this same error banner.
   async function handleShowAll(entityName) {
     const entity = entities.find((e) => e.name === entityName);
     if (!entity) return;
@@ -5054,6 +5060,8 @@ export function GlobalSearch({ entities, onClose, onJumpToEntity, onJumpToRecord
       const full = records.filter((r) => matchesSearch(r, entity.fields, query, lastRecordsByEntityRef.current));
       setExpandedSamples((prev) => ({ ...prev, [entityName]: full }));
       setResults((prev) => prev.map((r) => (r.entityName === entityName ? { ...r, totalMatches: full.length } : r)));
+    } catch (err) {
+      setError(err.message);
     } finally {
       setShowAllLoading((prev) => {
         const next = new Set(prev);
