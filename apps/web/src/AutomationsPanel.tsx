@@ -30,10 +30,13 @@ export function AutomationsPanel({
   projectId,
   project,
   onClose,
+  readOnly = false,
 }: {
   projectId: string;
   project: Project;
   onClose: () => void;
+  /** True for a "viewer" collaborator -- the server already rejects every write here with 403 VIEWER_READ_ONLY; this just keeps a viewer from clicking a control that can only ever fail. */
+  readOnly?: boolean;
 }) {
   const { t, lang } = useTranslation();
   const [rules, setRules] = useState<AutomationRuleView[] | null>(null);
@@ -326,12 +329,16 @@ export function AutomationsPanel({
                     <span className={`chip ${rule.enabled ? "automations-chip-enabled" : "automations-chip-disabled"}`}>
                       {rule.enabled ? t("automations.status.enabled") : t("automations.status.disabled")}
                     </span>
-                    <button type="button" className="secondary small" onClick={() => handleToggle(rule)} disabled={busyRuleId !== null}>
-                      {rule.enabled ? t("automations.disable") : t("automations.enable")}
-                    </button>
-                    <button type="button" className="danger small" onClick={() => handleDelete(rule)} disabled={busyRuleId !== null}>
-                      {t("automations.delete")}
-                    </button>
+                    {!readOnly && (
+                      <>
+                        <button type="button" className="secondary small" onClick={() => handleToggle(rule)} disabled={busyRuleId !== null}>
+                          {rule.enabled ? t("automations.disable") : t("automations.enable")}
+                        </button>
+                        <button type="button" className="danger small" onClick={() => handleDelete(rule)} disabled={busyRuleId !== null}>
+                          {t("automations.delete")}
+                        </button>
+                      </>
+                    )}
                   </div>
                 </li>
               ))}
@@ -339,6 +346,8 @@ export function AutomationsPanel({
           </>
         )}
 
+        {!readOnly && (
+        <>
         <h3 className="automations-new-heading">{t("automations.new.heading")}</h3>
         <form className="automations-create-form" onSubmit={handleCreate}>
           <label>
@@ -491,6 +500,8 @@ export function AutomationsPanel({
             {createBusy ? t("automations.create.busy") : t("automations.create")}
           </button>
         </form>
+        </>
+        )}
       </div>
     </div>
   );

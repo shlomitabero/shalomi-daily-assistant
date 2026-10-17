@@ -262,11 +262,22 @@ export const CheckpointSchema = z.object({
 
 export type Checkpoint = z.infer<typeof CheckpointSchema>;
 
-/** A user (other than the owner) who's been granted full access to a project — see packages/db/src/collaborators.ts. */
+/**
+ * "editor" has identical read/write access to the owner (the original,
+ * still-default grant). "viewer" is read-only, enforced server-side by
+ * requireProjectWriteAccess (apps/api/src/routes/projects.ts) -- not just a
+ * hidden button. The owner is never one of these values: ownership is
+ * project.ownerId, a separate concept entirely.
+ */
+export const CollaboratorRoleSchema = z.enum(["editor", "viewer"]);
+export type CollaboratorRole = z.infer<typeof CollaboratorRoleSchema>;
+
+/** A user (other than the owner) who's been granted access to a project — see packages/db/src/collaborators.ts. */
 export const ProjectCollaboratorSchema = z.object({
   userId: z.string(),
   email: z.string().email(),
   addedAt: z.string(),
+  role: CollaboratorRoleSchema,
 });
 
 export type ProjectCollaborator = z.infer<typeof ProjectCollaboratorSchema>;

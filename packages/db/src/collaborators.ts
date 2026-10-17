@@ -1,14 +1,15 @@
-import type { ProjectCollaborator } from "@forge/shared";
+import type { CollaboratorRole, ProjectCollaborator } from "@forge/shared";
 import type { ForgeDatabase } from "./connection.js";
 
 /**
- * Project sharing, the honest first version of the "No RBAC / organizations"
- * gap docs/security.md documented: not a full Workspace/roles system, just a
- * flat "this user has the same full access as the owner" grant per project,
- * one step past "the owner can do everything and nobody else can do
- * anything." Anyone in this table gets identical read/write access to the
- * project through requireProjectAccess (apps/api/src/routes/projects.ts);
- * managing the collaborator list itself stays owner-only.
+ * Project sharing, now a real two-tier role system: a collaborator is
+ * either an "editor" (identical read/write access to the owner, the
+ * original and still-default grant) or a "viewer" (read-only -- enforced
+ * server-side by requireProjectWriteAccess in
+ * apps/api/src/routes/projects.ts, not just hidden in the UI). The owner
+ * themself is never a row in this table -- ownership is project.ownerId,
+ * checked separately by requireProjectOwner; managing the collaborator
+ * list (inviting, removing, changing someone's role) stays owner-only.
  */
 export function ensureProjectCollaboratorsTable(db: ForgeDatabase): void {
   db.exec(`
@@ -19,16 +20,43 @@ export function ensureProjectCollaboratorsTable(db: ForgeDatabase): void {
       PRIMARY KEY (projectId, userId)
     )
   `);
+
+  // Additive migration (mirrors checkpoints.ts's own `kind` column
+  // backfill): every collaborator granted before roles existed keeps
+  // exactly the full access they already had, so this can never be a
+  // silent permission downgrade for an existing deployment.
+  const hasRoleColumn = (db.prepare("PRAGMA table_info(project_collaborators)").all() as { name: string }[]).some(
+    (c) => c.name === "role",
+  );
+  if (!hasRoleColumn) {
+    db.exec("ALTER TABLE project_collaborators ADD COLUMN role TEXT NOT NULL DEFAULT 'editor'");
+  }
 }
 
-/** Idempotent: adding an existing collaborator again is a silent no-op rather than a duplicate-key error. */
-export function addCollaborator(db: ForgeDatabase, projectId: string, userId: string): void {
+/** Idempotent: adding an existing collaborator again is a silent no-op rather than a duplicate-key error (their existing role is left untouched -- use updateCollaboratorRole to change it). */
+export function addCollaborator(
+  db: ForgeDatabase,
+  projectId: string,
+  userId: string,
+  role: CollaboratorRole = "editor",
+): void {
   const addedAt = new Date().toISOString();
-  db.prepare("INSERT OR IGNORE INTO project_collaborators (projectId, userId, addedAt) VALUES (?, ?, ?)").run(
-    projectId,
-    userId,
-    addedAt,
-  );
+  db.prepare(
+    "INSERT OR IGNORE INTO project_collaborators (projectId, userId, addedAt, role) VALUES (?, ?, ?, ?)",
+  ).run(projectId, userId, addedAt, role);
+}
+
+/** Null means "not a collaborator at all" (could still be the owner, who isn't in this table -- callers that need the owner case too should check that separately). */
+export function getCollaboratorRole(db: ForgeDatabase, projectId: string, userId: string): CollaboratorRole | null {
+  const row = db
+    .prepare("SELECT role FROM project_collaborators WHERE projectId = ? AND userId = ?")
+    .get(projectId, userId) as { role: CollaboratorRole } | undefined;
+  return row ? row.role : null;
+}
+
+/** No-op (rather than throwing) if the given userId isn't actually a collaborator on this project -- callers already resolved that via requireProjectOwner before reaching here. */
+export function updateCollaboratorRole(db: ForgeDatabase, projectId: string, userId: string, role: CollaboratorRole): void {
+  db.prepare("UPDATE project_collaborators SET role = ? WHERE projectId = ? AND userId = ?").run(role, projectId, userId);
 }
 
 export function removeCollaborator(db: ForgeDatabase, projectId: string, userId: string): void {
@@ -78,12 +106,12 @@ export function listCollaboratedProjectIds(db: ForgeDatabase, userId: string): s
 export function listCollaborators(db: ForgeDatabase, projectId: string): ProjectCollaborator[] {
   const rows = db
     .prepare(
-      `SELECT project_collaborators.userId AS userId, users.email AS email, project_collaborators.addedAt AS addedAt
+      `SELECT project_collaborators.userId AS userId, users.email AS email, project_collaborators.addedAt AS addedAt, project_collaborators.role AS role
        FROM project_collaborators
        JOIN users ON users.id = project_collaborators.userId
        WHERE project_collaborators.projectId = ?
        ORDER BY project_collaborators.addedAt ASC, project_collaborators.userId ASC`,
     )
-    .all(projectId) as { userId: string; email: string; addedAt: string }[];
+    .all(projectId) as { userId: string; email: string; addedAt: string; role: CollaboratorRole }[];
   return rows;
 }

@@ -5,6 +5,7 @@ import { Router, type Request, type Response, type NextFunction } from "express"
 import multer, { MulterError } from "multer";
 import { z } from "zod";
 import type { Entity, EntityRecord, Field, Project, Screen } from "@forge/shared";
+import { CollaboratorRoleSchema } from "@forge/shared";
 import {
   getCheckpoint,
   getProject,
@@ -34,6 +35,8 @@ import {
   removeCollaborator,
   isCollaborator,
   listCollaborators,
+  getCollaboratorRole,
+  updateCollaboratorRole,
   findUserByEmail,
   findUserById,
   countRecords,
@@ -221,6 +224,14 @@ const AddCollaboratorSchema = z.object({
   // from a signature, "John.Doe@Company.com") -- findUserByEmail's `WHERE
   // email = ?` is a plain case-sensitive SQLite comparison.
   email: z.string().email("a valid email is required").transform((email) => email.toLowerCase()),
+  // Optional and defaulted to "editor" so every existing caller (the web
+  // UI before this round, any script/integration already using this
+  // route) keeps behaving exactly as before -- full access, same as today.
+  role: CollaboratorRoleSchema.default("editor"),
+});
+
+const UpdateCollaboratorRoleSchema = z.object({
+  role: CollaboratorRoleSchema,
 });
 
 const RenameProjectSchema = z.object({
@@ -572,11 +583,33 @@ function requireProjectAccess(db: ForgeDatabase, id: string, userId: string): Pr
   return project;
 }
 
-/** Stricter than requireProjectAccess: for actions only the owner may take (inviting/removing a collaborator). */
+/** Stricter than requireProjectAccess: for actions only the owner may take (inviting/removing a collaborator, changing a collaborator's role). */
 function requireProjectOwner(db: ForgeDatabase, id: string, userId: string): Project {
   const project = getProject(db, id);
   if (!project || project.ownerId !== userId) {
     throw new HttpError(404, `Project "${id}" not found`, "PROJECT_NOT_FOUND");
+  }
+  return project;
+}
+
+/**
+ * Stricter than requireProjectAccess but looser than requireProjectOwner:
+ * for every route that actually mutates the project (as opposed to just
+ * reading it). The owner always passes -- ownership isn't a role row, it's
+ * project.ownerId. An "editor" collaborator passes too, exactly like every
+ * route used to treat every collaborator before roles existed. Only a
+ * "viewer" collaborator is turned back, and with a real 403 (not the 404
+ * requireProjectAccess uses for "no access at all") -- they already know
+ * the project exists, since they can read it; what's missing is write
+ * access, not the project itself.
+ */
+function requireProjectWriteAccess(db: ForgeDatabase, id: string, userId: string): Project {
+  const project = requireProjectAccess(db, id, userId);
+  if (project.ownerId === userId) {
+    return project;
+  }
+  if (getCollaboratorRole(db, id, userId) === "viewer") {
+    throw new HttpError(403, "Viewers can view this project but can't make changes to it", "VIEWER_READ_ONLY");
   }
   return project;
 }
@@ -858,7 +891,7 @@ export function createProjectsRouter(
   router.patch(
     "/projects/:id/name",
     asyncRoute(async (req, res) => {
-      const project = requireProjectAccess(db, req.params.id, req.userId!);
+      const project = requireProjectWriteAccess(db, req.params.id, req.userId!);
       const parsed = RenameProjectSchema.safeParse(req.body);
       if (!parsed.success) {
         throw new HttpError(400, formatValidationError(parsed.error), "VALIDATION_ERROR");
@@ -887,7 +920,7 @@ export function createProjectsRouter(
   router.patch(
     "/projects/:id/description",
     asyncRoute(async (req, res) => {
-      const project = requireProjectAccess(db, req.params.id, req.userId!);
+      const project = requireProjectWriteAccess(db, req.params.id, req.userId!);
       const parsed = UpdateProjectDescriptionSchema.safeParse(req.body);
       if (!parsed.success) {
         throw new HttpError(400, formatValidationError(parsed.error), "VALIDATION_ERROR");
@@ -1033,8 +1066,34 @@ export function createProjectsRouter(
       if (invited.id === project.ownerId) {
         throw new HttpError(400, "The project owner already has full access", "CANNOT_ADD_OWNER_AS_COLLABORATOR");
       }
-      addCollaborator(db, project.id, invited.id);
+      addCollaborator(db, project.id, invited.id, parsed.data.role);
       res.status(201).json({ collaborators: listCollaborators(db, project.id), owner: getOwnerInfo(db, project) });
+    }),
+  );
+
+  /**
+   * Owner-only, like inviting itself: changes an existing collaborator's
+   * role between "editor" (full read/write) and "viewer" (read-only,
+   * enforced by requireProjectWriteAccess on every mutating route). Does
+   * NOT let the owner target their own id -- ownership isn't a role row at
+   * all, so there is no "role" of the owner's to change.
+   */
+  router.patch(
+    "/projects/:id/collaborators/:userId/role",
+    asyncRoute(async (req, res) => {
+      const project = requireProjectOwner(db, req.params.id, req.userId!);
+      if (req.params.userId === project.ownerId) {
+        throw new HttpError(400, "The project owner doesn't have a collaborator role to change", "CANNOT_CHANGE_OWNER_ROLE");
+      }
+      if (getCollaboratorRole(db, project.id, req.params.userId) === null) {
+        throw new HttpError(404, "Collaborator not found", "COLLABORATOR_NOT_FOUND");
+      }
+      const parsed = UpdateCollaboratorRoleSchema.safeParse(req.body);
+      if (!parsed.success) {
+        throw new HttpError(400, formatValidationError(parsed.error), "VALIDATION_ERROR");
+      }
+      updateCollaboratorRole(db, project.id, req.params.userId, parsed.data.role);
+      res.json({ collaborators: listCollaborators(db, project.id), owner: getOwnerInfo(db, project) });
     }),
   );
 
@@ -1067,7 +1126,7 @@ export function createProjectsRouter(
   router.post(
     "/projects/:id/answers",
     asyncRoute(async (req, res) => {
-      const project = requireProjectAccess(db, req.params.id, req.userId!);
+      const project = requireProjectWriteAccess(db, req.params.id, req.userId!);
       const parsed = AnswerQuestionsSchema.safeParse(req.body);
       if (!parsed.success) {
         throw new HttpError(400, formatValidationError(parsed.error), "VALIDATION_ERROR");
@@ -1139,7 +1198,7 @@ export function createProjectsRouter(
   router.post(
     "/projects/:id/build",
     asyncRoute(async (req, res) => {
-      const project = requireProjectAccess(db, req.params.id, req.userId!);
+      const project = requireProjectWriteAccess(db, req.params.id, req.userId!);
       // Mirrors /refine's own status guard below: without this, calling
       // /build a second time on an already-built project silently
       // "succeeds" (diffAndMigrate with no previousSpec treats every
@@ -1170,7 +1229,7 @@ export function createProjectsRouter(
   router.post(
     "/projects/:id/refine",
     asyncRoute(async (req, res) => {
-      const project = requireProjectAccess(db, req.params.id, req.userId!);
+      const project = requireProjectWriteAccess(db, req.params.id, req.userId!);
       if (project.status !== "built") {
         throw new HttpError(409, "Build the project before refining it", "BUILD_REQUIRED");
       }
@@ -1209,7 +1268,7 @@ export function createProjectsRouter(
   router.post(
     "/projects/:id/checkpoints/:checkpointId/restore",
     asyncRoute(async (req, res) => {
-      const project = requireProjectAccess(db, req.params.id, req.userId!);
+      const project = requireProjectWriteAccess(db, req.params.id, req.userId!);
       const checkpoint = getCheckpoint(db, req.params.checkpointId);
       if (!checkpoint || checkpoint.projectId !== project.id) {
         throw new HttpError(404, `Checkpoint "${req.params.checkpointId}" not found`, "CHECKPOINT_NOT_FOUND");
@@ -1259,7 +1318,7 @@ export function createProjectsRouter(
   router.patch(
     "/projects/:id/checkpoints/:checkpointId",
     asyncRoute(async (req, res) => {
-      const project = requireProjectAccess(db, req.params.id, req.userId!);
+      const project = requireProjectWriteAccess(db, req.params.id, req.userId!);
       const parsed = RenameCheckpointSchema.safeParse(req.body);
       if (!parsed.success) {
         throw new HttpError(400, formatValidationError(parsed.error), "VALIDATION_ERROR");
@@ -1283,7 +1342,7 @@ export function createProjectsRouter(
   router.delete(
     "/projects/:id/checkpoints/:checkpointId",
     asyncRoute(async (req, res) => {
-      const project = requireProjectAccess(db, req.params.id, req.userId!);
+      const project = requireProjectWriteAccess(db, req.params.id, req.userId!);
       deleteCheckpoint(db, project.id, req.params.checkpointId);
       res.status(204).end();
     }),
@@ -1359,7 +1418,7 @@ export function createProjectsRouter(
   router.post(
     "/projects/:id/integrations/whatsapp/connect",
     asyncRoute(async (req, res) => {
-      const project = requireProjectAccess(db, req.params.id, req.userId!);
+      const project = requireProjectWriteAccess(db, req.params.id, req.userId!);
       res.json(await whatsapp.connect(project.id));
     }),
   );
@@ -1367,7 +1426,7 @@ export function createProjectsRouter(
   router.post(
     "/projects/:id/integrations/whatsapp/disconnect",
     asyncRoute(async (req, res) => {
-      const project = requireProjectAccess(db, req.params.id, req.userId!);
+      const project = requireProjectWriteAccess(db, req.params.id, req.userId!);
       await whatsapp.disconnect(project.id);
       res.json(whatsapp.getStatus(project.id));
     }),
@@ -1376,7 +1435,7 @@ export function createProjectsRouter(
   router.post(
     "/projects/:id/integrations/whatsapp/send",
     asyncRoute(async (req, res) => {
-      const project = requireProjectAccess(db, req.params.id, req.userId!);
+      const project = requireProjectWriteAccess(db, req.params.id, req.userId!);
       const parsed = WhatsAppSendSchema.safeParse(req.body ?? {});
       if (!parsed.success) {
         throw new HttpError(400, formatValidationError(parsed.error), "VALIDATION_ERROR");
@@ -1470,7 +1529,7 @@ export function createProjectsRouter(
   router.delete(
     "/projects/:id/integrations/whatsapp/messages",
     asyncRoute(async (req, res) => {
-      const project = requireProjectAccess(db, req.params.id, req.userId!);
+      const project = requireProjectWriteAccess(db, req.params.id, req.userId!);
       clearWhatsAppMessages(db, project.id);
       res.status(204).end();
     }),
@@ -1479,7 +1538,7 @@ export function createProjectsRouter(
   router.delete(
     "/projects/:id/integrations/whatsapp/messages/:messageId",
     asyncRoute(async (req, res) => {
-      const project = requireProjectAccess(db, req.params.id, req.userId!);
+      const project = requireProjectWriteAccess(db, req.params.id, req.userId!);
       deleteWhatsAppMessage(db, project.id, req.params.messageId);
       res.status(204).end();
     }),
@@ -1533,7 +1592,7 @@ export function createProjectsRouter(
   router.post(
     "/projects/:id/entities/:entityName",
     asyncRoute(async (req, res) => {
-      const project = requireProjectAccess(db, req.params.id, req.userId!);
+      const project = requireProjectWriteAccess(db, req.params.id, req.userId!);
       if (project.status !== "built") {
         throw new HttpError(409, "Project has not been built yet — call POST /build first", "BUILD_REQUIRED");
       }
@@ -1646,7 +1705,7 @@ export function createProjectsRouter(
     "/projects/:id/entities/:entityName/fields/:fieldName/upload",
     (req, res, next) => {
       try {
-        const project = requireProjectAccess(db, req.params.id, req.userId!);
+        const project = requireProjectWriteAccess(db, req.params.id, req.userId!);
         if (project.status !== "built") {
           throw new HttpError(409, "Project has not been built yet — call POST /build first", "BUILD_REQUIRED");
         }
@@ -1706,7 +1765,7 @@ export function createProjectsRouter(
   router.patch(
     "/projects/:id/entities/:entityName/label",
     asyncRoute(async (req, res) => {
-      const project = requireProjectAccess(db, req.params.id, req.userId!);
+      const project = requireProjectWriteAccess(db, req.params.id, req.userId!);
       // Same read-project.spec-then-write-it-back shape /build, /refine,
       // /answers, and checkpoint-restore are already guarded against (see
       // their own comments) -- a slow /refine already in flight computes
@@ -1742,7 +1801,7 @@ export function createProjectsRouter(
   router.patch(
     "/projects/:id/entities/:entityName/fields/:fieldName/label",
     asyncRoute(async (req, res) => {
-      const project = requireProjectAccess(db, req.params.id, req.userId!);
+      const project = requireProjectWriteAccess(db, req.params.id, req.userId!);
       // Same activePipelines guard as the entity-label route above, for the
       // same reason -- see its own comment.
       if (activePipelines.has(project.id)) {
@@ -1806,7 +1865,7 @@ export function createProjectsRouter(
   router.post(
     "/projects/:id/roles",
     asyncRoute(async (req, res) => {
-      const project = requireProjectAccess(db, req.params.id, req.userId!);
+      const project = requireProjectWriteAccess(db, req.params.id, req.userId!);
       // Same activePipelines guard as the entity/field-label routes above --
       // this is another direct read-project.spec-then-write-it-back edit,
       // the exact shape /build/refine/answers/restore are already guarded
@@ -1832,7 +1891,7 @@ export function createProjectsRouter(
   router.post(
     "/projects/:id/assumptions",
     asyncRoute(async (req, res) => {
-      const project = requireProjectAccess(db, req.params.id, req.userId!);
+      const project = requireProjectWriteAccess(db, req.params.id, req.userId!);
       // Same activePipelines guard as /roles above -- see its own comment.
       if (activePipelines.has(project.id)) {
         throw new HttpError(409, "A build or refine is already running for this project", "PIPELINE_IN_PROGRESS");
@@ -1854,7 +1913,7 @@ export function createProjectsRouter(
   router.delete(
     "/projects/:id/roles/:index",
     asyncRoute(async (req, res) => {
-      const project = requireProjectAccess(db, req.params.id, req.userId!);
+      const project = requireProjectWriteAccess(db, req.params.id, req.userId!);
       // Same activePipelines guard as /roles POST above -- see its own comment.
       if (activePipelines.has(project.id)) {
         throw new HttpError(409, "A build or refine is already running for this project", "PIPELINE_IN_PROGRESS");
@@ -1873,7 +1932,7 @@ export function createProjectsRouter(
   router.delete(
     "/projects/:id/assumptions/:index",
     asyncRoute(async (req, res) => {
-      const project = requireProjectAccess(db, req.params.id, req.userId!);
+      const project = requireProjectWriteAccess(db, req.params.id, req.userId!);
       // Same activePipelines guard as /roles POST above -- see its own comment.
       if (activePipelines.has(project.id)) {
         throw new HttpError(409, "A build or refine is already running for this project", "PIPELINE_IN_PROGRESS");
@@ -1904,7 +1963,7 @@ export function createProjectsRouter(
   router.patch(
     "/projects/:id/roles/:index",
     asyncRoute(async (req, res) => {
-      const project = requireProjectAccess(db, req.params.id, req.userId!);
+      const project = requireProjectWriteAccess(db, req.params.id, req.userId!);
       // Same activePipelines guard as /roles POST above -- see its own comment.
       if (activePipelines.has(project.id)) {
         throw new HttpError(409, "A build or refine is already running for this project", "PIPELINE_IN_PROGRESS");
@@ -1924,7 +1983,7 @@ export function createProjectsRouter(
   router.patch(
     "/projects/:id/assumptions/:index",
     asyncRoute(async (req, res) => {
-      const project = requireProjectAccess(db, req.params.id, req.userId!);
+      const project = requireProjectWriteAccess(db, req.params.id, req.userId!);
       // Same activePipelines guard as /roles POST above -- see its own comment.
       if (activePipelines.has(project.id)) {
         throw new HttpError(409, "A build or refine is already running for this project", "PIPELINE_IN_PROGRESS");
@@ -1972,7 +2031,7 @@ export function createProjectsRouter(
   router.delete(
     "/projects/:id/entities/:entityName",
     asyncRoute(async (req, res) => {
-      const project = requireProjectAccess(db, req.params.id, req.userId!);
+      const project = requireProjectWriteAccess(db, req.params.id, req.userId!);
       if (project.status === "built") {
         throw new HttpError(409, "Cannot remove a screen after the project has already been built", "ENTITY_REMOVAL_AFTER_BUILD");
       }
@@ -2033,7 +2092,7 @@ export function createProjectsRouter(
   router.post(
     "/projects/:id/entities",
     asyncRoute(async (req, res) => {
-      const project = requireProjectAccess(db, req.params.id, req.userId!);
+      const project = requireProjectWriteAccess(db, req.params.id, req.userId!);
       if (project.status === "built") {
         throw new HttpError(409, "Cannot add a screen after the project has already been built", "ENTITY_ADD_AFTER_BUILD");
       }
@@ -2088,7 +2147,7 @@ export function createProjectsRouter(
   router.post(
     "/projects/:id/entities/:entityName/fields",
     asyncRoute(async (req, res) => {
-      const project = requireProjectAccess(db, req.params.id, req.userId!);
+      const project = requireProjectWriteAccess(db, req.params.id, req.userId!);
       if (project.status === "built") {
         throw new HttpError(409, "Cannot add a field after the project has already been built", "FIELD_ADD_AFTER_BUILD");
       }
@@ -2135,7 +2194,7 @@ export function createProjectsRouter(
   router.delete(
     "/projects/:id/entities/:entityName/fields/:fieldName",
     asyncRoute(async (req, res) => {
-      const project = requireProjectAccess(db, req.params.id, req.userId!);
+      const project = requireProjectWriteAccess(db, req.params.id, req.userId!);
       if (project.status === "built") {
         throw new HttpError(409, "Cannot remove a field after the project has already been built", "FIELD_REMOVE_AFTER_BUILD");
       }
@@ -2163,7 +2222,7 @@ export function createProjectsRouter(
   router.patch(
     "/projects/:id/entities/:entityName/:recordId",
     asyncRoute(async (req, res) => {
-      const project = requireProjectAccess(db, req.params.id, req.userId!);
+      const project = requireProjectWriteAccess(db, req.params.id, req.userId!);
       if (project.status !== "built") {
         throw new HttpError(409, "Project has not been built yet — call POST /build first", "BUILD_REQUIRED");
       }
@@ -2201,7 +2260,7 @@ export function createProjectsRouter(
   router.delete(
     "/projects/:id/entities/:entityName/:recordId",
     asyncRoute(async (req, res) => {
-      const project = requireProjectAccess(db, req.params.id, req.userId!);
+      const project = requireProjectWriteAccess(db, req.params.id, req.userId!);
       if (project.status !== "built") {
         throw new HttpError(409, "Project has not been built yet — call POST /build first", "BUILD_REQUIRED");
       }
@@ -2257,7 +2316,7 @@ export function createProjectsRouter(
   router.post(
     "/projects/:id/entities/:entityName/automations",
     asyncRoute(async (req, res) => {
-      const project = requireProjectAccess(db, req.params.id, req.userId!);
+      const project = requireProjectWriteAccess(db, req.params.id, req.userId!);
       const entity = findEntity(project, req.params.entityName);
       const parsed = CreateAutomationRuleSchema.safeParse(req.body ?? {});
       if (!parsed.success) {
@@ -2317,7 +2376,7 @@ export function createProjectsRouter(
   router.patch(
     "/projects/:id/automations/:ruleId",
     asyncRoute(async (req, res) => {
-      const project = requireProjectAccess(db, req.params.id, req.userId!);
+      const project = requireProjectWriteAccess(db, req.params.id, req.userId!);
       const parsed = UpdateAutomationRuleSchema.safeParse(req.body ?? {});
       if (!parsed.success) {
         throw new HttpError(400, formatValidationError(parsed.error), "VALIDATION_ERROR");
@@ -2359,7 +2418,7 @@ export function createProjectsRouter(
   router.delete(
     "/projects/:id/automations/:ruleId",
     asyncRoute(async (req, res) => {
-      const project = requireProjectAccess(db, req.params.id, req.userId!);
+      const project = requireProjectWriteAccess(db, req.params.id, req.userId!);
       try {
         deleteAutomationRule(db, project.id, req.params.ruleId);
       } catch (err) {

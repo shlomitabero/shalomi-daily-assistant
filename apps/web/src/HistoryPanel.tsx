@@ -31,12 +31,15 @@ export function HistoryPanel({
   currentSpec,
   onRestored,
   onClose,
+  readOnly = false,
 }: {
   projectId: string;
   projectName: string;
   currentSpec: ProductSpec;
   onRestored: (project: Project) => void;
   onClose: () => void;
+  /** True for a "viewer" collaborator -- the server already rejects every write here with 403 VIEWER_READ_ONLY; this just keeps a viewer from clicking a control that can only ever fail. */
+  readOnly?: boolean;
 }) {
   const { t, lang } = useTranslation();
   const [checkpoints, setCheckpoints] = useState<Checkpoint[]>([]);
@@ -399,23 +402,27 @@ export function HistoryPanel({
                       second concurrent restoreCheckpoint request, and
                       whichever response lands last silently overwrites the
                       other's result via onRestored. */}
-                  <button
-                    type="button"
-                    className="checkpoint-restore-btn"
-                    onClick={() => handleRestore(checkpoint)}
-                    disabled={busyId !== null || deletingId !== null || isCurrent}
-                  >
-                    {busyId === checkpoint.id ? t("history.restore.busy") : t("history.restore")}
-                  </button>
-                  <button
-                    type="button"
-                    className="checkpoint-delete-btn"
-                    aria-label={t("history.deleteOne")}
-                    onClick={() => handleDelete(checkpoint)}
-                    disabled={busyId !== null || deletingId !== null}
-                  >
-                    {deletingId === checkpoint.id ? "…" : "🗑️"}
-                  </button>
+                  {!readOnly && (
+                    <>
+                      <button
+                        type="button"
+                        className="checkpoint-restore-btn"
+                        onClick={() => handleRestore(checkpoint)}
+                        disabled={busyId !== null || deletingId !== null || isCurrent}
+                      >
+                        {busyId === checkpoint.id ? t("history.restore.busy") : t("history.restore")}
+                      </button>
+                      <button
+                        type="button"
+                        className="checkpoint-delete-btn"
+                        aria-label={t("history.deleteOne")}
+                        onClick={() => handleDelete(checkpoint)}
+                        disabled={busyId !== null || deletingId !== null}
+                      >
+                        {deletingId === checkpoint.id ? "…" : "🗑️"}
+                      </button>
+                    </>
+                  )}
                 </li>
               );
             })}

@@ -405,6 +405,7 @@ function BoardCard({
   onDuplicate,
   onDelete,
   onJumpToRecord,
+  readOnly = false,
 }: {
   orderedFields: Field[];
   boardField: Field;
@@ -420,6 +421,7 @@ function BoardCard({
   onDuplicate: () => void;
   onDelete: () => void;
   onJumpToRecord?: (targetEntity: string, recordId: number) => void;
+  readOnly?: boolean;
 }) {
   // orderedFields (not the entity's raw declared order) -- mirrors round
   // 615's fix for Export CSV/Copy/per-record Print/Print list, so a board
@@ -440,8 +442,11 @@ function BoardCard({
     <div
       className={hasMoveError ? "board-card board-card-move-error" : "board-card"}
       data-record-id={record.id as number}
-      draggable
-      onDragStart={(e) => e.dataTransfer.setData("text/plain", String(record.id))}
+      draggable={!readOnly}
+      onDragStart={(e) => {
+        if (readOnly) return;
+        e.dataTransfer.setData("text/plain", String(record.id));
+      }}
     >
       {otherFields.map((f) => (
         <div key={f.name} className="board-card-field">
@@ -463,6 +468,7 @@ function BoardCard({
         className="board-card-move"
         value={currentBoardValue}
         onChange={(e) => onMove(e.target.value)}
+        disabled={readOnly}
       >
         {boardOptionValues.map((v) => (
           <option key={v} value={v}>
@@ -470,17 +476,19 @@ function BoardCard({
           </option>
         ))}
       </select>
-      <div className="row-actions">
-        <button type="button" onClick={onEdit}>
-          {t("entity.edit")}
-        </button>
-        <button type="button" onClick={onDuplicate}>
-          {t("entity.duplicate")}
-        </button>
-        <button type="button" className="danger" onClick={onDelete}>
-          {t("entity.delete")}
-        </button>
-      </div>
+      {!readOnly && (
+        <div className="row-actions">
+          <button type="button" onClick={onEdit}>
+            {t("entity.edit")}
+          </button>
+          <button type="button" onClick={onDuplicate}>
+            {t("entity.duplicate")}
+          </button>
+          <button type="button" className="danger" onClick={onDelete}>
+            {t("entity.delete")}
+          </button>
+        </div>
+      )}
     </div>
   );
 }
@@ -922,11 +930,14 @@ export function EntityPanel({
   onJumpToRecord,
   onSendWhatsApp,
   onRecordCountChange,
+  readOnly = false,
 }: {
   projectId: string;
   entity: Entity;
   allEntities: Entity[];
   onEntityRenamed: (project: Project) => void;
+  /** True for a "viewer" collaborator -- the server already rejects every write here with 403 VIEWER_READ_ONLY; this just keeps a viewer from clicking a control that can only ever fail. */
+  readOnly?: boolean;
   /** A record id to scroll to and highlight once loaded, e.g. after a global-search "jump to record" click. */
   highlightRecordId?: number | null;
   /** Called once the incoming highlightRecordId has actually been applied, so the caller can clear it and not re-trigger on the next render. */
@@ -1772,19 +1783,19 @@ export function EntityPanel({
       } else if (e.key === "k" || e.key === "ArrowUp") {
         e.preventDefault();
         setFocusedRowId((current) => computeNextFocusedRowId(visibleIds, current, "prev"));
-      } else if (e.key === "Enter" && isFocusedRowVisible && !e.defaultPrevented && !enterTargetsInteractiveElement(e.target)) {
+      } else if (!readOnly && e.key === "Enter" && isFocusedRowVisible && !e.defaultPrevented && !enterTargetsInteractiveElement(e.target)) {
         const record = visibleRecords.find((r) => (r.id as number) === focusedRowId);
         if (record) {
           e.preventDefault();
           startEdit(record);
         }
-      } else if (e.key === "x" && isFocusedRowVisible) {
+      } else if (!readOnly && e.key === "x" && isFocusedRowVisible) {
         e.preventDefault();
         toggleSelected(focusedRowId as number);
-      } else if ((e.key === "Delete" || e.key === "Backspace") && isFocusedRowVisible) {
+      } else if (!readOnly && (e.key === "Delete" || e.key === "Backspace") && isFocusedRowVisible) {
         e.preventDefault();
         void handleDelete(focusedRowId as number);
-      } else if (e.key === "d" && isFocusedRowVisible) {
+      } else if (!readOnly && e.key === "d" && isFocusedRowVisible) {
         e.preventDefault();
         void handleDuplicate(focusedRowId as number);
       } else if (e.key === "Escape" && selectedIds.size > 0) {
@@ -1794,7 +1805,7 @@ export function EntityPanel({
     }
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [viewMode, visibleRecords, focusedRowId, selectedIds, recordGroups, collapsedGroups]);
+  }, [viewMode, visibleRecords, focusedRowId, selectedIds, recordGroups, collapsedGroups, readOnly]);
 
   /**
    * "n" jumps straight to a blank add-record form, abandoning whatever
@@ -1813,14 +1824,14 @@ export function EntityPanel({
    */
   useEffect(() => {
     function handleKeyDown(e: KeyboardEvent) {
-      if (e.key !== "n" || e.ctrlKey || e.metaKey || e.altKey) return;
+      if (readOnly || e.key !== "n" || e.ctrlKey || e.metaKey || e.altKey) return;
       if (isTypingTarget(e.target as HTMLElement | null) || isAnyDialogOpen()) return;
       e.preventDefault();
       startCreateNew();
     }
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [entity]);
+  }, [entity, readOnly]);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -2425,7 +2436,7 @@ export function EntityPanel({
    * board field specifically.
    */
   function startInlineEdit(record: EntityRecord, field: Field) {
-    if (!isInlineEditableField(field)) return;
+    if (readOnly || !isInlineEditableField(field)) return;
     setEditingCell({ recordId: record.id as number, field: field.name });
     setCellDraft(record[field.name]);
   }
@@ -2496,6 +2507,7 @@ export function EntityPanel({
             aria-label={t("entity.bulk.selectRow")}
             checked={selectedIds.has(record.id as number)}
             onChange={() => toggleSelected(record.id as number)}
+            disabled={readOnly}
           />
         </td>
         {visibleFields.map((f) => {
@@ -2553,13 +2565,17 @@ export function EntityPanel({
         })}
         <td className="muted small created-at-cell">{formatRecordCreatedAt(record.createdAt as string | undefined, lang)}</td>
         <td className="row-actions">
-          <button type="button" onClick={() => startEdit(record)}>
-            {t("entity.edit")}
-          </button>
-          <button type="button" onClick={() => handleDuplicate(record.id as number)}>
-            {t("entity.duplicate")}
-          </button>
-          {phoneField && onSendWhatsApp && typeof record[phoneField.name] === "string" && record[phoneField.name] && (
+          {!readOnly && (
+            <button type="button" onClick={() => startEdit(record)}>
+              {t("entity.edit")}
+            </button>
+          )}
+          {!readOnly && (
+            <button type="button" onClick={() => handleDuplicate(record.id as number)}>
+              {t("entity.duplicate")}
+            </button>
+          )}
+          {!readOnly && phoneField && onSendWhatsApp && typeof record[phoneField.name] === "string" && record[phoneField.name] && (
             <button type="button" onClick={() => onSendWhatsApp(record[phoneField.name] as string)}>
               {t("entity.sendWhatsApp")}
             </button>
@@ -2567,9 +2583,11 @@ export function EntityPanel({
           <button type="button" onClick={() => setRecordToPrint(record)}>
             {t("entity.print")}
           </button>
-          <button type="button" className="danger" onClick={() => handleDelete(record.id as number)}>
-            {t("entity.delete")}
-          </button>
+          {!readOnly && (
+            <button type="button" className="danger" onClick={() => handleDelete(record.id as number)}>
+              {t("entity.delete")}
+            </button>
+          )}
         </td>
       </tr>
     );
@@ -2577,9 +2595,10 @@ export function EntityPanel({
 
   return (
     <div className="entity-panel">
-      <EntityLabelEditor entity={entity} projectId={projectId} onRenamed={onEntityRenamed} />
+      <EntityLabelEditor entity={entity} projectId={projectId} onRenamed={onEntityRenamed} readOnly={readOnly} />
       {entity.description && <p className="muted">{entity.description}</p>}
 
+      {!readOnly && (
       <form
         className="record-form"
         ref={formRef}
@@ -2615,6 +2634,7 @@ export function EntityPanel({
               field={field}
               projectId={projectId}
               onRenamed={onEntityRenamed}
+              readOnly={readOnly}
               labelOccurrences={entityFieldLabelOccurrences}
             />
             <FieldInput
@@ -2644,6 +2664,7 @@ export function EntityPanel({
           )}
         </div>
       </form>
+      )}
 
       {error && (
         <p className="error" role="status">
@@ -2671,6 +2692,7 @@ export function EntityPanel({
         </p>
       )}
 
+      {!readOnly && (
       <div className="csv-import-row">
         <label className="csv-import-label">
           {importBusy ? t("entity.import.parsing") : t("entity.importCsv")}
@@ -2687,6 +2709,7 @@ export function EntityPanel({
           </button>
         )}
       </div>
+      )}
       {showImportErrors && importErrors.length > 0 && (
         <ul className="csv-import-errors">
           {importErrors.map((msg, i) => (
@@ -2953,13 +2976,13 @@ export function EntityPanel({
                     // to write back, so it's display-only -- never a valid
                     // drop target. Not calling preventDefault() here means
                     // the browser rejects the drop before onDrop can fire.
-                    if (column.isOther) return;
+                    if (column.isOther || readOnly) return;
                     e.preventDefault();
                     setDragOverColumn(column.value);
                   }}
                   onDragLeave={() => setDragOverColumn((prev) => (prev === column.value ? null : prev))}
                   onDrop={(e) => {
-                    if (column.isOther) return;
+                    if (column.isOther || readOnly) return;
                     handleCardDrop(e, boardField.name, column.value);
                   }}
                 >
@@ -2977,7 +3000,7 @@ export function EntityPanel({
                       <span className={`badge badge-${badgeTone(column.value)}`}>{column.label}</span>
                       <span className="muted small">{column.records.length}</span>
                     </div>
-                    {!column.isOther && (
+                    {!column.isOther && !readOnly && (
                       <button
                         type="button"
                         className="board-add-card-btn"
@@ -3006,6 +3029,7 @@ export function EntityPanel({
                       onDuplicate={() => handleDuplicate(record.id as number)}
                       onDelete={() => handleDelete(record.id as number)}
                       onJumpToRecord={onJumpToRecord}
+                      readOnly={readOnly}
                     />
                   ))}
                 </div>
@@ -3024,15 +3048,15 @@ export function EntityPanel({
               onPrevMonth={() => setCalendarMonth((m) => new Date(m.getFullYear(), m.getMonth() - 1, 1))}
               onNextMonth={() => setCalendarMonth((m) => new Date(m.getFullYear(), m.getMonth() + 1, 1))}
               onToday={() => setCalendarMonth(new Date())}
-              onEdit={startEdit}
-              onDayClick={(date) => startCreateForDate(date, dateField)}
-              onReschedule={(record, date, originDay) => handleCalendarDrop(record, dateField.name, date, originDay)}
+              onEdit={readOnly ? () => {} : startEdit}
+              onDayClick={readOnly ? () => {} : (date) => startCreateForDate(date, dateField)}
+              onReschedule={readOnly ? () => {} : (record, date, originDay) => handleCalendarDrop(record, dateField.name, date, originDay)}
               moveErrorId={moveErrorId}
             />
           ) : (
             <div className="table-scroll" ref={tableScrollRef}>
               {visibleFields.length > 0 && <p className="muted small sort-hint">{t("entity.sort.multiHint")}</p>}
-              {selectedIds.size > 0 && (
+              {selectedIds.size > 0 && !readOnly && (
                 <div className="bulk-actions-bar">
                   <span>{t("entity.bulk.selectedCount", { count: selectedIds.size })}</span>
                   <label className="bulk-edit-field-label">
@@ -3089,6 +3113,7 @@ export function EntityPanel({
                           el.indeterminate = someSelected && !allSelected;
                         }}
                         onChange={toggleSelectAllVisible}
+                        disabled={readOnly}
                       />
                     </th>
                     {visibleFields.map((f, visibleIndex) => {

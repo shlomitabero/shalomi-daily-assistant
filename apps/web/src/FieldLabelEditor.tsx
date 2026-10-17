@@ -29,12 +29,15 @@ export function FieldLabelEditor({
   projectId,
   onRenamed,
   labelOccurrences,
+  readOnly = false,
 }: {
   entityName: string;
   field: Field;
   projectId: string;
   onRenamed: (project: Project) => void;
   labelOccurrences: Map<string, number>;
+  /** True for a "viewer" collaborator -- the server already rejects this rename with 403 VIEWER_READ_ONLY; this just hides the edit button instead of showing one that can only ever fail. */
+  readOnly?: boolean;
 }) {
   const { t } = useTranslation();
   const [editing, setEditing] = useState(false);
@@ -91,15 +94,17 @@ export function FieldLabelEditor({
       <span className="field-label">
         {displayLabel}
         {field.required ? " *" : ""}
-        <button
-          type="button"
-          className="field-label-edit-btn"
-          onClick={startEditing}
-          title={t("entity.renameFieldLabel")}
-          aria-label={t("entity.renameFieldLabel")}
-        >
-          ✏️
-        </button>
+        {!readOnly && (
+          <button
+            type="button"
+            className="field-label-edit-btn"
+            onClick={startEditing}
+            title={t("entity.renameFieldLabel")}
+            aria-label={t("entity.renameFieldLabel")}
+          >
+            ✏️
+          </button>
+        )}
       </span>
     );
   }

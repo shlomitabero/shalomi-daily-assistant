@@ -1,4 +1,6 @@
-import type { AgentStepEvent, Checkpoint, EntityRecord, Project, ProjectCollaborator, User } from "@forge/shared";
+import type { AgentStepEvent, CollaboratorRole, Checkpoint, EntityRecord, Project, ProjectCollaborator, User } from "@forge/shared";
+
+export type { CollaboratorRole };
 import {
   detectInitialLang,
   resolveErrorMessage as resolveErrorMessageForLang,
@@ -768,12 +770,24 @@ export function listCollaborators(projectId: string): Promise<{ collaborators: P
 export function addCollaborator(
   projectId: string,
   email: string,
+  role: CollaboratorRole = "editor",
 ): Promise<{ collaborators: ProjectCollaborator[]; owner: ProjectOwnerInfo | null }> {
-  return request(`/projects/${projectId}/collaborators`, { method: "POST", body: JSON.stringify({ email }) });
+  return request(`/projects/${projectId}/collaborators`, { method: "POST", body: JSON.stringify({ email, role }) });
 }
 
 export function removeCollaborator(projectId: string, userId: string): Promise<void> {
   return request(`/projects/${projectId}/collaborators/${userId}`, { method: "DELETE" });
+}
+
+export function updateCollaboratorRole(
+  projectId: string,
+  userId: string,
+  role: CollaboratorRole,
+): Promise<{ collaborators: ProjectCollaborator[]; owner: ProjectOwnerInfo | null }> {
+  return request(`/projects/${projectId}/collaborators/${userId}/role`, {
+    method: "PATCH",
+    body: JSON.stringify({ role }),
+  });
 }
 
 /**

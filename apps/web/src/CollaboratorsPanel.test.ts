@@ -4,7 +4,7 @@ import { test } from "node:test";
 import { JSDOM } from "jsdom";
 import React from "react";
 import { cleanup, fireEvent, render } from "@testing-library/react";
-import type { ProjectCollaborator } from "@forge/shared";
+import type { CollaboratorRole, ProjectCollaborator } from "@forge/shared";
 import { CollaboratorsPanel } from "./CollaboratorsPanel.js";
 import { LanguageProvider } from "./i18n/LanguageContext.js";
 import { ThemeProvider } from "./theme/ThemeContext.js";
@@ -53,8 +53,8 @@ async function waitForCondition(check: () => boolean, maxTicks = 40): Promise<vo
   throw new Error("waitForCondition: condition never became true");
 }
 
-function makeCollaborator(userId: string, email: string): ProjectCollaborator {
-  return { userId, email, addedAt: new Date().toISOString() };
+function makeCollaborator(userId: string, email: string, role: CollaboratorRole = "editor"): ProjectCollaborator {
+  return { userId, email, addedAt: new Date().toISOString(), role };
 }
 
 function renderPanel(isOwner = true, currentUserId?: string, onLeft: () => void = () => {}) {
@@ -556,6 +556,143 @@ test("CollaboratorsPanel's Leave button asks for confirmation, calls the real DE
     } finally {
       globalThis.fetch = originalFetch;
       globalThis.window.confirm = originalConfirm;
+    }
+  });
+});
+
+/**
+ * New in this round: collaborators are no longer a single flat grant --
+ * the owner's invite form now lets them pick a role ("editor", the
+ * default, or "viewer"), and that choice is sent to the server. Confirms
+ * the default submission (no role touched) sends "editor", and that
+ * picking "viewer" in the select actually changes what gets sent -- not
+ * just a cosmetic option that the submit ignores.
+ */
+test("CollaboratorsPanel's invite form defaults to the 'editor' role, and submits 'viewer' when that's picked", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    const dana = makeCollaborator("u1", "dana@example.com", "viewer");
+    const requestBodies: unknown[] = [];
+
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/collaborators") {
+        return new Response(JSON.stringify({ collaborators: [], owner: { userId: "owner1", email: "amit@example.com" } }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      if (method === "POST" && input === "/api/projects/proj1/collaborators") {
+        requestBodies.push(JSON.parse(init!.body as string));
+        return new Response(
+          JSON.stringify({ collaborators: [dana], owner: { userId: "owner1", email: "amit@example.com" } }),
+          { status: 201, headers: { "content-type": "application/json" } },
+        );
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+
+    try {
+      renderPanel(true);
+      await waitForCondition(() => document.querySelector(".collab-invite-form") !== null);
+
+      const roleSelect = document.querySelector('.collab-invite-form select[aria-label]') as HTMLSelectElement;
+      assert.equal(roleSelect.value, "editor", "the invite role must default to editor, matching every collaborator's access before roles existed");
+
+      fireEvent.change(document.querySelector('.collab-invite-form input[type="email"]') as HTMLInputElement, {
+        target: { value: "dana@example.com" },
+      });
+      fireEvent.change(roleSelect, { target: { value: "viewer" } });
+      fireEvent.submit(document.querySelector(".collab-invite-form")!);
+      await waitForCondition(() => requestBodies.length === 1);
+
+      assert.deepEqual(requestBodies[0], { email: "dana@example.com", role: "viewer" });
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
+ * New in this round: the owner can change an existing collaborator's role
+ * via a per-row select (a non-owner sees the role as a plain, read-only
+ * chip instead). Confirms the select starts at the collaborator's real
+ * current role, changing it sends a real PATCH to the role route, and the
+ * list re-renders from the server's response.
+ */
+test("CollaboratorsPanel lets the owner change a collaborator's role via a per-row select, which sends a real PATCH and updates the list", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    const dana = makeCollaborator("u1", "dana@example.com", "editor");
+    const danaAsViewer = makeCollaborator("u1", "dana@example.com", "viewer");
+    let patchCalls = 0;
+    let patchBody: unknown;
+
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/collaborators") {
+        return new Response(JSON.stringify({ collaborators: [dana] }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      if (method === "PATCH" && input === "/api/projects/proj1/collaborators/u1/role") {
+        patchCalls += 1;
+        patchBody = JSON.parse(init!.body as string);
+        return new Response(JSON.stringify({ collaborators: [danaAsViewer] }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+
+    try {
+      renderPanel(true);
+      await waitForCondition(() => document.querySelectorAll(".collab-list li").length === 1);
+
+      const rowSelect = document.querySelector(".collab-list li select") as HTMLSelectElement;
+      assert.ok(rowSelect, "the owner's view must show a real role select for each collaborator");
+      assert.equal(rowSelect.value, "editor");
+
+      fireEvent.change(rowSelect, { target: { value: "viewer" } });
+      await waitForCondition(() => patchCalls === 1);
+
+      assert.deepEqual(patchBody, { role: "viewer" });
+      await waitForCondition(() => (document.querySelector(".collab-list li select") as HTMLSelectElement)?.value === "viewer");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
+ * A non-owner never gets to change anyone's role -- they see the same
+ * role shown as plain, read-only text instead of a select, matching the
+ * existing "read-only list" convention for everything else owner-only on
+ * this panel (inviting, removing).
+ */
+test("CollaboratorsPanel shows a collaborator's role as read-only text (not a select) for a non-owner viewer of the panel", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    const dana = makeCollaborator("u1", "dana@example.com", "viewer");
+
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/collaborators") {
+        return new Response(JSON.stringify({ collaborators: [dana] }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+
+    try {
+      renderPanel(false, "u2");
+      await waitForCondition(() => document.querySelectorAll(".collab-list li").length === 1);
+
+      assert.equal(document.querySelector(".collab-list li select"), null, "a non-owner must never see an editable role control");
+      assert.ok(document.querySelector(".collab-role-chip"), "a non-owner must still see the collaborator's role, just as read-only text");
+    } finally {
+      globalThis.fetch = originalFetch;
     }
   });
 });

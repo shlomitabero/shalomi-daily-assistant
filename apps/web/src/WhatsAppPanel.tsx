@@ -114,10 +114,13 @@ export function WhatsAppPanel({
   prefillTo,
   onMessageDeleted,
   onHistoryCleared,
+  readOnly = false,
 }: {
   projectId: string;
   projectName: string;
   onClose: () => void;
+  /** True for a "viewer" collaborator -- the server already rejects every write here with 403 VIEWER_READ_ONLY; this just keeps a viewer from clicking a control that can only ever fail. */
+  readOnly?: boolean;
   onJumpToEntity: (entityName: string) => void;
   /**
    * The API already resolves each matched message down to a specific
@@ -740,9 +743,11 @@ export function WhatsAppPanel({
         {s === "disconnected" && (
           <div className="whatsapp-connect-box">
             {status?.phoneNumber && <p className="muted small">{t("whatsapp.lastConnected", { phone: status.phoneNumber })}</p>}
-            <button type="button" onClick={handleConnect} disabled={connecting}>
-              {connecting ? t("whatsapp.connect.connecting") : t("whatsapp.connect.button")}
-            </button>
+            {!readOnly && (
+              <button type="button" onClick={handleConnect} disabled={connecting}>
+                {connecting ? t("whatsapp.connect.connecting") : t("whatsapp.connect.button")}
+              </button>
+            )}
             {status?.error && (
               <p className="error" role="status">
                 {status.error}
@@ -779,14 +784,16 @@ export function WhatsAppPanel({
               )}
               {notifyPermission === "granted" && <p className="muted small whatsapp-notify-status">{t("whatsapp.notify.enabled")}</p>}
               {notifyPermission === "denied" && <p className="muted small whatsapp-notify-status">{t("whatsapp.notify.denied")}</p>}
-              <button type="button" className="secondary small" onClick={handleDisconnect} disabled={disconnecting}>
-                {disconnecting ? t("whatsapp.connected.disconnecting") : t("whatsapp.connected.disconnect")}
-              </button>
+              {!readOnly && (
+                <button type="button" className="secondary small" onClick={handleDisconnect} disabled={disconnecting}>
+                  {disconnecting ? t("whatsapp.connected.disconnecting") : t("whatsapp.connected.disconnect")}
+                </button>
+              )}
             </div>
           </div>
         )}
 
-        {s === "connected" && (
+        {s === "connected" && !readOnly && (
           <form className="whatsapp-test-form" onSubmit={handleSendTest}>
             <h3>{t("whatsapp.test.heading")}</h3>
             <label className="field-row">
@@ -863,9 +870,11 @@ export function WhatsAppPanel({
                 <button type="button" className="secondary small" onClick={handleDownloadLog}>
                   {t("whatsapp.log.download")}
                 </button>
-                <button type="button" className="secondary small" onClick={handleClearHistory} disabled={clearing}>
-                  {clearing ? t("whatsapp.log.clearing") : t("whatsapp.log.clear")}
-                </button>
+                {!readOnly && (
+                  <button type="button" className="secondary small" onClick={handleClearHistory} disabled={clearing}>
+                    {clearing ? t("whatsapp.log.clearing") : t("whatsapp.log.clear")}
+                  </button>
+                )}
               </div>
             )}
           </div>
@@ -978,7 +987,7 @@ export function WhatsAppPanel({
                   {m.status === "failed" && (
                     <>
                       <span className="badge badge-negative">{t("whatsapp.log.failed")}</span>
-                      {s === "connected" && (
+                      {s === "connected" && !readOnly && (
                         // Disabled while ANY retry is in flight, not just this row's
                         // own (same convention as HistoryPanel's restore/delete and
                         // AutomationsPanel's toggle/delete buttons): retryingId is a
@@ -998,11 +1007,12 @@ export function WhatsAppPanel({
                       )}
                     </>
                   )}
-                  {m.direction === "in" && s === "connected" && (
+                  {m.direction === "in" && s === "connected" && !readOnly && (
                     <button type="button" className="secondary small" onClick={() => handleReplyToMessage(m)}>
                       {t("whatsapp.log.reply")}
                     </button>
                   )}
+                  {!readOnly && (
                   <button
                     type="button"
                     className="whatsapp-log-delete"
@@ -1012,6 +1022,7 @@ export function WhatsAppPanel({
                   >
                     {deletingId === m.id ? "…" : "🗑️"}
                   </button>
+                  )}
                 </li>
               ))}
             </ul>

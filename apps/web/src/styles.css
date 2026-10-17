@@ -2692,7 +2692,8 @@ button.sort-header:hover:not(:disabled) {
   overflow-wrap: anywhere;
 }
 
-.collab-list li button {
+.collab-list li button,
+.collab-list li select {
   flex-shrink: 0;
 }
 
@@ -2705,6 +2706,19 @@ button.sort-header:hover:not(:disabled) {
   background: var(--accent-soft);
   color: var(--accent-deep);
   border-color: var(--accent-soft);
+}
+
+.collab-role-chip {
+  flex-shrink: 0;
+}
+
+.viewer-readonly-banner {
+  background: var(--accent-soft);
+  color: var(--accent-deep);
+  border: 1px solid var(--accent-soft);
+  border-radius: 8px;
+  padding: 8px 12px;
+  margin: 0 0 12px;
 }
 
 .automations-whatsapp-hint {

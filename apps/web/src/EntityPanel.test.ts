@@ -8988,3 +8988,39 @@ test("EntityPanel's table cell renders a 'file' field's stored descriptor as a r
     }
   });
 });
+
+/**
+ * Real role enforcement (RBAC), the UI-layer reflection of it: a "viewer"
+ * collaborator passes readOnly=true into EntityPanel. The server already
+ * rejects every write with 403 VIEWER_READ_ONLY (see app.test.ts); this
+ * confirms the UI never offers a control that can only ever fail --
+ * the add/edit record form, the per-row edit/delete buttons, and the
+ * bulk-selection checkboxes (which would otherwise surface a bulk-actions
+ * bar made entirely of writes) are all gone, while the table itself (a
+ * pure read) still renders normally.
+ */
+test("EntityPanel with readOnly=true hides the record form and row edit/delete buttons, and disables bulk selection, while still rendering the table", async () => {
+  await withJsdom(async () => {
+    const store: EntityRecord[] = [{ id: 1, name: "Acme Deal", amount: 100, status: "new" }];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = mockRecordsFetch(store) as typeof fetch;
+    try {
+      renderEntityPanel({ readOnly: true });
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 1);
+
+      assert.equal(document.querySelector("form.record-form"), null, "a viewer must never see the add/edit record form");
+      // Print is a pure read (and deliberately still offered), so the
+      // row-actions cell isn't empty -- it just has exactly that one
+      // button left, instead of also Edit/Duplicate/Delete.
+      const rowActionButtons = document.querySelectorAll("table tbody td.row-actions button");
+      assert.equal(rowActionButtons.length, 1, "a viewer's row-actions cell must keep only the read-only Print button");
+
+      const selectAll = document.querySelector("th.select-col input") as HTMLInputElement | null;
+      const rowCheckbox = document.querySelector("td.select-col input") as HTMLInputElement | null;
+      assert.ok(rowCheckbox?.disabled, "a viewer's row-selection checkbox must be disabled, since there is nothing a bulk action could do");
+      assert.ok(selectAll?.disabled, "a viewer's select-all checkbox must be disabled too");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});

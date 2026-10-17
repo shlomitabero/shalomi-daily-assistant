@@ -492,6 +492,7 @@ test("App's handleEnhanceAndBuild captures enhanceIdea's own providerName into e
       "setEnhanceProvider",
       "createProject",
       "setProject",
+      "setMyRole",
       "setSpecProvider",
       "setView",
       `${code}\nreturn handleEnhanceAndBuild;`,
@@ -505,6 +506,7 @@ test("App's handleEnhanceAndBuild captures enhanceIdea's own providerName into e
       (v: string | null) => (state.enhanceProvider = v),
       opts.createProjectFn,
       (p: Project) => (state.project = p),
+      (_role: string) => {},
       (v: string | null) => (state.specProvider = v),
       (v: string) => (state.view = v),
     ) as () => Promise<void>;
@@ -979,6 +981,7 @@ test("App's openExistingProject routes a built project to the live preview and a
       enhanceProvider: string | null;
       buildWarning: string | null;
       markSeenCalls: Array<[string, string]>;
+      myRole: string;
     } = {
       project: null,
       activeEntity: null,
@@ -987,6 +990,7 @@ test("App's openExistingProject routes a built project to the live preview and a
       enhanceProvider: "unset",
       buildWarning: "Seed Data: a real failure from a previously-opened project",
       markSeenCalls: [],
+      myRole: "unset",
     };
     const fn = new Function(
       "setProject",
@@ -998,6 +1002,8 @@ test("App's openExistingProject routes a built project to the live preview and a
       "user",
       "markSharedProjectSeen",
       "setSeenShared",
+      "setMyRole",
+      "listCollaborators",
       `${code}\nreturn openExistingProject;`,
     )(
       (p: Project) => (state.project = p),
@@ -1012,6 +1018,12 @@ test("App's openExistingProject routes a built project to the live preview and a
         return new Map([[id, sharedAt]]);
       },
       (_m: Map<string, string>) => {},
+      (role: string) => (state.myRole = role),
+      // Never resolved within this synchronous test -- openExistingProject's
+      // own real .then() always lands after this function already
+      // returned, so only the synchronous "owner" or optimistic "editor"
+      // assignment below is ever observable here.
+      (_id: string) => new Promise(() => {}),
     ) as (p: Project) => void;
     fn(project);
     return state;
@@ -1035,6 +1047,7 @@ test("App's openExistingProject routes a built project to the live preview and a
     { project: builtProject, activeEntity: "Customer", view: "preview", specProvider: null, enhanceProvider: null },
   );
   assert.deepEqual(builtResult.markSeenCalls, [], "opening a project you own yourself must never call markSharedProjectSeen");
+  assert.equal(builtResult.myRole, "owner", "opening your own project must set myRole to 'owner' synchronously, with no need to fetch a role for yourself");
   assert.equal(
     builtResult.buildWarning,
     null,
@@ -1066,6 +1079,11 @@ test("App's openExistingProject routes a built project to the live preview and a
     sharedResult.markSeenCalls,
     [[sharedProject.id, "2026-03-01T00:00:00.000Z"]],
     "opening a project someone else owns must mark it seen with its own id and current sharedAt",
+  );
+  assert.equal(
+    sharedResult.myRole,
+    "editor",
+    "opening a shared project must optimistically set myRole to 'editor' (full access) while the real role is still being fetched, never leave it unset",
   );
 
   const sharedProjectNoTimestamp = makeProject([makeEntity("Customer")]);

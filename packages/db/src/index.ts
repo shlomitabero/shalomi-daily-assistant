@@ -39,6 +39,8 @@ export {
   isCollaborator,
   listCollaborators,
   listCollaboratedProjectIds,
+  getCollaboratorRole,
+  updateCollaboratorRole,
 } from "./collaborators.js";
 export {
   ensureUsersTable,

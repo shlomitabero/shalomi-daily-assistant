@@ -19,10 +19,13 @@ export function EntityLabelEditor({
   entity,
   projectId,
   onRenamed,
+  readOnly = false,
 }: {
   entity: Entity;
   projectId: string;
   onRenamed: (project: Project) => void;
+  /** True for a "viewer" collaborator -- the server already rejects this rename with 403 VIEWER_READ_ONLY; this just renders the label as plain, non-editable text instead of a click target that can only ever fail. */
+  readOnly?: boolean;
 }) {
   const { t } = useTranslation();
   const [editing, setEditing] = useState(false);
@@ -65,6 +68,10 @@ export function EntityLabelEditor({
     } finally {
       setBusy(false);
     }
+  }
+
+  if (readOnly) {
+    return <h3 className="entity-label">{currentLabel}</h3>;
   }
 
   if (!editing) {

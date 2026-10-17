@@ -13,6 +13,7 @@ import {
   getEntityCounts,
   getToken,
   getWhatsAppStatus,
+  listCollaborators,
   listProjects,
   listTemplates,
   listWhatsAppMessages,
@@ -22,6 +23,7 @@ import {
   streamRefine,
   subscribeAuthExpired,
   subscribeWakeStatus,
+  type CollaboratorRole,
   type TemplateSummary,
   type WhatsAppMessageLogEntry,
 } from "./api.js";
@@ -425,6 +427,18 @@ function AppContent() {
   const [view, setView] = useState<View>("home");
   const [description, setDescription] = useState(getIdeaDraft);
   const [project, setProject] = useState<Project | null>(null);
+  // The signed-in user's own standing on the currently open project: the
+  // owner is always "owner" (never a row in project_collaborators at all --
+  // see collaborators.ts's own comment), and a collaborator is either
+  // "editor" (full access, the original behavior) or "viewer" (read-only,
+  // enforced server-side by requireProjectWriteAccess -- this is only the
+  // UI-layer reflection of that, via the readOnly props threaded into
+  // EntityPanel/AutomationsPanel/WhatsAppPanel/HistoryPanel/the editors
+  // below). Set in openExistingProject (and every project-creation path,
+  // which always makes the creator the owner); never recomputed afterwards
+  // for the project already open, since nothing in this session can change
+  // the signed-in user's own role on it.
+  const [myRole, setMyRole] = useState<"owner" | CollaboratorRole>("owner");
   // Which spec provider actually built the CURRENT draft's spec -- null for
   // a re-opened existing project (createProject's own response is the only
   // source of this, and it isn't stored on the project itself, so there's
@@ -979,6 +993,23 @@ function AppContent() {
     setBuildWarning(null);
     setView(p.status === "built" ? "preview" : "spec");
     if (user && p.ownerId !== user.id && p.sharedAt) setSeenShared(markSharedProjectSeen(p.id, p.sharedAt));
+    if (!user || p.ownerId === user.id) {
+      setMyRole("owner");
+    } else {
+      // Optimistic "editor" while the real role loads -- matches full
+      // access, the only thing every collaborator had before roles
+      // existed, so a slow network never shows a false read-only banner.
+      // If this collaborator's access was actually revoked, the next
+      // write attempt gets the real 403/404 from the server regardless,
+      // which is the actual enforcement; this is only a UX nicety on top.
+      setMyRole("editor");
+      listCollaborators(p.id)
+        .then(({ collaborators }) => {
+          const mine = collaborators.find((c) => c.userId === user.id);
+          setMyRole(mine?.role ?? "editor");
+        })
+        .catch(() => {});
+    }
   }
 
   /**
@@ -1124,6 +1155,7 @@ function AppContent() {
     try {
       const { project, providerName } = await createProject(description);
       setProject(project);
+      setMyRole("owner");
       setSpecProvider(providerName);
       setEnhanceProvider(null);
       setView("spec");
@@ -1155,6 +1187,7 @@ function AppContent() {
       setEnhanceProvider(enhanceProviderName);
       const { project, providerName } = await createProject(enhanced);
       setProject(project);
+      setMyRole("owner");
       setSpecProvider(providerName);
       setView("spec");
     } catch (err) {
@@ -1182,6 +1215,7 @@ function AppContent() {
     try {
       const { project } = await createProjectFromTemplate(templateId, lang);
       setProject(project);
+      setMyRole("owner");
       setSpecProvider(null);
       setEnhanceProvider(null);
       setView("spec");
@@ -1734,7 +1768,7 @@ function AppContent() {
 
       {view === "spec" && project && (
         <main className="spec-review">
-          <ProjectNameEditor project={project} onRenamed={setProject} />
+          <ProjectNameEditor project={project} onRenamed={setProject} readOnly={myRole === "viewer"} />
           <p className="muted small">{t("spec.title")}</p>
           <p>{project.spec.summary}</p>
           {specProviderLabel(specProvider, t) && (
@@ -1751,7 +1785,7 @@ function AppContent() {
           <section>
             <h2>{t("spec.description.heading")}</h2>
             <p className="muted small">{t("spec.description.hint")}</p>
-            <ProjectDescriptionEditor project={project} onChanged={setProject} />
+            <ProjectDescriptionEditor project={project} onChanged={setProject} readOnly={myRole === "viewer"} />
           </section>
 
           <section>
@@ -1885,7 +1919,7 @@ function AppContent() {
       {view === "preview" && project && (
         <main className="preview">
           <div className="preview-header">
-            <ProjectNameEditor project={project} onRenamed={setProject} />
+            <ProjectNameEditor project={project} onRenamed={setProject} readOnly={myRole === "viewer"} />
             <div className="preview-header-actions">
               <button type="button" className="secondary" onClick={() => openPanel("search")}>
                 {t("preview.search")}
@@ -1924,6 +1958,8 @@ function AppContent() {
             </div>
           </div>
 
+          {myRole === "viewer" && <p className="viewer-readonly-banner">{t("viewer.readOnlyBanner")}</p>}
+
           {buildWarning && (
             <p className="muted small" role="status">
               {t("preview.buildWarning", { detail: buildWarning })}
@@ -1946,7 +1982,7 @@ function AppContent() {
                   onComplete={handleBuildComplete}
                   onBack={() => setRefineRunning(false)}
                 />
-              ) : (
+              ) : myRole !== "viewer" ? (
                 <form className="refine-box" onSubmit={handleRefine}>
                   <input
                     type="text"
@@ -1959,7 +1995,7 @@ function AppContent() {
                     {t("preview.refine.submit")}
                   </button>
                 </form>
-              )}
+              ) : null}
 
               {refineHistory.length > 0 && (
                 <div className="refine-history">
@@ -2092,6 +2128,7 @@ function AppContent() {
                     onRecordCountChange={(entityName, count) =>
                       setEntityCounts((prev) => (prev[entityName] === count ? prev : { ...prev, [entityName]: count }))
                     }
+                    readOnly={myRole === "viewer"}
                   />
                 ))}
             </div>
@@ -2109,6 +2146,7 @@ function AppContent() {
                 setBuildWarning(null);
                 setShowHistory(false);
               }}
+              readOnly={myRole === "viewer"}
             />
           )}
 
@@ -2155,11 +2193,17 @@ function AppContent() {
               onHistoryCleared={() => {
                 lastNotifiedWhatsAppIdRef.current = null;
               }}
+              readOnly={myRole === "viewer"}
             />
           )}
 
           {showAutomations && (
-            <AutomationsPanel projectId={project.id} project={project} onClose={() => setShowAutomations(false)} />
+            <AutomationsPanel
+              projectId={project.id}
+              project={project}
+              onClose={() => setShowAutomations(false)}
+              readOnly={myRole === "viewer"}
+            />
           )}
 
           {showCollaborators && (

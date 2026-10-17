@@ -10,6 +10,8 @@ import {
   isCollaborator,
   listCollaborators,
   listCollaboratedProjectIds,
+  getCollaboratorRole,
+  updateCollaboratorRole,
 } from "./collaborators.js";
 
 function setup() {
@@ -120,4 +122,81 @@ test("removeAllCollaborationsForUser removes this user's own grants across every
 test("removeAllCollaborationsForUser is a harmless no-op for a user with no collaborations at all", () => {
   const db = setup();
   assert.doesNotThrow(() => removeAllCollaborationsForUser(db, "never-collaborated"));
+});
+
+test("addCollaborator defaults to the 'editor' role when none is given, matching every collaborator's access before roles existed", () => {
+  const db = setup();
+  createUser(db, { id: "user1", email: "user1@example.com", passwordHash: "x" });
+  addCollaborator(db, "proj1", "user1");
+  assert.equal(getCollaboratorRole(db, "proj1", "user1"), "editor");
+  assert.equal(listCollaborators(db, "proj1")[0].role, "editor");
+});
+
+test("addCollaborator stores an explicit 'viewer' role, and getCollaboratorRole/listCollaborators both reflect it", () => {
+  const db = setup();
+  createUser(db, { id: "user1", email: "user1@example.com", passwordHash: "x" });
+  addCollaborator(db, "proj1", "user1", "viewer");
+  assert.equal(getCollaboratorRole(db, "proj1", "user1"), "viewer");
+  assert.equal(listCollaborators(db, "proj1")[0].role, "viewer");
+});
+
+test("getCollaboratorRole returns null for a user who isn't a collaborator on that project at all", () => {
+  const db = setup();
+  assert.equal(getCollaboratorRole(db, "proj1", "never-added"), null);
+});
+
+test("updateCollaboratorRole changes an existing collaborator's role, leaving a different collaborator on the same project untouched", () => {
+  const db = setup();
+  createUser(db, { id: "user1", email: "user1@example.com", passwordHash: "x" });
+  createUser(db, { id: "user2", email: "user2@example.com", passwordHash: "x" });
+  addCollaborator(db, "proj1", "user1", "editor");
+  addCollaborator(db, "proj1", "user2", "editor");
+
+  updateCollaboratorRole(db, "proj1", "user1", "viewer");
+
+  assert.equal(getCollaboratorRole(db, "proj1", "user1"), "viewer");
+  assert.equal(getCollaboratorRole(db, "proj1", "user2"), "editor", "a different collaborator's own role on the same project must be untouched");
+});
+
+test("updateCollaboratorRole on a user who isn't a collaborator at all is a harmless no-op, not an error", () => {
+  const db = setup();
+  assert.doesNotThrow(() => updateCollaboratorRole(db, "proj1", "never-added", "viewer"));
+  assert.equal(getCollaboratorRole(db, "proj1", "never-added"), null);
+});
+
+/**
+ * Regression test for ensureProjectCollaboratorsTable's own migration path:
+ * a table created by an app version before roles existed has no `role`
+ * column at all. ensureProjectCollaboratorsTable must add it (ADD COLUMN,
+ * additive-only, same discipline checkpoints.ts's own `kind` backfill
+ * uses) with every existing row defaulting to "editor" -- the exact full
+ * access that row already had before this upgrade, so adding roles can
+ * never be a silent permission downgrade for an existing deployment.
+ */
+test("ensureProjectCollaboratorsTable adds a missing role column to a pre-existing table, defaulting every existing row to 'editor'", () => {
+  const db = openDatabase(":memory:");
+  ensureUsersTable(db);
+  // Stand in for a project_collaborators table created by an app version
+  // before `role` existed -- the exact old CREATE TABLE, no role column.
+  db.exec(`
+    CREATE TABLE project_collaborators (
+      projectId TEXT NOT NULL,
+      userId TEXT NOT NULL,
+      addedAt TEXT NOT NULL,
+      PRIMARY KEY (projectId, userId)
+    )
+  `);
+  db.prepare("INSERT INTO project_collaborators (projectId, userId, addedAt) VALUES (?, ?, ?)").run(
+    "proj1",
+    "pre-existing-user",
+    "2026-01-01T00:00:00.000Z",
+  );
+
+  ensureProjectCollaboratorsTable(db);
+
+  assert.equal(getCollaboratorRole(db, "proj1", "pre-existing-user"), "editor");
+
+  // Running it again (every app startup) must stay a no-op.
+  assert.doesNotThrow(() => ensureProjectCollaboratorsTable(db));
+  assert.equal(getCollaboratorRole(db, "proj1", "pre-existing-user"), "editor", "re-running the migration must not disturb an already-backfilled role");
 });

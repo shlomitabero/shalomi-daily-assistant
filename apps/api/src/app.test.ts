@@ -7736,3 +7736,264 @@ test("creating a 'webhook' automation rule requires a real, non-local webhookUrl
     assert.equal(patchRes.status, 400);
   });
 });
+
+/**
+ * Real role enforcement (RBAC): until this round, "collaborator" was a
+ * single flat grant -- identical full access to the owner, no exceptions
+ * (see the "identical full access" tests above this one). This adds a
+ * genuine second tier, "viewer" (read-only), enforced server-side by
+ * requireProjectWriteAccess -- not just a hidden button client-side. These
+ * tests cover the new gate directly: inviting with an explicit role,
+ * defaulting to "editor" when none is given, a viewer actually being
+ * blocked from writes while still able to read, changing an existing
+ * collaborator's role, and the role-change route's own owner-only guards.
+ */
+test("inviting a collaborator defaults to the 'editor' role when none is given, and an explicit 'viewer' role is stored and returned", async () => {
+  await withServer(async (baseUrl) => {
+    const ownerToken = await signup(baseUrl, "rbac-owner1@example.com");
+    await signup(baseUrl, "rbac-editor1@example.com");
+    await signup(baseUrl, "rbac-viewer1@example.com");
+
+    const createRes = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: authHeaders(ownerToken),
+      body: JSON.stringify({ description: "A CRM with customers and deals." }),
+    });
+    const { project } = (await createRes.json()) as { project: { id: string } };
+
+    const defaultInvite = await fetch(`${baseUrl}/api/projects/${project.id}/collaborators`, {
+      method: "POST",
+      headers: authHeaders(ownerToken),
+      body: JSON.stringify({ email: "rbac-editor1@example.com" }),
+    });
+    assert.equal(defaultInvite.status, 201);
+    const { collaborators: afterDefaultInvite } = (await defaultInvite.json()) as { collaborators: { email: string; role: string }[] };
+    assert.equal(afterDefaultInvite.find((c) => c.email === "rbac-editor1@example.com")?.role, "editor");
+
+    const viewerInvite = await fetch(`${baseUrl}/api/projects/${project.id}/collaborators`, {
+      method: "POST",
+      headers: authHeaders(ownerToken),
+      body: JSON.stringify({ email: "rbac-viewer1@example.com", role: "viewer" }),
+    });
+    assert.equal(viewerInvite.status, 201);
+    const { collaborators: afterViewerInvite } = (await viewerInvite.json()) as { collaborators: { email: string; role: string }[] };
+    assert.equal(afterViewerInvite.find((c) => c.email === "rbac-viewer1@example.com")?.role, "viewer");
+  });
+});
+
+test("a 'viewer' collaborator can read a project's data but gets a real 403 (not a silent no-op) on every kind of write, while an 'editor' collaborator on the same project is unaffected", async () => {
+  await withServer(async (baseUrl) => {
+    const ownerToken = await signup(baseUrl, "rbac-owner2@example.com");
+    const viewerToken = await signup(baseUrl, "rbac-viewer2@example.com");
+    const editorToken = await signup(baseUrl, "rbac-editor2@example.com");
+
+    const createRes = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: authHeaders(ownerToken),
+      body: JSON.stringify({ description: "A CRM with customers and deals." }),
+    });
+    const { project } = (await createRes.json()) as { project: { id: string; spec: { entities: { name: string }[] } } };
+
+    const buildRes = await fetch(`${baseUrl}/api/projects/${project.id}/build`, { method: "POST", headers: authHeaders(ownerToken) });
+    await collectSSE(buildRes);
+
+    await fetch(`${baseUrl}/api/projects/${project.id}/collaborators`, {
+      method: "POST",
+      headers: authHeaders(ownerToken),
+      body: JSON.stringify({ email: "rbac-viewer2@example.com", role: "viewer" }),
+    });
+    await fetch(`${baseUrl}/api/projects/${project.id}/collaborators`, {
+      method: "POST",
+      headers: authHeaders(ownerToken),
+      body: JSON.stringify({ email: "rbac-editor2@example.com", role: "editor" }),
+    });
+
+    // Reads stay open to a viewer -- only writes are blocked.
+    const viewerRead = await fetch(`${baseUrl}/api/projects/${project.id}`, { headers: authHeaders(viewerToken) });
+    assert.equal(viewerRead.status, 200);
+
+    const viewerRename = await fetch(`${baseUrl}/api/projects/${project.id}/name`, {
+      method: "PATCH",
+      headers: authHeaders(viewerToken),
+      body: JSON.stringify({ name: "Renamed by a viewer" }),
+    });
+    assert.equal(viewerRename.status, 403);
+    assert.equal(((await viewerRename.json()) as { code?: string }).code, "VIEWER_READ_ONLY");
+
+    const entityName = project.spec.entities[0].name;
+    const recordsRes = await fetch(`${baseUrl}/api/projects/${project.id}/entities/${encodeURIComponent(entityName)}`, {
+      headers: authHeaders(ownerToken),
+    });
+    const { records: seededRecords } = (await recordsRes.json()) as { records: { id: number }[] };
+    const seededRecordId = seededRecords[0].id;
+
+    // A no-op PATCH (no fields actually change) rather than a create, so
+    // this doesn't need to know this dynamically-generated entity's own
+    // required fields -- it still exercises the exact same
+    // requireProjectWriteAccess gate every other write route does.
+    const viewerUpdateRecord = await fetch(`${baseUrl}/api/projects/${project.id}/entities/${encodeURIComponent(entityName)}/${seededRecordId}`, {
+      method: "PATCH",
+      headers: authHeaders(viewerToken),
+      body: JSON.stringify({}),
+    });
+    assert.equal(viewerUpdateRecord.status, 403);
+    assert.equal(((await viewerUpdateRecord.json()) as { code?: string }).code, "VIEWER_READ_ONLY");
+
+    const viewerAutomation = await fetch(`${baseUrl}/api/projects/${project.id}/entities/${encodeURIComponent(entityName)}/automations`, {
+      method: "POST",
+      headers: authHeaders(viewerToken),
+      body: JSON.stringify({
+        trigger: "record_created",
+        actionType: "webhook",
+        webhookUrl: "https://hooks.example.com/forge",
+        messageTemplate: "hi",
+      }),
+    });
+    assert.equal(viewerAutomation.status, 403);
+    assert.equal(((await viewerAutomation.json()) as { code?: string }).code, "VIEWER_READ_ONLY");
+
+    // The same two write attempts succeed for an "editor" collaborator on
+    // the exact same project -- the gate is role-specific, not a blanket
+    // regression for every non-owner.
+    const editorRename = await fetch(`${baseUrl}/api/projects/${project.id}/name`, {
+      method: "PATCH",
+      headers: authHeaders(editorToken),
+      body: JSON.stringify({ name: "Renamed by an editor" }),
+    });
+    assert.equal(editorRename.status, 200);
+
+    const editorUpdateRecord = await fetch(`${baseUrl}/api/projects/${project.id}/entities/${encodeURIComponent(entityName)}/${seededRecordId}`, {
+      method: "PATCH",
+      headers: authHeaders(editorToken),
+      body: JSON.stringify({}),
+    });
+    assert.equal(editorUpdateRecord.status, 200);
+  });
+});
+
+test("the owner can change an existing collaborator's role between 'editor' and 'viewer', and the change takes effect immediately on the next request", async () => {
+  await withServer(async (baseUrl) => {
+    const ownerToken = await signup(baseUrl, "rbac-owner3@example.com");
+    const collabToken = await signup(baseUrl, "rbac-collab3@example.com");
+
+    const createRes = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: authHeaders(ownerToken),
+      body: JSON.stringify({ description: "A CRM with customers and deals." }),
+    });
+    const { project } = (await createRes.json()) as { project: { id: string } };
+
+    await fetch(`${baseUrl}/api/projects/${project.id}/collaborators`, {
+      method: "POST",
+      headers: authHeaders(ownerToken),
+      body: JSON.stringify({ email: "rbac-collab3@example.com" }),
+    });
+    const listRes = await fetch(`${baseUrl}/api/projects/${project.id}/collaborators`, { headers: authHeaders(ownerToken) });
+    const { collaborators } = (await listRes.json()) as { collaborators: { userId: string; role: string }[] };
+    const collabUserId = collaborators[0].userId;
+    assert.equal(collaborators[0].role, "editor");
+
+    // Starts able to write (the default "editor").
+    const beforeDemote = await fetch(`${baseUrl}/api/projects/${project.id}/name`, {
+      method: "PATCH",
+      headers: authHeaders(collabToken),
+      body: JSON.stringify({ name: "Still an editor" }),
+    });
+    assert.equal(beforeDemote.status, 200);
+
+    const demoteRes = await fetch(`${baseUrl}/api/projects/${project.id}/collaborators/${collabUserId}/role`, {
+      method: "PATCH",
+      headers: authHeaders(ownerToken),
+      body: JSON.stringify({ role: "viewer" }),
+    });
+    assert.equal(demoteRes.status, 200);
+    const { collaborators: afterDemote } = (await demoteRes.json()) as { collaborators: { userId: string; role: string }[] };
+    assert.equal(afterDemote.find((c) => c.userId === collabUserId)?.role, "viewer");
+
+    const afterDemoteWrite = await fetch(`${baseUrl}/api/projects/${project.id}/name`, {
+      method: "PATCH",
+      headers: authHeaders(collabToken),
+      body: JSON.stringify({ name: "Now a viewer" }),
+    });
+    assert.equal(afterDemoteWrite.status, 403, "the role change must take effect immediately, not just on the next invite");
+
+    const promoteRes = await fetch(`${baseUrl}/api/projects/${project.id}/collaborators/${collabUserId}/role`, {
+      method: "PATCH",
+      headers: authHeaders(ownerToken),
+      body: JSON.stringify({ role: "editor" }),
+    });
+    assert.equal(promoteRes.status, 200);
+
+    const afterPromoteWrite = await fetch(`${baseUrl}/api/projects/${project.id}/name`, {
+      method: "PATCH",
+      headers: authHeaders(collabToken),
+      body: JSON.stringify({ name: "Promoted back" }),
+    });
+    assert.equal(afterPromoteWrite.status, 200);
+  });
+});
+
+test("changing a collaborator's role is owner-only, can't target the owner's own id, and 404s for a userId that isn't a real collaborator", async () => {
+  await withServer(async (baseUrl) => {
+    const ownerToken = await signup(baseUrl, "rbac-owner4@example.com");
+    const collabToken = await signup(baseUrl, "rbac-collab4@example.com");
+    const otherCollabToken = await signup(baseUrl, "rbac-collab4b@example.com");
+
+    const createRes = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: authHeaders(ownerToken),
+      body: JSON.stringify({ description: "A CRM with customers and deals." }),
+    });
+    const { project } = (await createRes.json()) as { project: { id: string; ownerId: string } };
+
+    await fetch(`${baseUrl}/api/projects/${project.id}/collaborators`, {
+      method: "POST",
+      headers: authHeaders(ownerToken),
+      body: JSON.stringify({ email: "rbac-collab4@example.com" }),
+    });
+    await fetch(`${baseUrl}/api/projects/${project.id}/collaborators`, {
+      method: "POST",
+      headers: authHeaders(ownerToken),
+      body: JSON.stringify({ email: "rbac-collab4b@example.com" }),
+    });
+    const listRes = await fetch(`${baseUrl}/api/projects/${project.id}/collaborators`, { headers: authHeaders(ownerToken) });
+    const { collaborators } = (await listRes.json()) as { collaborators: { userId: string; email: string }[] };
+    const collabUserId = collaborators.find((c) => c.email === "rbac-collab4@example.com")!.userId;
+
+    // A non-owner collaborator can't change anyone's role -- 404, the same
+    // existence-hiding treatment every other owner-only action here uses.
+    const asNonOwner = await fetch(`${baseUrl}/api/projects/${project.id}/collaborators/${collabUserId}/role`, {
+      method: "PATCH",
+      headers: authHeaders(otherCollabToken),
+      body: JSON.stringify({ role: "viewer" }),
+    });
+    assert.equal(asNonOwner.status, 404);
+
+    // The owner has no collaborator role of their own to change.
+    const targetingOwner = await fetch(`${baseUrl}/api/projects/${project.id}/collaborators/${project.ownerId}/role`, {
+      method: "PATCH",
+      headers: authHeaders(ownerToken),
+      body: JSON.stringify({ role: "viewer" }),
+    });
+    assert.equal(targetingOwner.status, 400);
+    assert.equal(((await targetingOwner.json()) as { code?: string }).code, "CANNOT_CHANGE_OWNER_ROLE");
+
+    // A userId that was never a collaborator on this project at all.
+    const unknownUser = await fetch(`${baseUrl}/api/projects/${project.id}/collaborators/not-a-real-user-id/role`, {
+      method: "PATCH",
+      headers: authHeaders(ownerToken),
+      body: JSON.stringify({ role: "viewer" }),
+    });
+    assert.equal(unknownUser.status, 404);
+    assert.equal(((await unknownUser.json()) as { code?: string }).code, "COLLABORATOR_NOT_FOUND");
+
+    // An invalid role value is rejected by the schema, not silently coerced.
+    const badRole = await fetch(`${baseUrl}/api/projects/${project.id}/collaborators/${collabUserId}/role`, {
+      method: "PATCH",
+      headers: authHeaders(ownerToken),
+      body: JSON.stringify({ role: "admin" }),
+    });
+    assert.equal(badRole.status, 400);
+    assert.equal(((await badRole.json()) as { code?: string }).code, "VALIDATION_ERROR");
+  });
+});

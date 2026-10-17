@@ -10,7 +10,16 @@ import { useTranslation } from "./i18n/LanguageContext.js";
  * including a clone's generic "(copy)" suffix (see App.tsx's
  * handleDuplicateProject) -- with no way to fix it.
  */
-export function ProjectNameEditor({ project, onRenamed }: { project: Project; onRenamed: (project: Project) => void }) {
+export function ProjectNameEditor({
+  project,
+  onRenamed,
+  readOnly = false,
+}: {
+  project: Project;
+  onRenamed: (project: Project) => void;
+  /** True for a "viewer" collaborator -- the server already rejects this rename with 403 VIEWER_READ_ONLY; this just renders the title as plain, non-editable text instead of a click target that can only ever fail. */
+  readOnly?: boolean;
+}) {
   const { t } = useTranslation();
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState("");
@@ -67,6 +76,10 @@ export function ProjectNameEditor({ project, onRenamed }: { project: Project; on
     } finally {
       setBusy(false);
     }
+  }
+
+  if (readOnly) {
+    return <h1 className="project-name">{project.name}</h1>;
   }
 
   if (!editing) {

@@ -25,9 +25,12 @@ import { useTranslation } from "./i18n/LanguageContext.js";
 export function ProjectDescriptionEditor({
   project,
   onChanged,
+  readOnly = false,
 }: {
   project: Project;
   onChanged: (project: Project) => void;
+  /** True for a "viewer" collaborator -- the server already rejects this edit with 403 VIEWER_READ_ONLY; this just renders the description as plain, non-editable text instead of a click target that can only ever fail. */
+  readOnly?: boolean;
 }) {
   const { t } = useTranslation();
   const [editing, setEditing] = useState(false);
@@ -73,6 +76,10 @@ export function ProjectDescriptionEditor({
     } finally {
       setBusy(false);
     }
+  }
+
+  if (readOnly) {
+    return <p className="project-description">{project.description}</p>;
   }
 
   if (!editing) {

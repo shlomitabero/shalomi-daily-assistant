@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
-import type { ProjectCollaborator } from "@forge/shared";
-import { addCollaborator, listCollaborators, removeCollaborator, type ProjectOwnerInfo } from "./api.js";
+import type { CollaboratorRole, ProjectCollaborator } from "@forge/shared";
+import { addCollaborator, listCollaborators, removeCollaborator, updateCollaboratorRole, type ProjectOwnerInfo } from "./api.js";
 import { formatCollaboratorCount } from "./collaboratorCount.js";
 import { useTranslation } from "./i18n/LanguageContext.js";
 import { useDialogFocusTrap } from "./useDialogFocusTrap.js";
@@ -8,11 +8,13 @@ import { useDialogFocusTrap } from "./useDialogFocusTrap.js";
 const LOCALE: Record<string, string> = { he: "he-IL", en: "en-US" };
 
 /**
- * Project sharing UI, the client side of the honest first step past
- * "every project has exactly one owner and nobody else can touch it" (see
- * packages/db/src/collaborators.ts's own comment). Only the owner can
- * invite or remove someone -- a collaborator sees the same list read-only,
- * so they know who else has access without being able to change it.
+ * Project sharing UI, the client side of the two-tier role system in
+ * packages/db/src/collaborators.ts: a collaborator is either an "editor"
+ * (full read/write, like the owner) or a "viewer" (read-only, enforced
+ * server-side, not just hidden here). Only the owner can invite, remove, or
+ * change someone's role -- a collaborator sees the same list read-only, so
+ * they know who else has access and at what level without being able to
+ * change it.
  */
 export function CollaboratorsPanel({
   projectId,
@@ -41,9 +43,11 @@ export function CollaboratorsPanel({
   // closing and reopening the whole panel.
   const [loadError, setLoadError] = useState<string | null>(null);
   const [email, setEmail] = useState("");
+  const [inviteRole, setInviteRole] = useState<CollaboratorRole>("editor");
   const [inviteBusy, setInviteBusy] = useState(false);
   const [inviteInfo, setInviteInfo] = useState<string | null>(null);
   const [removingUserId, setRemovingUserId] = useState<string | null>(null);
+  const [updatingRoleUserId, setUpdatingRoleUserId] = useState<string | null>(null);
   const dialogRef = useDialogFocusTrap<HTMLDivElement>(onClose);
 
   function loadCollaborators() {
@@ -76,7 +80,7 @@ export function CollaboratorsPanel({
     // response alone can't tell a genuine new add apart from a no-op.
     const alreadyCollaborator = (collaborators ?? []).some((c) => c.email.toLowerCase() === trimmed.toLowerCase());
     try {
-      const { collaborators, owner } = await addCollaborator(projectId, trimmed);
+      const { collaborators, owner } = await addCollaborator(projectId, trimmed, inviteRole);
       setCollaborators(collaborators);
       setOwner(owner);
       setEmail("");
@@ -87,6 +91,19 @@ export function CollaboratorsPanel({
       setError((err as Error).message);
     } finally {
       setInviteBusy(false);
+    }
+  }
+
+  async function handleRoleChange(userId: string, role: CollaboratorRole) {
+    setUpdatingRoleUserId(userId);
+    setError(null);
+    try {
+      const { collaborators } = await updateCollaboratorRole(projectId, userId, role);
+      setCollaborators(collaborators);
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setUpdatingRoleUserId(null);
     }
   }
 
@@ -171,6 +188,14 @@ export function CollaboratorsPanel({
                 setInviteInfo(null);
               }}
             />
+            <select
+              aria-label={t("collab.role.label")}
+              value={inviteRole}
+              onChange={(e) => setInviteRole(e.target.value as CollaboratorRole)}
+            >
+              <option value="editor">{t("collab.role.editor")}</option>
+              <option value="viewer">{t("collab.role.viewer")}</option>
+            </select>
             <button type="submit" disabled={inviteBusy || !email.trim()}>
               {inviteBusy ? t("collab.invite.busy") : t("collab.invite")}
             </button>
@@ -208,6 +233,22 @@ export function CollaboratorsPanel({
                     <strong>{c.email}</strong>
                     <div className="muted small">{new Date(c.addedAt).toLocaleDateString(LOCALE[lang])}</div>
                   </div>
+                  {isOwner ? (
+                    <select
+                      aria-label={t("collab.role.label")}
+                      value={c.role}
+                      onChange={(e) => handleRoleChange(c.userId, e.target.value as CollaboratorRole)}
+                      disabled={updatingRoleUserId !== null}
+                    >
+                      <option value="editor">{t("collab.role.editor")}</option>
+                      <option value="viewer">{t("collab.role.viewer")}</option>
+                    </select>
+                  ) : (
+                    <span className="chip collab-role-chip">
+                      {c.role === "viewer" ? t("collab.role.viewer") : t("collab.role.editor")}
+                    </span>
+                  )}
+                  {updatingRoleUserId === c.userId && <span className="muted small">{t("collab.role.updating")}</span>}
                   {isOwner ? (
                     <button
                       type="button"
