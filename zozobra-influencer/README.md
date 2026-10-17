@@ -46,6 +46,12 @@ python -m zozobra.pipeline approve 2026-10-18
 pytest -q
 ```
 
+## The real space
+`assets/venue/` holds ZOZOBRA's interior design renders: 10 zones with a catalog in `venue.json`.
+The Brain picks a zone for every post, LILO is painted into that exact room (img2img + LoRA), and
+atmosphere cutaways animate the render itself. Panel → **המקום** shows the gallery and switches
+open / coming-soon.
+
 ## Built-in safety rails
 - **Disclosure is automatic and non-removable.** Every caption gets the Hebrew ad label
   (`#פרסומת | שיתוף פעולה בתשלום`) and the AI-character label. TikTok posts set

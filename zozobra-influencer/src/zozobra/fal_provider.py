@@ -19,6 +19,7 @@ from . import persona
 from .config import settings
 
 IMAGE_APP = "fal-ai/flux-lora"
+IMG2IMG_APP = "fal-ai/flux-lora/image-to-image"
 TRAIN_APP = "fal-ai/flux-lora-fast-training"
 VIDEO_APP = "fal-ai/kling-video/v2.1/master/image-to-video"
 LIPSYNC_APP = "fal-ai/sync-lipsync/v2"
@@ -63,6 +64,27 @@ def generate_image(prompt: str, seed: int, out_dir: Path, *, width: int = 1080, 
         args["loras"] = [{"path": s.lora_url, "scale": 0.9}]
     result = _fal().subscribe(IMAGE_APP, arguments=args)
     return [_download(img["url"], out_dir / f"{seed}_{i}.png") for i, img in enumerate(result["images"])]
+
+
+def place_in_plate(prompt: str, plate: Path, seed: int, out_dir: Path, *, strength: float = 0.62,
+                   num_images: int = 1) -> list[Path]:
+    """LILO (LoRA) painted into a real ZOZOBRA interior plate. strength ~0.55-0.7: low keeps the room
+    exact, high gives her more room to appear naturally (re-roll if the room changes too much)."""
+    s = settings()
+    if not s.lora_url:
+        raise RuntimeError("LILO_LORA_URL is not set - train the LoRA first")
+    result = _fal().subscribe(IMG2IMG_APP, arguments={
+        "image_url": upload(plate),
+        "prompt": prompt,
+        "strength": strength,
+        "num_inference_steps": 32,
+        "guidance_scale": 3.2,
+        "num_images": num_images,
+        "seed": seed,
+        "loras": [{"path": s.lora_url, "scale": 0.95}],
+        "output_format": "png",
+    })
+    return [_download(img["url"], out_dir / f"venue_{seed}_{i}.png") for i, img in enumerate(result["images"])]
 
 
 def animate(image_url: str, prompt: str, duration: int = 10) -> str:

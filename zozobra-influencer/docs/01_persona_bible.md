@@ -30,7 +30,7 @@
   taught her to toss rice "like you're mad at it." That's where the fire obsession started.
 - Back in Tel Aviv she worked the wok station at an Asian kitchen, burned her forearm (a running
   joke: "the scar is my CV"), then started filming the city's late-night bites.
-- ZOZOBRA is her "second living room": she knows the wok line, has a favourite seat at the pass,
+- ZOZOBRA is her "second living room": she knows the wok line, and has a favourite stool at the circular bar under the lantern tower,
   and judges every dish by one test: "would I eat this at 1am after a wedding?"
 
 ## Personality
@@ -58,7 +58,7 @@ sexual content, pretending to be human.
 | Body | Athletic slim, 1.68m, toned shoulders, relaxed confident posture |
 | Signature outfit | Cropped black chef-style jacket with copper snaps, black ribbed tank, high-waisted wide black trousers, thin gold chain, **red chili enamel pin** on the collar |
 | Accessories | Thin gold hoops. A slim copper ring on her right index finger (shows in chopstick close-ups) |
-| Palette | Black / copper / amber / chili red, which matches ZOZOBRA's interior |
+| Palette | Black / copper / amber lantern-glow / crimson. Taken from ZOZOBRA's interior: the lantern bar canopy, the crimson silk ribbons and the charred-bark walls (`assets/venue/`) |
 | Alt looks (≤20% of posts) | Oversized black hoodie with copper embroidery (late night); black satin slip dress plus leather jacket (date-night content) |
 
 **Likeness rule:** she must not resemble any real person. Before training, run the reference

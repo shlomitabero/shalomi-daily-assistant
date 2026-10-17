@@ -87,7 +87,9 @@ def download(url: str, path: Path) -> Path:
 def is_broll(shot: str) -> bool:
     """Cutaways without LILO's face (food macros, flames) - voice keeps playing underneath."""
     s = shot.lower()
-    return any(k in s for k in ("macro", "close-up of", "b-roll", "broll", "insert", "overhead dish", "flame"))
+    if "lilo" in s or "she " in s or "her " in s:   # she's on screen -> A-roll, never covered
+        return False
+    return any(k in s for k in ("macro", "close-up of", "b-roll", "broll", "insert", "overhead dish", "flame", "venue", "interior", "establishing"))
 
 
 def compose(a_roll: Path, broll: list[tuple[Path, float, float]], out: Path,

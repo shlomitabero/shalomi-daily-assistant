@@ -103,16 +103,45 @@ LoRA and prompt own that step avoids the "pasted-on face, frozen pose" look.
 | Small face in wide fire shots looks wrong | Enable FaceDetailer: bbox `face_yolov8m`, denoise 0.35, PuLID on the detailer's model path |
 | Hands with chopsticks break | Generate at 1080×1920 directly (no upscaling from small), add "anatomically correct hand", inpaint hands at 0.45 |
 
-## Step 4 — Placing her in ZOZOBRA (real interior)
+## Step 4: Placing her in ZOZOBRA (the real interior)
 
-For shots that must show the *actual* restaurant:
-1. Shoot real plates of the interior / wok line on a phone (9:16, at service time, flames on).
-2. Generate LILO with matching light direction and lens (prompt "warm key light from the right,
-   35mm, eye level").
-3. Composite with **Flux Fill** (inpaint her region into the real plate at denoise 0.6, with PuLID
-   on), or IC-Light to relight her to the plate.
-4. Food in the shot should be **real ZOZOBRA dishes** photographed on the day. Generating "their"
-   ramen invents dishes that don't exist, which is misleading advertising.
+ZOZOBRA's interior design renders live in `assets/venue/` (10 zones, 4 with night variants), with a
+catalog in `assets/venue/venue.json`. They are the **ground truth** for every in-restaurant scene:
+
+| Zone (plate id) | What's there | Best for |
+|---|---|---|
+| `bar_tower_vertical` | Already 9:16. Tiered lantern canopy over the circular bar, ribbons, slatted screens | Talking shots, night vibe |
+| `bar_canopy_bamboo` | Circular bar, open kitchen behind, bamboo foreground | Fire show, hero dish |
+| `bar_stools_ribbons` | Bar-stool row, hanging glasses, crimson ribbons | Challenges, cocktails |
+| `booth_row_ribbon` | Bolster-armchair booths, candles, black pendants | Eating shots, POV |
+| `booth_wall_bar_view` | Banquette, hammered wall, view to the kitchen and bar | Tracking shots |
+| `dining_hall_ribbons` | Communal table, ribbons, rust pendants | Group / community |
+| `screens_bamboo_square` | Between the slatted screens | Reveals |
+| `entrance_fringe_corridor` | Golden fringe ceiling, bark walls, uplights | Arrival / "come in" |
+| `mirror_corridor` | Already 9:16. Mirror at the end | Outfit check / mirror selfie |
+| `restroom_vanity` | Rust-metal vanity | Lipstick touch-up POV |
+
+How the pipeline uses them (automatic):
+1. The Brain picks a `venue_plate` for every in-restaurant post and writes the scene to match it.
+2. `venue.plate_9x16()` crops the plate to 1080×1920 around its `focus_x`. Posts after 19:00 use the
+   night variant.
+3. **LILO into the room:** img2img with her LoRA at strength ~0.62, which keeps the room's layout,
+   materials and light while she appears in it. On fal this is `fal-ai/flux-lora/image-to-image`;
+   in ComfyUI it's the same graph with `LoadImage → VAEEncode` replacing the empty latent and
+   `denoise 0.62`. The best of 4 renders by face similarity is kept.
+4. **Atmosphere cutaways** (shots starting with `venue establishing:`) animate the plate itself
+   with image-to-video, so the room on screen is the actual design, never an invented restaurant.
+5. **Food** stays real or generated close-up: food words in a shot send it to the food generator,
+   and dishes must exist in `menu.json`.
+
+Tuning: if the room changes too much, lower strength to 0.55. If LILO looks pasted on or too small,
+raise it to 0.7 and describe her position from the plate's `lilo_spots`. If the space isn't open
+yet, set `stage: coming_soon` (panel → המקום). The Brain then writes teaser content and never
+claims the space is open.
+
+The renders are a design visualisation. Once the branch is open and real photos of the service exist
+(woks on, people at the bar), add them as new plates with the same fields. Real photos beat renders
+for trust.
 
 ## Step 5 — Automatic QA gate (every render)
 

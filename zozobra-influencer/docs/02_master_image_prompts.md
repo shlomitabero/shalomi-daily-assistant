@@ -92,10 +92,14 @@ correct hand, five fingers, natural grip, dark moody background with warm copper
 ### R18–R29: In-world scenes (variety for the dataset)
 Use the R5 outfit and the ZOZOBRA world block:
 ```
-WORLD = dark-luxury Asian noodle bar, matte black surfaces, warm copper and amber practical
-lights, open show kitchen, wok flames leaping, steam rising, red neon reflections on glossy black
-tiles
+WORLD = ZOZOBRA dark-luxury Asian restaurant interior, towering tiered lantern canopy of backlit
+warm-paper panels over a circular bar with hanging wine glasses, sculptural crimson silk ribbons
+swirling across the dark ceiling, black-metal slatted screen partitions, charred-bark textured walls
+with warm grazing uplights, polished dark concrete floor with glowing LED strips, rust-copper
+cylinder pendants, candlelit wooden tables, bamboo, open kitchen with wok flames behind the bar
 ```
+(Taken from the real design renders in `assets/venue/`. For production shots the pipeline uses the
+renders themselves, not just this text. See `03_consistency_workflow.md`, Step 4.)
 - `{IDENTITY}, sitting at the black marble counter, slurping spicy red ramen, chili oil droplets, {WORLD}, 35mm, {REALISM}`
 - `{IDENTITY}, standing beside the wok station, a giant flame burst behind her lighting her face orange, laughing, {WORLD}, {REALISM}`
 - `{IDENTITY}, leaning on the bar holding a smoked cocktail, red neon rim light, {WORLD}, 50mm, {REALISM}`

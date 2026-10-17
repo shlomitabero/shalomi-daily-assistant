@@ -1,5 +1,5 @@
 {
-  "weekly_focus": "בנגקוק היט וסופר בי החריפים + אווירת ערב דארק-לאקשרי",
+  "weekly_focus": "בנגקוק היט וסופר בי החריפים + אווירת ערב דארק-לאקשרי בחלל של ZOZOBRA (מגדל הבר, הסרטים האדומים, מסדרון הכניסה)",
   "strategy_summary_he": "פותחים חזק עם אש (ראשון), בונים קשר עם POV (שני), מייצרים שיתופים עם צ'אלנג' (שלישי), נותנים ערך לשמירה בקרוסלה (רביעי), דוחפים את חמישי בערב כדייט נייט, ASMR לשישי בצהריים, ומסיימים בשבת אחרי צאת השבת בקהילה ובהצבעה שמזינה את השבוע הבא.",
   "days": [
     {
@@ -20,7 +20,8 @@
         "יש לי שאלה אחת: אתם עומדים בחום?"
       ],
       "visual": {
-        "scene": "standing beside the open wok line at ZOZOBRA, a cook tossing noodles behind her, a tall flame bursting, copper pendant lights, steam",
+        "venue_plate": "bar_canopy_bamboo",
+        "scene": "at the circular wooden bar under the glowing tiered lantern canopy, the white-tiled open kitchen behind her with a wok flame bursting, bamboo leaves in the foreground",
         "action": "turning to camera with a confident half-smile, one hand on the pass counter, flame light on her face",
         "wardrobe": "",
         "motion_prompt": "Static low angle on the wok line. A cook tosses glossy caramel-chili noodles and a one-meter flame bursts up, lighting her face orange from the side; she turns her head toward the camera and smirks; sparks drift upward; copper lights glow in the bokeh."
@@ -96,10 +97,11 @@
         "אם היום שלך היה מבאס, תישאר עד הסוף"
       ],
       "visual": {
-        "scene": "sitting alone at the black marble counter, a steaming bowl of teriyaki chicken ramen in front of her, warm amber light, quiet early evening",
+        "venue_plate": "booth_row_ribbon",
+        "scene": "the front booth of the booth row, black bolster armchair, candle and a steaming bowl of teriyaki chicken ramen on the wooden table, crimson ribbon sweeping down behind her",
         "action": "dropping her bag on the stool, exhaling, then lifting noodles with chopsticks and closing her eyes as she tastes",
         "wardrobe": "oversized black hoodie with copper embroidery",
-        "motion_prompt": "Slow handheld push-in. She drops onto the bar stool, exhales, lifts a bundle of noodles from the steaming broth with chopsticks, blows on them once and eats; noodles sway with weight, broth drips back; steam curls across the frame."
+        "motion_prompt": "Slow handheld push-in. She drops into the booth armchair, exhales, lifts a bundle of noodles from the steaming broth with chopsticks, blows on them once and eats; noodles sway with weight, broth drips back; steam curls across the frame."
       },
       "script": [
         {
@@ -108,7 +110,7 @@
           "spoken_he": "היה לי יום של שבע ישיבות.",
           "voice_direction": "[sighs]",
           "on_screen_text_he": "POV: יום של 7 ישיבות",
-          "shot": "medium, LILO slumps onto the bar stool"
+          "shot": "medium, LILO slumps into the booth armchair"
         },
         {
           "t_start": 3.0,
@@ -172,7 +174,8 @@
         "אמרו לי שאני לא אשרוד את זה"
       ],
       "visual": {
-        "scene": "at a dark table with a plate of Super B beef noodles, a full glass of water pushed to the edge of the table, red neon reflections",
+        "venue_plate": "bar_stools_ribbons",
+        "scene": "on the nearest bar stool at the curved bar, a plate of Super B beef noodles on the stone counter, a full glass of water pushed to the edge, crimson ribbons on the wall behind",
         "action": "taking a big bite with chopsticks, then freezing with wide eyes, fanning her face and laughing",
         "wardrobe": "",
         "motion_prompt": "Medium close-up, slight handheld. She takes a big bite of glossy beef noodles, chews, freezes, eyes widen, then she fans her face with one hand and laughs while her eyes water; ponytail swings; the water glass trembles at the table edge."
@@ -247,7 +250,8 @@
         "הקארי שישנה לכם את הצהריים"
       ],
       "visual": {
-        "scene": "midday at ZOZOBRA, a bowl of golden chicken massaman curry with pumpkin and peanuts on black marble, soft daylight mixing with copper light",
+        "venue_plate": "dining_hall_ribbons",
+        "scene": "head of the long communal table in the main dining hall, a bowl of golden chicken massaman curry with pumpkin and peanuts, crimson silk ribbons and rust-copper pendants overhead",
         "action": "holding a spoon above the bowl, smiling at camera, steam rising between them",
         "wardrobe": "white linen shirt",
         "motion_prompt": "Static macro: golden curry is spooned over jasmine rice, pumpkin chunks glisten, steam rises slowly."
@@ -282,10 +286,11 @@
         "חמישי. 21:00. כאן."
       ],
       "visual": {
-        "scene": "walking through the dark-luxury noodle bar on a busy Thursday night, glowing copper pendants, red neon reflections on black tiles, full tables blurred",
+        "venue_plate": "bar_tower_vertical",
+        "scene": "walking between the black slatted screens toward the circular bar under the towering glowing lantern canopy, crimson ribbons overhead, reflective concrete floor",
         "action": "walking toward the open kitchen and glancing back over her shoulder at the camera with a half-smile",
         "wardrobe": "black satin slip dress and black leather jacket",
-        "motion_prompt": "Smooth gimbal follow from behind. She walks through the dark noodle bar past glowing copper pendants toward the open kitchen, then glances back over her shoulder at the camera with a half-smile; steam and flame light ahead; diners softly blurred."
+        "motion_prompt": "Smooth gimbal follow from behind. She walks between the black slatted screens toward the glowing tiered lantern canopy over the circular bar, then glances back over her shoulder at the camera with a half-smile; steam and flame light ahead; diners softly blurred."
       },
       "script": [
         {
@@ -294,15 +299,15 @@
           "spoken_he": "תביאו את מי שאתם רוצים להרשים.",
           "voice_direction": "[softly]",
           "on_screen_text_he": "דייט נייט? 🖤",
-          "shot": "medium, LILO walking away from camera through the bar"
+          "shot": "medium, LILO walking between the slatted screens toward the bar"
         },
         {
           "t_start": 3.0,
           "t_end": 7.0,
-          "spoken_he": "אורות נחושת, מוזיקה טובה, והאש במרכז.",
+          "spoken_he": "מגדל אור, סרטים אדומים, והאש במרכז.",
           "voice_direction": "[warmly]",
           "on_screen_text_he": "",
-          "shot": "b-roll copper pendant lights and red neon reflections, flame in background"
+          "shot": "venue establishing: slow tilt up from the glossy floor to the glowing lantern canopy, crimson ribbons drifting"
         },
         {
           "t_start": 7.0,
@@ -350,7 +355,8 @@
         "שישי בצהריים, בלי מילים"
       ],
       "visual": {
-        "scene": "the wok station at Friday noon, pad thai being cooked, lime wedges and crushed peanuts on the pass",
+        "venue_plate": "booth_wall_bar_view",
+        "scene": "the banquette along the hammered wall with black cylinder pendants, a plate of pad thai with lime and crushed peanuts on the table, open kitchen glowing in the back",
         "action": "squeezing a lime over the plate, then taking the first bite and nodding slowly",
         "wardrobe": "",
         "motion_prompt": "Macro sequence: rice noodles hit a smoking wok, tamarind sauce sizzles, a quick flame flares, peanuts rain down, a lime wedge is squeezed with juice droplets; then a medium shot of her taking the first bite and nodding slowly."
@@ -426,7 +432,8 @@
         "אתם בוחרים מה אני אוכלת שבוע הבא"
       ],
       "visual": {
-        "scene": "at the bar with a plate of crispy vegetable spring rolls and a phone propped up showing comments, warm copper light",
+        "venue_plate": "screens_bamboo_square",
+        "scene": "seated in the booth between the black slatted screens, a plate of crispy vegetable spring rolls and a phone propped up showing comments, candlelight, bamboo beside her",
         "action": "reading from the phone, laughing, snapping a spring roll in half toward the camera",
         "wardrobe": "",
         "motion_prompt": "Medium shot, slight handheld. She glances at a phone on the bar, laughs, then snaps a crispy spring roll in half toward the camera; steam escapes from the middle; she points at the lens."

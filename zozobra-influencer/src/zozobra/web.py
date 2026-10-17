@@ -91,7 +91,7 @@ table{width:100%;border-collapse:collapse;font-size:14px}td,th{border-bottom:1px
 """
 
 NAV = [("/", "לוח בקרה"), ("/plan", "תכנון שבועי"), ("/calendars", "לוחות תוכן"), ("/replies", "תגובות"),
-       ("/insights", "ביצועים"), ("/menu", "תפריט"), ("/setup", "הקמה")]
+       ("/insights", "ביצועים"), ("/menu", "תפריט"), ("/venue", "המקום"), ("/setup", "הקמה")]
 
 
 def page(title: str, body: str, path: str = "/", refresh: bool = False) -> HTMLResponse:
@@ -122,6 +122,16 @@ def back(url: str) -> RedirectResponse:
 def fonts(name: str):
     path = (ROOT / "assets" / "fonts" / name).resolve()
     if path.parent != (ROOT / "assets" / "fonts").resolve() or not path.exists():
+        return Response(status_code=404)
+    return FileResponse(path)
+
+
+@app.get("/venue-img/{name}")
+def venue_img(name: str):
+    from .venue import VENUE_DIR
+
+    path = (VENUE_DIR / name).resolve()
+    if path.parent != VENUE_DIR.resolve() or path.suffix.lower() not in {".jpg", ".png"} or not path.exists():
         return Response(status_code=404)
     return FileResponse(path)
 
@@ -198,7 +208,12 @@ def dashboard():
         '<div class="card"><span class="pill ok">✓ כל ההגדרות תקינות</span></div>'
     cards = "".join(item_card(i) for i in upcoming) or \
         '<div class="card">אין עדיין פוסטים בתור. התחל ב-<a href="/plan">תכנון שבועי</a>.</div>'
-    return page("לוח בקרה", f"""{setup}
+    hero = ('<div class="card" style="padding:0;overflow:hidden;position:relative;height:180px;'
+            'background:url(/venue-img/dining_hall_ribbons.jpg) center/cover">'
+            '<div style="position:absolute;inset:0;background:linear-gradient(90deg,transparent,rgba(11,10,9,.85))"></div>'
+            '<div style="position:absolute;right:20px;bottom:16px"><div class="logo">LILO <b>×</b> ZOZOBRA</div>'
+            '<div class="mute">נתראה ליד האש 🔥</div></div></div>')
+    return page("לוח בקרה", f"""{hero}{setup}
 <div class="grid"><div class="card"><div class="mute">ממתינים לאישור שלך</div><h1>{len(pending)}</h1></div>
 <div class="card"><div class="mute">בתור (השבוע)</div><h1>{len(upcoming)}</h1></div>
 <div class="card"><div class="mute">פורסמו</div><h1>{sum(i.get('status')=='published' for i in items)}</h1></div></div>
@@ -271,13 +286,23 @@ def calendar_view(stem: str):
         days.append(f"""<div class="card"><div class="row"><b>{e(d.weekday_he)} {d.day} · {e(d.post_time_local)}</b>
 <span class="pill">{e(d.format.value)}</span><span class="pill">{e(PILLAR_HE.get(d.pillar.value, d.pillar.value))}</span>
 <span class="pill">{e(d.dish_id)}</span></div>
-<p><b>{e(d.concept)}</b></p><p>🎣 <b>הוק:</b> {e(d.hook_he)} <span class="mute">| A/B: {e(' | '.join(d.hook_alternatives_he))}</span></p>
+{venue_thumb(d.visual.venue_plate)}<p><b>{e(d.concept)}</b></p><p>🎣 <b>הוק:</b> {e(d.hook_he)} <span class="mute">| A/B: {e(' | '.join(d.hook_alternatives_he))}</span></p>
 <table><tr><th>זמן</th><th>מה היא אומרת</th><th>קול</th><th>טקסט על המסך</th><th>שוט</th></tr>{script}</table>
 <details><summary class="mute">פרומפטים (תמונה / תנועה)</summary><pre>{e(full_image_prompt(d))}</pre><pre>{e(d.visual.motion_prompt)}</pre></details>
 <label>כיתוב (כולל גילוי נאות אוטומטי)</label><pre class="he">{e(finalize_caption(d))}</pre>
 <div class="row">{action}</div></div>""")
     return page(f"שבוע {plan.days[0].day}", f"""<div class="card"><b>{e(plan.weekly_focus)}</b><p>{e(plan.strategy_summary_he)}</p>
 <form method="post" action="/calendars/{e(stem)}/produce"><button class="btn">🎬 הפק את כל השבוע</button></form></div>{''.join(days)}""", "/calendars")
+
+
+def venue_thumb(plate_id: str) -> str:
+    from .venue import plate, plate_ids
+
+    if plate_id not in plate_ids():
+        return ""
+    p = plate(plate_id)
+    return (f'<div class="row mute" style="margin:8px 0"><img src="/venue-img/{e(p["file"])}" '
+            f'style="height:56px;border-radius:8px;border:1px solid var(--line)"> 📍 {e(p["zone_he"])}</div>')
 
 
 def _produce_job(stem: str, day: str | None) -> str:
@@ -467,6 +492,38 @@ def menu_save(menu: str = Form(...)):
         return menu_view(error="JSON לא תקין — כל מנה צריכה id ו-name_he. לא נשמר.")
     (settings().data_dir / "menu.json").write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
     return back("/menu")
+
+
+# ---------- venue ----------
+@app.get("/venue", response_class=HTMLResponse)
+def venue_view():
+    from .venue import catalog
+
+    c = catalog()
+    cards = "".join(f"""<div class="card"><img class="media" style="max-width:100%" src="/venue-img/{e(p['file'])}" loading="lazy">
+<div class="row" style="margin-top:8px"><b>{e(p['zone_he'])}</b><span class="pill">{e(p['id'])}</span><span class="pill">{e(p['orientation'])}</span>
+{'<span class="pill">+ גרסת לילה</span>' if p.get('night_variant') else ''}</div>
+<p class="mute">לילו כאן: {e(p['lilo_spots'])}</p><p class="mute">מתאים ל: {e(', '.join(PILLAR_HE.get(b, b) for b in p['best_for']))}</p></div>"""
+                    for p in c["plates"])
+    stage_he = {"open": "פתוח — תוכן רגיל", "coming_soon": "בקרוב — תוכן טיזר"}
+    options = "".join(f'<option value="{k}" {"selected" if c["stage"] == k else ""}>{v}</option>' for k, v in stage_he.items())
+    return page("המקום — ZOZOBRA", f"""<form class="card" method="post" action="/venue">
+<p>אלה ההדמיות של החלל. כל פוסט שמתרחש במסעדה נבנה מתוכן: לילו "מצוירת" לתוך החדר האמיתי,
+וצילומי האווירה הם ההדמיה עצמה בתנועה — כך שבסושיאל רואים את העיצוב של ZOZOBRA ולא מסעדה מומצאת.</p>
+<label>סטטוס המקום</label><select name="stage">{options}</select>
+<p><button class="btn">שמור</button></p></form><div class="grid">{cards}</div>""", "/venue")
+
+
+@app.post("/venue")
+def venue_save(stage: str = Form(...)):
+    from .venue import VENUE_DIR, catalog
+
+    if stage in {"open", "coming_soon"}:
+        data = dict(catalog())
+        data["stage"] = stage
+        (VENUE_DIR / "venue.json").write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+        catalog.cache_clear()
+    return back("/venue")
 
 
 # ---------- setup wizard ----------

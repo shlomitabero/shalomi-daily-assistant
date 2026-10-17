@@ -1,0 +1,164 @@
+{
+  "_note": "ZOZOBRA interior design renders supplied by the restaurant. They are the ground truth for every scene: LILO is composited INTO these plates (image-to-image with her LoRA), and atmosphere B-roll is animated FROM them, so the space shown on social is the real design, never an invented restaurant. They are renders, not photos. If this space is a branch that hasn't opened yet, set stage to 'coming_soon' and the Brain will frame content as a teaser.",
+  "stage": "open",
+  "signature_elements": [
+    "a towering tiered lantern canopy of backlit warm-paper panels crowning a circular bar, with liquor bottles on a ring shelf and wine glasses hanging upside down beneath it",
+    "sculptural crimson silk ribbons swirling across the dark ceiling",
+    "stepped black-metal slatted screen partitions with irregular vertical bars",
+    "charred-bark textured dark walls lit by warm grazing uplights",
+    "polished dark concrete floor with glowing LED strips along raised platforms",
+    "cylindrical rust-copper pendants and slim black cylinder pendants",
+    "black textured boucle armchairs with round bolster backrests and rough-hewn dark wooden tables with candles",
+    "potted bamboo, dry twisted branches in large stoneware vases",
+    "an entrance corridor under a cascading golden fringe ceiling installation",
+    "an open kitchen with white tiles glowing behind the circular bar"
+  ],
+  "plates": [
+    {
+      "id": "dining_hall_ribbons",
+      "file": "dining_hall_ribbons.jpg",
+      "orientation": "landscape",
+      "zone_he": "האולם המרכזי",
+      "description": "wide view of the main dining hall: long wooden communal table with candles and wine glasses, crimson silk ribbons swirling overhead, rust-copper cylinder pendants, black slatted screens, bamboo by the windows, charred-bark wall glowing with uplights on the right, tiered lantern bar canopy in the far background",
+      "lilo_spots": "seated at the head of the communal table; walking down the aisle between tables",
+      "motion": "slow dolly forward down the aisle, candle flames flicker, ribbons sway slightly",
+      "best_for": [
+        "night_vibe",
+        "community",
+        "hero_dish"
+      ],
+      "focus_x": 0.55
+    },
+    {
+      "id": "bar_tower_vertical",
+      "file": "bar_tower_vertical.jpg",
+      "orientation": "portrait",
+      "zone_he": "מגדל הבר (אנכי — מושלם לרילס)",
+      "description": "vertical 9:16 view framed by black slatted screens: the glowing tiered paper-lantern canopy over the circular bar, bottles on the ring shelf, hanging glasses, wooden bar stools, crimson ribbons across the top, open kitchen glowing behind, reflective polished concrete floor in the foreground",
+      "lilo_spots": "walking toward the bar between the screens; sitting on a bar stool facing camera",
+      "motion": "slow tilt up from the glossy floor to the lantern canopy, ribbons drift",
+      "best_for": [
+        "night_vibe",
+        "fire_show",
+        "pov_story"
+      ]
+    },
+    {
+      "id": "bar_canopy_bamboo",
+      "file": "bar_canopy_bamboo.jpg",
+      "night_variant": "bar_canopy_bamboo_night.jpg",
+      "orientation": "landscape",
+      "zone_he": "הבר העגול והמטבח הפתוח",
+      "description": "bamboo in the foreground, black stepped slatted screen, tiered lantern canopy above the circular wooden bar with tall stools, white-tiled open kitchen behind the bar, stone plinth with twisted dry branch and ceramic vase, booth with bolster seat and candles on the left",
+      "lilo_spots": "leaning on the bar with the open kitchen behind her; at the booth on the left",
+      "motion": "parallax slide right past the bamboo leaves revealing the bar",
+      "best_for": [
+        "fire_show",
+        "hero_dish",
+        "night_vibe"
+      ],
+      "focus_x": 0.62
+    },
+    {
+      "id": "bar_stools_ribbons",
+      "file": "bar_stools_ribbons.jpg",
+      "night_variant": "bar_stools_ribbons_night.jpg",
+      "orientation": "landscape",
+      "zone_he": "שורת הבר מתחת לסרטים האדומים",
+      "description": "curved bar counter with warm wood front and dark stone top on the right, a row of wooden bar stools, hanging wine glasses under the lit canopy rim, stone dining table with candles on the left, crimson ribbons across the textured wall, slatted screens",
+      "lilo_spots": "sitting on the nearest bar stool, three-quarter to camera, cocktail or bowl on the counter",
+      "motion": "slow arc around the bar stools, candlelight flicker",
+      "best_for": [
+        "night_vibe",
+        "challenge",
+        "community"
+      ],
+      "focus_x": 0.68
+    },
+    {
+      "id": "booth_row_ribbon",
+      "file": "booth_row_ribbon.jpg",
+      "night_variant": "booth_row_ribbon_night.jpg",
+      "orientation": "landscape",
+      "zone_he": "שורת הבוטים",
+      "description": "row of dining booths with black textured bolster armchairs and wooden tables set with black bowls, candles and wine glasses, slim black cylinder pendants, LED strip glowing along the wall bench, crimson silk ribbon sweeping down from the ceiling, bark-textured back wall, slatted screen",
+      "lilo_spots": "seated in the front booth eating, facing camera; candle lighting her face",
+      "motion": "gentle push-in toward the front booth table",
+      "best_for": [
+        "hero_dish",
+        "pov_story",
+        "challenge"
+      ],
+      "focus_x": 0.68
+    },
+    {
+      "id": "booth_wall_bar_view",
+      "file": "booth_wall_bar_view.jpg",
+      "orientation": "landscape",
+      "zone_he": "קיר הבוטים עם מבט לבר",
+      "description": "long banquette along a hammered textured wall with black cylinder pendants and candlelit tables, raw concrete column, steel kitchen hood and white-tiled open kitchen in the back, black slatted screens opening to the glowing tiered bar canopy on the right",
+      "lilo_spots": "walking from the booths toward the bar opening between the screens",
+      "motion": "tracking shot along the banquette toward the bar",
+      "best_for": [
+        "night_vibe",
+        "fire_show"
+      ],
+      "focus_x": 0.5
+    },
+    {
+      "id": "screens_bamboo_square",
+      "file": "screens_bamboo_square.jpg",
+      "orientation": "square",
+      "zone_he": "המחיצות והבמבוק",
+      "description": "square view between two black slatted screens: lantern canopy glowing top left, crimson ribbons overhead, booth with bolster armchairs and candles, bamboo on the right, LED strips along the raised floor",
+      "lilo_spots": "peeking between the two screens; seated in the booth",
+      "motion": "slow reveal sliding between the screens",
+      "best_for": [
+        "night_vibe",
+        "pov_story"
+      ],
+      "focus_x": 0.5
+    },
+    {
+      "id": "entrance_fringe_corridor",
+      "file": "entrance_fringe_corridor.jpg",
+      "night_variant": "entrance_fringe_corridor_night.jpg",
+      "orientation": "landscape",
+      "zone_he": "מסדרון הכניסה עם תקרת הפרנזים",
+      "description": "entrance corridor with charred-bark textured walls grazed by floor uplights, a cascading golden fringe installation draped along the ceiling, polished concrete floor with square in-floor lights, large stoneware vase with dry branches by a dark door",
+      "lilo_spots": "walking toward camera through the corridor; the arrival / 'come in' moment",
+      "motion": "steady walk-forward gimbal through the corridor, fringe shimmers",
+      "best_for": [
+        "night_vibe",
+        "pov_story"
+      ],
+      "focus_x": 0.4
+    },
+    {
+      "id": "mirror_corridor",
+      "file": "mirror_corridor.jpg",
+      "orientation": "portrait",
+      "zone_he": "מסדרון המראה",
+      "description": "narrow vertical corridor with recessed ceiling spots, faceted dark metal wall on the left, concrete wall with black door pulls on the right, a full-height mirror at the end reflecting a vase of orange dry branches",
+      "lilo_spots": "outfit check in the mirror at the end (mirror selfie moment)",
+      "motion": "slow walk toward the mirror",
+      "best_for": [
+        "pov_story",
+        "community"
+      ]
+    },
+    {
+      "id": "restroom_vanity",
+      "file": "restroom_vanity.jpg",
+      "orientation": "landscape",
+      "zone_he": "אזור הכיור",
+      "description": "dark restroom antechamber with bark-textured door frame, rust-metal vanity with candle and amber bottle, vases with dry orange branches, hand-plastered wall lit by downlights, mirror corridor",
+      "lilo_spots": "lipstick touch-up at the rust vanity mirror",
+      "motion": "static, candle flicker",
+      "best_for": [
+        "pov_story"
+      ],
+      "focus_x": 0.62
+    }
+  ]
+}

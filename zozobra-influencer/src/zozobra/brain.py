@@ -14,7 +14,7 @@ from pathlib import Path
 
 import anthropic
 
-from . import persona
+from . import persona, venue
 from .compliance import finalize_caption, validate_day
 from .config import settings
 from .schemas import DayPlan, WeekPlan
@@ -44,6 +44,16 @@ woks on fire, steam, copper light, black surfaces.
   a few English ones (foodtok, ramen, wok). No banned/spammy tags, no #fyp spam stacks.
 - Captions: 1-3 short lines, one question to drive comments, one clear CTA (save / tag who you'd
   bring / come tonight).
+
+## The real ZOZOBRA space (design renders = ground truth)
+Every post set inside the restaurant must pick ONE plate id below as `visual.venue_plate`; the pipeline
+paints LILO into that exact room and animates it for atmosphere cutaways, so `visual.scene` and
+`visual.action` must match what the plate shows and where LILO can be in it. Use 'none' only for
+food-only macros or outdoor shots. Rotate plates across the week; prefer `bar_tower_vertical` and
+`mirror_corridor` (already vertical) for talking shots. For atmosphere cutaways write shots starting
+with "venue establishing:" so they use the real plate. If stage is 'coming_soon', frame the space as a
+teaser ("בקרוב") and never say it's open.
+{venue.brain_brief()}
 
 ## Hard rules
 - Mention ONLY dishes, drinks, branches and offers that appear in the provided menu JSON. Never

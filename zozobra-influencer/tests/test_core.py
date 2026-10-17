@@ -14,7 +14,7 @@ def make_day(d: date, **over) -> dict:
         "platforms": ["instagram", "tiktok"], "format": "reel", "pillar": "hero_dish",
         "dish_id": "bangkok_heat", "concept": "משיכת נודלס", "hook_he": "שמעתם את הווק?",
         "hook_alternatives_he": ["א", "ב"],
-        "visual": {"scene": "at the wok line", "action": "lifting noodles", "wardrobe": "",
+        "visual": {"venue_plate": "bar_tower_vertical", "scene": "at the wok line", "action": "lifting noodles", "wardrobe": "",
                    "motion_prompt": "slow push-in"},
         "script": [
             {"t_start": 0, "t_end": 4, "spoken_he": "וואלה", "voice_direction": "[excited]",
@@ -203,3 +203,42 @@ def test_panel_password(monkeypatch):
     assert c.get("/").status_code == 401
     assert c.get("/", auth=("lilo", "s3cret")).status_code == 200
     assert c.get("/healthz").status_code == 200
+
+
+def test_venue_plates_drive_scenes(tmp_path):
+    from zozobra import venue
+
+    assert {"bar_tower_vertical", "entrance_fringe_corridor", "dining_hall_ribbons"} <= venue.plate_ids()
+    for pid in venue.plate_ids():
+        assert venue.plate_path(pid).exists()
+    crop = venue.plate_9x16("dining_hall_ribbons", out_dir=tmp_path)
+    from PIL import Image
+
+    assert Image.open(crop).size == (1080, 1920)
+
+    bad = DayPlan.model_validate(make_day(date(2026, 10, 18)))
+    bad.visual.venue_plate = "rooftop"
+    assert any("venue_plate" in p for p in compliance.validate_day(bad, IDS))
+
+    week = WeekPlan.model_validate_json((pipeline.Path(__file__).resolve().parents[1] / "examples" / "week_sample.json").read_text(encoding="utf-8"))
+    thu = next(d for d in week.days if d.day == date(2026, 10, 22))
+    item = pipeline.produce_day(thu, MENU, tmp_path / "r", dry_run=True)
+    assert item["steps"]["venue_plate"] == "bar_tower_vertical" and item["steps"]["venue_night_variant"]
+    assert [b["source"] for b in item["steps"]["broll"]] == ["venue_plate"]
+    sun = pipeline.produce_day(week.days[0], MENU, tmp_path / "r", dry_run=True)
+    assert all(b["source"] == "generated" for b in sun["steps"]["broll"])  # food macros are generated
+    assert "lantern canopy" in brain.SYSTEM_PROMPT and "bar_tower_vertical" in brain.SYSTEM_PROMPT
+
+
+def test_comfy_img2img_patch():
+    wf = image_gen.build_workflow("P", 1, init_image="plate.jpg", denoise=0.6)
+    sampler = next(n for n in wf.values() if n["_meta"]["title"] == "SEED")["inputs"]
+    assert sampler["latent_image"] == ["101", 0] and sampler["denoise"] == 0.6
+
+
+def test_shots_with_lilo_are_never_broll():
+    from zozobra.video import is_broll
+
+    assert not is_broll("medium, LILO walks out of frame past the flames")
+    assert is_broll("macro flame burst in the wok")
+    assert is_broll("venue establishing: slow tilt up to the lantern canopy")

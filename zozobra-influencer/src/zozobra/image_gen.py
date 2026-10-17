@@ -32,7 +32,8 @@ def _node(wf: dict, title: str) -> dict:
 
 
 def build_workflow(prompt: str, seed: int, *, width: int = 1080, height: int = 1920,
-                   lora: str | None = None, face_ref: str | None = None) -> dict:
+                   lora: str | None = None, face_ref: str | None = None,
+                   init_image: str | None = None, denoise: float = 1.0) -> dict:
     s = settings()
     wf = copy.deepcopy(load_workflow())
     _node(wf, "POSITIVE")["inputs"]["text"] = prompt
@@ -42,7 +43,23 @@ def build_workflow(prompt: str, seed: int, *, width: int = 1080, height: int = 1
     latent["width"], latent["height"] = width, height
     _node(wf, "LILO_LORA")["inputs"]["lora_name"] = lora or s.lora_name
     _node(wf, "FACE_REF")["inputs"]["image"] = face_ref or s.face_ref
+    if init_image:  # img2img: start from a real venue plate instead of empty latent
+        wf["100"] = {"class_type": "LoadImage", "inputs": {"image": init_image}, "_meta": {"title": "INIT_IMAGE"}}
+        wf["101"] = {"class_type": "VAEEncode", "inputs": {"pixels": ["100", 0], "vae": ["3", 0]},
+                     "_meta": {"title": "INIT_LATENT"}}
+        sampler = _node(wf, "SEED")["inputs"]
+        sampler["latent_image"], sampler["denoise"] = ["101", 0], denoise
     return wf
+
+
+def upload_input(path: Path) -> str:
+    """Copy a local image into ComfyUI's input folder; returns the name to reference."""
+    base = settings().comfyui_url.rstrip("/")
+    with path.open("rb") as f:
+        r = requests.post(f"{base}/upload/image", files={"image": (path.name, f, "image/jpeg")},
+                          data={"overwrite": "true"}, timeout=60)
+    r.raise_for_status()
+    return r.json()["name"]
 
 
 def generate(prompt: str, seed: int, out_dir: Path, **kw) -> list[Path]:

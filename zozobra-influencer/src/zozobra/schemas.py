@@ -32,6 +32,7 @@ class ScriptLine(BaseModel):
 
 
 class Visual(BaseModel):
+    venue_plate: str = Field(description="Id of the ZOZOBRA interior plate this shot happens in (from the venue list), or 'none' for food-only / outdoor shots")
     scene: str = Field(description="Where, inside ZOZOBRA, lighting, props. English. No description of LILO's face/body - that is injected automatically.")
     action: str = Field(description="What LILO is doing, pose, expression, hands. English.")
     wardrobe: str = Field(description="Outfit for this shot in English, or empty string to use the signature look")

@@ -20,6 +20,17 @@ def image(prompt: str, seed: int, out_dir: Path, *, use_lora: bool = True) -> li
     return generate(prompt, seed, out_dir)
 
 
+def image_in_venue(prompt: str, plate: Path, seed: int, out_dir: Path) -> list[Path]:
+    """LILO composited into a real ZOZOBRA plate (img2img + LoRA)."""
+    if _fal():
+        from .fal_provider import place_in_plate
+
+        return place_in_plate(prompt, plate, seed, out_dir)
+    from .image_gen import generate, upload_input
+
+    return generate(prompt, seed, out_dir, init_image=upload_input(plate), denoise=0.62)
+
+
 def upload(path: Path, key: str) -> str:
     if _fal():
         from .fal_provider import upload as fal_upload

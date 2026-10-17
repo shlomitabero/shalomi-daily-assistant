@@ -39,6 +39,10 @@ def validate_day(day: DayPlan, valid_dish_ids: set[str]) -> list[str]:
     problems: list[str] = []
     if day.dish_id != "atmosphere" and day.dish_id not in valid_dish_ids:
         problems.append(f"unknown dish_id '{day.dish_id}' (not in menu)")
+    from .venue import plate_ids
+
+    if day.visual.venue_plate != "none" and day.visual.venue_plate not in plate_ids():
+        problems.append(f"unknown venue_plate '{day.visual.venue_plate}'")
     if not _HHMM.match(day.post_time_local):
         problems.append(f"bad post_time_local '{day.post_time_local}'")
     if not set(day.platforms) <= {"instagram", "tiktok"} or not day.platforms:

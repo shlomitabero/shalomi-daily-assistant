@@ -16,7 +16,7 @@ import json
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
-from . import persona
+from . import persona, venue
 from .account_health import TZ, PublishGuard
 from .brain import full_image_prompt, generate_week, load_menu, save, spoken_script
 from .compliance import finalize_caption
@@ -44,8 +44,14 @@ def produce_day(day: DayPlan, menu: dict, workdir: Path, dry_run: bool) -> dict:
     caption = finalize_caption(day)
     hero_prompt = full_image_prompt(day)
     broll_lines = [l for l in day.script if is_broll(l.shot)]
+    plate_id = day.visual.venue_plate if day.visual.venue_plate in venue.plate_ids() else None
+    night = int(day.post_time_local[:2]) >= 19
     steps = {"hero_prompt": hero_prompt,
-             "broll": [{"t": [l.t_start, l.t_end], "prompt": broll_prompt(day, l.shot, menu)} for l in broll_lines],
+             "venue_plate": plate_id, "venue_night_variant": night,
+             "broll": [{"t": [l.t_start, l.t_end],
+                        "source": "venue_plate" if plate_id and not venue.is_food_shot(l.shot) else "generated",
+                        "prompt": l.shot if plate_id and not venue.is_food_shot(l.shot) else broll_prompt(day, l.shot, menu)}
+                       for l in broll_lines],
              "motion_prompt": day.visual.motion_prompt,
              "voice_text": spoken_script(day) if day.format is Format.reel else "",
              "caption": caption}
@@ -59,7 +65,11 @@ def produce_day(day: DayPlan, menu: dict, workdir: Path, dry_run: bool) -> dict:
         from . import qa, subtitles, video, voice
 
         seed = int(day.day.strftime("%Y%m%d"))
-        stills = [p for i in range(4) for p in P.image(hero_prompt, seed + i, workdir / "hero")]
+        if plate_id:
+            plate_img = venue.plate_9x16(plate_id, night=night)
+            stills = [p for i in range(4) for p in P.image_in_venue(hero_prompt, plate_img, seed + i, workdir / "hero")]
+        else:
+            stills = [p for i in range(4) for p in P.image(hero_prompt, seed + i, workdir / "hero")]
         anchor = settings().data_dir / "refs" / "R0_anchor.png"
         if anchor.exists():
             hero, _ = qa.best_match(stills, anchor)
@@ -73,7 +83,10 @@ def produce_day(day: DayPlan, menu: dict, workdir: Path, dry_run: bool) -> dict:
                                     workdir / "a_roll.mp4")
             cutaways = []
             for i, (line, spec) in enumerate(zip(broll_lines, steps["broll"])):
-                img = P.image(spec["prompt"], seed + 100 + i, workdir / "broll", use_lora=False)[0]
+                if spec["source"] == "venue_plate":   # the real room, animated - never an invented interior
+                    img = venue.plate_9x16(plate_id, night=night)
+                else:
+                    img = P.image(spec["prompt"], seed + 100 + i, workdir / "broll", use_lora=False)[0]
                 clip = video.download(P.animate(P.upload(img, f"lilo/{day.day}/{img.name}"), line.shot, 5),
                                       workdir / f"broll_{i}.mp4")
                 cutaways.append((clip, line.t_start, line.t_end))
