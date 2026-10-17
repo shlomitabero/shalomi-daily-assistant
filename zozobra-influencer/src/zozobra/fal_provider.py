@@ -1,0 +1,111 @@
+"""Hosted alternative to the self-run ComfyUI/Runway/Sync stack: one FAL_KEY, no GPU.
+
+  images   fal-ai/flux-lora               (Flux.1-dev + LILO's LoRA = identity lock)
+  training fal-ai/flux-lora-fast-training (train the LoRA from a zip of the curated dataset)
+  video    fal-ai/kling-video/.../image-to-video (strong food + hand physics)
+  lipsync  fal-ai/sync-lipsync/v2
+  storage  fal CDN (public HTTPS URLs for intermediate files)
+
+Model ids are constants so they can be bumped when fal publishes newer versions.
+"""
+from __future__ import annotations
+
+import zipfile
+from pathlib import Path
+
+import requests
+
+from . import persona
+from .config import settings
+
+IMAGE_APP = "fal-ai/flux-lora"
+TRAIN_APP = "fal-ai/flux-lora-fast-training"
+VIDEO_APP = "fal-ai/kling-video/v2.1/master/image-to-video"
+LIPSYNC_APP = "fal-ai/sync-lipsync/v2"
+
+
+def _fal():
+    import fal_client
+
+    if not settings().fal_key:
+        raise RuntimeError("FAL_KEY is not set")
+    return fal_client
+
+
+def upload(path: Path) -> str:
+    return _fal().upload_file(path)
+
+
+def _download(url: str, path: Path) -> Path:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    r = requests.get(url, timeout=300)
+    r.raise_for_status()
+    path.write_bytes(r.content)
+    return path
+
+
+def generate_image(prompt: str, seed: int, out_dir: Path, *, width: int = 1080, height: int = 1920,
+                   num_images: int = 1, use_lora: bool = True) -> list[Path]:
+    s = settings()
+    args = {
+        "prompt": prompt,
+        "image_size": {"width": width, "height": height},
+        "num_inference_steps": 28,
+        "guidance_scale": 3.2,
+        "num_images": num_images,
+        "seed": seed,
+        "output_format": "png",
+        "enable_safety_checker": True,
+    }
+    if use_lora:
+        if not s.lora_url:
+            raise RuntimeError("LILO_LORA_URL is not set - train the LoRA first (python -m zozobra.fal_provider train)")
+        args["loras"] = [{"path": s.lora_url, "scale": 0.9}]
+    result = _fal().subscribe(IMAGE_APP, arguments=args)
+    return [_download(img["url"], out_dir / f"{seed}_{i}.png") for i, img in enumerate(result["images"])]
+
+
+def animate(image_url: str, prompt: str, duration: int = 10) -> str:
+    result = _fal().subscribe(VIDEO_APP, arguments={
+        "image_url": image_url,
+        "prompt": prompt[:2500],
+        "duration": "10" if duration > 5 else "5",
+        "negative_prompt": "face morphing, identity change, extra fingers, blur, distortion, low quality",
+        "cfg_scale": 0.5,
+    })
+    return result["video"]["url"]
+
+
+def lipsync(video_url: str, audio_url: str) -> str:
+    result = _fal().subscribe(LIPSYNC_APP, arguments={
+        "video_url": video_url, "audio_url": audio_url, "sync_mode": "loop"})
+    return result["video"]["url"]
+
+
+def train_lora(dataset_dir: Path, steps: int = 2000) -> str:
+    """Zip the curated dataset (images + .txt captions), train on fal, return the LoRA URL."""
+    files = sorted(p for p in dataset_dir.iterdir() if p.suffix.lower() in {".png", ".jpg", ".jpeg", ".webp", ".txt"})
+    if sum(p.suffix != ".txt" for p in files) < 15:
+        raise ValueError("need at least 15 curated images (30 recommended) - see docs/03")
+    archive = dataset_dir.parent / f"{dataset_dir.name}.zip"
+    with zipfile.ZipFile(archive, "w") as z:
+        for p in files:
+            z.write(p, p.name)
+    result = _fal().subscribe(TRAIN_APP, arguments={
+        "images_data_url": upload(archive),
+        "trigger_word": persona.TRIGGER,
+        "steps": steps,
+        "create_masks": True,
+        "is_style": False,
+    }, with_logs=True)
+    return result["diffusers_lora_file"]["url"]
+
+
+if __name__ == "__main__":
+    import argparse
+
+    ap = argparse.ArgumentParser(description="Train LILO's LoRA on fal.ai")
+    sub = ap.add_subparsers(dest="cmd", required=True)
+    t = sub.add_parser("train"); t.add_argument("dataset", type=Path); t.add_argument("--steps", type=int, default=2000)
+    args = ap.parse_args()
+    print("LILO_LORA_URL=" + train_lora(args.dataset, args.steps))

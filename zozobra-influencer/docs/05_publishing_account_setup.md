@@ -46,8 +46,9 @@ ZOZOBRA brand association down with the account.
    states "AI virtual creator."
 2. Settings → Content preferences: turn on **AI-generated content** labelling by default.
 3. developers.tiktok.com: create an app, add **Content Posting API** with **Direct Post**, scopes
-   `user.info.basic`, `video.publish`, `video.list`. Verify the media domain
-   (`media.zozobra.co.il`) for `PULL_FROM_URL`.
+   `user.info.basic`, `video.publish`, `video.list`. The publisher uploads the rendered file
+   directly (`FILE_UPLOAD`), so no domain verification is needed. You only need to verify a domain
+   if you switch to `PULL_FROM_URL`.
 4. Submit the app for **audit**. Until it's approved, API posts are forced to `SELF_ONLY`
    (private). Use that period for warm-up tests.
 5. The publisher sets `brand_content_toggle: true` (the "Paid partnership" label) and
@@ -71,7 +72,7 @@ national memorial days or sirens (the Brain flags those weeks). Instagram also e
 ```
 pipeline produce  ─► data/queue/<day>.json (status: pending, caption with disclosures, media URL)
 human review      ─► python -m zozobra.pipeline approve <day>   (watch final.mp4 first)
-cron */15 * * * * ─► python -m zozobra.pipeline publish-due
+scheduler (panel) ─► publish-due every 15 min (or cron below)
                         ├─ skip if not approved (REQUIRE_HUMAN_APPROVAL=true)
                         ├─ PublishGuard: caps / gap / quiet hours
                         ├─ IG:  POST /{ig-user}/media (REELS) → poll status_code=FINISHED → /media_publish
@@ -83,7 +84,7 @@ Human approval is **on by default** and should stay on. It's brand-safety for a 
 wrong dish name, an allergy claim or a tone-deaf post on a sensitive day costs more than the
 review takes.
 
-### Crontab (server in Asia/Jerusalem or set `CRON_TZ`)
+### Crontab: only if you run without the control panel (the panel has its own scheduler)
 ```cron
 CRON_TZ=Asia/Jerusalem
 */15 * * * *  cd /srv/zozobra-influencer && .venv/bin/python -m zozobra.pipeline publish-due >> logs/publish.log 2>&1

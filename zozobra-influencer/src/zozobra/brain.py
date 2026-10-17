@@ -63,7 +63,12 @@ def _client() -> anthropic.Anthropic:
 
 
 def load_menu(path: Path | None = None) -> dict:
-    path = path or settings().data_dir / "menu.json"
+    if path is None:
+        path = settings().data_dir / "menu.json"
+        if not path.exists():  # fresh deployment volume: fall back to the bundled menu
+            from .config import ROOT
+
+            path = ROOT / "data" / "menu.json"
     return json.loads(path.read_text(encoding="utf-8"))
 
 

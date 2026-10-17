@@ -12,7 +12,7 @@ def make_day(d: date, **over) -> dict:
     base = {
         "day": d.isoformat(), "weekday_he": "ראשון", "post_time_local": "20:00",
         "platforms": ["instagram", "tiktok"], "format": "reel", "pillar": "hero_dish",
-        "dish_id": "spicy_ramen", "concept": "משיכת נודלס", "hook_he": "שמעתם את הווק?",
+        "dish_id": "bangkok_heat", "concept": "משיכת נודלס", "hook_he": "שמעתם את הווק?",
         "hook_alternatives_he": ["א", "ב"],
         "visual": {"scene": "at the wok line", "action": "lifting noodles", "wardrobe": "",
                    "motion_prompt": "slow push-in"},
@@ -98,7 +98,7 @@ def test_brain_with_fake_client():
     plan = brain.generate_week("ראמן", date(2026, 10, 18), menu=MENU, client=client)
     assert len(plan.days) == 7
     assert captured["output_config"]["format"]["type"] == "json_schema"
-    assert "spicy_ramen" in captured["messages"][0]["content"]
+    assert "bangkok_heat" in captured["messages"][0]["content"]
     md = brain.render_markdown(plan)
     assert persona.AI_DISCLOSURE_HE in md
 
@@ -123,7 +123,7 @@ def test_analytics_insights(tmp_path):
     conn = analytics.db(tmp_path / "a.sqlite")
     for i, (pillar, views, shares) in enumerate([("fire_show", 1000, 80), ("night_vibe", 1000, 5)]):
         analytics.record_post(conn, post_id=str(i), platform="instagram", day="2026-10-18",
-                              post_time="20:00", pillar=pillar, dish_id="spicy_ramen", hook="h", fmt="reel")
+                              post_time="20:00", pillar=pillar, dish_id="bangkok_heat", hook="h", fmt="reel")
         conn.execute("INSERT INTO metrics VALUES (?,?,?,?,?,?,?,?)", (str(i), "t", views, views, 50, 10, shares, 20))
     conn.commit()
     text = analytics.weekly_insights(conn, top_n=1)
@@ -142,7 +142,64 @@ def test_pipeline_dry_run_and_approval_gate(tmp_path, monkeypatch):
     assert "[excited]" in item["steps"]["voice_text"]
 
     now = datetime(2026, 10, 18, 20, 5, tzinfo=account_health.TZ)
-    monkeypatch.setattr(pipeline, "PublishGuard", lambda _: account_health.PublishGuard(date(2026, 10, 1), tmp_path / "l.json"))
+    monkeypatch.setattr(pipeline, "PublishGuard", lambda *_: account_health.PublishGuard(date(2026, 10, 1), tmp_path / "l.json"))
     assert pipeline.publish_due(now) == ["2026-10-18: waiting for approval"]
     pipeline.approve("2026-10-18")
     assert all("DRY RUN" in l for l in pipeline.publish_due(now))
+
+
+def test_subtitles_ass():
+    from zozobra import subtitles
+
+    day = DayPlan.model_validate(make_day(date(2026, 10, 18)))
+    day.script[1].on_screen_text_he = "רמת חריפות: לילו"
+    ass = subtitles.build_ass(day.script, hook="שנייה {תשמעו}")
+    assert "Style: Hook,Heebo Black" in ass
+    assert "Dialogue: 0,0:00:04.00,0:00:12.00,Line" in ass and "רמת חריפות" in ass
+    assert "{תשמעו}" not in ass  # braces would be parsed as ASS override tags
+
+
+def test_sample_week_is_valid():
+    from pathlib import Path
+
+    path = Path(__file__).resolve().parents[1] / "examples" / "week_sample.json"
+    plan = WeekPlan.model_validate_json(path.read_text(encoding="utf-8"))
+    assert len(plan.days) == 7
+    assert all(compliance.validate_day(d, IDS) == [] for d in plan.days)
+
+
+def test_web_panel_flow(tmp_path, monkeypatch):
+    from fastapi.testclient import TestClient
+
+    monkeypatch.setenv("DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("DRY_RUN", "true")
+    monkeypatch.setenv("PANEL_PASSWORD", "")
+    from zozobra import web
+
+    c = TestClient(web.app)
+    for url in ["/", "/plan", "/calendars", "/menu", "/setup", "/insights", "/replies"]:
+        assert c.get(url).status_code == 200, url
+    assert c.post("/setup/sample", follow_redirects=False).status_code == 303
+    pipeline.produce_day(
+        WeekPlan.model_validate_json((tmp_path / "calendars" / "week_2026-10-18.json").read_text(encoding="utf-8")).days[0],
+        MENU, tmp_path / "r", dry_run=True)
+    r = c.post("/queue/2026-10-18/save", data={"caption": "בלי גילוי", "post_time": "20:00", "action": "approve"})
+    assert r.status_code == 200
+    import json as _json
+
+    saved = _json.loads((tmp_path / "queue" / "2026-10-18.json").read_text(encoding="utf-8"))
+    assert saved["status"] == "approved" and persona.AD_DISCLOSURE_HE in saved["caption"]
+    assert c.get("/media/../../etc/passwd").status_code == 404
+    assert c.post("/menu", data={"menu": "{bad"}).status_code == 200  # shows error, doesn't save
+
+
+def test_panel_password(monkeypatch):
+    from fastapi.testclient import TestClient
+
+    monkeypatch.setenv("PANEL_PASSWORD", "s3cret")
+    from zozobra import web
+
+    c = TestClient(web.app)
+    assert c.get("/").status_code == 401
+    assert c.get("/", auth=("lilo", "s3cret")).status_code == 200
+    assert c.get("/healthz").status_code == 200

@@ -91,7 +91,7 @@ def is_broll(shot: str) -> bool:
 
 
 def compose(a_roll: Path, broll: list[tuple[Path, float, float]], out: Path,
-            music: Path | None = None) -> Path:
+            music: Path | None = None, subtitles: Path | None = None) -> Path:
     """A-roll = lip-synced LILO clip carrying the voice track. Each B-roll clip is laid over it
     for [start, end] seconds, so the mouth is hidden exactly while she isn't on screen."""
     out.parent.mkdir(parents=True, exist_ok=True)
@@ -106,7 +106,12 @@ def compose(a_roll: Path, broll: list[tuple[Path, float, float]], out: Path,
     for i, (_, start, end) in enumerate(broll, start=1):
         graph.append(f"[{i}:v]{norm},setpts=PTS-STARTPTS+{start}/TB[b{i}]")
         graph.append(f"[base{i-1}][b{i}]overlay=enable='between(t,{start},{end})':eof_action=pass[base{i}]")
-    graph.append(f"[base{len(broll)}]null[v]")
+    if subtitles:
+        from .subtitles import ffmpeg_filter
+
+        graph.append(f"[base{len(broll)}]{ffmpeg_filter(subtitles)}[v]")
+    else:
+        graph.append(f"[base{len(broll)}]null[v]")
     if music:
         m = len(broll) + 1
         graph.append(f"[{m}:a]volume=0.18[m];[0:a][m]amix=inputs=2:duration=first,"
@@ -116,5 +121,8 @@ def compose(a_roll: Path, broll: list[tuple[Path, float, float]], out: Path,
 
     subprocess.run([*args, "-filter_complex", ";".join(graph), "-map", "[v]", "-map", "[a]",
                     "-c:v", "libx264", "-preset", "slow", "-crf", "18", "-c:a", "aac", "-b:a", "192k",
-                    "-shortest", "-movflags", "+faststart", str(out)], check=True)
+                    "-shortest", "-movflags", "+faststart",
+                    # IPTC "trainedAlgorithmicMedia" marker so platforms can read the AI provenance
+                    "-metadata", "comment=AI-generated (trainedAlgorithmicMedia) - LILO virtual creator x ZOZOBRA",
+                    str(out)], check=True, capture_output=True)
     return out

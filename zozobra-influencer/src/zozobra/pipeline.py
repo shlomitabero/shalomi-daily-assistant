@@ -23,8 +23,6 @@ from .compliance import finalize_caption
 from .config import settings
 from .schemas import DayPlan, Format, WeekPlan
 
-ACCOUNT_CREATED = date(2026, 10, 1)   # set to the real account creation date (drives warm-up caps)
-ANCHOR_FACE = settings().data_dir / "refs" / "R0_anchor.png"   # curated anchor portrait from docs/02
 
 
 def _queue_dir() -> Path:
@@ -57,28 +55,34 @@ def produce_day(day: DayPlan, menu: dict, workdir: Path, dry_run: bool) -> dict:
             "image_urls": [], "steps": steps}
 
     if not dry_run:
-        from . import image_gen, qa, storage, video, voice
+        from . import providers as P
+        from . import qa, subtitles, video, voice
 
         seed = int(day.day.strftime("%Y%m%d"))
-        stills = [p for i in range(4) for p in image_gen.generate(hero_prompt, seed + i, workdir / "hero")]
-        hero, _ = qa.best_match(stills, ANCHOR_FACE)
-        stills = [hero] + [p for p in stills if p != hero]
-        still_urls = [storage.publish_file(p, f"lilo/{day.day}/{p.name}") for p in stills]
+        stills = [p for i in range(4) for p in P.image(hero_prompt, seed + i, workdir / "hero")]
+        anchor = settings().data_dir / "refs" / "R0_anchor.png"
+        if anchor.exists():
+            hero, _ = qa.best_match(stills, anchor)
+            stills = [hero] + [p for p in stills if p != hero]
+        item["image_paths"] = [str(p) for p in stills]
+        still_urls = [P.upload(p, f"lilo/{day.day}/{p.name}") for p in stills]
         if day.format is Format.reel:
-            a_roll_raw = video.animate_still(still_urls[0], day.visual.motion_prompt, duration=10)
+            a_roll_raw = P.animate(still_urls[0], day.visual.motion_prompt, 10)
             audio = voice.synthesize(spoken_script(day), workdir / "voice.mp3")
-            audio_url = storage.publish_file(audio, f"lilo/{day.day}/voice.mp3")
-            a_roll = video.download(video.lipsync(a_roll_raw, audio_url), workdir / "a_roll.mp4")
+            a_roll = video.download(P.lipsync(a_roll_raw, P.upload(audio, f"lilo/{day.day}/voice.mp3")),
+                                    workdir / "a_roll.mp4")
             cutaways = []
             for i, (line, spec) in enumerate(zip(broll_lines, steps["broll"])):
-                img = image_gen.generate(spec["prompt"], seed + 100 + i, workdir / "broll")[0]
-                url = storage.publish_file(img, f"lilo/{day.day}/{img.name}")
-                clip = video.download(video.animate_still(url, line.shot), workdir / f"broll_{i}.mp4")
+                img = P.image(spec["prompt"], seed + 100 + i, workdir / "broll", use_lora=False)[0]
+                clip = video.download(P.animate(P.upload(img, f"lilo/{day.day}/{img.name}"), line.shot, 5),
+                                      workdir / f"broll_{i}.mp4")
                 cutaways.append((clip, line.t_start, line.t_end))
-            final = video.compose(a_roll, cutaways, workdir / "final.mp4")
-            item["media_url"] = storage.publish_file(final, f"lilo/{day.day}/final.mp4")
+            subs = subtitles.write_ass(day.script, workdir / "subs.ass", hook=day.hook_he)
+            final = video.compose(a_roll, cutaways, workdir / "final.mp4", subtitles=subs)
+            item["media_path"] = str(final)
+            item["media_url"] = P.upload(final, f"lilo/{day.day}/final.mp4")
         else:
-            item["image_urls"] = still_urls
+            item["image_urls"] = still_urls[:10]
 
     _queue_dir().mkdir(parents=True, exist_ok=True)
     (_queue_dir() / f"{day.day}.json").write_text(json.dumps(item, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -98,7 +102,7 @@ def publish_due(now: datetime | None = None, dry_run: bool | None = None) -> lis
     s = settings()
     dry_run = s.dry_run if dry_run is None else dry_run
     now = (now or datetime.now(TZ)).astimezone(TZ)
-    guard = PublishGuard(ACCOUNT_CREATED)
+    guard = PublishGuard(date.fromisoformat(s.account_created))
     log: list[str] = []
     for path in sorted(_queue_dir().glob("*.json")):
         item = json.loads(path.read_text(encoding="utf-8"))
@@ -142,7 +146,9 @@ def _publish(platform: str, item: dict) -> str:
         return ig.publish_reel(item["media_url"], item["caption"])
     from .publish_tiktok import TikTokPublisher
 
-    return TikTokPublisher().publish_video(item["media_url"], item["caption"])
+    # Prefer direct file upload (no TikTok domain verification needed)
+    media = Path(item["media_path"]) if item.get("media_path") and Path(item["media_path"]).exists() else item["media_url"]
+    return TikTokPublisher().publish_video(media, item["caption"])
 
 
 def main() -> None:

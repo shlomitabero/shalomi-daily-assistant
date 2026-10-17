@@ -16,6 +16,32 @@ ROOT = Path(__file__).resolve().parents[2]
 DATA_DIR = ROOT / "data"
 
 
+def _runtime_path() -> Path:
+    return Path(os.getenv("DATA_DIR", str(DATA_DIR))) / "runtime.json"
+
+
+def runtime() -> dict:
+    """Values the control panel saves (LoRA URL, voice id, weekly focus...). Env vars win."""
+    import json
+
+    try:
+        return json.loads(_runtime_path().read_text(encoding="utf-8"))
+    except (FileNotFoundError, ValueError):
+        return {}
+
+
+def save_runtime(**values) -> None:
+    import json
+
+    data = runtime() | values
+    _runtime_path().parent.mkdir(parents=True, exist_ok=True)
+    _runtime_path().write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def _env_or_runtime(name: str, key: str) -> str:
+    return os.getenv(name) or runtime().get(key, "")
+
+
 def _bool(name: str, default: bool) -> bool:
     raw = os.getenv(name)
     if raw is None:
@@ -26,6 +52,10 @@ def _bool(name: str, default: bool) -> bool:
 @dataclass(frozen=True)
 class Settings:
     model: str = field(default_factory=lambda: os.getenv("ZOZOBRA_MODEL", "claude-opus-5-5"))
+    # "fal" = hosted (one FAL_KEY, no GPU). "self" = your ComfyUI + Runway + Sync + S3.
+    provider: str = field(default_factory=lambda: os.getenv("MEDIA_PROVIDER", "fal"))
+    fal_key: str = field(default_factory=lambda: os.getenv("FAL_KEY", ""))
+    lora_url: str = field(default_factory=lambda: _env_or_runtime("LILO_LORA_URL", "lora_url"))
     comfyui_url: str = field(default_factory=lambda: os.getenv("COMFYUI_URL", "http://127.0.0.1:8188"))
     lora_name: str = field(default_factory=lambda: os.getenv("LILO_LORA_NAME", "lilo_flux_v1.safetensors"))
     face_ref: str = field(default_factory=lambda: os.getenv("LILO_FACE_REF", "lilo_face_ref_front.png"))
@@ -33,7 +63,7 @@ class Settings:
     runway_api_key: str = field(default_factory=lambda: os.getenv("RUNWAY_API_KEY", ""))
     sync_api_key: str = field(default_factory=lambda: os.getenv("SYNC_API_KEY", ""))
     elevenlabs_api_key: str = field(default_factory=lambda: os.getenv("ELEVENLABS_API_KEY", ""))
-    elevenlabs_voice_id: str = field(default_factory=lambda: os.getenv("ELEVENLABS_VOICE_ID", ""))
+    elevenlabs_voice_id: str = field(default_factory=lambda: _env_or_runtime("ELEVENLABS_VOICE_ID", "voice_id"))
 
     media_bucket: str = field(default_factory=lambda: os.getenv("MEDIA_BUCKET", ""))
     media_public_base_url: str = field(default_factory=lambda: os.getenv("MEDIA_PUBLIC_BASE_URL", ""))
@@ -47,7 +77,10 @@ class Settings:
     require_human_approval: bool = field(default_factory=lambda: _bool("REQUIRE_HUMAN_APPROVAL", True))
     dry_run: bool = field(default_factory=lambda: _bool("DRY_RUN", True))
 
-    data_dir: Path = DATA_DIR
+    account_created: str = field(default_factory=lambda: os.getenv("ACCOUNT_CREATED", "2026-10-01"))
+    panel_password: str = field(default_factory=lambda: os.getenv("PANEL_PASSWORD", ""))
+
+    data_dir: Path = field(default_factory=lambda: Path(os.getenv("DATA_DIR", str(DATA_DIR))))
 
 
 def settings() -> Settings:

@@ -1,16 +1,23 @@
 {
-  "_note": "Source of truth for dishes the Brain may mention. Replace with the current ZOZOBRA menu and branch list before going live - the Brain is forbidden from inventing items or prices that are not here.",
+  "_note": "Built from ZOZOBRA's public Wolt listings (Tel Aviv, Kfar Saba), Oct 2026. Prices are deliberately omitted - they differ between branches and delivery vs dine-in, and the Brain never mentions prices. Have the restaurant confirm this list; edit freely (also from the control panel).",
   "brand": "ZOZOBRA",
-  "positioning": "Asian street-food noodle bar, open show kitchen, woks on fire, dark-luxury evening vibe",
+  "positioning": "Asian street-food noodle bar by chef Avi Conforti, open show kitchen, woks on fire, dark-luxury evening vibe",
   "dishes": [
-    {"id": "chicken_curry", "name_he": "קארי עוף", "name_en": "Chicken Curry", "hero_visual": "thick golden curry glossy over jasmine rice, steam curling", "spice": 2},
-    {"id": "spicy_ramen", "name_he": "ראמן חריף", "name_en": "Spicy Ramen", "hero_visual": "red chili broth, chopsticks lifting noodles in a slow pull, chili oil droplets", "spice": 4},
-    {"id": "pad_thai", "name_he": "פאד תאי", "name_en": "Pad Thai", "hero_visual": "wok toss mid-air, peanuts and lime, flame burst behind", "spice": 1},
-    {"id": "dumplings", "name_he": "דמפלינגס", "name_en": "Dumplings", "hero_visual": "crispy-bottom dumplings, dipping sauce drip, bamboo steamer lid lifting", "spice": 1}
+    {"id": "bangkok_heat", "name_he": "בנגקוק היט", "name_en": "Bangkok Heat", "desc": "spicy garlic-caramel noodles with chicken, green onion, mint, cucumber salad; tofu/vegan versions", "hero_visual": "glossy caramel-chili noodles tossed high in a flaming wok, mint leaves falling, chopsticks pulling a sticky strand", "spice": 4},
+    {"id": "super_b", "name_he": "סופר בי", "name_en": "Super B", "desc": "spicy garlic-caramel noodles with beef fillet strips", "hero_visual": "seared beef fillet strips over dark glossy noodles, smoke from the wok, sesame and chili flakes", "spice": 4},
+    {"id": "pad_thai", "name_he": "פאד תאי", "name_en": "Pad Thai", "desc": "rice noodles with chicken in tamarind sauce", "hero_visual": "wok toss mid-air, crushed peanuts and lime wedge, flame burst behind", "spice": 1},
+    {"id": "teriyaki_ramen", "name_he": "ראמן טריאקי", "name_en": "Teriyaki Chicken Ramen", "desc": "ramen with teriyaki chicken in broth", "hero_visual": "slow noodle pull from steaming broth, glossy teriyaki chicken slices, steam curling into copper light", "spice": 1},
+    {"id": "massaman_curry", "name_he": "קארי מסמן עוף", "name_en": "Chicken Massaman Curry", "desc": "chicken massaman curry with pumpkin, zucchini and peanuts", "hero_visual": "thick golden curry poured over jasmine rice, pumpkin chunks, peanuts, steam rising", "spice": 2},
+    {"id": "burmese_salad", "name_he": "סלט בורמזי", "name_en": "Burmese Salad", "desc": "cucumber and lime salad", "hero_visual": "crisp cucumber and lime close-up, dressing drizzle, fresh herbs, cold contrast against hot woks", "spice": 1},
+    {"id": "spring_rolls", "name_he": "ספרינג רולס ירקות", "name_en": "Vegetable Spring Rolls", "desc": "crispy vegetable spring rolls", "hero_visual": "spring roll snapped in half with an audible crunch, steam escaping, dipping sauce", "spice": 0},
+    {"id": "sushi_rolls", "name_he": "רולים", "name_en": "Sushi Rolls", "desc": "sushi rolls", "hero_visual": "rolls lined up on black slate, chopsticks lifting one, soy splash in slow motion", "spice": 0}
   ],
   "drinks": [
-    {"id": "signature_cocktail", "name_he": "קוקטייל הבית", "name_en": "House Cocktail", "hero_visual": "smoked coupe glass, copper light refraction, ice crack ASMR", "alcoholic": true}
+    {"id": "house_cocktail", "name_he": "קוקטייל הבית", "name_en": "House Cocktail", "desc": "confirm the real cocktail list with the bar before using", "hero_visual": "smoked coupe glass, copper light refraction, ice crack ASMR", "alcoholic": true}
   ],
-  "branches": ["(fill in branch names + addresses)"],
+  "branches": [
+    {"city": "תל אביב", "address": "החשמונאים 96", "verify": true},
+    {"city": "כפר סבא", "address": "ויצמן 207", "verify": true}
+  ],
   "offers": []
 }
