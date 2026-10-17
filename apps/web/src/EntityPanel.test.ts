@@ -4179,6 +4179,79 @@ test("EntityPanel's board cards list their fields in the user's drag-reordered c
 });
 
 /**
+ * Round 678: the same audit round 670 ran for board cards turned up one
+ * more surface still following the old pattern -- the add/edit record
+ * form itself, the primary data-entry surface in this whole panel. It
+ * mapped over entity.fields (the entity's raw declared order) instead of
+ * orderedFields, so after a real column reorder the on-screen table
+ * showed Phone before Name, but the form a user actually types into
+ * still asked for Name before Phone. The bulk-edit field picker
+ * (bulkEditableFields, a sibling whole-record field list) had the exact
+ * same gap, fixed in the same pass.
+ */
+test("EntityPanel's add/edit record form lists fields in the user's drag-reordered column order, not the entity's original declared order", async () => {
+  await withJsdom(async () => {
+    const dealWithPhone: Entity = {
+      name: "Deal",
+      label: "Deal",
+      fields: [
+        { name: "name", label: "Name", type: "text", required: true },
+        { name: "phone", label: "Phone", type: "text", required: false },
+        {
+          name: "status",
+          label: "Status",
+          type: "enum",
+          required: true,
+          enumValues: ["new", "won", "lost"],
+          enumLabels: { new: "New", won: "Won", lost: "Lost" },
+        },
+      ],
+    };
+    localStorage.setItem("forge.columnOrder", JSON.stringify({ "proj1:Deal": ["phone", "name", "status"] }));
+    const store: EntityRecord[] = [{ id: 1, name: "Globex", phone: "555-1234", status: "new" }];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = mockRecordsFetch(store) as typeof fetch;
+    try {
+      renderEntityPanel({ entity: dealWithPhone, allEntities: [dealWithPhone] });
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 1);
+      assert.deepEqual(
+        [...document.querySelectorAll("thead th.resizable-col")].map((th) => th.querySelector(".sort-header")!.textContent),
+        ["Phone", "Name", "Status"],
+        "the persisted reorder must already be in effect on the on-screen table",
+      );
+
+      const formFieldLabels = Array.from(document.querySelectorAll(".record-form .field-row .field-label")).map((el) =>
+        (el.textContent ?? "").replace("✏️", "").replace(" *", "").trim(),
+      );
+      assert.deepEqual(
+        formFieldLabels,
+        ["Phone", "Name", "Status"],
+        "the add/edit form must list Phone before Name, matching the reordered table, not the entity's original declared order",
+      );
+
+      // The bulk-edit "set field" picker is the same sibling gap
+      // round 670's own audit found for board cards -- it reads from
+      // bulkEditableFields, which used to filter the entity's raw
+      // declared order rather than orderedFields.
+      const rowCheckbox = document.querySelector('td.select-col input[type="checkbox"]') as HTMLInputElement;
+      fireEvent.click(rowCheckbox);
+      await waitForCondition(() => document.querySelector(".bulk-edit-field-label select") !== null);
+      const bulkEditOptions = Array.from(document.querySelectorAll(".bulk-edit-field-label option"))
+        .filter((o) => (o as HTMLOptionElement).value !== "")
+        .map((o) => o.textContent);
+      assert.deepEqual(
+        bulkEditOptions,
+        ["Phone", "Name", "Status"],
+        "the bulk-edit field picker must also list Phone before Name, matching the reordered table",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+      localStorage.removeItem("forge.columnOrder");
+    }
+  });
+});
+
+/**
  * Round 621: round 615 made Export CSV, Copy, and per-record Print all
  * honor the user's drag-reordered column order (orderedFields), but the
  * "Columns" visibility menu's own checkbox list -- the one UI a person

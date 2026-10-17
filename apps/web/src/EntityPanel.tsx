@@ -1027,8 +1027,6 @@ export function EntityPanel({
   const boardField = useMemo(() => findBoardField(entity.fields), [entity.fields]);
   const filterableFields = useMemo(() => findFilterableFields(entity.fields), [entity.fields]);
   const filterableFieldLabelOccurrences = useMemo(() => fieldLabelOccurrences(filterableFields), [filterableFields]);
-  const bulkEditableFields = useMemo(() => entity.fields.filter(isInlineEditableField), [entity.fields]);
-  const bulkEditableFieldLabelOccurrences = useMemo(() => fieldLabelOccurrences(bulkEditableFields), [bulkEditableFields]);
   const dateField = useMemo(() => findDateField(entity.fields), [entity.fields]);
   const endDateField = useMemo(() => (dateField ? findEndDateField(entity.fields, dateField) : null), [entity.fields, dateField]);
   const phoneField = useMemo(() => findPhoneField(entity.fields), [entity.fields]);
@@ -1539,6 +1537,13 @@ export function EntityPanel({
   const orderedFields = useMemo(() => applyColumnOrder(entity.fields, columnOrder), [entity.fields, columnOrder]);
   const orderedFieldLabelOccurrences = useMemo(() => fieldLabelOccurrences(orderedFields), [orderedFields]);
   const entityFieldLabelOccurrences = useMemo(() => fieldLabelOccurrences(entity.fields), [entity.fields]);
+  // The bulk-edit field picker is a whole-record action like the table's
+  // own column list, so it follows the same drag-reordered column order
+  // (orderedFields) rather than the entity's raw declared order -- moved
+  // here (it used to sit right after boardField/filterableFields above,
+  // textually before orderedFields existed) since it now reads from it.
+  const bulkEditableFields = useMemo(() => orderedFields.filter(isInlineEditableField), [orderedFields]);
+  const bulkEditableFieldLabelOccurrences = useMemo(() => fieldLabelOccurrences(bulkEditableFields), [bulkEditableFields]);
 
   // Which columns actually render in the table -- CSV export and both print
   // sheets (per-record RecordPrintSheet and the list's RecordListPrintSheet)
@@ -2627,7 +2632,15 @@ export function EntityPanel({
           }
         }}
       >
-        {entity.fields.map((field) => (
+        {/*
+         * orderedFields, not the entity's raw declared order -- the one
+         * remaining surface in this file still following the old pattern
+         * (table header, CSV export, both print sheets, and board cards
+         * all already follow the user's drag-reordered columns). The
+         * create/edit form has no functional reason to differ: handleSubmit
+         * builds a plain keyed object regardless of field order.
+         */}
+        {orderedFields.map((field) => (
           <label key={field.name} className="field-row">
             <FieldLabelEditor
               entityName={entity.name}
