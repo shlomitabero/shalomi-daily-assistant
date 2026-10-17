@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
-import { mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { test } from "node:test";
@@ -65,7 +65,7 @@ function createFakeEmailSender(
 }
 
 async function withServer(
-  fn: (baseUrl: string, db: ForgeDatabase) => Promise<void>,
+  fn: (baseUrl: string, db: ForgeDatabase, uploadsDir: string) => Promise<void>,
   opts?: { whatsapp?: (db: ForgeDatabase) => WhatsAppWebManager; provider?: SpecProvider; emailSender?: EmailSender },
 ) {
   const db = createStore(":memory:");
@@ -80,7 +80,7 @@ async function withServer(
   const address = server.address();
   const port = typeof address === "object" && address ? address.port : 0;
   try {
-    await fn(`http://127.0.0.1:${port}`, db);
+    await fn(`http://127.0.0.1:${port}`, db, uploadsDir);
   } finally {
     // server.close()'s own callback doesn't fire until every open
     // connection closes on its own -- a keep-alive socket sitting idle
@@ -7525,6 +7525,100 @@ test("uploading a file for a 'file' field stores it on disk, serves it back at t
     const getRes = await fetch(`${baseUrl}/api/projects/${projectId}/entities/Applicant`, { headers: authHeaders(token) });
     const { records } = (await getRes.json()) as { records: { id: number; resume: string }[] };
     assert.deepEqual(JSON.parse(records.find((r) => r.id === record.id)!.resume), uploadBody.file);
+  });
+});
+
+/**
+ * Regression test for a real disk-space leak: deleteProject (packages/db)
+ * drops every data table, checkpoint, and collaborator grant, but it's a
+ * pure DB-layer function with no filesystem access at all -- every file
+ * ever uploaded to this project stayed on disk under
+ * uploadsDir/<projectId>/... forever, under a project id that no longer
+ * exists anywhere, reachable by nothing. DELETE /projects/:id now also
+ * removes that whole per-project uploads directory.
+ */
+test("DELETE /projects/:id removes every uploaded file for that project from disk, not just its database rows", async () => {
+  await withServer(async (baseUrl, db, uploadsDir) => {
+    const email = `upload-delete-${randomUUID()}@example.com`;
+    const token = await signup(baseUrl, email);
+    const user = findUserByEmail(db, email)!;
+
+    const spec: ProductSpec = {
+      summary: "test",
+      personas: [],
+      roles: ["Admin"],
+      entities: [{ name: "Applicant", fields: [{ name: "resume", type: "file", required: false }] }],
+      screens: [],
+      assumptions: [],
+      openQuestions: [],
+    };
+    const projectId = randomUUID();
+    insertProject(db, { id: projectId, ownerId: user.id, name: "Hiring", description: "test", spec });
+    diffAndMigrate(db, projectId, undefined, spec);
+    markProjectBuilt(db, projectId);
+
+    const formData = new FormData();
+    formData.append("file", new File(["%PDF-fake"], "resume.pdf", { type: "application/pdf" }));
+    const uploadRes = await fetch(`${baseUrl}/api/projects/${projectId}/entities/Applicant/fields/resume/upload`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${token}` },
+      body: formData,
+    });
+    const { file } = (await uploadRes.json()) as { file: { url: string } };
+    const filePathOnDisk = path.join(uploadsDir, file.url.replace(/^\/api\/uploads\//, ""));
+    assert.ok(existsSync(filePathOnDisk), "the uploaded file must actually exist on disk before deletion");
+
+    const deleteRes = await fetch(`${baseUrl}/api/projects/${projectId}`, { method: "DELETE", headers: authHeaders(token) });
+    assert.equal(deleteRes.status, 204);
+
+    assert.equal(existsSync(filePathOnDisk), false, "the uploaded file must be removed from disk once its project is deleted");
+    assert.equal(existsSync(path.join(uploadsDir, projectId)), false, "the whole per-project uploads directory must be gone too");
+  });
+});
+
+/**
+ * Same leak, the account-deletion path: DELETE /auth/account loops over
+ * every project the account owns and calls deleteProject for each one --
+ * which, same as the single-project route above, never touched the
+ * filesystem. Confirms the fix applies there too, for every owned
+ * project in the loop, not just the single-project delete route.
+ */
+test("DELETE /auth/account removes the uploaded files for every project the deleted account owned, from disk", async () => {
+  await withServer(async (baseUrl, db, uploadsDir) => {
+    const email = `upload-account-delete-${randomUUID()}@example.com`;
+    const token = await signup(baseUrl, email);
+    const user = findUserByEmail(db, email)!;
+
+    const spec: ProductSpec = {
+      summary: "test",
+      personas: [],
+      roles: ["Admin"],
+      entities: [{ name: "Applicant", fields: [{ name: "resume", type: "file", required: false }] }],
+      screens: [],
+      assumptions: [],
+      openQuestions: [],
+    };
+    const projectId = randomUUID();
+    insertProject(db, { id: projectId, ownerId: user.id, name: "Hiring", description: "test", spec });
+    diffAndMigrate(db, projectId, undefined, spec);
+    markProjectBuilt(db, projectId);
+
+    const formData = new FormData();
+    formData.append("file", new File(["%PDF-fake"], "resume.pdf", { type: "application/pdf" }));
+    const uploadRes = await fetch(`${baseUrl}/api/projects/${projectId}/entities/Applicant/fields/resume/upload`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${token}` },
+      body: formData,
+    });
+    const { file } = (await uploadRes.json()) as { file: { url: string } };
+    const filePathOnDisk = path.join(uploadsDir, file.url.replace(/^\/api\/uploads\//, ""));
+    assert.ok(existsSync(filePathOnDisk));
+
+    const deleteRes = await fetch(`${baseUrl}/api/auth/account`, { method: "DELETE", headers: authHeaders(token) });
+    assert.equal(deleteRes.status, 204);
+
+    assert.equal(existsSync(filePathOnDisk), false, "deleting the account must remove the uploaded files for every project it owned");
+    assert.equal(existsSync(path.join(uploadsDir, projectId)), false);
   });
 });
 

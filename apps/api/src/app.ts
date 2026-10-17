@@ -81,7 +81,7 @@ export function createApp(
    * legitimate upload or record read handed out.
    */
   app.use("/api/uploads", express.static(uploadsDir));
-  app.use("/api", createAuthRouter(db, whatsappManager, resolvedEmailSender, activePipelines));
+  app.use("/api", createAuthRouter(db, whatsappManager, resolvedEmailSender, activePipelines, uploadsDir));
   app.use("/api", createProjectsRouter(db, provider, whatsappManager, activePipelines, uploadsDir));
 
   if (staticDir && existsSync(staticDir)) {

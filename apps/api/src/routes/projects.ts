@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { mkdirSync } from "node:fs";
+import { rm } from "node:fs/promises";
 import path from "node:path";
 import { Router, type Request, type Response, type NextFunction } from "express";
 import multer, { MulterError } from "multer";
@@ -664,6 +665,21 @@ function safeFileExtension(originalName: string): string {
   return /^\.[a-z0-9]{1,10}$/.test(ext) ? ext : "";
 }
 
+/**
+ * Every uploaded file for a project lives under uploadsDir/{projectId}/...
+ * (see createUploadMiddleware's own destination callback below) -- a
+ * project-scoped directory, so removing it wholesale on project deletion
+ * is both correct and simple: no need to parse any individual record's
+ * file-field value or know which fields were ever "file" type. Best-
+ * effort: a project that never had a file field (the common case) has no
+ * such directory at all, and recursive+force makes that -- along with any
+ * other already-gone-for-whatever-reason case -- a silent no-op rather
+ * than an error that would block the rest of deletion.
+ */
+export async function deleteProjectUploads(uploadsDir: string, projectId: string): Promise<void> {
+  await rm(path.join(uploadsDir, projectId), { recursive: true, force: true }).catch(() => {});
+}
+
 function createUploadMiddleware(uploadsDir: string) {
   const storage = multer.diskStorage({
     destination: (req, _file, cb) => {
@@ -1029,6 +1045,7 @@ export function createProjectsRouter(
       try {
         await whatsapp.disconnect(project.id).catch(() => {});
         deleteProject(db, project.id);
+        await deleteProjectUploads(uploadsDir, project.id);
       } finally {
         activePipelines.delete(project.id);
       }

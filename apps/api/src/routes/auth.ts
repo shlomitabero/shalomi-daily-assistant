@@ -28,6 +28,7 @@ import { extractBearerToken, requireAuth } from "../auth/middleware.js";
 import { formatValidationError, HttpError } from "../httpError.js";
 import type { EmailSender } from "../email.js";
 import type { WhatsAppWebManager } from "../whatsappWeb.js";
+import { deleteProjectUploads } from "./projects.js";
 
 const CredentialsSchema = z.object({
   // Emails are case-insensitive in practice (RFC 5321 makes the local part
@@ -113,6 +114,7 @@ export function createAuthRouter(
   whatsapp: WhatsAppWebManager,
   emailSender: EmailSender,
   activePipelines: Set<string>,
+  uploadsDir: string,
 ): Router {
   const router = Router();
 
@@ -404,6 +406,7 @@ export function createAuthRouter(
           // re-check or re-add/remove per iteration.
           await whatsapp.disconnect(projectId).catch(() => {});
           deleteProject(db, projectId);
+          await deleteProjectUploads(uploadsDir, projectId);
         }
         removeAllCollaborationsForUser(db, req.userId!);
         deleteUser(db, req.userId!);
