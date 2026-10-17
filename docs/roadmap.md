@@ -29330,3 +29330,19 @@ No server-side security hole existed (`requireProjectWriteAccess` already blocke
 **Verification**: full `npm run build` clean, `@forge/web` 956/956 (955 baseline + 1 new). Only `apps/web` changed this round, so `@forge/db`/`@forge/api` weren't re-run (per this file's own established convention: one workspace changed → that workspace's full suite + the full build is sufficient). Commit `6c82f6b`.
 
 **Status**: shipped and pushed.
+
+### Round 673: matchesSearch missing its fifth branch -- the "file" field type
+
+Still no genuine reply from שלומי. Per the routine's own "don't fixate on one feature more than 3-4 rounds" convention, this round deliberately steered away from RBAC/readOnly (two consecutive rounds there already) with a fresh general-purpose Explore survey.
+
+**The bug**: `matchesSearch` (`apps/web/src/entityFormatting.ts`) has an explicit branch converting a field's raw stored value into the exact display string the table cell actually shows, before matching the search query against it -- for `enum`, `relation`, `number`, `date` (rounds ~415/475), and `boolean` (round 671, the fourth and most recent such fix). It never got a branch for `"file"`, a field type added in a *later* round than those fixes, so it fell through to the generic `String(value)` fallback -- the raw JSON upload descriptor (`{"url":...,"name":...,"size":...,"mimeType":...}`), not the filename `fieldDisplayValue` already shows for this exact same field type (`entityFormatting.ts`'s own `field.type === "file"` branch there). This is literally the same bug class fixed four times already, just never ported to the fifth field type that came along afterward -- exactly the "audit that fixes one type at a time never guarantees every relevant type got covered" lesson this routine's own accumulated notes call out from round 671's own boolean fix.
+
+Two concrete failure modes: **over-matching** -- searching "uploads" (the upload URL's own path prefix, `/api/uploads/<projectId>/<entityName>/<file>` -- so even the entity's own name was a false-positive hit), a mimetype like "pdf", or the raw byte size matched every record with a file, none of which shows any of that on screen. **Under-matching** -- a filename containing a `"` or `\` is JSON-escaped in the raw stored string, so typing back the *exact* unescaped name visibly shown on screen could still miss.
+
+**The fix**: added a `field.type === "file"` branch to `matchesSearch`'s ternary chain, using `parseFileFieldValue(value)?.name ?? ""` -- mirroring `fieldDisplayValue`'s identical existing branch exactly. Checked whether `codegen.ts` (the exported/standalone app generator) needed the matching port, per this file's own standing rule to verify rather than assume: it doesn't -- `codegen.ts`'s own `fieldDisplayValue` has no `file` branch either, confirming the `"file"` field type is a Forge-AI-platform-only feature never generated into exported apps at all, so there is nothing there to fix.
+
+**The tests**: `entityFormatting.test.ts` -- 2 new (the exact displayed filename matches; the raw url/mimeType/byte-size never do; an empty/no-file-chosen value matches nothing).
+
+**Verification**: full `npm run build` clean, `@forge/web` 958/958 (956 baseline + 2 new). Only `apps/web` changed, so `@forge/db`/`@forge/api` weren't re-run. Commit `e55ad96`.
+
+**Status**: shipped and pushed.
