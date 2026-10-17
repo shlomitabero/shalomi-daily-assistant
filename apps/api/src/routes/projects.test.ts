@@ -245,9 +245,12 @@ const recordCreatedRule = {
   trigger: "record_created" as const,
   fieldName: null,
   fieldValue: null,
+  scheduleTimeUtc: null,
+  actionType: "send_whatsapp" as const,
   toMode: "static" as const,
   toNumber: "+15551234567",
   toField: null,
+  webhookUrl: null,
 };
 
 test("findAutomationRuleInvariantViolation accepts a valid record_created + static-destination rule", () => {
@@ -260,9 +263,12 @@ test("findAutomationRuleInvariantViolation accepts a valid field_equals + field-
       trigger: "field_equals",
       fieldName: "status",
       fieldValue: "Delivered",
+      scheduleTimeUtc: null,
+      actionType: "send_whatsapp",
       toMode: "field",
       toNumber: null,
       toField: "customerPhone",
+      webhookUrl: null,
     }),
     null,
   );
@@ -292,4 +298,44 @@ test("findAutomationRuleInvariantViolation rejects toMode:static with no toNumbe
 test("findAutomationRuleInvariantViolation rejects toMode:field with no toField, e.g. after a toMode-only PATCH on a static rule", () => {
   const afterToModeOnlyPatch = { ...recordCreatedRule, toMode: "field" as const };
   assert.match(findAutomationRuleInvariantViolation(afterToModeOnlyPatch) ?? "", /toField is required/);
+});
+
+test("findAutomationRuleInvariantViolation accepts a valid webhook rule with no toNumber/toField at all", () => {
+  assert.equal(
+    findAutomationRuleInvariantViolation({
+      ...recordCreatedRule,
+      actionType: "webhook",
+      toNumber: null,
+      toField: null,
+      webhookUrl: "https://hooks.example.com/forge",
+    }),
+    null,
+  );
+});
+
+test("findAutomationRuleInvariantViolation rejects actionType:webhook with no webhookUrl", () => {
+  assert.match(
+    findAutomationRuleInvariantViolation({ ...recordCreatedRule, actionType: "webhook", webhookUrl: null }) ?? "",
+    /webhookUrl is required/,
+  );
+});
+
+test("findAutomationRuleInvariantViolation rejects actionType:webhook with a webhookUrl pointing at a blocked local/private host", () => {
+  assert.match(
+    findAutomationRuleInvariantViolation({ ...recordCreatedRule, actionType: "webhook", webhookUrl: "http://127.0.0.1/abc" }) ?? "",
+    /local\/private address/,
+  );
+});
+
+test("findAutomationRuleInvariantViolation never requires toNumber/toField for a webhook rule, even with toMode:field and no toField", () => {
+  assert.equal(
+    findAutomationRuleInvariantViolation({
+      ...recordCreatedRule,
+      actionType: "webhook",
+      toMode: "field",
+      toField: null,
+      webhookUrl: "https://hooks.example.com/forge",
+    }),
+    null,
+  );
 });

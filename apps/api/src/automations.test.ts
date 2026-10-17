@@ -16,7 +16,15 @@ import {
   openDatabase,
   updateAutomationRule,
 } from "@forge/db";
-import { fireScheduledRule, interpolateTemplate, isScheduledRuleDue, matchesTrigger, runAutomationsForRecordChange, runScheduledAutomationsCheck } from "./automations.js";
+import {
+  fireScheduledRule,
+  interpolateTemplate,
+  isAllowedWebhookUrl,
+  isScheduledRuleDue,
+  matchesTrigger,
+  runAutomationsForRecordChange,
+  runScheduledAutomationsCheck,
+} from "./automations.js";
 import type { WhatsAppConnectionState, WhatsAppSendResult, WhatsAppWebManager } from "./whatsappWeb.js";
 
 const orderEntity: Entity = {
@@ -581,4 +589,184 @@ test("runScheduledAutomationsCheck fires exactly the rules that are due right no
   assert.equal(getAutomationRule(db, "proj1", due.id)!.lastStatus, "sent");
   assert.equal(getAutomationRule(db, "proj2", notYetDue.id)!.lastStatus, null, "not due yet -- must be untouched");
   assert.equal(getAutomationRule(db, "proj1", disabledDue.id)!.lastStatus, null, "disabled -- must never be considered even though its time has passed");
+});
+
+test("isAllowedWebhookUrl accepts a real public http(s) URL and rejects non-http(s) schemes, malformed URLs, and local/private hosts", () => {
+  assert.equal(isAllowedWebhookUrl("https://hooks.example.com/abc"), true);
+  assert.equal(isAllowedWebhookUrl("http://hooks.example.com/abc"), true);
+  assert.equal(isAllowedWebhookUrl("ftp://hooks.example.com/abc"), false, "non-http(s) schemes must be rejected");
+  assert.equal(isAllowedWebhookUrl("not a url"), false, "a malformed URL must be rejected, not throw");
+  assert.equal(isAllowedWebhookUrl("http://localhost/abc"), false);
+  assert.equal(isAllowedWebhookUrl("http://127.0.0.1/abc"), false);
+  assert.equal(isAllowedWebhookUrl("http://169.254.169.254/latest/meta-data/"), false, "the cloud instance-metadata IP specifically must be blocked");
+  assert.equal(isAllowedWebhookUrl("http://10.0.0.5/abc"), false);
+  assert.equal(isAllowedWebhookUrl("http://172.16.0.5/abc"), false);
+  assert.equal(isAllowedWebhookUrl("http://192.168.1.5/abc"), false);
+  assert.equal(isAllowedWebhookUrl("http://[::1]/abc"), false);
+});
+
+/**
+ * New: the "webhook" action type -- fireRule's own branch, reached through
+ * the real event-driven path (runAutomationsForRecordChange), not a direct
+ * call (fireRule itself isn't exported). Mocks the global fetch this
+ * process-wide function calls, the same convention apps/web's own tests
+ * already use for client-side fetch, just server-side here.
+ */
+test("runAutomationsForRecordChange posts a JSON payload to the webhook URL and records a sent outcome on a 2xx response", async () => {
+  const { db, project } = setupProject();
+  const rule = insertAutomationRule(db, {
+    projectId: project.id,
+    entityName: "Order",
+    trigger: "record_created",
+    actionType: "webhook",
+    webhookUrl: "https://hooks.example.com/forge",
+    toMode: "static",
+    messageTemplate: "New order from {{customerName}}!",
+  });
+  const record = { id: 1, customerName: "Dana Levi", customerPhone: "972501234567", status: "New" };
+
+  const originalFetch = globalThis.fetch;
+  const calls: { url: string; init: RequestInit }[] = [];
+  globalThis.fetch = (async (url: string, init?: RequestInit) => {
+    calls.push({ url, init: init! });
+    return new Response(null, { status: 200 });
+  }) as typeof fetch;
+  try {
+    await runAutomationsForRecordChange(db, {} as WhatsAppWebManager, project, orderEntity, "created", record, new Set());
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0]!.url, "https://hooks.example.com/forge");
+  assert.equal(calls[0]!.init.method, "POST");
+  const payload = JSON.parse(calls[0]!.init.body as string);
+  assert.equal(payload.event, "record_created");
+  assert.equal(payload.entity, "Order");
+  assert.equal(payload.message, "New order from Dana Levi!");
+  assert.deepEqual(payload.record, record);
+  assert.equal(payload.project.id, project.id);
+  assert.equal(getAutomationRule(db, project.id, rule.id)!.lastStatus, "sent");
+});
+
+test("runAutomationsForRecordChange records a failed outcome when the webhook responds with a non-2xx status, without throwing", async () => {
+  const { db, project } = setupProject();
+  const rule = insertAutomationRule(db, {
+    projectId: project.id,
+    entityName: "Order",
+    trigger: "record_created",
+    actionType: "webhook",
+    webhookUrl: "https://hooks.example.com/forge",
+    toMode: "static",
+    messageTemplate: "New order!",
+  });
+  const record = { id: 1, customerName: "Dana Levi", customerPhone: "972501234567", status: "New" };
+
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async () => new Response(null, { status: 500 })) as typeof fetch;
+  try {
+    await runAutomationsForRecordChange(db, {} as WhatsAppWebManager, project, orderEntity, "created", record, new Set());
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+
+  const after = getAutomationRule(db, project.id, rule.id)!;
+  assert.equal(after.lastStatus, "failed");
+  assert.match(after.lastError ?? "", /500/);
+});
+
+test("runAutomationsForRecordChange records a failed outcome when the webhook request itself throws (network error/timeout), without throwing", async () => {
+  const { db, project } = setupProject();
+  const rule = insertAutomationRule(db, {
+    projectId: project.id,
+    entityName: "Order",
+    trigger: "record_created",
+    actionType: "webhook",
+    webhookUrl: "https://hooks.example.com/forge",
+    toMode: "static",
+    messageTemplate: "New order!",
+  });
+  const record = { id: 1, customerName: "Dana Levi", customerPhone: "972501234567", status: "New" };
+
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async () => {
+    throw new Error("network down");
+  }) as typeof fetch;
+  try {
+    await runAutomationsForRecordChange(db, {} as WhatsAppWebManager, project, orderEntity, "created", record, new Set());
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+
+  const after = getAutomationRule(db, project.id, rule.id)!;
+  assert.equal(after.lastStatus, "failed");
+  assert.match(after.lastError ?? "", /network down/);
+});
+
+test("runAutomationsForRecordChange rejects (records failed, never calls fetch) a webhook rule whose URL points at a blocked local/private host", async () => {
+  const { db, project } = setupProject();
+  // Bypasses the route-level isAllowedWebhookUrl check on purpose (direct DB
+  // insert, not through the validated HTTP route) to prove fireRule's own
+  // runtime check is a real, independent guard -- not just a client-facing
+  // validation message that could be skipped by any other write path.
+  const rule = insertAutomationRule(db, {
+    projectId: project.id,
+    entityName: "Order",
+    trigger: "record_created",
+    actionType: "webhook",
+    webhookUrl: "http://169.254.169.254/latest/meta-data/",
+    toMode: "static",
+    messageTemplate: "New order!",
+  });
+  const record = { id: 1, customerName: "Dana Levi", customerPhone: "972501234567", status: "New" };
+
+  const originalFetch = globalThis.fetch;
+  let fetchCalled = false;
+  globalThis.fetch = (async () => {
+    fetchCalled = true;
+    return new Response(null, { status: 200 });
+  }) as typeof fetch;
+  try {
+    await runAutomationsForRecordChange(db, {} as WhatsAppWebManager, project, orderEntity, "created", record, new Set());
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+
+  assert.equal(fetchCalled, false, "a blocked host must never actually be fetched");
+  const after = getAutomationRule(db, project.id, rule.id)!;
+  assert.equal(after.lastStatus, "failed");
+});
+
+test("fireScheduledRule's webhook action sends messageTemplate verbatim with a null record/entity in the payload (there's no triggering record)", async () => {
+  const { db, project } = setupProject();
+  const rule = insertAutomationRule(db, {
+    projectId: project.id,
+    entityName: "Order",
+    trigger: "schedule",
+    scheduleTimeUtc: "09:00",
+    actionType: "webhook",
+    webhookUrl: "https://hooks.example.com/forge",
+    toMode: "static",
+    messageTemplate: "Good morning! {{anything}}",
+  });
+
+  const originalFetch = globalThis.fetch;
+  const calls: { url: string; init: RequestInit }[] = [];
+  globalThis.fetch = (async (url: string, init?: RequestInit) => {
+    calls.push({ url, init: init! });
+    return new Response(null, { status: 200 });
+  }) as typeof fetch;
+  try {
+    await fireScheduledRule(db, {} as WhatsAppWebManager, project, rule);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+
+  assert.equal(calls.length, 1);
+  const payload = JSON.parse(calls[0]!.init.body as string);
+  assert.equal(payload.event, "schedule");
+  assert.equal(payload.entity, null);
+  assert.equal(payload.record, null);
+  assert.equal(payload.message, "Good morning! {{anything}}", "no record to interpolate {{anything}} from, so it must be left exactly as typed");
+  assert.equal(getAutomationRule(db, project.id, rule.id)!.lastStatus, "sent");
 });

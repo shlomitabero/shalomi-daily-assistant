@@ -286,3 +286,69 @@ test("listEnabledScheduledRules returns only enabled schedule-trigger rules, acr
   assert.ok(!rules.some((r) => r.id === disabledSchedule.id));
   assert.ok(rules.every((r) => r.trigger === "schedule" && r.enabled));
 });
+
+test("insertAutomationRule supports actionType 'webhook' with a webhookUrl, and leaves it null for a send_whatsapp rule", () => {
+  const db = openDatabase(":memory:");
+  ensureAutomationRulesTable(db);
+  const webhookRule = insertAutomationRule(
+    db,
+    baseRule({ actionType: "webhook", webhookUrl: "https://example.com/hook", toField: null, toNumber: null }),
+  );
+  assert.equal(webhookRule.actionType, "webhook");
+  assert.equal(webhookRule.webhookUrl, "https://example.com/hook");
+
+  const whatsappRule = insertAutomationRule(db, baseRule());
+  assert.equal(whatsappRule.webhookUrl, null);
+});
+
+test("updateAutomationRule can switch a rule's actionType and set/clear webhookUrl", () => {
+  const db = openDatabase(":memory:");
+  ensureAutomationRulesTable(db);
+  const rule = insertAutomationRule(db, baseRule());
+  const switched = updateAutomationRule(db, "proj1", rule.id, { actionType: "webhook", webhookUrl: "https://example.com/hook" });
+  assert.equal(switched.actionType, "webhook");
+  assert.equal(switched.webhookUrl, "https://example.com/hook");
+
+  const clearedBack = updateAutomationRule(db, "proj1", rule.id, { actionType: "send_whatsapp", webhookUrl: null });
+  assert.equal(clearedBack.actionType, "send_whatsapp");
+  assert.equal(clearedBack.webhookUrl, null);
+});
+
+/** Mirrors the identical additive-migration test for scheduleTimeUtc/scheduleDaysOfWeek above, for the webhookUrl column. */
+test("ensureAutomationRulesTable adds webhookUrl to a pre-existing table from an older app version, leaving existing rows intact, and is idempotent", () => {
+  const db = openDatabase(":memory:");
+  db.exec(`
+    CREATE TABLE automation_rules (
+      id TEXT PRIMARY KEY,
+      projectId TEXT NOT NULL,
+      entityName TEXT NOT NULL,
+      trigger TEXT NOT NULL,
+      fieldName TEXT,
+      fieldValue TEXT,
+      actionType TEXT NOT NULL,
+      toMode TEXT NOT NULL,
+      toNumber TEXT,
+      toField TEXT,
+      messageTemplate TEXT NOT NULL,
+      enabled INTEGER NOT NULL DEFAULT 1,
+      lastTriggeredAt TEXT,
+      lastStatus TEXT,
+      lastError TEXT,
+      createdAt TEXT NOT NULL,
+      updatedAt TEXT NOT NULL
+    )
+  `);
+  db.prepare(
+    `INSERT INTO automation_rules (id, projectId, entityName, trigger, fieldName, fieldValue, actionType, toMode, toNumber, toField, messageTemplate, enabled, createdAt, updatedAt)
+     VALUES ('old-rule', 'proj1', 'Order', 'field_equals', 'status', 'Delivered', 'send_whatsapp', 'field', NULL, 'customerPhone', 'Hi!', 1, '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z')`,
+  ).run();
+
+  ensureAutomationRulesTable(db);
+
+  const oldRule = getAutomationRule(db, "proj1", "old-rule")!;
+  assert.equal(oldRule.webhookUrl, null);
+  assert.equal(oldRule.fieldName, "status", "the migration must not disturb an existing row's other columns");
+
+  assert.doesNotThrow(() => ensureAutomationRulesTable(db));
+  assert.equal(getAutomationRule(db, "proj1", "old-rule")!.fieldName, "status");
+});

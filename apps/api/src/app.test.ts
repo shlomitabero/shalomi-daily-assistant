@@ -7672,3 +7672,67 @@ test("creating a 'schedule' automation rule requires scheduleTimeUtc and toMode:
     assert.equal(patchRes.status, 400);
   });
 });
+
+/**
+ * The real HTTP route's own validation for the new "webhook" automation
+ * action type: requires a real webhookUrl, rejects one pointing at a
+ * blocked local/private host, and doesn't require toNumber/toField at
+ * all (there's no WhatsApp destination to configure for a webhook).
+ */
+test("creating a 'webhook' automation rule requires a real, non-local webhookUrl, and doesn't require a WhatsApp destination", async () => {
+  await withServer(async (baseUrl, db) => {
+    const email = `webhook-automation-${randomUUID()}@example.com`;
+    const token = await signup(baseUrl, email);
+    const owner = findUserByEmail(db, email)!;
+
+    const spec: ProductSpec = {
+      summary: "test",
+      personas: [],
+      roles: ["Admin"],
+      entities: [{ name: "Order", fields: [{ name: "status", type: "text", required: true }] }],
+      screens: [],
+      assumptions: [],
+      openQuestions: [],
+    };
+    const projectId = randomUUID();
+    insertProject(db, { id: projectId, ownerId: owner.id, name: "Orders", description: "test", spec });
+    diffAndMigrate(db, projectId, undefined, spec);
+    markProjectBuilt(db, projectId);
+
+    const baseBody = { trigger: "record_created", actionType: "webhook", toMode: "static", messageTemplate: "New order!" };
+
+    const missingUrl = await fetch(`${baseUrl}/api/projects/${projectId}/entities/Order/automations`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify(baseBody),
+    });
+    assert.equal(missingUrl.status, 400);
+    assert.equal(((await missingUrl.json()) as { code?: string }).code, "VALIDATION_ERROR");
+
+    const blockedHost = await fetch(`${baseUrl}/api/projects/${projectId}/entities/Order/automations`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ ...baseBody, webhookUrl: "http://169.254.169.254/latest/meta-data/" }),
+    });
+    assert.equal(blockedHost.status, 400, "a webhook pointed at the cloud instance-metadata IP must be rejected");
+
+    const goodRes = await fetch(`${baseUrl}/api/projects/${projectId}/entities/Order/automations`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ ...baseBody, webhookUrl: "https://hooks.example.com/forge" }),
+    });
+    assert.equal(goodRes.status, 201, "no toNumber/toField given, and none should be required for a webhook action");
+    const { rule } = (await goodRes.json()) as { rule: { id: string; webhookUrl: string; actionType: string } };
+    assert.equal(rule.actionType, "webhook");
+    assert.equal(rule.webhookUrl, "https://hooks.example.com/forge");
+
+    // A PATCH that would clear webhookUrl on an existing webhook rule must
+    // be rejected the same way creation is.
+    const patchRes = await fetch(`${baseUrl}/api/projects/${projectId}/automations/${rule.id}`, {
+      method: "PATCH",
+      headers: authHeaders(token),
+      body: JSON.stringify({ webhookUrl: null }),
+    });
+    assert.equal(patchRes.status, 400);
+  });
+});

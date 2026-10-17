@@ -5,6 +5,7 @@ import {
   deleteAutomationRule,
   listAutomationRules,
   updateAutomationRule,
+  type AutomationActionType,
   type AutomationRuleView,
   type AutomationToMode,
   type AutomationTrigger,
@@ -58,6 +59,8 @@ export function AutomationsPanel({
   // string, so the common case doesn't bloat every stored rule with a
   // redundant value meaning the same thing as leaving it unset.
   const [scheduleDays, setScheduleDays] = useState<number[]>([0, 1, 2, 3, 4, 5, 6]);
+  const [actionType, setActionType] = useState<AutomationActionType>("send_whatsapp");
+  const [webhookUrl, setWebhookUrl] = useState("");
 
   // A schedule rule has no triggering record at all, so there's nothing a
   // toMode:"field" destination could ever read from (the server rejects
@@ -135,8 +138,9 @@ export function AutomationsPanel({
     if (!selectedEntity || !messageTemplate.trim()) return;
     if (trigger === "field_equals" && (!fieldName || !fieldValue.trim())) return;
     if (trigger === "schedule" && (!scheduleTimeUtc || scheduleDays.length === 0)) return;
-    if (toMode === "field" && !toField) return;
-    if (toMode === "static" && !toNumber.trim()) return;
+    if (actionType === "webhook" && !webhookUrl.trim()) return;
+    if (actionType === "send_whatsapp" && toMode === "field" && !toField) return;
+    if (actionType === "send_whatsapp" && toMode === "static" && !toNumber.trim()) return;
     setCreateBusy(true);
     setError(null);
     try {
@@ -147,15 +151,17 @@ export function AutomationsPanel({
         fieldValue: trigger === "field_equals" ? fieldValue.trim() : undefined,
         scheduleTimeUtc: trigger === "schedule" ? scheduleTimeUtc : undefined,
         scheduleDaysOfWeek: trigger === "schedule" && !everyDay ? [...scheduleDays].sort().join(",") : undefined,
-        actionType: "send_whatsapp",
+        actionType,
         toMode,
-        toField: toMode === "field" ? toField : undefined,
-        toNumber: toMode === "static" ? toNumber.trim() : undefined,
+        toField: actionType === "send_whatsapp" && toMode === "field" ? toField : undefined,
+        toNumber: actionType === "send_whatsapp" && toMode === "static" ? toNumber.trim() : undefined,
+        webhookUrl: actionType === "webhook" ? webhookUrl.trim() : undefined,
         messageTemplate: messageTemplate.trim(),
       });
       setRules((prev) => [...(prev ?? []), rule]);
       setFieldValue("");
       setToNumber("");
+      setWebhookUrl("");
       setMessageTemplate("");
     } catch (err) {
       setError((err as Error).message);
@@ -254,6 +260,9 @@ export function AutomationsPanel({
   }
 
   function describeDestination(rule: AutomationRuleView): string {
+    if (rule.actionType === "webhook") {
+      return t("automations.rule.callsWebhook", { url: rule.webhookUrl ?? "" });
+    }
     const destination =
       rule.toMode === "field"
         ? t("automations.rule.sendsField", { field: fieldLabel(rule, rule.toField) })
@@ -414,34 +423,57 @@ export function AutomationsPanel({
             </>
           )}
 
-          {trigger !== "schedule" && (
-            <label>
-              {t("automations.toMode.label")}
-              <select value={toMode} onChange={(e) => setToMode(e.target.value as AutomationToMode)}>
-                <option value="field">{t("automations.toMode.field")}</option>
-                <option value="static">{t("automations.toMode.static")}</option>
-              </select>
-            </label>
-          )}
-
-          {toMode === "field" && selectedEntity && phoneFields.length > 0 ? (
-            <select value={toField} onChange={(e) => setToField(e.target.value)} aria-label={t("automations.toField.placeholder")}>
-              {phoneFields.map((f) => (
-                <option key={f.name} value={f.name}>
-                  {f.label ?? f.name}
-                </option>
-              ))}
+          <label>
+            {t("automations.actionType.label")}
+            <select value={actionType} onChange={(e) => setActionType(e.target.value as AutomationActionType)}>
+              <option value="send_whatsapp">{t("automations.actionType.sendWhatsapp")}</option>
+              <option value="webhook">{t("automations.actionType.webhook")}</option>
             </select>
-          ) : toMode === "field" && selectedEntity ? (
-            <p role="alert">{t("automations.toField.none")}</p>
+          </label>
+
+          {actionType === "webhook" ? (
+            <>
+              <input
+                type="url"
+                placeholder={t("automations.webhookUrl.placeholder")}
+                aria-label={t("automations.webhookUrl.placeholder")}
+                value={webhookUrl}
+                onChange={(e) => setWebhookUrl(e.target.value)}
+              />
+              <p className="muted small">{t("automations.webhookUrl.hint")}</p>
+            </>
           ) : (
-            <input
-              type="text"
-              placeholder={t("automations.toNumber.placeholder")}
-              aria-label={t("automations.toNumber.placeholder")}
-              value={toNumber}
-              onChange={(e) => setToNumber(e.target.value)}
-            />
+            <>
+              {trigger !== "schedule" && (
+                <label>
+                  {t("automations.toMode.label")}
+                  <select value={toMode} onChange={(e) => setToMode(e.target.value as AutomationToMode)}>
+                    <option value="field">{t("automations.toMode.field")}</option>
+                    <option value="static">{t("automations.toMode.static")}</option>
+                  </select>
+                </label>
+              )}
+
+              {toMode === "field" && selectedEntity && phoneFields.length > 0 ? (
+                <select value={toField} onChange={(e) => setToField(e.target.value)} aria-label={t("automations.toField.placeholder")}>
+                  {phoneFields.map((f) => (
+                    <option key={f.name} value={f.name}>
+                      {f.label ?? f.name}
+                    </option>
+                  ))}
+                </select>
+              ) : toMode === "field" && selectedEntity ? (
+                <p role="alert">{t("automations.toField.none")}</p>
+              ) : (
+                <input
+                  type="text"
+                  placeholder={t("automations.toNumber.placeholder")}
+                  aria-label={t("automations.toNumber.placeholder")}
+                  value={toNumber}
+                  onChange={(e) => setToNumber(e.target.value)}
+                />
+              )}
+            </>
           )}
 
           <label>

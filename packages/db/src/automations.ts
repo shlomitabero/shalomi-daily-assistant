@@ -13,7 +13,7 @@ import { NotFoundError } from "./repository.js";
  * an in-app notification) is an additive change, not a rewrite.
  */
 export type AutomationTrigger = "record_created" | "field_equals" | "schedule";
-export type AutomationActionType = "send_whatsapp";
+export type AutomationActionType = "send_whatsapp" | "webhook";
 export type AutomationToMode = "static" | "field";
 export type AutomationLastStatus = "sent" | "failed" | null;
 
@@ -31,11 +31,13 @@ export interface AutomationRule {
   /** Only meaningful when trigger is "schedule". Comma-separated day-of-week numbers (0 = Sunday .. 6 = Saturday, matching Date.prototype.getUTCDay()); null or empty means every day. */
   scheduleDaysOfWeek: string | null;
   actionType: AutomationActionType;
-  /** "static" sends to toNumber; "field" reads the destination number from the triggering record's own toField. */
+  /** "static" sends to toNumber; "field" reads the destination number from the triggering record's own toField. Meaningless (always "static", ignored) for actionType "webhook" -- stored anyway since the column itself has never been nullable. */
   toMode: AutomationToMode;
   toNumber: string | null;
   toField: string | null;
-  /** May reference the record's own fields as {{fieldName}} placeholders, interpolated at send time. */
+  /** Required when actionType is "webhook"; null otherwise. The outbound URL the rule POSTs a JSON payload to -- see apps/api/src/automations.ts's own fireWebhookAction for the exact payload shape and the SSRF-hardening host checks applied before every request. */
+  webhookUrl: string | null;
+  /** May reference the record's own fields as {{fieldName}} placeholders, interpolated at send time. Sent verbatim as the webhook payload's own "message" field for actionType "webhook" too. */
   messageTemplate: string;
   enabled: boolean;
   lastTriggeredAt: string | null;
@@ -81,6 +83,9 @@ export function ensureAutomationRulesTable(db: ForgeDatabase): void {
   if (!columns.includes("scheduleDaysOfWeek")) {
     db.exec("ALTER TABLE automation_rules ADD COLUMN scheduleDaysOfWeek TEXT");
   }
+  if (!columns.includes("webhookUrl")) {
+    db.exec("ALTER TABLE automation_rules ADD COLUMN webhookUrl TEXT");
+  }
 }
 
 function rowToRule(row: Record<string, unknown>): AutomationRule {
@@ -97,6 +102,7 @@ function rowToRule(row: Record<string, unknown>): AutomationRule {
     toMode: row.toMode as AutomationToMode,
     toNumber: (row.toNumber as string | null) ?? null,
     toField: (row.toField as string | null) ?? null,
+    webhookUrl: (row.webhookUrl as string | null) ?? null,
     messageTemplate: row.messageTemplate as string,
     enabled: Boolean(row.enabled),
     lastTriggeredAt: (row.lastTriggeredAt as string | null) ?? null,
@@ -121,6 +127,7 @@ export function insertAutomationRule(
     toMode: AutomationToMode;
     toNumber?: string | null;
     toField?: string | null;
+    webhookUrl?: string | null;
     messageTemplate: string;
   },
 ): AutomationRule {
@@ -128,8 +135,8 @@ export function insertAutomationRule(
   const now = new Date().toISOString();
   db.prepare(
     `INSERT INTO automation_rules
-       (id, projectId, entityName, trigger, fieldName, fieldValue, scheduleTimeUtc, scheduleDaysOfWeek, actionType, toMode, toNumber, toField, messageTemplate, enabled, lastTriggeredAt, lastStatus, lastError, createdAt, updatedAt)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, NULL, NULL, NULL, ?, ?)`,
+       (id, projectId, entityName, trigger, fieldName, fieldValue, scheduleTimeUtc, scheduleDaysOfWeek, actionType, toMode, toNumber, toField, webhookUrl, messageTemplate, enabled, lastTriggeredAt, lastStatus, lastError, createdAt, updatedAt)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, NULL, NULL, NULL, ?, ?)`,
   ).run(
     id,
     rule.projectId,
@@ -143,6 +150,7 @@ export function insertAutomationRule(
     rule.toMode,
     rule.toNumber ?? null,
     rule.toField ?? null,
+    rule.webhookUrl ?? null,
     rule.messageTemplate,
     now,
     now,
@@ -201,9 +209,11 @@ export function updateAutomationRule(
     fieldValue: string | null;
     scheduleTimeUtc: string | null;
     scheduleDaysOfWeek: string | null;
+    actionType: AutomationActionType;
     toMode: AutomationToMode;
     toNumber: string | null;
     toField: string | null;
+    webhookUrl: string | null;
     messageTemplate: string;
     enabled: boolean;
   }>,
@@ -215,7 +225,7 @@ export function updateAutomationRule(
   const next = { ...existing, ...patch };
   db.prepare(
     `UPDATE automation_rules SET
-       entityName = ?, trigger = ?, fieldName = ?, fieldValue = ?, scheduleTimeUtc = ?, scheduleDaysOfWeek = ?, toMode = ?, toNumber = ?, toField = ?, messageTemplate = ?, enabled = ?, updatedAt = ?
+       entityName = ?, trigger = ?, fieldName = ?, fieldValue = ?, scheduleTimeUtc = ?, scheduleDaysOfWeek = ?, actionType = ?, toMode = ?, toNumber = ?, toField = ?, webhookUrl = ?, messageTemplate = ?, enabled = ?, updatedAt = ?
      WHERE projectId = ? AND id = ?`,
   ).run(
     next.entityName,
@@ -224,9 +234,11 @@ export function updateAutomationRule(
     next.fieldValue,
     next.scheduleTimeUtc,
     next.scheduleDaysOfWeek,
+    next.actionType,
     next.toMode,
     next.toNumber,
     next.toField,
+    next.webhookUrl,
     next.messageTemplate,
     next.enabled ? 1 : 0,
     new Date().toISOString(),

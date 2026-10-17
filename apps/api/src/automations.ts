@@ -167,6 +167,108 @@ export async function runAutomationsForRecordChange(
   }
 }
 
+// Private IPv4 ranges, loopback, link-local (169.254.0.0/16 also covers the
+// AWS/GCP/Azure instance-metadata IP, 169.254.169.254 -- the single most
+// common real-world SSRF target), and the IPv6 loopback/link-local
+// equivalents -- a webhook URL is entirely user-supplied (any project
+// collaborator can type one in), and this server would otherwise make an
+// outbound request to wherever it points, from inside whatever network this
+// process happens to run on. This is a deliberately cheap, hostname/literal-
+// IP-string check, not full SSRF-proofing (no DNS-rebinding protection, no
+// redirect-following check on the response) -- raising the bar against the
+// common case at low complexity, not a guarantee against a determined
+// attacker with DNS control.
+const BLOCKED_WEBHOOK_HOSTNAME_PATTERNS = [
+  /^localhost$/i,
+  /^127\./,
+  /^0\.0\.0\.0$/,
+  /^10\./,
+  /^172\.(1[6-9]|2\d|3[01])\./,
+  /^192\.168\./,
+  /^169\.254\./,
+  /^\[?::1\]?$/,
+  /^\[?fe80:/i,
+  /^\[?fc00:/i,
+  /^\[?fd00:/i,
+];
+
+/** Exported for direct unit testing -- see automations.test.ts. */
+export function isAllowedWebhookUrl(raw: string): boolean {
+  let url: URL;
+  try {
+    url = new URL(raw);
+  } catch {
+    return false;
+  }
+  if (url.protocol !== "http:" && url.protocol !== "https:") return false;
+  const hostname = url.hostname.toLowerCase();
+  return !BLOCKED_WEBHOOK_HOSTNAME_PATTERNS.some((p) => p.test(hostname));
+}
+
+/**
+ * The webhook counterpart to the WhatsApp send in fireRule/fireScheduledRule
+ * below -- posts a small JSON payload describing the event instead of
+ * sending a message. `entity`/`record` are null for a schedule rule (there's
+ * no triggering record at all), in which case messageTemplate is sent
+ * verbatim in the payload's own `message` field, same as fireScheduledRule's
+ * WhatsApp path already does for the identical reason. A 10s timeout keeps a
+ * slow/hanging destination from blocking this automation (and, since this
+ * is fire-and-forget background work either way, from leaking an open
+ * connection) indefinitely.
+ */
+async function fireWebhookAction(
+  db: ForgeDatabase,
+  project: Project,
+  entity: Entity | null,
+  rule: AutomationRule,
+  record: EntityRecord | null,
+): Promise<void> {
+  if (!rule.webhookUrl || !isAllowedWebhookUrl(rule.webhookUrl)) {
+    recordAutomationRun(db, project.id, rule.id, {
+      status: "failed",
+      error: "This rule has no valid webhook URL configured",
+    });
+    return;
+  }
+  const message =
+    entity && record
+      ? interpolateTemplate(
+          rule.messageTemplate,
+          entity,
+          resolveRelationFieldsForTemplate(db, project.id, entity, project.spec.entities, record),
+          isHebrewText(project.description) ? "he" : "en",
+        )
+      : rule.messageTemplate;
+  const payload = {
+    event: rule.trigger,
+    project: { id: project.id, name: project.name },
+    entity: entity?.name ?? null,
+    message,
+    record: record ?? null,
+  };
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 10_000);
+  try {
+    const res = await fetch(rule.webhookUrl, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(payload),
+      signal: controller.signal,
+    });
+    recordAutomationRun(db, project.id, rule.id, {
+      status: res.ok ? "sent" : "failed",
+      error: res.ok ? null : `Webhook responded with status ${res.status}`,
+    });
+  } catch (err) {
+    recordAutomationRun(db, project.id, rule.id, {
+      status: "failed",
+      error: err instanceof Error ? err.message : "Webhook request failed",
+    });
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 async function fireRule(
   db: ForgeDatabase,
   whatsapp: WhatsAppWebManager,
@@ -175,6 +277,10 @@ async function fireRule(
   rule: AutomationRule,
   record: EntityRecord,
 ): Promise<void> {
+  if (rule.actionType === "webhook") {
+    await fireWebhookAction(db, project, entity, rule, record);
+    return;
+  }
   const to = rule.toMode === "static" ? rule.toNumber : rule.toField ? record[rule.toField] : null;
   if (!to || typeof to !== "string" || !to.trim()) {
     recordAutomationRun(db, project.id, rule.id, {
@@ -259,6 +365,10 @@ export async function fireScheduledRule(
   project: Project,
   rule: AutomationRule,
 ): Promise<void> {
+  if (rule.actionType === "webhook") {
+    await fireWebhookAction(db, project, null, rule, null);
+    return;
+  }
   const to = rule.toNumber;
   if (!to || !to.trim()) {
     recordAutomationRun(db, project.id, rule.id, {

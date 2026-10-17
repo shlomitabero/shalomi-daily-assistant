@@ -884,6 +884,7 @@ export function deleteWhatsAppMessage(projectId: string, messageId: string): Pro
 
 export type AutomationTrigger = "record_created" | "field_equals" | "schedule";
 export type AutomationToMode = "static" | "field";
+export type AutomationActionType = "send_whatsapp" | "webhook";
 
 export interface AutomationRuleView {
   id: string;
@@ -893,9 +894,11 @@ export interface AutomationRuleView {
   fieldValue: string | null;
   scheduleTimeUtc: string | null;
   scheduleDaysOfWeek: string | null;
+  actionType: AutomationActionType;
   toMode: AutomationToMode;
   toNumber: string | null;
   toField: string | null;
+  webhookUrl: string | null;
   messageTemplate: string;
   enabled: boolean;
   lastTriggeredAt: string | null;
@@ -916,10 +919,11 @@ export function createAutomationRule(
     fieldValue?: string;
     scheduleTimeUtc?: string;
     scheduleDaysOfWeek?: string;
-    actionType: "send_whatsapp";
+    actionType: AutomationActionType;
     toMode: AutomationToMode;
     toNumber?: string;
     toField?: string;
+    webhookUrl?: string;
     messageTemplate: string;
   },
 ): Promise<{ rule: AutomationRuleView }> {
@@ -939,9 +943,11 @@ export function updateAutomationRule(
     fieldValue: string | null;
     scheduleTimeUtc: string | null;
     scheduleDaysOfWeek: string | null;
+    actionType: AutomationActionType;
     toMode: AutomationToMode;
     toNumber: string | null;
     toField: string | null;
+    webhookUrl: string | null;
     messageTemplate: string;
     enabled: boolean;
   }>,

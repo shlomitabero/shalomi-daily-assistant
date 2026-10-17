@@ -47,6 +47,7 @@ import {
   type ForgeDatabase,
   type AutomationTrigger,
   type AutomationToMode,
+  type AutomationActionType,
 } from "@forge/db";
 import type { SpecProvider } from "@forge/spec-engine";
 import { enhancePrompt, generateSpec, isHebrewText, TEMPLATES } from "@forge/spec-engine";
@@ -60,7 +61,7 @@ import { buildZip } from "../zip.js";
 import { computeBusinessTwin } from "../twin.js";
 import type { WhatsAppWebManager } from "../whatsappWeb.js";
 import { findMatchingRecord } from "../whatsapp.js";
-import { runAutomationsForRecordChange } from "../automations.js";
+import { isAllowedWebhookUrl, runAutomationsForRecordChange } from "../automations.js";
 
 const CreateProjectSchema = z.object({
   description: z.string().min(1, "description is required"),
@@ -108,10 +109,11 @@ const CreateAutomationRuleSchema = z
       .string()
       .regex(SCHEDULE_DAYS_OF_WEEK_PATTERN, "scheduleDaysOfWeek must be comma-separated day numbers 0-6")
       .optional(),
-    actionType: z.literal("send_whatsapp"),
+    actionType: z.enum(["send_whatsapp", "webhook"]),
     toMode: z.enum(["static", "field"]),
     toNumber: z.string().min(1).optional(),
     toField: z.string().min(1).optional(),
+    webhookUrl: z.string().min(1).optional(),
     messageTemplate: z.string().min(1, "messageTemplate is required"),
   })
   .refine((data) => data.trigger !== "field_equals" || (!!data.fieldName && !!data.fieldValue), {
@@ -122,17 +124,25 @@ const CreateAutomationRuleSchema = z
     message: "scheduleTimeUtc is required when trigger is schedule",
     path: ["scheduleTimeUtc"],
   })
-  .refine((data) => data.trigger !== "schedule" || data.toMode === "static", {
+  .refine((data) => data.trigger !== "schedule" || data.actionType === "webhook" || data.toMode === "static", {
     message: "a schedule rule has no triggering record to read a destination field from, so toMode must be static",
     path: ["toMode"],
   })
-  .refine((data) => data.toMode !== "static" || !!data.toNumber, {
+  .refine((data) => data.actionType !== "send_whatsapp" || data.toMode !== "static" || !!data.toNumber, {
     message: "toNumber is required when toMode is static",
     path: ["toNumber"],
   })
-  .refine((data) => data.toMode !== "field" || !!data.toField, {
+  .refine((data) => data.actionType !== "send_whatsapp" || data.toMode !== "field" || !!data.toField, {
     message: "toField is required when toMode is field",
     path: ["toField"],
+  })
+  .refine((data) => data.actionType !== "webhook" || !!data.webhookUrl, {
+    message: "webhookUrl is required when actionType is webhook",
+    path: ["webhookUrl"],
+  })
+  .refine((data) => data.actionType !== "webhook" || !data.webhookUrl || isAllowedWebhookUrl(data.webhookUrl), {
+    message: "webhookUrl must be a real http(s) URL, and can't point at a local/private address",
+    path: ["webhookUrl"],
   });
 
 const UpdateAutomationRuleSchema = z.object({
@@ -145,9 +155,11 @@ const UpdateAutomationRuleSchema = z.object({
     .regex(SCHEDULE_DAYS_OF_WEEK_PATTERN, "scheduleDaysOfWeek must be comma-separated day numbers 0-6")
     .nullable()
     .optional(),
+  actionType: z.enum(["send_whatsapp", "webhook"]).optional(),
   toMode: z.enum(["static", "field"]).optional(),
   toNumber: z.string().min(1).nullable().optional(),
   toField: z.string().min(1).nullable().optional(),
+  webhookUrl: z.string().min(1).nullable().optional(),
   messageTemplate: z.string().min(1).optional(),
   enabled: z.boolean().optional(),
 });
@@ -171,9 +183,11 @@ export function findAutomationRuleInvariantViolation(rule: {
   fieldName: string | null;
   fieldValue: string | null;
   scheduleTimeUtc: string | null;
+  actionType: AutomationActionType;
   toMode: AutomationToMode;
   toNumber: string | null;
   toField: string | null;
+  webhookUrl: string | null;
 }): string | null {
   if (rule.trigger === "field_equals" && !(rule.fieldName && rule.fieldValue)) {
     return "fieldName and fieldValue are required when trigger is field_equals";
@@ -181,13 +195,19 @@ export function findAutomationRuleInvariantViolation(rule: {
   if (rule.trigger === "schedule" && !rule.scheduleTimeUtc) {
     return "scheduleTimeUtc is required when trigger is schedule";
   }
-  if (rule.trigger === "schedule" && rule.toMode !== "static") {
+  if (rule.trigger === "schedule" && rule.actionType !== "webhook" && rule.toMode !== "static") {
     return "a schedule rule has no triggering record to read a destination field from, so toMode must be static";
   }
-  if (rule.toMode === "static" && !rule.toNumber) {
+  if (rule.actionType === "webhook" && !rule.webhookUrl) {
+    return "webhookUrl is required when actionType is webhook";
+  }
+  if (rule.actionType === "webhook" && rule.webhookUrl && !isAllowedWebhookUrl(rule.webhookUrl)) {
+    return "webhookUrl must be a real http(s) URL, and can't point at a local/private address";
+  }
+  if (rule.actionType === "send_whatsapp" && rule.toMode === "static" && !rule.toNumber) {
     return "toNumber is required when toMode is static";
   }
-  if (rule.toMode === "field" && !rule.toField) {
+  if (rule.actionType === "send_whatsapp" && rule.toMode === "field" && !rule.toField) {
     return "toField is required when toMode is field";
   }
   return null;
@@ -2284,6 +2304,7 @@ export function createProjectsRouter(
             toMode: data.toMode,
             toNumber: data.toNumber ?? null,
             toField: data.toField ?? null,
+            webhookUrl: data.webhookUrl ?? null,
             messageTemplate: data.messageTemplate,
           });
           return { status: 201, body: { rule } };
