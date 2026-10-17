@@ -87,5 +87,12 @@ class Settings:
     data_dir: Path = field(default_factory=lambda: Path(os.getenv("DATA_DIR", str(DATA_DIR))))
 
 
+def can_render(s: "Settings") -> bool:
+    """Real media rendering needs the face model and the voice. DRY_RUN only gates *publishing*."""
+    if s.provider == "fal":
+        return bool(s.fal_key and s.lora_url and s.elevenlabs_api_key and s.elevenlabs_voice_id)
+    return bool(s.comfyui_url and s.runway_api_key and s.sync_api_key and s.elevenlabs_voice_id)
+
+
 def settings() -> Settings:
     return Settings()

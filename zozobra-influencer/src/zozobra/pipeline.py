@@ -20,7 +20,7 @@ from . import persona, venue
 from .account_health import TZ, PublishGuard
 from .brain import full_image_prompt, generate_week, load_menu, save, spoken_script
 from .compliance import finalize_caption
-from .config import settings
+from .config import can_render, settings
 from .schemas import DayPlan, Format, WeekPlan
 
 
@@ -187,8 +187,9 @@ def main() -> None:
         for d in plan.days:
             if args.day and d.day.isoformat() != args.day:
                 continue
-            item = produce_day(d, menu, s.data_dir / "renders" / d.day.isoformat(), s.dry_run)
-            print(json.dumps(item["steps"], ensure_ascii=False, indent=2) if s.dry_run else f"{d.day}: queued")
+            render = can_render(s)
+            item = produce_day(d, menu, s.data_dir / "renders" / d.day.isoformat(), not render)
+            print(f"{d.day}: queued" if render else json.dumps(item["steps"], ensure_ascii=False, indent=2))
     elif args.cmd == "approve":
         approve(args.day)
     elif args.cmd == "publish-due":

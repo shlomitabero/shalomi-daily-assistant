@@ -18,7 +18,7 @@ from fastapi import FastAPI, Form, Request
 from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse, Response
 
 from . import jobs, persona
-from .config import ROOT, runtime, save_runtime, settings
+from .config import ROOT, can_render, runtime, save_runtime, settings
 
 def _seed_sample_week() -> None:
     """Fresh install: show the sample week so the panel never opens empty, and install LILO's
@@ -114,8 +114,9 @@ def page(title: str, body: str, path: str = "/", refresh: bool = False) -> HTMLR
     nav = "".join(f'<a href="{h}" class="{"on" if h == path else ""}">{t}</a>' for h, t in NAV)
     running = any(j["status"] == "running" for j in jobs.JOBS.values())
     meta = '<meta http-equiv="refresh" content="8">' if (refresh or running) else ""
-    banner = ('<div class="banner">🧪 מצב בדיקה פעיל (DRY_RUN) — שום דבר לא נשלח לרשתות ולא מחויב קרדיט. '
-              'כשהכול ירוק בלשונית "הקמה", הגדר <code>DRY_RUN=false</code>.</div>') if s.dry_run else ""
+    banner = ('<div class="banner">🧪 מצב בדיקה: שום דבר לא מתפרסם ברשתות. '
+              + ('הפקת סרטונים פעילה (משתמשת בקרדיט של fal ו-ElevenLabs).' if can_render(s) else
+                 'הפקת סרטונים תופעל אחרי אימון הפנים ובחירת הקול.') + '</div>') if s.dry_run else ""
     job_html = "".join(
         f'<div class="row mute"><span class="pill {"ok" if j["status"]=="done" else "bad" if j["status"]=="failed" else "warn"}">'
         f'{STATUS_HE[j["status"]]}</span> {e(j["title"])} · {e(j["started"])}'
@@ -344,7 +345,7 @@ def _produce_job(stem: str, day: str | None) -> str:
     for d in plan.days:
         if day and d.day.isoformat() != day:
             continue
-        produce_day(d, menu, s.data_dir / "renders" / d.day.isoformat(), s.dry_run)
+        produce_day(d, menu, s.data_dir / "renders" / d.day.isoformat(), not can_render(s))
         done.append(d.day.isoformat())
     return "הופקו: " + ", ".join(done)
 
