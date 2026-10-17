@@ -134,6 +134,14 @@ How the pipeline uses them (automatic):
 5. **Food** stays real or generated close-up: food words in a shot send it to the food generator,
    and dishes must exist in `menu.json`.
 
+**Interim method, used before the LoRA exists:** generate LILO on a flat chroma-green background
+and composite her onto the real plate with `scripts/composite_lilo.py`. That script keys out the
+green, removes green spill, colour-matches her to the room, and adds a soft shadow, depth blur and
+shared grain. The room is pixel-for-pixel the real design, so no invented lamps, signs or murals
+can appear. Text-to-image scenes that "describe" the room are not allowed for publishing: they
+invent decor such as calligraphy lanterns, dragon murals or red paper lanterns that ZOZOBRA
+doesn't have.
+
 Tuning: if the room changes too much, lower strength to 0.55. If LILO looks pasted on or too small,
 raise it to 0.7 and describe her position from the plate's `lilo_spots`. If the space isn't open
 yet, set `stage: coming_soon` (panel → המקום). The Brain then writes teaser content and never
