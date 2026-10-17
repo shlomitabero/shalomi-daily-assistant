@@ -51,6 +51,8 @@ sexual content, pretending to be human.
 
 ## Visual signature (locked)
 
+**Official face:** `assets/lilo/R0_anchor.jpg`, approved 2026-10-17. Every render is checked against it.
+
 | Element | Spec |
 |---|---|
 | Face | Warm olive skin with real texture, faint freckles across the nose bridge, almond hazel-green eyes, thick straight dark brows, **beauty mark under the left eye** (the anchor feature for consistency QA), soft cheekbones, full lips, asymmetric half-smile |

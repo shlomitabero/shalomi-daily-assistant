@@ -250,3 +250,4 @@ def test_fresh_install_seeds_sample_week(tmp_path, monkeypatch):
 
     web._seed_sample_week()
     assert (tmp_path / "calendars" / "week_2026-10-18.json").exists()
+    assert (tmp_path / "refs" / "R0_anchor.png").exists()

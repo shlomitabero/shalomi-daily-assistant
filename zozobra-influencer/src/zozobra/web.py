@@ -21,9 +21,17 @@ from . import jobs, persona
 from .config import ROOT, runtime, save_runtime, settings
 
 def _seed_sample_week() -> None:
-    """Fresh install: show the sample week so the panel never opens empty."""
+    """Fresh install: show the sample week so the panel never opens empty, and install LILO's
+    approved anchor face (assets/lilo/R0_anchor.jpg) so the setup wizard starts at step 2."""
     if not any(cal_dir().glob("week_*.json")):
         setup_sample()
+    anchor = settings().data_dir / "refs" / "R0_anchor.png"
+    bundled = ROOT / "assets" / "lilo" / "R0_anchor.jpg"
+    if not anchor.exists() and bundled.exists():
+        from PIL import Image
+
+        anchor.parent.mkdir(parents=True, exist_ok=True)
+        Image.open(bundled).convert("RGB").save(anchor)
 
 
 @asynccontextmanager
