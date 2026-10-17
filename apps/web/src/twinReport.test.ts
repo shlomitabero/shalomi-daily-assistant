@@ -19,6 +19,8 @@ function makeTwin(overrides: Partial<BusinessTwin> = {}): BusinessTwin {
     mostLinkedRecord: null,
     mostActiveObservation: null,
     jumpableObservations: [],
+    distributions: [],
+    numericStats: [],
     ...overrides,
   };
 }

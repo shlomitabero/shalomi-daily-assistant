@@ -39,6 +39,41 @@ export function computeTwinStatPercent(count: number, totalRecords: number): num
   return Math.round((count / totalRecords) * 100);
 }
 
+/**
+ * A single horizontal bar chart -- the dashboard's one reusable chart
+ * primitive, used for both the per-entity record-count comparison and
+ * every enum/boolean field's value breakdown. Deliberately a single,
+ * flat accent color (var(--accent), the same brand color the rest of this
+ * app already uses) rather than a different hue per bar: each row's own
+ * text label is what carries identity here, not color -- an unbounded,
+ * business-defined set of entity names or enum values has no fixed
+ * categorical order to assign fixed hues to, and a "9th bar" would
+ * otherwise need an invented color with no meaning. Magnitude is carried
+ * by bar length alone, which reads correctly regardless of color vision.
+ * A native `title` attribute on each row doubles as the hover tooltip,
+ * the same lightweight convention EntityPanel.tsx's own longtext table
+ * cells already use.
+ */
+function TwinBarChart({ title, bars }: { title: string; bars: { label: string; value: number }[] }) {
+  const max = Math.max(1, ...bars.map((b) => b.value));
+  return (
+    <div className="twin-chart">
+      <h4 className="twin-chart-title">{title}</h4>
+      <div className="twin-chart-bars">
+        {bars.map((b, i) => (
+          <div key={`${b.label}-${i}`} className="twin-chart-row" title={`${b.label}: ${b.value.toLocaleString()}`}>
+            <span className="twin-chart-row-label">{b.label}</span>
+            <div className="twin-chart-track">
+              <div className="twin-chart-bar" style={{ width: `${Math.max(2, (b.value / max) * 100)}%` }} />
+            </div>
+            <span className="twin-chart-row-value">{b.value.toLocaleString()}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 export function BusinessTwinPanel({
   projectId,
   projectName,
@@ -63,6 +98,13 @@ export function BusinessTwinPanel({
   const [twin, setTwin] = useState<BusinessTwin | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [copyStatus, setCopyStatus] = useState<"idle" | "copied" | "failed">("idle");
+  // Defaults to "report" (not "dashboard") specifically so every existing
+  // insight -- the jumpable mostLinkedRecord/mostActiveObservation/
+  // jumpableObservations buttons -- keeps rendering immediately exactly as
+  // it always has, with no extra click required; the dashboard is an
+  // additional view a person opts into, not a replacement for what was
+  // already there.
+  const [view, setView] = useState<"dashboard" | "report">("report");
   const dialogRef = useDialogFocusTrap<HTMLDivElement>(onClose);
 
   function handleDownload() {
@@ -187,7 +229,59 @@ export function BusinessTwinPanel({
               ))}
             </div>
 
-            {(twin.observations.length > 0 ||
+            {(twin.distributions.length > 0 ||
+              twin.numericStats.length > 0 ||
+              twin.observations.length > 0 ||
+              twin.jumpableObservations.length > 0 ||
+              twin.mostLinkedRecord ||
+              twin.mostActiveObservation) && (
+              <div className="view-toggle twin-view-toggle" role="group">
+                <button
+                  type="button"
+                  className={view === "dashboard" ? "view-toggle-btn view-toggle-btn-active" : "view-toggle-btn"}
+                  onClick={() => setView("dashboard")}
+                >
+                  {t("twin.view.dashboard")}
+                </button>
+                <button
+                  type="button"
+                  className={view === "report" ? "view-toggle-btn view-toggle-btn-active" : "view-toggle-btn"}
+                  onClick={() => setView("report")}
+                >
+                  {t("twin.view.report")}
+                </button>
+              </div>
+            )}
+
+            {view === "dashboard" && (twin.distributions.length > 0 || twin.numericStats.length > 0) && (
+              <div className="twin-dashboard">
+                {twin.distributions.map((d, i) => (
+                  <TwinBarChart
+                    key={`dist-${i}`}
+                    title={t("twin.dashboard.distributionTitle", { field: d.fieldLabel, entity: d.entityLabel })}
+                    bars={d.breakdown.map((b) => ({ label: b.label, value: b.count }))}
+                  />
+                ))}
+                {twin.numericStats.length > 0 && (
+                  <div className="twin-dashboard-stats">
+                    {twin.numericStats.map((s, i) => (
+                      <div key={`stat-${i}`} className="twin-stat-tile twin-stat-tile-static">
+                        <div className="twin-stat-value">{s.sum.toLocaleString()}</div>
+                        <div className="twin-stat-label">{t("twin.dashboard.totalOf", { field: s.fieldLabel, entity: s.entityLabel })}</div>
+                        <div className="twin-stat-percent">
+                          {t("twin.dashboard.averageOf", { average: s.average.toLocaleString(undefined, { maximumFractionDigits: 1 }) })}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+            {view === "dashboard" && twin.distributions.length === 0 && twin.numericStats.length === 0 && (
+              <p className="muted small">{t("twin.dashboard.empty")}</p>
+            )}
+
+            {view === "report" && (twin.observations.length > 0 ||
               twin.jumpableObservations.length > 0 ||
               twin.mostLinkedRecord ||
               twin.mostActiveObservation) && (

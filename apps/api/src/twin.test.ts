@@ -863,6 +863,91 @@ test("computeBusinessTwin reports a boolean field's TRUE/FALSE value distributio
   assert.match(distribution!.text, /2 "TRUE".*1 "FALSE"/);
 });
 
+/**
+ * New: the structured sibling of the prose distribution above -- the
+ * dashboard view renders a real bar chart from `twin.distributions`
+ * directly, rather than re-parsing the `text` sentence, so the raw
+ * per-value counts must actually survive into the API response.
+ */
+test("computeBusinessTwin's twin.distributions carries the same per-value counts as the prose text, as real numbers", () => {
+  const orderProject: Project = {
+    ...project,
+    description: "An online store with orders",
+    spec: {
+      ...project.spec,
+      entities: [
+        {
+          name: "Order",
+          label: "Orders",
+          fields: [
+            { name: "customer", type: "text", required: true },
+            {
+              name: "status",
+              label: "Status",
+              type: "enum",
+              required: true,
+              enumValues: ["Pending", "Shipped", "Cancelled"],
+              enumLabels: { Pending: "ממתין", Shipped: "נשלח", Cancelled: "בוטל" },
+            },
+          ],
+        },
+      ],
+    },
+  };
+  const db = openDatabase(":memory:");
+  applyMigrations(db, orderProject.id, orderProject.spec);
+  const order = orderProject.spec.entities[0];
+  insertRecord(db, orderProject.id, order, { customer: "Dana", status: "Pending" });
+  insertRecord(db, orderProject.id, order, { customer: "Yossi", status: "Pending" });
+  insertRecord(db, orderProject.id, order, { customer: "Noa", status: "Shipped" });
+
+  const twin = computeBusinessTwin(db, orderProject);
+  assert.equal(twin.distributions.length, 1);
+  const dist = twin.distributions[0]!;
+  assert.equal(dist.entityName, "Order");
+  assert.equal(dist.fieldName, "status");
+  assert.equal(dist.fieldLabel, "Status");
+  assert.deepEqual(dist.breakdown, [
+    { value: "Pending", label: "ממתין", count: 2 },
+    { value: "Shipped", label: "נשלח", count: 1 },
+  ]);
+});
+
+/** The structured sibling of the numeric-aggregate prose. */
+test("computeBusinessTwin's twin.numericStats carries the real sum/average as numbers, not just the formatted prose", () => {
+  const orderProject: Project = {
+    ...project,
+    description: "An online store with orders",
+    spec: {
+      ...project.spec,
+      entities: [
+        {
+          name: "Order",
+          label: "Orders",
+          fields: [
+            { name: "customer", type: "text", required: true },
+            { name: "total", label: "Total", type: "number", required: true },
+          ],
+        },
+      ],
+    },
+  };
+  const db = openDatabase(":memory:");
+  applyMigrations(db, orderProject.id, orderProject.spec);
+  const order = orderProject.spec.entities[0];
+  insertRecord(db, orderProject.id, order, { customer: "Dana", total: 100 });
+  insertRecord(db, orderProject.id, order, { customer: "Yossi", total: 300 });
+
+  const twin = computeBusinessTwin(db, orderProject);
+  assert.equal(twin.numericStats.length, 1);
+  const stats = twin.numericStats[0]!;
+  assert.equal(stats.entityName, "Order");
+  assert.equal(stats.fieldName, "total");
+  assert.equal(stats.sum, 400);
+  assert.equal(stats.average, 200);
+  assert.equal(stats.recordCount, 2);
+});
+
 test("computeBusinessTwin's boolean distribution is skipped when every record shares the same value, same as the enum case", () => {
   const orderProject: Project = {
     ...project,

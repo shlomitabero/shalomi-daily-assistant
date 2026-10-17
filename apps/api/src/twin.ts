@@ -55,6 +55,33 @@ export interface BusinessTwin {
    * at once, so this is an array rather than a single nullable value.
    */
   jumpableObservations: { text: string; entityName: string }[];
+  /**
+   * The same per-value counts computeEnumDistributionObservations already
+   * computes (see its own `countByValue`/`breakdown` locals) to build its
+   * prose `text` -- surfaced here too, structured, so the dashboard view
+   * can render a real bar chart instead of re-parsing a sentence. Every
+   * entry here already has a matching prose sentence in
+   * jumpableObservations; this is additive, not a replacement.
+   */
+  distributions: {
+    text: string;
+    entityName: string;
+    entityLabel: string;
+    fieldName: string;
+    fieldLabel: string;
+    breakdown: { value: string; label: string; count: number }[];
+  }[];
+  /** The structured sibling of computeNumericAggregateObservations' prose, for the same reason as `distributions` above. */
+  numericStats: {
+    text: string;
+    entityName: string;
+    entityLabel: string;
+    fieldName: string;
+    fieldLabel: string;
+    sum: number;
+    average: number;
+    recordCount: number;
+  }[];
 }
 
 /**
@@ -362,8 +389,17 @@ function computeNumericAggregateObservations(
   recordsByEntity: Map<string, EntityRecord[]>,
   project: Project,
   hebrew: boolean,
-): { text: string; entityName: string }[] {
-  const observations: { text: string; entityName: string }[] = [];
+): {
+  text: string;
+  entityName: string;
+  entityLabel: string;
+  fieldName: string;
+  fieldLabel: string;
+  sum: number;
+  average: number;
+  recordCount: number;
+}[] {
+  const observations: ReturnType<typeof computeNumericAggregateObservations> = [];
   for (const entity of project.spec.entities) {
     const numberFields = entity.fields.filter((f) => f.type === "number");
     if (numberFields.length === 0) continue;
@@ -402,6 +438,12 @@ function computeNumericAggregateObservations(
           ? `סה"כ "${fieldLabel}"${fieldSuffix} ב"${entityLabel}": ${sum.toLocaleString()} (ממוצע ${average.toLocaleString(undefined, { maximumFractionDigits: 1 })} על פני ${values.length} רשומות).`
           : `Total "${fieldLabel}"${fieldSuffix} in "${entityLabel}": ${sum.toLocaleString()} (average ${average.toLocaleString(undefined, { maximumFractionDigits: 1 })} across ${values.length} records).`,
         entityName: entity.name,
+        entityLabel,
+        fieldName: field.name,
+        fieldLabel,
+        sum,
+        average,
+        recordCount: values.length,
       });
     }
   }
@@ -439,8 +481,15 @@ function computeEnumDistributionObservations(
   recordsByEntity: Map<string, EntityRecord[]>,
   project: Project,
   hebrew: boolean,
-): { text: string; entityName: string }[] {
-  const observations: { text: string; entityName: string }[] = [];
+): {
+  text: string;
+  entityName: string;
+  entityLabel: string;
+  fieldName: string;
+  fieldLabel: string;
+  breakdown: { value: string; label: string; count: number }[];
+}[] {
+  const observations: ReturnType<typeof computeEnumDistributionObservations> = [];
   for (const entity of project.spec.entities) {
     const distributionFields = entity.fields.filter(
       (f) => (f.type === "enum" && f.enumValues && f.enumValues.length > 0) || f.type === "boolean",
@@ -472,19 +521,24 @@ function computeEnumDistributionObservations(
 
       const breakdown = [...countByValue.entries()]
         .sort((a, b) => b[1] - a[1])
-        .map(([value, count]) => {
-          const label = field.type === "boolean" ? (value === "true" ? "TRUE" : "FALSE") : (field.enumLabels && field.enumLabels[value]) || value;
-          return `${count} "${label}"`;
-        })
-        .join(", ");
+        .map(([value, count]) => ({
+          value,
+          label: field.type === "boolean" ? (value === "true" ? "TRUE" : "FALSE") : (field.enumLabels && field.enumLabels[value]) || value,
+          count,
+        }));
+      const breakdownText = breakdown.map((b) => `${b.count} "${b.label}"`).join(", ");
       const fieldLabel = field.label ?? field.name;
       const ambiguous = (labelOccurrences.get(fieldLabel) ?? 0) > 1;
       const fieldSuffix = ambiguous ? ` (${field.name})` : "";
       observations.push({
         text: hebrew
-          ? `פילוח "${fieldLabel}"${fieldSuffix} ב"${entityLabel}": ${breakdown}.`
-          : `"${fieldLabel}"${fieldSuffix} breakdown in "${entityLabel}": ${breakdown}.`,
+          ? `פילוח "${fieldLabel}"${fieldSuffix} ב"${entityLabel}": ${breakdownText}.`
+          : `"${fieldLabel}"${fieldSuffix} breakdown in "${entityLabel}": ${breakdownText}.`,
         entityName: entity.name,
+        entityLabel,
+        fieldName: field.name,
+        fieldLabel,
+        breakdown,
       });
     }
   }
@@ -527,6 +581,8 @@ export function computeBusinessTwin(db: ForgeDatabase, project: Project): Busine
 
   const observations: string[] = [];
   const jumpableObservations: { text: string; entityName: string }[] = [];
+  const numericStats: ReturnType<typeof computeNumericAggregateObservations> = [];
+  const distributions: ReturnType<typeof computeEnumDistributionObservations> = [];
   let mostLinkedRecord: { text: string; entityName: string; recordId: number } | null = null;
   let mostActiveObservation: { text: string; entityName: string } | null = null;
   if (totalRecords === 0) {
@@ -560,8 +616,9 @@ export function computeBusinessTwin(db: ForgeDatabase, project: Project): Busine
     mostLinkedRecord = computeRelationHubObservation(db, recordsByEntity, project, hebrew);
     jumpableObservations.push(...computeRelationCoverageObservations(recordsByEntity, project, hebrew));
     jumpableObservations.push(...computeDuplicateObservations(recordsByEntity, project, hebrew));
-    jumpableObservations.push(...computeNumericAggregateObservations(recordsByEntity, project, hebrew));
-    jumpableObservations.push(...computeEnumDistributionObservations(recordsByEntity, project, hebrew));
+    numericStats.push(...computeNumericAggregateObservations(recordsByEntity, project, hebrew));
+    distributions.push(...computeEnumDistributionObservations(recordsByEntity, project, hebrew));
+    jumpableObservations.push(...numericStats, ...distributions);
     const activity = computeActivityObservations(recordsByEntity, project, hebrew);
     observations.push(...activity.observations);
     jumpableObservations.push(...activity.jumpableObservations);
@@ -578,5 +635,7 @@ export function computeBusinessTwin(db: ForgeDatabase, project: Project): Busine
     mostLinkedRecord,
     mostActiveObservation,
     jumpableObservations,
+    distributions,
+    numericStats,
   };
 }

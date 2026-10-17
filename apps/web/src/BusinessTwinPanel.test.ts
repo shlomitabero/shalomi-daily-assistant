@@ -67,6 +67,8 @@ const TWIN: BusinessTwin = {
   mostLinkedRecord: null,
   mostActiveObservation: null,
   jumpableObservations: [],
+  distributions: [],
+  numericStats: [],
 };
 
 function mockTwinFetch() {
@@ -375,6 +377,8 @@ test("BusinessTwinPanel renders stat tiles sorted by real record count (busiest 
       mostLinkedRecord: null,
       mostActiveObservation: null,
       jumpableObservations: [],
+      distributions: [],
+      numericStats: [],
     };
     const originalFetch = globalThis.fetch;
     globalThis.fetch = (async (input: string) => {
@@ -470,6 +474,8 @@ test("BusinessTwinPanel omits the percent line for a genuinely empty (0-record) 
       mostLinkedRecord: null,
       mostActiveObservation: null,
       jumpableObservations: [],
+      distributions: [],
+      numericStats: [],
     };
     const originalFetch = globalThis.fetch;
     globalThis.fetch = (async (input: string) => {
@@ -661,6 +667,117 @@ test("BusinessTwinPanel's copy button shows a failure label when navigator.clipb
       t.mock.timers.reset();
       globalThis.fetch = originalFetch;
       delete (navigator as { clipboard?: unknown }).clipboard;
+    }
+  });
+});
+
+/**
+ * New: the Dashboard view -- a real bar chart per enum/boolean
+ * distribution and a stat tile per numeric aggregate, both built from
+ * twin.distributions/twin.numericStats directly (not re-parsed from
+ * prose). Defaults to the Report view (see BusinessTwinPanel.tsx's own
+ * comment on its `view` state) so every pre-existing test above keeps
+ * working unchanged; this test explicitly switches to Dashboard.
+ */
+const TWIN_WITH_CHARTS: BusinessTwin = {
+  ...TWIN,
+  distributions: [
+    {
+      text: '"Status" breakdown in "Orders": 2 "Pending", 1 "Shipped".',
+      entityName: "Order",
+      entityLabel: "Orders",
+      fieldName: "status",
+      fieldLabel: "Status",
+      breakdown: [
+        { value: "Pending", label: "Pending", count: 2 },
+        { value: "Shipped", label: "Shipped", count: 1 },
+      ],
+    },
+  ],
+  numericStats: [
+    {
+      text: 'Total "Total" in "Orders": 400 (average 200 across 2 records).',
+      entityName: "Order",
+      entityLabel: "Orders",
+      fieldName: "total",
+      fieldLabel: "Total",
+      sum: 400,
+      average: 200,
+      recordCount: 2,
+    },
+  ],
+};
+
+test("BusinessTwinPanel's Dashboard view renders a real bar chart from twin.distributions and a stat tile from twin.numericStats", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string) => {
+      if (input === "/api/projects/proj1/twin") {
+        return new Response(JSON.stringify({ twin: TWIN_WITH_CHARTS }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${input}`);
+    }) as typeof fetch;
+    try {
+      renderTwinPanel(() => {});
+      await waitForCondition(() => document.querySelector(".twin-view-toggle") !== null);
+
+      // Defaults to Report -- the dashboard's own chart content must not
+      // be in the DOM at all until the person switches to it.
+      assert.equal(document.querySelector(".twin-chart"), null, "dashboard content must not render before the Dashboard view is chosen");
+
+      const dashboardButton = Array.from(document.querySelectorAll(".twin-view-toggle button")).find((b) => b.textContent?.includes("Dashboard"));
+      fireEvent.click(dashboardButton!);
+
+      await waitForCondition(() => document.querySelector(".twin-chart") !== null);
+      const rows = Array.from(document.querySelectorAll(".twin-chart-row"));
+      assert.equal(rows.length, 2, "one bar per breakdown value");
+      assert.equal(rows[0]!.querySelector(".twin-chart-row-label")!.textContent, "Pending");
+      assert.equal(rows[0]!.querySelector(".twin-chart-row-value")!.textContent, "2");
+      assert.equal(rows[1]!.querySelector(".twin-chart-row-label")!.textContent, "Shipped");
+      assert.equal(rows[1]!.querySelector(".twin-chart-row-value")!.textContent, "1");
+
+      // The larger bucket's bar must actually be wider than the smaller
+      // one -- the chart encodes magnitude via real bar length, not just
+      // listing the numbers in a table.
+      const pendingBarWidth = parseFloat((rows[0]!.querySelector(".twin-chart-bar") as HTMLElement).style.width);
+      const shippedBarWidth = parseFloat((rows[1]!.querySelector(".twin-chart-bar") as HTMLElement).style.width);
+      assert.ok(pendingBarWidth > shippedBarWidth, `expected Pending's bar (${pendingBarWidth}%) to be wider than Shipped's (${shippedBarWidth}%)`);
+
+      const statTile = document.querySelector(".twin-stat-tile-static") as HTMLElement;
+      assert.ok(statTile, "expected a stat tile for the numeric aggregate");
+      assert.equal(statTile.querySelector(".twin-stat-value")!.textContent, "400");
+
+      // Switching back to Report must restore the original list, and hide the chart again.
+      const reportButton = Array.from(document.querySelectorAll(".twin-view-toggle button")).find((b) => b.textContent?.includes("Report"));
+      fireEvent.click(reportButton!);
+      assert.equal(document.querySelector(".twin-chart"), null, "the chart must be gone once switched back to Report");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+test("BusinessTwinPanel's Dashboard view shows an empty-state message when there are no distributions or numeric stats to chart", async () => {
+  await withJsdom(async () => {
+    const twinWithOnlyObservations: BusinessTwin = { ...TWIN, observations: ["No real data has been entered yet."] };
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string) => {
+      if (input === "/api/projects/proj1/twin") {
+        return new Response(JSON.stringify({ twin: twinWithOnlyObservations }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${input}`);
+    }) as typeof fetch;
+    try {
+      renderTwinPanel(() => {});
+      await waitForCondition(() => document.querySelector(".twin-view-toggle") !== null);
+
+      const dashboardButton = Array.from(document.querySelectorAll(".twin-view-toggle button")).find((b) => b.textContent?.includes("Dashboard"));
+      fireEvent.click(dashboardButton!);
+
+      await waitForCondition(() => document.body.textContent?.includes("Not enough data yet for the dashboard view") ?? false);
+      assert.equal(document.querySelector(".twin-chart"), null);
+    } finally {
+      globalThis.fetch = originalFetch;
     }
   });
 });
