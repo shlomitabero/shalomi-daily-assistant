@@ -42,6 +42,25 @@ export function LanguageProvider({ children }: { children: ReactNode }) {
     }
   }, [lang]);
 
+  // Mirrors ThemeContext.tsx's own live system-preference listener -- this
+  // half of the fix was never actually ported over despite the comment
+  // above claiming full parity: without it, a person who never made an
+  // explicit language choice (relying on auto-detected navigator.language)
+  // had no way to pick up a live OS/browser language change mid-session,
+  // unlike dark/light mode, which already follows the system instantly.
+  useEffect(() => {
+    function handleSystemChange() {
+      // Checked here, not just once at effect setup, so a setLang call made
+      // after this listener was attached still blocks it -- otherwise an
+      // explicit choice made mid-session could still get silently
+      // overwritten by the next browser-language change.
+      if (hasExplicitChoiceRef.current) return;
+      setLangState(detectInitialLang(null, navigator.language));
+    }
+    window.addEventListener("languagechange", handleSystemChange);
+    return () => window.removeEventListener("languagechange", handleSystemChange);
+  }, []);
+
   const value: LanguageContextValue = {
     lang,
     dir: dirFor(lang),

@@ -76,6 +76,32 @@ test("LanguageProvider does not silently persist a browser-derived (non-explicit
 });
 
 /**
+ * Regression test for round 661's finding: this file's own comment claims
+ * LanguageContext "mirrors ThemeContext.tsx's own hasExplicitChoiceRef fix
+ * for the identical bug" -- but only the persistence-gating half of that
+ * fix was actually ported. ThemeContext.tsx also registers a live
+ * matchMedia listener so a system dark/light switch is followed instantly
+ * when nobody has made an explicit choice yet; LanguageContext had no
+ * equivalent `languagechange` listener at all, so a live OS/browser
+ * language change mid-session was silently ignored until a full reload.
+ * Confirms the fixed provider actually follows a live language change.
+ */
+test("LanguageProvider follows a live browser language change when the user has never made an explicit choice", async () => {
+  await withJsdom(async () => {
+    render(React.createElement(LanguageProvider, null, React.createElement(TestConsumer)));
+    assert.equal(document.querySelector('[data-testid="lang-value"]')!.textContent, "en", "starts en: no stored choice, browser locale is en-US");
+
+    Object.defineProperty(window.navigator, "language", { value: "he-IL", configurable: true });
+    fireEvent(window, new window.Event("languagechange"));
+    assert.equal(document.querySelector('[data-testid="lang-value"]')!.textContent, "he", "must follow the browser switching to Hebrew");
+
+    Object.defineProperty(window.navigator, "language", { value: "en-US", configurable: true });
+    fireEvent(window, new window.Event("languagechange"));
+    assert.equal(document.querySelector('[data-testid="lang-value"]')!.textContent, "en", "must follow the browser switching back to English");
+  }, "en-US");
+});
+
+/**
  * Companion: once a person has an explicit stored choice (from a prior
  * visit's LanguageSwitcher click), it must win over whatever the browser's
  * own locale is -- language.ts's own contract says the explicit choice
@@ -93,6 +119,27 @@ test("LanguageProvider's stored explicit choice wins over the browser locale", a
       "the stored explicit choice must win over the browser's Hebrew locale",
     );
   }, "he-IL");
+});
+
+/**
+ * Companion regression test: once a person has an explicit stored choice,
+ * a later live `languagechange` event must never silently override it --
+ * language.ts's own contract says the explicit choice always wins.
+ */
+test("LanguageProvider ignores a live browser language change once an explicit choice is already stored", async () => {
+  await withJsdom(async () => {
+    localStorage.setItem(STORAGE_KEY, "en");
+    render(React.createElement(LanguageProvider, null, React.createElement(TestConsumer)));
+    assert.equal(document.querySelector('[data-testid="lang-value"]')!.textContent, "en", "the stored explicit choice must win at mount");
+
+    Object.defineProperty(window.navigator, "language", { value: "he-IL", configurable: true });
+    fireEvent(window, new window.Event("languagechange"));
+    assert.equal(
+      document.querySelector('[data-testid="lang-value"]')!.textContent,
+      "en",
+      "a live browser language change must never override an already-stored explicit choice",
+    );
+  }, "en-US");
 });
 
 /**
