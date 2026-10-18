@@ -89,6 +89,16 @@ function foldIcsLine(line: string): string {
  * exclusive, so it's set to one day *after* the end field's own date, not
  * the end date itself. A missing/invalid/earlier-than-start end value falls
  * back to the previous single-day behavior.
+ *
+ * `orderedFields` -- defaulting to `entity.fields` so every existing
+ * caller/test keeps its exact current behavior -- is this module's own
+ * version of the `orderedFields` convention rounds 615/621/670/678/684
+ * already enforce across EntityPanel.tsx's whole-record render paths
+ * (CSV export, print, the Columns menu, board cards, the record form, the
+ * bulk-edit/filter/group-by pickers): the DESCRIPTION lines below list
+ * fields in the user's drag-reordered column order, not the entity's raw
+ * declared order, matching the calendar grid's own chips right next to
+ * this export button.
  */
 export function buildCalendarIcs(
   entity: Entity,
@@ -99,9 +109,10 @@ export function buildCalendarIcs(
   relatedRecords: RelatedRecordsByEntity,
   now: Date = new Date(),
   endField?: Field | null,
+  orderedFields: Field[] = entity.fields,
 ): string {
   const dtstamp = formatIcsTimestamp(now);
-  const descriptionFields = entity.fields.filter(
+  const descriptionFields = orderedFields.filter(
     (f) => f.name !== dateField.name && f.name !== labelField.name && f.name !== endField?.name,
   );
   const lines: string[] = [

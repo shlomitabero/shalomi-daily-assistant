@@ -2355,7 +2355,7 @@ test("the exported EntityView's real generated buildCalendarIcs produces a genui
   const utf8LenSrc = entityViewJsx.match(/function utf8ByteLength\(s\) \{[\s\S]*?\n\}\n/)?.[0];
   const foldSrc = entityViewJsx.match(/function foldIcsLine\(line\) \{[\s\S]*?\n\}\n/)?.[0];
   const buildSrc = entityViewJsx.match(
-    /function buildCalendarIcs\(entity, dateField, labelField, records, relatedRecords, now, endField\) \{[\s\S]*?\n\}\n/,
+    /function buildCalendarIcs\(entity, dateField, labelField, records, relatedRecords, now, endField, orderedFields = entity\.fields\) \{[\s\S]*?\n\}\n/,
   )?.[0];
   assert.ok(
     pickDisplaySrc && labelFieldSrc && pad2Src && dateSrc && tsSrc && escSrc && utf8LenSrc && foldSrc && buildSrc,
@@ -2438,7 +2438,7 @@ test("the exported EntityView's real generated buildCalendarIcs disambiguates tw
   const utf8LenSrc = entityViewJsx.match(/function utf8ByteLength\(s\) \{[\s\S]*?\n\}\n/)?.[0];
   const foldSrc = entityViewJsx.match(/function foldIcsLine\(line\) \{[\s\S]*?\n\}\n/)?.[0];
   const buildSrc = entityViewJsx.match(
-    /function buildCalendarIcs\(entity, dateField, labelField, records, relatedRecords, now, endField\) \{[\s\S]*?\n\}\n/,
+    /function buildCalendarIcs\(entity, dateField, labelField, records, relatedRecords, now, endField, orderedFields = entity\.fields\) \{[\s\S]*?\n\}\n/,
   )?.[0];
   assert.ok(
     pickDisplaySrc && labelFieldSrc && pad2Src && dateSrc && tsSrc && escSrc && utf8LenSrc && foldSrc && buildSrc,
@@ -2468,6 +2468,76 @@ test("the exported EntityView's real generated buildCalendarIcs disambiguates tw
 
   assert.match(ics, /Amount \(subtotal\): 800/, "the subtotal field must be disambiguated by its own name");
   assert.match(ics, /Amount \(shipping\): 30/, "the shipping field must be disambiguated by its own name");
+});
+
+/**
+ * Round 686: the same orderedFields convention rounds 615/621/670/678/684
+ * already enforce across EntityPanel.tsx's whole-record render paths (and
+ * their codegen.ts ports) never reached this module's own exported-app
+ * copy either -- confirmed by reading codegen.ts directly: its own
+ * generated buildCalendarIcs's descriptionFields still read entity.fields,
+ * not the generated handleExportIcs's own already-in-scope orderedFields.
+ * Uses the same real-generated-code extraction harness as the two tests
+ * above, not a reimplementation.
+ */
+test("the exported EntityView's real generated buildCalendarIcs lists DESCRIPTION fields in the given orderedFields order, defaulting to entity.fields when none is passed", () => {
+  const entityViewJsx = generateExportFiles(project).find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+
+  const pickDisplaySrc = entityViewJsx.match(/export function pickDisplayField\(entity\) \{[\s\S]*?\n\}\n/)?.[0]?.replace(/^export /, "");
+  const labelFieldSrc = entityViewJsx.match(/function calendarLabelField\(entity, dateField\) \{[\s\S]*?\n\}\n/)?.[0];
+  const pad2Src = entityViewJsx.match(/function icsPad2\(n\) \{[\s\S]*?\n\}\n/)?.[0];
+  const dateSrc = entityViewJsx.match(/function formatIcsDate\(date\) \{[\s\S]*?\n\}\n/)?.[0];
+  const tsSrc = entityViewJsx.match(/function formatIcsTimestamp\(date\) \{[\s\S]*?\n\}\n/)?.[0];
+  const escSrc = entityViewJsx.match(/function icsEscapeText\(value\) \{[\s\S]*?\n\}\n/)?.[0];
+  const utf8LenSrc = entityViewJsx.match(/function utf8ByteLength\(s\) \{[\s\S]*?\n\}\n/)?.[0];
+  const foldSrc = entityViewJsx.match(/function foldIcsLine\(line\) \{[\s\S]*?\n\}\n/)?.[0];
+  const buildSrc = entityViewJsx.match(
+    /function buildCalendarIcs\(entity, dateField, labelField, records, relatedRecords, now, endField, orderedFields = entity\.fields\) \{[\s\S]*?\n\}\n/,
+  )?.[0];
+  assert.ok(
+    pickDisplaySrc && labelFieldSrc && pad2Src && dateSrc && tsSrc && escSrc && utf8LenSrc && foldSrc && buildSrc,
+    "expected to find every ICS helper function in the real generated output",
+  );
+
+  const relationStub = "function relationDisplayLabel() { return ''; }\n";
+  const buildCalendarIcs = new Function(
+    `${pickDisplaySrc}\n${labelFieldSrc}\n${pad2Src}\n${dateSrc}\n${tsSrc}\n${escSrc}\n${utf8LenSrc}\n${foldSrc}\n${relationStub}\n${buildSrc}\nreturn buildCalendarIcs;`,
+  )() as (
+    entity: unknown,
+    dateField: unknown,
+    labelField: unknown,
+    records: unknown[],
+    relatedRecords: unknown,
+    now: Date,
+    endField: unknown,
+    orderedFields?: unknown[],
+  ) => string;
+
+  const entity = {
+    name: "Order",
+    label: "Orders",
+    fields: [
+      { name: "customerName", label: "Customer", type: "text" },
+      { name: "date", label: "Date", type: "date" },
+      { name: "priority", label: "Priority", type: "text" },
+      { name: "notes", label: "Notes", type: "text" },
+    ],
+  };
+  const dateField = entity.fields[1];
+  const labelField = entity.fields[0];
+  const records = [{ id: 1, customerName: "Dana", date: "2026-03-15", priority: "High", notes: "VIP" }];
+
+  const unordered = buildCalendarIcs(entity, dateField, labelField, records, {}, new Date("2026-01-01T00:00:00Z"), null);
+  const unorderedDesc = unordered.match(/DESCRIPTION:.*/)![0];
+  assert.ok(
+    unorderedDesc.indexOf("Priority") < unorderedDesc.indexOf("Notes"),
+    "with no orderedFields argument, DESCRIPTION must follow entity.fields's own declared order (priority before notes)",
+  );
+
+  const reordered = [entity.fields[3], entity.fields[1], entity.fields[0], entity.fields[2]]; // notes, date, customerName, priority
+  const ics = buildCalendarIcs(entity, dateField, labelField, records, {}, new Date("2026-01-01T00:00:00Z"), null, reordered);
+  const desc = ics.match(/DESCRIPTION:.*/)![0];
+  assert.ok(desc.indexOf("Notes") < desc.indexOf("Priority"), `DESCRIPTION must list the reordered fields (notes before priority), got: ${desc}`);
 });
 
 // Regression test for round 551's finding: PRODID's own content
@@ -2505,7 +2575,7 @@ test("the exported EntityView's real generated buildCalendarIcs folds a long PRO
   const utf8LenSrc = entityViewJsx.match(/function utf8ByteLength\(s\) \{[\s\S]*?\n\}\n/)?.[0];
   const foldSrc = entityViewJsx.match(/function foldIcsLine\(line\) \{[\s\S]*?\n\}\n/)?.[0];
   const buildSrc = entityViewJsx.match(
-    /function buildCalendarIcs\(entity, dateField, labelField, records, relatedRecords, now, endField\) \{[\s\S]*?\n\}\n/,
+    /function buildCalendarIcs\(entity, dateField, labelField, records, relatedRecords, now, endField, orderedFields = entity\.fields\) \{[\s\S]*?\n\}\n/,
   )?.[0];
   assert.ok(
     pickDisplaySrc && labelFieldSrc && pad2Src && dateSrc && tsSrc && escSrc && utf8LenSrc && foldSrc && buildSrc,
@@ -2592,7 +2662,7 @@ test("the exported EntityView's real generated buildCalendarIcs escapes an entit
   const utf8LenSrc = entityViewJsx.match(/function utf8ByteLength\(s\) \{[\s\S]*?\n\}\n/)?.[0];
   const foldSrc = entityViewJsx.match(/function foldIcsLine\(line\) \{[\s\S]*?\n\}\n/)?.[0];
   const buildSrc = entityViewJsx.match(
-    /function buildCalendarIcs\(entity, dateField, labelField, records, relatedRecords, now, endField\) \{[\s\S]*?\n\}\n/,
+    /function buildCalendarIcs\(entity, dateField, labelField, records, relatedRecords, now, endField, orderedFields = entity\.fields\) \{[\s\S]*?\n\}\n/,
   )?.[0];
   assert.ok(
     pickDisplaySrc && labelFieldSrc && pad2Src && dateSrc && tsSrc && escSrc && utf8LenSrc && foldSrc && buildSrc,
@@ -2663,7 +2733,7 @@ test("the exported EntityView's real generated buildCalendarIcs resolves an enum
   const utf8LenSrc = entityViewJsx.match(/function utf8ByteLength\(s\) \{[\s\S]*?\n\}\n/)?.[0];
   const foldSrc = entityViewJsx.match(/function foldIcsLine\(line\) \{[\s\S]*?\n\}\n/)?.[0];
   const buildSrc = entityViewJsx.match(
-    /function buildCalendarIcs\(entity, dateField, labelField, records, relatedRecords, now, endField\) \{[\s\S]*?\n\}\n/,
+    /function buildCalendarIcs\(entity, dateField, labelField, records, relatedRecords, now, endField, orderedFields = entity\.fields\) \{[\s\S]*?\n\}\n/,
   )?.[0];
   assert.ok(
     pickDisplaySrc && labelFieldSrc && pad2Src && dateSrc && tsSrc && escSrc && utf8LenSrc && foldSrc && buildSrc,
@@ -2723,7 +2793,7 @@ test("the exported EntityView's real generated buildCalendarIcs folds a Hebrew D
   const utf8LenSrc = entityViewJsx.match(/function utf8ByteLength\(s\) \{[\s\S]*?\n\}\n/)?.[0];
   const foldSrc = entityViewJsx.match(/function foldIcsLine\(line\) \{[\s\S]*?\n\}\n/)?.[0];
   const buildSrc = entityViewJsx.match(
-    /function buildCalendarIcs\(entity, dateField, labelField, records, relatedRecords, now, endField\) \{[\s\S]*?\n\}\n/,
+    /function buildCalendarIcs\(entity, dateField, labelField, records, relatedRecords, now, endField, orderedFields = entity\.fields\) \{[\s\S]*?\n\}\n/,
   )?.[0];
   assert.ok(
     pickDisplaySrc && labelFieldSrc && pad2Src && dateSrc && tsSrc && escSrc && utf8LenSrc && foldSrc && buildSrc,

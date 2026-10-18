@@ -66,6 +66,40 @@ test("buildCalendarIcs's DESCRIPTION includes every other field as 'Label: value
 });
 
 /**
+ * Round 686: the same orderedFields convention rounds 615/621/670/678/684
+ * already enforce across EntityPanel.tsx's whole-record render paths
+ * (CSV export, print, the Columns menu, board cards, the record form, the
+ * bulk-edit/filter/group-by pickers) never reached this module at all --
+ * descriptionFields read entity.fields directly, so a reordered column
+ * ("courier" dragged before "notes") still listed DESCRIPTION lines in the
+ * entity's original declared order, the same bug this routine has already
+ * fixed five times elsewhere. The default (omitting the new 9th argument)
+ * must still read entity.fields, exactly as every call above does.
+ */
+test("buildCalendarIcs's DESCRIPTION lines follow the user's drag-reordered column order when given one, and entity.fields's own order when not", () => {
+  const records: EntityRecord[] = [
+    { id: 1, appointmentDate: "2026-03-15", customerName: "Dana Levi", notes: "First visit", courierId: 42 },
+  ];
+  const courierEntity: Entity = { name: "Courier", fields: [{ name: "name", type: "text", required: true }] };
+  const relatedRecords = { Courier: [{ id: 42, name: "Avi Mizrahi" }] };
+
+  const unordered = buildCalendarIcs(entity, dateField, nameField, records, [courierEntity], relatedRecords);
+  const unorderedDesc = parseEvents(unordered)[0].match(/DESCRIPTION:.*/)![0];
+  assert.ok(
+    unorderedDesc.indexOf("הערות") < unorderedDesc.indexOf("שליח"),
+    "with no orderedFields argument, DESCRIPTION must still follow entity.fields's own declared order (notes before courier)",
+  );
+
+  const reordered = [courierField, dateField, nameField, notesField];
+  const ics = buildCalendarIcs(entity, dateField, nameField, records, [courierEntity], relatedRecords, new Date(), null, reordered);
+  const desc = parseEvents(ics)[0].match(/DESCRIPTION:.*/)![0];
+  assert.ok(
+    desc.indexOf("שליח") < desc.indexOf("הערות"),
+    `DESCRIPTION must list the reordered fields (courier before notes), got: ${desc}`,
+  );
+});
+
+/**
  * Regression test for a real bug found by round 636's Explore survey: the
  * same label-collision gap round 635 fixed in twin.ts's Business Twin
  * observations, but never checked anywhere else. Only field.name is unique

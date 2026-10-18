@@ -2280,7 +2280,7 @@ export function EntityPanel({
   function handleExportIcs() {
     if (!dateField) return;
     const labelField = calendarChipLabelField(entity, dateField);
-    const ics = buildCalendarIcs(entity, dateField, labelField, icsMonthRecords, allEntities, relatedRecords, new Date(), endDateField);
+    const ics = buildCalendarIcs(entity, dateField, labelField, icsMonthRecords, allEntities, relatedRecords, new Date(), endDateField, orderedFields);
     downloadCalendarIcs(ics, entity.name);
   }
 

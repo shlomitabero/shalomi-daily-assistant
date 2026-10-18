@@ -2382,9 +2382,9 @@ function foldIcsLine(line) {
 // every field other than the date/label fields becomes a "Label: value"
 // line in DESCRIPTION, and a relation field resolves to its real display
 // label rather than a raw id.
-function buildCalendarIcs(entity, dateField, labelField, records, relatedRecords, now, endField) {
+function buildCalendarIcs(entity, dateField, labelField, records, relatedRecords, now, endField, orderedFields = entity.fields) {
   const dtstamp = formatIcsTimestamp(now || new Date());
-  const descriptionFields = entity.fields.filter((f) => f.name !== dateField.name && f.name !== labelField.name && f.name !== (endField && endField.name));
+  const descriptionFields = orderedFields.filter((f) => f.name !== dateField.name && f.name !== labelField.name && f.name !== (endField && endField.name));
   const lines = ["BEGIN:VCALENDAR", "VERSION:2.0", foldIcsLine(\`PRODID:-//Forge AI//\${icsEscapeText(entity.label || entity.name)}//EN\`), "CALSCALE:GREGORIAN"];
   for (const record of records) {
     const raw = record[dateField.name];
@@ -4093,7 +4093,7 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
   function handleExportIcs() {
     if (!dateField) return;
     const labelField = calendarLabelField(entity, dateField);
-    const ics = buildCalendarIcs(entity, dateField, labelField, icsMonthRecords, relatedRecords, new Date(), endDateField);
+    const ics = buildCalendarIcs(entity, dateField, labelField, icsMonthRecords, relatedRecords, new Date(), endDateField, orderedFields);
     const blob = new Blob([ics], { type: "text/calendar;charset=utf-8" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
