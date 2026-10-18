@@ -2049,7 +2049,7 @@ function mockListRecordsFetch(store: EntityRecord[]) {
   };
 }
 
-function renderAppointmentPanel() {
+function renderAppointmentPanel(extraProps: Record<string, unknown> = {}) {
   return render(
     React.createElement(
       ThemeProvider,
@@ -2062,6 +2062,7 @@ function renderAppointmentPanel() {
           entity: APPOINTMENT_ENTITY,
           allEntities: [APPOINTMENT_ENTITY],
           onEntityRenamed: () => {},
+          ...extraProps,
         }),
       ),
     ),
@@ -2275,6 +2276,61 @@ test("EntityPanel's calendar view opens the clicked record for editing, with the
       const dateInput = document.querySelector('.record-form input[type="date"]') as HTMLInputElement;
       assert.equal(titleInput.value, "Dana's appointment", "clicking the chip must pre-fill the form with that record's own title");
       assert.equal(dateInput.value, today, "clicking the chip must pre-fill the form with that record's own date");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
+ * Round 697: CalendarView's caller already no-ops onEdit/onDayClick/
+ * onReschedule for a read-only viewer, but every affordance inside the
+ * calendar itself (day-cell click/keyboard/drag-drop, chip drag/click)
+ * stayed fully "live" regardless -- the exact same affordance-vs-callback
+ * mismatch round 695 fixed for the table view's inline-edit cells and
+ * round 696 fixed for the pre-build spec review screen, just never ported
+ * to this third component. Confirms a read-only render has no clickable/
+ * draggable day cells and a disabled, non-draggable record chip, and that
+ * clicking or dropping on either does nothing at all.
+ */
+test("EntityPanel's calendar view offers no clickable or draggable affordance at all when readOnly=true", async () => {
+  await withJsdom(async () => {
+    const today = isoDateToday();
+    const store: EntityRecord[] = [{ id: 1, title: "Dana's appointment", date: today }];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = mockListRecordsFetch(store) as typeof fetch;
+    try {
+      renderAppointmentPanel({ readOnly: true });
+      await waitForCondition(() => document.querySelector(".entity-toolbar") !== null);
+
+      const calendarToggle = document.querySelectorAll(".view-toggle-btn")[1] as HTMLButtonElement;
+      fireEvent.click(calendarToggle);
+      await waitForCondition(() => document.querySelectorAll(".calendar-record-chip").length === 1);
+
+      assert.equal(
+        document.querySelectorAll(".calendar-day-clickable").length === 0,
+        true,
+        "a read-only calendar must have no clickable day cells at all",
+      );
+
+      const chip = document.querySelector(".calendar-record-chip") as HTMLButtonElement;
+      assert.equal(chip.disabled, true, "a read-only calendar's record chip must be disabled");
+      assert.equal(chip.draggable, false, "a read-only calendar's record chip must not be draggable");
+
+      fireEvent.click(chip);
+      assert.equal(
+        document.querySelector(".record-form") === null,
+        true,
+        "clicking a disabled record chip in a read-only calendar must never open the edit form",
+      );
+
+      const anyDayCell = document.querySelector(".calendar-day:not(.calendar-day-outside)") as HTMLElement;
+      fireEvent.click(anyDayCell);
+      assert.equal(
+        document.querySelector(".record-form") === null,
+        true,
+        "clicking a day cell in a read-only calendar must never open the create form",
+      );
     } finally {
       globalThis.fetch = originalFetch;
     }

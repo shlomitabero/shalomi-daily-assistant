@@ -515,6 +515,7 @@ function CalendarView({
   onDayClick,
   onReschedule,
   moveErrorId,
+  readOnly = false,
 }: {
   entity: Entity;
   dateField: Field;
@@ -530,6 +531,8 @@ function CalendarView({
   onDayClick: (date: Date) => void;
   onReschedule: (record: EntityRecord, date: Date, originDay?: string) => void;
   moveErrorId?: number | null;
+  /** Mirrors BoardCard's own readOnly convention for the identical hazard: the caller already no-ops onEdit/onDayClick/onReschedule for a read-only viewer, but every affordance in here (day-cell click/keyboard/drag-drop, chip drag/click) stayed fully "live" regardless -- a viewer saw a clickable/draggable calendar that silently did nothing. */
+  readOnly?: boolean;
 }) {
   const year = month.getFullYear();
   const monthIndex = month.getMonth();
@@ -571,13 +574,20 @@ function CalendarView({
       <div className="calendar-grid calendar-days">
         {days.map((day, i) => {
           const dayKey = formatDateForInput(day.date);
-          const isDragOver = day.inCurrentMonth && dragOverDay === dayKey;
+          // A read-only viewer gets none of this day cell's write
+          // affordances (add-record click, drag-to-reschedule drop target)
+          // -- mirrors BoardCard's own readOnly convention: hide/omit the
+          // affordance itself, not just no-op the callback underneath it
+          // (round 695's own fix for this exact hazard elsewhere in this
+          // same file).
+          const dayInteractive = day.inCurrentMonth && !readOnly;
+          const isDragOver = dayInteractive && dragOverDay === dayKey;
           const isToday = day.inCurrentMonth && isSameDay(day.date, new Date());
           const dayClasses = ["calendar-day"];
-          if (day.inCurrentMonth) {
+          if (dayInteractive) {
             dayClasses.push("calendar-day-clickable");
             if (isDragOver) dayClasses.push("calendar-day-drag-over");
-          } else {
+          } else if (!day.inCurrentMonth) {
             dayClasses.push("calendar-day-outside");
           }
           if (isToday) dayClasses.push("calendar-day-today");
@@ -585,13 +595,13 @@ function CalendarView({
           <div
             key={i}
             className={dayClasses.join(" ")}
-            onClick={day.inCurrentMonth ? () => onDayClick(day.date) : undefined}
-            title={day.inCurrentMonth ? t("entity.calendar.addOnDay") : undefined}
-            tabIndex={day.inCurrentMonth ? 0 : undefined}
-            role={day.inCurrentMonth ? "button" : undefined}
-            aria-label={day.inCurrentMonth ? t("entity.calendar.addOnDay") : undefined}
+            onClick={dayInteractive ? () => onDayClick(day.date) : undefined}
+            title={dayInteractive ? t("entity.calendar.addOnDay") : undefined}
+            tabIndex={dayInteractive ? 0 : undefined}
+            role={dayInteractive ? "button" : undefined}
+            aria-label={dayInteractive ? t("entity.calendar.addOnDay") : undefined}
             onKeyDown={
-              day.inCurrentMonth
+              dayInteractive
                 ? (e) => {
                     // Guard against a focused record-chip button's own Enter/Space
                     // bubbling up here too -- keydown bubbles even though the
@@ -604,7 +614,7 @@ function CalendarView({
                 : undefined
             }
             onDragOver={
-              day.inCurrentMonth
+              dayInteractive
                 ? (e) => {
                     e.preventDefault();
                     setDragOverDay(dayKey);
@@ -612,10 +622,10 @@ function CalendarView({
                 : undefined
             }
             onDragLeave={
-              day.inCurrentMonth ? () => setDragOverDay((prev) => (prev === dayKey ? null : prev)) : undefined
+              dayInteractive ? () => setDragOverDay((prev) => (prev === dayKey ? null : prev)) : undefined
             }
             onDrop={
-              day.inCurrentMonth
+              dayInteractive
                 ? (e) => {
                     e.preventDefault();
                     setDragOverDay(null);
@@ -639,8 +649,10 @@ function CalendarView({
                       ? "calendar-record-chip calendar-record-chip-move-error"
                       : "calendar-record-chip"
                   }
-                  draggable
+                  draggable={!readOnly}
+                  disabled={readOnly}
                   onDragStart={(e) => {
+                    if (readOnly) return;
                     // A drag that starts on the record chip must never also
                     // bubble into the day cell's own onClick (Escape/no-drop
                     // still fires a click on release in some browsers) --
@@ -3146,6 +3158,7 @@ export function EntityPanel({
               onDayClick={readOnly ? () => {} : (date) => startCreateForDate(date, dateField)}
               onReschedule={readOnly ? () => {} : (record, date, originDay) => handleCalendarDrop(record, dateField.name, date, originDay)}
               moveErrorId={moveErrorId}
+              readOnly={readOnly}
             />
           ) : (
             <div className="table-scroll" ref={tableScrollRef}>
