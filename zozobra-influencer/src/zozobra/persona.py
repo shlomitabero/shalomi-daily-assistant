@@ -11,7 +11,7 @@ TRIGGER = "l1l0zzb"
 
 NAME = "LILO"
 FULL_NAME = "Lilach 'LILO' Adar"
-HANDLE = "@lilo.eats.fire"
+HANDLE = "@lilo_moskowitz"
 
 # Locked physical description - copied verbatim into every visual prompt.
 FACE_TOKENS = (
@@ -51,7 +51,7 @@ CAMERA_TOKENS = (
 )
 
 VOICE_DESCRIPTION = (
-    "Israeli woman in her late twenties, warm slightly husky mid-low voice, fast energetic Tel Aviv "
+    "Israeli woman in her late twenties, warm slightly husky mid-low voice, fast energetic Israeli "
     "delivery with playful smirks in the tone, crisp consonants, natural breathy laughs, speaks "
     "native Hebrew with casual English food words mixed in, intimate like talking to a friend at the bar"
 )
@@ -70,8 +70,9 @@ VOICE_RULES_HE = """
 
 BACKSTORY = (
     "Grew up in Haifa above her grandmother's kitchen. After the army she spent a year cooking "
-    "night-market woks in Bangkok and Taipei, came back to Tel Aviv, and now films the city's "
-    "best late-night bites. ZOZOBRA's open wok line is her 'second living room'."
+    "night-market woks in Bangkok and Taipei, came back to Israel, and now films the country's "
+    "best late-night bites - now back home in Haifa as the city's AI nightlife guide. "
+    "ZOZOBRA's open wok line (opening in Haifa Bay) is her 'second living room'."
 )
 
 AI_DISCLOSURE_HE = "LILO היא דמות וירטואלית שנוצרה ב-AI 🤖"

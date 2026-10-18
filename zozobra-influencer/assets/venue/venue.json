@@ -1,6 +1,6 @@
 {
   "_note": "ZOZOBRA interior design renders supplied by the restaurant. They are the ground truth for every scene: LILO is composited INTO these plates (image-to-image with her LoRA), and atmosphere B-roll is animated FROM them, so the space shown on social is the real design, never an invented restaurant. They are renders, not photos. If this space is a branch that hasn't opened yet, set stage to 'coming_soon' and the Brain will frame content as a teaser.",
-  "stage": "open",
+  "stage": "coming_soon",
   "signature_elements": [
     "a towering tiered canopy of backlit warm-beige paper panels (a bar shelving tower, not lamps) crowning a circular bar, with liquor bottles on a ring shelf and wine glasses hanging upside down beneath it",
     "long crimson silk fabric ribbons draped and swirling across the dark ceiling (fabric only, no lamps)",

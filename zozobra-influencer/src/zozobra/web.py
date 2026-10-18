@@ -25,6 +25,11 @@ def _seed_sample_week() -> None:
     approved anchor face (assets/lilo/R0_anchor.jpg) so the setup wizard starts at step 2."""
     if not any(cal_dir().glob("week_*.json")):
         setup_sample()
+    launch = ROOT / "examples" / "launch_posts.json"
+    first = json.loads(launch.read_text(encoding="utf-8"))
+    target = cal_dir() / f"week_{first['days'][0]['day']}.json"
+    if not target.exists():
+        target.write_text(json.dumps(first, ensure_ascii=False, indent=2), encoding="utf-8")
     anchor = settings().data_dir / "refs" / "R0_anchor.png"
     bundled = ROOT / "assets" / "lilo" / "R0_anchor.jpg"
     if not anchor.exists() and bundled.exists():

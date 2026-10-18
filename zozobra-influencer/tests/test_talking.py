@@ -31,3 +31,27 @@ def test_retime_follows_real_clip_lengths():
 def test_no_lanterns_or_bar_fire_in_sample():
     text = SAMPLE.read_text(encoding="utf-8").lower()
     assert "lantern" not in text
+
+
+def test_city_posts_skip_ad_label_but_keep_ai_label():
+    from zozobra import persona
+    from zozobra.compliance import finalize_caption, validate_day
+
+    launch = WeekPlan.model_validate_json((SAMPLE.parent / "launch_posts.json").read_text(encoding="utf-8"))
+    for day in launch.days:
+        cap = finalize_caption(day)
+        assert persona.AD_DISCLOSURE_HE not in cap and persona.AI_DISCLOSURE_HE in cap
+        assert "זוזוברה" not in day.model_dump_json() and validate_day(day, set()) == []
+    zoz = _week().days[0]
+    assert persona.AD_DISCLOSURE_HE in finalize_caption(zoz)
+
+
+def test_campaign_phases():
+    from datetime import date
+
+    from zozobra import campaign
+
+    assert campaign.phase(date(2026, 10, 19)) == "grow"
+    assert campaign.phase(date(2026, 12, 1)) == "teaser"
+    assert campaign.phase(date(2026, 12, 20)) == "launch"
+    assert "Do NOT mention ZOZOBRA" in campaign.brief(date(2026, 10, 19))

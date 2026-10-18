@@ -14,7 +14,7 @@ from pathlib import Path
 
 import anthropic
 
-from . import persona, venue
+from . import campaign, persona, venue
 from .compliance import finalize_caption, validate_day
 from .config import settings
 from .schemas import DayPlan, WeekPlan
@@ -40,7 +40,7 @@ woks on fire, steam, copper light, black surfaces.
   sensitive dates - flag them if the week includes one.
 - Mix pillars across the week (hero_dish, fire_show, night_vibe, challenge, pov_story, community);
   never the same pillar two days in a row.
-- Hashtags: 3-8, mixing Hebrew discovery tags (e.g. אוכלבתלאביב, מסעדותבתלאביב, אוכלאסייתי) with
+- Hashtags: 3-8, mixing Hebrew discovery tags (e.g. אוכלבחיפה, מסעדותבחיפה, אוכלאסייתי) with
   a few English ones (foodtok, ramen, wok). No banned/spammy tags, no #fyp spam stacks.
 - Captions: 1-3 short lines, one question to drive comments, one clear CTA (save / tag who you'd
   bring / come tonight).
@@ -73,6 +73,8 @@ or motion prompts set at the bar, the paper-panel bar tower, tables, booths or c
 ## Hard rules
 - Mention ONLY dishes, drinks, branches and offers that appear in the provided menu JSON. Never
   invent prices, discounts or opening hours.
+- Follow the campaign PHASE in the user message. Outside places may be named only if they appear in the
+  research brief, listed in `places` with their source URL; never invent a venue, event or opening hours.
 - The `visual.scene` / `visual.action` fields describe the place and what she does. Do NOT describe
   her face, hair or body - the pipeline injects her locked identity tokens automatically.
 - Don't write disclosure lines; the compliance layer appends the AI label and the ad label itself.
@@ -97,14 +99,48 @@ def load_menu(path: Path | None = None) -> dict:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
-def build_user_prompt(focus: str, start: date, menu: dict, insights: str | None) -> str:
+RESEARCH_PROMPT = """Research real, currently operating nightlife for {city} for the week {start} to {end}:
+bars, restaurants, new openings, events, festivals and neighbourhood happenings people are talking about.
+Prefer official venue pages, municipal event listings and recent local press. Return a plain list: for each
+item one line with name, area, what it is, date if it is an event, and the source URL. Only include what the
+sources confirm; skip anything closed or uncertain. 10-20 items."""
+
+
+def research_city(start: date, client: anthropic.Anthropic | None = None) -> str:
+    """Live web research so city posts only name real places (server-side web_search tool)."""
+    client = client or _client()
+    c = campaign.config()
+    messages = [{"role": "user", "content": RESEARCH_PROMPT.format(
+        city=c["city_he"], start=start.isoformat(), end=(start + timedelta(days=6)).isoformat())}]
+    # no user_location: the search tool rejects country IL, so the city is named in the prompt instead
+    tools = [{"type": "web_search_20260209", "name": "web_search", "max_uses": 20}]
+    for _ in range(5):   # resume server-side loops that hit pause_turn
+        with client.beta.messages.stream(
+            model=settings().model, max_tokens=16000, betas=["server-side-fallback-2026-07-01"],
+            fallbacks="default", thinking={"type": "adaptive"}, output_config={"effort": "medium"},
+            tools=tools, messages=messages,
+        ) as stream:
+            message = stream.get_final_message()
+        if message.stop_reason != "pause_turn":
+            break
+        messages = [messages[0], {"role": "assistant", "content": message.content}]
+    if message.stop_reason == "refusal":
+        return ""
+    return "\n".join(b.text for b in message.content if b.type == "text").strip()
+
+
+def build_user_prompt(focus: str, start: date, menu: dict, insights: str | None,
+                      research: str | None = None) -> str:
     days = [(start + timedelta(days=i)).isoformat() for i in range(7)]
     parts = [
+        campaign.brief(start),
         f"Weekly focus: {focus}",
         f"Plan exactly these 7 days, in order: {', '.join(days)}",
         "Menu JSON (the only dishes/drinks you may reference):",
         json.dumps(menu, ensure_ascii=False, indent=2),
     ]
+    if research:
+        parts += ["Research brief (real places with sources - the only outside places you may name):", research]
     if insights:
         parts += ["Performance insights from previous weeks (lean into what worked):", insights]
     return "\n\n".join(parts)
@@ -121,6 +157,7 @@ def generate_week(
     """One structured-output call -> validated WeekPlan."""
     menu = menu or load_menu()
     client = client or _client()
+    research = research_city(start, client) if campaign.phase(start) != "launch" else None
     schema = anthropic.transform_schema(WeekPlan)
 
     with client.beta.messages.stream(
@@ -131,7 +168,7 @@ def generate_week(
         thinking={"type": "adaptive"},
         output_config={"effort": "high", "format": {"type": "json_schema", "schema": schema}},
         system=[{"type": "text", "text": SYSTEM_PROMPT, "cache_control": {"type": "ephemeral"}}],
-        messages=[{"role": "user", "content": build_user_prompt(focus, start, menu, insights)}],
+        messages=[{"role": "user", "content": build_user_prompt(focus, start, menu, insights, research)}],
     ) as stream:
         message = stream.get_final_message()
 

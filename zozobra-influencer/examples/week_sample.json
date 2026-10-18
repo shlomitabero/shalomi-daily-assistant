@@ -13,6 +13,8 @@
       "format": "reel",
       "pillar": "fire_show",
       "dish_id": "bangkok_heat",
+      "features_zozobra": true,
+      "places": [],
       "concept": "פותחים את השבוע ליד הפס של המטבח הפתוח: הבנגקוק היט נולד בווק, בשלושים שניות על אש גבוהה",
       "hook_he": "ככה מתחיל שבוע 🔥",
       "hook_alternatives_he": [
@@ -71,7 +73,7 @@
       "caption_he": "שלושים שניות על אש גבוהה. זה כל הסוד 🔥\nבנגקוק היט: נודלס בקרמל שום וצ'ילי, נענע טרייה וסלט מלפפונים.\nחריף רגיל, או חריף באמת?",
       "cta_he": "שמרו לערב הבא שלכם בחוץ",
       "hashtags": [
-        "אוכלבתלאביב",
+        "אוכלבחיפה",
         "זוזוברה",
         "אוכלאסייתי",
         "wok",
@@ -90,6 +92,8 @@
       "format": "reel",
       "pillar": "pov_story",
       "dish_id": "teriyaki_ramen",
+      "features_zozobra": true,
+      "places": [],
       "concept": "POV: יצאת מהמשרד גמור/ה ויש רק דבר אחד שמציל את היום — קערת ראמן",
       "hook_he": "יום ארוך? יש לזה תשובה.",
       "hook_alternatives_he": [
@@ -149,7 +153,7 @@
       "cta_he": "תייגו את מי שצריך את זה היום",
       "hashtags": [
         "ראמן",
-        "אוכלבתלאביב",
+        "אוכלבחיפה",
         "pov",
         "comfortfood",
         "זוזוברה"
@@ -167,6 +171,8 @@
       "format": "reel",
       "pillar": "challenge",
       "dish_id": "super_b",
+      "features_zozobra": true,
+      "places": [],
       "concept": "צ'אלנג' חריפות: לילו מנסה את הסופר בי בלי מים לעשר שניות",
       "hook_he": "עשר שניות בלי מים.",
       "hook_alternatives_he": [
@@ -243,6 +249,8 @@
       "format": "carousel",
       "pillar": "hero_dish",
       "dish_id": "massaman_curry",
+      "features_zozobra": true,
+      "places": [],
       "concept": "קרוסלה: 5 סיבות שהקארי מסמן הוא הצהריים הכי שווים של האמצע-שבוע",
       "hook_he": "המנה שכדאי להכיר",
       "hook_alternatives_he": [
@@ -261,7 +269,7 @@
       "cta_he": "שמרו את הפוסט לצהריים של מחר",
       "hashtags": [
         "קארי",
-        "צהרייםבתלאביב",
+        "צהרייםבחיפה",
         "אוכלאסייתי",
         "curry",
         "זוזוברה"
@@ -279,6 +287,8 @@
       "format": "reel",
       "pillar": "night_vibe",
       "dish_id": "atmosphere",
+      "features_zozobra": true,
+      "places": [],
       "concept": "חמישי בערב: לילו מגיעה לבר, מול המטבח הפתוח. הזמנה לדייט נייט",
       "hook_he": "חמישי בערב. יש לכם תוכניות?",
       "hook_alternatives_he": [
@@ -331,7 +341,7 @@
       "hashtags": [
         "דייטנייט",
         "חמישיבערב",
-        "מסעדותבתלאביב",
+        "מסעדותבחיפה",
         "זוזוברה",
         "nightout"
       ],
@@ -348,10 +358,12 @@
       "format": "reel",
       "pillar": "hero_dish",
       "dish_id": "pad_thai",
+      "features_zozobra": true,
+      "places": [],
       "concept": "ASMR של שישי בצהריים: הפאד תאי מהרגע שהוא נכנס לווק עד הביס הראשון",
       "hook_he": "בלי מילים. רק תקשיבו 🎧",
       "hook_alternatives_he": [
-        "הסאונד הכי טוב בתל אביב",
+        "הסאונד הכי טוב בעיר",
         "שישי בצהריים, בלי מילים"
       ],
       "visual": {
@@ -425,6 +437,8 @@
       "format": "reel",
       "pillar": "community",
       "dish_id": "spring_rolls",
+      "features_zozobra": true,
+      "places": [],
       "concept": "לילו עונה לתגובות של השבוע תוך כדי ספרינג רולס — ומבקשת מהעוקבים להחליט את המנה של השבוע הבא",
       "hook_he": "שאלתם. אני עונה.",
       "hook_alternatives_he": [
@@ -484,7 +498,7 @@
       "cta_he": "כתבו בתגובות — הרוב קובע",
       "hashtags": [
         "זוזוברה",
-        "אוכלבתלאביב",
+        "אוכלבחיפה",
         "springrolls",
         "ai",
         "קהילה"

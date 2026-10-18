@@ -39,6 +39,11 @@ class Visual(BaseModel):
     motion_prompt: str = Field(description="Image-to-video prompt: camera move + subject motion + physics, English, one paragraph")
 
 
+class Place(BaseModel):
+    name: str = Field(description="Real place or area named in the post")
+    source_url: str = Field(description="URL from the research brief that confirms it")
+
+
 class DayPlan(BaseModel):
     day: date
     weekday_he: str
@@ -46,7 +51,9 @@ class DayPlan(BaseModel):
     platforms: list[str] = Field(description="Subset of ['instagram','tiktok']")
     format: Format
     pillar: Pillar
-    dish_id: str = Field(description="Must be an id from the menu, or 'atmosphere' for vibe-only posts")
+    dish_id: str = Field(description="Must be an id from the menu, or 'atmosphere' for vibe-only / city posts")
+    features_zozobra: bool = Field(default=True, description="True if the post shows or names ZOZOBRA (gets the paid-partnership label)")
+    places: list[Place] = Field(default_factory=list, description="Real outside places named in the post, each with a source URL; empty for ZOZOBRA posts")
     concept: str = Field(description="One-sentence idea in Hebrew")
     hook_he: str = Field(description="First 1.5 seconds - spoken or on-screen hook in Hebrew")
     hook_alternatives_he: list[str] = Field(description="Two alternative hooks for A/B testing")

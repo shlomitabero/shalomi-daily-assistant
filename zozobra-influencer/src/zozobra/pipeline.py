@@ -33,7 +33,8 @@ def _queue_dir() -> Path:
 def broll_prompt(day: DayPlan, shot: str, menu: dict) -> str:
     dish = next((d for d in menu.get("dishes", []) + menu.get("drinks", []) if d["id"] == day.dish_id), None)
     hero = dish["hero_visual"] if dish else ""
-    return ", ".join(x for x in [shot, hero, persona.WORLD_TOKENS, persona.CAMERA_TOKENS,
+    world = persona.WORLD_TOKENS if day.features_zozobra else ""
+    return ", ".join(x for x in [shot, hero, world, persona.CAMERA_TOKENS,
                                  "no people, no faces, food photography"] if x)
 
 

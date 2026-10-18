@@ -38,7 +38,7 @@ DAYS = [
         ],
         "caption_he": "שלושים שניות על אש גבוהה. זה כל הסוד 🔥\nבנגקוק היט: נודלס בקרמל שום וצ'ילי, נענע טרייה וסלט מלפפונים.\nחריף רגיל, או חריף באמת?",
         "cta_he": "שמרו לערב הבא שלכם בחוץ",
-        "hashtags": ["אוכלבתלאביב", "זוזוברה", "אוכלאסייתי", "wok", "foodtok"],
+        "hashtags": ["אוכלבחיפה", "זוזוברה", "אוכלאסייתי", "wok", "foodtok"],
         "trend_or_audio_note": "Original audio: real wok sizzle as the first 2 seconds - no music under the hook",
     },
     {
@@ -60,7 +60,7 @@ DAYS = [
         ],
         "caption_he": "יש ימים שרק קערה חמה מבינה 🍜\nראמן טריאקי: ציר עמוק, עוף מזוגג ואטריות שנמשכות.\nמה מציל לכם יום ארוך?",
         "cta_he": "תייגו את מי שצריך את זה היום",
-        "hashtags": ["ראמן", "אוכלבתלאביב", "pov", "comfortfood", "זוזוברה"],
+        "hashtags": ["ראמן", "אוכלבחיפה", "pov", "comfortfood", "זוזוברה"],
         "trend_or_audio_note": "POV text format; voiceover only, soft lo-fi bed at -20dB",
     },
     {
@@ -98,7 +98,7 @@ DAYS = [
         "script": [],
         "caption_he": "קארי מסמן עוף, בשלוש שכבות 🍛\nדלעת שנמסה ברוטב. בוטנים שנותנים קראנץ'. רוטב שמחכה לאורז.\nצוות קארי או צוות נודלס?",
         "cta_he": "שמרו את הפוסט לצהריים של מחר",
-        "hashtags": ["קארי", "צהרייםבתלאביב", "אוכלאסייתי", "curry", "זוזוברה"],
+        "hashtags": ["קארי", "צהרייםבחיפה", "אוכלאסייתי", "curry", "זוזוברה"],
         "trend_or_audio_note": "",
     },
     {
@@ -119,7 +119,7 @@ DAYS = [
         ],
         "caption_he": "חמישי בערב, על הבר, מול המטבח הפתוח 🖤\nעם מי אתם באים?",
         "cta_he": "שלחו למי שאתם רוצים לקחת",
-        "hashtags": ["דייטנייט", "חמישיבערב", "מסעדותבתלאביב", "זוזוברה", "nightout"],
+        "hashtags": ["דייטנייט", "חמישיבערב", "מסעדותבחיפה", "זוזוברה", "nightout"],
         "trend_or_audio_note": "Slow-walk 'follow me' format; dark R&B instrumental, beat drop on the over-the-shoulder glance",
     },
     {
@@ -127,7 +127,7 @@ DAYS = [
         "format": "reel", "pillar": "hero_dish", "dish_id": "pad_thai",
         "concept": "ASMR של שישי בצהריים: הפאד תאי מהרגע שהוא נכנס לווק עד הביס הראשון",
         "hook_he": "בלי מילים. רק תקשיבו 🎧",
-        "hook_alternatives_he": ["הסאונד הכי טוב בתל אביב", "שישי בצהריים, בלי מילים"],
+        "hook_alternatives_he": ["הסאונד הכי טוב בעיר", "שישי בצהריים, בלי מילים"],
         "visual": {"venue_plate": "booth_wall_bar_view", "scene": "the banquette along the hammered wall with black cylinder pendants, a plate of pad thai with lime and crushed peanuts on the table, open kitchen glowing in the back",
                    "action": "squeezing a lime over the plate, then taking the first bite and nodding slowly",
                    "wardrobe": "",
@@ -163,7 +163,7 @@ DAYS = [
         ],
         "caption_he": "תודה על כל התגובות השבוע 🧡\nשבוע הבא אתם מחליטים: סופר בי או קארי מסמן?",
         "cta_he": "כתבו בתגובות — הרוב קובע",
-        "hashtags": ["זוזוברה", "אוכלבתלאביב", "springrolls", "ai", "קהילה"],
+        "hashtags": ["זוזוברה", "אוכלבחיפה", "springrolls", "ai", "קהילה"],
         "trend_or_audio_note": "Reply-to-comment format; post after Shabbat ends",
     },
 ]
