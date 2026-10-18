@@ -702,6 +702,19 @@ function CalendarView({
   );
 }
 
+/**
+ * Mirrors the real server-side cap (apps/api/src/routes/projects.ts's own
+ * `multer({ limits: { fileSize: 10 * 1024 * 1024 } })`) so an oversized
+ * file can be rejected the instant it's picked, before any network request
+ * at all -- every other field type here gets this kind of pre-submission
+ * validation (required, a number's own native constraint, round 299's own
+ * fix for it), but "file" was the one type that always skipped straight to
+ * a real upload POST and only learned the file was too large from the
+ * server's own rejection after the full multipart body had already been
+ * sent.
+ */
+const MAX_FILE_UPLOAD_SIZE_BYTES = 10 * 1024 * 1024;
+
 function FieldInput({
   field,
   value,
@@ -895,6 +908,10 @@ function FieldInput({
             e.target.value = "";
             if (!chosen || !projectId || !entityName) return;
             setFileUploadError(null);
+            if (chosen.size > MAX_FILE_UPLOAD_SIZE_BYTES) {
+              setFileUploadError(t("entity.file.tooLarge"));
+              return;
+            }
             try {
               const uploaded = await uploadRecordFile(projectId, entityName, field.name, chosen);
               onChange(JSON.stringify(uploaded));
@@ -903,7 +920,7 @@ function FieldInput({
             }
           }}
         />
-        {fileUploadError && <p role="alert">{fileUploadError}</p>}
+        {fileUploadError ? <p role="alert">{fileUploadError}</p> : <p className="muted small">{t("entity.file.maxSize")}</p>}
       </div>
     );
   }

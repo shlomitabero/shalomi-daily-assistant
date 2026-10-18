@@ -9188,6 +9188,80 @@ test("EntityPanel's add form uploads a chosen file for a 'file' field and submit
 });
 
 /**
+ * Round 688: a real bug found by the survey -- every other field type's
+ * own FieldInput control validates before ever reaching the network
+ * (required, a number's own native constraint), but "file" always fired
+ * a real upload POST immediately on selection with zero size check, only
+ * learning a file was too large from the server's own 10 MB rejection
+ * after the whole multipart body had already been sent. Confirms an
+ * oversized file is rejected with NO fetch call at all (the exact
+ * regression this fix exists to prevent), while a within-budget file
+ * still uploads normally right after -- not just "the error shows", but
+ * that the happy path survives the new check too.
+ */
+test("EntityPanel's file field rejects an oversized file before ever uploading it, but still uploads a file within the 10MB limit", async () => {
+  await withJsdom(async () => {
+    const store: EntityRecord[] = [];
+    let uploadCalls = 0;
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/entities/Applicant") {
+        return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      if (method === "POST" && input === "/api/projects/proj1/entities/Applicant/fields/resume/upload") {
+        uploadCalls += 1;
+        return new Response(
+          JSON.stringify({ file: { url: "/api/uploads/proj1/Applicant/abc123.pdf", name: "resume.pdf", size: 9, mimeType: "application/pdf" } }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+
+    try {
+      renderEntityPanel({ entity: APPLICANT_ENTITY, allEntities: [APPLICANT_ENTITY] });
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 0);
+
+      const form = document.querySelector("form") as HTMLFormElement;
+      const fileInput = form.querySelector('input[type="file"]') as HTMLInputElement;
+
+      // jsdom's real File doesn't compute .size from its content array for
+      // a huge buffer efficiently, but File's own "size" property can be
+      // overridden directly -- this is the exact property the fix reads,
+      // so overriding it is a real test of that check, not a shortcut
+      // around it.
+      const oversizedFile = new File(["small body"], "huge.pdf", { type: "application/pdf" });
+      Object.defineProperty(oversizedFile, "size", { value: 11 * 1024 * 1024 });
+
+      await act(async () => {
+        Object.defineProperty(fileInput, "files", { value: [oversizedFile], configurable: true });
+        fireEvent.change(fileInput);
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      });
+
+      await waitForCondition(() => form.querySelector('[role="alert"]') !== null);
+      assert.match(form.querySelector('[role="alert"]')!.textContent ?? "", /too large/i);
+      assert.equal(uploadCalls, 0, "an oversized file must never fire a real upload request at all");
+      assert.equal(form.querySelector(".file-field-current"), null, "no file must have been accepted");
+
+      const withinBudgetFile = new File(["résumé body"], "resume.pdf", { type: "application/pdf" });
+      await act(async () => {
+        Object.defineProperty(fileInput, "files", { value: [withinBudgetFile], configurable: true });
+        fireEvent.change(fileInput);
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      });
+
+      await waitForCondition(() => form.querySelector(".file-field-current") !== null);
+      assert.equal(uploadCalls, 1, "a file within the limit must still upload normally right after a rejected one");
+      assert.equal(form.querySelector('[role="alert"]'), null, "the earlier error must clear once a valid file is chosen");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * The table-cell side of the same field type: an existing record's file
  * value (the JSON descriptor the upload endpoint produces) renders as a
  * real clickable link to that file's URL, showing the file's own name as
