@@ -1025,8 +1025,6 @@ export function EntityPanel({
   const formRef = useRef<HTMLFormElement>(null);
   const tableScrollRef = useRef<HTMLDivElement>(null);
   const boardField = useMemo(() => findBoardField(entity.fields), [entity.fields]);
-  const filterableFields = useMemo(() => findFilterableFields(entity.fields), [entity.fields]);
-  const filterableFieldLabelOccurrences = useMemo(() => fieldLabelOccurrences(filterableFields), [filterableFields]);
   const dateField = useMemo(() => findDateField(entity.fields), [entity.fields]);
   const endDateField = useMemo(() => (dateField ? findEndDateField(entity.fields, dateField) : null), [entity.fields, dateField]);
   const phoneField = useMemo(() => findPhoneField(entity.fields), [entity.fields]);
@@ -1544,6 +1542,14 @@ export function EntityPanel({
   // textually before orderedFields existed) since it now reads from it.
   const bulkEditableFields = useMemo(() => orderedFields.filter(isInlineEditableField), [orderedFields]);
   const bulkEditableFieldLabelOccurrences = useMemo(() => fieldLabelOccurrences(bulkEditableFields), [bulkEditableFields]);
+  // The per-field filter dropdowns are a whole-record-set view like the
+  // bulk-edit field picker just above -- they follow the same
+  // drag-reordered column order (orderedFields), not the entity's raw
+  // declared order. Moved here (it used to sit right after boardField
+  // above, textually before orderedFields existed) for the same reason
+  // bulkEditableFields was.
+  const filterableFields = useMemo(() => findFilterableFields(orderedFields), [orderedFields]);
+  const filterableFieldLabelOccurrences = useMemo(() => fieldLabelOccurrences(filterableFields), [filterableFields]);
 
   // Which columns actually render in the table -- CSV export and both print
   // sheets (per-record RecordPrintSheet and the list's RecordListPrintSheet)
@@ -1640,7 +1646,9 @@ export function EntityPanel({
   // auto-picked field, and always in its own separate view), this lets a
   // person cluster the ordinary table by ANY such field while staying in
   // table view, with search/sort/columns all still applying underneath.
-  const groupableFields = useMemo(() => entity.fields.filter(isGroupableField), [entity.fields]);
+  // Same orderedFields rationale as filterableFields above -- the "Group
+  // by" dropdown's own option list is a whole-record-set view too.
+  const groupableFields = useMemo(() => orderedFields.filter(isGroupableField), [orderedFields]);
   const groupableFieldLabelOccurrences = useMemo(() => fieldLabelOccurrences(groupableFields), [groupableFields]);
   const groupField = groupableFields.find((f) => f.name === groupFieldName) ?? null;
   const recordGroups = useMemo(

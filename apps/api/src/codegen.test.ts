@@ -1343,7 +1343,7 @@ test("the exported EntityView's table toolbar has one filter dropdown per qualif
 
   assert.match(entityViewJsx, /function findFilterableEnumFields\(fields\) \{/);
   assert.match(entityViewJsx, /function findFilterableFields\(fields\) \{/);
-  assert.match(entityViewJsx, /const filterableFields = useMemo\(\(\) => findFilterableFields\(entity\.fields\), \[entity\.fields\]\);/);
+  assert.match(entityViewJsx, /const filterableFields = useMemo\(\(\) => findFilterableFields\(orderedFields\), \[orderedFields\]\);/);
   assert.match(
     entityViewJsx,
     /const \[fieldFilters, setFieldFilters\] = useState\(\(\) => sanitizeFieldFilters\(getPersistedFieldFilters\(entity\.name\), entity\.fields\)\);/,
@@ -1420,7 +1420,7 @@ test("the exported EntityView's table can be grouped by an enum/boolean field, n
   assert.match(entityViewJsx, /function isGroupableField\(field\) \{/);
   assert.match(entityViewJsx, /function groupRecordsByField\(records, field\) \{/);
   assert.match(entityViewJsx, /const \[groupFieldName, setGroupFieldName\] = useState\(\(\) => getPersistedGroupField\(entity\.name\)\);/);
-  assert.match(entityViewJsx, /const groupableFields = useMemo\(\(\) => entity\.fields\.filter\(isGroupableField\), \[entity\.fields\]\);/);
+  assert.match(entityViewJsx, /const groupableFields = useMemo\(\(\) => orderedFields\.filter\(isGroupableField\), \[orderedFields\]\);/);
   assert.match(entityViewJsx, /const recordGroups = useMemo\(/);
   // The group-by dropdown itself, gated to table view only
   assert.match(entityViewJsx, /viewMode === "table" && groupableFields\.length > 0 &&/);
@@ -13614,6 +13614,127 @@ test("the exported EntityView's Columns menu lists checkboxes in the user's drag
         labels,
         ["סטטוס", "שם"],
         "the Columns menu's own checkbox list must match the reordered table, not the entity's original declared order",
+      );
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    cleanup();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
+ * Round 684: rounds 615/621/670 ported the orderedFields fix to Export
+ * CSV/Copy/Print, the Columns menu, and board cards in the exported app --
+ * but the per-field filter dropdowns, the "Group by" option list, the
+ * bulk-edit field picker, and the add/edit record form itself were never
+ * swept into that audit here (the live preview's own EntityPanel.tsx got
+ * the record-form/bulk-edit fix in round 678, but that round changed only
+ * apps/web -- it never touched codegen.ts at all, confirmed by that
+ * round's own roadmap entry). All four still mapped over entity.fields.
+ */
+test("the exported EntityView's filter dropdowns, 'Group by' options, bulk-edit field picker, and add/edit form all honor the user's drag-reordered column order", async () => {
+  const orderProject: Project = {
+    ...project,
+    spec: {
+      ...project.spec,
+      entities: [
+        {
+          name: "Order",
+          label: "Order",
+          fields: [
+            { name: "name", label: "Name", type: "text", required: true },
+            {
+              name: "status",
+              label: "Status",
+              type: "enum",
+              required: true,
+              enumValues: ["new", "won"],
+              enumLabels: { new: "New", won: "Won" },
+            },
+            {
+              name: "priority",
+              label: "Priority",
+              type: "enum",
+              required: false,
+              enumValues: ["low", "high"],
+              enumLabels: { low: "Low", high: "High" },
+            },
+          ],
+        },
+      ],
+    },
+  };
+  const files = generateExportFiles(orderProject);
+  const dir = writeGeneratedWebComponent(files);
+  const originalFetch = globalThis.fetch;
+  const store = [{ id: 1, name: "Acme Corp", status: "new", priority: "high" }];
+  globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
+    const method = init?.method ?? "GET";
+    if (method === "GET" && input === "/api/Order") {
+      return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    throw new Error(`unexpected request ${method} ${input}`);
+  }) as typeof fetch;
+
+  try {
+    await withRealLocalStorage(async () => {
+      localStorage.setItem("forge_column_order", JSON.stringify({ Order: ["priority", "status", "name"] }));
+      const { EntityView } = await import(path.join(dir, "web", "src", "components", "EntityView.jsx"));
+      const orderEntity = orderProject.spec.entities[0];
+      const props = {
+        entity: orderEntity,
+        highlightRecordId: null,
+        onHighlightHandled: () => {},
+        onJumpToRecord: () => {},
+        onRecordCountChange: () => {},
+      };
+
+      const { container } = render(React.createElement(EntityView, props));
+      for (let i = 0; i < 40; i++) {
+        if (container.querySelectorAll("tbody tr").length === 1) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+      assert.deepEqual(
+        Array.from(container.querySelectorAll("thead th.resizable-col")).map((th) => th.querySelector(".sort-header")!.textContent),
+        ["Priority", "Status", "Name"],
+        "the persisted reorder must already be in effect on the on-screen table",
+      );
+
+      const filterLabels = Array.from(container.querySelectorAll(".entity-status-filter")).map((s) => s.getAttribute("aria-label"));
+      assert.deepEqual(
+        filterLabels,
+        ["Filter by Priority", "Filter by Status"],
+        "the filter dropdowns must appear Priority before Status, matching the reordered table",
+      );
+
+      const groupByOptions = Array.from(container.querySelectorAll(".entity-group-by option"))
+        .filter((o) => (o as HTMLOptionElement).value !== "")
+        .map((o) => o.textContent);
+      assert.deepEqual(groupByOptions, ["Priority", "Status"], "the 'Group by' option list must also list Priority before Status");
+
+      const formLabels = Array.from(container.querySelectorAll("form.record-form label.field span")).map((el) =>
+        (el.textContent ?? "").replace(" *", "").trim(),
+      );
+      assert.deepEqual(
+        formLabels,
+        ["Priority", "Status", "Name"],
+        "the add/edit form must list fields in the reordered sequence, not the entity's original declared order",
+      );
+
+      const rowCheckbox = container.querySelector('td.select-col input[type="checkbox"]') as HTMLInputElement;
+      await act(async () => {
+        fireEvent.click(rowCheckbox);
+      });
+      const bulkEditOptions = Array.from(container.querySelectorAll(".bulk-edit-field-label option"))
+        .filter((o) => (o as HTMLOptionElement).value !== "")
+        .map((o) => o.textContent);
+      assert.deepEqual(
+        bulkEditOptions,
+        ["Priority", "Status", "Name"],
+        "the bulk-edit field picker must also list fields in the reordered sequence",
       );
     });
   } finally {

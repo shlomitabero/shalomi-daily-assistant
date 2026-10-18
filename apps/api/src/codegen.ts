@@ -3014,10 +3014,6 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
   // still-correct records already on screen.
   const refreshRequestId = useRef(0);
   const boardField = useMemo(() => findBoardField(entity.fields), [entity.fields]);
-  const filterableFields = useMemo(() => findFilterableFields(entity.fields), [entity.fields]);
-  const filterableFieldLabelOccurrences = useMemo(() => fieldLabelOccurrences(filterableFields), [filterableFields]);
-  const bulkEditableFields = useMemo(() => entity.fields.filter(isInlineEditableField), [entity.fields]);
-  const bulkEditableFieldLabelOccurrences = useMemo(() => fieldLabelOccurrences(bulkEditableFields), [bulkEditableFields]);
   const entityFieldLabelOccurrences = useMemo(() => fieldLabelOccurrences(entity.fields), [entity.fields]);
   const dateField = useMemo(() => findDateField(entity.fields), [entity.fields]);
   const endDateField = useMemo(() => (dateField ? findEndDateField(entity.fields, dateField) : null), [entity.fields, dateField]);
@@ -3294,6 +3290,17 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
   // the live preview's own EntityPanel.tsx (round 203).
   const orderedFields = useMemo(() => applyColumnOrder(entity.fields, columnOrder), [entity.fields, columnOrder]);
   const orderedFieldLabelOccurrences = useMemo(() => fieldLabelOccurrences(orderedFields), [orderedFields]);
+  // The bulk-edit field picker, and the per-field filter dropdowns below,
+  // are whole-record-set actions like the table's own column list -- they
+  // follow the same drag-reordered column order (orderedFields) rather
+  // than the entity's raw declared order. Mirrors the live preview's own
+  // EntityPanel.tsx (round 678); moved here (they used to sit right after
+  // boardField above, textually before orderedFields existed) for the
+  // same reason that round's own fix moved bulkEditableFields there.
+  const bulkEditableFields = useMemo(() => orderedFields.filter(isInlineEditableField), [orderedFields]);
+  const bulkEditableFieldLabelOccurrences = useMemo(() => fieldLabelOccurrences(bulkEditableFields), [bulkEditableFields]);
+  const filterableFields = useMemo(() => findFilterableFields(orderedFields), [orderedFields]);
+  const filterableFieldLabelOccurrences = useMemo(() => fieldLabelOccurrences(filterableFields), [filterableFields]);
 
   // Which columns actually render in the table -- CSV export and both print
   // sheets (per-record RecordPrintSheet and the list's RecordListPrintSheet)
@@ -3422,7 +3429,10 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
   // ordinary table by ANY such field while staying in table view, with
   // search/sort/columns all still applying underneath. Mirrors the live
   // preview's own EntityPanel.tsx (round 219).
-  const groupableFields = useMemo(() => entity.fields.filter(isGroupableField), [entity.fields]);
+  // Same orderedFields rationale as filterableFields/bulkEditableFields
+  // above -- the "Group by" dropdown's own option list is a
+  // whole-record-set view too.
+  const groupableFields = useMemo(() => orderedFields.filter(isGroupableField), [orderedFields]);
   const groupableFieldLabelOccurrences = useMemo(() => fieldLabelOccurrences(groupableFields), [groupableFields]);
   const groupField = groupableFields.find((f) => f.name === groupFieldName) || null;
   const recordGroups = useMemo(
@@ -4242,7 +4252,11 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
           }
         }}
       >
-        {entity.fields.map((f) => (
+        {/* The create/edit form follows the same drag-reordered column
+            order as every other whole-record action -- mirrors the live
+            preview's own EntityPanel.tsx (round 678); handleSubmit builds
+            a plain keyed object regardless of field order. */}
+        {orderedFields.map((f) => (
           <label className="field" key={f.name}>
             <span>
               {fieldDisplayLabel(f, entityFieldLabelOccurrences)}

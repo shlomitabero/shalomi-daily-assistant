@@ -4380,6 +4380,77 @@ test("EntityPanel's Columns menu lists checkboxes in the user's drag-reordered c
 });
 
 /**
+ * Round 684: rounds 615/621/670/678 turned "respect orderedFields, not the
+ * entity's raw declared order" into a repeated audit across every
+ * whole-record render path -- CSV export/Copy/Print, the Columns menu,
+ * board cards, the add/edit form, and the bulk-edit field picker. The
+ * per-field filter dropdowns and the "Group by" dropdown's own option list
+ * were never swept into that audit: both read straight from `entity.fields`
+ * (`filterableFields`/`groupableFields`), sitting textually before
+ * `orderedFields` even existed -- the identical positioning hazard round
+ * 678's own fix comment called out for `bulkEditableFields`.
+ */
+test("EntityPanel's per-field filter dropdowns and 'Group by' option list both honor the user's drag-reordered column order, not the entity's original declared order", async () => {
+  await withJsdom(async () => {
+    const dealWithPriority: Entity = {
+      name: "Deal",
+      label: "Deal",
+      fields: [
+        {
+          name: "status",
+          label: "Status",
+          type: "enum",
+          required: true,
+          enumValues: ["new", "won", "lost"],
+          enumLabels: { new: "New", won: "Won", lost: "Lost" },
+        },
+        {
+          name: "priority",
+          label: "Priority",
+          type: "enum",
+          required: false,
+          enumValues: ["low", "high"],
+          enumLabels: { low: "Low", high: "High" },
+        },
+        { name: "name", label: "Name", type: "text", required: true },
+      ],
+    };
+    localStorage.setItem("forge.columnOrder", JSON.stringify({ "proj1:Deal": ["priority", "status", "name"] }));
+    const store: EntityRecord[] = [{ id: 1, name: "Globex", status: "new", priority: "high" }];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = mockRecordsFetch(store) as typeof fetch;
+    try {
+      renderEntityPanel({ entity: dealWithPriority, allEntities: [dealWithPriority] });
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 1);
+      assert.deepEqual(
+        [...document.querySelectorAll("thead th.resizable-col")].map((th) => th.querySelector(".sort-header")!.textContent),
+        ["Priority", "Status", "Name"],
+        "the persisted reorder must already be in effect on the on-screen table",
+      );
+
+      const filterLabels = Array.from(document.querySelectorAll(".entity-status-filter")).map((s) => s.getAttribute("aria-label"));
+      assert.deepEqual(
+        filterLabels,
+        [`Filter by Priority`, `Filter by Status`],
+        "the per-field filter dropdowns must appear Priority before Status, matching the reordered table, not the entity's original declared order",
+      );
+
+      const groupByOptions = Array.from(document.querySelectorAll(".entity-group-by option"))
+        .filter((o) => (o as HTMLOptionElement).value !== "")
+        .map((o) => o.textContent);
+      assert.deepEqual(
+        groupByOptions,
+        ["Priority", "Status"],
+        "the 'Group by' dropdown's own option list must also list Priority before Status, matching the reordered table",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+      localStorage.removeItem("forge.columnOrder");
+    }
+  });
+});
+
+/**
  * New in this round: GlobalSearchPanel's per-row "jump to record" click
  * (see GlobalSearchPanel.test.ts) carries a specific record id down through
  * App.tsx into a new highlightRecordId prop, so the person lands on the
