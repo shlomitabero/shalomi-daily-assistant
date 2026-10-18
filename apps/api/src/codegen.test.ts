@@ -3052,7 +3052,7 @@ test("the exported EntityView's handleBulkDuplicate and handleBulkUpdate keep on
         `${handleBulkUpdateSrc}\nreturn handleBulkUpdate;`,
       )(
         false,
-        { name: "Order" },
+        { name: "Order", fields: [{ name: "status", required: false }] },
         "status",
         "Shipped",
         new Set([1, 2, 3]),
@@ -3107,7 +3107,7 @@ test("the exported EntityView's handleBulkDuplicate and handleBulkUpdate keep on
         `${handleBulkUpdateSrc}\nreturn handleBulkUpdate;`,
       )(
         false,
-        { name: "Order" },
+        { name: "Order", fields: [{ name: "status", required: false }] },
         "status",
         "Shipped",
         new Set([1, 2, 3]),
@@ -3166,6 +3166,97 @@ test("the exported EntityView's handleBulkDuplicate and handleBulkUpdate keep on
     await fn();
     assert.equal(updateRecordCalled, 0, "no field chosen must mean no update calls at all");
     assert.equal(refreshCalled, 0);
+  }
+
+  // Round 702: the same gap found in the live preview's own handleBulkUpdate
+  // exists here too -- leaving a required field at its default blank value
+  // fired one doomed PATCH per selected record with no pre-submit check at
+  // all, unlike this same generated file's own single-record add/edit form
+  // (its own missingField guard, right next to this handler). Mirrors that
+  // same check.
+  {
+    const originalConfirm = globalThis.window?.confirm;
+    let confirmCalled = false;
+    let capturedError: string | undefined;
+    let updateCalled = false;
+    (globalThis.window as unknown as { confirm: () => boolean }).confirm = () => {
+      confirmCalled = true;
+      return true;
+    };
+    try {
+      const fn = new Function(
+        "bulkActionBusy",
+        "entity",
+        "bulkEditField",
+        "bulkEditValue",
+        "selectedIds",
+        "setBulkActionBusy",
+        "setSelectedIds",
+        "setError",
+        "updateRecord",
+        "refresh",
+        `${handleBulkUpdateSrc}\nreturn handleBulkUpdate;`,
+      )(
+        false,
+        { name: "Order", fields: [{ name: "status", label: "Status", required: true }] },
+        "status",
+        "",
+        new Set([1, 2, 3]),
+        () => {},
+        () => {},
+        (msg: string) => (capturedError = msg),
+        async () => {
+          updateCalled = true;
+        },
+        async () => {},
+      );
+      await fn();
+      assert.match(capturedError!, /"Status" is a required field/, "must name the required field, mirroring the single-record form's own message");
+      assert.equal(confirmCalled, false, "must refuse before even asking for confirmation");
+      assert.equal(updateCalled, false, "must not call updateRecord at all when the chosen required field is blank");
+    } finally {
+      if (originalConfirm) (globalThis.window as unknown as { confirm: () => boolean }).confirm = originalConfirm;
+    }
+  }
+
+  // Sibling of the guard above: a required field with a real value must
+  // still proceed normally.
+  {
+    let updateCalled = false;
+    const originalConfirm = globalThis.window?.confirm;
+    (globalThis.window as unknown as { confirm: () => boolean }).confirm = () => true;
+    try {
+      const fn = new Function(
+        "bulkActionBusy",
+        "entity",
+        "bulkEditField",
+        "bulkEditValue",
+        "selectedIds",
+        "setBulkActionBusy",
+        "setSelectedIds",
+        "setError",
+        "updateRecord",
+        "refresh",
+        `${handleBulkUpdateSrc}\nreturn handleBulkUpdate;`,
+      )(
+        false,
+        { name: "Order", fields: [{ name: "status", label: "Status", required: true }] },
+        "status",
+        "Shipped",
+        new Set([1]),
+        () => {},
+        () => {},
+        () => {},
+        async () => {
+          updateCalled = true;
+        },
+        async () => {},
+      );
+      await fn();
+      assert.equal(updateCalled, true, "must still call updateRecord when the required field has a real value");
+    } finally {
+      if (originalConfirm) (globalThis.window as unknown as { confirm: () => boolean }).confirm = originalConfirm;
+    }
   }
 });
 

@@ -739,7 +739,7 @@ test("EntityPanel's handleBulkUpdate refreshes and keeps only the ids that actua
       () => {},
       (key: string, params?: Record<string, unknown>) => (params ? `${key}:${JSON.stringify(params)}` : key),
       "proj1",
-      { name: "Order" },
+      { name: "Order", fields: [{ name: "status", required: false }] },
       new Set([1, 2, 3]),
       "status",
       "Shipped",
@@ -834,7 +834,7 @@ test("EntityPanel's handleBulkUpdate asks for confirmation before applying, and 
       () => {},
       (key: string, params?: Record<string, unknown>) => (params ? `${key}:${JSON.stringify(params)}` : key),
       "proj1",
-      { name: "Order" },
+      { name: "Order", fields: [{ name: "status", required: false }] },
       new Set([1, 2, 3]),
       "status",
       "",
@@ -905,6 +905,140 @@ test("EntityPanel's handleBulkUpdate does nothing when no field has been chosen 
 
   assert.equal(updateCalled, false, "must not call updateRecord when bulkEditField is empty");
   assert.equal(refreshCalled, false, "must not refresh when nothing was updated");
+});
+
+/**
+ * Round 702: the single-record add/edit form has had its own pre-submit
+ * required-field guard for a long time (missingField, above in this same
+ * file) -- but handleBulkUpdate let a required field through at its default
+ * blank value with no equivalent check, firing one doomed PATCH per
+ * selected record, every one rejected server-side, surfaced only as a
+ * generic error with no field name at all. Confirms the bulk path now
+ * refuses before even asking for confirmation, let alone calling
+ * updateRecord, and names the field the same way the single-record form's
+ * own message does.
+ */
+test("EntityPanel's handleBulkUpdate refuses a blank value for a required field before even asking for confirmation", async () => {
+  const handlerMatch = entityPanelSrc.match(/ {2}async function handleBulkUpdate\(\) \{[\s\S]*?\n {2}\}\n/);
+  assert.ok(handlerMatch, "expected to find handleBulkUpdate in EntityPanel.tsx");
+  const { code } = transformSync(handlerMatch![0], { loader: "ts" });
+
+  let capturedError: string | undefined;
+  let confirmCalled = false;
+  let updateCalled = false;
+  let refreshCalled = false;
+  const originalConfirm = globalThis.window.confirm;
+  globalThis.window.confirm = (() => {
+    confirmCalled = true;
+    return true;
+  }) as typeof window.confirm;
+  try {
+    const fn = new Function(
+      "bulkActionBusy",
+      "setBulkActionBusy",
+      "t",
+      "projectId",
+      "entity",
+      "selectedIds",
+      "bulkEditField",
+      "bulkEditValue",
+      "setError",
+      "updateRecord",
+      "setSelectedIds",
+      "refresh",
+      `${code}\nreturn handleBulkUpdate;`,
+    )(
+      false,
+      () => {},
+      (key: string, params?: Record<string, unknown>) => (params ? `${key}:${JSON.stringify(params)}` : key),
+      "proj1",
+      { name: "Order", fields: [{ name: "status", label: "Status", required: true }] },
+      new Set([1, 2, 3]),
+      "status",
+      "",
+      (msg: string | null) => {
+        capturedError = msg ?? undefined;
+      },
+      async () => {
+        updateCalled = true;
+      },
+      () => {},
+      async () => {
+        refreshCalled = true;
+      },
+    ) as () => Promise<void>;
+
+    await fn();
+
+    assert.match(
+      capturedError!,
+      /entity\.form\.requiredField/,
+      "must surface the same translated required-field message the single-record form uses, naming the field",
+    );
+    assert.equal(confirmCalled, false, "must refuse before even asking for confirmation");
+    assert.equal(updateCalled, false, "must not call updateRecord at all when the chosen field is required and blank");
+    assert.equal(refreshCalled, false, "must not refresh when nothing was updated");
+  } finally {
+    globalThis.window.confirm = originalConfirm;
+  }
+});
+
+/**
+ * Sibling of the guard test above: a required field is only a problem when
+ * actually left blank. Confirms picking a real value for that same required
+ * field proceeds normally (asks for confirmation, calls updateRecord) --
+ * guards against an overbroad fix that blocks every required field
+ * regardless of its chosen value.
+ */
+test("EntityPanel's handleBulkUpdate still proceeds when a required field is given a real value", async () => {
+  const handlerMatch = entityPanelSrc.match(/ {2}async function handleBulkUpdate\(\) \{[\s\S]*?\n {2}\}\n/);
+  const { code } = transformSync(handlerMatch![0], { loader: "ts" });
+
+  let capturedError: string | undefined;
+  let updateCalled = false;
+  const originalConfirm = globalThis.window.confirm;
+  globalThis.window.confirm = (() => true) as typeof window.confirm;
+  try {
+    const fn = new Function(
+      "bulkActionBusy",
+      "setBulkActionBusy",
+      "t",
+      "projectId",
+      "entity",
+      "selectedIds",
+      "bulkEditField",
+      "bulkEditValue",
+      "setError",
+      "updateRecord",
+      "setSelectedIds",
+      "refresh",
+      `${code}\nreturn handleBulkUpdate;`,
+    )(
+      false,
+      () => {},
+      (key: string) => key,
+      "proj1",
+      { name: "Order", fields: [{ name: "status", label: "Status", required: true }] },
+      new Set([1]),
+      "status",
+      "Shipped",
+      (msg: string | null) => {
+        capturedError = msg ?? undefined;
+      },
+      async () => {
+        updateCalled = true;
+      },
+      () => {},
+      async () => {},
+    ) as () => Promise<void>;
+
+    await fn();
+
+    assert.equal(capturedError, undefined, "must not report any error when a real value was chosen for the required field");
+    assert.equal(updateCalled, true, "must still call updateRecord when the required field has a real value");
+  } finally {
+    globalThis.window.confirm = originalConfirm;
+  }
 });
 
 /**

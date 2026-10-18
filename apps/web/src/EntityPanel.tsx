@@ -2272,6 +2272,16 @@ export function EntityPanel({
     if (bulkActionBusy) return;
     const ids = [...selectedIds];
     if (ids.length === 0 || !bulkEditField) return;
+    // Mirrors the single-record add/edit form's own pre-submit required-field
+    // check (see missingField above) -- without it, leaving a required field
+    // at its default blank value fires one doomed PATCH per selected record,
+    // every one rejected server-side, surfaced only as the generic
+    // VALIDATION_ERROR string with no field name at all.
+    const bulkEditFieldDef = entity.fields.find((f) => f.name === bulkEditField);
+    if (bulkEditFieldDef?.required && (bulkEditValue === "" || bulkEditValue == null)) {
+      setError(t("entity.form.requiredField", { field: bulkEditFieldDef.label ?? bulkEditFieldDef.name }));
+      return;
+    }
     if (!window.confirm(t("entity.bulk.confirmUpdate", { count: ids.length }))) return;
     setBulkActionBusy(true);
     setError(null);

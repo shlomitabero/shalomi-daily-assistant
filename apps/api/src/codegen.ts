@@ -3892,6 +3892,14 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
     if (bulkActionBusy) return;
     const ids = [...selectedIds];
     if (ids.length === 0 || !bulkEditField) return;
+    // Mirrors the single-record add/edit form's own pre-submit required-field
+    // check above -- without it, leaving a required field at its default
+    // blank value fires one doomed PATCH per selected record.
+    const bulkEditFieldDef = entity.fields.find((f) => f.name === bulkEditField);
+    if (bulkEditFieldDef?.required && (bulkEditValue === "" || bulkEditValue == null)) {
+      setError(\`"\${bulkEditFieldDef.label || bulkEditFieldDef.name}" is a required field\`);
+      return;
+    }
     if (!window.confirm(\`Set this field on \${ids.length} records? This cannot be undone.\`)) return;
     setBulkActionBusy(true);
     setError(null);
