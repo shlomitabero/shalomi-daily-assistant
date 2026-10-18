@@ -2249,7 +2249,9 @@ function AppContent() {
             />
           )}
 
-          {showShortcuts && <ShortcutsPanel onClose={() => setShowShortcuts(false)} />}
+          {showShortcuts && (
+            <ShortcutsPanel onClose={() => setShowShortcuts(false)} readOnly={myRole === "viewer"} />
+          )}
         </main>
       )}
     </div>

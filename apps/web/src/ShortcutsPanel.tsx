@@ -27,9 +27,30 @@ const SHORTCUTS: { keys: string[]; descriptionKey: string }[] = [
   { keys: ["Esc"], descriptionKey: "shortcuts.clearSelection" },
 ];
 
-export function ShortcutsPanel({ onClose }: { onClose: () => void }) {
+/**
+ * Every one of these rows is a shortcut that EntityPanel.tsx's own keydown
+ * handler (and the create/edit form it submits) already no-ops for a
+ * read-only viewer (readOnly checks at EntityPanel.tsx:1872/1878/1881/1884/
+ * 1913, and the whole create/edit <form> is unrendered behind `{!readOnly &&`
+ * at line 2743) -- so listing them here for a viewer would describe keys
+ * that silently do nothing, the same affordance-gating hazard already fixed
+ * for EntityPanel's own inline-edit cells, SpecListItemRemover, and
+ * CalendarView.
+ */
+const EDITOR_ONLY_KEYS = new Set([
+  "shortcuts.rowEdit",
+  "shortcuts.toggleSelect",
+  "shortcuts.newRecord",
+  "shortcuts.rowDelete",
+  "shortcuts.rowDuplicate",
+  "shortcuts.submitForm",
+  "shortcuts.clearSelection",
+]);
+
+export function ShortcutsPanel({ onClose, readOnly = false }: { onClose: () => void; readOnly?: boolean }) {
   const { t } = useTranslation();
   const dialogRef = useDialogFocusTrap<HTMLDivElement>(onClose);
+  const visibleShortcuts = readOnly ? SHORTCUTS.filter((row) => !EDITOR_ONLY_KEYS.has(row.descriptionKey)) : SHORTCUTS;
 
   return (
     <div className="history-overlay">
@@ -41,7 +62,7 @@ export function ShortcutsPanel({ onClose }: { onClose: () => void }) {
           </button>
         </div>
         <ul className="shortcuts-list">
-          {SHORTCUTS.map((row, i) => (
+          {visibleShortcuts.map((row, i) => (
             <li key={i} className="shortcuts-row">
               <span className="shortcuts-keys">
                 {row.keys.map((key, j) => (

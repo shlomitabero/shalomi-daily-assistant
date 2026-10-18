@@ -44,12 +44,12 @@ async function withJsdom<T>(fn: () => Promise<T> | T): Promise<T> {
   }
 }
 
-function renderPanel(onClose: () => void = () => {}) {
+function renderPanel(onClose: () => void = () => {}, readOnly = false) {
   render(
     React.createElement(
       ThemeProvider,
       null,
-      React.createElement(LanguageProvider, null, React.createElement(ShortcutsPanel, { onClose })),
+      React.createElement(LanguageProvider, null, React.createElement(ShortcutsPanel, { onClose, readOnly })),
     ),
   );
 }
@@ -103,6 +103,43 @@ test("renders a real dialog listing every actual shortcut, not a placeholder", a
       descriptions.every((d) => !d?.startsWith("shortcuts.")),
       "no row should ever render a raw, untranslated key",
     );
+  });
+});
+
+test("readOnly viewer sees only the shortcuts that still actually do something", async () => {
+  await withJsdom(async () => {
+    renderPanel(() => {}, true);
+
+    const rows = document.querySelectorAll(".shortcuts-row");
+    // Every editor-only shortcut (edit row, toggle-select, new record,
+    // delete row, duplicate row, submit form, clear selection) is a no-op
+    // for a viewer -- EntityPanel.tsx gates each one behind !readOnly, and
+    // the row-selection checkbox itself is `disabled={readOnly}` so
+    // selectedIds can never become non-empty to clear in the first place.
+    // Only the 6 role-agnostic rows (Ctrl+K, "/", "?", close-Esc, j, k)
+    // should remain.
+    assert.equal(rows.length, 6, "expected only the 6 shortcuts that still work for a read-only viewer");
+
+    const kbds = Array.from(document.querySelectorAll(".shortcuts-keys kbd")).map((el) => el.textContent);
+    assert.ok(kbds.includes("Ctrl"), "expected Ctrl+K (search) to remain for a viewer");
+    assert.ok(kbds.includes("/"), '"/" (search) should remain for a viewer');
+    assert.ok(kbds.includes("?"), "expected this panel's own shortcut to remain for a viewer");
+    assert.ok(kbds.includes("j"), "expected j (row-down navigation) to remain for a viewer");
+    assert.ok(kbds.includes("k"), "expected k (row-up navigation) to remain for a viewer");
+    assert.equal(kbds.filter((k) => k === "Esc").length, 1, "expected only the close-Esc row, not the dead clear-selection Esc row");
+    assert.ok(!kbds.includes("Enter"), "Enter (edit row) is dead for a viewer and must not be listed");
+    assert.ok(!kbds.includes("x"), "x (toggle select) is dead for a viewer and must not be listed");
+    assert.ok(!kbds.includes("n"), "n (new record) is dead for a viewer and must not be listed");
+    assert.ok(!kbds.includes("Delete"), "Delete (delete row) is dead for a viewer and must not be listed");
+    assert.ok(!kbds.includes("d"), "d (duplicate row) is dead for a viewer and must not be listed");
+  });
+});
+
+test("non-viewer still sees the full shortcut list (readOnly defaults to false)", async () => {
+  await withJsdom(async () => {
+    renderPanel();
+    const rows = document.querySelectorAll(".shortcuts-row");
+    assert.equal(rows.length, 13, "expected the full list when readOnly is omitted");
   });
 });
 
