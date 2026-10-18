@@ -1800,10 +1800,11 @@ function AppContent() {
                   canRemove={project.spec.roles.length > 1}
                   onRenamed={setProject}
                   onRemoved={setProject}
+                  readOnly={myRole === "viewer"}
                 />
               ))}
             </div>
-            <AddRoleForm projectId={project.id} onAdded={setProject} />
+            <AddRoleForm projectId={project.id} onAdded={setProject} readOnly={myRole === "viewer"} />
           </section>
 
           <section>
@@ -1818,12 +1819,13 @@ function AppContent() {
                 canRemove={project.spec.entities.length > 1}
                 onRenamed={setProject}
                 onRemoved={setProject}
+                readOnly={myRole === "viewer"}
               />
             ))}
             {project.spec.entities.some((e) => e.fields.some((f) => f.required)) && (
               <p className="muted small">{t("spec.entities.requiredHint")}</p>
             )}
-            <AddEntityForm projectId={project.id} onAdded={setProject} />
+            <AddEntityForm projectId={project.id} onAdded={setProject} readOnly={myRole === "viewer"} />
           </section>
 
           <section>
@@ -1837,10 +1839,11 @@ function AppContent() {
                   index={i}
                   onRenamed={setProject}
                   onRemoved={setProject}
+                  readOnly={myRole === "viewer"}
                 />
               ))}
             </ul>
-            <AddAssumptionForm projectId={project.id} onAdded={setProject} />
+            <AddAssumptionForm projectId={project.id} onAdded={setProject} readOnly={myRole === "viewer"} />
           </section>
 
           {project.spec.openQuestions.length > 0 && (

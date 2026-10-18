@@ -84,6 +84,7 @@ function renderRoleChip(
   onRemoved: (p: Project) => void,
   canRemove = true,
   onRenamed: (p: Project) => void = () => {},
+  readOnly = false,
 ) {
   render(
     React.createElement(
@@ -92,13 +93,17 @@ function renderRoleChip(
       React.createElement(
         LanguageProvider,
         null,
-        React.createElement(RoleChip, { role: "Manager", projectId: "proj1", index: 1, canRemove, onRenamed, onRemoved }),
+        React.createElement(RoleChip, { role: "Manager", projectId: "proj1", index: 1, canRemove, onRenamed, onRemoved, readOnly }),
       ),
     ),
   );
 }
 
-function renderAssumptionItem(onRemoved: (p: Project) => void, onRenamed: (p: Project) => void = () => {}) {
+function renderAssumptionItem(
+  onRemoved: (p: Project) => void,
+  onRenamed: (p: Project) => void = () => {},
+  readOnly = false,
+) {
   render(
     React.createElement(
       ThemeProvider,
@@ -112,6 +117,7 @@ function renderAssumptionItem(onRemoved: (p: Project) => void, onRenamed: (p: Pr
           index: 1,
           onRenamed,
           onRemoved,
+          readOnly,
         }),
       ),
     ),
@@ -122,6 +128,7 @@ function renderEntitySummaryItem(
   onRemoved: (p: Project) => void,
   canRemove = true,
   onRenamed: (p: Project) => void = () => {},
+  readOnly = false,
 ) {
   render(
     React.createElement(
@@ -138,6 +145,7 @@ function renderEntitySummaryItem(
           canRemove,
           onRenamed,
           onRemoved,
+          readOnly,
         }),
       ),
     ),
@@ -149,6 +157,7 @@ function renderFieldChip(
   canRemove = true,
   field: Field = { name: "email", type: "text", required: true },
   allEntities: Entity[] = baseProject.spec.entities,
+  readOnly = false,
 ) {
   render(
     React.createElement(
@@ -164,13 +173,18 @@ function renderFieldChip(
           canRemove,
           onChanged,
           allEntities,
+          readOnly,
         }),
       ),
     ),
   );
 }
 
-function renderAddFieldForm(onAdded: (p: Project) => void, allEntities: Entity[] = baseProject.spec.entities) {
+function renderAddFieldForm(
+  onAdded: (p: Project) => void,
+  allEntities: Entity[] = baseProject.spec.entities,
+  readOnly = false,
+) {
   render(
     React.createElement(
       ThemeProvider,
@@ -178,38 +192,38 @@ function renderAddFieldForm(onAdded: (p: Project) => void, allEntities: Entity[]
       React.createElement(
         LanguageProvider,
         null,
-        React.createElement(AddFieldForm, { projectId: "proj1", entityName: "Customer", allEntities, onAdded }),
+        React.createElement(AddFieldForm, { projectId: "proj1", entityName: "Customer", allEntities, onAdded, readOnly }),
       ),
     ),
   );
 }
 
-function renderAddRoleForm(onAdded: (p: Project) => void) {
+function renderAddRoleForm(onAdded: (p: Project) => void, readOnly = false) {
   render(
     React.createElement(
       ThemeProvider,
       null,
-      React.createElement(LanguageProvider, null, React.createElement(AddRoleForm, { projectId: "proj1", onAdded })),
+      React.createElement(LanguageProvider, null, React.createElement(AddRoleForm, { projectId: "proj1", onAdded, readOnly })),
     ),
   );
 }
 
-function renderAddAssumptionForm(onAdded: (p: Project) => void) {
+function renderAddAssumptionForm(onAdded: (p: Project) => void, readOnly = false) {
   render(
     React.createElement(
       ThemeProvider,
       null,
-      React.createElement(LanguageProvider, null, React.createElement(AddAssumptionForm, { projectId: "proj1", onAdded })),
+      React.createElement(LanguageProvider, null, React.createElement(AddAssumptionForm, { projectId: "proj1", onAdded, readOnly })),
     ),
   );
 }
 
-function renderAddEntityForm(onAdded: (p: Project) => void) {
+function renderAddEntityForm(onAdded: (p: Project) => void, readOnly = false) {
   render(
     React.createElement(
       ThemeProvider,
       null,
-      React.createElement(LanguageProvider, null, React.createElement(AddEntityForm, { projectId: "proj1", onAdded })),
+      React.createElement(LanguageProvider, null, React.createElement(AddEntityForm, { projectId: "proj1", onAdded, readOnly })),
     ),
   );
 }
@@ -1366,5 +1380,82 @@ test("choosing 'relation' as the add-field type reveals a dropdown of this proje
     } finally {
       globalThis.fetch = originalFetch;
     }
+  });
+});
+
+/**
+ * Round 696: a viewer collaborator can genuinely land on this exact spec
+ * review screen (App.tsx routes any unbuilt project straight to "spec"
+ * regardless of role, and a collaborator can be invited before build), and
+ * the server already rejects every one of these components' writes with
+ * 403 VIEWER_READ_ONLY -- but none of them had ever been gated client-side
+ * at all, unlike their two siblings on the same screen (ProjectNameEditor/
+ * ProjectDescriptionEditor, both already readOnly-aware). readOnly=true
+ * must render each item as plain, non-interactive content (no rename/
+ * remove affordance) and omit every add-form entirely, mirroring
+ * CheckpointLabelEditor's own established `if (readOnly) return <strong>`
+ * pattern.
+ */
+test("a role chip in readOnly mode renders the plain role text with no rename or remove affordance", async () => {
+  await withJsdom(async () => {
+    renderRoleChip(() => {}, true, () => {}, true);
+    assert.equal(document.body.textContent, "Manager");
+    assert.equal(document.querySelector(".chip-remove") === null, true, "a read-only role chip must never show a remove button");
+    assert.equal(document.querySelector(".chip-text") === null, true, "a read-only role chip must never show a clickable rename affordance");
+  });
+});
+
+test("an assumption item in readOnly mode renders the plain text with no rename or remove affordance", async () => {
+  await withJsdom(async () => {
+    renderAssumptionItem(() => {}, () => {}, true);
+    assert.equal(document.body.textContent, "Second assumption");
+    assert.equal(document.querySelector(".assumption-remove") === null, true, "a read-only assumption must never show a remove button");
+    assert.equal(document.querySelector(".assumption-text") === null, true, "a read-only assumption must never show a clickable rename affordance");
+  });
+});
+
+test("an entity summary in readOnly mode renders the plain entity label with no rename/remove affordance, its field chips are also read-only, and the add-field form is omitted entirely", async () => {
+  await withJsdom(async () => {
+    renderEntitySummaryItem(() => {}, true, () => {}, true);
+    assert.equal(document.querySelector(".entity-summary-remove") === null, true, "a read-only entity summary must never show a remove button");
+    assert.equal(
+      document.querySelector(".entity-summary-label[role='button']") === null,
+      true,
+      "a read-only entity summary's label must never be a clickable rename affordance",
+    );
+    assert.match(document.body.textContent ?? "", /Customer/);
+    assert.equal(document.querySelector(".spec-add-field-form") === null, true, "a read-only entity summary must never show the add-field form");
+    assert.equal(document.querySelector(".chip-remove") === null, true, "a read-only entity summary's own field chips must also be read-only");
+    assert.equal(document.querySelector("select.chip-field-type") === null, true, "a read-only field chip must never show the field-type select");
+  });
+});
+
+test("a field chip in readOnly mode renders the plain field label (with the required marker) and no type select, required checkbox, rename, or remove affordance", async () => {
+  await withJsdom(async () => {
+    renderFieldChip(() => {}, true, { name: "email", type: "text", required: true }, baseProject.spec.entities, true);
+    assert.match(document.body.textContent ?? "", /email \*/);
+    assert.equal(document.querySelector(".chip-remove") === null, true);
+    assert.equal(document.querySelector("select.chip-field-type") === null, true);
+    assert.equal(document.querySelector("input[type='checkbox']") === null, true, "a read-only field chip must never show the required checkbox");
+    assert.equal(document.querySelector(".chip-text[role='button']") === null, true, "a read-only field chip's label must never be a clickable rename affordance");
+  });
+});
+
+test("AddRoleForm, AddAssumptionForm, AddEntityForm, and AddFieldForm all render nothing at all in readOnly mode", async () => {
+  await withJsdom(async () => {
+    renderAddRoleForm(() => {}, true);
+    assert.equal(document.querySelector("form") === null, true, "a read-only AddRoleForm must render nothing");
+    cleanup();
+
+    renderAddAssumptionForm(() => {}, true);
+    assert.equal(document.querySelector("form") === null, true, "a read-only AddAssumptionForm must render nothing");
+    cleanup();
+
+    renderAddEntityForm(() => {}, true);
+    assert.equal(document.querySelector("form") === null, true, "a read-only AddEntityForm must render nothing");
+    cleanup();
+
+    renderAddFieldForm(() => {}, baseProject.spec.entities, true);
+    assert.equal(document.querySelector("form") === null, true, "a read-only AddFieldForm must render nothing");
   });
 });

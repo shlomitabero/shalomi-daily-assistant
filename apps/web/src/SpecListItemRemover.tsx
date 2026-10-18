@@ -119,6 +119,7 @@ export function RoleChip({
   canRemove,
   onRenamed,
   onRemoved,
+  readOnly = false,
 }: {
   role: string;
   projectId: string;
@@ -127,10 +128,16 @@ export function RoleChip({
   canRemove: boolean;
   onRenamed: (project: Project) => void;
   onRemoved: (project: Project) => void;
+  /** A viewer collaborator can land on the spec review screen (it's shown for any unbuilt project, regardless of role) -- the server already rejects a rename/remove with 403 VIEWER_READ_ONLY, but without this the chip still looked and behaved like a live rename/remove control up until that rejection. Mirrors CheckpointLabelEditor's own `if (readOnly) return <strong>...` pattern. */
+  readOnly?: boolean;
 }) {
   const { t } = useTranslation();
   const { busy, error, handleRemove } = useRemovableSpecItem(() => removeRole(projectId, index, role), onRemoved);
   const rename = useRenamableSpecItem(role, (value) => renameRole(projectId, index, value, role), onRenamed);
+
+  if (readOnly) {
+    return <span className="chip">{role}</span>;
+  }
 
   if (rename.editing) {
     return (
@@ -200,12 +207,15 @@ export function AssumptionItem({
   index,
   onRenamed,
   onRemoved,
+  readOnly = false,
 }: {
   assumption: string;
   projectId: string;
   index: number;
   onRenamed: (project: Project) => void;
   onRemoved: (project: Project) => void;
+  /** See RoleChip's own comment -- same gap, same fix. */
+  readOnly?: boolean;
 }) {
   const { t } = useTranslation();
   const { busy, error, handleRemove } = useRemovableSpecItem(
@@ -217,6 +227,10 @@ export function AssumptionItem({
     (value) => renameAssumption(projectId, index, value, assumption),
     onRenamed,
   );
+
+  if (readOnly) {
+    return <li className="assumption-item">{assumption}</li>;
+  }
 
   if (rename.editing) {
     return (
@@ -306,6 +320,7 @@ export function EntitySummaryItem({
   canRemove,
   onRenamed,
   onRemoved,
+  readOnly = false,
 }: {
   entity: Entity;
   /** The project's full entity list -- threaded through to AddFieldForm below so a newly-added "relation" field can offer a real dropdown of valid targets (including this same entity, for a legitimate self-relation like "reports to"), rather than a free-text name with no way to tell a deliberate reference from a typo. */
@@ -316,6 +331,8 @@ export function EntitySummaryItem({
   canRemove: boolean;
   onRenamed: (project: Project) => void;
   onRemoved: (project: Project) => void;
+  /** See RoleChip's own comment -- same gap, same fix. Threaded through to each FieldChip below and AddFieldForm is omitted entirely, the same way EntityPanel's own record form is hidden (not just disabled) for a read-only viewer. */
+  readOnly?: boolean;
 }) {
   const { t } = useTranslation();
   const { busy, error, handleRemove } = useRemovableSpecItem(() => removeEntity(projectId, entity.name), onRemoved);
@@ -324,6 +341,30 @@ export function EntitySummaryItem({
     (value) => renameEntityLabel(projectId, entity.name, value),
     onRenamed,
   );
+
+  if (readOnly) {
+    return (
+      <div className="entity-summary">
+        <div className="entity-summary-header">
+          <strong className="entity-summary-label">{entity.label ?? entity.name}</strong>
+        </div>
+        <div className="entity-summary-fields chips" aria-label={fieldsSummary}>
+          {entity.fields.map((field) => (
+            <FieldChip
+              key={field.name}
+              field={field}
+              projectId={projectId}
+              entityName={entity.name}
+              canRemove={entity.fields.length > 1}
+              onChanged={onRenamed}
+              allEntities={allEntities}
+              readOnly
+            />
+          ))}
+        </div>
+      </div>
+    );
+  }
 
   if (rename.editing) {
     return (
@@ -421,6 +462,7 @@ export function FieldChip({
   allEntities,
   canRemove,
   onChanged,
+  readOnly = false,
 }: {
   field: Field;
   projectId: string;
@@ -430,6 +472,8 @@ export function FieldChip({
   /** False once this is the only remaining field on the entity -- the API rejects removing it (EntitySchema requires fields.min(1)), so the button is disabled instead of letting the user hit that error. */
   canRemove: boolean;
   onChanged: (project: Project) => void;
+  /** See RoleChip's own comment -- same gap, same fix. */
+  readOnly?: boolean;
 }) {
   const { t } = useTranslation();
   const { busy, error, handleRemove } = useRemovableSpecItem(
@@ -513,6 +557,15 @@ export function FieldChip({
       enumValues: draftType === "enum" ? draftEnumValues : undefined,
       relationTo: draftType === "relation" ? draftRelationTo : undefined,
     });
+  }
+
+  if (readOnly) {
+    return (
+      <span className="chip">
+        {field.label ?? field.name}
+        {field.required ? " *" : ""}
+      </span>
+    );
   }
 
   if (rename.editing) {
@@ -671,12 +724,22 @@ function useAddableSpecItem(add: (value: string) => Promise<{ project: Project }
   return { value, setValue, busy, error, handleSubmit };
 }
 
-export function AddRoleForm({ projectId, onAdded }: { projectId: string; onAdded: (project: Project) => void }) {
+export function AddRoleForm({
+  projectId,
+  onAdded,
+  readOnly = false,
+}: {
+  projectId: string;
+  onAdded: (project: Project) => void;
+  /** See RoleChip's own comment -- same gap, same fix: hidden entirely, the same way EntityPanel's own record form is hidden (not just disabled) for a read-only viewer. */
+  readOnly?: boolean;
+}) {
   const { t } = useTranslation();
   const { value, setValue, busy, error, handleSubmit } = useAddableSpecItem(
     (role) => addRole(projectId, role),
     onAdded,
   );
+  if (readOnly) return null;
   return (
     <form className="spec-add-item-form" onSubmit={handleSubmit}>
       <input
@@ -709,12 +772,22 @@ export function AddRoleForm({ projectId, onAdded }: { projectId: string; onAdded
  * here, the same as adding a role or assumption needs nothing more than
  * their own single string.
  */
-export function AddEntityForm({ projectId, onAdded }: { projectId: string; onAdded: (project: Project) => void }) {
+export function AddEntityForm({
+  projectId,
+  onAdded,
+  readOnly = false,
+}: {
+  projectId: string;
+  onAdded: (project: Project) => void;
+  /** See AddRoleForm's own comment -- same gap, same fix. */
+  readOnly?: boolean;
+}) {
   const { t } = useTranslation();
   const { value, setValue, busy, error, handleSubmit } = useAddableSpecItem(
     (label) => addEntity(projectId, label),
     onAdded,
   );
+  if (readOnly) return null;
   return (
     <form className="spec-add-item-form" onSubmit={handleSubmit}>
       <input
@@ -762,11 +835,14 @@ export function AddFieldForm({
   entityName,
   allEntities,
   onAdded,
+  readOnly = false,
 }: {
   projectId: string;
   entityName: string;
   allEntities: Entity[];
   onAdded: (project: Project) => void;
+  /** See AddRoleForm's own comment -- same gap, same fix. Not actually threaded in from App.tsx (EntitySummaryItem's own readOnly branch above omits AddFieldForm entirely instead), but declared the same way as every sibling Add*Form for consistency and in case a future caller renders it directly. */
+  readOnly?: boolean;
 }) {
   const { t } = useTranslation();
   const [label, setLabel] = useState("");
@@ -800,6 +876,8 @@ export function AddFieldForm({
       setBusy(false);
     }
   }
+
+  if (readOnly) return null;
 
   return (
     <form className="spec-add-item-form spec-add-field-form" onSubmit={handleSubmit}>
@@ -853,12 +931,22 @@ export function AddFieldForm({
   );
 }
 
-export function AddAssumptionForm({ projectId, onAdded }: { projectId: string; onAdded: (project: Project) => void }) {
+export function AddAssumptionForm({
+  projectId,
+  onAdded,
+  readOnly = false,
+}: {
+  projectId: string;
+  onAdded: (project: Project) => void;
+  /** See AddRoleForm's own comment -- same gap, same fix. */
+  readOnly?: boolean;
+}) {
   const { t } = useTranslation();
   const { value, setValue, busy, error, handleSubmit } = useAddableSpecItem(
     (assumption) => addAssumption(projectId, assumption),
     onAdded,
   );
+  if (readOnly) return null;
   return (
     <form className="spec-add-item-form" onSubmit={handleSubmit}>
       <input
