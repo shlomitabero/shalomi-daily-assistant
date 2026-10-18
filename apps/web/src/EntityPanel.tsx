@@ -2590,7 +2590,16 @@ export function EntityPanel({
         {visibleFields.map((f) => {
           const isEditingThisCell =
             editingCell != null && editingCell.recordId === (record.id as number) && editingCell.field === f.name;
-          const editable = isInlineEditableField(f);
+          // Mirrors startInlineEdit's own readOnly check above -- without
+          // this, a read-only viewer still gets the "cell-inline-editable"
+          // hover/cursor styling and the "Double-click to edit quickly"
+          // tooltip on every cell, then double-clicking one silently does
+          // nothing (startInlineEdit's own check rejects it with no
+          // feedback). Every other read-only affordance in this file (the
+          // row-select checkbox, BoardCard's drag/Edit/Delete, the bulk-
+          // actions bar) gates the control's own look, not just its
+          // callback -- this was the one place only the callback was gated.
+          const editable = !readOnly && isInlineEditableField(f);
           return (
             <td
               key={f.name}

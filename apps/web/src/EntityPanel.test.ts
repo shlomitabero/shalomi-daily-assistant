@@ -9438,3 +9438,40 @@ test("EntityPanel with readOnly=true hides the record form and row edit/delete b
     }
   });
 });
+
+/**
+ * Round 695: startInlineEdit itself already refuses to start an edit for a
+ * read-only viewer (readOnly || !isInlineEditableField(field)), but the
+ * cell's own rendering computed `editable` from isInlineEditableField alone
+ * -- so a viewer still got the "cell-inline-editable" hover/cursor styling
+ * and the "Double-click to edit quickly" tooltip on every ordinary cell,
+ * and double-clicking one silently did nothing, with zero feedback as to
+ * why. Every other read-only affordance in this file (the row checkbox
+ * above, BoardCard's drag/Edit/Delete, the bulk-actions bar) gates the
+ * control's own look, not just its callback -- this was the one place that
+ * only gated the callback.
+ */
+test("EntityPanel never shows the inline-edit hover styling or tooltip on a table cell when readOnly=true, even for a field type that's normally inline-editable", async () => {
+  await withJsdom(async () => {
+    const store: EntityRecord[] = [{ id: 1, name: "Acme Deal", amount: 100, status: "new" }];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = mockRecordsFetch(store) as typeof fetch;
+    try {
+      renderEntityPanel({ readOnly: true });
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 1);
+
+      assert.equal(
+        document.querySelectorAll("table tbody td.cell-inline-editable").length,
+        0,
+        "a read-only viewer must never see the inline-editable cursor/hover styling on any cell",
+      );
+      const nameCell = Array.from(document.querySelectorAll("table tbody td")).find((td) => td.textContent === "Acme Deal")!;
+      assert.equal(nameCell.getAttribute("title"), null, "a read-only viewer must never see the 'Double-click to edit quickly' tooltip");
+      assert.equal(document.querySelector(".cell-editing"), null, "double-clicking must never actually enter edit mode for a read-only viewer");
+      fireEvent.doubleClick(nameCell);
+      assert.equal(document.querySelector(".cell-editing"), null, "double-clicking a read-only cell must still do nothing after the click");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
