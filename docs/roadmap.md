@@ -29433,3 +29433,17 @@ Still no genuine reply from שלומי. `AutomationsPanel.tsx` (677, a full "Edi
 **Verification**: `AutomationsPanel.test.ts` in isolation 22/22 (20 baseline + 2 new). Full `@forge/web` suite 969/969 (967 baseline + 2 new), no flake this run. Full `npm run build` clean. Only `apps/web` changed this round. Commit `947dee9`.
 
 **Status**: shipped and pushed.
+
+### Round 680: a stale role-update response could resurrect a just-removed collaborator
+
+Still no genuine reply from שלומי. `AutomationsPanel.tsx` (677, 679), `EntityPanel.tsx` (678), and `SpecListItemRemover.tsx` (675-676) had each just had recent rounds, so this round's survey was steered toward `CollaboratorsPanel.tsx`'s less-visited flows and found a real concurrency bug -- the same shape a sibling panel had already been fixed for.
+
+**The bug**: `handleRoleChange` (`apps/web/src/CollaboratorsPanel.tsx`) does a full `setCollaborators(collaborators)` replace from its own PATCH response, while `handleRemove` does a local `.filter(...)`. The role `<select>` was only ever disabled while `updatingRoleUserId !== null`, and the remove button only while `removingUserId !== null` -- two fully independent gates, so nothing stopped a role-change PATCH for one collaborator and a removal DELETE for a *different* collaborator from being in flight at the same time. If the DELETE resolved first (plausible under ordinary network jitter -- no artificial delay needed), `handleRemove` correctly dropped that collaborator from the list. But when the still-pending PATCH's response then landed, its own server-side snapshot -- captured at the moment the server handled the role change, before it had processed the DELETE -- still included the just-removed collaborator, and the full-replace silently resurrected them in the UI (any further action against them would then 404, confusing the owner). `HistoryPanel.tsx` has the identical shape (two destructive/mutating actions on the same list, each with its own busy flag, each doing a `setX(...)` that could clobber the other) and was already fixed for exactly this: its own restore and delete buttons are both disabled while *either* `busyId` or `deletingId` is set, with a comment explaining why. `CollaboratorsPanel.tsx` never got the equivalent cross-gate.
+
+**The fix**: the role `<select>`, the remove button, and the leave button are now all disabled while *either* `updatingRoleUserId !== null` *or* `removingUserId !== null` -- mirroring `HistoryPanel`'s own convention exactly, so the two requests this bug needed can never actually overlap in the first place (not a deeper fix to the response-handling itself, since preventing the race is simpler and matches the established pattern).
+
+**The test**: `CollaboratorsPanel.test.ts` -- 1 new (two collaborators; changing one's role gates a *different* row's remove button -- clicking it while disabled is confirmed to be a genuine no-op, not just visually disabled, since no DELETE request fires; once the role update resolves, the same remove button works normally). Regression-proofed via an exact revert-and-restore cycle: reverting the two cross-gated conditions back to their single-flag originals reproduced the expected failure before the full restore.
+
+**Verification**: `CollaboratorsPanel.test.ts` in isolation 14/14 (13 baseline + 1 new). Full `@forge/web` suite 970/970 (969 baseline + 1 new), no flake this run. Full `npm run build` clean. Only `apps/web` changed this round. Commit `766a33f`.
+
+**Status**: shipped and pushed.
