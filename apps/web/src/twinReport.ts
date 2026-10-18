@@ -49,6 +49,12 @@ export function formatTwinReport(
     ...(twin.mostLinkedRecord ? [twin.mostLinkedRecord.text] : []),
     ...twin.jumpableObservations.map((o) => o.text),
     ...twin.observations,
+    // distributions before numericStats, same order BusinessTwinPanel.tsx's
+    // own Dashboard tab renders them (bar charts, then stat tiles) -- these
+    // were added by the Dashboard feature but never folded in here, so the
+    // one downloadable/shareable snapshot of this data silently omitted it.
+    ...twin.distributions.map((d) => d.text),
+    ...twin.numericStats.map((s) => s.text),
   ];
   if (allObservations.length > 0) {
     lines.push("");

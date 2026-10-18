@@ -140,6 +140,54 @@ test("formatTwinReport orders mostActiveObservation before mostLinkedRecord, mat
   assert.ok(activeIndex < linkedIndex, "mostActiveObservation must appear before mostLinkedRecord, matching the panel's order");
 });
 
+/**
+ * Round 701: BusinessTwinPanel.tsx's Dashboard tab renders distributions as
+ * bar charts and numericStats as stat tiles, but formatTwinReport never
+ * folded either `.text` field into the report -- the one downloadable/
+ * shareable snapshot of this exact data silently omitted it. Confirms both
+ * now survive into the report, in the same order the Dashboard tab renders
+ * them (distributions' bar charts before numericStats' stat tiles).
+ */
+test("formatTwinReport folds distributions and numericStats into the observations section, in the Dashboard tab's own order", () => {
+  const t = (key: string, params?: Record<string, string | number>) => translate("en", key, params);
+  const twin = makeTwin({
+    observations: [],
+    distributions: [
+      {
+        text: 'In "Orders", status breaks down as: Open (3), Closed (2).',
+        entityName: "Order",
+        entityLabel: "Orders",
+        fieldName: "status",
+        fieldLabel: "Status",
+        breakdown: [
+          { value: "open", label: "Open", count: 3 },
+          { value: "closed", label: "Closed", count: 2 },
+        ],
+      },
+    ],
+    numericStats: [
+      {
+        text: 'Total revenue across "Orders": 1,250 (average 250).',
+        entityName: "Order",
+        entityLabel: "Orders",
+        fieldName: "revenue",
+        fieldLabel: "Revenue",
+        sum: 1250,
+        average: 250,
+        recordCount: 5,
+      },
+    ],
+  });
+  const report = formatTwinReport(twin, "Flower Shop", "en", t);
+
+  assert.match(report, /status breaks down as: Open \(3\), Closed \(2\)/);
+  assert.match(report, /Total revenue across "Orders": 1,250/);
+
+  const distributionIndex = report.indexOf("status breaks down as");
+  const numericIndex = report.indexOf("Total revenue across");
+  assert.ok(distributionIndex < numericIndex, "distributions must appear before numericStats, matching the Dashboard tab's own order");
+});
+
 test("formatTwinReport still lists every entity's count even when there are zero total records", () => {
   const t = (key: string, params?: Record<string, string | number>) => translate("en", key, params);
   const twin = makeTwin({
