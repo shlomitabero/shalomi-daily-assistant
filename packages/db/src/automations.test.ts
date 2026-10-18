@@ -5,10 +5,14 @@ import { NotFoundError } from "./repository.js";
 import {
   deleteAutomationRule,
   deleteAutomationRulesForProject,
+  deleteAutomationRunsForRule,
+  deleteAutomationRunsForProject,
   ensureAutomationRulesTable,
+  ensureAutomationRunsTable,
   getAutomationRule,
   insertAutomationRule,
   listAutomationRules,
+  listAutomationRuns,
   listEnabledAutomationRulesForEntity,
   listEnabledScheduledRules,
   recordAutomationRun,
@@ -166,6 +170,94 @@ test("deleteAutomationRulesForProject wipes every rule for that project only", (
   deleteAutomationRulesForProject(db, "proj1");
   assert.deepEqual(listAutomationRules(db, "proj1"), []);
   assert.ok(getAutomationRule(db, "proj2", otherRule.id));
+});
+
+/**
+ * New in this round: a rule's lastTriggeredAt/lastStatus/lastError only
+ * ever reflected the single most recent firing -- a rule that failed
+ * repeatedly and then happened to succeed on its latest attempt looked
+ * perfectly healthy, with no way to tell it had been flaky. recordAutomationRun
+ * now also inserts into the new automation_runs table (ensureAutomationRunsTable
+ * is called automatically from ensureAutomationRulesTable, so every
+ * existing call site gets it without having to learn about a second
+ * function), and listAutomationRuns returns the real run-by-run history,
+ * newest first.
+ */
+test("recordAutomationRun also inserts a row into automation_runs, and listAutomationRuns returns every run newest-first", async () => {
+  const db = openDatabase(":memory:");
+  ensureAutomationRulesTable(db);
+  const rule = insertAutomationRule(db, baseRule());
+
+  recordAutomationRun(db, "proj1", rule.id, { status: "failed", error: "WhatsApp not connected" });
+  await new Promise((r) => setTimeout(r, 2));
+  recordAutomationRun(db, "proj1", rule.id, { status: "failed", error: "WhatsApp not connected" });
+  await new Promise((r) => setTimeout(r, 2));
+  recordAutomationRun(db, "proj1", rule.id, { status: "sent" });
+
+  const runs = listAutomationRuns(db, "proj1", rule.id);
+  assert.equal(runs.length, 3, "every individual firing must be kept, not just the latest");
+  assert.deepEqual(
+    runs.map((r) => r.status),
+    ["sent", "failed", "failed"],
+    "must be ordered newest-first, so a rule that just failed twice in a row is visible even though its latest attempt succeeded",
+  );
+  assert.equal(runs[1].error, "WhatsApp not connected");
+  assert.equal(runs[0].error, null);
+  for (const run of runs) {
+    assert.equal(run.ruleId, rule.id);
+    assert.equal(run.projectId, "proj1");
+  }
+});
+
+test("listAutomationRuns is scoped to one rule and one project, and caps at its own limit", () => {
+  const db = openDatabase(":memory:");
+  ensureAutomationRulesTable(db);
+  const ruleA = insertAutomationRule(db, baseRule());
+  const ruleB = insertAutomationRule(db, baseRule({ entityName: "Ticket" }));
+  recordAutomationRun(db, "proj1", ruleA.id, { status: "sent" });
+  recordAutomationRun(db, "proj1", ruleB.id, { status: "sent" });
+  assert.equal(listAutomationRuns(db, "proj1", ruleA.id).length, 1);
+  assert.equal(listAutomationRuns(db, "proj1", ruleB.id).length, 1);
+  assert.deepEqual(listAutomationRuns(db, "proj1", "nonexistent-rule"), []);
+
+  for (let i = 0; i < 25; i++) recordAutomationRun(db, "proj1", ruleA.id, { status: "sent" });
+  assert.equal(listAutomationRuns(db, "proj1", ruleA.id, 20).length, 20, "must cap at the given limit, not return every run ever fired");
+});
+
+test("deleteAutomationRule also wipes that rule's own run history", () => {
+  const db = openDatabase(":memory:");
+  ensureAutomationRulesTable(db);
+  const rule = insertAutomationRule(db, baseRule());
+  recordAutomationRun(db, "proj1", rule.id, { status: "sent" });
+  deleteAutomationRule(db, "proj1", rule.id);
+  assert.deepEqual(listAutomationRuns(db, "proj1", rule.id), []);
+});
+
+test("deleteAutomationRulesForProject also wipes every one of that project's runs, leaving other projects' untouched", () => {
+  const db = openDatabase(":memory:");
+  ensureAutomationRulesTable(db);
+  const rule = insertAutomationRule(db, baseRule({ projectId: "proj1" }));
+  const otherRule = insertAutomationRule(db, baseRule({ projectId: "proj2" }));
+  recordAutomationRun(db, "proj1", rule.id, { status: "sent" });
+  recordAutomationRun(db, "proj2", otherRule.id, { status: "sent" });
+  deleteAutomationRulesForProject(db, "proj1");
+  assert.deepEqual(listAutomationRuns(db, "proj1", rule.id), []);
+  assert.equal(listAutomationRuns(db, "proj2", otherRule.id).length, 1, "another project's run history must survive");
+});
+
+test("ensureAutomationRunsTable is idempotent and standalone, and deleteAutomationRunsForRule/deleteAutomationRunsForProject work directly", () => {
+  const db = openDatabase(":memory:");
+  ensureAutomationRunsTable(db);
+  assert.doesNotThrow(() => ensureAutomationRunsTable(db));
+  ensureAutomationRulesTable(db);
+  const rule = insertAutomationRule(db, baseRule());
+  recordAutomationRun(db, "proj1", rule.id, { status: "sent" });
+  deleteAutomationRunsForRule(db, "proj1", rule.id);
+  assert.deepEqual(listAutomationRuns(db, "proj1", rule.id), []);
+
+  recordAutomationRun(db, "proj1", rule.id, { status: "sent" });
+  deleteAutomationRunsForProject(db, "proj1");
+  assert.deepEqual(listAutomationRuns(db, "proj1", rule.id), []);
 });
 
 test("insertAutomationRule supports a schedule trigger with no triggering field, storing scheduleTimeUtc/scheduleDaysOfWeek", () => {

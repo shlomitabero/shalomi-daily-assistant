@@ -2775,11 +2775,25 @@ button.sort-header:hover:not(:disabled) {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
+  flex-wrap: wrap;
   gap: 12px;
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
   padding: 12px 14px;
   background: var(--surface-raised);
+}
+
+.automations-rule-history {
+  flex-basis: 100%;
+  border-top: 1px solid var(--border-soft);
+  padding-top: 8px;
+  margin-top: 4px;
+}
+
+.automations-rule-history-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
 }
 
 .automations-rule-info {

@@ -1195,3 +1195,94 @@ test("AutomationsPanel's Download button downloads the real report as a named fi
     }
   });
 });
+
+/**
+ * Round 682: a rule's own lastTriggeredAt/lastStatus/lastError (already
+ * shown in the rule row) only ever reflects the single most recent
+ * firing -- a rule that failed repeatedly and then happened to succeed on
+ * its latest attempt looked perfectly healthy. The new "History" button
+ * fetches and shows the real run-by-run log instead. Confirms it doesn't
+ * fetch until actually clicked, shows a loading state, renders every
+ * returned run (not just one), and collapses back on a second click
+ * without re-fetching.
+ */
+test("AutomationsPanel's History button fetches and shows every real run for that rule, only when clicked, and toggles closed on a second click", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    let runsRequests = 0;
+    globalThis.fetch = (async (input: string) => {
+      if (input === "/api/projects/proj1/automations") {
+        return new Response(JSON.stringify({ rules: [makeRule()] }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      if (input === "/api/projects/proj1/automations/rule1/runs") {
+        runsRequests += 1;
+        return new Response(
+          JSON.stringify({
+            runs: [
+              { id: "run2", ruleId: "rule1", status: "sent", error: null, triggeredAt: new Date("2026-03-15T10:00:00Z").toISOString() },
+              { id: "run1", ruleId: "rule1", status: "failed", error: "WhatsApp not connected", triggeredAt: new Date("2026-03-15T09:00:00Z").toISOString() },
+            ],
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      throw new Error(`unexpected request ${input}`);
+    }) as typeof fetch;
+
+    try {
+      renderPanel();
+      await waitForCondition(() => document.querySelectorAll(".automations-rule-row").length === 1);
+
+      assert.equal(document.querySelector(".automations-rule-history"), null, "no history list before History is clicked");
+      assert.equal(runsRequests, 0, "must never fetch run history before the user actually asks for it");
+
+      const historyButton = Array.from(document.querySelectorAll("button")).find((b) => b.textContent === "History") as HTMLButtonElement;
+      assert.ok(historyButton, "expected a History button on the rule row");
+      fireEvent.click(historyButton);
+
+      await waitForCondition(() => document.querySelectorAll(".automations-rule-history-list li").length === 2);
+      assert.equal(runsRequests, 1);
+      const entries = Array.from(document.querySelectorAll(".automations-rule-history-list li")).map((li) => li.textContent);
+      assert.match(entries[0] ?? "", /sent/i, "the newer, successful run must be listed first");
+      assert.match(entries[1] ?? "", /WhatsApp not connected/, "the older, failed run's real error must be shown");
+
+      fireEvent.click(historyButton);
+      assert.equal(document.querySelector(".automations-rule-history"), null, "a second click must collapse the history list");
+
+      fireEvent.click(historyButton);
+      await waitForCondition(() => document.querySelectorAll(".automations-rule-history-list li").length === 2);
+      assert.equal(runsRequests, 1, "re-expanding the same rule must reuse the cached runs, not re-fetch");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+test("AutomationsPanel's History button shows a real empty state for a rule that has never fired", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string) => {
+      if (input === "/api/projects/proj1/automations") {
+        return new Response(JSON.stringify({ rules: [makeRule()] }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      if (input === "/api/projects/proj1/automations/rule1/runs") {
+        return new Response(JSON.stringify({ runs: [] }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${input}`);
+    }) as typeof fetch;
+
+    try {
+      renderPanel();
+      await waitForCondition(() => document.querySelectorAll(".automations-rule-row").length === 1);
+
+      fireEvent.click(Array.from(document.querySelectorAll("button")).find((b) => b.textContent === "History") as HTMLButtonElement);
+      await waitForCondition(() =>
+        /hasn't fired yet/i.test(document.querySelector(".automations-rule-history")?.textContent ?? ""),
+      );
+
+      assert.equal(document.querySelectorAll(".automations-rule-history-list li").length, 0);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});

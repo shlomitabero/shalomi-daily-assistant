@@ -42,6 +42,7 @@ import {
   findUserById,
   countRecords,
   listAutomationRules,
+  listAutomationRuns,
   getAutomationRule,
   insertAutomationRule,
   updateAutomationRule,
@@ -2507,6 +2508,28 @@ export function createProjectsRouter(
     asyncRoute(async (req, res) => {
       const project = requireProjectAccess(db, req.params.id, req.userId!);
       res.json({ rules: listAutomationRules(db, project.id) });
+    }),
+  );
+
+  /**
+   * A rule's own lastTriggeredAt/lastStatus/lastError (already in the
+   * list above) only ever shows the single most recent firing -- a rule
+   * that failed repeatedly and then happened to succeed on its latest
+   * attempt looks perfectly healthy. This surfaces the real history
+   * (packages/db/src/automations.ts's own automation_runs table,
+   * populated by recordAutomationRun alongside its existing rule-row
+   * update) so a user can actually tell a flaky rule apart from a
+   * reliable one. Same access level as the rule list itself.
+   */
+  router.get(
+    "/projects/:id/automations/:ruleId/runs",
+    asyncRoute(async (req, res) => {
+      const project = requireProjectAccess(db, req.params.id, req.userId!);
+      const rule = getAutomationRule(db, project.id, req.params.ruleId);
+      if (!rule) {
+        throw new HttpError(404, `Automation rule "${req.params.ruleId}" not found`, "AUTOMATION_RULE_NOT_FOUND");
+      }
+      res.json({ runs: listAutomationRuns(db, project.id, rule.id) });
     }),
   );
 

@@ -47,7 +47,84 @@ export interface AutomationRule {
   updatedAt: string;
 }
 
+export interface AutomationRun {
+  id: string;
+  projectId: string;
+  ruleId: string;
+  status: "sent" | "failed";
+  error: string | null;
+  triggeredAt: string;
+}
+
+/**
+ * Every individual firing of a rule, not just the most recent one --
+ * recordAutomationRun below used to only ever overwrite
+ * automation_rules.lastTriggeredAt/lastStatus/lastError, so a rule that
+ * failed nine times and then succeeded on the tenth looked perfectly
+ * healthy in the UI, with zero way to tell it had been flaky. Same shape
+ * as whatsapp_messages (whatsapp.ts) -- a rule fires repeatedly over
+ * time and a user wants a log, the identical story that table already
+ * solves for WhatsApp traffic.
+ */
+export function ensureAutomationRunsTable(db: ForgeDatabase): void {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS automation_runs (
+      id TEXT PRIMARY KEY,
+      projectId TEXT NOT NULL,
+      ruleId TEXT NOT NULL,
+      status TEXT NOT NULL,
+      error TEXT,
+      triggeredAt TEXT NOT NULL
+    )
+  `);
+}
+
+function rowToRun(row: Record<string, unknown>): AutomationRun {
+  return {
+    id: row.id as string,
+    projectId: row.projectId as string,
+    ruleId: row.ruleId as string,
+    status: row.status as "sent" | "failed",
+    error: (row.error as string | null) ?? null,
+    triggeredAt: row.triggeredAt as string,
+  };
+}
+
+/**
+ * The most recent runs for one rule, newest first -- capped at `limit`
+ * (default 20) rather than cursor-paginated like listWhatsAppMessages:
+ * AutomationsPanel only ever shows "did this rule recently misbehave,"
+ * not a full archival log, so a single bounded page is enough and avoids
+ * the extra cursor plumbing a feature this UI doesn't expose would never
+ * use.
+ */
+export function listAutomationRuns(db: ForgeDatabase, projectId: string, ruleId: string, limit = 20): AutomationRun[] {
+  const rows = db
+    .prepare("SELECT * FROM automation_runs WHERE projectId = ? AND ruleId = ? ORDER BY triggeredAt DESC, rowid DESC LIMIT ?")
+    .all(projectId, ruleId, limit) as Record<string, unknown>[];
+  return rows.map(rowToRun);
+}
+
+/** Part of deleteAutomationRule's own cleanup -- a rule's run history has no reason to survive the rule itself. */
+export function deleteAutomationRunsForRule(db: ForgeDatabase, projectId: string, ruleId: string): void {
+  db.prepare("DELETE FROM automation_runs WHERE projectId = ? AND ruleId = ?").run(projectId, ruleId);
+}
+
+/** Part of deleteProject's cleanup (projects.ts), mirroring deleteAutomationRulesForProject's own convention. */
+export function deleteAutomationRunsForProject(db: ForgeDatabase, projectId: string): void {
+  db.prepare("DELETE FROM automation_runs WHERE projectId = ?").run(projectId);
+}
+
 export function ensureAutomationRulesTable(db: ForgeDatabase): void {
+  // automation_runs is a logically separate table, but every existing
+  // caller of this function (store.ts, migrate.ts, and this module's own
+  // extensive test suite) already treats "the automation rules feature is
+  // set up" as a single call -- provisioning the run-history table here
+  // too, rather than requiring every one of those call sites to also
+  // learn about a second function, keeps recordAutomationRun/
+  // deleteAutomationRule's own now-unconditional writes to automation_runs
+  // from ever hitting a "no such table" error.
+  ensureAutomationRunsTable(db);
   db.exec(`
     CREATE TABLE IF NOT EXISTS automation_rules (
       id TEXT PRIMARY KEY,
@@ -263,9 +340,17 @@ export function recordAutomationRun(
   id: string,
   outcome: { status: "sent" | "failed"; error?: string | null },
 ): void {
+  const now = new Date().toISOString();
   db.prepare(
     `UPDATE automation_rules SET lastTriggeredAt = ?, lastStatus = ?, lastError = ? WHERE projectId = ? AND id = ?`,
-  ).run(new Date().toISOString(), outcome.status, outcome.error ?? null, projectId, id);
+  ).run(now, outcome.status, outcome.error ?? null, projectId, id);
+  // The rule row above stays a cheap, already-wired-up "most recent
+  // outcome" summary; this is the actual history, inserted alongside it
+  // rather than instead of it so no existing lastTriggeredAt/lastStatus/
+  // lastError reader needs to change.
+  db.prepare(
+    `INSERT INTO automation_runs (id, projectId, ruleId, status, error, triggeredAt) VALUES (?, ?, ?, ?, ?, ?)`,
+  ).run(randomUUID(), projectId, id, outcome.status, outcome.error ?? null, now);
 }
 
 export function deleteAutomationRule(db: ForgeDatabase, projectId: string, id: string): void {
@@ -273,11 +358,13 @@ export function deleteAutomationRule(db: ForgeDatabase, projectId: string, id: s
   if (result.changes === 0) {
     throw new NotFoundError(`Automation rule ${id} not found in project ${projectId}`);
   }
+  deleteAutomationRunsForRule(db, projectId, id);
 }
 
 /** Part of deleteProject's cleanup (projects.ts), mirroring deleteWhatsAppData's own convention. */
 export function deleteAutomationRulesForProject(db: ForgeDatabase, projectId: string): void {
   db.prepare("DELETE FROM automation_rules WHERE projectId = ?").run(projectId);
+  deleteAutomationRunsForProject(db, projectId);
 }
 
 /**

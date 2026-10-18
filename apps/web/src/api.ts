@@ -965,6 +965,18 @@ export function listAutomationRules(projectId: string): Promise<{ rules: Automat
   return request(`/projects/${projectId}/automations`);
 }
 
+export interface AutomationRunView {
+  id: string;
+  ruleId: string;
+  status: "sent" | "failed";
+  error: string | null;
+  triggeredAt: string;
+}
+
+export function listAutomationRuns(projectId: string, ruleId: string): Promise<{ runs: AutomationRunView[] }> {
+  return request(`/projects/${projectId}/automations/${ruleId}/runs`);
+}
+
 export function createAutomationRule(
   projectId: string,
   entityName: string,

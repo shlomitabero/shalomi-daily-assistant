@@ -4,9 +4,11 @@ import {
   createAutomationRule,
   deleteAutomationRule,
   listAutomationRules,
+  listAutomationRuns,
   updateAutomationRule,
   type AutomationActionType,
   type AutomationRuleView,
+  type AutomationRunView,
   type AutomationToMode,
   type AutomationTrigger,
 } from "./api.js";
@@ -45,6 +47,19 @@ export function AutomationsPanel({
   const [error, setError] = useState<string | null>(null);
   const [busyRuleId, setBusyRuleId] = useState<string | null>(null);
   const [copyStatus, setCopyStatus] = useState<"idle" | "copied" | "failed">("idle");
+  // A rule's own lastTriggeredAt/lastStatus/lastError only ever shows the
+  // single most recent firing -- expanding "History" here fetches the
+  // real run-by-run log (packages/db/src/automations.ts's own
+  // automation_runs table) so a rule that fails intermittently doesn't
+  // look perfectly healthy just because its latest attempt happened to
+  // succeed. Only one rule's history is ever expanded at a time, same as
+  // this panel's own single-draft-at-a-time edit convention; runsByRuleId
+  // caches each rule's fetched runs so re-expanding the same rule doesn't
+  // re-fetch.
+  const [expandedHistoryRuleId, setExpandedHistoryRuleId] = useState<string | null>(null);
+  const [runsByRuleId, setRunsByRuleId] = useState<Record<string, AutomationRunView[]>>({});
+  const [historyError, setHistoryError] = useState<string | null>(null);
+  const [historyLoading, setHistoryLoading] = useState(false);
   const dialogRef = useDialogFocusTrap<HTMLDivElement>(onClose);
 
   const entities = project.spec.entities;
@@ -362,6 +377,26 @@ export function AutomationsPanel({
       : t("automations.lastRun.failed", { time, error: rule.lastError ?? "" });
   }
 
+  function describeRunStatus(run: AutomationRunView): string {
+    const time = new Date(run.triggeredAt).toLocaleString(LOCALE[lang]);
+    return run.status === "sent" ? t("automations.lastRun.sent", { time }) : t("automations.lastRun.failed", { time, error: run.error ?? "" });
+  }
+
+  function handleToggleHistory(rule: AutomationRuleView) {
+    if (expandedHistoryRuleId === rule.id) {
+      setExpandedHistoryRuleId(null);
+      return;
+    }
+    setExpandedHistoryRuleId(rule.id);
+    setHistoryError(null);
+    if (runsByRuleId[rule.id]) return;
+    setHistoryLoading(true);
+    listAutomationRuns(projectId, rule.id)
+      .then(({ runs }) => setRunsByRuleId((prev) => ({ ...prev, [rule.id]: runs })))
+      .catch((err) => setHistoryError((err as Error).message))
+      .finally(() => setHistoryLoading(false));
+  }
+
   function handleDownload() {
     downloadAutomationsReport(formatAutomationsReport(rules ?? [], entities, project.name, lang, t), project.name);
   }
@@ -465,7 +500,38 @@ export function AutomationsPanel({
                         </button>
                       </>
                     )}
+                    {/* Placed last -- the existing enable/disable/edit/delete
+                        buttons above are already relied on positionally by
+                        this panel's own existing tests (".automations-rule-actions
+                        button" picking the first one), so a new control must
+                        never be inserted before them. */}
+                    <button type="button" className="secondary small" onClick={() => handleToggleHistory(rule)}>
+                      {expandedHistoryRuleId === rule.id ? t("automations.history.hide") : t("automations.history.show")}
+                    </button>
                   </div>
+                  {expandedHistoryRuleId === rule.id && (
+                    <div className="automations-rule-history">
+                      {historyLoading && !runsByRuleId[rule.id] ? (
+                        <p className="muted small" role="status">
+                          {t("automations.history.loading")}
+                        </p>
+                      ) : historyError ? (
+                        <p className="error small" role="alert">
+                          {historyError}
+                        </p>
+                      ) : (runsByRuleId[rule.id]?.length ?? 0) === 0 ? (
+                        <p className="muted small">{t("automations.history.empty")}</p>
+                      ) : (
+                        <ul className="automations-rule-history-list">
+                          {runsByRuleId[rule.id]!.map((run) => (
+                            <li key={run.id} className="muted small">
+                              {describeRunStatus(run)}
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                    </div>
+                  )}
                 </li>
               ))}
             </ul>

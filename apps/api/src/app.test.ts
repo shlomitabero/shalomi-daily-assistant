@@ -12,6 +12,7 @@ import {
   insertProject,
   insertWhatsAppMessage,
   markProjectBuilt,
+  recordAutomationRun,
   updateProjectSpec,
   type ForgeDatabase,
 } from "@forge/db";
@@ -1812,6 +1813,65 @@ test("POST /projects/:id/entities/:entityName/automations retried with the same 
     const listRes = await fetch(`${baseUrl}/api/projects/${project.id}/automations`, { headers: authHeaders(token) });
     const { rules } = (await listRes.json()) as { rules: { id: string }[] };
     assert.equal(rules.length, 1, "exactly one automation rule must exist -- the retry must not have inserted a second row");
+  });
+});
+
+/**
+ * Round 682: a rule's own lastTriggeredAt/lastStatus/lastError (already
+ * returned by GET /automations) only ever showed the single most recent
+ * firing -- a rule that failed repeatedly and then happened to succeed on
+ * its latest attempt looked perfectly healthy. GET .../runs surfaces the
+ * real run-by-run history (packages/db/src/automations.ts's own
+ * automation_runs table).
+ */
+test("GET /projects/:id/automations/:ruleId/runs returns that rule's real run history, newest first, scoped to the right rule and project", async () => {
+  await withServer(async (baseUrl, db) => {
+    const token = await signup(baseUrl, "automation-runs1@example.com");
+    const createRes = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ description: "A CRM with customers and deals." }),
+    });
+    const { project } = (await createRes.json()) as { project: { id: string; spec: { entities: { name: string }[] } } };
+    const entityName = project.spec.entities[0].name;
+
+    const ruleRes = await fetch(`${baseUrl}/api/projects/${project.id}/entities/${entityName}/automations`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ trigger: "record_created", actionType: "send_whatsapp", toMode: "static", toNumber: "972501234567", messageTemplate: "hi" }),
+    });
+    const { rule } = (await ruleRes.json()) as { rule: { id: string } };
+
+    const emptyRunsRes = await fetch(`${baseUrl}/api/projects/${project.id}/automations/${rule.id}/runs`, {
+      headers: authHeaders(token),
+    });
+    assert.equal(emptyRunsRes.status, 200);
+    assert.deepEqual((await emptyRunsRes.json()) as { runs: unknown[] }, { runs: [] }, "a rule that's never fired must return an empty run list, not an error");
+
+    recordAutomationRun(db, project.id, rule.id, { status: "failed", error: "WhatsApp not connected" });
+    await new Promise((r) => setTimeout(r, 2));
+    recordAutomationRun(db, project.id, rule.id, { status: "sent" });
+
+    const runsRes = await fetch(`${baseUrl}/api/projects/${project.id}/automations/${rule.id}/runs`, {
+      headers: authHeaders(token),
+    });
+    assert.equal(runsRes.status, 200);
+    const { runs } = (await runsRes.json()) as { runs: { status: string; error: string | null; ruleId: string }[] };
+    assert.equal(runs.length, 2);
+    assert.deepEqual(
+      runs.map((r) => r.status),
+      ["sent", "failed"],
+      "must be ordered newest-first",
+    );
+    assert.equal(runs[1].error, "WhatsApp not connected");
+    assert.equal(runs[0].error, null);
+    for (const run of runs) assert.equal(run.ruleId, rule.id);
+
+    const notFoundRes = await fetch(`${baseUrl}/api/projects/${project.id}/automations/nonexistent-rule/runs`, {
+      headers: authHeaders(token),
+    });
+    assert.equal(notFoundRes.status, 404);
+    assert.equal(((await notFoundRes.json()) as { code?: string }).code, "AUTOMATION_RULE_NOT_FOUND");
   });
 });
 
