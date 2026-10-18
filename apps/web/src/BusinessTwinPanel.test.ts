@@ -757,6 +757,59 @@ test("BusinessTwinPanel's Dashboard view renders a real bar chart from twin.dist
   });
 });
 
+/**
+ * Round 703: the Dashboard tab's bar-chart values and stat-tile sum/average
+ * were the only numbers in the entire web app formatted with no explicit
+ * locale at all (bare toLocaleString()), unlike every other number and date
+ * in this codebase, which all pass the app's own LOCALE[lang] (confirmed via
+ * entityFormatting.ts's formatNumberValue, now reused here). This app's
+ * language is an explicit in-app toggle independent of the browser (see
+ * detectInitialLang's own doc comment), so silently falling back to the
+ * runtime's default locale means a user who switched the in-app language
+ * still gets this one screen's numbers in whatever locale the browser
+ * happens to carry. he-IL and en-US render plain digits identically, so this
+ * spies on Number.prototype.toLocaleString itself to prove a real, explicit
+ * locale string is actually being forwarded -- not just that SOME number
+ * came back right.
+ */
+test("BusinessTwinPanel's Dashboard view formats its bar-chart and stat-tile numbers with the app's own locale, not the runtime default", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string) => {
+      if (input === "/api/projects/proj1/twin") {
+        return new Response(JSON.stringify({ twin: TWIN_WITH_CHARTS }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${input}`);
+    }) as typeof fetch;
+    const originalToLocaleString = Number.prototype.toLocaleString;
+    const capturedLocales: unknown[] = [];
+    Number.prototype.toLocaleString = function (this: number, ...args: unknown[]) {
+      capturedLocales.push(args[0]);
+      return originalToLocaleString.apply(this, args as [string?, Intl.NumberFormatOptions?]);
+    } as typeof Number.prototype.toLocaleString;
+    try {
+      renderTwinPanel(() => {});
+      await waitForCondition(() => document.querySelector(".twin-view-toggle") !== null);
+      const dashboardButton = Array.from(document.querySelectorAll(".twin-view-toggle button")).find((b) => b.textContent?.includes("Dashboard"));
+      fireEvent.click(dashboardButton!);
+      await waitForCondition(() => document.querySelector(".twin-chart") !== null);
+
+      // The test environment's own default language is English (no stored
+      // choice, jsdom's own navigator.language) -- so every one of these
+      // calls must carry the real "en-US" locale string, never undefined
+      // (bare toLocaleString()) and never some other hardcoded value.
+      assert.ok(capturedLocales.length > 0, "expected at least one toLocaleString call while rendering the dashboard");
+      assert.ok(
+        capturedLocales.every((l) => l === "en-US"),
+        `expected every toLocaleString call to carry the app's own "en-US" locale, got: ${JSON.stringify(capturedLocales)}`,
+      );
+    } finally {
+      Number.prototype.toLocaleString = originalToLocaleString;
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
 test("BusinessTwinPanel's Dashboard view shows an empty-state message when there are no distributions or numeric stats to chart", async () => {
   await withJsdom(async () => {
     const twinWithOnlyObservations: BusinessTwin = { ...TWIN, observations: ["No real data has been entered yet."] };

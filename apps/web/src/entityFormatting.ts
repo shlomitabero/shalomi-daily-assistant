@@ -223,8 +223,8 @@ export function formatRecordCreatedAt(createdAt: string | undefined, lang: Lang)
 }
 
 /** Adds locale-appropriate thousands separators to a numeric value. */
-export function formatNumberValue(value: number, lang: Lang): string {
-  return value.toLocaleString(LOCALE[lang]);
+export function formatNumberValue(value: number, lang: Lang, options?: Intl.NumberFormatOptions): string {
+  return value.toLocaleString(LOCALE[lang], options);
 }
 
 /**

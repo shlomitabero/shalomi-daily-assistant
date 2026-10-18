@@ -162,6 +162,19 @@ test("formatNumberValue adds thousands separators", () => {
   assert.equal(formatNumberValue(1234567, "en"), "1,234,567");
 });
 
+/**
+ * Round 703: formatNumberValue gained an optional third `options` parameter
+ * so BusinessTwinPanel.tsx's stat tiles (which need Intl.NumberFormat's
+ * maximumFractionDigits to show an average like "41.7" rather than a long
+ * float) could reuse this same locale-aware helper instead of calling
+ * toLocaleString() directly with no locale argument at all -- the exact
+ * cross-feature convention this function already exists to provide.
+ */
+test("formatNumberValue forwards Intl.NumberFormatOptions through to toLocaleString, e.g. to round a float for display", () => {
+  assert.equal(formatNumberValue(1234.567, "en", { maximumFractionDigits: 1 }), "1,234.6");
+  assert.equal(formatNumberValue(1234567, "en"), "1,234,567", "omitting options must still work exactly as before");
+});
+
 test("matchesSearch matches on any field, is case-insensitive, and an empty query matches everything", () => {
   const fields: Field[] = [
     { name: "name", type: "text", required: true },

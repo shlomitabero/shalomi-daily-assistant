@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
 import { getBusinessTwin, type BusinessTwin, type BusinessTwinEntityStat } from "./api.js";
+import { formatNumberValue } from "./entityFormatting.js";
 import { useTranslation } from "./i18n/LanguageContext.js";
+import type { Lang } from "./i18n/language.js";
 import { useDialogFocusTrap } from "./useDialogFocusTrap.js";
 import { downloadTwinReport, formatTwinReport } from "./twinReport.js";
 
@@ -54,19 +56,19 @@ export function computeTwinStatPercent(count: number, totalRecords: number): num
  * the same lightweight convention EntityPanel.tsx's own longtext table
  * cells already use.
  */
-function TwinBarChart({ title, bars }: { title: string; bars: { label: string; value: number }[] }) {
+function TwinBarChart({ title, bars, lang }: { title: string; bars: { label: string; value: number }[]; lang: Lang }) {
   const max = Math.max(1, ...bars.map((b) => b.value));
   return (
     <div className="twin-chart">
       <h4 className="twin-chart-title">{title}</h4>
       <div className="twin-chart-bars">
         {bars.map((b, i) => (
-          <div key={`${b.label}-${i}`} className="twin-chart-row" title={`${b.label}: ${b.value.toLocaleString()}`}>
+          <div key={`${b.label}-${i}`} className="twin-chart-row" title={`${b.label}: ${formatNumberValue(b.value, lang)}`}>
             <span className="twin-chart-row-label">{b.label}</span>
             <div className="twin-chart-track">
               <div className="twin-chart-bar" style={{ width: `${Math.max(2, (b.value / max) * 100)}%` }} />
             </div>
-            <span className="twin-chart-row-value">{b.value.toLocaleString()}</span>
+            <span className="twin-chart-row-value">{formatNumberValue(b.value, lang)}</span>
           </div>
         ))}
       </div>
@@ -260,16 +262,17 @@ export function BusinessTwinPanel({
                     key={`dist-${i}`}
                     title={t("twin.dashboard.distributionTitle", { field: d.fieldLabel, entity: d.entityLabel })}
                     bars={d.breakdown.map((b) => ({ label: b.label, value: b.count }))}
+                    lang={lang}
                   />
                 ))}
                 {twin.numericStats.length > 0 && (
                   <div className="twin-dashboard-stats">
                     {twin.numericStats.map((s, i) => (
                       <div key={`stat-${i}`} className="twin-stat-tile twin-stat-tile-static">
-                        <div className="twin-stat-value">{s.sum.toLocaleString()}</div>
+                        <div className="twin-stat-value">{formatNumberValue(s.sum, lang)}</div>
                         <div className="twin-stat-label">{t("twin.dashboard.totalOf", { field: s.fieldLabel, entity: s.entityLabel })}</div>
                         <div className="twin-stat-percent">
-                          {t("twin.dashboard.averageOf", { average: s.average.toLocaleString(undefined, { maximumFractionDigits: 1 }) })}
+                          {t("twin.dashboard.averageOf", { average: formatNumberValue(s.average, lang, { maximumFractionDigits: 1 }) })}
                         </div>
                       </div>
                     ))}
