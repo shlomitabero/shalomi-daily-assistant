@@ -696,3 +696,97 @@ test("CollaboratorsPanel shows a collaborator's role as read-only text (not a se
     }
   });
 });
+
+/**
+ * Round 680: handleRoleChange does a full setCollaborators(collaborators)
+ * replace from its own server response, while handleRemove does a local
+ * filter -- so a role-update PATCH for one collaborator still in flight
+ * while a different collaborator's removal completes meant the role
+ * update's stale response, once it finally landed, could resurrect the
+ * just-removed collaborator (the PATCH's own server snapshot still
+ * included them, since the server hadn't processed the DELETE yet when it
+ * computed that response). Mirrors HistoryPanel's own restore/delete
+ * cross-gate for the identical shape: both the role select AND the
+ * remove/leave buttons are now disabled while EITHER a role update OR a
+ * removal is in flight anywhere on the list, not just the one row calling
+ * it -- so the two requests this bug needed can never actually overlap.
+ */
+test("CollaboratorsPanel disables every row's role select and remove button while either a role update or a removal is in flight anywhere on the list", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    const dana = makeCollaborator("u1", "dana@example.com", "editor");
+    const yossi = makeCollaborator("u2", "yossi@example.com", "editor");
+    const danaAsViewer = makeCollaborator("u1", "dana@example.com", "viewer");
+    let resolvePatch: (() => void) | undefined;
+    const patchGate = new Promise<void>((resolve) => {
+      resolvePatch = resolve;
+    });
+    let deleteCalls = 0;
+
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/collaborators") {
+        return new Response(JSON.stringify({ collaborators: [dana, yossi] }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      if (method === "PATCH" && input === "/api/projects/proj1/collaborators/u1/role") {
+        await patchGate;
+        // The server's own snapshot at the moment it handled this PATCH --
+        // would still include u2 (yossi) if a DELETE for yossi had raced
+        // in and resolved first, since the server captures this response
+        // body from whatever it saw at PATCH-handling time.
+        return new Response(JSON.stringify({ collaborators: [danaAsViewer, yossi] }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      if (method === "DELETE" && input === "/api/projects/proj1/collaborators/u2") {
+        deleteCalls += 1;
+        return new Response(null, { status: 204 });
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+    globalThis.window.confirm = (() => true) as typeof window.confirm;
+
+    try {
+      renderPanel();
+      await waitForCondition(() => document.querySelectorAll(".collab-list li").length === 2);
+
+      const rows = Array.from(document.querySelectorAll(".collab-list li"));
+      const danaSelect = rows[0].querySelector("select") as HTMLSelectElement;
+      const yossiRemoveBtn = rows[1].querySelector("button") as HTMLButtonElement;
+      assert.equal(danaSelect.disabled, false);
+      assert.equal(yossiRemoveBtn.disabled, false);
+
+      fireEvent.change(danaSelect, { target: { value: "viewer" } });
+
+      // While dana's role PATCH is still in flight, yossi's remove button
+      // (a DIFFERENT row) must already be disabled -- the bug this fixes
+      // is specifically that it wasn't, letting the DELETE below fire
+      // concurrently with the still-pending PATCH.
+      assert.equal(yossiRemoveBtn.disabled, true, "a different row's remove button must be disabled while any role update is in flight");
+      assert.equal(danaSelect.disabled, true, "the select itself must also be disabled while its own update is pending");
+
+      // A disabled button's click handler never fires (browser/jsdom both
+      // suppress it) -- confirms the cross-gate doesn't just look
+      // disabled, it genuinely blocks the DELETE that would have raced.
+      fireEvent.click(yossiRemoveBtn);
+      assert.equal(deleteCalls, 0, "clicking a disabled remove button must never actually call the DELETE endpoint");
+
+      resolvePatch!();
+      await waitForCondition(() => yossiRemoveBtn.disabled === false);
+      assert.equal((rows[0].querySelector("select") as HTMLSelectElement).value, "viewer", "dana's role update must have landed normally");
+
+      // Now that nothing is in flight, removing yossi must work exactly
+      // as before -- the fix only adds a cross-gate, it doesn't block
+      // removal once the role update is actually done.
+      fireEvent.click(yossiRemoveBtn);
+      await waitForCondition(() => deleteCalls === 1);
+      await waitForCondition(() => document.querySelectorAll(".collab-list li").length === 1);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});

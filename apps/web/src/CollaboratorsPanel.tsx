@@ -233,12 +233,22 @@ export function CollaboratorsPanel({
                     <strong>{c.email}</strong>
                     <div className="muted small">{new Date(c.addedAt).toLocaleDateString(LOCALE[lang])}</div>
                   </div>
+                  {/* Disabled while ANY role update OR ANY removal is in
+                      flight, not just this row's own -- otherwise changing
+                      one collaborator's role while removing a different one
+                      is still pending fires two independent requests, and
+                      whichever response lands last silently overwrites the
+                      other's result (handleRoleChange does a full
+                      setCollaborators(...) replace from its own server
+                      response, which can resurrect a collaborator handleRemove
+                      already filtered out locally). Mirrors HistoryPanel's
+                      own restore/delete cross-gate for the identical hazard. */}
                   {isOwner ? (
                     <select
                       aria-label={t("collab.role.label")}
                       value={c.role}
                       onChange={(e) => handleRoleChange(c.userId, e.target.value as CollaboratorRole)}
-                      disabled={updatingRoleUserId !== null}
+                      disabled={updatingRoleUserId !== null || removingUserId !== null}
                     >
                       <option value="editor">{t("collab.role.editor")}</option>
                       <option value="viewer">{t("collab.role.viewer")}</option>
@@ -254,13 +264,18 @@ export function CollaboratorsPanel({
                       type="button"
                       className="secondary"
                       onClick={() => handleRemove(c.userId, c.email)}
-                      disabled={removingUserId !== null}
+                      disabled={removingUserId !== null || updatingRoleUserId !== null}
                     >
                       {removingUserId === c.userId ? t("collab.remove.busy") : t("collab.remove")}
                     </button>
                   ) : (
                     c.userId === currentUserId && (
-                      <button type="button" className="secondary" onClick={handleLeave} disabled={removingUserId !== null}>
+                      <button
+                        type="button"
+                        className="secondary"
+                        onClick={handleLeave}
+                        disabled={removingUserId !== null || updatingRoleUserId !== null}
+                      >
                         {removingUserId === currentUserId ? t("collab.leave.busy") : t("collab.leave")}
                       </button>
                     )
