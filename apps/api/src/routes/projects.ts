@@ -2443,15 +2443,25 @@ export function createProjectsRouter(
         throw err;
       }
       res.json({ record });
-      void runAutomationsForRecordChange(
-        db,
-        whatsapp,
-        project,
-        entity,
-        "updated",
-        record,
-        computeChangedFields(entity, before, record),
-      );
+      // Same X-Suppress-Automations escape hatch as the POST route above --
+      // see its own comment. CSV import now PATCHes a row whose id matched
+      // an existing record (see EntityPanel.tsx's handleImportFile) instead
+      // of always POSTing a duplicate, and that bulk re-import is exactly
+      // as automation-unsafe on the update side as it is on the create
+      // side: a spreadsheet of hundreds of pre-existing customers,
+      // re-imported after a bulk edit, must not fire a "record_updated"
+      // WhatsApp rule for every single one of them at once.
+      if (req.header("X-Suppress-Automations") !== "true") {
+        void runAutomationsForRecordChange(
+          db,
+          whatsapp,
+          project,
+          entity,
+          "updated",
+          record,
+          computeChangedFields(entity, before, record),
+        );
+      }
     }),
   );
 

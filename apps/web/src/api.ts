@@ -787,9 +787,11 @@ export function updateRecord(
   entityName: string,
   recordId: number,
   data: Record<string, unknown>,
+  options?: { suppressAutomations?: boolean },
 ): Promise<{ record: EntityRecord }> {
   return request(`/projects/${projectId}/entities/${encodeURIComponent(entityName)}/${recordId}`, {
     method: "PATCH",
+    headers: options?.suppressAutomations ? { "x-suppress-automations": "true" } : undefined,
     body: JSON.stringify(data),
   });
 }

@@ -3184,6 +3184,94 @@ test("EntityPanel's CSV import sends X-Suppress-Automations on the real POST req
 });
 
 /**
+ * Round 683: a real bug found by the survey -- re-importing a CSV this app
+ * had itself just exported always created a brand-new duplicate record,
+ * even for a row whose data was completely unchanged, because nothing in
+ * the export/import round trip carried a record's own id. Fixed by having
+ * recordsToCsv's real "Export CSV" download include a leading "id" column
+ * and buildImportRecords recognize it; this test exercises the real DOM
+ * wiring end to end: a CSV with an "id" column, one row matching an
+ * existing record (must PATCH, not POST) and one row with a blank id (must
+ * still POST, exactly like before) -- confirming both requests actually
+ * reach the server with the right method/body, the table reflects both
+ * outcomes (the existing record updated in place, the new one appended),
+ * and both the PATCH and the POST carry X-Suppress-Automations, same as
+ * every other CSV-import write.
+ */
+test("EntityPanel's CSV import updates an existing record by its id column instead of duplicating it, while still creating a row with no id", async () => {
+  await withJsdom(async () => {
+    const store: EntityRecord[] = [{ id: 1, name: "Dana", email: "dana@old.example.com" }];
+    let nextId = 2;
+    const seenRequests: { method: string; input: string; headers: Headers }[] = [];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/entities/Customer") {
+        return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      seenRequests.push({ method, input, headers: new Headers(init!.headers) });
+      if (method === "POST" && input === "/api/projects/proj1/entities/Customer") {
+        const data = JSON.parse(init!.body as string);
+        const record = { id: nextId++, ...data };
+        store.push(record);
+        return new Response(JSON.stringify({ record }), { status: 201, headers: { "content-type": "application/json" } });
+      }
+      const patchMatch = /^\/api\/projects\/proj1\/entities\/Customer\/(\d+)$/.exec(input);
+      if (method === "PATCH" && patchMatch) {
+        const id = Number(patchMatch[1]);
+        const record = store.find((r) => r.id === id);
+        assert.ok(record, `mock PATCH target record ${id} must exist`);
+        Object.assign(record!, JSON.parse(init!.body as string));
+        return new Response(JSON.stringify({ record }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+    try {
+      render(
+        React.createElement(
+          ThemeProvider,
+          null,
+          React.createElement(
+            LanguageProvider,
+            null,
+            React.createElement(EntityPanel, {
+              projectId: "proj1",
+              entity: CUSTOMER_IMPORT_ENTITY,
+              allEntities: [CUSTOMER_IMPORT_ENTITY],
+              onEntityRenamed: () => {},
+            }),
+          ),
+        ),
+      );
+      await waitForCondition(() => document.querySelector(".csv-import-row") !== null);
+
+      const csvText = "id,name,email\n1,Dana,dana@new.example.com\n,Amit,amit@example.com\n";
+      const file = new File([csvText], "customers.csv", { type: "text/csv" });
+      const fileInput = document.querySelector('input[type="file"]') as HTMLInputElement;
+      Object.defineProperty(fileInput, "files", { value: [file], configurable: true });
+      fireEvent.change(fileInput);
+
+      await waitForCondition(() => store.length === 2);
+
+      assert.equal(store[0].id, 1, "the id=1 row must have UPDATED the existing record, not appended a new one");
+      assert.equal(store[0].email, "dana@new.example.com", "the existing record's own field must reflect the imported row's new value");
+      assert.equal(store[1].name, "Amit", "the blank-id row must still have been created as a genuinely new record");
+
+      const patchReq = seenRequests.find((r) => r.method === "PATCH");
+      const postReq = seenRequests.find((r) => r.method === "POST");
+      assert.ok(patchReq, "the id=1 row must have actually PATCHed the server, not POSTed a duplicate");
+      assert.ok(postReq, "the blank-id row must have actually POSTed a new record");
+      assert.equal(patchReq!.headers.get("x-suppress-automations"), "true", "an imported update must also suppress automations");
+      assert.equal(postReq!.headers.get("x-suppress-automations"), "true", "an imported create must still suppress automations");
+
+      await waitForCondition(() => /updated 1 existing/i.test(document.body.textContent ?? ""));
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * New in this round: a per-row "Print" action fills the always-mounted
  * (but on-screen-hidden, via styles.css) `.print-record-sheet` with that
  * ONE record's fields and calls `window.print()` -- the sheet's own

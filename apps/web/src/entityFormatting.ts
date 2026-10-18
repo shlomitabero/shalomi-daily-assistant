@@ -1113,6 +1113,17 @@ export function fieldDisplayLabel(field: Field, occurrences: Map<string, number>
  * actual spreadsheet a business owner can open, not a JSON dump. A relation
  * field resolves to the related record's own display label (e.g. a
  * courier's name), same as the table/board views -- not the raw stored id.
+ *
+ * `includeId`, when true, prepends each record's own numeric id as a
+ * leading "id" column -- "id" is a reserved field name (see packages/
+ * shared's RESERVED_FIELD_NAMES), so it can never collide with a real
+ * field's header. buildImportRecords below recognizes that same column on
+ * the way back in, which is what lets re-importing an edited copy of your
+ * own export UPDATE the records it came from instead of only ever
+ * creating duplicates. Defaults to false so every other existing caller
+ * (and every existing test) keeps producing the exact same id-free CSV it
+ * always has -- only EntityPanel's own "Export CSV" file download, the one
+ * path actually meant to be re-imported later, opts in.
  */
 export function recordsToCsv(
   fields: Field[],
@@ -1120,12 +1131,15 @@ export function recordsToCsv(
   lang: Lang,
   allEntities: Entity[] = [],
   relatedRecords: RelatedRecordsByEntity = {},
+  includeId = false,
 ): string {
   const labelOccurrences = fieldLabelOccurrences(fields);
-  const header = fields.map((f) => csvEscape(fieldDisplayLabel(f, labelOccurrences))).join(",");
-  const rows = records.map((record) =>
-    fields.map((f) => csvEscape(fieldDisplayValue(f, record[f.name], lang, allEntities, relatedRecords))).join(","),
-  );
+  const headerCells = fields.map((f) => fieldDisplayLabel(f, labelOccurrences));
+  const header = (includeId ? ["id", ...headerCells] : headerCells).map(csvEscape).join(",");
+  const rows = records.map((record) => {
+    const cells = fields.map((f) => fieldDisplayValue(f, record[f.name], lang, allEntities, relatedRecords));
+    return (includeId ? [String(record.id), ...cells] : cells).map(csvEscape).join(",");
+  });
   return [header, ...rows].join("\r\n");
 }
 
@@ -1287,6 +1301,16 @@ const BOOLEAN_FALSE_VALUES = ["false", "0", "no", "לא"];
  * opposite reason -- there's no uploaded file to attach, not a missing
  * lookup -- so a required file field gets the same whole-import refusal,
  * and an optional one is ignored per row exactly like relation.
+ *
+ * A header cell literally "id" (case-insensitive) is recognized as
+ * recordsToCsv's own re-import-friendly leading column, not matched
+ * against `fields` at all -- "id" is a reserved field name, so no real
+ * field can ever legitimately claim that header. A row with a valid,
+ * non-blank id in that column comes back with an `id` key alongside its
+ * other fields; EntityPanel's handleImportFile uses that to PATCH the
+ * existing record instead of POSTing a new one. A blank id cell (a row
+ * appended below the exported ones, e.g.) is simply a new record, exactly
+ * like a file with no id column at all.
  */
 export function buildImportRecords(fields: Field[], rows: string[][]): ImportResult {
   if (rows.length === 0) return { records: [], errors: [] };
@@ -1302,6 +1326,8 @@ export function buildImportRecords(fields: Field[], rows: string[][]): ImportRes
   }
 
   const [header, ...dataRows] = rows;
+  const idColumnIndex = header.findIndex((cell) => cell.trim().toLowerCase() === "id");
+
   // A field is claimed by at most one column, in header order -- otherwise
   // two fields that share a label (e.g. both renamed to "Status" via
   // FieldLabelEditor, which enforces no uniqueness) would both resolve to
@@ -1310,7 +1336,10 @@ export function buildImportRecords(fields: Field[], rows: string[][]): ImportRes
   // dropping the other's real column entirely.
   const claimedFieldNames = new Set<string>();
   const labelOccurrences = fieldLabelOccurrences(fields);
-  const columnFields: (Field | null)[] = header.map((cell) => {
+  const columnFields: (Field | null)[] = header.map((cell, index) => {
+    // The id column is consumed above, not matched against real fields --
+    // see this function's own doc comment on why "id" can never be one.
+    if (index === idColumnIndex) return null;
     const match = fields.find((f) => !claimedFieldNames.has(f.name) && matchesHeader(cell, f, labelOccurrences));
     if (match) claimedFieldNames.add(match.name);
     return match ?? null;
@@ -1326,7 +1355,19 @@ export function buildImportRecords(fields: Field[], rows: string[][]): ImportRes
     const record: Record<string, unknown> = {};
     let rowError: string | null = null;
 
-    for (const field of fields) {
+    if (idColumnIndex !== -1) {
+      const rawId = (row[idColumnIndex] ?? "").trim();
+      if (rawId !== "") {
+        const parsedId = Number(rawId);
+        if (!Number.isInteger(parsedId) || parsedId <= 0) {
+          rowError = `Row ${rowIndex + 1}: "${rawId}" isn't a valid record id.`;
+        } else {
+          record.id = parsedId;
+        }
+      }
+    }
+
+    for (const field of rowError ? [] : fields) {
       const columnIndex = columnFields.findIndex((f) => f?.name === field.name);
       const raw = columnIndex === -1 ? "" : unescapeCsvGuard((row[columnIndex] ?? "").trim());
 

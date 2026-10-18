@@ -1873,11 +1873,21 @@ function fieldDisplayLabel(field, occurrences) {
 
 // Builds a real, Excel-friendly CSV (CRLF line endings, quoted fields
 // where needed) from an entity's records -- so "download my data" means
-// an actual spreadsheet, not a JSON dump.
-function recordsToCsv(fields, records, relatedRecords) {
+// an actual spreadsheet, not a JSON dump. includeId, when true, prepends
+// each record's own id as a leading "id" column -- "id" is a reserved
+// field name, so it can never collide with a real field's header -- which
+// buildImportRecords below recognizes on the way back in, letting a
+// re-imported copy of your own export UPDATE those records instead of
+// only ever creating duplicates. Only the real "Export CSV" download
+// below opts in; Copy (pasted into chat/email, never re-imported) doesn't.
+function recordsToCsv(fields, records, relatedRecords, includeId) {
   const labelOccurrences = fieldLabelOccurrences(fields);
-  const header = fields.map((f) => csvEscape(fieldDisplayLabel(f, labelOccurrences))).join(",");
-  const rows = records.map((record) => fields.map((f) => csvEscape(fieldDisplayValue(f, record[f.name], relatedRecords))).join(","));
+  const headerCells = fields.map((f) => fieldDisplayLabel(f, labelOccurrences));
+  const header = (includeId ? ["id", ...headerCells] : headerCells).map(csvEscape).join(",");
+  const rows = records.map((record) => {
+    const cells = fields.map((f) => fieldDisplayValue(f, record[f.name], relatedRecords));
+    return (includeId ? [String(record.id), ...cells] : cells).map(csvEscape).join(",");
+  });
   return [header, ...rows].join("\\r\\n");
 }
 
@@ -2001,12 +2011,19 @@ function buildImportRecords(fields, rows) {
   }
 
   const [header, ...dataRows] = rows;
+  // A header cell literally "id" is recordsToCsv's own re-import-friendly
+  // leading column, not matched against real fields at all (see
+  // entityFormatting.ts's buildImportRecords for the full reasoning --
+  // "id" is a reserved field name, so this can never collide with one).
+  const idColumnIndex = header.findIndex((cell) => cell.trim().toLowerCase() === "id");
+
   // See entityFormatting.ts's buildImportRecords for why: a field is
   // claimed by at most one column, in header order, so two fields sharing
   // a label don't both resolve to the same first-matching field.
   const claimedFieldNames = new Set();
   const labelOccurrences = fieldLabelOccurrences(fields);
-  const columnFields = header.map((cell) => {
+  const columnFields = header.map((cell, index) => {
+    if (index === idColumnIndex) return null;
     const match = fields.find((f) => !claimedFieldNames.has(f.name) && matchesImportHeader(cell, f, labelOccurrences));
     if (match) claimedFieldNames.add(match.name);
     return match || null;
@@ -2022,7 +2039,19 @@ function buildImportRecords(fields, rows) {
     const record = {};
     let rowError = null;
 
-    for (const field of fields) {
+    if (idColumnIndex !== -1) {
+      const rawId = (row[idColumnIndex] || "").trim();
+      if (rawId !== "") {
+        const parsedId = Number(rawId);
+        if (!Number.isInteger(parsedId) || parsedId <= 0) {
+          rowError = \`Row \${rowIndex + 1}: "\${rawId}" isn't a valid record id.\`;
+        } else {
+          record.id = parsedId;
+        }
+      }
+    }
+
+    for (const field of rowError ? [] : fields) {
       const columnIndex = columnFields.findIndex((f) => f && f.name === field.name);
       const trimmedCell = columnIndex === -1 ? "" : (row[columnIndex] || "").trim();
       // Reverses the leading "'" that csvEscape (this file's own guard
@@ -4020,7 +4049,7 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
   }
 
   function handleExportCsv() {
-    const csv = recordsToCsv(orderedFields, selectedOrAllRecords(records, effectivelyVisibleRecords, selectedIds), relatedRecords);
+    const csv = recordsToCsv(orderedFields, selectedOrAllRecords(records, effectivelyVisibleRecords, selectedIds), relatedRecords, true);
     const blob = new Blob(["\\uFEFF" + csv], { type: "text/csv;charset=utf-8;" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
@@ -4067,9 +4096,13 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
   }
 
   // The complement to CSV export: parses an uploaded file, converts it to
-  // record payloads (already validated client-side), then POSTs each
+  // record payloads (already validated client-side), then writes each
   // valid row. Uses allSettled rather than assuming success once
   // client-side validation passes, since the server has the final say.
+  // A row whose id buildImportRecords resolved (handleExportCsv's own
+  // leading "id" column, round-tripped) is PATCHed instead of POSTed, so
+  // re-importing an edited copy of your own export updates those exact
+  // records instead of creating a duplicate for every one of them.
   async function handleImportFile(e) {
     const file = e.target.files && e.target.files[0];
     e.target.value = "";
@@ -4091,15 +4124,30 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
         return;
       }
 
-      const results = await Promise.allSettled(parsedRecords.map((record) => createRecord(entity.name, record)));
+      const results = await Promise.allSettled(
+        parsedRecords.map((record) => {
+          const { id, ...data } = record;
+          return id != null ? updateRecord(entity.name, id, data) : createRecord(entity.name, data);
+        }),
+      );
       const serverErrors = results.filter((r) => r.status === "rejected").map((r) => r.reason.message);
-      const createdCount = results.length - serverErrors.length;
+      let createdCount = 0;
+      let updatedCount = 0;
+      results.forEach((r, i) => {
+        if (r.status !== "fulfilled") return;
+        if (parsedRecords[i].id != null) updatedCount += 1;
+        else createdCount += 1;
+      });
       const allErrors = [...parseErrors, ...serverErrors];
       setImportErrors(allErrors);
       setImportMessage(
-        allErrors.length === 0
-          ? \`Imported \${createdCount} records successfully.\`
-          : \`Imported \${createdCount} records, skipped \${allErrors.length} rows.\`,
+        updatedCount === 0
+          ? allErrors.length === 0
+            ? \`Imported \${createdCount} records successfully.\`
+            : \`Imported \${createdCount} records, skipped \${allErrors.length} rows.\`
+          : allErrors.length === 0
+            ? \`Imported \${createdCount} new records and updated \${updatedCount} existing records.\`
+            : \`Imported \${createdCount} new records, updated \${updatedCount} existing records, skipped \${allErrors.length} rows.\`,
       );
       await refresh();
     } catch (err) {

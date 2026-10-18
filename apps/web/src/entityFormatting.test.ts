@@ -1691,6 +1691,93 @@ test("two same-labeled fields' CSV export round-trips back through buildImportRe
   );
 });
 
+/**
+ * Round 683: a real bug found by the survey -- CSV import always created a
+ * new record, even when re-importing a file the app itself had just
+ * exported, because nothing in the export/import round trip carried a
+ * record's own id. recordsToCsv's default (no 6th argument) must still
+ * produce exactly the id-free CSV every existing caller/test above
+ * depends on -- this is the "opt-in, not a behavior change" half of the fix.
+ */
+test("recordsToCsv omits the id column by default, unchanged from before round 683", () => {
+  const fields: Field[] = [{ name: "name", label: "Name", type: "text", required: true }];
+  const csv = recordsToCsv(fields, [{ id: 7, name: "Dana" }], "en");
+  assert.equal(csv, "Name\r\nDana", "with no 6th argument, the id must never appear in the header or the row");
+});
+
+test("recordsToCsv prepends a leading \"id\" column when includeId is true", () => {
+  const fields: Field[] = [{ name: "name", label: "Name", type: "text", required: true }];
+  const csv = recordsToCsv(fields, [{ id: 7, name: "Dana" }], "en", [], {}, true);
+  assert.equal(csv, "id,Name\r\n7,Dana", "includeId must put the record's real id first, ahead of every real field column");
+});
+
+test("buildImportRecords resolves a valid \"id\" column into each record's own `id` key, leaving the field data unchanged", () => {
+  const fields: Field[] = [{ name: "name", label: "Name", type: "text", required: true }];
+  const rows = [
+    ["id", "Name"],
+    ["7", "Dana"],
+    ["12", "Noa"],
+  ];
+  const result = buildImportRecords(fields, rows);
+  assert.deepEqual(result.errors, []);
+  assert.deepEqual(result.records, [
+    { id: 7, name: "Dana" },
+    { id: 12, name: "Noa" },
+  ]);
+});
+
+test("buildImportRecords treats a blank \"id\" cell as a brand-new record (no `id` key at all), not an error", () => {
+  const fields: Field[] = [{ name: "name", label: "Name", type: "text", required: true }];
+  const rows = [
+    ["id", "Name"],
+    ["7", "Dana"],
+    ["", "Amit"],
+  ];
+  const result = buildImportRecords(fields, rows);
+  assert.deepEqual(result.errors, []);
+  assert.deepEqual(result.records, [{ id: 7, name: "Dana" }, { name: "Amit" }]);
+});
+
+test("buildImportRecords rejects a non-numeric \"id\" cell with a clear row-numbered error, instead of silently importing it as a new record", () => {
+  const fields: Field[] = [{ name: "name", label: "Name", type: "text", required: true }];
+  const rows = [
+    ["id", "Name"],
+    ["not-a-number", "Dana"],
+  ];
+  const result = buildImportRecords(fields, rows);
+  assert.deepEqual(result.records, []);
+  assert.equal(result.errors.length, 1);
+  assert.match(result.errors[0], /Row 1/);
+  assert.match(result.errors[0], /not-a-number/);
+});
+
+test("a real record's own CSV export round-trips through parseCsv -> buildImportRecords back to its own id, exercising the exact export/import pair handleExportCsv and handleImportFile actually use", () => {
+  const fields: Field[] = [{ name: "name", label: "Name", type: "text", required: true }];
+  const csv = recordsToCsv(fields, [{ id: 42, name: "Globex" }], "en", [], {}, true);
+  const rows = parseCsv(csv);
+  const result = buildImportRecords(fields, rows);
+  assert.deepEqual(result.errors, []);
+  assert.deepEqual(result.records, [{ id: 42, name: "Globex" }], "re-parsing the app's own id-including export must resolve back to the same id");
+});
+
+test("buildImportRecords never confuses a field whose own label happens to be \"id\" with the reserved id column, since field names (unlike labels) can't be \"id\" at all", () => {
+  // "id" is a reserved FIELD NAME (packages/shared's RESERVED_FIELD_NAMES),
+  // not a reserved LABEL -- a user could still rename a field's display
+  // label to "Id" via the Field Label editor. The reserved-name column is
+  // matched by raw header text alone (not through matchesHeader), and a
+  // real field can never be named "id", so there is no field for the
+  // user-renamed label to collide with here; this just pins that a
+  // same-named header still can't accidentally feed a real field's data.
+  const fields: Field[] = [{ name: "customerId", label: "Id", type: "text", required: false }];
+  const rows = [
+    ["id", "Id"],
+    ["5", "CUST-5"],
+  ];
+  const result = buildImportRecords(fields, rows);
+  assert.deepEqual(result.errors, []);
+  assert.deepEqual(result.records, [{ id: 5, customerId: "CUST-5" }]);
+});
+
 test("uniqueEnumValues de-dupes while preserving first-occurrence order, and tolerates a missing array", () => {
   assert.deepEqual(uniqueEnumValues(["New", "New", "Won", "Lost", "Won"]), ["New", "Won", "Lost"]);
   assert.deepEqual(uniqueEnumValues([]), []);

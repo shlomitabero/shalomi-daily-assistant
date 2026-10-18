@@ -2212,7 +2212,18 @@ export function EntityPanel({
   }
 
   function handleExportCsv() {
-    const csv = recordsToCsv(orderedFields, selectedOrAllRecords(records, effectivelyVisibleRecords, selectedIds), lang, allEntities, relatedRecords);
+    // includeId: true -- unlike handleCopy below (pasted into Slack/email,
+    // never re-imported), this is the one CSV this app actually hands back
+    // to handleImportFile, so it needs the id column that lets re-import
+    // update these exact records instead of duplicating them.
+    const csv = recordsToCsv(
+      orderedFields,
+      selectedOrAllRecords(records, effectivelyVisibleRecords, selectedIds),
+      lang,
+      allEntities,
+      relatedRecords,
+      true,
+    );
     const blob = new Blob(["﻿" + csv], { type: "text/csv;charset=utf-8;" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
@@ -2268,22 +2279,31 @@ export function EntityPanel({
   /**
    * The complement to CSV export: parses an uploaded file with parseCsv,
    * converts it to record payloads with buildImportRecords (which already
-   * validates types/required fields client-side), then POSTs each valid
+   * validates types/required fields client-side), then writes each valid
    * row. Uses allSettled rather than assuming success once client-side
    * validation passes, since the server has the final say (e.g. a
    * cross-field rule this component doesn't know about) -- the summary
-   * message reports real created/skipped counts either way, not an
+   * message reports real created/updated/skipped counts either way, not an
    * optimistic guess.
    *
-   * Every createRecord call below sets suppressAutomations -- without it,
-   * importing a spreadsheet of pre-existing customers (the whole point of
-   * this feature, e.g. migrating off another system) fires every
-   * "record_created" WhatsApp automation rule for each row, all at once
-   * (these POSTs run concurrently via Promise.allSettled), sending a real
-   * "welcome" message to everyone in the file even though none of them
-   * were actually just created. See routes/projects.ts's own comment on
-   * X-Suppress-Automations for why this is scoped to import alone and not
-   * the single "Add" form, duplicate, or bulk-duplicate.
+   * A row whose `id` buildImportRecords resolved (handleExportCsv's own
+   * leading "id" column, round-tripped) is PATCHed instead of POSTed --
+   * this is what lets re-importing an edited copy of your own export
+   * update those exact records instead of creating a duplicate row for
+   * every one of them. `id` is pulled out of the payload before sending
+   * either request: it's metadata about WHICH record, never a field value
+   * to write.
+   *
+   * Every write below sets suppressAutomations -- without it, importing a
+   * spreadsheet of pre-existing customers (the whole point of this
+   * feature, e.g. migrating off another system) fires every
+   * "record_created"/"record_updated" WhatsApp automation rule for each
+   * row, all at once (these requests run concurrently via
+   * Promise.allSettled), sending a real "welcome"/"updated" message to
+   * everyone in the file even though none of them just happened through
+   * the app. See routes/projects.ts's own comment on X-Suppress-Automations
+   * for why this is scoped to import alone and not the single "Add" form,
+   * duplicate, or bulk-duplicate.
    */
   async function handleImportFile(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
@@ -2309,18 +2329,33 @@ export function EntityPanel({
       }
 
       const results = await Promise.allSettled(
-        parsedRecords.map((record) => createRecord(projectId, entity.name, record, { suppressAutomations: true })),
+        parsedRecords.map((record) => {
+          const { id, ...data } = record as { id?: number } & Record<string, unknown>;
+          return id != null
+            ? updateRecord(projectId, entity.name, id, data, { suppressAutomations: true })
+            : createRecord(projectId, entity.name, data, { suppressAutomations: true });
+        }),
       );
       const serverErrors = results
         .filter((r): r is PromiseRejectedResult => r.status === "rejected")
         .map((r) => (r.reason as Error).message);
-      const createdCount = results.length - serverErrors.length;
+      let createdCount = 0;
+      let updatedCount = 0;
+      results.forEach((r, i) => {
+        if (r.status !== "fulfilled") return;
+        if ((parsedRecords[i] as { id?: number }).id != null) updatedCount += 1;
+        else createdCount += 1;
+      });
       const allErrors = [...parseErrors, ...serverErrors];
       setImportErrors(allErrors);
       setImportMessage(
-        allErrors.length === 0
-          ? t("entity.import.success", { count: createdCount })
-          : t("entity.import.successWithErrors", { count: createdCount, errorCount: allErrors.length }),
+        updatedCount === 0
+          ? allErrors.length === 0
+            ? t("entity.import.success", { count: createdCount })
+            : t("entity.import.successWithErrors", { count: createdCount, errorCount: allErrors.length })
+          : allErrors.length === 0
+            ? t("entity.import.successWithUpdates", { count: createdCount, updatedCount })
+            : t("entity.import.successWithUpdatesAndErrors", { count: createdCount, updatedCount, errorCount: allErrors.length }),
       );
       await refresh();
     } catch (err) {

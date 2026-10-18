@@ -5315,7 +5315,7 @@ test("the exported EntityView renders a real picker for relation fields, not a r
   assert.match(entityViewJsx, /field\.type === "relation" && relatedEntity\)/);
   assert.match(entityViewJsx, /relatedEntityRecords\.map/);
   // CSV export also resolves the related record's label, not the raw id.
-  assert.match(entityViewJsx, /function recordsToCsv\(fields, records, relatedRecords\)/);
+  assert.match(entityViewJsx, /function recordsToCsv\(fields, records, relatedRecords, includeId\)/);
 });
 
 // The live-preview app's relation cells became a real "jump to the related
@@ -5522,7 +5522,7 @@ test("the exported EntityView's own CSV-export formatting renders booleans as TR
   const entityViewJsx = files.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
   const csvEscapeSrc = entityViewJsx.match(/function csvEscape\(value\) \{[\s\S]*?\n\}\n/)?.[0];
   const fieldDisplayValueSrc = entityViewJsx.match(/function fieldDisplayValue\(field, value, relatedRecords\) \{[\s\S]*?\n\}\n/)?.[0];
-  const recordsToCsvSrc = entityViewJsx.match(/function recordsToCsv\(fields, records, relatedRecords\) \{[\s\S]*?\n\}\n/)?.[0];
+  const recordsToCsvSrc = entityViewJsx.match(/function recordsToCsv\(fields, records, relatedRecords, includeId\) \{[\s\S]*?\n\}\n/)?.[0];
   const fieldLabelOccurrencesSrc = entityViewJsx.match(/function fieldLabelOccurrences\(fields\) \{[\s\S]*?\n\}\n/)?.[0];
   const fieldDisplayLabelSrc = entityViewJsx.match(/function fieldDisplayLabel\(field, occurrences\) \{[\s\S]*?\n\}\n/)?.[0];
   assert.ok(
@@ -5566,7 +5566,7 @@ test("the exported EntityView's real generated recordsToCsv disambiguates two co
   const entityViewJsx = files.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
   const csvEscapeSrc = entityViewJsx.match(/function csvEscape\(value\) \{[\s\S]*?\n\}\n/)?.[0];
   const fieldDisplayValueSrc = entityViewJsx.match(/function fieldDisplayValue\(field, value, relatedRecords\) \{[\s\S]*?\n\}\n/)?.[0];
-  const recordsToCsvSrc = entityViewJsx.match(/function recordsToCsv\(fields, records, relatedRecords\) \{[\s\S]*?\n\}\n/)?.[0];
+  const recordsToCsvSrc = entityViewJsx.match(/function recordsToCsv\(fields, records, relatedRecords, includeId\) \{[\s\S]*?\n\}\n/)?.[0];
   const fieldLabelOccurrencesSrc = entityViewJsx.match(/function fieldLabelOccurrences\(fields\) \{[\s\S]*?\n\}\n/)?.[0];
   const fieldDisplayLabelSrc = entityViewJsx.match(/function fieldDisplayLabel\(field, occurrences\) \{[\s\S]*?\n\}\n/)?.[0];
   assert.ok(
@@ -5611,7 +5611,7 @@ test("the exported EntityView's Export CSV routes through selectedOrAllRecords, 
   assert.ok(handleExportCsvSrc, "expected to find handleExportCsv in generated output");
   assert.match(
     handleExportCsvSrc!,
-    /recordsToCsv\(orderedFields, selectedOrAllRecords\(records, effectivelyVisibleRecords, selectedIds\), relatedRecords\)/,
+    /recordsToCsv\(orderedFields, selectedOrAllRecords\(records, effectivelyVisibleRecords, selectedIds\), relatedRecords, true\)/,
     "handleExportCsv must route through selectedOrAllRecords instead of always exporting visibleRecords directly",
   );
 
@@ -6539,7 +6539,7 @@ test("the exported EntityView's CSV export and import round-trip two same-labele
 
   const csvEscapeSrc = entityViewJsx.match(/function csvEscape\(value\) \{[\s\S]*?\n\}\n/)?.[0];
   const fieldDisplayValueSrc = entityViewJsx.match(/function fieldDisplayValue\(field, value, relatedRecords\) \{[\s\S]*?\n\}\n/)?.[0];
-  const recordsToCsvSrc = entityViewJsx.match(/function recordsToCsv\(fields, records, relatedRecords\) \{[\s\S]*?\n\}\n/)?.[0];
+  const recordsToCsvSrc = entityViewJsx.match(/function recordsToCsv\(fields, records, relatedRecords, includeId\) \{[\s\S]*?\n\}\n/)?.[0];
   const fieldLabelOccurrencesSrc = entityViewJsx.match(/function fieldLabelOccurrences\(fields\) \{[\s\S]*?\n\}\n/)?.[0];
   const fieldDisplayLabelSrc = entityViewJsx.match(/function fieldDisplayLabel\(field, occurrences\) \{[\s\S]*?\n\}\n/)?.[0];
   const parseCsvSrc = entityViewJsx.match(/function parseCsv\(text\) \{[\s\S]*?\n\}\n/)?.[0];
@@ -6646,7 +6646,7 @@ test("the exported EntityView's CSV export and import round-trip a value csvEsca
 
   const csvEscapeSrc = entityViewJsx.match(/function csvEscape\(value\) \{[\s\S]*?\n\}\n/)?.[0];
   const fieldDisplayValueSrc = entityViewJsx.match(/function fieldDisplayValue\(field, value, relatedRecords\) \{[\s\S]*?\n\}\n/)?.[0];
-  const recordsToCsvSrc = entityViewJsx.match(/function recordsToCsv\(fields, records, relatedRecords\) \{[\s\S]*?\n\}\n/)?.[0];
+  const recordsToCsvSrc = entityViewJsx.match(/function recordsToCsv\(fields, records, relatedRecords, includeId\) \{[\s\S]*?\n\}\n/)?.[0];
   const fieldLabelOccurrencesSrc = entityViewJsx.match(/function fieldLabelOccurrences\(fields\) \{[\s\S]*?\n\}\n/)?.[0];
   const fieldDisplayLabelSrc = entityViewJsx.match(/function fieldDisplayLabel\(field, occurrences\) \{[\s\S]*?\n\}\n/)?.[0];
   const parseCsvSrc = entityViewJsx.match(/function parseCsv\(text\) \{[\s\S]*?\n\}\n/)?.[0];
@@ -6699,7 +6699,7 @@ test("the exported EntityView's CSV export and import round-trip a value that ge
 
   const csvEscapeSrc = entityViewJsx.match(/function csvEscape\(value\) \{[\s\S]*?\n\}\n/)?.[0];
   const fieldDisplayValueSrc = entityViewJsx.match(/function fieldDisplayValue\(field, value, relatedRecords\) \{[\s\S]*?\n\}\n/)?.[0];
-  const recordsToCsvSrc = entityViewJsx.match(/function recordsToCsv\(fields, records, relatedRecords\) \{[\s\S]*?\n\}\n/)?.[0];
+  const recordsToCsvSrc = entityViewJsx.match(/function recordsToCsv\(fields, records, relatedRecords, includeId\) \{[\s\S]*?\n\}\n/)?.[0];
   const fieldLabelOccurrencesSrc = entityViewJsx.match(/function fieldLabelOccurrences\(fields\) \{[\s\S]*?\n\}\n/)?.[0];
   const fieldDisplayLabelSrc = entityViewJsx.match(/function fieldDisplayLabel\(field, occurrences\) \{[\s\S]*?\n\}\n/)?.[0];
   const parseCsvSrc = entityViewJsx.match(/function parseCsv\(text\) \{[\s\S]*?\n\}\n/)?.[0];
@@ -6734,6 +6734,65 @@ test("the exported EntityView's CSV export and import round-trip a value that ge
 
   assert.deepEqual(errors, []);
   assert.deepEqual(records, [original]);
+});
+
+/**
+ * Round 683: the same CSV-import-always-duplicates bug fixed in the live
+ * preview (apps/web/src/entityFormatting.ts) existed identically in this
+ * exported, standalone app's own independent copy of the same logic --
+ * neither recordsToCsv nor buildImportRecords here carried a record's own
+ * id either. Executes the real generated recordsToCsv(..., true) and
+ * buildImportRecords (not reimplemented) to confirm the exported app's own
+ * "Export CSV" -> re-import round trip now resolves back to the same id,
+ * and that a blank id cell is still treated as a brand-new record.
+ */
+test("the exported EntityView's CSV export (with includeId) and import round-trip a record's own id, so a re-imported row updates instead of duplicating it", () => {
+  const files = generateExportFiles(project);
+  const entityViewJsx = files.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+
+  const csvEscapeSrc = entityViewJsx.match(/function csvEscape\(value\) \{[\s\S]*?\n\}\n/)?.[0];
+  const fieldDisplayValueSrc = entityViewJsx.match(/function fieldDisplayValue\(field, value, relatedRecords\) \{[\s\S]*?\n\}\n/)?.[0];
+  const recordsToCsvSrc = entityViewJsx.match(/function recordsToCsv\(fields, records, relatedRecords, includeId\) \{[\s\S]*?\n\}\n/)?.[0];
+  const fieldLabelOccurrencesSrc = entityViewJsx.match(/function fieldLabelOccurrences\(fields\) \{[\s\S]*?\n\}\n/)?.[0];
+  const fieldDisplayLabelSrc = entityViewJsx.match(/function fieldDisplayLabel\(field, occurrences\) \{[\s\S]*?\n\}\n/)?.[0];
+  const parseCsvSrc = entityViewJsx.match(/function parseCsv\(text\) \{[\s\S]*?\n\}\n/)?.[0];
+  const headerSrc = entityViewJsx.match(/function matchesImportHeader\(header, field, labelOccurrences\) \{[\s\S]*?\n\}\n/)?.[0];
+  const isValidDateSrc = entityViewJsx.match(/const DATE_FORMAT[\s\S]*?\nfunction isValidDate\(value\) \{[\s\S]*?\n\}\n/)?.[0];
+  const importSrc = entityViewJsx.match(/function buildImportRecords\(fields, rows\) \{[\s\S]*?\n\}\n/)?.[0];
+  assert.ok(
+    csvEscapeSrc && fieldDisplayValueSrc && recordsToCsvSrc && fieldLabelOccurrencesSrc && fieldDisplayLabelSrc && parseCsvSrc && headerSrc && isValidDateSrc && importSrc,
+    "expected to find csvEscape/fieldDisplayValue/recordsToCsv/fieldLabelOccurrences/fieldDisplayLabel/parseCsv/matchesImportHeader/isValidDate/buildImportRecords in generated output",
+  );
+
+  const { recordsToCsv, parseCsv, buildImportRecords } = new Function(
+    `${csvEscapeSrc}\n${fieldDisplayValueSrc}\n${fieldLabelOccurrencesSrc}\n${fieldDisplayLabelSrc}\n${recordsToCsvSrc}\n${parseCsvSrc}\n${isValidDateSrc}\n${headerSrc}\n${importSrc}\nreturn { recordsToCsv, parseCsv, buildImportRecords };`,
+  )();
+
+  const fields = [{ name: "name", label: "Name", type: "text" }];
+
+  // Without includeId, the exact same id-free output every existing caller
+  // (handleCopy, every test above) already depends on.
+  assert.equal(recordsToCsv(fields, [{ id: 7, name: "Dana" }], {}), "Name\r\nDana");
+
+  const csv = recordsToCsv(fields, [{ id: 42, name: "Globex" }], {}, true);
+  assert.equal(csv, "id,Name\r\n42,Globex");
+
+  const rows = parseCsv(csv + "\r\n,Amit");
+  const { records, errors } = buildImportRecords(fields, rows);
+  assert.deepEqual(errors, []);
+  assert.deepEqual(records, [{ id: 42, name: "Globex" }, { name: "Amit" }], "a matched id must resolve for re-import, and a blank id must still mean a brand-new record");
+});
+
+test("the exported EntityView's handleImportFile PATCHes a row whose id resolved, instead of always POSTing a duplicate", () => {
+  const files = generateExportFiles(project);
+  const entityViewJsx = files.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+  const handleImportFileSrc = entityViewJsx.match(/async function handleImportFile\(e\) \{[\s\S]*?\n {2}\}\n/)?.[0];
+  assert.ok(handleImportFileSrc, "expected to find handleImportFile in generated output");
+  assert.match(
+    handleImportFileSrc!,
+    /id != null \? updateRecord\(entity\.name, id, data\) : createRecord\(entity\.name, data\)/,
+    "a row with a resolved id must PATCH via updateRecord, and only a row with none must still POST via createRecord",
+  );
 });
 
 test("the exported app includes a real cross-entity global search, ported from the Forge AI live preview", () => {

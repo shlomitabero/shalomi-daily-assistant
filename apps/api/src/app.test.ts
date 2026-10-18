@@ -1753,6 +1753,114 @@ test("POST .../entities/:entityName with X-Suppress-Automations skips the record
 });
 
 /**
+ * Round 683: CSV import (EntityPanel.tsx's handleImportFile) now PATCHes a
+ * row whose own leading "id" column matched an existing record, instead of
+ * always POSTing a new one -- the exact same bulk-reimport-of-pre-existing-
+ * data scenario the test above already protects on the create side. The
+ * PATCH route didn't check X-Suppress-Automations at all before this round,
+ * so a re-imported update would have fired "record_updated" for every row
+ * at once. Mirrors the POST test above: the header must suppress the rule
+ * on a PATCH, and an ordinary field edit (no header) must still fire it.
+ */
+test("PATCH .../entities/:entityName/:recordId with X-Suppress-Automations skips the record_updated automation, but an ordinary edit (no header) still fires it", async () => {
+  let createdSockets: ReturnType<typeof createFakeWhatsAppSocket>[] = [];
+  await withServer(
+    async (baseUrl) => {
+      const token = await signup(baseUrl, "suppress-automations2@example.com");
+      const createRes = await fetch(`${baseUrl}/api/projects`, {
+        method: "POST",
+        headers: authHeaders(token),
+        body: JSON.stringify({
+          description:
+            "Build an appointment-management application for a beauty clinic. I need customers, appointments, employees, services, an admin dashboard and automatic appointment status tracking.",
+        }),
+      });
+      const { project } = (await createRes.json()) as { project: { id: string } };
+      const buildRes = await fetch(`${baseUrl}/api/projects/${project.id}/build`, { method: "POST", headers: authHeaders(token) });
+      await collectSSE(buildRes);
+
+      await fetch(`${baseUrl}/api/projects/${project.id}/integrations/whatsapp/connect`, { method: "POST", headers: authHeaders(token) });
+      createdSockets[0].sock.user = { id: "15550009999:1@s.whatsapp.net" };
+      createdSockets[0].emitConnectionUpdate({ connection: "open" });
+
+      // "field_equals" is this app's actual update-triggered rule (there is
+      // no separate "record_updated" trigger value -- see automations.ts's
+      // matchesTrigger): it fires on a PATCH the moment the given field is
+      // set to the given value, as part of that same request's own payload.
+      // Uses the free-text "name" field (not "status", an enum whose
+      // declared values this spec controls, not this test) so the target
+      // value "VIP Customer" is guaranteed to be one the field can actually
+      // hold, same as every other field_equals test in this file does for
+      // a text field.
+      const ruleRes = await fetch(`${baseUrl}/api/projects/${project.id}/entities/Customer/automations`, {
+        method: "POST",
+        headers: authHeaders(token),
+        body: JSON.stringify({
+          trigger: "field_equals",
+          fieldName: "name",
+          fieldValue: "VIP Customer",
+          actionType: "send_whatsapp",
+          toMode: "field",
+          toField: "phone",
+          messageTemplate: "Updated!",
+        }),
+      });
+      assert.equal(ruleRes.status, 201);
+
+      const customerRes = await fetch(`${baseUrl}/api/projects/${project.id}/entities/Customer`, {
+        method: "POST",
+        headers: authHeaders(token),
+        body: JSON.stringify({ name: "Dana", email: "dana@example.com", status: "New", phone: "972500000003" }),
+      });
+      const { record: customer } = (await customerRes.json()) as { record: { id: number } };
+
+      // A row re-imported via CSV import (its own leading "id" column
+      // matched this existing record) sets this header -- the
+      // field_equals-on-update automation must never fire for it.
+      const importedRes = await fetch(`${baseUrl}/api/projects/${project.id}/entities/Customer/${customer.id}`, {
+        method: "PATCH",
+        headers: { ...authHeaders(token), "x-suppress-automations": "true" },
+        body: JSON.stringify({ name: "VIP Customer" }),
+      });
+      assert.equal(importedRes.status, 200);
+
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      assert.equal(createdSockets[0].sendCalls.length, 0, "an imported update must never trigger a field_equals automation");
+
+      // An ordinary inline-edit/form PATCH (no header) on a SECOND record
+      // and the same rule must still fire normally -- this isn't a blanket
+      // disable. A second record (not the one just suppressed above) keeps
+      // this independent of matchesTrigger's own "only once, on the exact
+      // request that changed the field" rule.
+      const secondRes = await fetch(`${baseUrl}/api/projects/${project.id}/entities/Customer`, {
+        method: "POST",
+        headers: authHeaders(token),
+        body: JSON.stringify({ name: "Noa", email: "noa@example.com", status: "New", phone: "972500000004" }),
+      });
+      const { record: second } = (await secondRes.json()) as { record: { id: number } };
+      const ordinaryRes = await fetch(`${baseUrl}/api/projects/${project.id}/entities/Customer/${second.id}`, {
+        method: "PATCH",
+        headers: authHeaders(token),
+        body: JSON.stringify({ name: "VIP Customer" }),
+      });
+      assert.equal(ordinaryRes.status, 200);
+
+      for (let i = 0; i < 40 && createdSockets[0].sendCalls.length === 0; i++) {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      }
+      assert.deepEqual(createdSockets[0].sendCalls, [{ jid: "972500000004@s.whatsapp.net", text: "Updated!" }]);
+    },
+    {
+      whatsapp: (db) => {
+        const { manager, createdSockets: sockets } = createTestWhatsAppManager(db);
+        createdSockets = sockets;
+        return manager;
+      },
+    },
+  );
+});
+
+/**
  * Round 600's Explore survey found that docs/wakeRetry-idempotency-design.md's
  * own inventory of mutating routes never mentioned
  * POST /projects/:id/entities/:entityName/automations at all -- Automation
