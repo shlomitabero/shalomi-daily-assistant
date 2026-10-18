@@ -5383,7 +5383,9 @@ test("the exported EntityView renders a real picker for relation fields, not a r
   // records, not the old raw number input, once relatedEntityRecords has
   // actually loaded (see round 440's disabled-placeholder loading branch).
   assert.match(entityViewJsx, /field\.type === "relation" && relatedEntity\)/);
-  assert.match(entityViewJsx, /relatedEntityRecords\.map/);
+  // filteredRecords (not the raw relatedEntityRecords) is what's actually
+  // rendered -- round 698's own filter input narrows this list client-side.
+  assert.match(entityViewJsx, /filteredRecords\.map/);
   // CSV export also resolves the related record's label, not the raw id.
   assert.match(entityViewJsx, /function recordsToCsv\(fields, records, relatedRecords, includeId\)/);
 });
@@ -8701,9 +8703,10 @@ test("the exported EntityView's FieldInput wires field.required into the real re
 
   // round 440 added a disabled, loading-placeholder <select> branch ahead
   // of the real, option-backed one (rendered while relatedEntityRecords
-  // hasn't resolved yet) -- anchor on relatedEntityRecords.map to land in
-  // the real branch specifically, not the loading placeholder.
-  const relationSelectBranch = fieldInputSrc!.match(/field\.type === "relation" && relatedEntity\)[\s\S]*?relatedEntityRecords\.map/)?.[0];
+  // hasn't resolved yet) -- anchor on filteredRecords.map (round 698's own
+  // client-side filter over relatedEntityRecords) to land in the real
+  // branch specifically, not the loading placeholder.
+  const relationSelectBranch = fieldInputSrc!.match(/field\.type === "relation" && relatedEntity\)[\s\S]*?filteredRecords\.map/)?.[0];
   assert.match(relationSelectBranch ?? "", /required=\{field\.required\}/, "the relation <select> branch must be required-wired");
 
   const booleanBranch = fieldInputSrc!.match(/field\.type === "boolean"[\s\S]{0,200}\}\n\s*\}/)?.[0];
@@ -10821,6 +10824,112 @@ test("the exported EntityView's relation field keeps the record's real stored va
         "9",
         "the select must reflect the record's real stored courier id even though the related-entity fetch failed and returned no options",
       );
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    cleanup();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
+ * Round 698, ported to the exported standalone app's own hand-duplicated
+ * FieldInput (apps/api/src/codegen.ts) -- the identical fix just applied
+ * to the live preview's FieldInput (EntityPanel.tsx): a relation field
+ * with more than a handful of related records had no way to narrow the
+ * plain <select> below it. Confirms the exported app's own generated
+ * EntityView now offers a real filter input once there are enough
+ * related records, and that typing into it narrows the real <select>'s
+ * own <option>s by each record's resolved display label while always
+ * keeping the already-selected record's own option visible.
+ */
+test("the exported EntityView's relation field offers a filter input once there are enough related records, and it narrows the real select's options", async () => {
+  const courierEntity: Entity = { name: "Courier", label: "Courier", fields: [{ name: "name", label: "Name", type: "text", required: true }] };
+  const orderEntity: Entity = {
+    name: "Order",
+    label: "Order",
+    fields: [
+      { name: "item", label: "Item", type: "text", required: true },
+      { name: "courierId", label: "Courier", type: "relation", relationTo: "Courier", required: false },
+    ],
+  };
+  const withRelationProject: Project = {
+    ...project,
+    spec: { ...project.spec, entities: [courierEntity, orderEntity] },
+  };
+  const files = generateExportFiles(withRelationProject);
+  const dir = writeGeneratedWebComponent(files);
+  const courierRelated: EntityRecord[] = [
+    { id: 1, name: "Dana Levi" },
+    { id: 2, name: "Yossi Cohen" },
+    { id: 3, name: "Maya Golan" },
+    { id: 4, name: "Avi Mizrahi" },
+    { id: 5, name: "Noa Peretz" },
+    { id: 6, name: "Ron Shapira" },
+  ];
+  const store: EntityRecord[] = [{ id: 1, item: "Pizza", courierId: 1 }];
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async (input: string) => {
+    if (input === "/api/Order") {
+      return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    if (input === "/api/Courier") {
+      return new Response(JSON.stringify({ records: courierRelated }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    throw new Error(`unexpected request ${input}`);
+  }) as typeof fetch;
+
+  try {
+    await withRealLocalStorage(async () => {
+      const { EntityView } = await import(path.join(dir, "web", "src", "components", "EntityView.jsx"));
+      const props = {
+        entity: orderEntity,
+        highlightRecordId: null,
+        onHighlightHandled: () => {},
+        onJumpToRecord: () => {},
+        onRecordCountChange: () => {},
+      };
+
+      const { container } = render(React.createElement(EntityView, props));
+      for (let i = 0; i < 40; i++) {
+        if (container.querySelectorAll("tbody tr").length === 1) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+
+      const editButton = container.querySelector(".row-actions button") as HTMLButtonElement;
+      await act(async () => {
+        fireEvent.click(editButton);
+      });
+
+      let courierSelect: HTMLSelectElement | null = null;
+      for (let i = 0; i < 40; i++) {
+        courierSelect = container.querySelector(".record-form select") as HTMLSelectElement | null;
+        if (courierSelect !== null && !courierSelect.disabled) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+
+      const filterInput = container.querySelector(".relation-filter-input") as HTMLInputElement | null;
+      assert.ok(filterInput, "expected a filter input once there are more than a handful of related records");
+      assert.equal(courierSelect!.querySelectorAll("option").length, 7, "every related record plus the blank placeholder must be offered before any filtering");
+
+      await act(async () => {
+        fireEvent.change(filterInput!, { target: { value: "yossi" } });
+      });
+      for (let i = 0; i < 40; i++) {
+        if (courierSelect!.querySelectorAll("option").length === 3) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+      const filteredLabels = Array.from(courierSelect!.options).map((o) => o.textContent);
+      assert.ok(filteredLabels.includes("Yossi Cohen"), "the filter must keep the one matching record's option");
+      assert.ok(filteredLabels.includes("Dana Levi"), "the currently-selected record's option must stay visible even though the filter text doesn't match it");
+      assert.ok(!filteredLabels.includes("Maya Golan"), "a non-matching, non-selected record's option must be filtered out");
+      assert.equal(courierSelect!.value, "1", "the currently-selected record must remain selected while filtered");
     });
   } finally {
     globalThis.fetch = originalFetch;

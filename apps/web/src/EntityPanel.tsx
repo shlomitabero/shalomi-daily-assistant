@@ -759,6 +759,15 @@ function FieldInput({
 }) {
   const { t } = useTranslation();
   const [fileUploadError, setFileUploadError] = useState<string | null>(null);
+  // A relation field with more than a handful of related records (e.g. a
+  // CRM's Deal.customer pointing at 150 Customer rows) had no way to
+  // narrow the plain <select> below -- a browser's own type-ahead inside
+  // an open <select> only jumps to an option whose label *starts with*
+  // what's typed, can't match a substring, and is especially unreliable
+  // for this app's Hebrew-labeled records. Filters client-side, by
+  // recordDisplayLabel (the exact text each <option> already shows), so
+  // it narrows the same real options rather than hiding mismatched ones.
+  const [relationFilter, setRelationFilter] = useState("");
   if (field.type === "relation" && relatedEntity) {
     // relatedEntityRecords is only populated once EntityPanel's own
     // loadRelated effect resolves its real network fetch -- a useEffect
@@ -785,23 +794,49 @@ function FieldInput({
     // below already guards against (round 508).
     const currentRelationId = value === "" || value === null || value === undefined ? null : Number(value);
     const hasCurrentRelationOption = currentRelationId === null || relatedEntityRecords.some((r) => Number(r.id) === currentRelationId);
+    const trimmedFilter = relationFilter.trim().toLowerCase();
+    // The current value's own option (including the "#id" fallback above)
+    // must always stay visible regardless of the filter text -- otherwise
+    // typing a filter that doesn't match the already-selected record would
+    // blank the controlled <select> the instant its matching option
+    // disappears, the same "stale value has no <option>" hazard this
+    // branch's own hasCurrentRelationOption fallback already guards
+    // against for a different cause.
+    const filteredRecords =
+      trimmedFilter === ""
+        ? relatedEntityRecords
+        : relatedEntityRecords.filter(
+            (r) => Number(r.id) === currentRelationId || recordDisplayLabel(relatedEntity, r).toLowerCase().includes(trimmedFilter),
+          );
     return (
-      <select
-        required={field.required}
-        value={value === "" || value === null || value === undefined ? "" : String(value)}
-        onChange={(e) => onChange(e.target.value === "" ? "" : Number(e.target.value))}
-        autoFocus={autoFocus}
-        onBlur={onBlur}
-        onKeyDown={onKeyDown}
-      >
-        <option value="">{t("entity.select")}</option>
-        {!hasCurrentRelationOption && <option value={currentRelationId as number}>{`#${currentRelationId}`}</option>}
-        {relatedEntityRecords.map((r) => (
-          <option key={r.id as number} value={r.id as number}>
-            {recordDisplayLabel(relatedEntity, r)}
-          </option>
-        ))}
-      </select>
+      <div className="relation-field-input">
+        {relatedEntityRecords.length > 5 && (
+          <input
+            type="text"
+            className="relation-filter-input"
+            value={relationFilter}
+            onChange={(e) => setRelationFilter(e.target.value)}
+            placeholder={t("entity.relation.filterPlaceholder")}
+            aria-label={t("entity.relation.filterPlaceholder")}
+          />
+        )}
+        <select
+          required={field.required}
+          value={value === "" || value === null || value === undefined ? "" : String(value)}
+          onChange={(e) => onChange(e.target.value === "" ? "" : Number(e.target.value))}
+          autoFocus={autoFocus}
+          onBlur={onBlur}
+          onKeyDown={onKeyDown}
+        >
+          <option value="">{t("entity.select")}</option>
+          {!hasCurrentRelationOption && <option value={currentRelationId as number}>{`#${currentRelationId}`}</option>}
+          {filteredRecords.map((r) => (
+            <option key={r.id as number} value={r.id as number}>
+              {recordDisplayLabel(relatedEntity, r)}
+            </option>
+          ))}
+        </select>
+      </div>
     );
   }
   if (field.type === "boolean") {

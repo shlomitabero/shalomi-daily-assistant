@@ -7287,6 +7287,136 @@ test("EntityPanel's relation field keeps the record's real stored value selectab
 });
 
 /**
+ * Round 698: a relation field's plain <select> had no way to narrow a
+ * long list of related records -- a browser's own type-ahead inside an
+ * open <select> only jumps to an option whose label *starts with* what's
+ * typed, can't match a substring, and is especially unreliable for this
+ * app's Hebrew-labeled records. Confirms the filter input only appears
+ * once there are enough related records to matter (not for a trivial
+ * 2-3-option list), narrows the real <select>'s own <option>s by a
+ * case-insensitive substring match against each record's resolved display
+ * label, and never hides the already-selected record's own option even
+ * when the filter text doesn't match it (the same "stale value has no
+ * <option>" hazard this branch's own fallback for a missing id already
+ * guards against, here for a different cause).
+ */
+test("EntityPanel's relation field offers no filter input at all for a short list of related records", async () => {
+  await withJsdom(async () => {
+    const orderEntity: Entity = {
+      name: "Order",
+      label: "Order",
+      fields: [
+        { name: "item", label: "Item", type: "text", required: true },
+        { name: "courierId", label: "Courier", type: "relation", relationTo: "Courier", required: false },
+      ],
+    };
+    const courierEntity: Entity = { name: "Courier", label: "Courier", fields: [{ name: "name", label: "Name", type: "text", required: true }] };
+    const courierRelated: EntityRecord[] = [
+      { id: 1, createdAt: "x", name: "Dana Levi" },
+      { id: 2, createdAt: "x", name: "Yossi Cohen" },
+    ];
+    const store: EntityRecord[] = [{ id: 1, createdAt: "x", item: "Pizza", courierId: 1 }];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string) => {
+      if (input === "/api/projects/proj1/entities/Order") {
+        return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      if (input === "/api/projects/proj1/entities/Courier") {
+        return new Response(JSON.stringify({ records: courierRelated }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${input}`);
+    }) as typeof fetch;
+    try {
+      renderEntityPanel({ entity: orderEntity, allEntities: [orderEntity, courierEntity] });
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 1);
+
+      const editButton = document.querySelector(".row-actions button") as HTMLButtonElement;
+      fireEvent.click(editButton);
+      await waitForCondition(() => {
+        const select = document.querySelector(".record-form select") as HTMLSelectElement | null;
+        return select !== null && !select.disabled;
+      });
+
+      assert.equal(
+        document.querySelector(".relation-filter-input") === null,
+        true,
+        "a short related-record list must never show the filter input -- it would just be clutter over 2 options",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+test("EntityPanel's relation field offers a filter input once there are enough related records, and it narrows the real select's options by display label", async () => {
+  await withJsdom(async () => {
+    const orderEntity: Entity = {
+      name: "Order",
+      label: "Order",
+      fields: [
+        { name: "item", label: "Item", type: "text", required: true },
+        { name: "courierId", label: "Courier", type: "relation", relationTo: "Courier", required: false },
+      ],
+    };
+    const courierEntity: Entity = { name: "Courier", label: "Courier", fields: [{ name: "name", label: "Name", type: "text", required: true }] };
+    const courierRelated: EntityRecord[] = [
+      { id: 1, createdAt: "x", name: "Dana Levi" },
+      { id: 2, createdAt: "x", name: "Yossi Cohen" },
+      { id: 3, createdAt: "x", name: "Maya Golan" },
+      { id: 4, createdAt: "x", name: "Avi Mizrahi" },
+      { id: 5, createdAt: "x", name: "Noa Peretz" },
+      { id: 6, createdAt: "x", name: "Ron Shapira" },
+    ];
+    const store: EntityRecord[] = [{ id: 1, createdAt: "x", item: "Pizza", courierId: 1 }];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string) => {
+      if (input === "/api/projects/proj1/entities/Order") {
+        return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      if (input === "/api/projects/proj1/entities/Courier") {
+        return new Response(JSON.stringify({ records: courierRelated }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${input}`);
+    }) as typeof fetch;
+    try {
+      renderEntityPanel({ entity: orderEntity, allEntities: [orderEntity, courierEntity] });
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 1);
+
+      const editButton = document.querySelector(".row-actions button") as HTMLButtonElement;
+      fireEvent.click(editButton);
+      await waitForCondition(() => {
+        const select = document.querySelector(".record-form select") as HTMLSelectElement | null;
+        return select !== null && !select.disabled;
+      });
+
+      const filterInput = document.querySelector(".relation-filter-input") as HTMLInputElement;
+      assert.ok(filterInput, "expected a filter input once there are more than a handful of related records");
+
+      const select = document.querySelector(".record-form select") as HTMLSelectElement;
+      assert.equal(select.querySelectorAll("option").length, 7, "every related record (plus the blank placeholder) must be offered before any filtering");
+
+      fireEvent.change(filterInput, { target: { value: "yossi" } });
+      // 3, not 2: the blank placeholder, "Yossi Cohen" (matches the filter
+      // text), and "Dana Levi" -- the already-selected record, which the
+      // filter text does NOT match, but must stay in the list regardless
+      // (see the fix's own comment on currentRelationId) so the controlled
+      // select never loses its real current value.
+      await waitForCondition(() => select.querySelectorAll("option").length === 3);
+      const filteredLabels = Array.from(select.options).map((o) => o.textContent);
+      assert.ok(filteredLabels.includes("Yossi Cohen"), "the filter must keep the one matching record's option");
+      assert.ok(filteredLabels.includes("Dana Levi"), "the currently-selected record's option must stay visible even though the filter text doesn't match it");
+      assert.ok(!filteredLabels.includes("Maya Golan"), "a non-matching, non-selected record's option must be filtered out");
+      assert.equal(select.value, "1", "the currently-selected record must remain selected while filtered");
+
+      fireEvent.change(filterInput, { target: { value: "" } });
+      await waitForCondition(() => select.querySelectorAll("option").length === 7);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * New in this round: the search box's own matchesSearch fell through to
  * the raw stored foreign-key id for a relation field, so typing the exact
  * name a relation cell visibly shows (e.g. "Dana", resolved via

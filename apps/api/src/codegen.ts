@@ -2711,6 +2711,12 @@ function BoardCard({ orderedFields, boardField, record, relatedRecords, highligh
 // (EntityPanel.tsx, round 206).
 function FieldInput({ entity, field, value, onChange, relatedEntity, relatedEntityRecords, autoFocus, onBlur, onKeyDown }) {
   const id = \`f_\${entity.name}_\${field.name}\`;
+  // Mirrors the live preview's own fix (EntityPanel.tsx, round 698): a
+  // relation field with more than a handful of related records had no way
+  // to narrow the plain <select> below -- a browser's own type-ahead
+  // inside an open <select> only jumps to an option whose label starts
+  // with what's typed, not a substring match.
+  const [relationFilter, setRelationFilter] = useState("");
   if (field.type === "relation" && relatedEntity) {
     // relatedEntityRecords is only populated once EntityView's own
     // loadRelated effect resolves its real network fetch -- a useEffect
@@ -2735,24 +2741,47 @@ function FieldInput({ entity, field, value, onChange, relatedEntity, relatedEnti
     // below already guards against.
     const currentRelationId = value === "" || value === null || value === undefined ? null : Number(value);
     const hasCurrentRelationOption = currentRelationId === null || relatedEntityRecords.some((r) => Number(r.id) === currentRelationId);
+    const trimmedFilter = relationFilter.trim().toLowerCase();
+    // The current value's own option must always stay visible regardless
+    // of the filter text -- otherwise typing a filter that doesn't match
+    // the already-selected record would blank the controlled <select> the
+    // instant its matching option disappears.
+    const filteredRecords =
+      trimmedFilter === ""
+        ? relatedEntityRecords
+        : relatedEntityRecords.filter(
+            (r) => Number(r.id) === currentRelationId || recordDisplayLabel(relatedEntity, r).toLowerCase().includes(trimmedFilter),
+          );
     return (
-      <select
-        id={id}
-        required={field.required}
-        value={value === "" || value === null || value === undefined ? "" : String(value)}
-        onChange={(e) => onChange(e.target.value === "" ? "" : Number(e.target.value))}
-        autoFocus={autoFocus}
-        onBlur={onBlur}
-        onKeyDown={onKeyDown}
-      >
-        <option value="">…</option>
-        {!hasCurrentRelationOption && <option value={currentRelationId}>{\`#\${currentRelationId}\`}</option>}
-        {relatedEntityRecords.map((r) => (
-          <option key={r.id} value={r.id}>
-            {recordDisplayLabel(relatedEntity, r)}
-          </option>
-        ))}
-      </select>
+      <div className="relation-field-input">
+        {relatedEntityRecords.length > 5 && (
+          <input
+            type="text"
+            className="relation-filter-input"
+            value={relationFilter}
+            onChange={(e) => setRelationFilter(e.target.value)}
+            placeholder="Search…"
+            aria-label="Search…"
+          />
+        )}
+        <select
+          id={id}
+          required={field.required}
+          value={value === "" || value === null || value === undefined ? "" : String(value)}
+          onChange={(e) => onChange(e.target.value === "" ? "" : Number(e.target.value))}
+          autoFocus={autoFocus}
+          onBlur={onBlur}
+          onKeyDown={onKeyDown}
+        >
+          <option value="">…</option>
+          {!hasCurrentRelationOption && <option value={currentRelationId}>{\`#\${currentRelationId}\`}</option>}
+          {filteredRecords.map((r) => (
+            <option key={r.id} value={r.id}>
+              {recordDisplayLabel(relatedEntity, r)}
+            </option>
+          ))}
+        </select>
+      </div>
     );
   }
   if (field.type === "boolean") {
