@@ -29589,3 +29589,17 @@ Still no genuine reply from שלומי. This round's survey was explicitly steer
 **Verification**: the new test (and the full existing `isAllowedWebhookUrl` test) passed in isolation, both before and after the regression-proof revert/restore cycle confirmed the expected failure. `@forge/api` full suite 628/628 clean (627 baseline + 1 new). Full `npm run build` clean. Only `apps/api` changed this round. Commit `279c850`.
 
 **Status**: shipped and pushed.
+
+### Round 691: the IPv6 unspecified address ("::") bypassed the same webhook SSRF guard round 690 just hardened
+
+Still no genuine reply from שלומי. A direct continuation of round 690's area (automations.ts's webhook SSRF guard) -- not a duplicate: round 690 fixed an *already-blocked IPv4 address* wrapped as an IPv4-mapped IPv6 literal (e.g. `::ffff:169.254.169.254`), whereas this round's gap is IPv6's *own* unspecified address, with no IPv4 ever embedded in it.
+
+**The gap**: `BLOCKED_WEBHOOK_HOSTNAME_PATTERNS` (`apps/api/src/automations.ts`) already explicitly blocks IPv4's "any/unspecified" address, `0.0.0.0` -- the devs clearly already knew connecting to it routes to the local host. There was no IPv6 equivalent for `::`, its exact analogue. Confirmed directly: `new URL("http://[::]/x").hostname`, `new URL("http://[::0]/x").hostname`, `new URL("http://[0:0:0:0:0:0:0:0]/x").hostname`, and `new URL("http://[0::0]/x").hostname` all normalize to `"[::]"`, and none of the 11 existing patterns match it (the loopback pattern `/^\[?::1\]?$/` requires a literal trailing "1", so a plain `::` with no "1" never matches). Confirmed `automations.test.ts`'s existing coverage (lines 594-618, including round 690's own new test) never exercised any all-zero IPv6 spelling. A webhook automation rule targeting `http://[::]:<port>/...` therefore passed `isAllowedWebhookUrl` cleanly, letting `fireWebhookAction`'s real `fetch()` reach any service bound on all interfaces or loopback on the same host -- the direct IPv6 counterpart of the `0.0.0.0` vector this same pattern list was already written to stop.
+
+**The fix**: one new pattern, `/^\[?::\]?$/`, added to `BLOCKED_WEBHOOK_HOSTNAME_PATTERNS` right where `0.0.0.0` already sits, with a comment drawing the explicit parallel. No other code changes needed -- this hostname-string check is the same shared function both route-level validation and fire-time already go through.
+
+**The tests**: `automations.test.ts` -- 1 new test asserting all four equivalent spellings (`[::]`, `[::0]`, `[0:0:0:0:0:0:0:0]`, `[0::0]`) are blocked. Regression-proofed via revert-and-restore: removing the new pattern reproduced the exact bypass (`true !== false` on the canonical `[::]` case) before being restored.
+
+**Verification**: the new test (and the full existing `isAllowedWebhookUrl` test, now 3 tests total) passed in isolation, both before and after the regression-proof cycle confirmed the expected failure. `@forge/api` full suite 629/629 clean (628 baseline + 1 new). Full `npm run build` clean. Only `apps/api` changed this round. Commit `4b869c7`.
+
+**Status**: shipped and pushed.
