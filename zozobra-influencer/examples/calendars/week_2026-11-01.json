@@ -1,0 +1,737 @@
+{
+  "weekly_focus": "שבוע 3: האצה. הכפלת הפורמטים שעבדו, יותר סקרים ותגובות לעוקבים, פוסטים שמזמינים Collab עם מקומות",
+  "strategy_summary_he": "שלב האצה: ZOZOBRA לא מוזכרת השבוע. כל הפוסטים הם פוסטי עיר, מצולמים במרחבים ציבוריים בלבד. כל מקום שמוזכר מופיע בבריף המחקר, עם מקור. לילו לא טוענת שביקרה או שאכלה. היא מצאה, בחרה, שומעת ושואלת אתכם. בכל יום יש רילס אחד בסדרה של אותו יום, 20-24 שניות, עם הוק של 2 שניות וקריאה ברורה לשמירה, לתיוג או לתגובה. מכפילים את מה שעבד: סקרי 1/2/3 בתגובות (רביעי), POV (ראשון ושישי), וגמר הצבעה קהילתי (מוצ״ש). שני המקומות בבת גלים מקבלים חשיפה חוזרת בניסוח שמזמין Collab ותיוג. תזמון: ערבי חול בין 19:00 ל-20:00. בחמישי בשמונה בערב. שישי בצהריים. שלישי ב-12:30, כי הקונצרט מתחיל ב-20:00 וצריך זמן לקנות כרטיסים. שבת רק אחרי צאת השבת. רגישות: אין השבוע צפירות או ימי זיכרון לאומיים. 4.11 הוא יום השנה הלועזי לרצח רבין. הטקס הממלכתי לפי התאריך העברי כבר עבר, אבל ביום הזה הטון רגוע, בלי אלכוהול ובלי מסיבות. לבדוק לפני העלאה: התאריך של חנאל ומכבית, השעה של אגם הברבורים ושל רד בנד, ושעות הפתיחה של המקומות.",
+  "days": [
+    {
+      "day": "2026-11-01",
+      "weekday_he": "יום ראשון",
+      "post_time_local": "19:30",
+      "platforms": [
+        "instagram",
+        "tiktok"
+      ],
+      "format": "reel",
+      "pillar": "pov_story",
+      "dish_id": "atmosphere",
+      "features_zozobra": false,
+      "places": [
+        {
+          "name": "מפגש בת גלים",
+          "source_url": "https://www.haaretz.co.il/food/restaurants-reviews/2026-10-08/ty-article-review/.highlight/000001a1-1587-dd49-a5ff-d797fd960000"
+        }
+      ],
+      "concept": "Hidden Gems: לילו מגלה את מפגש בת גלים, מסעדה ים-תיכונית סלוניקית בלי הזמנות, ומזמינה את מי שכבר היה לספר מה להזמין.",
+      "hook_he": "מסעדה בלי הזמנות. וכולם מדברים עליה.",
+      "hook_alternatives_he": [
+        "בת גלים שומרת סוד. עד היום.",
+        "הפינה השקטה של חיפה מבשלת סלוניקי."
+      ],
+      "visual": {
+        "venue_plate": "none",
+        "scene": "Masada Street in Hadar, Haifa, a bohemian cafe street at dusk: old stone facades, small trees, warm string-free shop-window glow, a few diverse Israeli passers-by on the sidewalk, blue-hour sky. Public street only, never inside any business.",
+        "action": "LILO walks slowly toward camera on the sidewalk, then stops, leans in slightly and speaks to camera with a knowing half-smile. She lifts one finger to her lips on the word 'סוד', then gestures down the street.",
+        "wardrobe": "long camel wool coat over a black high-neck knit, straight black trousers, low black ankle boots, small gold hoops",
+        "motion_prompt": "Handheld 9:16 slow backward dolly as LILO walks toward camera along the dusk street, soft natural sway, coat hem moving with each step, passers-by drifting in soft focus behind, warm window light flickering gently on the stone, then the camera settles into a medium close-up as she stops and speaks."
+      },
+      "script": [
+        {
+          "t_start": 0.0,
+          "t_end": 2.0,
+          "spoken_he": "מסעדה בלי הזמנות. וכולם מדברים עליה.",
+          "voice_direction": "[intrigued] [softly]",
+          "on_screen_text_he": "בלי הזמנות.",
+          "shot": "medium close-up, LILO to camera on Masada Street at dusk"
+        },
+        {
+          "t_start": 2.0,
+          "t_end": 6.0,
+          "spoken_he": "מצאתי אותה בבת גלים. מפגש בת גלים.",
+          "voice_direction": "[warm]",
+          "on_screen_text_he": "מפגש בת גלים | בת גלים",
+          "shot": "tracking shot, LILO walking past stone facades"
+        },
+        {
+          "t_start": 6.0,
+          "t_end": 10.0,
+          "spoken_he": "מטבח ים-תיכוני. נגיעה סלוניקית.",
+          "voice_direction": "[warm] [savoring]",
+          "on_screen_text_he": "ים-תיכוני. סלוניקי.",
+          "shot": "text card over blurred street lights, slow push-in"
+        },
+        {
+          "t_start": 10.0,
+          "t_end": 14.0,
+          "spoken_he": "הארץ כתבו עליה באוקטובר. שמתי לב.",
+          "voice_direction": "[playful]",
+          "on_screen_text_he": "ביקורת בהארץ, אוקטובר",
+          "shot": "close-up, LILO raising an eyebrow, three-quarter angle"
+        },
+        {
+          "t_start": 14.0,
+          "t_end": 18.0,
+          "spoken_he": "שלישי עד שישי, משש בערב. מגיעים מוקדם.",
+          "voice_direction": "[confident]",
+          "on_screen_text_he": "שלישי–שישי | 18:00",
+          "shot": "wide, LILO pointing down the street, dusk sky"
+        },
+        {
+          "t_start": 18.0,
+          "t_end": 21.0,
+          "spoken_he": "הייתם? ספרו לי מה להזמין.",
+          "voice_direction": "[curious]",
+          "on_screen_text_he": "הייתם? ספרו בתגובות",
+          "shot": "medium, LILO leaning toward camera"
+        },
+        {
+          "t_start": 21.0,
+          "t_end": 24.0,
+          "spoken_he": "אוכלים. שותים. נשארים.",
+          "voice_direction": "[warm] [confident]",
+          "on_screen_text_he": "EAT. DRINK. STAY.",
+          "shot": "medium, LILO turning away down the street, soft dusk glow"
+        }
+      ],
+      "caption_he": "פנינה שקטה בבת גלים. ים-תיכוני, סלוניקי, בלי הזמנות.\nמי כבר הספיק? מה חובה להזמין שם?",
+      "cta_he": "שמרו את הפוסט לשלישי ותייגו את מי שתיקחו.",
+      "hashtags": [
+        "אוכלבחיפה",
+        "מסעדותבחיפה",
+        "בתגלים",
+        "חיפה",
+        "hiddengems",
+        "foodtok"
+      ],
+      "trend_or_audio_note": "פורמט 'אני לא אמורה לספר לכם' (gatekeeping), עם צליל אקוסטי טרנדי שקט מתחת לקריינות."
+    },
+    {
+      "day": "2026-11-02",
+      "weekday_he": "יום שני",
+      "post_time_local": "19:00",
+      "platforms": [
+        "instagram",
+        "tiktok"
+      ],
+      "format": "reel",
+      "pillar": "hero_dish",
+      "dish_id": "atmosphere",
+      "features_zozobra": false,
+      "places": [
+        {
+          "name": "פיצה סאנפלאואר",
+          "source_url": "https://www.israelhayom.co.il/food/restaurant-reviews/article/21474852"
+        }
+      ],
+      "concept": "Food Crush: פיצה סאנפלאואר, הפיצרייה החדשה של הצוות של מאפיית סאנפלאואר בבת גלים. פתוחה הערב, והשאלה לעוקבים היא מה מזמינים ראשון.",
+      "hook_he": "הצוות של מאפייה אהובה פתח פיצרייה.",
+      "hook_alternatives_he": [
+        "הקראש של השבוע: פיצה בבת גלים.",
+        "פיצרייה חדשה בבת גלים. רשמתם?"
+      ],
+      "visual": {
+        "venue_plate": "none",
+        "scene": "Haifa Bay waterfront at night, public seaside path with railings, the Krayot lights glittering across the dark water, cool night breeze, a few diverse Israelis strolling in the background. Public outdoor space only.",
+        "action": "LILO stands by the railing, turns to camera with a delighted 'I have news' expression, counts on her fingers while listing details, then holds her phone up as if showing a saved location.",
+        "wardrobe": "black tailored wool blazer over a cream high-neck top, wide-leg charcoal trousers, loafers",
+        "motion_prompt": "9:16 slow orbit from the water side to a medium shot of LILO at the railing, distant Krayot lights twinkling and slightly defocused, gentle wind moving her blazer lapel, small ripples reflecting city light on the water, subtle handheld micro-shake for a natural vlog feel."
+      },
+      "script": [
+        {
+          "t_start": 0.0,
+          "t_end": 2.0,
+          "spoken_he": "הצוות של מאפייה אהובה פתח פיצרייה.",
+          "voice_direction": "[excited] [low voice]",
+          "on_screen_text_he": "FOOD CRUSH",
+          "shot": "close-up, LILO turning to camera at the railing"
+        },
+        {
+          "t_start": 2.0,
+          "t_end": 6.0,
+          "spoken_he": "פיצה סאנפלאואר. יעקב כספי 19, בת גלים.",
+          "voice_direction": "[warm]",
+          "on_screen_text_he": "פיצה סאנפלאואר | יעקב כספי 19",
+          "shot": "medium, LILO with the bay lights behind"
+        },
+        {
+          "t_start": 6.0,
+          "t_end": 10.0,
+          "spoken_he": "מאחוריה הצוות של מאפיית סאנפלאואר.",
+          "voice_direction": "[impressed]",
+          "on_screen_text_he": "מהצוות של סאנפלאואר",
+          "shot": "text card over slow-moving water reflections"
+        },
+        {
+          "t_start": 10.0,
+          "t_end": 14.0,
+          "spoken_he": "ישראל היום כבר כתבו עליה.",
+          "voice_direction": "[playful]",
+          "on_screen_text_he": "ביקורת: ישראל היום",
+          "shot": "close-up, LILO holding phone up to camera"
+        },
+        {
+          "t_start": 14.0,
+          "t_end": 18.0,
+          "spoken_he": "פתוח הערב עד עשר. בשישי סגור.",
+          "voice_direction": "[confident]",
+          "on_screen_text_he": "היום 16:00–22:00",
+          "shot": "wide, LILO walking along the waterfront path"
+        },
+        {
+          "t_start": 18.0,
+          "t_end": 21.0,
+          "spoken_he": "מה אתם מזמינים ראשון? תגובות.",
+          "voice_direction": "[curious]",
+          "on_screen_text_he": "מה מזמינים ראשון?",
+          "shot": "medium, LILO leaning on the railing toward camera"
+        },
+        {
+          "t_start": 21.0,
+          "t_end": 24.0,
+          "spoken_he": "אוכלים. שותים. נשארים.",
+          "voice_direction": "[warm] [confident]",
+          "on_screen_text_he": "EAT. DRINK. STAY.",
+          "shot": "wide, LILO silhouetted against the Krayot lights"
+        }
+      ],
+      "caption_he": "הקראש של השבוע: פיצה סאנפלאואר, בת גלים.\nמה הפיצה הראשונה שלכם?",
+      "cta_he": "שלחו למי שאוכל איתכם פיצה הערב.",
+      "hashtags": [
+        "אוכלבחיפה",
+        "פיצהבחיפה",
+        "בתגלים",
+        "חיפה",
+        "pizza",
+        "foodtok"
+      ],
+      "trend_or_audio_note": "צליל 'crush' רומנטי-קליל שמגיע לשיא ברגע חשיפת השם, עם חיתוך על הביט."
+    },
+    {
+      "day": "2026-11-03",
+      "weekday_he": "יום שלישי",
+      "post_time_local": "12:30",
+      "platforms": [
+        "instagram",
+        "tiktok"
+      ],
+      "format": "reel",
+      "pillar": "night_vibe",
+      "dish_id": "atmosphere",
+      "features_zozobra": false,
+      "places": [
+        {
+          "name": "האודיטוריום חיפה – פריז המנון לאהבה",
+          "source_url": "https://ethos.smarticket.co.il/"
+        },
+        {
+          "name": "היכל התיאטרון קריית מוצקין – אגם הברבורים",
+          "source_url": "https://www.mozkin-theater.co.il/"
+        }
+      ],
+      "concept": "Date Night by Lilo: דייט של שלישי עם אזנבור ופיאף באודיטוריום חיפה, ואחריו הליכה מול אורות המפרץ. לקריות יש חלופה: אגם הברבורים במוצקין.",
+      "hook_he": "דייט הערב? אזנבור ופיאף.",
+      "hook_alternatives_he": [
+        "שלישי בערב, ופריז בחיפה.",
+        "הדייט הכי רומנטי השבוע. בלי טיסה."
+      ],
+      "visual": {
+        "venue_plate": "none",
+        "scene": "Louis Promenade, Haifa, at night: stone promenade with railings overlooking the glittering lights of Haifa Bay and the port far below, a few diverse Israeli couples strolling, soft street lamps along the path. Public space only.",
+        "action": "LILO strolls along the promenade, pauses at the railing, turns to camera with a romantic, slightly mischievous smile, then gestures out toward the bay view.",
+        "wardrobe": "deep burgundy long-sleeve midi dress with a high neckline, long black wool coat, delicate gold necklace, low heels",
+        "motion_prompt": "9:16 smooth gimbal follow behind LILO along the promenade, then arc around to face her at the railing as she turns, port lights shimmering below with soft bokeh, light evening wind moving her coat and dress hem, couples walking past in gentle soft focus."
+      },
+      "script": [
+        {
+          "t_start": 0.0,
+          "t_end": 2.0,
+          "spoken_he": "דייט הערב? אזנבור ופיאף.",
+          "voice_direction": "[romantic] [softly]",
+          "on_screen_text_he": "DATE NIGHT",
+          "shot": "close-up, LILO turning at the railing, bay lights behind"
+        },
+        {
+          "t_start": 2.0,
+          "t_end": 6.0,
+          "spoken_he": "פריז, המנון לאהבה. האודיטוריום חיפה.",
+          "voice_direction": "[warm]",
+          "on_screen_text_he": "פריז, המנון לאהבה",
+          "shot": "medium tracking, LILO walking the promenade"
+        },
+        {
+          "t_start": 6.0,
+          "t_end": 10.0,
+          "spoken_he": "הערב בשמונה. שירים שכולם מכירים.",
+          "voice_direction": "[dreamy]",
+          "on_screen_text_he": "האודיטוריום | 20:00",
+          "shot": "text card over port lights bokeh"
+        },
+        {
+          "t_start": 10.0,
+          "t_end": 14.0,
+          "spoken_he": "אחר כך, הליכה מול האורות.",
+          "voice_direction": "[romantic]",
+          "on_screen_text_he": "ואחר כך: האורות",
+          "shot": "wide, LILO at the railing overlooking the bay"
+        },
+        {
+          "t_start": 14.0,
+          "t_end": 18.0,
+          "spoken_he": "מהקריות? אגם הברבורים, היכל התיאטרון מוצקין.",
+          "voice_direction": "[helpful]",
+          "on_screen_text_he": "אגם הברבורים | ק. מוצקין",
+          "shot": "medium, LILO pointing north across the bay"
+        },
+        {
+          "t_start": 18.0,
+          "t_end": 21.0,
+          "spoken_he": "בדקו שעה באתר. ותייגו את הדייט.",
+          "voice_direction": "[playful]",
+          "on_screen_text_he": "תייגו את הדייט שלכם",
+          "shot": "close-up, LILO smiling to camera"
+        },
+        {
+          "t_start": 21.0,
+          "t_end": 24.0,
+          "spoken_he": "אוכלים. שותים. נשארים.",
+          "voice_direction": "[warm] [confident]",
+          "on_screen_text_he": "EAT. DRINK. STAY.",
+          "shot": "wide, LILO walking away along the promenade"
+        }
+      ],
+      "caption_he": "דייט של שלישי: פריז באודיטוריום, ואחר כך הליכה מול המפרץ.\nמה הדייט המושלם שלכם בחיפה?",
+      "cta_he": "תייגו את מי שאתם לוקחים הערב, ושמרו לדייט הבא.",
+      "hashtags": [
+        "דייטבחיפה",
+        "חיפה",
+        "הקריות",
+        "תרבותבחיפה",
+        "datenight",
+        "haifa"
+      ],
+      "trend_or_audio_note": "צליל טרנדי של שאנסון צרפתי בסגנון 'La Vie en Rose' (רק קטע ברישיון מספריית הצלילים של הפלטפורמה)."
+    },
+    {
+      "day": "2026-11-04",
+      "weekday_he": "יום רביעי",
+      "post_time_local": "20:00",
+      "platforms": [
+        "instagram",
+        "tiktok"
+      ],
+      "format": "reel",
+      "pillar": "challenge",
+      "dish_id": "atmosphere",
+      "features_zozobra": false,
+      "places": [
+        {
+          "name": "זאפה חיפה – היווניה",
+          "source_url": "https://www.zappa-club.co.il/"
+        },
+        {
+          "name": "האודיטוריום חיפה – מפצח האגוזים",
+          "source_url": "https://muzi.co.il/events-by-hall/"
+        },
+        {
+          "name": "אודיטוריום מוזיאון הכט, אוניברסיטת חיפה – פגניני",
+          "source_url": "https://live.tickchak.co.il/mushecht.haifa"
+        }
+      ],
+      "concept": "3 Places You Must Try: שלוש במות לסוף השבוע, ואתגר לעוקבים לבחור מספר אחד בתגובות בלי להתלבט. פורמט הסקר שעבד הכי טוב.",
+      "hook_he": "שלוש במות. סוף שבוע אחד. בחרו.",
+      "hook_alternatives_he": [
+        "יש לכם שלוש שניות לבחור.",
+        "1, 2 או 3? אין תשובה לא נכונה."
+      ],
+      "visual": {
+        "venue_plate": "none",
+        "scene": "Ben Gurion Boulevard in Haifa's German Colony at night: wide boulevard with old stone Templer houses and trees, the illuminated Baha'i terraces rising behind up the Carmel, a few diverse Israeli pedestrians. Public street only.",
+        "action": "LILO stands in the middle of the boulevard sidewalk, holds up one, two, then three fingers in turn, then points straight at camera to challenge the viewer; calm, confident energy.",
+        "wardrobe": "charcoal belted trench coat over a black knit turtleneck, dark tailored trousers, ankle boots",
+        "motion_prompt": "9:16 static centered frame with the illuminated terraces symmetrical behind LILO, quick punch-in zoom on each number she counts, light breeze moving tree leaves and her coat belt, pedestrians crossing softly in the background, steady calm night ambience."
+      },
+      "script": [
+        {
+          "t_start": 0.0,
+          "t_end": 2.0,
+          "spoken_he": "שלוש במות. סוף שבוע אחד. בחרו.",
+          "voice_direction": "[confident] [playful]",
+          "on_screen_text_he": "1, 2 או 3?",
+          "shot": "medium, LILO centered on Ben Gurion Boulevard, terraces behind"
+        },
+        {
+          "t_start": 2.0,
+          "t_end": 7.0,
+          "spoken_he": "אחת: זאפה חיפה. שישי, ערב יווני.",
+          "voice_direction": "[upbeat]",
+          "on_screen_text_he": "1. היווניה | זאפה, שישי",
+          "shot": "punch-in, LILO holding up one finger"
+        },
+        {
+          "t_start": 7.0,
+          "t_end": 12.0,
+          "spoken_he": "שתיים: האודיטוריום. מפצח האגוזים, שבת בחמש.",
+          "voice_direction": "[warm]",
+          "on_screen_text_he": "2. מפצח האגוזים | שבת 17:00",
+          "shot": "punch-in, LILO holding up two fingers"
+        },
+        {
+          "t_start": 12.0,
+          "t_end": 17.0,
+          "spoken_he": "שלוש: מוזיאון הכט. פגניני, שבת בשמונה.",
+          "voice_direction": "[elegant]",
+          "on_screen_text_he": "3. פגניני | שבת 20:00",
+          "shot": "punch-in, LILO holding up three fingers"
+        },
+        {
+          "t_start": 17.0,
+          "t_end": 21.0,
+          "spoken_he": "מספר אחד בתגובות. בלי להתלבט.",
+          "voice_direction": "[playful] [challenging]",
+          "on_screen_text_he": "מספר אחד בתגובות",
+          "shot": "close-up, LILO pointing at camera"
+        },
+        {
+          "t_start": 21.0,
+          "t_end": 24.0,
+          "spoken_he": "אוכלים. שותים. נשארים.",
+          "voice_direction": "[warm] [confident]",
+          "on_screen_text_he": "EAT. DRINK. STAY.",
+          "shot": "wide, boulevard and glowing terraces, LILO walking off frame"
+        }
+      ],
+      "caption_he": "שלוש במות בחיפה לסוף השבוע: מוזיקה יוונית, בלט וכינור.\nאתם 1, 2 או 3?",
+      "cta_he": "כתבו מספר בתגובות ושמרו את הפוסט לסופ״ש.",
+      "hashtags": [
+        "חיפה",
+        "תרבותבחיפה",
+        "סופשבחיפה",
+        "מושבההגרמנית",
+        "haifa",
+        "weekendplans"
+      ],
+      "trend_or_audio_note": "פורמט 'בחרו אחד' עם צליל ספירה/טיק שקט לכל מספר. בלי מוזיקת מסיבה, הטון רגוע ביום השנה הלועזי לרצח רבין."
+    },
+    {
+      "day": "2026-11-05",
+      "weekday_he": "יום חמישי",
+      "post_time_local": "20:00",
+      "platforms": [
+        "instagram",
+        "tiktok"
+      ],
+      "format": "reel",
+      "pillar": "night_vibe",
+      "dish_id": "atmosphere",
+      "features_zozobra": false,
+      "places": [
+        {
+          "name": "זאפה חיפה – רד בנד",
+          "source_url": "https://www.zappa-club.co.il/"
+        },
+        {
+          "name": "היכל התרבות עכו – מיקה שלי",
+          "source_url": "https://www.htakko.co.il/"
+        },
+        {
+          "name": "מפגש בת גלים",
+          "source_url": "https://www.haaretz.co.il/food/restaurants-reviews/2026-10-08/ty-article-review/.highlight/000001a1-1587-dd49-a5ff-d797fd960000"
+        }
+      ],
+      "concept": "Tonight in Haifa: מה עושים הערב. רד בנד בזאפה חיפה, מיקה שלי בעכו, וארוחה לפני במפגש בת גלים.",
+      "hook_he": "חמישי. הערב הזה לא נשאר בבית.",
+      "hook_alternatives_he": [
+        "הערב בחיפה, בשלושה משפטים.",
+        "עוד לא סגרתם תוכניות להערב?"
+      ],
+      "visual": {
+        "venue_plate": "none",
+        "scene": "A narrow street of old stone buildings in Haifa's downtown lower city at night, warm bar lights spilling onto the cobbles from shop fronts, a few diverse Israeli friends chatting on the sidewalk. Public street only, never inside any venue.",
+        "action": "LILO walks briskly toward camera like someone already heading out, adjusting her coat collar, then stops under a warm light and talks to camera, ticking options off on her fingers.",
+        "wardrobe": "black leather-look tailored jacket over a deep green high-neck blouse, black wide-leg trousers, block-heel boots",
+        "motion_prompt": "9:16 handheld walk-and-talk, the camera backs up as LILO strides forward over the stone street, warm light pools passing across her, quick whip-pan transitions between beats, people laughing softly out of focus in the background, energetic Thursday-night pace."
+      },
+      "script": [
+        {
+          "t_start": 0.0,
+          "t_end": 2.0,
+          "spoken_he": "חמישי. הערב הזה לא נשאר בבית.",
+          "voice_direction": "[energetic] [confident]",
+          "on_screen_text_he": "TONIGHT IN HAIFA",
+          "shot": "medium, LILO striding toward camera in the lower city"
+        },
+        {
+          "t_start": 2.0,
+          "t_end": 6.0,
+          "spoken_he": "רד בנד, בזאפה חיפה. הערב.",
+          "voice_direction": "[excited]",
+          "on_screen_text_he": "רד בנד | זאפה חיפה",
+          "shot": "whip-pan to close-up, LILO under warm light"
+        },
+        {
+          "t_start": 6.0,
+          "t_end": 10.0,
+          "spoken_he": "בעכו? מיקה שלי, היכל התרבות. בתשע.",
+          "voice_direction": "[upbeat]",
+          "on_screen_text_he": "מיקה שלי | עכו 21:00",
+          "shot": "medium, LILO pointing north"
+        },
+        {
+          "t_start": 10.0,
+          "t_end": 14.0,
+          "spoken_he": "רעבים לפני? מפגש בת גלים פתוח הערב.",
+          "voice_direction": "[warm]",
+          "on_screen_text_he": "מפגש בת גלים | עד 22:30",
+          "shot": "text card over the glowing stone street"
+        },
+        {
+          "t_start": 14.0,
+          "t_end": 18.0,
+          "spoken_he": "בלי הזמנות. אז לא מתעכבים. שעות בודקים באתר.",
+          "voice_direction": "[playful]",
+          "on_screen_text_he": "בלי הזמנות. זזים.",
+          "shot": "close-up, LILO checking her watch with a smile"
+        },
+        {
+          "t_start": 18.0,
+          "t_end": 21.0,
+          "spoken_he": "לאן אתם יוצאים? כתבו לי.",
+          "voice_direction": "[curious]",
+          "on_screen_text_he": "לאן יוצאים הערב?",
+          "shot": "medium, LILO leaning toward camera"
+        },
+        {
+          "t_start": 21.0,
+          "t_end": 24.0,
+          "spoken_he": "אוכלים. שותים. נשארים.",
+          "voice_direction": "[warm] [confident]",
+          "on_screen_text_he": "EAT. DRINK. STAY.",
+          "shot": "wide, LILO walking away down the lit street"
+        }
+      ],
+      "caption_he": "חמישי בחיפה: רד בנד בזאפה, מיקה שלי בעכו, ומפגש בת גלים לפני.\nלאן אתם יוצאים הערב?",
+      "cta_he": "שלחו לחבורה ותחליטו יחד לאן יוצאים.",
+      "hashtags": [
+        "חיפהבלילה",
+        "יציאותבחיפה",
+        "חיפה",
+        "עכו",
+        "nightlife",
+        "haifa"
+      ],
+      "trend_or_audio_note": "צליל 'get ready / heading out' טרנדי עם ביט מהיר וחיתוכי whip-pan על כל ביט."
+    },
+    {
+      "day": "2026-11-06",
+      "weekday_he": "יום שישי",
+      "post_time_local": "12:30",
+      "platforms": [
+        "instagram",
+        "tiktok"
+      ],
+      "format": "reel",
+      "pillar": "pov_story",
+      "dish_id": "atmosphere",
+      "features_zozobra": false,
+      "places": [
+        {
+          "name": "זאפה חיפה – היווניה",
+          "source_url": "https://www.zappa-club.co.il/"
+        },
+        {
+          "name": "פיצה סאנפלאואר",
+          "source_url": "https://www.israelhayom.co.il/food/restaurant-reviews/article/21474852"
+        },
+        {
+          "name": "תיאטרון חיפה – חנאל ומכבית",
+          "source_url": "https://www.ht1.co.il/Show"
+        }
+      ],
+      "concept": "Weekend Vibes ב-POV: סופ״ש מתוכנן בחיפה. שקיעה על הים, היווניה בזאפה בשישי, פיצה סאנפלאואר וחנאל ומכבית בשבת.",
+      "hook_he": "POV: הסופ״ש כבר מתוכנן לכם.",
+      "hook_alternatives_he": [
+        "שקיעה, מוזיקה יוונית, פיצה. סופ״ש.",
+        "סופ״ש בחיפה, ב-20 שניות."
+      ],
+      "visual": {
+        "venue_plate": "none",
+        "scene": "Carmel Beach promenade in Haifa at sunset: wide seaside promenade, golden light over the Mediterranean, gentle waves, palm silhouettes, a few diverse Israelis walking and sitting on benches. Public outdoor space only.",
+        "action": "LILO walks barefoot-free in flats along the promenade holding a small notebook, opens it as if reading a plan, smiles to camera and closes it with satisfaction at the end.",
+        "wardrobe": "oversized cream cable-knit sweater, long olive pleated midi skirt, white leather sneakers, light scarf",
+        "motion_prompt": "9:16 golden-hour gimbal shot following LILO along the promenade, sun flare sliding across the lens, sea breeze lifting her scarf and skirt hem, waves rolling softly behind, slow push-in as she opens the notebook and looks up to camera."
+      },
+      "script": [
+        {
+          "t_start": 0.0,
+          "t_end": 2.0,
+          "spoken_he": "POV: הסופ״ש כבר מתוכנן לכם.",
+          "voice_direction": "[warm] [playful]",
+          "on_screen_text_he": "POV: סופ״ש מתוכנן",
+          "shot": "close-up, LILO opening notebook at sunset"
+        },
+        {
+          "t_start": 2.0,
+          "t_end": 6.0,
+          "spoken_he": "שישי: שקיעה על הים. בלי לחץ.",
+          "voice_direction": "[relaxed]",
+          "on_screen_text_he": "שישי | שקיעה",
+          "shot": "wide, sun over the sea, LILO walking"
+        },
+        {
+          "t_start": 6.0,
+          "t_end": 10.0,
+          "spoken_he": "בערב, היווניה בזאפה חיפה.",
+          "voice_direction": "[upbeat]",
+          "on_screen_text_he": "היווניה | זאפה, שישי בערב",
+          "shot": "medium, LILO turning to camera"
+        },
+        {
+          "t_start": 10.0,
+          "t_end": 14.0,
+          "spoken_he": "שבת מארבע: פיצה סאנפלאואר, בת גלים.",
+          "voice_direction": "[warm]",
+          "on_screen_text_he": "שבת | פיצה סאנפלאואר",
+          "shot": "close-up, LILO ticking a line in the notebook"
+        },
+        {
+          "t_start": 14.0,
+          "t_end": 18.0,
+          "spoken_he": "בתשע: חנאל ומכבית, תיאטרון חיפה. בדקו מועד.",
+          "voice_direction": "[playful]",
+          "on_screen_text_he": "חנאל ומכבית | 21:00",
+          "shot": "medium, LILO laughing softly by the railing"
+        },
+        {
+          "t_start": 18.0,
+          "t_end": 21.0,
+          "spoken_he": "מה מוסיפים לרשימה? כתבו לי.",
+          "voice_direction": "[curious]",
+          "on_screen_text_he": "מה מוסיפים?",
+          "shot": "close-up, LILO closing notebook, looking at camera"
+        },
+        {
+          "t_start": 21.0,
+          "t_end": 24.0,
+          "spoken_he": "אוכלים. שותים. נשארים.",
+          "voice_direction": "[warm] [confident]",
+          "on_screen_text_he": "EAT. DRINK. STAY.",
+          "shot": "wide, LILO silhouette against the sunset"
+        }
+      ],
+      "caption_he": "סופ״ש בחיפה: שקיעה, היווניה בזאפה, פיצה בבת גלים וקומדיה בתיאטרון.\nמה חסר ברשימה?",
+      "cta_he": "שמרו את התוכנית ושלחו למי שבא איתכם.",
+      "hashtags": [
+        "סופשבחיפה",
+        "חוףהכרמל",
+        "חיפה",
+        "אוכלבחיפה",
+        "weekendvibes",
+        "haifa"
+      ],
+      "trend_or_audio_note": "צליל POV רגוע של שקיעה (lo-fi טרנדי), עם הדגשה רכה על כל שורה ברשימה."
+    },
+    {
+      "day": "2026-11-07",
+      "weekday_he": "מוצאי שבת",
+      "post_time_local": "19:30",
+      "platforms": [
+        "instagram",
+        "tiktok"
+      ],
+      "format": "reel",
+      "pillar": "community",
+      "dish_id": "atmosphere",
+      "features_zozobra": false,
+      "places": [
+        {
+          "name": "מפגש בת גלים",
+          "source_url": "https://www.haaretz.co.il/food/restaurants-reviews/2026-10-08/ty-article-review/.highlight/000001a1-1587-dd49-a5ff-d797fd960000"
+        },
+        {
+          "name": "פיצה סאנפלאואר",
+          "source_url": "https://www.israelhayom.co.il/food/restaurant-reviews/article/21474852"
+        }
+      ],
+      "concept": "Lilo's Pick: גמר הבחירה של השבוע. שני המקומות מבת גלים עולים לגמר, הקהילה מכריעה בסקר ובתגובות, ומזמינים את המקומות עצמם להצטרף (Collab).",
+      "hook_he": "השבוע, אתם בוחרים איתי.",
+      "hook_alternatives_he": [
+        "שני מקומות. בחירה אחת. שלכם.",
+        "גמר השבוע: בת גלים נגד בת גלים."
+      ],
+      "visual": {
+        "venue_plate": "none",
+        "scene": "Louis Promenade, Haifa, at night overlooking the glittering lights of Haifa Bay and the port, calm Saturday-night atmosphere, a few diverse Israeli families and couples strolling. Public space only.",
+        "action": "LILO stands at the railing holding two small cards, one red and one blue, lifts each in turn toward camera, then holds both side by side and raises an eyebrow inviting the vote.",
+        "wardrobe": "navy double-breasted wool coat over an ivory high-neck knit, straight dark jeans, loafers, small gold earrings",
+        "motion_prompt": "9:16 slow push-in on LILO at the railing, port lights twinkling in soft bokeh below, gentle wind moving her coat, a subtle rack focus from each card to her expression, couples drifting past softly behind, calm and warm night mood."
+      },
+      "script": [
+        {
+          "t_start": 0.0,
+          "t_end": 2.0,
+          "spoken_he": "השבוע, אתם בוחרים איתי.",
+          "voice_direction": "[warm] [inviting]",
+          "on_screen_text_he": "LILO'S PICK",
+          "shot": "close-up, LILO lifting two cards"
+        },
+        {
+          "t_start": 2.0,
+          "t_end": 6.0,
+          "spoken_he": "שני מקומות בגמר. שניהם בבת גלים.",
+          "voice_direction": "[playful]",
+          "on_screen_text_he": "הגמר: בת גלים",
+          "shot": "medium, LILO at the railing, bay lights behind"
+        },
+        {
+          "t_start": 6.0,
+          "t_end": 10.0,
+          "spoken_he": "באדום: מפגש בת גלים. סלוניקי, בלי הזמנות.",
+          "voice_direction": "[warm]",
+          "on_screen_text_he": "1. מפגש בת גלים",
+          "shot": "rack focus to the red card"
+        },
+        {
+          "t_start": 10.0,
+          "t_end": 14.0,
+          "spoken_he": "בכחול: פיצה סאנפלאואר. פתוח הערב עד עשר.",
+          "voice_direction": "[upbeat]",
+          "on_screen_text_he": "2. פיצה סאנפלאואר",
+          "shot": "rack focus to the blue card"
+        },
+        {
+          "t_start": 14.0,
+          "t_end": 18.0,
+          "spoken_he": "הצביעו בסטורי, או כתבו 1 או 2.",
+          "voice_direction": "[curious]",
+          "on_screen_text_he": "1 או 2? הסקר בסטורי",
+          "shot": "medium, LILO holding both cards side by side"
+        },
+        {
+          "t_start": 18.0,
+          "t_end": 21.0,
+          "spoken_he": "ותייגו את המקום שלכם. שיידע.",
+          "voice_direction": "[playful] [confident]",
+          "on_screen_text_he": "תייגו את המקום",
+          "shot": "close-up, LILO winking to camera"
+        },
+        {
+          "t_start": 21.0,
+          "t_end": 24.0,
+          "spoken_he": "אוכלים. שותים. נשארים.",
+          "voice_direction": "[warm] [confident]",
+          "on_screen_text_he": "EAT. DRINK. STAY.",
+          "shot": "wide, LILO walking along the promenade, port lights below"
+        }
+      ],
+      "caption_he": "הבחירה של השבוע עולה להצבעה: מפגש בת גלים או פיצה סאנפלאואר?\nכתבו 1 או 2. הסקר מחכה בסטורי.",
+      "cta_he": "הצביעו בתגובות, תייגו את המקום שאתם בעדו ושתפו לחבר מחיפה.",
+      "hashtags": [
+        "אוכלבחיפה",
+        "מסעדותבחיפה",
+        "בתגלים",
+        "חיפה",
+        "lilospick",
+        "foodtok"
+      ],
+      "trend_or_audio_note": "פורמט 'this or that' עם צליל טרנדי של הכרעה (drumroll קצר) לפני החשיפה של כל כרטיס. מעלים אחרי צאת השבת."
+    }
+  ]
+}

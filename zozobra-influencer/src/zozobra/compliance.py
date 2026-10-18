@@ -23,6 +23,8 @@ _HHMM = re.compile(r"^([01]\d|2[0-3]):[0-5]\d$")
 def finalize_caption(day: DayPlan) -> str:
     tags = " ".join("#" + t.lstrip("#").replace(" ", "") for t in day.hashtags)
     disclosures = ([persona.AD_DISCLOSURE_HE] if day.features_zozobra else []) + [persona.AI_DISCLOSURE_HE]
+    if day.visual.venue_plate != "none":   # ZOZOBRA scenes are built on design renders, not photos
+        disclosures.append(persona.RENDER_DISCLOSURE_HE)
     return "\n".join([day.caption_he.strip(), day.cta_he.strip(), "", *disclosures, "", tags]).strip()
 
 
@@ -36,6 +38,10 @@ def validate_day(day: DayPlan, valid_dish_ids: set[str]) -> list[str]:
         problems.append(f"unknown venue_plate '{day.visual.venue_plate}'")
     if not day.features_zozobra and (day.dish_id != "atmosphere" or day.visual.venue_plate != "none"):
         problems.append("city post must use dish_id 'atmosphere' and venue_plate 'none'")
+    from .campaign import allows_zozobra
+
+    if day.features_zozobra and not allows_zozobra(day.day):
+        problems.append("ZOZOBRA may not appear before the reveal phase (day 31)")
     if not _HHMM.match(day.post_time_local):
         problems.append(f"bad post_time_local '{day.post_time_local}'")
     if not set(day.platforms) <= {"instagram", "tiktok"} or not day.platforms:

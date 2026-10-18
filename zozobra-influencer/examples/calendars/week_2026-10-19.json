@@ -1,0 +1,246 @@
+{
+  "weekly_focus": "פתיחת החשבון: לילו, מדריכת הבילויים הווירטואלית של חיפה והקריות",
+  "strategy_summary_he": "שלושה פוסטים ראשונים: היכרות שמזמינה תגובות, מדריך קצר שמזמין שמירה ושיתוף, ופוסט קהילה שהופך את העוקבים לשותפים בתוכן. זוזוברה לא מוזכרת עד שלב הטיזר.",
+  "days": [
+    {
+      "day": "2026-10-19",
+      "weekday_he": "שני",
+      "post_time_local": "20:00",
+      "platforms": [
+        "instagram",
+        "tiktok"
+      ],
+      "format": "reel",
+      "pillar": "pov_story",
+      "dish_id": "atmosphere",
+      "features_zozobra": false,
+      "places": [],
+      "concept": "היכרות: לילו, מדריכת הבילויים הווירטואלית של חיפה והקריות, מבקשת מהקהל להיות \"הפה שלה\"",
+      "hook_he": "נעים מאוד, אני לילו.",
+      "hook_alternatives_he": [
+        "אני AI, ואני צריכה את העזרה שלכם",
+        "מדריכת הלילה החדשה של חיפה"
+      ],
+      "visual": {
+        "venue_plate": "none",
+        "scene": "Louis Promenade in Haifa at night, the lights of Haifa Bay and the port glittering far below, warm street lamps",
+        "action": "leaning on the promenade railing, turning to camera with a confident half-smile, a small wave",
+        "wardrobe": "tailored black blazer over a high-neck black top, black wide-leg trousers, thin gold chain",
+        "motion_prompt": "Slow push-in from medium to medium close-up. She turns from the bay view to the camera, smiles and gives a small wave; city lights twinkle in the bokeh behind her; a light breeze moves loose strands of her hair."
+      },
+      "script": [
+        {
+          "t_start": 0.0,
+          "t_end": 3.0,
+          "spoken_he": "נעים מאוד, אני לילו.",
+          "voice_direction": "[warmly]",
+          "on_screen_text_he": "נעים מאוד, אני לילו 👋",
+          "shot": "medium, LILO to camera at the promenade"
+        },
+        {
+          "t_start": 3.0,
+          "t_end": 7.0,
+          "spoken_he": "אני דמות AI, ואני מכירה כל פינה שווה בחיפה ובקריות.",
+          "voice_direction": "[confidently]",
+          "on_screen_text_he": "AI · חיפה והקריות",
+          "shot": "medium close-up, LILO to camera"
+        },
+        {
+          "t_start": 7.0,
+          "t_end": 11.0,
+          "spoken_he": "רק בעיה אחת: אני לא יכולה לטעום. אז אתם תהיו הפה שלי.",
+          "voice_direction": "[playfully]",
+          "on_screen_text_he": "אתם הפה שלי",
+          "shot": "close-up, LILO smiling"
+        },
+        {
+          "t_start": 11.0,
+          "t_end": 15.0,
+          "spoken_he": "כתבו לי בתגובות: לאן יוצאים הערב?",
+          "voice_direction": "[warmly]",
+          "on_screen_text_he": "לאן יוצאים הערב? 👇",
+          "shot": "medium close-up, LILO points at camera"
+        },
+        {
+          "t_start": 15.0,
+          "t_end": 17.5,
+          "spoken_he": "אוכלים. שותים. נשארים.",
+          "voice_direction": "[warmly]",
+          "on_screen_text_he": "EAT. DRINK. STAY.",
+          "shot": "medium, LILO turns back to the bay view"
+        }
+      ],
+      "caption_he": "נעים מאוד, אני לילו 🌙\nדמות AI שמכירה כל פינה שווה בחיפה ובקריות, ולא יכולה לטעום כלום.\nאז אתם תהיו הפה שלי.",
+      "cta_he": "כתבו בתגובות לאן יוצאים הערב 👇",
+      "hashtags": [
+        "חיפה",
+        "חיפהבלילה",
+        "בילוייםבחיפה",
+        "קריות",
+        "haifa",
+        "nightlife"
+      ],
+      "trend_or_audio_note": ""
+    },
+    {
+      "day": "2026-10-21",
+      "weekday_he": "רביעי",
+      "post_time_local": "20:00",
+      "platforms": [
+        "instagram",
+        "tiktok"
+      ],
+      "format": "reel",
+      "pillar": "night_vibe",
+      "dish_id": "atmosphere",
+      "features_zozobra": false,
+      "places": [],
+      "concept": "חיפה לא הולכת לישון מוקדם: שלושה אזורים לערב בעיר",
+      "hook_he": "חושבים שחיפה הולכת לישון מוקדם?",
+      "hook_alternatives_he": [
+        "3 אזורים לערב בחיפה",
+        "מי אמר שאין מה לעשות בחיפה בלילה?"
+      ],
+      "visual": {
+        "venue_plate": "none",
+        "scene": "Ben Gurion Boulevard in Haifa's German Colony at night, the illuminated Baha'i terraces rising up the mountain behind her",
+        "action": "walking slowly toward camera on the boulevard, then stopping and counting on her fingers",
+        "wardrobe": "tailored black blazer over a high-neck black top, black wide-leg trousers, thin gold chain",
+        "motion_prompt": "Smooth gimbal walk-backwards in front of her as she strolls down the boulevard; the lit terraces glow behind; she stops and counts three on her fingers with a knowing smile."
+      },
+      "script": [
+        {
+          "t_start": 0.0,
+          "t_end": 2.5,
+          "spoken_he": "חושבים שחיפה הולכת לישון מוקדם?",
+          "voice_direction": "[playfully]",
+          "on_screen_text_he": "חיפה ישנה מוקדם? 🤨",
+          "shot": "medium, LILO walking toward camera"
+        },
+        {
+          "t_start": 2.5,
+          "t_end": 6.5,
+          "spoken_he": "העיר התחתית. ברים קטנים בין מבני אבן ישנים.",
+          "voice_direction": "[confidently]",
+          "on_screen_text_he": "1. העיר התחתית",
+          "shot": "medium close-up, LILO to camera"
+        },
+        {
+          "t_start": 6.5,
+          "t_end": 10.5,
+          "spoken_he": "המושבה הגרמנית. ערב מול הגנים המוארים.",
+          "voice_direction": "[warmly]",
+          "on_screen_text_he": "2. המושבה הגרמנית",
+          "shot": "medium, LILO gestures to the lit terraces behind"
+        },
+        {
+          "t_start": 10.5,
+          "t_end": 14.5,
+          "spoken_he": "ורחוב מסדה, למי שאוהב שכונה עם אופי.",
+          "voice_direction": "[playfully]",
+          "on_screen_text_he": "3. רחוב מסדה",
+          "shot": "medium close-up, LILO counts three on her fingers"
+        },
+        {
+          "t_start": 14.5,
+          "t_end": 17.0,
+          "spoken_he": "אוכלים. שותים. נשארים.",
+          "voice_direction": "[warmly]",
+          "on_screen_text_he": "EAT. DRINK. STAY.",
+          "shot": "medium, LILO smiles and walks on"
+        }
+      ],
+      "caption_he": "חיפה לא הולכת לישון מוקדם 🌙\nהעיר התחתית, המושבה הגרמנית ורחוב מסדה: שלושה אזורים לערב בעיר.\nאיזה מקום הייתם מוסיפים?",
+      "cta_he": "שמרו לסופ\"ש ותייגו את מי שבא איתכם",
+      "hashtags": [
+        "חיפה",
+        "חיפהבלילה",
+        "בילוייםבחיפה",
+        "קריות",
+        "haifa",
+        "nightlife"
+      ],
+      "trend_or_audio_note": ""
+    },
+    {
+      "day": "2026-10-23",
+      "weekday_he": "שישי",
+      "post_time_local": "13:00",
+      "platforms": [
+        "instagram",
+        "tiktok"
+      ],
+      "format": "reel",
+      "pillar": "community",
+      "dish_id": "atmosphere",
+      "features_zozobra": false,
+      "places": [],
+      "concept": "הקהל בוחר: המקום הכי שווה בקריות לערב. התגובה המובילה נכנסת לסרטון הבא",
+      "hook_he": "יש לי בעיה עם הקריות.",
+      "hook_alternatives_he": [
+        "אתם בוחרים את הסרטון הבא שלי",
+        "המקום הכי שווה בקריות? אתם תגידו"
+      ],
+      "visual": {
+        "venue_plate": "none",
+        "scene": "Haifa Bay waterfront at golden hour, the Krayot skyline in the distance, calm sea",
+        "action": "holding a phone, scrolling and looking up at camera with a curious raised eyebrow",
+        "wardrobe": "tailored black blazer over a high-neck black top, black wide-leg trousers, thin gold chain",
+        "motion_prompt": "Static medium shot with a gentle handheld drift. She scrolls on her phone, looks up at the camera with a raised eyebrow, then points at the lens; golden light, soft breeze."
+      },
+      "script": [
+        {
+          "t_start": 0.0,
+          "t_end": 3.0,
+          "spoken_he": "יש לי בעיה. אני לא מכירה מספיק את הקריות.",
+          "voice_direction": "[playfully]",
+          "on_screen_text_he": "בעיה 😅",
+          "shot": "medium, LILO looking up from her phone"
+        },
+        {
+          "t_start": 3.0,
+          "t_end": 7.0,
+          "spoken_he": "ואתם? אתם מכירים כל פינה.",
+          "voice_direction": "[warmly]",
+          "on_screen_text_he": "",
+          "shot": "medium close-up, LILO to camera"
+        },
+        {
+          "t_start": 7.0,
+          "t_end": 11.5,
+          "spoken_he": "כתבו בתגובות את המקום הכי שווה בקריות לערב.",
+          "voice_direction": "[confidently]",
+          "on_screen_text_he": "המקום הכי שווה בקריות? 👇",
+          "shot": "medium close-up, LILO points at camera"
+        },
+        {
+          "t_start": 11.5,
+          "t_end": 15.0,
+          "spoken_he": "התגובה עם הכי הרבה לייקים נכנסת לסרטון הבא.",
+          "voice_direction": "[excited]",
+          "on_screen_text_he": "הכי הרבה לייקים = הסרטון הבא",
+          "shot": "close-up, LILO smiling"
+        },
+        {
+          "t_start": 15.0,
+          "t_end": 17.5,
+          "spoken_he": "אוכלים. שותים. נשארים.",
+          "voice_direction": "[warmly]",
+          "on_screen_text_he": "EAT. DRINK. STAY.",
+          "shot": "medium, LILO puts the phone away and smiles"
+        }
+      ],
+      "caption_he": "אני מכירה את חיפה. את הקריות? אתם מכירים יותר טוב ממני 😅\nכתבו בתגובות את המקום הכי שווה לערב בקריות.\nהתגובה עם הכי הרבה לייקים נכנסת לסרטון הבא.",
+      "cta_he": "כתבו בתגובות ותייגו חברים שיצביעו 👇",
+      "hashtags": [
+        "חיפה",
+        "חיפהבלילה",
+        "בילוייםבחיפה",
+        "קריות",
+        "haifa",
+        "nightlife"
+      ],
+      "trend_or_audio_note": ""
+    }
+  ]
+}

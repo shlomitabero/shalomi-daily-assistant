@@ -1,18 +1,21 @@
-"""Growth campaign: LILO builds a following as Haifa's AI nightlife guide before ZOZOBRA opens.
+"""60-day growth campaign: LILO MOSCOWITZ builds a real local following, then launches ZOZOBRA.
 
-    grow    -> city nightlife content only, ZOZOBRA is never named (no ad label needed)
-    teaser  -> last weeks before opening: mysterious hints ("something is opening in the Bay")
-    launch  -> ZOZOBRA content, every post carries the paid-partnership label
+    brand       days 1-14   city nightlife guide, ZOZOBRA never named
+    accelerate  days 15-30  double down on what performed, collabs, polls
+    reveal      days 31-45  ZOZOBRA enters openly (paid-partnership label, renders labelled)
+    launch      day 46 ->   cinematic teasers, countdown, opening campaign
+    open        from launch_date
 
-The phase is computed from data/campaign.json (launch_date), so the Brain changes gear by itself.
+Phases and the weekday series come from data/campaign.json, so the Brain changes gear by itself.
 """
 from __future__ import annotations
 
 import json
 from datetime import date, timedelta
-from pathlib import Path
 
 from .config import ROOT, settings
+
+PHASES = ("brand", "accelerate", "reveal", "launch", "open")
 
 
 def config() -> dict:
@@ -22,49 +25,63 @@ def config() -> dict:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
+def day_number(day: date) -> int:
+    return (day - date.fromisoformat(config()["start_date"])).days + 1
+
+
 def phase(day: date | None = None) -> str:
-    c = config()
     day = day or date.today()
-    launch = date.fromisoformat(c["launch_date"])
-    if day >= launch:
-        return "launch"
-    if day >= launch - timedelta(days=c.get("teaser_days", 21)):
-        return "teaser"
-    return "grow"
+    if day >= date.fromisoformat(config()["launch_date"]):
+        return "open"
+    n = day_number(day)
+    return "brand" if n <= 14 else "accelerate" if n <= 30 else "reveal" if n <= 45 else "launch"
+
+
+def series(day: date) -> str:
+    return config()["weekly_series"].get(str(day.weekday()), "")
+
+
+def allows_zozobra(day: date) -> bool:
+    return phase(day) in ("reveal", "launch", "open")
+
+
+_PHASE_RULES = {
+    "brand": (
+        "PHASE brand (days 1-14): build LILO's own brand. ZOZOBRA is never named or shown: every day "
+        "features_zozobra=false, dish_id='atmosphere', visual.venue_plate='none'. One vertical video per day."),
+    "accelerate": (
+        "PHASE accelerate (days 15-30): lean into the formats that performed best (see insights); more polls, "
+        "reply-to-comment videos and collab-ready posts about real places. ZOZOBRA still not named."),
+    "reveal": (
+        "PHASE reveal (days 31-45): ZOZOBRA enters openly as LILO's partner - never as an independent review. "
+        "2-3 ZOZOBRA posts per week (features_zozobra=true; the paid-partnership and render labels are added "
+        "automatically): the design, the bar, the open kitchen, the EAT • DRINK • STAY idea. The other days stay "
+        "city posts. Never say it is open; show diverse Israeli guests, not only Asian diners."),
+    "launch": (
+        "PHASE launch campaign (days 46-60): cinematic teasers, countdown to the opening, the bar and the "
+        "experience; ZOZOBRA on most days (features_zozobra=true). Never promise a date, gift or giveaway that is "
+        "not in the menu JSON offers."),
+    "open": (
+        "PHASE open: ZOZOBRA is open. Hero dishes, fire show, bar nights; keep one city post a week so LILO stays "
+        "a guide, not an ad."),
+}
 
 
 def brief(start: date) -> str:
-    """Phase instructions for the Brain's user prompt (volatile, so kept out of the cached system)."""
+    """Phase + series instructions for the Brain's user prompt (volatile, kept out of the cached system)."""
     c = config()
-    p = phase(start)
+    days = [start + timedelta(days=i) for i in range(7)]
+    plan = "\n".join(f"- {d.isoformat()} (day {day_number(d)}, {phase(d)}): series {series(d)}" for d in days)
     spots = "\n".join(f"- {s}" for s in c["public_spots"])
-    common = (
-        f"Campaign city: {c['city_he']}. ZOZOBRA opens on {c['launch_date']} at {c['launch_location_he']}.\n"
-        "Public locations LILO can be shown in (visual.scene, visual.venue_plate='none'):\n" + spots
-    )
-    if p == "grow":
-        return (
-            "PHASE: GROW (build followers). LILO is Haifa & the Krayot's AI nightlife guide.\n"
-            "- Do NOT mention ZOZOBRA, its dishes or its interior. Set every day's features_zozobra=false, "
-            "dish_id='atmosphere', visual.venue_plate='none'.\n"
-            "- Content: guides to real neighbourhoods and real places found in the research brief (cite each in "
-            "`places` with its source URL), weekend 'where to go' lists, polls, reply-to-comments, POV humour about "
-            "being an AI who can't taste ('you are my mouth').\n"
-            "- She never claims she ate, drank or visited somewhere - she 'hears', 'picks', 'asks you'. "
-            "Only positive picks; never criticise a business.\n"
-            "- Visuals show LILO in the public locations above - never inside another business.\n"
-            "- Sign-off: spoken 'אוכלים. שותים. נשארים.' with on-screen 'EAT. DRINK. STAY.' (her tagline; later "
-            "revealed as ZOZOBRA's).\n" + common
-        )
-    if p == "teaser":
-        return (
-            "PHASE: TEASER (opening in under three weeks). Keep 1-2 city posts per week; the rest tease the "
-            "opening without naming it: 'something is opening in the Bay', countdowns, glimpses of the fire and the "
-            "dark-luxury space (ZOZOBRA plates allowed, stage is coming_soon). Teaser posts set features_zozobra=true "
-            "and may name ZOZOBRA only in the final week. Never say it is open.\n" + common
-        )
+    rules = "\n".join(dict.fromkeys(_PHASE_RULES[phase(d)] for d in days))
     return (
-        "PHASE: LAUNCH. ZOZOBRA is open. Hero dishes, fire show, opening-week giveaways and date nights; "
-        "features_zozobra=true on every ZOZOBRA post. Keep one city post per week so the guide identity stays.\n"
-        + common
+        f"Campaign: LILO MOSCOWITZ, AI guide to food, drinks and nightlife in {c['city_he']}. "
+        f"ZOZOBRA ({c['launch_location_he']}) opens around {c['launch_date']} (not final - never state the date "
+        "as certain).\n" + rules + "\n"
+        "Every day: one 9:16 reel of 15-35 seconds in that day's series, a 2-second hook, a clear save/share/"
+        "comment CTA.\nCity posts: name only real places from the research brief (list them in `places` with "
+        "the source URL); positive picks only; LILO never claims she visited, ate or met anyone - she 'found', "
+        "'picked', 'hears', 'asks you'. Visuals show her only in public locations, never inside another business:\n"
+        + spots + "\nSign-off on every reel: spoken 'אוכלים. שותים. נשארים.' with on-screen 'EAT. DRINK. STAY.'\n"
+        "Days this week:\n" + plan
     )

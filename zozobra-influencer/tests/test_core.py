@@ -29,7 +29,7 @@ def make_day(d: date, **over) -> dict:
     return base
 
 
-def make_week(start=date(2026, 10, 18)) -> dict:
+def make_week(start=date(2026, 11, 22)) -> dict:
     pillars = ["hero_dish", "fire_show", "night_vibe", "challenge", "pov_story", "community", "hero_dish"]
     return {"weekly_focus": "ראמן", "strategy_summary_he": "...",
             "days": [make_day(start + timedelta(i), pillar=pillars[i]) for i in range(7)]}
@@ -40,21 +40,21 @@ IDS = {d["id"] for d in MENU["dishes"]} | {d["id"] for d in MENU["drinks"]}
 
 
 def test_caption_always_carries_disclosures():
-    cap = compliance.finalize_caption(DayPlan.model_validate(make_day(date(2026, 10, 18))))
+    cap = compliance.finalize_caption(DayPlan.model_validate(make_day(date(2026, 11, 22))))
     assert persona.AI_DISCLOSURE_HE in cap and persona.AD_DISCLOSURE_HE in cap
     assert "#אוכלבתלאביב" in cap
 
 
 def test_validation_catches_invented_dish_and_bad_formats():
-    d = DayPlan.model_validate(make_day(date(2026, 10, 18), dish_id="lobster", format="carousel"))
+    d = DayPlan.model_validate(make_day(date(2026, 11, 22), dish_id="lobster", format="carousel"))
     problems = compliance.validate_day(d, IDS)
     assert any("unknown dish_id" in p for p in problems)
     assert any("TikTok only" in p for p in problems)
-    assert compliance.validate_day(DayPlan.model_validate(make_day(date(2026, 10, 18))), IDS) == []
+    assert compliance.validate_day(DayPlan.model_validate(make_day(date(2026, 11, 22))), IDS) == []
 
 
 def test_visual_prompt_locks_identity():
-    p = brain.full_image_prompt(DayPlan.model_validate(make_day(date(2026, 10, 18))))
+    p = brain.full_image_prompt(DayPlan.model_validate(make_day(date(2026, 11, 22))))
     assert p.startswith(f"photo of {persona.TRIGGER} woman")
     assert persona.FACE_TOKENS in p and persona.SIGNATURE_LOOK in p
 
@@ -95,7 +95,7 @@ def test_brain_with_fake_client():
         return FakeStream()
 
     client = SimpleNamespace(beta=SimpleNamespace(messages=SimpleNamespace(stream=stream)))
-    plan = brain.generate_week("ראמן", date(2026, 10, 18), menu=MENU, client=client)
+    plan = brain.generate_week("ראמן", date(2026, 11, 22), menu=MENU, client=client)
     assert len(plan.days) == 7
     assert captured["output_config"]["format"]["type"] == "json_schema"
     assert "bangkok_heat" in captured["messages"][0]["content"]
@@ -116,13 +116,13 @@ def test_brain_rejects_hallucinated_dish():
 
     client = SimpleNamespace(beta=SimpleNamespace(messages=SimpleNamespace(stream=lambda **kw: S())))
     with pytest.raises(ValueError, match="sushi_tower"):
-        brain.generate_week("x", date(2026, 10, 18), menu=MENU, client=client)
+        brain.generate_week("x", date(2026, 11, 22), menu=MENU, client=client)
 
 
 def test_analytics_insights(tmp_path):
     conn = analytics.db(tmp_path / "a.sqlite")
     for i, (pillar, views, shares) in enumerate([("fire_show", 1000, 80), ("night_vibe", 1000, 5)]):
-        analytics.record_post(conn, post_id=str(i), platform="instagram", day="2026-10-18",
+        analytics.record_post(conn, post_id=str(i), platform="instagram", day="2026-11-22",
                               post_time="20:00", pillar=pillar, dish_id="bangkok_heat", hook="h", fmt="reel")
         conn.execute("INSERT INTO metrics VALUES (?,?,?,?,?,?,?,?)", (str(i), "t", views, views, 50, 10, shares, 20))
     conn.commit()
@@ -141,17 +141,17 @@ def test_pipeline_dry_run_and_approval_gate(tmp_path, monkeypatch):
     assert item["steps"]["broll"] and "no faces" in item["steps"]["broll"][0]["prompt"]
     assert "[excited]" in item["steps"]["voice_text"]
 
-    now = datetime(2026, 10, 18, 20, 5, tzinfo=account_health.TZ)
+    now = datetime(2026, 11, 22, 20, 5, tzinfo=account_health.TZ)
     monkeypatch.setattr(pipeline, "PublishGuard", lambda *_: account_health.PublishGuard(date(2026, 10, 1), tmp_path / "l.json"))
-    assert pipeline.publish_due(now) == ["2026-10-18: waiting for approval"]
-    pipeline.approve("2026-10-18")
+    assert pipeline.publish_due(now) == ["2026-11-22: waiting for approval"]
+    pipeline.approve("2026-11-22")
     assert all("DRY RUN" in l for l in pipeline.publish_due(now))
 
 
 def test_subtitles_ass():
     from zozobra import subtitles
 
-    day = DayPlan.model_validate(make_day(date(2026, 10, 18)))
+    day = DayPlan.model_validate(make_day(date(2026, 11, 22)))
     day.script[1].on_screen_text_he = "רמת חריפות: לילו"
     ass = subtitles.build_ass(day.script, hook="שנייה {תשמעו}")
     assert "Style: Hook,Heebo Black" in ass
@@ -181,13 +181,13 @@ def test_web_panel_flow(tmp_path, monkeypatch):
         assert c.get(url).status_code == 200, url
     assert c.post("/setup/sample", follow_redirects=False).status_code == 303
     pipeline.produce_day(
-        WeekPlan.model_validate_json((tmp_path / "calendars" / "week_2026-10-18.json").read_text(encoding="utf-8")).days[0],
+        WeekPlan.model_validate_json((tmp_path / "calendars" / "week_2026-11-22.json").read_text(encoding="utf-8")).days[0],
         MENU, tmp_path / "r", dry_run=True)
-    r = c.post("/queue/2026-10-18/save", data={"caption": "בלי גילוי", "post_time": "20:00", "action": "approve"})
+    r = c.post("/queue/2026-11-22/save", data={"caption": "בלי גילוי", "post_time": "20:00", "action": "approve"})
     assert r.status_code == 200
     import json as _json
 
-    saved = _json.loads((tmp_path / "queue" / "2026-10-18.json").read_text(encoding="utf-8"))
+    saved = _json.loads((tmp_path / "queue" / "2026-11-22.json").read_text(encoding="utf-8"))
     assert saved["status"] == "approved" and persona.AD_DISCLOSURE_HE in saved["caption"]
     assert c.get("/media/../../etc/passwd").status_code == 404
     assert c.post("/menu", data={"menu": "{bad"}).status_code == 200  # shows error, doesn't save
@@ -216,12 +216,12 @@ def test_venue_plates_drive_scenes(tmp_path):
 
     assert Image.open(crop).size == (1080, 1920)
 
-    bad = DayPlan.model_validate(make_day(date(2026, 10, 18)))
+    bad = DayPlan.model_validate(make_day(date(2026, 11, 22)))
     bad.visual.venue_plate = "rooftop"
     assert any("venue_plate" in p for p in compliance.validate_day(bad, IDS))
 
     week = WeekPlan.model_validate_json((pipeline.Path(__file__).resolve().parents[1] / "examples" / "week_sample.json").read_text(encoding="utf-8"))
-    thu = next(d for d in week.days if d.day == date(2026, 10, 22))
+    thu = next(d for d in week.days if d.day == date(2026, 11, 26))
     item = pipeline.produce_day(thu, MENU, tmp_path / "r", dry_run=True)
     assert item["steps"]["venue_plate"] == "bar_tower_vertical" and item["steps"]["venue_night_variant"]
     assert [b["source"] for b in item["steps"]["broll"]] == ["venue_plate"]
@@ -249,7 +249,7 @@ def test_fresh_install_seeds_sample_week(tmp_path, monkeypatch):
     from zozobra import web
 
     web._seed_sample_week()
-    assert (tmp_path / "calendars" / "week_2026-10-18.json").exists()
+    assert (tmp_path / "calendars" / "week_2026-11-22.json").exists()
     assert (tmp_path / "refs" / "R0_anchor.png").exists()
 
 

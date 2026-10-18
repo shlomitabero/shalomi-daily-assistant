@@ -51,7 +51,26 @@ def test_campaign_phases():
 
     from zozobra import campaign
 
-    assert campaign.phase(date(2026, 10, 19)) == "grow"
-    assert campaign.phase(date(2026, 12, 1)) == "teaser"
-    assert campaign.phase(date(2026, 12, 20)) == "launch"
-    assert "Do NOT mention ZOZOBRA" in campaign.brief(date(2026, 10, 19))
+    assert campaign.phase(date(2026, 10, 18)) == "brand"          # day 1
+    assert campaign.phase(date(2026, 11, 1)) == "accelerate"      # day 15
+    assert campaign.phase(date(2026, 11, 17)) == "reveal"         # day 31
+    assert campaign.phase(date(2026, 12, 2)) == "launch"          # day 46
+    assert campaign.phase(date(2026, 12, 17)) == "open"
+    assert campaign.series(date(2026, 10, 18)).startswith("Hidden Gems")   # Sunday
+    assert "ZOZOBRA is never named" in campaign.brief(date(2026, 10, 18))
+
+
+def test_public_waitlist_needs_consent(tmp_path, monkeypatch):
+    from fastapi.testclient import TestClient
+
+    monkeypatch.setenv("DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("PANEL_PASSWORD", "pw")
+    from zozobra import web
+
+    c = TestClient(web.app)
+    assert c.get("/join?src=bio").status_code == 200            # public, no password
+    assert c.post("/join", data={"name": "דנה", "phone": "0501234567"}).status_code == 400
+    assert c.post("/join", data={"name": "דנה", "phone": "0501234567", "consent": "yes", "src": "bio"}).status_code == 200
+    assert c.get("/leads").status_code == 401                    # list stays private
+    r = c.get("/leads.csv", auth=("lilo", "pw"))
+    assert "0501234567" in r.text and "bio" in r.text

@@ -25,11 +25,15 @@ def _seed_sample_week() -> None:
     approved anchor face (assets/lilo/R0_anchor.jpg) so the setup wizard starts at step 2."""
     if not any(cal_dir().glob("week_*.json")):
         setup_sample()
-    launch = ROOT / "examples" / "launch_posts.json"
-    first = json.loads(launch.read_text(encoding="utf-8"))
-    target = cal_dir() / f"week_{first['days'][0]['day']}.json"
-    if not target.exists():
-        target.write_text(json.dumps(first, ensure_ascii=False, indent=2), encoding="utf-8")
+    old_sample = cal_dir() / "week_2026-10-18.json"   # pre-campaign ZOZOBRA sample, now dated 22/11
+    if old_sample.exists() and "bangkok_heat" in old_sample.read_text(encoding="utf-8"):
+        old_sample.rename(old_sample.with_suffix(".retired"))
+        setup_sample()
+    for bundled_cal in sorted((ROOT / "examples" / "calendars").glob("week_*.json")):   # campaign weeks 1-5
+        target = cal_dir() / bundled_cal.name
+        if not target.exists():
+            cal_dir().mkdir(parents=True, exist_ok=True)
+            target.write_text(bundled_cal.read_text(encoding="utf-8"), encoding="utf-8")
     anchor = settings().data_dir / "refs" / "R0_anchor.png"
     bundled = ROOT / "assets" / "lilo" / "R0_anchor.jpg"
     if not anchor.exists() and bundled.exists():
@@ -61,7 +65,8 @@ PILLAR_HE = {"hero_dish": "מנת הדגל", "fire_show": "שואו אש", "nigh
 @app.middleware("http")
 async def basic_auth(request: Request, call_next):
     pw = settings().panel_password
-    if pw and request.url.path != "/healthz" and not request.url.path.startswith("/pub/"):
+    public = request.url.path in ("/healthz", "/join") or request.url.path.startswith("/pub/")
+    if pw and not public:
         header = request.headers.get("authorization", "")
         ok = False
         if header.startswith("Basic "):
@@ -111,7 +116,7 @@ table{width:100%;border-collapse:collapse;font-size:14px}td,th{border-bottom:1px
 """
 
 NAV = [("/", "לוח בקרה"), ("/plan", "תכנון שבועי"), ("/calendars", "לוחות תוכן"), ("/replies", "תגובות"),
-       ("/insights", "ביצועים"), ("/menu", "תפריט"), ("/venue", "המקום"), ("/setup", "הקמה")]
+       ("/insights", "ביצועים"), ("/leads", "נרשמים"), ("/menu", "תפריט"), ("/venue", "המקום"), ("/setup", "הקמה")]
 
 
 def page(title: str, body: str, path: str = "/", refresh: bool = False) -> HTMLResponse:
@@ -797,6 +802,81 @@ def setup_sample():
     data = json.loads(src.read_text(encoding="utf-8"))
     (cal_dir() / f"week_{data['days'][0]['day']}.json").write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
     return back("/calendars")
+
+
+# ---------- leads (public waitlist, explicit consent) ----------
+def leads_path() -> Path:
+    return settings().data_dir / "leads.jsonl"
+
+
+JOIN_HTML = """<!doctype html><html lang="he" dir="rtl"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1"><title>EAT. DRINK. STAY.</title>
+<style>body{{margin:0;background:#0b0b0d;color:#f2ede6;font:17px/1.6 system-ui,sans-serif;display:grid;place-items:center;min-height:100vh}}
+main{{max-width:420px;padding:28px 20px}}h1{{font-size:30px;letter-spacing:.08em;margin:0 0 6px}}p{{color:#bdb4a8}}
+input{{width:100%;box-sizing:border-box;padding:12px;margin:6px 0 12px;border-radius:10px;border:1px solid #3a332b;background:#16140f;color:inherit;font:inherit}}
+label.c{{display:flex;gap:10px;align-items:flex-start;font-size:14px;color:#bdb4a8}}label.c input{{width:auto;margin-top:5px}}
+button{{width:100%;padding:13px;border:0;border-radius:10px;background:#c8562b;color:#fff;font:600 17px system-ui;margin-top:10px}}</style></head>
+<body><main>{body}</main></body></html>"""
+
+
+@app.get("/join", response_class=HTMLResponse)
+def join_form(src: str = ""):
+    return HTMLResponse(JOIN_HTML.format(body=f"""<h1>EAT. DRINK. STAY.</h1>
+<p>משהו נפתח במפרץ חיפה. השאירו פרטים ותהיו הראשונים לדעת.</p>
+<form method="post" action="/join"><input type="hidden" name="src" value="{e(src)}">
+<label>שם<input name="name" required maxlength="60"></label>
+<label>טלפון<input name="phone" required inputmode="tel" pattern="[0-9+\\- ]{{9,15}}" maxlength="15"></label>
+<label class="c"><input type="checkbox" name="consent" value="yes" required>
+אני מסכים/ה לקבל עדכונים על פתיחת ZOZOBRA חוצות המפרץ בהודעות. אפשר להסיר בכל עת.</label>
+<button>עדכנו אותי</button></form>"""))
+
+
+@app.post("/join", response_class=HTMLResponse)
+def join_submit(name: str = Form(...), phone: str = Form(...), consent: str = Form(""), src: str = Form("")):
+    if consent != "yes":
+        return HTMLResponse(JOIN_HTML.format(body="<p>כדי להירשם צריך לאשר קבלת עדכונים.</p>"), status_code=400)
+    from datetime import datetime
+
+    from .account_health import TZ
+
+    rec = {"at": datetime.now(TZ).isoformat(timespec="seconds"), "name": name.strip()[:60],
+           "phone": phone.strip()[:15], "src": src.strip()[:40], "consent": True}
+    with leads_path().open("a", encoding="utf-8") as f:
+        f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+    return HTMLResponse(JOIN_HTML.format(body="<h1>תודה!</h1><p>נעדכן אתכם ראשונים. EAT. DRINK. STAY.</p>"))
+
+
+def _leads() -> list[dict]:
+    p = leads_path()
+    return [json.loads(l) for l in p.read_text(encoding="utf-8").splitlines() if l.strip()] if p.exists() else []
+
+
+@app.get("/leads", response_class=HTMLResponse)
+def leads_view():
+    rows = _leads()
+    by_src: dict[str, int] = {}
+    for r in rows:
+        by_src[r["src"] or "ישיר"] = by_src.get(r["src"] or "ישיר", 0) + 1
+    table = "".join(f"<tr><td>{e(r['at'][:16])}</td><td>{e(r['name'])}</td><td>{e(r['phone'])}</td><td>{e(r['src'])}</td></tr>"
+                    for r in reversed(rows[-200:]))
+    return page("נרשמים לעדכוני הפתיחה", f"""<div class="card"><p><b>{len(rows)}</b> נרשמים (יעד: 500). קישור ההרשמה הציבורי:
+<code>/join?src=bio</code> (מחליפים את bio במקור: story, reel-12 וכו').</p>
+<p>{' · '.join(f'{e(k)}: {v}' for k, v in sorted(by_src.items(), key=lambda kv: -kv[1]))}</p>
+<p><a class="btn ghost" href="/leads.csv">⬇️ הורדת CSV</a></p></div>
+<div class="card"><table><tr><th>מתי</th><th>שם</th><th>טלפון</th><th>מקור</th></tr>{table}</table></div>""", "/leads")
+
+
+@app.get("/leads.csv")
+def leads_csv():
+    import csv
+    import io
+
+    buf = io.StringIO()
+    w = csv.DictWriter(buf, fieldnames=["at", "name", "phone", "src", "consent"])
+    w.writeheader()
+    w.writerows(_leads())
+    return Response("\ufeff" + buf.getvalue(), media_type="text/csv; charset=utf-8",
+                    headers={"Content-Disposition": "attachment; filename=zozobra_leads.csv"})
 
 
 # ---------- scheduler ----------

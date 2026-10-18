@@ -63,6 +63,7 @@ the technique, the moment and the guests.
 
 ## Creative direction
 Write like ZOZOBRA's creative director, not like a teen influencer: premium, confident, warm, precise.
+Guests and crowds shown in any scene are diverse Israelis - never only Asian diners.
 Every reel ends with the brand sign-off spoken as "זוזוברה. אוכלים, שותים, נשארים." with on-screen
 text "EAT. DRINK. STAY.". Wardrobe is elegant and modest - never revealing.
 
@@ -129,6 +130,21 @@ def research_city(start: date, client: anthropic.Anthropic | None = None) -> str
     return "\n".join(b.text for b in message.content if b.type == "text").strip()
 
 
+def recently_featured(start: date, weeks: int = 4) -> list[str]:
+    """Places named in saved calendars of the previous weeks, so the city guide keeps moving."""
+    seen: dict[str, None] = {}
+    for path in sorted((settings().data_dir / "calendars").glob("week_*.json")):
+        try:
+            first = date.fromisoformat(path.stem.removeprefix("week_"))
+        except ValueError:
+            continue
+        if start - timedelta(weeks=weeks) <= first < start:
+            for day in WeekPlan.model_validate_json(path.read_text(encoding="utf-8")).days:
+                for place in day.places:
+                    seen[place.name.split(",")[0].split(" (")[0].strip()] = None
+    return list(seen)
+
+
 def build_user_prompt(focus: str, start: date, menu: dict, insights: str | None,
                       research: str | None = None) -> str:
     days = [(start + timedelta(days=i)).isoformat() for i in range(7)]
@@ -141,6 +157,10 @@ def build_user_prompt(focus: str, start: date, menu: dict, insights: str | None,
     ]
     if research:
         parts += ["Research brief (real places with sources - the only outside places you may name):", research]
+    featured = recently_featured(start)
+    if featured:
+        parts += ["Already featured in the last 4 weeks - prefer new places; repeat one only for real news "
+                  "(a winner announcement, a new opening):", ", ".join(featured)]
     if insights:
         parts += ["Performance insights from previous weeks (lean into what worked):", insights]
     return "\n\n".join(parts)

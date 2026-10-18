@@ -1,9 +1,18 @@
 {
-  "_note": "Growth campaign until ZOZOBRA opens. Edit launch_date when the opening date is fixed - the Brain switches phase automatically.",
+  "_note": "60-day growth campaign (master prompt, 18/10/2026). Edit launch_date when the opening date is confirmed - phases shift automatically.",
+  "start_date": "2026-10-18",
   "launch_date": "2026-12-17",
-  "teaser_days": 21,
-  "city_he": "חיפה והקריות",
+  "city_he": "חיפה, הקריות והצפון",
   "launch_location_he": "ZOZOBRA חוצות המפרץ, חיפה",
+  "weekly_series": {
+    "6": "Hidden Gems - a lesser-known place",
+    "0": "Food Crush - one dish or food spot worth knowing",
+    "1": "Date Night by Lilo - a date idea",
+    "2": "3 Places You Must Try - three places around one theme",
+    "3": "Tonight in Haifa - where to go tonight / this weekend's events",
+    "4": "Weekend Vibes - weekend plans, brunch, sunset spots",
+    "5": "Lilo's Pick - the pick of the week, decided with the community"
+  },
   "public_spots": [
     "Louis Promenade (Haifa) at night overlooking the lights of Haifa Bay and the port",
     "Ben Gurion Boulevard in Haifa's German Colony at night, the illuminated Baha'i terraces rising behind",

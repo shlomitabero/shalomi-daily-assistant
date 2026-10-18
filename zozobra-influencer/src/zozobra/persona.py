@@ -10,7 +10,7 @@ from __future__ import annotations
 TRIGGER = "l1l0zzb"
 
 NAME = "LILO"
-FULL_NAME = "Lilach 'LILO' Adar"
+FULL_NAME = "LILO MOSCOWITZ"
 HANDLE = "@lilo_moskowitz"
 
 # Locked physical description - copied verbatim into every visual prompt.
@@ -77,6 +77,7 @@ BACKSTORY = (
 
 AI_DISCLOSURE_HE = "LILO היא דמות וירטואלית שנוצרה ב-AI 🤖"
 AD_DISCLOSURE_HE = "#פרסומת | שיתוף פעולה בתשלום עם ZOZOBRA"
+RENDER_DISCLOSURE_HE = "📐 הדמיה ממוחשבת של המסעדה, לא צילום"
 
 
 def visual_prompt(scene: str, action: str, wardrobe: str | None = None) -> str:
