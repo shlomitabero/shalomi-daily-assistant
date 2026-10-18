@@ -7874,6 +7874,99 @@ test("restoring a checkpoint surfaces a migrationWarning when a reused column's 
 });
 
 /**
+ * Round 687: diffAndMigrate's own automation-rule-disable sweep
+ * (packages/db/src/migrate.ts) silently discarded its outcome instead of
+ * reporting it as a real MigrationChange -- confirmed by reading the code
+ * directly: disableAutomationRulesForEntity/Field were declared `void` and
+ * the sweep's own loops never pushed anything onto the `changes` array
+ * describeMigrationHazards(changes) builds its note from. A business
+ * owner whose WhatsApp automation stopped firing after a refine or a
+ * checkpoint restore had zero trail explaining why -- the exact same
+ * "silently discarded hazard" shape the type_changed/relation_* notes
+ * already exist to prevent, just for a fourth kind of hazard those three
+ * never covered. Engineered via the DB layer, same determinism reasoning
+ * as the test above.
+ */
+test("restoring a checkpoint surfaces a migrationWarning naming how many automation rules were disabled, when the restored spec no longer has the field a rule referenced", async () => {
+  await withServer(async (baseUrl, db) => {
+    const email = `restore-automation-warning-${randomUUID()}@example.com`;
+    const token = await signup(baseUrl, email);
+    const user = findUserByEmail(db, email)!;
+
+    const specWithoutStatus: ProductSpec = {
+      summary: "test",
+      personas: [],
+      roles: ["Admin"],
+      entities: [{ name: "Deal", fields: [{ name: "title", type: "text", required: true }] }],
+      screens: [],
+      assumptions: [],
+      openQuestions: [],
+    };
+    const specWithStatus: ProductSpec = {
+      ...specWithoutStatus,
+      entities: [
+        {
+          name: "Deal",
+          fields: [
+            { name: "title", type: "text", required: true },
+            { name: "status", type: "enum", required: false, enumValues: ["New", "Won"] },
+          ],
+        },
+      ],
+    };
+
+    const projectId = randomUUID();
+    insertProject(db, {
+      id: projectId,
+      ownerId: user.id,
+      name: "Deal tracker",
+      description: "A CRM for tracking deals.",
+      spec: specWithoutStatus,
+    });
+    diffAndMigrate(db, projectId, undefined, specWithoutStatus);
+    const checkpoint = insertCheckpoint(db, {
+      id: randomUUID(),
+      projectId,
+      label: "Before status field",
+      kind: "build",
+      spec: specWithoutStatus,
+    });
+
+    // Simulates a later refine that adds "status", exactly like /refine's
+    // own route -- then a real automation rule gets created referencing it.
+    diffAndMigrate(db, projectId, specWithoutStatus, specWithStatus);
+    updateProjectSpec(db, projectId, specWithStatus);
+    const ruleRes = await fetch(`${baseUrl}/api/projects/${projectId}/entities/Deal/automations`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({
+        trigger: "field_equals",
+        fieldName: "status",
+        fieldValue: "Won",
+        actionType: "send_whatsapp",
+        toMode: "static",
+        toNumber: "+15551234567",
+        messageTemplate: "Deal won!",
+      }),
+    });
+    assert.equal(ruleRes.status, 201);
+
+    // Restoring the earlier checkpoint (no "status" field at all) must
+    // disable the rule that now references it, and the restore route's
+    // migrationWarning must actually say so.
+    const restoreRes = await fetch(`${baseUrl}/api/projects/${projectId}/checkpoints/${checkpoint.id}/restore`, {
+      method: "POST",
+      headers: authHeaders(token),
+    });
+    assert.equal(restoreRes.status, 200);
+    const restoreBody = (await restoreRes.json()) as { migrationWarning: string | null };
+    assert.ok(restoreBody.migrationWarning, "a migrationWarning must be present given the automation rule this restore just disabled");
+    assert.match(restoreBody.migrationWarning!, /1 automation rule\(s\) were disabled/);
+    assert.match(restoreBody.migrationWarning!, /re-enable them from the Automations panel/);
+  });
+});
+
+/**
  * The upload route is a new field type's whole reason to exist: a file
  * field's stored value is a JSON descriptor the client gets back from
  * this route, not something a client could ever construct on its own

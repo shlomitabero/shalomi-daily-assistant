@@ -1135,10 +1135,28 @@ test("describeMigrationHazards reports nothing for new_table/new_column entries,
     " Note: entity_proj1_Order.customerId (→ Customer) is a relation field reusing a column that was never linked to anything — existing and new values in it are not protected against pointing at a record that doesn't exist.",
   );
 
-  // All three together concatenate as three separate "Note:" segments, in
-  // type order -- matching exactly what pipeline.ts's inline version did
-  // before this extraction, so this round's refactor changed nothing about
-  // /build and /refine's own existing behavior.
+  // Round 687: the automation-rule-disable sweep used to silently discard
+  // its own outcome instead of reporting it through this same shared
+  // mechanism -- a 4th hazard kind, same contract as the other three.
+  assert.equal(
+    describeMigrationHazards([{ type: "automation_rule_disabled", table: "entity_proj1_Order", disabledCount: 3 }]),
+    " Note: 3 automation rule(s) were disabled because they referenced a field or entity that no longer exists — re-enable them from the Automations panel if still needed.",
+  );
+  // Two separate disable entries (e.g. one entity removed, one field
+  // removed from a different surviving entity) must sum into a single
+  // combined note, not one segment per entry.
+  assert.equal(
+    describeMigrationHazards([
+      { type: "automation_rule_disabled", table: "entity_proj1_Order", disabledCount: 1 },
+      { type: "automation_rule_disabled", table: "entity_proj1_Customer", column: "status", disabledCount: 2 },
+    ]),
+    " Note: 3 automation rule(s) were disabled because they referenced a field or entity that no longer exists — re-enable them from the Automations panel if still needed.",
+  );
+
+  // All four together concatenate as four separate "Note:" segments, in
+  // type order -- matching exactly how the first three already combined
+  // before this round, so this addition changed nothing about /build and
+  // /refine's own existing behavior for the first three.
   assert.equal(
     describeMigrationHazards([
       { type: "type_changed", table: "entity_proj1_Deal", column: "won", fromType: "boolean", toType: "text" },
@@ -1150,10 +1168,12 @@ test("describeMigrationHazards reports nothing for new_table/new_column entries,
         toRelationTo: "Courier",
       },
       { type: "relation_missing_fk", table: "entity_proj1_Order", column: "driverId", toRelationTo: "Driver" },
+      { type: "automation_rule_disabled", table: "entity_proj1_Order", disabledCount: 1 },
     ]),
     " Note: entity_proj1_Deal.won (boolean → text) kept the original database column type — existing data was not converted." +
       " Note: entity_proj1_Order.customerId (Customer → Courier) kept pointing at the original related table — existing data was not re-linked." +
-      " Note: entity_proj1_Order.driverId (→ Driver) is a relation field reusing a column that was never linked to anything — existing and new values in it are not protected against pointing at a record that doesn't exist.",
+      " Note: entity_proj1_Order.driverId (→ Driver) is a relation field reusing a column that was never linked to anything — existing and new values in it are not protected against pointing at a record that doesn't exist." +
+      " Note: 1 automation rule(s) were disabled because they referenced a field or entity that no longer exists — re-enable them from the Automations panel if still needed.",
   );
 });
 
@@ -1189,11 +1209,21 @@ test("diffAndMigrate disables (not deletes) automation rules for an entity remov
   });
 
   const nextSpec: ProductSpec = { ...spec, entities: [spec.entities[0]] };
-  diffAndMigrate(db, "proj1", spec, nextSpec);
+  const changes = diffAndMigrate(db, "proj1", spec, nextSpec);
 
   const after = getAutomationRule(db, "proj1", rule.id);
   assert.ok(after, "the rule row must survive -- only its enabled flag changes");
   assert.equal(after!.enabled, false);
+  // Round 687: this used to be silently discarded -- pipeline.ts's own
+  // build/refine stream and the checkpoint-restore route's
+  // migrationWarning are both driven solely by
+  // describeMigrationHazards(changes), so a disable that never lands in
+  // this returned array is a disable the user is never told about.
+  assert.deepEqual(
+    changes.filter((c) => c.type === "automation_rule_disabled"),
+    [{ type: "automation_rule_disabled", table: "entity_proj1_Order", disabledCount: 1 }],
+    "the entity-level disable must be reported as a real MigrationChange, not silently discarded",
+  );
 });
 
 test("diffAndMigrate disables an automation rule referencing a field removed from a surviving entity, as either its trigger field or its destination field, but leaves an unrelated rule alone", () => {
@@ -1244,7 +1274,7 @@ test("diffAndMigrate disables an automation rule referencing a field removed fro
       spec.entities[1],
     ],
   };
-  diffAndMigrate(db, "proj1", spec, nextSpec);
+  const changes = diffAndMigrate(db, "proj1", spec, nextSpec);
 
   assert.equal(getAutomationRule(db, "proj1", statusTriggerRule.id)!.enabled, false);
   assert.equal(getAutomationRule(db, "proj1", statusDestinationRule.id)!.enabled, false);
@@ -1252,6 +1282,14 @@ test("diffAndMigrate disables an automation rule referencing a field removed fro
     getAutomationRule(db, "proj1", survivingRule.id)!.enabled,
     true,
     "the rule on the surviving 'name' field must not be touched",
+  );
+  // Round 687: one UPDATE call disables both rules in a single statement
+  // (fieldName = ? OR toField = ? matches both), so this must be reported
+  // as ONE automation_rule_disabled entry with disabledCount: 2, not
+  // silently discarded or double-reported.
+  assert.deepEqual(
+    changes.filter((c) => c.type === "automation_rule_disabled"),
+    [{ type: "automation_rule_disabled", table: "entity_proj1_Customer", column: "status", disabledCount: 2 }],
   );
 });
 

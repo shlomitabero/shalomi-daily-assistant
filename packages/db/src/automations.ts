@@ -389,12 +389,17 @@ export function deleteAutomationRulesForProject(db: ForgeDatabase, projectId: st
  * that case: once the entity reappears, the rule is interactable and
  * re-enable-able again through the normal PATCH route, not gone forever.
  */
-export function disableAutomationRulesForEntity(db: ForgeDatabase, projectId: string, entityName: string): void {
-  db.prepare("UPDATE automation_rules SET enabled = 0, updatedAt = ? WHERE projectId = ? AND entityName = ?").run(
-    new Date().toISOString(),
-    projectId,
-    entityName,
-  );
+/**
+ * Returns the number of rules actually disabled (0 when none referenced
+ * this entity), so diffAndMigrate's own sweep can tell whether to surface
+ * this as a migration hazard (see describeMigrationHazards) instead of
+ * silently discarding the outcome the way it used to.
+ */
+export function disableAutomationRulesForEntity(db: ForgeDatabase, projectId: string, entityName: string): number {
+  const result = db
+    .prepare("UPDATE automation_rules SET enabled = 0, updatedAt = ? WHERE projectId = ? AND entityName = ?")
+    .run(new Date().toISOString(), projectId, entityName);
+  return Number(result.changes);
 }
 
 /**
@@ -406,14 +411,18 @@ export function disableAutomationRulesForEntity(db: ForgeDatabase, projectId: st
  * strings that could otherwise coincide with an unrelated entity's own
  * field of the same name. Disables rather than deletes for the same
  * restore-safety reason as disableAutomationRulesForEntity above.
+ *
+ * Returns the number of rules actually disabled, same reason as
+ * disableAutomationRulesForEntity's own return value.
  */
 export function disableAutomationRulesForField(
   db: ForgeDatabase,
   projectId: string,
   entityName: string,
   fieldName: string,
-): void {
-  db.prepare(
-    "UPDATE automation_rules SET enabled = 0, updatedAt = ? WHERE projectId = ? AND entityName = ? AND (fieldName = ? OR toField = ?)",
-  ).run(new Date().toISOString(), projectId, entityName, fieldName, fieldName);
+): number {
+  const result = db
+    .prepare("UPDATE automation_rules SET enabled = 0, updatedAt = ? WHERE projectId = ? AND entityName = ? AND (fieldName = ? OR toField = ?)")
+    .run(new Date().toISOString(), projectId, entityName, fieldName, fieldName);
+  return Number(result.changes);
 }

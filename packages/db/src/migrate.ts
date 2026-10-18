@@ -159,8 +159,9 @@ function fieldTypeLabelForSqlType(sqlType: string, hasForeignKey: boolean): stri
 }
 
 export interface MigrationChange {
-  type: "new_table" | "new_column" | "type_changed" | "relation_target_changed" | "relation_missing_fk";
+  type: "new_table" | "new_column" | "type_changed" | "relation_target_changed" | "relation_missing_fk" | "automation_rule_disabled";
   table: string;
+  /** For "automation_rule_disabled" at the entity level (the whole entity was removed), left undefined -- same convention as "new_table". */
   column?: string;
   /** Only set for "type_changed": the field's old and new declared type, for a message that says what actually changed. */
   fromType?: string;
@@ -168,6 +169,8 @@ export interface MigrationChange {
   /** Only set for "relation_target_changed": the field's old and new relationTo entity name. Only set for "relation_missing_fk": the relationTo the field claims, with no "from" since the reused column never had any FK to begin with. */
   fromRelationTo?: string;
   toRelationTo?: string;
+  /** Only set for "automation_rule_disabled": how many rules this one disable call actually turned off. */
+  disabledCount?: number;
 }
 
 /**
@@ -184,6 +187,7 @@ export function describeMigrationHazards(changes: MigrationChange[]): string {
   const typeChanges = changes.filter((c) => c.type === "type_changed");
   const relationTargetChanges = changes.filter((c) => c.type === "relation_target_changed");
   const relationMissingFkChanges = changes.filter((c) => c.type === "relation_missing_fk");
+  const automationDisables = changes.filter((c) => c.type === "automation_rule_disabled");
   return (
     (typeChanges.length > 0
       ? ` Note: ${typeChanges.map((c) => `${c.table}.${c.column} (${c.fromType} → ${c.toType})`).join(", ")} kept the original database column type — existing data was not converted.`
@@ -193,6 +197,9 @@ export function describeMigrationHazards(changes: MigrationChange[]): string {
       : "") +
     (relationMissingFkChanges.length > 0
       ? ` Note: ${relationMissingFkChanges.map((c) => `${c.table}.${c.column} (→ ${c.toRelationTo})`).join(", ")} is a relation field reusing a column that was never linked to anything — existing and new values in it are not protected against pointing at a record that doesn't exist.`
+      : "") +
+    (automationDisables.length > 0
+      ? ` Note: ${automationDisables.reduce((sum, c) => sum + (c.disabledCount ?? 0), 0)} automation rule(s) were disabled because they referenced a field or entity that no longer exists — re-enable them from the Automations panel if still needed.`
       : "")
   );
 }
@@ -600,7 +607,16 @@ export function diffAndMigrate(
   ensureAutomationRulesTable(db);
   for (const prevEntity of previousSpec.entities) {
     if (!entityNames.has(prevEntity.name)) {
-      disableAutomationRulesForEntity(db, projectId, prevEntity.name);
+      const disabledCount = disableAutomationRulesForEntity(db, projectId, prevEntity.name);
+      // Surfaced as a real MigrationChange (not silently discarded) so
+      // pipeline.ts's own build/refine stream and the checkpoint-restore
+      // route's migrationWarning -- both driven solely by
+      // describeMigrationHazards(changes) -- actually tell the user a
+      // rule just went dark, instead of them only noticing days later
+      // that a WhatsApp automation stopped firing with zero explanation.
+      if (disabledCount > 0) {
+        changes.push({ type: "automation_rule_disabled", table: tableNameFor(projectId, prevEntity.name), disabledCount });
+      }
       continue;
     }
     const nextEntity = nextSpec.entities.find((e) => e.name === prevEntity.name)!;
@@ -618,11 +634,27 @@ export function diffAndMigrate(
     const nextFieldNamesLower = new Set(nextEntity.fields.map((f) => f.name.toLowerCase()));
     for (const prevField of prevEntity.fields) {
       if (!nextFieldNames.has(prevField.name) && !nextFieldNamesLower.has(prevField.name.toLowerCase())) {
-        disableAutomationRulesForField(db, projectId, prevEntity.name, prevField.name);
+        const disabledCount = disableAutomationRulesForField(db, projectId, prevEntity.name, prevField.name);
+        if (disabledCount > 0) {
+          changes.push({
+            type: "automation_rule_disabled",
+            table: tableNameFor(projectId, prevEntity.name),
+            column: prevField.name,
+            disabledCount,
+          });
+        }
       }
     }
     for (const fieldName of fieldsNeedingAutomationDisable.get(prevEntity.name) ?? []) {
-      disableAutomationRulesForField(db, projectId, prevEntity.name, fieldName);
+      const disabledCount = disableAutomationRulesForField(db, projectId, prevEntity.name, fieldName);
+      if (disabledCount > 0) {
+        changes.push({
+          type: "automation_rule_disabled",
+          table: tableNameFor(projectId, prevEntity.name),
+          column: fieldName,
+          disabledCount,
+        });
+      }
     }
   }
 
