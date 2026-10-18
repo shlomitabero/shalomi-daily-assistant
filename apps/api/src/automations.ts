@@ -186,6 +186,11 @@ const BLOCKED_WEBHOOK_HOSTNAME_PATTERNS = [
   /^172\.(1[6-9]|2\d|3[01])\./,
   /^192\.168\./,
   /^169\.254\./,
+  // IPv6's own "unspecified address" analogue of 0.0.0.0 above --
+  // connecting to it routes to the local host the same way 0.0.0.0 does,
+  // and Node's URL parser canonicalizes every all-zero spelling
+  // ("[::0]", "[0:0:0:0:0:0:0:0]", "[0::0]", etc.) to this same "[::]".
+  /^\[?::\]?$/,
   /^\[?::1\]?$/,
   /^\[?fe80:/i,
   /^\[?fc00:/i,

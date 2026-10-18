@@ -618,6 +618,13 @@ test("isAllowedWebhookUrl also blocks an IPv4-mapped IPv6 literal wrapping a blo
   assert.equal(isAllowedWebhookUrl("http://[::ffff:8.8.8.8]/abc"), true, "a genuinely public IPv4 address wrapped as IPv4-mapped IPv6 must still be allowed");
 });
 
+test("isAllowedWebhookUrl blocks the IPv6 unspecified address ('::'), the analogue of the already-blocked 0.0.0.0, in every equivalent spelling", () => {
+  assert.equal(isAllowedWebhookUrl("http://[::]/abc"), false, "the canonical '::' form must be blocked");
+  assert.equal(isAllowedWebhookUrl("http://[::0]/abc"), false, "'::0' must be blocked (Node normalizes it to '::')");
+  assert.equal(isAllowedWebhookUrl("http://[0:0:0:0:0:0:0:0]/abc"), false, "the fully-expanded all-zero form must be blocked (Node normalizes it to '::')");
+  assert.equal(isAllowedWebhookUrl("http://[0::0]/abc"), false, "another all-zero spelling must be blocked (Node normalizes it to '::')");
+});
+
 /**
  * New: the "webhook" action type -- fireRule's own branch, reached through
  * the real event-driven path (runAutomationsForRecordChange), not a direct
