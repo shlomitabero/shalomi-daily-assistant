@@ -38,6 +38,61 @@ function TestOverlayDialog({ onClose }: { onClose: () => void }) {
 const entityPanelSrc = readFileSync(new URL("./EntityPanel.tsx", import.meta.url), "utf8");
 
 /**
+ * Regression test (round 693): a "file" field's stored value is just the
+ * uploaded file's own descriptor (url/name/size/mimeType) -- before this
+ * fix, handleDuplicate copied it verbatim, so the new record pointed at
+ * the exact same file on disk as the original. routes/projects.ts's own
+ * deleteReplacedFileFields has no way to know a second record now shares
+ * that reference, so deleting either copy deleted the file out from under
+ * the other, leaving the survivor's own file field pointing at a 404.
+ */
+test("EntityPanel's handleDuplicate never copies a 'file' field's value -- duplicating a record with an uploaded file must not make two records share the same file on disk", async () => {
+  const handlerMatch = entityPanelSrc.match(/ {2}async function handleDuplicate\(id: number\) \{[\s\S]*?\n {2}\}\n/);
+  assert.ok(handlerMatch, "expected to find handleDuplicate in EntityPanel.tsx");
+  const { code } = transformSync(handlerMatch![0], { loader: "ts" });
+
+  const entity: Entity = {
+    name: "Applicant",
+    fields: [
+      { name: "name", type: "text", required: true },
+      { name: "resume", type: "file", required: false },
+    ],
+  };
+  const fileValue = JSON.stringify({ url: "/api/uploads/p1/Applicant/abc.pdf", name: "resume.pdf", size: 123, mimeType: "application/pdf" });
+  const records: EntityRecord[] = [{ id: 1, createdAt: "x", name: "Dana", resume: fileValue }];
+
+  let capturedCopy: Record<string, unknown> | undefined;
+  let refreshCalled = 0;
+
+  const fn = new Function(
+    "records",
+    "setError",
+    "entity",
+    "createRecord",
+    "projectId",
+    "refresh",
+    `${code}\nreturn handleDuplicate;`,
+  )(
+    records,
+    () => {},
+    entity,
+    async (_projectId: string, _entityName: string, copy: Record<string, unknown>) => {
+      capturedCopy = copy;
+    },
+    "proj1",
+    async () => {
+      refreshCalled += 1;
+    },
+  ) as (id: number) => Promise<void>;
+
+  await fn(1);
+
+  assert.equal(capturedCopy?.name, "Dana", "every non-file field must still be copied as before");
+  assert.equal(capturedCopy?.resume, null, "a 'file' field's value must never be copied -- it would make the new record share the original's file on disk");
+  assert.equal(refreshCalled, 1);
+});
+
+/**
  * Regression test: handleBulkDelete used to await `Promise.all(ids.map(...))`
  * inside a try/catch. A single rejected delete (a dropped connection, a
  * record another browser tab already removed) rejected the whole
@@ -127,6 +182,59 @@ test("EntityPanel's handleBulkDuplicate refreshes and keeps only the ids that ac
     "a partial failure must surface the translated duplicate-partial-failure message, not the raw single-record rejection",
   );
   assert.equal(refreshCalled, 1, "refresh() must still run so the table shows the records that WERE successfully duplicated");
+});
+
+test("EntityPanel's handleBulkDuplicate never copies a 'file' field's value either, for the same reason handleDuplicate doesn't", async () => {
+  const handlerMatch = entityPanelSrc.match(/ {2}async function handleBulkDuplicate\(\) \{[\s\S]*?\n {2}\}\n/);
+  assert.ok(handlerMatch, "expected to find handleBulkDuplicate in EntityPanel.tsx");
+  const { code } = transformSync(handlerMatch![0], { loader: "ts" });
+
+  const entity: Entity = {
+    name: "Applicant",
+    fields: [
+      { name: "name", type: "text", required: true },
+      { name: "resume", type: "file", required: false },
+    ],
+  };
+  const fileValue = JSON.stringify({ url: "/api/uploads/p1/Applicant/abc.pdf", name: "resume.pdf", size: 123, mimeType: "application/pdf" });
+  const records: EntityRecord[] = [{ id: 1, createdAt: "x", name: "Dana", resume: fileValue }];
+
+  const attemptedCopies: Record<string, unknown>[] = [];
+
+  const fn = new Function(
+    "bulkActionBusy",
+    "setBulkActionBusy",
+    "t",
+    "projectId",
+    "entity",
+    "records",
+    "selectedIds",
+    "setError",
+    "createRecord",
+    "setSelectedIds",
+    "refresh",
+    `${code}\nreturn handleBulkDuplicate;`,
+  )(
+    false,
+    () => {},
+    (key: string) => key,
+    "proj1",
+    entity,
+    records,
+    new Set([1]),
+    () => {},
+    async (_projectId: string, _entityName: string, copy: Record<string, unknown>) => {
+      attemptedCopies.push(copy);
+    },
+    () => {},
+    async () => {},
+  ) as () => Promise<void>;
+
+  await fn();
+
+  assert.equal(attemptedCopies.length, 1);
+  assert.equal(attemptedCopies[0]!.name, "Dana");
+  assert.equal(attemptedCopies[0]!.resume, null, "a 'file' field's value must never be copied in a bulk duplicate either");
 });
 
 test("EntityPanel's handleBulkDuplicate still surfaces the raw error message when every duplicate in the batch fails", async () => {

@@ -2071,7 +2071,17 @@ export function EntityPanel({
     setError(null);
     try {
       const copy: Record<string, unknown> = {};
-      for (const field of entity.fields) copy[field.name] = record[field.name];
+      // A "file" field's stored value is just the uploaded file's own
+      // descriptor (url/name/size/mimeType) -- copying it verbatim would
+      // make the new record point at the exact same file on disk as the
+      // original, not a fresh upload. routes/projects.ts's own
+      // deleteReplacedFileFields has no way to know a second record now
+      // shares that reference, so deleting either copy deletes the file
+      // out from under the other, leaving a broken link. There's no
+      // "clone the underlying file" operation to call instead, so the
+      // duplicate simply starts with that field empty, the same way its
+      // own form already starts empty for a new record.
+      for (const field of entity.fields) copy[field.name] = field.type === "file" ? null : record[field.name];
       await createRecord(projectId, entity.name, copy);
       await refresh();
     } catch (err) {
@@ -2120,7 +2130,9 @@ export function EntityPanel({
           const record = records.find((r) => (r.id as number) === id);
           if (!record) return Promise.reject(new Error(t("entity.bulk.recordGone")));
           const copy: Record<string, unknown> = {};
-          for (const field of entity.fields) copy[field.name] = record[field.name];
+          // Same shared-file-reference hazard as handleDuplicate above, and
+          // the same fix -- see its own comment for why.
+          for (const field of entity.fields) copy[field.name] = field.type === "file" ? null : record[field.name];
           return createRecord(projectId, entity.name, copy);
         }),
       );
