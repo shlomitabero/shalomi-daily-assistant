@@ -1,5 +1,5 @@
 import type { Entity, EntityRecord, Field } from "@forge/shared";
-import { relationDisplayLabel, type RelatedRecordsByEntity } from "./entityFormatting.js";
+import { parseFileFieldValue, relationDisplayLabel, type RelatedRecordsByEntity } from "./entityFormatting.js";
 import { safeDownloadName } from "./api.js";
 
 function pad2(n: number): string {
@@ -171,12 +171,22 @@ export function buildCalendarIcs(
         // enumLabels translation every other view of this data already
         // shows, which is exactly the "take it with you" gap this export
         // exists to avoid.
+        // A "file" field's stored value is a JSON-encoded descriptor
+        // (url/name/size/mimeType), not a plain string -- without this
+        // branch, it falls into the generic `record[f.name]` case below
+        // and writes that raw JSON verbatim into the exported .ics,
+        // visibly broken in any real calendar app and leaking the
+        // server's internal upload URL path structure into a file a user
+        // might forward or publish. Mirrors entityFormatting.ts's own
+        // fieldDisplayValue, which already has this exact branch.
         const value =
           f.type === "relation"
             ? relationDisplayLabel(f, record[f.name], allEntities, relatedRecords)
             : f.type === "enum"
               ? (f.enumLabels?.[String(record[f.name])] ?? record[f.name])
-              : record[f.name];
+              : f.type === "file"
+                ? parseFileFieldValue(record[f.name])?.name ?? null
+                : record[f.name];
         if (value === null || value === undefined || value === "") return null;
         const fieldLabel = f.label ?? f.name;
         const ambiguous = (descriptionLabelOccurrences.get(fieldLabel) ?? 0) > 1;

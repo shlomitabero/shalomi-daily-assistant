@@ -231,6 +231,21 @@ test("buildCalendarIcs resolves an enum field to its Hebrew enumLabels translati
   assert.doesNotMatch(ics, /סטטוס: shipped/, "must never leak the raw enum value once a real Hebrew label exists for it");
 });
 
+test("buildCalendarIcs resolves a file field to just its filename in DESCRIPTION, not the raw JSON descriptor it's actually stored as", () => {
+  const photoField: Field = { name: "photo", label: "תמונה", type: "file", required: false };
+  const photoEntity: Entity = { name: "Appointment", label: "תור", fields: [dateField, nameField, photoField] };
+  const fileValue = JSON.stringify({ url: "/api/uploads/p1/Appointment/abc.jpg", name: "receipt.jpg", size: 2048, mimeType: "image/jpeg" });
+  const records: EntityRecord[] = [
+    { id: 1, appointmentDate: "2026-03-15", customerName: "Dana Levi", photo: fileValue },
+    { id: 2, appointmentDate: "2026-03-16", customerName: "Yossi Cohen", photo: null },
+  ];
+  const ics = buildCalendarIcs(photoEntity, dateField, nameField, records, [], {});
+  const events = parseEvents(ics);
+  assert.match(events[0]!, /תמונה: receipt\.jpg/, "a set file field must render just the filename, not the raw JSON descriptor");
+  assert.doesNotMatch(ics, /api\/uploads/, "the server's own internal upload URL path must never leak into an exported calendar file");
+  assert.doesNotMatch(events[1]!, /תמונה/, "an unset file field must produce no description line at all, same as any other empty field");
+});
+
 /**
  * Same gap, other affected line: SUMMARY uses whatever field
  * calendarChipLabelField picked as the label field, which falls back to
