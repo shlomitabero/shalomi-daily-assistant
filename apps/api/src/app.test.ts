@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { test } from "node:test";
@@ -8040,6 +8040,274 @@ test("DELETE /auth/account removes the uploaded files for every project the dele
 
     assert.equal(existsSync(filePathOnDisk), false, "deleting the account must remove the uploaded files for every project it owned");
     assert.equal(existsSync(path.join(uploadsDir, projectId)), false);
+  });
+});
+
+/**
+ * Round 685: the same leak the two tests above fixed for whole-project/
+ * account deletion -- confirmed, by reading the code directly, to still
+ * exist on every ordinary single-record edit and delete, which is exactly
+ * the real follow-up round 674's own writeup named and deliberately left
+ * for later ("replacing a file field's value, or removing the field/
+ * entity, each orphans one old file ... a real follow-up"). PATCH never
+ * compared a file field's old value against its new one, and DELETE never
+ * touched the filesystem at all -- both now clean up via the fire-and-
+ * forget deleteReplacedFileFields, same latency-safety convention as
+ * runAutomationsForRecordChange on the same two routes.
+ *
+ * This test covers the PATCH side: replacing the field's value deletes the
+ * OLD file but leaves the NEW one in place, and a PATCH that never touches
+ * the file field at all leaves its existing file completely alone (the
+ * "happy path that must NOT delete" half of the fix, not just the "must
+ * delete" half).
+ */
+test("PATCH .../entities/:entityName/:recordId deletes a replaced file field's OLD upload from disk, keeps the new one, and never touches the file when the field itself isn't in the PATCH body", async () => {
+  await withServer(async (baseUrl, db, uploadsDir) => {
+    const email = `upload-patch-replace-${randomUUID()}@example.com`;
+    const token = await signup(baseUrl, email);
+    const user = findUserByEmail(db, email)!;
+
+    const spec: ProductSpec = {
+      summary: "test",
+      personas: [],
+      roles: ["Admin"],
+      entities: [
+        {
+          name: "Applicant",
+          fields: [
+            { name: "name", type: "text", required: true },
+            { name: "resume", type: "file", required: false },
+          ],
+        },
+      ],
+      screens: [],
+      assumptions: [],
+      openQuestions: [],
+    };
+    const projectId = randomUUID();
+    insertProject(db, { id: projectId, ownerId: user.id, name: "Hiring", description: "test", spec });
+    diffAndMigrate(db, projectId, undefined, spec);
+    markProjectBuilt(db, projectId);
+
+    async function uploadResume(contents: string) {
+      const formData = new FormData();
+      formData.append("file", new File([contents], "resume.pdf", { type: "application/pdf" }));
+      const res = await fetch(`${baseUrl}/api/projects/${projectId}/entities/Applicant/fields/resume/upload`, {
+        method: "POST",
+        headers: { authorization: `Bearer ${token}` },
+        body: formData,
+      });
+      return (await res.json()) as { file: { url: string; name: string; size: number; mimeType: string } };
+    }
+    function diskPath(url: string) {
+      return path.join(uploadsDir, url.replace(/^\/api\/uploads\//, ""));
+    }
+
+    const first = await uploadResume("first-resume-contents");
+    const createRes = await fetch(`${baseUrl}/api/projects/${projectId}/entities/Applicant`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ name: "Dana", resume: JSON.stringify(first.file) }),
+    });
+    const { record } = (await createRes.json()) as { record: { id: number } };
+    assert.ok(existsSync(diskPath(first.file.url)), "the first uploaded file must exist on disk right after creation");
+
+    // A PATCH that never mentions the file field at all must never touch
+    // its file -- this is the fix's own "happy path", not an edge case.
+    const untouchedRes = await fetch(`${baseUrl}/api/projects/${projectId}/entities/Applicant/${record.id}`, {
+      method: "PATCH",
+      headers: authHeaders(token),
+      body: JSON.stringify({ name: "Dana Cohen" }),
+    });
+    assert.equal(untouchedRes.status, 200);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    assert.ok(existsSync(diskPath(first.file.url)), "a PATCH that doesn't touch the file field must leave its existing upload alone");
+
+    const second = await uploadResume("second-resume-contents");
+    const replaceRes = await fetch(`${baseUrl}/api/projects/${projectId}/entities/Applicant/${record.id}`, {
+      method: "PATCH",
+      headers: authHeaders(token),
+      body: JSON.stringify({ resume: JSON.stringify(second.file) }),
+    });
+    assert.equal(replaceRes.status, 200);
+
+    for (let i = 0; i < 40 && existsSync(diskPath(first.file.url)); i++) {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+    assert.equal(existsSync(diskPath(first.file.url)), false, "replacing the file field must delete the OLD upload from disk");
+    assert.ok(existsSync(diskPath(second.file.url)), "the NEW upload the field now points to must still exist");
+  });
+});
+
+/**
+ * Round 685, PATCH-clear half: a user clicking FieldInput's own "Remove"
+ * button (apps/web/src/EntityPanel.tsx) sends an empty string, not a new
+ * descriptor -- confirms that counts as "replaced" too (the old file must
+ * still be deleted), not just the upload-a-new-file case above.
+ */
+test("PATCH .../entities/:entityName/:recordId deletes a file field's upload from disk when the field is cleared to an empty value", async () => {
+  await withServer(async (baseUrl, db, uploadsDir) => {
+    const email = `upload-patch-clear-${randomUUID()}@example.com`;
+    const token = await signup(baseUrl, email);
+    const user = findUserByEmail(db, email)!;
+
+    const spec: ProductSpec = {
+      summary: "test",
+      personas: [],
+      roles: ["Admin"],
+      entities: [{ name: "Applicant", fields: [{ name: "resume", type: "file", required: false }] }],
+      screens: [],
+      assumptions: [],
+      openQuestions: [],
+    };
+    const projectId = randomUUID();
+    insertProject(db, { id: projectId, ownerId: user.id, name: "Hiring", description: "test", spec });
+    diffAndMigrate(db, projectId, undefined, spec);
+    markProjectBuilt(db, projectId);
+
+    const formData = new FormData();
+    formData.append("file", new File(["resume-contents"], "resume.pdf", { type: "application/pdf" }));
+    const uploadRes = await fetch(`${baseUrl}/api/projects/${projectId}/entities/Applicant/fields/resume/upload`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${token}` },
+      body: formData,
+    });
+    const { file } = (await uploadRes.json()) as { file: { url: string } };
+    const filePathOnDisk = path.join(uploadsDir, file.url.replace(/^\/api\/uploads\//, ""));
+
+    const createRes = await fetch(`${baseUrl}/api/projects/${projectId}/entities/Applicant`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ resume: JSON.stringify(file) }),
+    });
+    const { record } = (await createRes.json()) as { record: { id: number } };
+    assert.ok(existsSync(filePathOnDisk));
+
+    const clearRes = await fetch(`${baseUrl}/api/projects/${projectId}/entities/Applicant/${record.id}`, {
+      method: "PATCH",
+      headers: authHeaders(token),
+      body: JSON.stringify({ resume: "" }),
+    });
+    assert.equal(clearRes.status, 200);
+
+    for (let i = 0; i < 40 && existsSync(filePathOnDisk); i++) {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+    assert.equal(existsSync(filePathOnDisk), false, "clearing the file field must delete its upload from disk, not just blank the DB value");
+  });
+});
+
+/**
+ * Round 685, DELETE half: deleteRecord (packages/db) is a pure DB-layer
+ * delete with no filesystem access -- confirmed by reading it directly --
+ * so deleting a record outright left its file field's upload on disk
+ * forever, unreachable from the UI the instant the record itself was gone.
+ */
+test("DELETE .../entities/:entityName/:recordId removes that record's uploaded file from disk, not just its database row", async () => {
+  await withServer(async (baseUrl, db, uploadsDir) => {
+    const email = `upload-record-delete-${randomUUID()}@example.com`;
+    const token = await signup(baseUrl, email);
+    const user = findUserByEmail(db, email)!;
+
+    const spec: ProductSpec = {
+      summary: "test",
+      personas: [],
+      roles: ["Admin"],
+      entities: [{ name: "Applicant", fields: [{ name: "resume", type: "file", required: false }] }],
+      screens: [],
+      assumptions: [],
+      openQuestions: [],
+    };
+    const projectId = randomUUID();
+    insertProject(db, { id: projectId, ownerId: user.id, name: "Hiring", description: "test", spec });
+    diffAndMigrate(db, projectId, undefined, spec);
+    markProjectBuilt(db, projectId);
+
+    const formData = new FormData();
+    formData.append("file", new File(["resume-contents"], "resume.pdf", { type: "application/pdf" }));
+    const uploadRes = await fetch(`${baseUrl}/api/projects/${projectId}/entities/Applicant/fields/resume/upload`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${token}` },
+      body: formData,
+    });
+    const { file } = (await uploadRes.json()) as { file: { url: string } };
+    const filePathOnDisk = path.join(uploadsDir, file.url.replace(/^\/api\/uploads\//, ""));
+
+    const createRes = await fetch(`${baseUrl}/api/projects/${projectId}/entities/Applicant`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ resume: JSON.stringify(file) }),
+    });
+    const { record } = (await createRes.json()) as { record: { id: number } };
+    assert.ok(existsSync(filePathOnDisk), "the uploaded file must actually exist on disk before the record is deleted");
+
+    const deleteRes = await fetch(`${baseUrl}/api/projects/${projectId}/entities/Applicant/${record.id}`, {
+      method: "DELETE",
+      headers: authHeaders(token),
+    });
+    assert.equal(deleteRes.status, 204);
+
+    for (let i = 0; i < 40 && existsSync(filePathOnDisk); i++) {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+    assert.equal(existsSync(filePathOnDisk), false, "deleting the record must remove its uploaded file from disk, not just the database row");
+  });
+});
+
+/**
+ * Round 685, path-traversal safety: a file field's stored value is
+ * otherwise-unvalidated client-settable JSON (coerceValue's "file" case
+ * has no structural check at all -- confirmed by reading repository.ts
+ * directly), so deleteUploadedFile must never resolve a crafted url
+ * outside this exact project+entity's own upload directory. Confirms a
+ * record whose file field holds a traversal attempt is deleted (PATCHed
+ * to clear it) without the attempted target ever being touched.
+ */
+test("replacing/clearing a file field whose stored value is a crafted path-traversal URL never deletes anything outside that project+entity's own uploads directory", async () => {
+  await withServer(async (baseUrl, db, uploadsDir) => {
+    const email = `upload-traversal-${randomUUID()}@example.com`;
+    const token = await signup(baseUrl, email);
+    const user = findUserByEmail(db, email)!;
+
+    const spec: ProductSpec = {
+      summary: "test",
+      personas: [],
+      roles: ["Admin"],
+      entities: [{ name: "Applicant", fields: [{ name: "resume", type: "file", required: false }] }],
+      screens: [],
+      assumptions: [],
+      openQuestions: [],
+    };
+    const projectId = randomUUID();
+    insertProject(db, { id: projectId, ownerId: user.id, name: "Hiring", description: "test", spec });
+    diffAndMigrate(db, projectId, undefined, spec);
+    markProjectBuilt(db, projectId);
+
+    // A canary file somewhere else entirely under uploadsDir, standing in
+    // for "anything a crafted value might try to reach outside this
+    // project+entity's own directory".
+    const canaryDir = path.join(uploadsDir, "some-other-project", "SomeEntity");
+    mkdirSync(canaryDir, { recursive: true });
+    const canaryPath = path.join(canaryDir, "canary.txt");
+    writeFileSync(canaryPath, "do not delete me");
+
+    const maliciousUrl = `/api/uploads/${projectId}/Applicant/../../some-other-project/SomeEntity/canary.txt`;
+    const createRes = await fetch(`${baseUrl}/api/projects/${projectId}/entities/Applicant`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ resume: JSON.stringify({ url: maliciousUrl, name: "x", size: 0, mimeType: "" }) }),
+    });
+    const { record } = (await createRes.json()) as { record: { id: number } };
+
+    const clearRes = await fetch(`${baseUrl}/api/projects/${projectId}/entities/Applicant/${record.id}`, {
+      method: "PATCH",
+      headers: authHeaders(token),
+      body: JSON.stringify({ resume: "" }),
+    });
+    assert.equal(clearRes.status, 200);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    assert.ok(existsSync(canaryPath), "a crafted file-field value must never be able to delete a file outside its own project+entity directory");
   });
 });
 

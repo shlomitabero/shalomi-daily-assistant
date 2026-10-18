@@ -747,6 +747,69 @@ export async function deleteProjectUploads(uploadsDir: string, projectId: string
   await rm(path.join(uploadsDir, projectId), { recursive: true, force: true }).catch(() => {});
 }
 
+// Matches exactly what createUploadMiddleware's own filename callback below
+// always generates (randomUUID() + safeFileExtension's optional dotted
+// extension) -- never anything else.
+const UPLOADED_FILENAME = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}(\.[a-z0-9]{1,10})?$/;
+
+/**
+ * Deletes one `file`-type field's currently-stored upload from disk,
+ * best-effort -- the per-record sibling of deleteProjectUploads above,
+ * for round 674's own deferred follow-up: replacing a file field's value,
+ * clearing it, or deleting the record it belongs to each orphans the old
+ * upload forever, since deleteProjectUploads only ever runs on whole-
+ * project/account deletion, not on an ordinary single-record edit.
+ *
+ * A `file` field's stored value is otherwise-unvalidated, client-settable
+ * JSON (coerceValue's "file" case falls through to its plain `String(raw)`
+ * default, same as any other untyped field -- see packages/db/
+ * repository.ts) -- so this can never be handed a value and trusted to
+ * resolve wherever its own embedded URL points. Only the filename's final
+ * path segment is used, and only once it matches UPLOADED_FILENAME exactly
+ * (the one shape this server itself ever generates); the project/entity
+ * directory segments come solely from this route's own already-authorized
+ * `project.id`/`entity.name`, never from the field value itself. A fully
+ * crafted value can therefore at worst name another real file already
+ * inside that exact project+entity's own upload directory -- it can never
+ * escape uploadsDir or target a different project's files.
+ */
+async function deleteUploadedFile(uploadsDir: string, projectId: string, entityName: string, rawValue: unknown): Promise<void> {
+  if (typeof rawValue !== "string" || rawValue === "") return;
+  let url: string;
+  try {
+    const parsed = JSON.parse(rawValue) as { url?: unknown };
+    if (typeof parsed.url !== "string") return;
+    url = parsed.url;
+  } catch {
+    return;
+  }
+  const filename = url.slice(url.lastIndexOf("/") + 1);
+  if (!UPLOADED_FILENAME.test(filename)) return;
+  await rm(path.join(uploadsDir, projectId, entityName, filename), { force: true }).catch(() => {});
+}
+
+/**
+ * Cleans up whichever `file`-type fields are about to stop being reachable
+ * from this record -- every one of them when the record itself is gone
+ * (`newRecord` null, from the DELETE route), or only the ones a PATCH
+ * actually changed (comparing against `newRecord`, so an update that never
+ * touches a given file field leaves its upload alone). Always deletes the
+ * OLD value's file, never whatever the new one might be.
+ */
+async function deleteReplacedFileFields(
+  uploadsDir: string,
+  projectId: string,
+  entity: Entity,
+  oldRecord: EntityRecord,
+  newRecord: EntityRecord | null,
+): Promise<void> {
+  await Promise.all(
+    entity.fields
+      .filter((f) => f.type === "file" && (!newRecord || oldRecord[f.name] !== newRecord[f.name]))
+      .map((f) => deleteUploadedFile(uploadsDir, projectId, entity.name, oldRecord[f.name])),
+  );
+}
+
 function createUploadMiddleware(uploadsDir: string) {
   const storage = multer.diskStorage({
     destination: (req, _file, cb) => {
@@ -2443,6 +2506,10 @@ export function createProjectsRouter(
         throw err;
       }
       res.json({ record });
+      // Fire-and-forget, same reasoning as runAutomationsForRecordChange
+      // just below -- a filesystem delete must never add latency to, or
+      // ever fail, the response this update already succeeded at.
+      void deleteReplacedFileFields(uploadsDir, project.id, entity, before, record);
       // Same X-Suppress-Automations escape hatch as the POST route above --
       // see its own comment. CSV import now PATCHes a row whose id matched
       // an existing record (see EntityPanel.tsx's handleImportFile) instead
@@ -2474,6 +2541,11 @@ export function createProjectsRouter(
       }
       const entity = findEntity(project, req.params.entityName);
       const recordId = parseRecordId(req.params.recordId);
+      // Fetched before the delete below purely so a `file`-type field's
+      // own upload can be cleaned up afterward (see
+      // deleteReplacedFileFields) -- `undefined` here just means the
+      // delete itself is about to 404, same as always.
+      const before = getRecord(db, project.id, entity, recordId);
       /**
        * `PRAGMA foreign_keys = ON` (connection.ts) makes deleting a record
        * another record still points to via a `relation` field throw a real
@@ -2499,6 +2571,9 @@ export function createProjectsRouter(
         throw err;
       }
       res.status(204).end();
+      // Fire-and-forget, same reasoning as the PATCH route's own call --
+      // a filesystem delete must never add latency to this response.
+      if (before) void deleteReplacedFileFields(uploadsDir, project.id, entity, before, null);
     }),
   );
 
