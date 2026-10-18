@@ -605,6 +605,19 @@ test("isAllowedWebhookUrl accepts a real public http(s) URL and rejects non-http
   assert.equal(isAllowedWebhookUrl("http://[::1]/abc"), false);
 });
 
+test("isAllowedWebhookUrl also blocks an IPv4-mapped IPv6 literal wrapping a blocked IPv4 address, in both dotted and hex form", () => {
+  assert.equal(
+    isAllowedWebhookUrl("http://[::ffff:169.254.169.254]/latest/meta-data/"),
+    false,
+    "the cloud instance-metadata IP wrapped as an IPv4-mapped IPv6 literal must still be blocked",
+  );
+  assert.equal(isAllowedWebhookUrl("http://[::ffff:127.0.0.1]/abc"), false, "loopback wrapped as IPv4-mapped IPv6 (dotted) must still be blocked");
+  assert.equal(isAllowedWebhookUrl("http://[::ffff:7f00:1]/abc"), false, "loopback wrapped as IPv4-mapped IPv6 (hex, as Node's URL parser actually normalizes it to) must still be blocked");
+  assert.equal(isAllowedWebhookUrl("http://[::ffff:10.0.0.5]/abc"), false, "a private 10.x address wrapped as IPv4-mapped IPv6 must still be blocked");
+  assert.equal(isAllowedWebhookUrl("http://[::ffff:192.168.1.5]/abc"), false, "a private 192.168.x address wrapped as IPv4-mapped IPv6 must still be blocked");
+  assert.equal(isAllowedWebhookUrl("http://[::ffff:8.8.8.8]/abc"), true, "a genuinely public IPv4 address wrapped as IPv4-mapped IPv6 must still be allowed");
+});
+
 /**
  * New: the "webhook" action type -- fireRule's own branch, reached through
  * the real event-driven path (runAutomationsForRecordChange), not a direct

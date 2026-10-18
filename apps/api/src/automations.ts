@@ -192,6 +192,30 @@ const BLOCKED_WEBHOOK_HOSTNAME_PATTERNS = [
   /^\[?fd00:/i,
 ];
 
+/**
+ * Node's URL parser normalizes an IPv4-mapped IPv6 literal (e.g.
+ * "[::ffff:169.254.169.254]", or the same address written in hex as
+ * "[::ffff:a9fe:a9fe]") into its own canonical bracketed hex form --
+ * neither form starts with any of BLOCKED_WEBHOOK_HOSTNAME_PATTERNS'
+ * dotted-decimal or "::1"/"fe80:"/"fc00:"/"fd00:" prefixes, so a blocked
+ * IPv4 target (the cloud instance-metadata IP included) could sail
+ * straight through isAllowedWebhookUrl wrapped in this form. Unwraps it
+ * back to the embedded IPv4 address so the existing IPv4 patterns above
+ * still catch it.
+ */
+function extractIPv4MappedAddress(hostname: string): string | null {
+  const stripped = hostname.startsWith("[") && hostname.endsWith("]") ? hostname.slice(1, -1) : hostname;
+  const match = /^::ffff:(.+)$/.exec(stripped);
+  if (!match) return null;
+  const tail = match[1]!;
+  if (/^\d+\.\d+\.\d+\.\d+$/.test(tail)) return tail;
+  const hexMatch = /^([0-9a-f]{1,4}):([0-9a-f]{1,4})$/.exec(tail);
+  if (!hexMatch) return null;
+  const high = parseInt(hexMatch[1]!, 16);
+  const low = parseInt(hexMatch[2]!, 16);
+  return `${(high >> 8) & 0xff}.${high & 0xff}.${(low >> 8) & 0xff}.${low & 0xff}`;
+}
+
 /** Exported for direct unit testing -- see automations.test.ts. */
 export function isAllowedWebhookUrl(raw: string): boolean {
   let url: URL;
@@ -202,7 +226,8 @@ export function isAllowedWebhookUrl(raw: string): boolean {
   }
   if (url.protocol !== "http:" && url.protocol !== "https:") return false;
   const hostname = url.hostname.toLowerCase();
-  return !BLOCKED_WEBHOOK_HOSTNAME_PATTERNS.some((p) => p.test(hostname));
+  const hostToCheck = extractIPv4MappedAddress(hostname) ?? hostname;
+  return !BLOCKED_WEBHOOK_HOSTNAME_PATTERNS.some((p) => p.test(hostToCheck));
 }
 
 /**
