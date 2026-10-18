@@ -254,7 +254,16 @@ function Cell({
         {isImageMimeType(fileValue.mimeType) ? (
           <img src={fileValue.url} alt={fileValue.name} className="file-cell-thumbnail" />
         ) : (
-          <span className="file-cell-name">{fileValue.name}</span>
+          // fileValue.name is exactly what matchesSearch's own "file"
+          // branch matches against -- without this, a record that shows
+          // up in a filtered table precisely because its attachment's
+          // filename matched the search query gave no visual indication
+          // of why, unlike every other field type whose displayed text is
+          // also what matchesSearch matched (enum/longtext/the generic
+          // fallback, all a few lines above).
+          <span className="file-cell-name">
+            <Highlighted text={fileValue.name} query={highlightQuery} />
+          </span>
         )}
       </a>
     );

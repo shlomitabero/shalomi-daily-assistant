@@ -9590,6 +9590,48 @@ test("EntityPanel's table cell renders a 'file' field's stored descriptor as a r
 });
 
 /**
+ * Round 699: matchesSearch's own "file" branch (just added the prior
+ * round) matches a record into the filtered table by its attachment's
+ * filename -- but the Cell branch that renders that exact filename never
+ * wrapped it in Highlighted, unlike every other field type whose
+ * displayed text is also what matchesSearch matched (enum/longtext/the
+ * generic text fallback, confirmed via the test right above this one's
+ * own sibling coverage). A record could show up in a filtered table
+ * precisely because its file's name matched the search, with no visual
+ * indication anywhere of why.
+ */
+test("EntityPanel's search box highlights the matched substring within a 'file' field's own filename, not just text/enum fields", async () => {
+  await withJsdom(async () => {
+    const store: EntityRecord[] = [
+      { id: 1, name: "Dana", resume: JSON.stringify({ url: "/api/uploads/proj1/Applicant/abc123.pdf", name: "resume_march.pdf", size: 9, mimeType: "application/pdf" }) },
+      { id: 2, name: "Yossi", resume: JSON.stringify({ url: "/api/uploads/proj1/Applicant/def456.pdf", name: "cv_final.pdf", size: 9, mimeType: "application/pdf" }) },
+    ];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string) => {
+      if (input === "/api/projects/proj1/entities/Applicant") {
+        return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${input}`);
+    }) as typeof fetch;
+    try {
+      renderEntityPanel({ entity: APPLICANT_ENTITY, allEntities: [APPLICANT_ENTITY] });
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 2);
+
+      const searchBox = document.querySelector(".entity-search") as HTMLInputElement;
+      fireEvent.change(searchBox, { target: { value: "march" } });
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 1);
+
+      const mark = document.querySelector(".file-cell-name mark.search-match");
+      assert.ok(mark, "the matched substring within the filename must be wrapped in a real <mark class=\"search-match\">");
+      assert.equal(mark!.textContent, "march", "the highlighted text must be exactly the matched substring");
+      assert.equal(document.querySelector("a.file-cell-link")!.textContent, "resume_march.pdf", "the rest of the filename must still render around the highlight");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * Real role enforcement (RBAC), the UI-layer reflection of it: a "viewer"
  * collaborator passes readOnly=true into EntityPanel. The server already
  * rejects every write with 403 VIEWER_READ_ONLY (see app.test.ts); this
