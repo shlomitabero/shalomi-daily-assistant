@@ -790,3 +790,107 @@ test("CollaboratorsPanel disables every row's role select and remove button whil
     }
   });
 });
+
+/**
+ * Round 689: round 680's own fix cross-gated handleRoleChange against
+ * handleRemove (both do a full setCollaborators(...) replace from their
+ * own server response, so one still in flight can resurrect a
+ * collaborator the other already resolved locally) -- but handleInvite
+ * does the exact same full-replace (see its own `setCollaborators(
+ * collaborators)` on a successful addCollaborator) and was left out of
+ * that cross-gate entirely, in both directions: the invite button was
+ * only ever disabled by its own inviteBusy, and the role select/remove/
+ * leave buttons were only ever disabled by updatingRoleUserId/
+ * removingUserId, with no awareness invite could be in flight too.
+ */
+test("CollaboratorsPanel cross-gates the invite form against any role update or removal in flight, and vice versa", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    const dana = makeCollaborator("u1", "dana@example.com", "editor");
+    const yossi = makeCollaborator("u2", "yossi@example.com", "editor");
+    const newGuy = makeCollaborator("u3", "new@example.com", "editor");
+    let resolveInvite: (() => void) | undefined;
+    const invitePromise = new Promise<void>((resolve) => {
+      resolveInvite = resolve;
+    });
+    let resolveDelete: (() => void) | undefined;
+    const deletePromise = new Promise<void>((resolve) => {
+      resolveDelete = resolve;
+    });
+    let inviteCalls = 0;
+    let deleteCalls = 0;
+
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/collaborators") {
+        return new Response(JSON.stringify({ collaborators: [dana, yossi] }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      if (method === "POST" && input === "/api/projects/proj1/collaborators") {
+        inviteCalls += 1;
+        await invitePromise;
+        // The server's own snapshot at invite-handling time -- still
+        // includes yossi, since a concurrent DELETE for yossi must never
+        // be allowed to actually race against this in the first place.
+        return new Response(JSON.stringify({ collaborators: [dana, yossi, newGuy] }), {
+          status: 201,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      if (method === "DELETE" && input === "/api/projects/proj1/collaborators/u2") {
+        deleteCalls += 1;
+        await deletePromise;
+        return new Response(null, { status: 204 });
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+    globalThis.window.confirm = (() => true) as typeof window.confirm;
+
+    try {
+      renderPanel();
+      await waitForCondition(() => document.querySelectorAll(".collab-list li").length === 2);
+
+      const rows = Array.from(document.querySelectorAll(".collab-list li"));
+      const danaSelect = rows[0].querySelector("select") as HTMLSelectElement;
+      const yossiRemoveBtn = rows[1].querySelector("button") as HTMLButtonElement;
+      const emailInput = document.querySelector('.collab-invite-form input[type="email"]') as HTMLInputElement;
+      const inviteBtn = document.querySelector('.collab-invite-form button[type="submit"]') as HTMLButtonElement;
+
+      // Direction 1: an invite in flight must disable every row's own
+      // controls, not just the invite form itself.
+      fireEvent.change(emailInput, { target: { value: "new@example.com" } });
+      fireEvent.submit(document.querySelector(".collab-invite-form")!);
+
+      assert.equal(danaSelect.disabled, true, "a role select must be disabled while an invite is in flight");
+      assert.equal(yossiRemoveBtn.disabled, true, "a remove button must be disabled while an invite is in flight");
+
+      fireEvent.click(yossiRemoveBtn);
+      assert.equal(deleteCalls, 0, "clicking a disabled remove button while an invite is in flight must never call the DELETE endpoint");
+
+      resolveInvite!();
+      await waitForCondition(() => document.querySelectorAll(".collab-list li").length === 3);
+      await waitForCondition(() => danaSelect.disabled === false);
+      assert.equal(inviteCalls, 1, "exactly one invite request must have fired");
+
+      // Direction 2: a removal in flight must disable the invite form too.
+      const rowsAfterInvite = Array.from(document.querySelectorAll(".collab-list li"));
+      const yossiRemoveBtn2 = rowsAfterInvite[1].querySelector("button") as HTMLButtonElement;
+      fireEvent.click(yossiRemoveBtn2);
+
+      assert.equal(inviteBtn.disabled, true, "the invite button must be disabled while a removal is in flight");
+
+      fireEvent.change(emailInput, { target: { value: "another@example.com" } });
+      fireEvent.click(inviteBtn);
+      assert.equal(inviteCalls, 1, "clicking the invite button while it is disabled must never fire a second invite request");
+
+      resolveDelete!();
+      await waitForCondition(() => document.querySelectorAll(".collab-list li").length === 2);
+      await waitForCondition(() => inviteBtn.disabled === false);
+      assert.equal(deleteCalls, 1, "exactly one delete request must have fired");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});

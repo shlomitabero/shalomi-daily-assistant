@@ -196,7 +196,13 @@ export function CollaboratorsPanel({
               <option value="editor">{t("collab.role.editor")}</option>
               <option value="viewer">{t("collab.role.viewer")}</option>
             </select>
-            <button type="submit" disabled={inviteBusy || !email.trim()}>
+            {/* Same cross-gate as the role select/remove/leave buttons
+                below, the other direction: handleInvite's own full
+                setCollaborators(...) replace can just as easily resurrect
+                a collaborator a still-pending remove/role-change already
+                resolved locally, so invite must wait for those too, not
+                just its own inviteBusy. */}
+            <button type="submit" disabled={inviteBusy || !email.trim() || removingUserId !== null || updatingRoleUserId !== null}>
               {inviteBusy ? t("collab.invite.busy") : t("collab.invite")}
             </button>
           </form>
@@ -233,22 +239,27 @@ export function CollaboratorsPanel({
                     <strong>{c.email}</strong>
                     <div className="muted small">{new Date(c.addedAt).toLocaleDateString(LOCALE[lang])}</div>
                   </div>
-                  {/* Disabled while ANY role update OR ANY removal is in
-                      flight, not just this row's own -- otherwise changing
-                      one collaborator's role while removing a different one
-                      is still pending fires two independent requests, and
-                      whichever response lands last silently overwrites the
-                      other's result (handleRoleChange does a full
-                      setCollaborators(...) replace from its own server
-                      response, which can resurrect a collaborator handleRemove
-                      already filtered out locally). Mirrors HistoryPanel's
-                      own restore/delete cross-gate for the identical hazard. */}
+                  {/* Disabled while ANY role update, ANY removal, OR an
+                      invite is in flight, not just this row's own --
+                      otherwise changing one collaborator's role (or
+                      removing one) while a different request is still
+                      pending fires two independent requests, and whichever
+                      response lands last silently overwrites the other's
+                      result (handleRoleChange and handleInvite both do a
+                      full setCollaborators(...) replace from their own
+                      server response, either of which can resurrect a
+                      collaborator handleRemove already filtered out
+                      locally -- round 680 originally gated role-change
+                      against remove, but left invite, a third actor doing
+                      the identical full-replace, out of the cross-gate).
+                      Mirrors HistoryPanel's own restore/delete cross-gate
+                      for the identical hazard. */}
                   {isOwner ? (
                     <select
                       aria-label={t("collab.role.label")}
                       value={c.role}
                       onChange={(e) => handleRoleChange(c.userId, e.target.value as CollaboratorRole)}
-                      disabled={updatingRoleUserId !== null || removingUserId !== null}
+                      disabled={updatingRoleUserId !== null || removingUserId !== null || inviteBusy}
                     >
                       <option value="editor">{t("collab.role.editor")}</option>
                       <option value="viewer">{t("collab.role.viewer")}</option>
@@ -264,7 +275,7 @@ export function CollaboratorsPanel({
                       type="button"
                       className="secondary"
                       onClick={() => handleRemove(c.userId, c.email)}
-                      disabled={removingUserId !== null || updatingRoleUserId !== null}
+                      disabled={removingUserId !== null || updatingRoleUserId !== null || inviteBusy}
                     >
                       {removingUserId === c.userId ? t("collab.remove.busy") : t("collab.remove")}
                     </button>
@@ -274,7 +285,7 @@ export function CollaboratorsPanel({
                         type="button"
                         className="secondary"
                         onClick={handleLeave}
-                        disabled={removingUserId !== null || updatingRoleUserId !== null}
+                        disabled={removingUserId !== null || updatingRoleUserId !== null || inviteBusy}
                       >
                         {removingUserId === currentUserId ? t("collab.leave.busy") : t("collab.leave")}
                       </button>
